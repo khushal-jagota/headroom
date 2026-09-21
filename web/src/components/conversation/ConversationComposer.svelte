@@ -109,7 +109,9 @@
     onSubmitUserInput,
     onCancelTurn,
     onDiscardHeldPrompt,
-    onPromoteHeldPrompt
+    onPromoteHeldPrompt,
+    onStopDrawingHeldPrompt,
+    onSendHeldPromptAgain
   }: {
     /** The current conversation, or none before the first message creates it. */
     conversationId?: string | null;
@@ -171,6 +173,8 @@
       heldPromptId: string,
       mode: "send_now" | "steer"
     ) => Promise<void> | void;
+    onStopDrawingHeldPrompt?: (senderMessageId: string) => Promise<void> | void;
+    onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
   } = $props();
 
   let text = $state("");
@@ -303,6 +307,23 @@
   // A dismissal belongs to the active token. Leaving the token clears it.
   $effect(() => {
     if (typedCatalogText === null) menuWasDismissed = false;
+  });
+
+  /* The menu mounts and reflows under a pointer that nobody moved, and the browser
+   * reports the pointer's resting place each time. That is geometry, not a person
+   * choosing a row. The composer stays mounted while the menu comes and goes, so the
+   * pointer's last place is remembered here and survives every opening. */
+  let pointerSpot: { x: number; y: number } | null = null;
+  let pointerReallyMoved = false;
+
+  $effect(() => {
+    function trackPointer(event: MouseEvent): void {
+      pointerReallyMoved =
+        pointerSpot !== null && (event.clientX !== pointerSpot.x || event.clientY !== pointerSpot.y);
+      pointerSpot = { x: event.clientX, y: event.clientY };
+    }
+    document.addEventListener("mousemove", trackPointer, { capture: true, passive: true });
+    return () => document.removeEventListener("mousemove", trackPointer, true);
   });
 
   // A different list is a different highlight, and it starts at the top.
@@ -754,6 +775,8 @@
       {running}
       onDiscard={onDiscardHeldPrompt}
       onPromote={onPromoteHeldPrompt}
+      onStopDrawing={onStopDrawingHeldPrompt}
+      onSendAgain={onSendHeldPromptAgain}
     />
 
     <div
@@ -793,6 +816,7 @@
           anyEntriesAtAll={eligibleCatalogEntries.length > 0}
           onChoose={(entry) => void takeTheCatalogEntry(entry)}
           onHighlight={(index) => (activeCatalogEntryIndex = index)}
+          pointerReallyMoved={() => pointerReallyMoved}
         />
       {/if}
 

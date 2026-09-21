@@ -99,14 +99,24 @@ export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicke
   // Ticket another Ticket holds. They read the same red, and never the same word.
   if (ticket.agent_state === "errored") return { mark: "errored", word: "errored" };
   if (ticket.ticket_status === "blocked") return { mark: "errored", word: "blocked" };
+  // The word a row shows is the lowercase of the heading the same Ticket sits under, so
+  // a row and its group never name one fact two ways. The three headings live in
+  // `GROUP_LABELS` in workspaceRail.ts and in `TICKET_STATUS_GROUPS`; a heading changed
+  // there is changed here.
   const attention = primaryWorkAttention(ticket);
   if (attention === "awaiting_approval") {
-    return { mark: "current-awaiting-approval", word: "to review" };
+    return { mark: "current-awaiting-approval", word: "needs your approval" };
   }
-  if (attention === "assigned") return { mark: "current-paired", word: "assigned" };
-  if (attention === "awaiting_reply") return { mark: "needs-me", word: "need you" };
-  if (ticket.agent_state === "working") return { mark: "current-running", word: "working" };
-  if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting for closeout" };
+  if (attention === "assigned") return { mark: "current-assigned", word: "yours" };
+  if (attention === "awaiting_reply") return { mark: "needs-me", word: "messages" };
+  // The durable fact, not the live one. `agent` is what the wakeup system writes when it
+  // sends a worker its step, and it holds until the Ticket moves on. Whether a turn is
+  // live in process is a different question: a worker that ends its turn to wait on a
+  // long job is still the agent's. A live fact can add a Ticket to a group — `errored`
+  // and `awaiting_reply` above both do — but it must never be the only thing carrying a
+  // durable state, or the group empties the moment the process stops.
+  if (ticket.ticket_status === "agent") return { mark: "current-running", word: "working" };
+  if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting on consequences" };
   return { mark: "upcoming", word: "to do" };
 }
 
@@ -134,7 +144,6 @@ export function sprintTicketSectionsForTickets(
   const later: SprintTicket[] = [];
   const done: SprintTicket[] = [];
   for (const ticket of tickets) {
-    if (ticket.stage === "dropped") continue;
     if (ticket.stage === "done") done.push(ticket);
     else if (todayTicketIds.has(ticket.id)) today.push(ticket);
     else later.push(ticket);
@@ -147,7 +156,7 @@ export function sprintTicketSectionsForTickets(
 }
 
 export function outcomeTicketProgress(item: SprintOutcomeGroup): string {
-  const tickets = item.tickets.filter((ticket) => ticket.stage !== "dropped");
+  const tickets = item.tickets;
   const done = tickets.filter((ticket) => ticket.stage === "done").length;
   return `${done}/${tickets.length}`;
 }

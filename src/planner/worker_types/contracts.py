@@ -8,6 +8,14 @@ from typing import TypedDict
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 
+# The three names the runtime fixes. Everything else a Worker type calls its Stages and
+# fields is the type's own business. `consequences` is the field every Worker type must
+# declare, because a Worker type ends by landing what it produced. `brief` is paired first
+# for a type that opens with one.
+CONSEQUENCES_FIELD_ID = "consequences"
+BRIEF_FIELD_ID = "brief"
+NEEDS_BRIEF_STAGE_ID = f"needs_{BRIEF_FIELD_ID}"
+
 
 @dataclass(frozen=True, slots=True)
 class StageDefinition:
@@ -15,7 +23,7 @@ class StageDefinition:
     label: str
     gating_field: str | None
     is_terminal: bool
-    default_ownership_mode: StageOwnershipMode | None
+    ownership_mode: StageOwnershipMode | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,10 +54,8 @@ class WorkerTypeDefinition:
     worker_type: str
     label: str
     stages: tuple[StageDefinition, ...]
-    dropped_stage: StageDefinition
     fields: tuple[FieldDefinition, ...]
     worker_profile: WorkerProfile
-    supports_prefix_reconciliation: bool
 
     def stage_ids(self) -> tuple[str, ...]:
         return tuple(stage.id for stage in self.stages)
@@ -75,16 +81,12 @@ class WorkerTypeDefinition:
         )
 
     def is_known_stage(self, stage: str) -> bool:
-        return stage == self.dropped_stage.id or stage in self.stage_ids()
+        return stage in self.stage_ids()
 
     def is_terminal(self, stage: str) -> bool:
-        if stage == self.dropped_stage.id:
-            return True
         return self.stage_definition(stage).is_terminal
 
     def gating_field(self, stage: str) -> str | None:
-        if stage == self.dropped_stage.id:
-            return None
         return self.stage_definition(stage).gating_field
 
     def stage_gated_by(self, field: str) -> str:
@@ -114,8 +116,6 @@ class WorkerTypeDefinition:
         )
 
     def advance_target(self, stage: str) -> str | None:
-        if stage == self.dropped_stage.id:
-            return None
         index = self.stage_index(stage)
         if self.stages[index].is_terminal:
             return None
@@ -137,11 +137,6 @@ class WorkerTypeDefinition:
 
     def default_ceiling(self) -> str:
         return self.ceiling_range()[0]
-
-    def first_worker_stage(self) -> str:
-        if self.stage_ids()[0] == "needs_kickoff":
-            return self.stage_ids()[1]
-        return self.stage_ids()[0]
 
     def completed_stage(self) -> str:
         for stage_definition in self.stages:
@@ -167,20 +162,12 @@ class WorkerTypeDefinition:
                 {"worker_type": self.worker_type, "ceiling": ceiling},
             )
 
-    def reconciliation_field_order(self) -> tuple[str, ...]:
-        return tuple(
-            stage.gating_field
-            for stage in self.stages
-            if not stage.is_terminal and stage.gating_field is not None
-        )
-
-
 class WorkerTypeManifestStage(TypedDict):
     id: str
     label: str
     gating_field: str | None
     is_terminal: bool
-    default_ownership_mode: str | None
+    ownership_mode: str | None
 
 
 class WorkerTypeManifestField(TypedDict):
@@ -192,7 +179,6 @@ class WorkerTypeManifest(TypedDict):
     worker_type: str
     label: str
     stages: list[WorkerTypeManifestStage]
-    dropped: WorkerTypeManifestStage
     advance: dict[str, str]
     fields: list[WorkerTypeManifestField]
     ceiling_range: list[str]

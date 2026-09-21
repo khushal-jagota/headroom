@@ -27,6 +27,33 @@ export type HeldPromptRow = Readonly<{
   queueReason: PromptQueueReason | null;
 }>;
 
+/** What can be done with one row in the stack.
+ *
+ * ``discard``, ``send_now`` and ``steer`` are the record's own operations. Each one names a
+ * held prompt the server is holding, so a row the server has never heard of cannot offer
+ * them. ``stop_drawing`` and ``send_again`` are the opposite: both are things this tab can
+ * do alone, with the words it still has.
+ */
+export type HeldPromptRowAction =
+  | "discard"
+  | "send_now"
+  | "steer"
+  | "stop_drawing"
+  | "send_again";
+
+/** The actions this row can offer, before the conversation's own state narrows them.
+ *
+ * A row the record holds keeps everything it always had. A row that is only this browser's
+ * gets something to do only once the wait is over: while a send is still on its way there
+ * is nothing to decide, and offering to drop or resend it would invite a person to act on
+ * a question that is about to answer itself.
+ */
+export function heldPromptRowActions(row: HeldPromptRow): readonly HeldPromptRowAction[] {
+  if (row.heldPromptId !== null) return ["discard", "send_now", "steer"];
+  if (row.state === "unknown") return ["stop_drawing", "send_again"];
+  return [];
+}
+
 export function heldPromptRowLabel(row: HeldPromptRow): string {
   const words = messageContentText(row.content);
   if (words !== "") return words;

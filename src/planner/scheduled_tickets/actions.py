@@ -27,7 +27,7 @@ from planner.scheduled_tickets.logic import (
     planning_day_for,
     validate_local_time,
 )
-from planner.sprints.logic import DateRange, current_sprint_id
+from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
@@ -269,24 +269,12 @@ def _settle_occurrence(
                     now=now,
                 )
             sprint_item_id = schedule.template.sprint_item_id
-            sprint_id: str | None = None
             project_id = schedule.template.project_id
-            if schedule.template.placement_mode is ScheduledTicketPlacementMode.backlog:
-                sprint_id = None
-            elif schedule.template.placement_mode is ScheduledTicketPlacementMode.current_sprint:
-                ranges = [
-                    DateRange(
-                        id=str(row["id"]),
-                        date_start=str(row["date_start"]),
-                        date_end=str(row["date_end"]),
-                    )
-                    for row in conn.execute(
-                        "SELECT id, date_start, date_end FROM sprints"
-                    ).fetchall()
-                ]
-                sprint_id = schedule.template.sprint_id or current_sprint_id(
-                    planning_day_for(planning_now, boundary_hour), ranges
-                )
+            sprint_id = schedule.template.sprint_id
+            sprint_id_explicit = (
+                schedule.template.placement_mode is ScheduledTicketPlacementMode.backlog
+                or sprint_id is not None
+            )
             ticket = tickets_actions.create_ticket(
                 conn,
                 title=schedule.template.title,
@@ -310,7 +298,7 @@ def _settle_occurrence(
                 planning_now=planning_now,
                 boundary_hour=boundary_hour,
                 sprint_item_id_explicit=True,
-                sprint_id_explicit=True,
+                sprint_id_explicit=sprint_id_explicit,
             )
             return data.insert_occurrence(
                 conn,

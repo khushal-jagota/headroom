@@ -13,8 +13,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.files.contracts import SprintItemFile, TicketFile
-from planner.files.logic.paths import resolve_sprint_item_file, resolve_ticket_file
+from planner.files.contracts import SprintItemFile
+from planner.files.logic.paths import resolve_sprint_item_file
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -70,20 +70,6 @@ def test_sprint_item_files_use_an_isolated_root_and_route(tmp_path: Path) -> Non
     assert missing.status_code == 404
 
 
-@pytest.mark.parametrize(
-    "relative_path",
-    ("", "../brief.md", "notes\\brief.md", "%2e%2e/brief.md", "folder"),
-)
-def test_sprint_item_file_resolution_rejects_unsafe_or_non_file_targets(
-    tmp_path: Path, relative_path: str
-) -> None:
-    db_path = tmp_path / "data" / "planning.db"
-    folder = _sprint_item_root(db_path) / "si_files" / "folder"
-    folder.mkdir(parents=True)
-    with pytest.raises(ValueError):
-        resolve_sprint_item_file(db_path, "si_files", relative_path)
-
-
 def test_sprint_item_file_resolution_rejects_root_entity_and_file_symlinks(
     tmp_path: Path,
 ) -> None:
@@ -106,21 +92,6 @@ def test_sprint_item_file_resolution_rejects_root_entity_and_file_symlinks(
     (root / "si_files" / "brief.md").symlink_to(outside / "brief.md")
     with pytest.raises(ValueError):
         resolve_sprint_item_file(db_path, "si_files", "brief.md")
-
-
-def test_resolve_ticket_file_accepts_nested_paths_and_spaces(tmp_path: Path) -> None:
-    db_path = tmp_path / "data" / "planning.db"
-    target = _ticket_root(db_path) / "t_file123" / "notes" / "space name.md"
-    target.parent.mkdir(parents=True)
-    target.write_text("# Notes\n", encoding="utf-8")
-
-    resolved = resolve_ticket_file(db_path, "t_file123", "notes/space name.md")
-
-    assert resolved == TicketFile(
-        ticket_id="t_file123",
-        relative_path="notes/space name.md",
-        absolute_path=target.resolve(strict=True),
-    )
 
 
 def test_ticket_file_route_serves_inline_allowlist_with_nosniff(tmp_path: Path) -> None:

@@ -31,7 +31,7 @@ literal summaries of the Tickets on the Day:
 
 The Home page combines the morning orientation with live Ticket progress. It shows one
 mark per Ticket and action tiles for work that needs the user, needs review, is working,
-is paired, or is done. The tiles lead to Review or Workspace. The page does not edit the
+is assigned to the user, or is done. The tiles lead to Review or Workspace. The page does not edit the
 Day fields or show the Midday reconciliation.
 
 The four morning fields and Midday reconciliation remain canonical Day data. Their
@@ -42,7 +42,7 @@ current. It does not copy a plan or start a rollover workflow.
 At 05:05 local time, just after the 5am planning-day boundary, the internal schedule
 creates a `planning-day` Ticket for the current planning day. Its specialist Worker
 gathers current evidence, plans the four morning fields with the user, and writes the
-agreed Day only at Closeout. At 14:30, a
+agreed Day only at Consequences. At 14:30, a
 `planning-midday-check` Ticket compares that intent with current execution, agrees any
 useful intervention, carries it out, and records the reconciliation. Each planning
 Ticket uses the Personal Project and direct current-Sprint placement. Repeat or pre-laid
@@ -64,7 +64,7 @@ date), `web/src/routes/DayRoute.svelte` (the daily hub), and
 ## Handoffs
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — the tickets a day lists and the
-  scope that governs whether the day's work advances on its own.
+  ceiling that governs whether the day's work advances on its own.
 - **The conversation system** (`conversation-system.md`) — a Ticket's conversation is
   separate from the Day page.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — where a captured idea lands.

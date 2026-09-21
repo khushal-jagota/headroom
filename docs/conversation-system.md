@@ -6,9 +6,8 @@ of everything that happened in it. The rest of Panels can start it, send a messa
 interrupt or kill activity, manage held messages, and ask about live work that needs
 the user. Those operations form the whole boundary.
 
-It serves every screen that shows a conversation: a Ticket's, the Chief of
-Staff's, and the development pane at `#/dev/conversation`. Worker orchestration
-uses the same system. There is no second path.
+It serves every screen that shows a conversation: a Ticket's and the Chief of
+Staff's. Worker orchestration uses the same system. There is no second path.
 
 ```
   caller (pane, loop)                the conversation system                agent CLIs
@@ -41,33 +40,33 @@ listen for new ones. Opening a conversation, reconnecting after a dropped
 connection, and a second device are all that same fetch. Nothing re-downloads
 mid-read.
 
-Every conversation opens through the Focus lens. Focus shows the owner's prompts,
-explicit messages addressed to the owner, permission requests, agent questions, and
+A browser with no saved lens choice opens through the Focus lens. Focus shows the
+owner's prompts, explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
-Failed turns, stopped turns, missing explicit replies, and terminal proposal-alert
-delivery failures remain visible as compact system rows. Complete turn boundaries still
+Failed turns, stopped turns, and missing explicit replies remain visible as compact
+system rows. Complete turn boundaries still
 settle the Focus thread and rest line when runtime rows are hidden. A turn with a hidden
 opening prompt has no Focus turn head.
-Full shows the complete runtime notebook. The header toggle and the unmodified `f` key
-switch the lens without replacing the conversation. Editable controls keep the key.
+Full shows the complete runtime notebook, every held prompt, all live agent text, and
+every tool call without a Focus fold. The header toggle and the unmodified `f` key switch
+the lens without replacing the conversation. Editable controls keep the key. The browser
+keeps the choice across conversation switches, new conversations, and later visits.
 
 The lens changes only what the person reads. Liveness, streaming, reconnects, and
 snapshots continue to use the complete feed. A switch to another conversation invalidates
 the old read and tail. A late snapshot, row, frame, or refresh from the old conversation
 cannot change the newly opened conversation.
 
-While active Focus is open, the owner read position advances through the newest delivered
-row. Runtime-only rows can clear an unread mark because Focus displays every result that
+While an active lens is open, the owner read position advances through the newest delivered
+row. Runtime-only rows can clear an unread mark because each lens displays every result that
 needs the owner's attention.
 
 An open conversation is handed each new row directly, so it never has to be told to
 come and look. That is why most rows are written quietly: a historical agent-message row, a tool
 call starting or finishing, a plan, a token count, and a compaction are shown only
-inside the conversation. The compact runtime row for a terminal proposal-alert failure
-is also conversation-only. Its separate durable failure record surfaces the pending
-proposal in owner attention and Review. Writing the runtime row does not send every other open screen back
-for a fresh copy of itself. A working agent writes dozens of those rows a minute, and
+inside the conversation. Writing a runtime-only row does not send every other open screen
+back for a fresh copy of itself. A working agent writes dozens of those rows a minute, and
 announcing each one sends every open tab back for everything it is showing.
 
 The rows anything else reads still announce themselves the ordinary way: a delivered,
@@ -220,6 +219,25 @@ from the authenticated request. Panels records that address on every durable out
 including held, refused, uncertain, and discarded prompts. Browser-supplied display
 labels are not authority.
 
+Panels also derives an exact Send Message target from each authenticated sender. It adds
+that trusted reply requirement only to the backend wire prompt. When a genuine
+requirement exists, it starts the entire prompt with nothing before it. Every
+sender-authored byte follows its authenticated sender label. Identical words anywhere
+else remain ordinary sender content.
+The durable prompt keeps the sender's original content. An ordinary new turn, an
+ordinary accepted steer, and a batch from the held line carry the requirement.
+Unaddressed loop and maintenance prompts do not. The agent role requires one explicit
+send to each addressed sender before the turn ends.
+Panels classifies that accepted send as the reply, so its recipient receives no counter-
+reply requirement and agent conversations cannot form an acknowledgement loop.
+
+An actual native slash command uses its backend's exact control route, so its wire form
+does not carry the reply requirement. The adapter reports that fact with its delivery
+result, so Panels creates no reply debt or missing-reply marker for that command.
+Slash-like text that is not a live native command remains ordinary prose. It carries the
+wire requirement as any other addressed prompt does. Automatic compaction is a separate
+system-only control operation and creates no reply debt.
+
 Backend prose is runtime output only. Finishing a turn does not turn that prose into a
 message for the person who prompted it. Only Send Message creates an explicit addressed
 reply. A turn remembers each distinct principal whose addressed prompt it admitted,
@@ -234,22 +252,22 @@ a drop. Attachments wait beside the draft and can be removed one at a time. They
 travel with words or form the whole message. There is no separate upload conversation
 or attachment record.
 
-The command accepts `--mode queue|steer|send_now`. Queue is the default for command sends.
-Queue holds behind active work. Steer asks the current turn to admit the message. Send now
+The command accepts `--mode steer|queue|send_now`. Steer is the default for command sends.
+Steer asks the current turn to admit the message. Queue holds behind active work. Send now
 interrupts current work and starts the message first. The Send Message API accepts the
-same three values and defaults an omitted value to `queue`.
+same three values and defaults an omitted value to `steer`.
 
-The browser composer defaults to steer. Its mode control also exposes queue and send now.
+The browser composer defaults to steer as well. Its mode control also exposes queue and send now.
 Enter and the send arrow use the selected mode. Every selected mode starts an idle turn.
 Attachments and run changes cannot steer, so they enter the queue with a visible reason.
 A confirmed steer refusal does the same. An uncertain steer remains terminal and never
 enters the queue, because a retry can deliver the same message twice.
 
-The unlinked development conversation page keeps a lower-level raw send route for testing
-conversation mechanics in isolation. It rejects every conversation associated with a
-Ticket, the Chief, or a Sprint Item supervisor. It therefore is not an employee
-conversation door and does not participate in principal addressing. Ticket, Chief, and
-Sprint Item composers never use it; they all use the addressed Send Message operation.
+A lower-level raw send route remains for testing conversation mechanics in isolation. It
+rejects every conversation associated with a Ticket, the Chief, or a Sprint Item
+supervisor. It therefore is not an employee conversation door and does not participate in
+principal addressing. No shipped screen uses it: Ticket, Chief, and Sprint Item composers
+all use the addressed Send Message operation.
 
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front
@@ -260,9 +278,10 @@ not collapsed with the prompt: each message still gets its own row with its orig
 content, because a row names one sender's message id and that id is how a sender
 recognises its own message when the record hands it back. A message that asks to run
 on a different model starts the next turn instead of joining this one, because a turn
-runs on one model and the messages in front of it never named that one. A message that
-starts with a slash token also gets its own turn. This keeps a possible native command at
-the absolute start and prevents a later command from becoming part of an earlier prompt.
+runs on one model and the messages in front of it never named that one. Slash-like prose
+can join the same batch. Only a live adapter decides whether delivered content uses a
+native command route. If a live command is first in a multi-message batch, the adapter
+delivers the complete batch as an ordinary prompt. It does not discard later messages.
 
 A waiting message that cannot be delivered at all is written down as discarded, and
 the line carries on to the next one. One message nobody can deliver does not take the
@@ -377,6 +396,31 @@ breath later, and almost always it turns out to have the message, which takes th
 copy off the screen the ordinary way. Only a message the record does not have once
 it has been read says that nobody ever said whether it arrived — and it says that
 because it is true, not because the page has just started.
+
+A send waits three minutes for an answer. Past that nothing is coming, and the
+copy says so. Three minutes is long on purpose: the biggest message this system
+takes is around eighteen megabytes once its files and pictures are encoded, which
+is minutes of uploading on a poor connection before the server can answer at all.
+Waiting too long costs almost nothing, because a message the record turns out to
+have disappears from the screen as soon as the record is read again. Waiting too
+little would put a frightening sentence on a message that was about to turn out
+fine.
+
+A message nobody answered for does not stay in the thread. The thread draws these
+copies after every row the conversation has, so one left there would sit under
+every later turn for as long as the tab stayed open, looking like the newest thing
+said. It moves up to the composer, with the other messages that have not landed,
+and it says that no answer came. Two things can be done with it there, and both
+belong to the browser rather than the record: stop showing it, or send the same
+words again. Sending again is a new message with a new name, so if the first one
+did arrive after all there are two — that is the person's call to make, and
+nothing guesses it for them.
+
+None of that is a guess about whether the message arrived, and the question stays
+open until the record answers it. Most of the time the record already has the
+answer and this browser simply missed it, so a conversation holding a send nobody
+answered for reads the record again the moment the server is reachable. If the row
+is there, the copy goes, the ordinary way.
 
 Sending also decides where the thread sits. The message that was just sent
 settles near the top of the view with the rest of it kept for the answer, and
@@ -558,6 +602,12 @@ offers skills. An at sign offers apps and plugins. Leading whitespace, an empty 
 line, or a trigger on a later line does not open the menu. The composer narrows that
 eligible list as text is typed.
 
+The keyboard owns the highlight. It starts at the top of the list and moves with the
+arrow keys. A row takes the highlight when the pointer really moves onto it. A menu that
+opens or changes size under a pointer standing still does not move the highlight, because
+the browser reports the pointer's resting place at those moments and no person chose
+anything.
+
 A choice replaces the active token with the entry's exact insertion text. That result is
 still an ordinary draft. The backend adapter resolves a live catalog command from the
 sender's original draft and keeps the exact slash command for native dispatch. Other
@@ -613,8 +663,8 @@ child process runs. A conversation with no report yet offers nothing.
 - Contract and floor defaults: `src/planner/conversation/contracts.py` (the
   docstrings are the documentation of record).
 - Core, notebook, storage: `src/planner/conversation/` (`system.py`,
-  `events.py`, `storage.py`); tables land in
-  `src/planner/core/migrations/versions/conversation_system_tables.py`.
+  `events.py`, `storage.py`); their tables are part of the baseline revision under
+  `src/planner/core/migrations/versions/`.
 - What a message is made of, and where the files it carries are kept:
   `src/planner/conversation/message_content.py` and `message_files.py`. The
   files sit under the same managed root as ticket files, resolved by the same
@@ -641,4 +691,4 @@ child process runs. A conversation with no report yet offers nothing.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-15._
+_Last verified: 2026-09-21._

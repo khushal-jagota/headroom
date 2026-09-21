@@ -29,8 +29,10 @@
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import {
     conversationFeedForLens,
+    conversationLensPreference,
     conversationRowsForLens,
     heldPromptIsInLens,
+    rememberConversationLensPreference,
     type ConversationLens
   } from "../../lib/conversation/lens";
   import type { ConversationState } from "../../lib/conversation/conversationState";
@@ -38,11 +40,14 @@
     eligibleOwnerReadSequence,
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
+  import { connectionStatus } from "../../lib/changeStream";
   import {
     afterTheRecordHasBeenRead,
+    anOutgoingMessageIsWaitingOnTheRecord,
     mintOutgoingMessage,
     moveRememberedOutgoingMessages,
     outgoingPersistenceConversationId,
+    outgoingMessagesByPlace,
     outgoingMessagesTheRecordHasNot,
     recallOutgoingMessages,
     releaseOutgoingMessageFiles,
@@ -51,6 +56,7 @@
     reserveOutgoingMessageFiles,
     reserveOutgoingMessageImages,
     reserveRecalledOutgoingMessages,
+    tellWhenAWaitRunsOut,
     type OutgoingMessage,
     type OutgoingMessageKnownFate
   } from "../../lib/conversation/outgoing";
@@ -94,15 +100,12 @@
     emptyState,
     sendMessage,
     onNewConversation,
-    readOnly = false,
-    ticketId = null
+    readOnly = false
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     conversationId?: string | null;
     /** Stable owner identity used before the server assigns a Conversation id. */
     persistenceKey: string;
-    /** Present only when this is the conversation owned by a Ticket. */
-    ticketId?: string | null;
     label: string;
     backends?: readonly BackendSnapshot[];
     /** Who the messages sent from here are from. Recorded on the row, display-only. */
@@ -150,7 +153,7 @@
   let askNote = $state<string | null>(null);
   let busy = $state(false);
   let opening = $state(false);
-  let lens = $state<ConversationLens>("focus");
+  let lens = $state<ConversationLens>(conversationLensPreference());
   /** The conversation this component currently has open. It follows the prop, and a start
    *  sets it directly, because the message that caused the start has to go somewhere now
    *  rather than after the parent's own state has come back round. */
@@ -166,6 +169,10 @@
   let attentionPulse = $state(0);
 
   let stream: ConversationStream | null = null;
+
+  $effect(() => {
+    rememberConversationLensPreference(lens);
+  });
 
   /** Whether there is a conversation here at all. Holding an id is not the same as one
    *  existing: a Ticket names its conversation before a person opens the page, and this
@@ -200,7 +207,7 @@
         // Focus can leave the top document through a preview iframe without a window
         // blur event. Ask the document again when a new row is about to be credited.
         windowIsFocused: windowIsFocused && document.hasFocus(),
-        deliveredLatestSequence: lens === "focus" ? feed.latestSequence : 0,
+        deliveredLatestSequence: feed.latestSequence,
         snapshot: {
           latestSequence: view.latest_sequence,
           ownerReadThroughSequence: view.owner_read_through_sequence
@@ -260,18 +267,12 @@
       held.sender_message_id == null ? [] : [held.sender_message_id]
     ))
   );
-  let stackOutgoingMessages = $derived(
-    sentMessages.filter((message) =>
-      composerStackMessageIds.includes(message.messageId)
-      || message.knownFate === "waiting_for_the_agent"
-      || serverHeldSenderIds.has(message.messageId)
-    )
-  );
-  let transcriptOutgoingMessages = $derived(
-    sentMessages.filter((message) =>
-      !stackOutgoingMessages.some((stackMessage) => stackMessage.messageId === message.messageId)
-    )
-  );
+  let placedOutgoingMessages = $derived(outgoingMessagesByPlace(sentMessages, {
+    composerStackMessageIds,
+    serverHeldSenderMessageIds: serverHeldSenderIds
+  }));
+  let stackOutgoingMessages = $derived(placedOutgoingMessages.composerStack);
+  let transcriptOutgoingMessages = $derived(placedOutgoingMessages.thread);
   let visibleHeldRows = $derived(heldPromptRows(
     (view?.held_prompts ?? []).filter((held) => heldPromptIsInLens(held, lens, senderLabel)),
     stackOutgoingMessages
@@ -307,7 +308,6 @@
     if (wanted === null) {
       closeStream();
       openedId = null;
-      lens = "focus";
       opening = false;
       view = null;
       feed = emptyConversationFeed();
@@ -321,7 +321,6 @@
   async function adopt(id: string): Promise<void> {
     closeStream();
     openedId = id;
-    lens = "focus";
     view = null;
     feed = emptyConversationFeed();
     // A reload can happen after the first request reached the server but before its
@@ -499,7 +498,9 @@
     const message = mintOutgoingMessage({
       content,
       senderLabel,
-      mode
+      mode,
+      pickedModel: picked.model,
+      pickedReasoningEffort: picked.reasoningEffort
     });
     if (running) composerStackMessageIds = [...composerStackMessageIds, message.messageId];
     if (!reserveOutgoingMessageImages(message)) {
@@ -551,7 +552,6 @@
         // what this browser is holding is the message being sent right now, which is newer
         // than anything remembered.
         openedId = delivered.conversation_id;
-        lens = "focus";
         await openConversation(delivered.conversation_id);
       }
       const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
@@ -619,6 +619,37 @@
     composerStackMessageIds = composerStackMessageIds.filter((candidate) => candidate !== messageId);
     releaseOutgoingMessageImages(messageId);
     releaseOutgoingMessageFiles(messageId);
+  }
+
+  /** Send the same words again, as a new message.
+   *
+   * A new name and a new instant, because that is what this is. The first one may have
+   * arrived, and nothing here retries a message behind a person's back — so if it did
+   * arrive, the conversation ends up with two, which is the person's choice to make and
+   * not this browser's guess.
+   *
+   * The uncertain copy goes first and comes back if the send does not get away. That order
+   * is what lets a message carrying pictures or files be sent again at all: the tab's byte
+   * budget counts every copy it is holding, and two copies of the same attachment would
+   * not fit through it.
+   */
+  async function sendTheseWordsAgain(senderMessageId: string): Promise<void> {
+    const uncertain = sentMessages.find((message) => message.messageId === senderMessageId);
+    if (uncertain === undefined) return;
+    await stopDrawing(senderMessageId);
+    const away = await send(uncertain.content, uncertain.mode, {
+      model: uncertain.pickedModel ?? null,
+      reasoningEffort: uncertain.pickedReasoningEffort ?? null
+    });
+    if (away) return;
+    // The server turned it away, so the words are nowhere. Put the copy back rather than
+    // let a person lose what they wrote to a button they pressed.
+    if (!reserveOutgoingMessageImages(uncertain)) return;
+    if (!reserveOutgoingMessageFiles(uncertain)) {
+      releaseOutgoingMessageImages(senderMessageId);
+      return;
+    }
+    await holdOnTo([...sentMessages, uncertain]);
   }
 
   function stopDrawing(messageId: string): Promise<boolean> {
@@ -730,7 +761,6 @@
     void holdOnTo([]);
     composerStackMessageIds = [];
     openedId = null;
-    lens = "focus";
     view = null;
     feed = emptyConversationFeed();
     fateNote = null;
@@ -738,22 +768,67 @@
     askNote = null;
   }
 
+  /** Read the record again, and tell whatever is waiting on it what the record said.
+   *
+   * Reading and being told are one thing rather than two. A copy brought back from before
+   * the page reloaded says nothing while it waits for the record, so a read that stops
+   * short leaves it waiting for a read that has already happened.
+   *
+   * A conversation switched away from part-way through loses its say: the trouble mark and
+   * the telling both belong to the reader that is still the current one.
+   */
+  function readTheRecordAgain(): void {
+    const reconnectingStream = stream;
+    const reconnectingId = openedId;
+    if (reconnectingId === null) return;
+    if (reconnectingStream === null) {
+      // The first read never got through, so there is no reader here to reconnect. Opening
+      // is that same read from the start, and it is the one path for coming back to a
+      // conversation — including a tab that came back before the server did.
+      if (!opening) void openConversation(reconnectingId);
+      return;
+    }
+    const stillTheCurrentReader = (): boolean =>
+      stream === reconnectingStream && openedId === reconnectingId;
+    reconnectingStream.connect().then(
+      () => {
+        if (stillTheCurrentReader()) theRecordHasBeenRead();
+      },
+      () => {
+        if (stillTheCurrentReader()) connectionTrouble = true;
+      }
+    );
+  }
+
+  // A send whose answer never came must stop looking like one that is still on its way.
+  // Both the rule and its wake-up belong to the module: this only says which list is
+  // waiting and what to do once the waiting is over.
+  $effect(() => tellWhenAWaitRunsOut(sentMessages, (told) => void holdOnTo(told)));
+
   onMount(() => {
+    // The record is the only thing that can settle a send this tab never heard an answer
+    // for, and most of the time it already has the answer: the row was written and this
+    // browser was not listening. So when the server comes back, read again. Coming back is
+    // not something this pane has to work out — the app's own connection says it, and a
+    // reconnect is what everything else on screen reacts to as well.
+    let reachable = false;
+    const stopWatchingTheConnection = connectionStatus.subscribe((status) => {
+      const nowReachable = status === "connected";
+      const cameBack = nowReachable && !reachable;
+      reachable = nowReachable;
+      if (!cameBack) return;
+      if (!anOutgoingMessageIsWaitingOnTheRecord(sentMessages)) return;
+      readTheRecordAgain();
+    });
     const onVisible = (): void => {
       if (document.visibilityState !== "visible") return;
       // Coming back to the tab is the same read as opening it: what has happened since
       // the row this reader holds?
-      const reconnectingStream = stream;
-      const reconnectingId = openedId;
-      if (reconnectingStream === null || reconnectingId === null) return;
-      reconnectingStream.connect().catch(() => {
-        if (stream === reconnectingStream && openedId === reconnectingId) {
-          connectionTrouble = true;
-        }
-      });
+      readTheRecordAgain();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
+      stopWatchingTheConnection();
       document.removeEventListener("visibilitychange", onVisible);
       closeStream();
     };
@@ -762,7 +837,6 @@
 
 <ConversationPane
   conversationId={openedId ?? ""}
-  {ticketId}
   {label}
   {backendKey}
   conversationExists={started}
@@ -801,6 +875,8 @@
   onCancelTurn={() => void stop()}
   onDiscardHeldPrompt={(heldPromptId) => discard(heldPromptId)}
   onPromoteHeldPrompt={(heldPromptId, mode) => promote(heldPromptId, mode)}
+  onStopDrawingHeldPrompt={(senderMessageId) => void stopDrawing(senderMessageId)}
+  onSendHeldPromptAgain={(senderMessageId) => sendTheseWordsAgain(senderMessageId)}
   onNewConversation={() => void newConversation()}
   emptyState={emptyState === undefined ? undefined : beforeThereIsAConversation}
   showRunPicker={started || emptyState === undefined}

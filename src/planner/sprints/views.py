@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from planner.core import links as core_links
+from planner.core import ticket_blocks
 from planner.core.contracts import JsonDict
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
@@ -20,8 +21,7 @@ from planner.sprints.contracts import (
     SprintWireBody,
 )
 from planner.sprints.logic import DateRange, current_sprint_id
-from planner.tickets.contracts import AtCap, TicketStatus
-from planner.tickets.logic import machine
+from planner.tickets import derivation
 from planner.worker_types.configuration import configured_worker_type_registry
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -34,11 +34,7 @@ def _prio_rank(priority: str) -> int:
 # --- serializers ---------------------------------------------------------------
 
 
-def item_json(
-    item: SprintItem,
-    *,
-    blocking_ticket_ids: list[str] | None = None,
-) -> JsonDict:
+def item_json(item: SprintItem) -> JsonDict:
     return {
         "id": item.id,
         "title": item.title,
@@ -58,7 +54,6 @@ def item_json(
                 ),
             },
         },
-        "blocked_by": list(blocking_ticket_ids or []),
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
@@ -116,24 +111,16 @@ def item_tickets(
     ).fetchall()
     result: list[JsonDict] = []
     registry = configured_worker_type_registry()
-    blocked_target_ids = core_links.blocked_target_ids(conn)
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     for r in rows:
         stage = str(r["stage"])
-        ticket_status = str(r["ticket_status"])
+        facts = derivation.derive_ticket_facts(
+            derivation.stored_facts_from_row(
+                r, has_live_blocker=str(r["id"]) in blocked_ticket_ids
+            )
+        )
         worker_type_definition = registry.require(str(r["worker_type"]))
         gating_field = worker_type_definition.gating_field(stage)
-        stopped_at_current_stage = str(
-            r["at_cap"]
-        ) == AtCap.stop.value and machine.at_or_beyond_ceiling(
-            stage,
-            str(r["ceiling"]),
-            worker_type_definition=worker_type_definition,
-        )
-        waiting_to_closeout = (
-            gating_field == "closeout"
-            and ticket_status == TicketStatus.empty.value
-            and not stopped_at_current_stage
-        )
         result.append(
             {
                 "id": str(r["id"]),
@@ -145,11 +132,15 @@ def item_tickets(
                 "stage": stage,
                 "priority": str(r["priority"]),
                 "has_pending_proposal": r["pending_proposal"] is not None,
-                "ticket_status": ticket_status,
-                "waiting_to_closeout": waiting_to_closeout,
+                # Who a parked proposal is addressed to. The shared attention projection
+                # answers `awaiting_approval` for Khushal and `awaiting_agent_approval`
+                # for everyone else, so this is what tells a reader whether the one it is
+                # looking at is its own.
+                "ceiling_holder": json.loads(str(r["ceiling_holder"])),
+                "ticket_status": facts.ticket_status.value,
+                "waiting_to_closeout": facts.waiting_to_closeout,
                 "gating_field": gating_field,
-                "blocked": str(r["id"]) in blocked_target_ids,
-                "review_route": str(r["at_cap"]),
+                "blocked": facts.blocked,
                 "employee_backend": str(r["employee_backend"]),
                 "worker_type": str(r["worker_type"]),
                 "day_ids": [
@@ -162,50 +153,6 @@ def item_tickets(
             }
         )
     return result
-
-
-def item_ticket_overview(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
-    """One line per Ticket on the Item, for the Sprint Item supervisor's own-Item read:
-    id, title, stage, ticket_status, and Day membership. Finished Tickets included,
-    ordered created_at, id.
-
-    This is not item_tickets. That projection carries the board-card signals the Sprint
-    Item page colours its rows off; the supervisor reads its answer in full and drills
-    into one Ticket at a time through ticket-context, so anything more per Ticket is
-    weight it pays for and does not use."""
-    rows = conn.execute(
-        "SELECT id, title, stage, ticket_status FROM tickets "
-        "WHERE sprint_item_id = ? ORDER BY created_at, id",
-        (item_id,),
-    ).fetchall()
-    day_ids_by_ticket: dict[str, list[str]] = {}
-    for day_row in conn.execute(
-        "SELECT day_tickets.ticket_id AS ticket_id, day_tickets.day_id AS day_id "
-        "FROM day_tickets JOIN tickets ON tickets.id = day_tickets.ticket_id "
-        "WHERE tickets.sprint_item_id = ? ORDER BY day_tickets.day_id",
-        (item_id,),
-    ).fetchall():
-        day_ids_by_ticket.setdefault(str(day_row["ticket_id"]), []).append(str(day_row["day_id"]))
-    return [
-        {
-            "id": str(row["id"]),
-            "title": str(row["title"]),
-            "stage": str(row["stage"]),
-            "ticket_status": str(row["ticket_status"]),
-            "day_ids": day_ids_by_ticket.get(str(row["id"]), []),
-        }
-        for row in rows
-    ]
-
-
-def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[str]:
-    """Resolve active/read blocker ids to titles, preserving order."""
-    titles: list[str] = []
-    for ticket_id in blocked_by:
-        row = conn.execute("SELECT title FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
-        if row is not None:
-            titles.append(str(row["title"]))
-    return titles
 
 
 def _item_row_key(row: sqlite3.Row) -> tuple[int, int, str]:
@@ -224,11 +171,7 @@ def list_items(conn: sqlite3.Connection, *, project_id: str | None = None) -> li
 def item_detail(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     read = sprints_data.read_item(conn, item_id)
     result = {
-        **item_json(
-            read.item,
-            blocking_ticket_ids=read.blocking_ticket_ids,
-        ),
-        "blockers_cleared": read.blockers_cleared,
+        **item_json(read.item),
         "committed_sprints": [
             dict(row)
             for row in conn.execute(

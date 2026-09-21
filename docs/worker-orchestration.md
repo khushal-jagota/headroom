@@ -4,8 +4,7 @@ Each Ticket has one active conversation, and one worker on the other end of it. 
 also retains its past conversations. This system decides when the active worker receives
 the Ticket's next step, and sends that step.
 That is the whole job. It does not watch the worker, wait for it to finish, or settle
-anything afterwards — a Ticket moves again only when someone acts on it: a proposal
-filed, an approval given, a take-over.
+anything afterwards. A Ticket moves again only when someone files or decides a proposal.
 
 ```
 the readiness loop                      one Ticket's start
@@ -27,27 +26,39 @@ all of these hold right now:
 
 1. It is on today's planning day.
 2. Its Stage is not terminal and has a next blank to fill.
-3. The Stage's owner is not the user.
-4. Its status is `empty`. This fact keeps blocked work, parked approvals, active claims,
-   and errors out of the runnable set. User-owned Stages are already excluded by rule 3.
-5. Nothing is already parked on that blank waiting for approval.
-6. Scope permits work at the current ceiling.
-7. If the blank is Closeout, no other Ticket in the same project-and-Worker-type lane
-   is at Closeout and not resting. One poll sends at most one Ticket into each free
-   lane.
+3. It reads as `empty`. That one answer keeps blocked work, parked approvals, active
+   claims, and errors out of the runnable set. A parked proposal is not asked about
+   separately: a Ticket with one reads as `awaiting_approval`, so rule 3 already refuses
+   it.
+4. If the Stage's owner is the user, its one opening turn has not run yet. The opener
+   fact belongs to that Stage entry, so a later entry gets its own turn.
+5. If the blank is Consequences, no other Ticket in the same project-and-Worker-type
+   lane is at Consequences and not resting. One poll sends at most one Ticket into
+   each free lane.
+
+The ceiling is not one of these questions. It decides what a finished step does with its
+answer, not whether the step may run.
 
 Then one more question that the record cannot answer: **is this Ticket's worker busy
 right now?** The conversation system is asked directly, and a busy worker is left alone
 for this pass.
 
-If everything says yes, Panels takes the Ticket from `empty` to `agent` in one guarded
-write. That flip **is** the claim. There is no claim stamp or general run record. For a
-paired Stage, the same transaction records a tentative opener fact for that Stage entry.
+If everything says yes, Panels takes the Ticket's worker-step claim in one guarded
+write. That claim is the only state of control Panels stores, and it is why the Ticket
+then reads as `agent`. There is no separate claim stamp or run record. For a
+user-owned Stage, the same transaction records a tentative opener fact for that Stage entry.
 Readiness checks that fact, not the Ticket status, to prevent a second opener. A refused
 send removes the fact. An accepted send keeps it and returns the Ticket to `empty`.
 The canonical Stage writer clears the fact when the Ticket leaves that Stage. A later
 Stage entry can therefore receive its own opener without a database trigger.
 All readiness questions run again inside the write, so only one racer wins the claim.
+
+Day membership is one of those questions, and it is asked at the start of a worker step
+and again inside the claim. Nothing reads it afterwards to continue, re-wake, or end
+that turn: a supervisor restart reads it once more, only to explain why a start produced
+nothing. Taking a Ticket off today
+therefore stops its next wake, and it does not stop the turn already in flight. That
+turn ends on its own, and the Ticket moves again only when someone acts on it.
 
 Checking too often costs nothing: the check reads and decides, and writes nothing. So
 the loop does not wait out its timer. Every write committed through the database door
@@ -72,11 +83,12 @@ occurrences, and suppression.
 
 ## Sending the step
 
-The opening message is written first: a short instruction naming the Ticket, its Stage,
-and the blank to fill, plus any worker context that was waiting to be delivered. The
-worker sees that context because it is in the actual message — never because Panels
-wrote a row somewhere. It is written before anything else so that a failure here cannot
-leave a conversation behind.
+The opening message is composed first as one ordered, inspectable list of Panels inputs:
+the Stage instruction, Ticket guidance when present, the settled Brief, and revision
+feedback for the current Stage when present. The worker sees each one because it is in
+the actual message. Worker skills and conversation history stay separate from this list.
+It is composed before anything else so that a failure here cannot leave a conversation
+behind.
 
 Then it is sent, through the one door there is. If the Ticket has a conversation the
 message goes into it. If it has none, the message is what brings one into being — and
@@ -97,17 +109,17 @@ The conversation system reports one of three fates:
 
 - **Started** — it is running now.
 - **Queued** — the worker was busy, so the message is held and will run when it is
-  free. This counts as delivered: the waiting context is ticked off and the step is
-  done being started.
+  free. This counts as delivered: the exact revision feedback batch is removed and the
+  step is done being started.
 - **Refused** — nothing was delivered. The claim is given back and one line is logged.
 
-Giving a claim back checks the status it wrote and the revision of that status change.
+Giving a claim back checks the claim it took and the revision of that claim change.
 Every actual change advances the revision, even when two changes share a second. An
-old release therefore cannot erase a newer claim that happens to use the same status.
+old release therefore cannot erase a newer claim that looks the same.
 
 Once a send reports started or queued, it cannot be taken back, so nothing after that
-point reverts. A failure to tick off the delivered context there is logged and left
-alone; reverting would only re-arm the Ticket to send the same thing twice.
+point reverts. A failure to remove delivered revision feedback is logged and left alone;
+reverting would only re-arm the Ticket to send the same thing twice.
 
 One slow backend must not hold up every other Ticket, so each Ticket's start runs as
 its own independent piece of work rather than in a queue behind the others. On
@@ -117,84 +129,47 @@ deadline, and abandons whatever is left.
 _Code paths:_ `src/planner/runtime/conversation_start.py`,
 `src/planner/runtime/logic/conversation_start_resolution.py`,
 `src/planner/runtime/logic/worker_step_prompt.py`, and
-`src/planner/worker_context/`.
+`src/planner/tickets/revision_feedback.py`.
 
-## Status is not liveness, and Panels says so
+## A claim is not liveness, and Panels says so
 
-A Ticket's status says what Panels last decided about it. Whether a worker is actually
+A Ticket's claim says that Panels sent its worker a step. Whether a worker is actually
 running is the conversation system's fact, and it is asked for it every time it
-matters. The two can disagree — a process that dies mid-flight leaves a Ticket sitting
-at `agent` with nothing running.
+matters. The two can disagree — a process that dies mid-flight leaves a Ticket reading
+`agent` with nothing running.
 
 That is the honest record, and there is no machinery that pretends otherwise: no
 recovery sweep at startup, no stranded-run cleanup, no correctness table to reconcile.
 The owner sees a Ticket that is not moving and picks it up. This is a deliberate choice
 in favour of one true answer over a second bookkeeping system that can itself be wrong.
 
-Picking it up is a real action rather than a repair. `sprint item supervisor
-restart-worker` clears the dead conversation, gives the claim back, and starts the step
-again, so a Sprint Item supervisor can recover its own child Ticket without the user.
-Both halves happen together because either one alone leaves the Ticket stuck: a Ticket
-with no conversation still reads as claimed, and a Ticket at `empty` still pointing at a
-dead conversation would talk into it.
+Picking it up is a real action rather than a repair. `ticket restart-worker` clears the
+dead conversation, gives the claim back, and starts the step again. Both halves happen
+together because either one alone leaves the Ticket stuck: a Ticket with no conversation
+still reads as claimed, and a Ticket with its claim back but still pointing at a dead
+conversation would talk into it.
+
+Anyone standing above the Ticket can do it, which is Khushal, the Chief, or the Ticket's
+own Outcome. Khushal could not before: no ordinary route restarted a Worker, and the
+only door was the Outcome's. This is a new capability on his surface, not a rename.
 
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a
-check on that would refuse exactly the Tickets that need recovering. The supervisor
-reads the conversation and decides, and the rules around the action bound what that
-decision can reach: its own Item, a Worker-owned Stage, and a worker step that has
-already had five minutes.
+check on that would refuse exactly the Tickets that need recovering. Whoever restarts
+reads the conversation and decides, and two rules bound the action: a Worker-owned
+Stage, and a worker step that has already had five minutes.
 
 ## Sending a proposal back
 
 When the holder returns a proposal for revision, one Ticket transaction checks every
-authorization and current-parent route. It commits the decision and two ordered outbox
-records: a Panels lifecycle fact, then the decider's separately attributed comment.
-The transaction performs no backend I/O.
-
-The machine-lock-owned delivery loop sends those records after the commit. Durable
-sender identities preserve transcript order and prevent duplicates across retries and
-process restarts. A refusal leaves the message pending for retry. An accepted prompt
-with a failed transcript write becomes terminal `uncertain`, so Panels never sends it
-twice. The conversation shows that uncertain attempt, and later rejection messages
-continue in order. If the runtime row fails too, the same recovery loop recreates that
-row from the durable rejection record without another backend send. Reply bookkeeping
-credits the source turn after the commit and cannot undo the rejection.
+authorization and current-parent route. It clears the proposal, appends the exact comment
+to a separate attributed revision-feedback record, and returns the Ticket to its resting
+status. A same-Stage user opener is cleared so the discussion can open again. The next
+normal worker-step prompt carries feedback for that Stage, and only a successful send
+consumes it. Ticket guidance remains independent. Reply bookkeeping credits the source
+turn after the commit and cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.
-
-## Waking a non-owner proposal holder
-
-Filing a parked proposal commits a durable wake row and returns without backend I/O.
-Only the machine-lock-owned loop claims that row as `delivering`. A decision,
-replacement, or deletion cancels or supersedes any undelivered wake in its own database
-transaction. A wake that already reached the wire is harmless because the holder reads
-canonical Ticket state. Definite refusal advances the attempt identity and uses delays
-of 1, 2, 4, 8, 16, 32, then 60 seconds. Ten total attempts end in `failed`. The same
-transaction records immutable failure visibility and surfaces the proposal to the owner.
-It does not change the proposal holder or Ticket status. The failure settles the wake,
-so later messages can proceed. A queued prompt stays `delivering`
-because that queue is process-local; the loop probes the same sender identity until the
-conversation reports durable delivery.
-
-The proposal-holder wake loop shares the process machine lock and server event loop with
-the other reconcilers. Database change signals wake it promptly, while its periodic tick
-is the retry backstop. It schedules at most one delivery per Ticket at a time. After it
-owns the machine lock, startup returns crash-abandoned `delivering` rows to `pending`
-without changing their attempt identity. A second server therefore cannot reset a live
-delivery claim. Conversation idempotency either discovers the earlier success or safely
-recreates a lost queue. Shutdown retains the lock if a delivery does not settle before
-the deadline or a durable `delivering` row still represents a process-local queue.
-Process exit then releases the lock. A post-wire transcript failure becomes terminal
-`uncertain`; it is visible for repair and never retried automatically.
-
-The source Ticket's Worker conversation shows one compact failure row. This row never
-goes to the backend. Its stable identity and immutable failure history let the loop
-recover the row after a storage fault, cancellation, replacement, or restart. A later
-proposal decision or replacement removes the owner surface. Runtime-row recovery remains
-independent, so the compact row still appears after a decision, replacement, or restart.
-
-_Code paths:_ `src/planner/proposal_holder_wakes/`, `src/planner/core/loops.py`.
 
 ## The seam: one conversation contract
 
@@ -256,19 +231,19 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
 
 ## Handoffs
 
-- **Worker types** (`worker-types.md`) declares Stages, default ownership, and the
+- **Worker types** (`worker-types.md`) declares Stages, ownership, and the
   specialist skill.
-- **Tickets & the gates** (`tickets-and-gates.md`) owns proposals, scope, approval,
-  and Ticket status.
+- **Tickets & the gates** (`tickets-and-gates.md`) owns proposals, the ceiling,
+  approval, and Ticket status.
 - **The conversation system** (`conversation-system.md`) owns the pane the human types
   into, and the conversation the step is sent into.
 - **The front end** (`frontend.md`) owns the row marks these signals feed.
 - **The command-line tool** (`cli.md`) is the surface the worker acts through.
 
 An errored worker-owned Ticket remains errored through reads and owner replies. A
-successful start supersedes the failed turn in derived agent state. A Sprint Item
-supervisor can use explicit restart, which clears the error before a new start.
+successful start supersedes the failed turn in derived agent state. Explicit restart
+clears the error before a new start.
 
 ---
 
-_Last verified: 2026-09-15._
+_Last verified: 2026-09-21._

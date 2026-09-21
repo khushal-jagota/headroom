@@ -1,4 +1,4 @@
-"""Sprint date integrity and Outcome blocker facts."""
+"""Sprint date integrity and Outcome behavior."""
 
 from __future__ import annotations
 
@@ -8,22 +8,17 @@ from threading import Barrier, Event
 
 import pytest
 
-from planner.core import links as core_links
-from planner.core.authctx import _classify, require_planning_write
+from planner.core import authority
+from planner.core.authctx import _classify
+from planner.core.authority import require_above
 from planner.core.clock import TestClock
-from planner.core.contracts import LinkKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints.data import (
-    create_idea,
-    create_item,
     create_sprint,
-    read_item,
     read_sprint,
-    set_sprint_dates,
     update_sprint,
 )
-from planner.sprints.logic import DateRange, current_sprint_id
 
 _EMPTY_CODING_FIELDS = "{}"
 
@@ -34,7 +29,7 @@ def _insert_ticket(
     stage: str,
     *,
     sprint_item_id: str | None = None,
-    ticket_status: str = "empty",
+    worker_step_claim: str = "none",
 ) -> None:
     # T04 owns ticket writers; a direct INSERT is the sanctioned test-fixture
     # shortcut for setting child/blocker ticket-states (only NOT-NULL non-defaulted
@@ -42,16 +37,10 @@ def _insert_ticket(
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, "
         "sprint_item_id, ceiling, "
-        "ticket_status, field_values, created_at, updated_at) "
+        "worker_step_claim, field_values, created_at, updated_at) "
         "VALUES (?, ?, 'coding', 'hermes', ?, ?, 'needs_success', ?, ?, 0, 0)",
-        (ticket_id, "child", stage, sprint_item_id, ticket_status, _EMPTY_CODING_FIELDS),
+        (ticket_id, "child", stage, sprint_item_id, worker_step_claim, _EMPTY_CODING_FIELDS),
     )
-
-
-def _set_ticket_state(conn: Connection, ticket_id: str, stage: str) -> None:
-    # Same sanction as _insert_ticket: blocker ticket-states are test fixtures here,
-    # not exercises of T04's writers.
-    conn.execute("UPDATE tickets SET stage = ? WHERE id = ?", (stage, ticket_id))
 
 
 # --- item 10: sprint-item permissions (single anchored test) ----------------------
@@ -87,91 +76,6 @@ def test_a20_sprint_overlap(tmp_db: Connection, fake_clock: TestClock) -> None:
 
 
 # --- supplementary sprints-domain tests (no fence anchor) -------------------------
-
-
-def test_x06_current_sprint_selection() -> None:
-    a = DateRange(id="sp_a", date_start="2026-07-01", date_end="2026-07-14")
-    d = DateRange(id="sp_d", date_start="2026-07-15", date_end="2026-07-21")
-
-    assert current_sprint_id("2026-07-10", [a, d]) == "sp_a"
-    assert current_sprint_id("2026-07-14", [a, d]) == "sp_a"  # inclusive end
-    assert current_sprint_id("2026-07-15", [a, d]) == "sp_d"
-    assert current_sprint_id("2026-06-30", [a, d]) is None
-
-
-def test_outcome_retains_direct_blockers_and_cleared_facts(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    directly_blocked = create_item(
-        tmp_db, title="directly blocked", project_id="project_vylo", clock=fake_clock
-    )
-    _insert_ticket(tmp_db, "t_done_direct", "done")
-    _insert_ticket(tmp_db, "t_dropped_direct", "dropped")
-    core_links.add_link(tmp_db, "t_done_direct", directly_blocked.id, LinkKind.blocks, 1)
-    core_links.add_link(tmp_db, "t_dropped_direct", directly_blocked.id, LinkKind.blocks, 1)
-
-    direct_read = read_item(tmp_db, directly_blocked.id)
-
-    assert direct_read.blocking_ticket_ids == ["t_done_direct", "t_dropped_direct"]
-    assert direct_read.blockers_cleared is True
-
-    child_blocked = create_item(
-        tmp_db, title="child cleared", project_id="project_vylo", clock=fake_clock
-    )
-    _insert_ticket(tmp_db, "t_child_cleared", "needs_success", sprint_item_id=child_blocked.id)
-    _insert_ticket(tmp_db, "t_done_child_blocker", "done")
-    core_links.add_link(tmp_db, "t_done_child_blocker", "t_child_cleared", LinkKind.blocks, 1)
-
-
-def test_x06_create_idea_writer_logs_event(tmp_db: Connection, fake_clock: TestClock) -> None:
-    now = fake_clock.now_unix()
-    idea = create_idea(
-        tmp_db,
-        title="Maybe later",
-        body="Worth exploring.",
-        project_id="project_vylo",
-        now=now,
-    )
-
-    assert idea["title"] == "Maybe later"
-    assert idea["body"] == "Worth exploring."
-    assert idea["project_id"] == "project_vylo"
-    assert idea["project_name"] == "Vylo"
-
-
-def test_x06_set_sprint_dates_writer_updates_and_rejects_overlap(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    sprint = create_sprint(
-        tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
-    )
-    other = create_sprint(
-        tmp_db, name="B", date_start="2026-07-20", date_end="2026-07-22", clock=fake_clock
-    )
-
-    updated = set_sprint_dates(
-        tmp_db,
-        sprint.id,
-        date_start="2026-07-02",
-        date_end="2026-07-15",
-        clock=fake_clock,
-    )
-
-    assert updated.date_start == "2026-07-02"
-    assert updated.date_end == "2026-07-15"
-    assert read_sprint(tmp_db, sprint.id).date_start == "2026-07-02"
-    assert read_sprint(tmp_db, sprint.id).date_end == "2026-07-15"
-
-    with pytest.raises(PlannerError) as exc:
-        set_sprint_dates(
-            tmp_db,
-            sprint.id,
-            date_start=None,
-            date_end="2026-07-20",
-            clock=fake_clock,
-        )
-    assert exc.value.code is ErrorCode.sprint_overlap
-    assert exc.value.detail["conflict_id"] == other.id
 
 
 def test_compound_sprint_updates_serialize_overlap_validation_with_the_write(
@@ -258,7 +162,7 @@ def test_planning_claim_and_sprint_write_share_one_write_lock(
         try:
 
             def admit() -> None:
-                require_planning_write(conn, ctx, "planning-sprint")
+                require_above(conn, ctx.principal, authority.plan("sprint"))
                 admitted.set()
                 assert deletion_attempted.wait(timeout=5)
                 assert not deletion_done.is_set()

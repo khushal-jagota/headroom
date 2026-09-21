@@ -62,6 +62,7 @@ from planner.conversation.backends.codex_app_server.client import (
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
+    BackendPromptAccepted,
     BackendSpawnFailed,
     BackendSteerAccepted,
     BackendSteerOutcome,
@@ -93,11 +94,12 @@ from planner.conversation.events import (
     UserInputQuestion,
 )
 from planner.conversation.message_content import (
+    ComposedMessageDoesNotContainSenderContent,
     MessageContent,
     MessageFile,
     MessageImage,
     MessageText,
-    sender_labeled_message_content,
+    sender_labeled_composed_message_content,
     text_message_content,
 )
 from planner.conversation.message_files import (
@@ -365,13 +367,14 @@ class CodexAppServerBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
-        sender_content: MessageContent,
         sender_label: str,
+        sender_content: MessageContent,
+        sender_message_count: int = 1,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
         automatic_compaction: bool = False,
-    ) -> None:
+    ) -> BackendPromptAccepted:
         """Start a turn with this message, on these values, and return when codex has it.
 
         The sender label goes at the start of ordinary wire content. The delivery mode has
@@ -387,7 +390,11 @@ class CodexAppServerBackendChild:
         turn = _TurnInFlight(token=turn_token, started=asyncio.get_running_loop().create_future())
         self._turn = turn
         try:
-            invocation = self._catalog_invocation(sender_content)
+            invocation = (
+                self._catalog_invocation(sender_content)
+                if sender_message_count == 1
+                else None
+            )
         except PromptWriteFailed:
             self._turn = None
             raise
@@ -402,8 +409,14 @@ class CodexAppServerBackendChild:
         native_command = (
             invocation is not None and invocation.kind is ComposerCatalogEntryKind.command
         )
-        if not native_command and not automatic_compaction:
-            content = sender_labeled_message_content(content, sender_label)
+        if not native_command:
+            try:
+                content = sender_labeled_composed_message_content(
+                    content, sender_content, sender_label
+                )
+            except ComposedMessageDoesNotContainSenderContent as invalid_composition:
+                self._turn = None
+                raise PromptWriteFailed(str(invalid_composition)) from invalid_composition
         if native_command:
             assert invocation is not None
             turn.kind = (
@@ -438,11 +451,18 @@ class CodexAppServerBackendChild:
         if not native_command:
             self._model = model
             self._reasoning_effort = reasoning_effort
+        return BackendPromptAccepted(composed_content_delivered=not native_command)
 
     async def steer(
-        self, turn_token: TurnToken, content: MessageContent, *, sender_label: str
+        self,
+        turn_token: TurnToken,
+        content: MessageContent,
+        *,
+        sender_content: MessageContent | None = None,
+        sender_label: str,
     ) -> BackendSteerOutcome:
         """Ask Codex to admit this content to the exact captured ordinary turn."""
+        sender_content = content if sender_content is None else sender_content
         turn = self._turn
         if turn is None:
             return BackendSteerRefused(
@@ -467,14 +487,19 @@ class CodexAppServerBackendChild:
         except PromptWriteFailed:
             return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
         try:
+            labeled_content = sender_labeled_composed_message_content(
+                content, sender_content, sender_label
+            )
             parameters = bindings.TurnSteerParams(
                 threadId=thread_id,
                 expectedTurnId=captured_native_turn_id,
-                input=self._turn_input(
-                    sender_labeled_message_content(content, sender_label)
-                ),
+                input=self._turn_input(labeled_content),
             )
-        except (PromptWriteFailed, ValidationError):
+        except (
+            ComposedMessageDoesNotContainSenderContent,
+            PromptWriteFailed,
+            ValidationError,
+        ):
             return BackendSteerRefused(
                 PromptDeliveryRefusalReason.message_cannot_be_steered
             )
@@ -498,7 +523,7 @@ class CodexAppServerBackendChild:
             return BackendSteerUncertain()
         if response.turnId != captured_native_turn_id:
             return BackendSteerUncertain()
-        return BackendSteerAccepted()
+        return BackendSteerAccepted(composed_content_delivered=True)
 
     async def cancel_running_turn(self) -> None:
         """Stop the running turn, and return once codex says it has stopped.

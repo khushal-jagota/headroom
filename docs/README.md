@@ -2,7 +2,7 @@
 
 Panels is a personal planning and work system that runs on one host. Its record contains
 **Days**, **Sprints**, **Sprint Items**, **Tickets**, **Ideas**, **Feedback**, and **Projects**. Tickets
-can carry work for an AI Worker, paired work, or user-owned personal tasks. Each Ticket
+can carry worker-owned work or user-owned work with an agent alongside. Each Ticket
 owns its Project and optional Sprint placement. An Outcome holds optional shared context across Sprints. Explicit commitments select
 Outcomes before Tickets exist; Tickets keep their own scheduling. The stored Item
 identity and its supervisor conversation remain stable.
@@ -18,23 +18,27 @@ Sprint Item supervisor ─────┴──────────► domai
                                                ▲
 Ticket Worker ──field proposal──► proposal resolver
 planning Worker ──guarded claim──► Day or Sprint writer
-Chief ──external-work intake─────► Ticket reconciliation writer
+direct user ──user-owned value───► proposal resolver
 ```
 
-The browser is the main human surface. The `panels` CLI exposes ordinary direct actions,
-Ticket Worker actions, and bounded Chief intake as separate command groups.
+The browser is the main human surface. The `panels` CLI exposes ordinary direct actions
+and Ticket Worker actions as separate command groups.
+
+Every operation has exactly one address, and one sentence decides who may call it: you
+may act on anything strictly below you. See `authority.md`.
 
 Ticket gated fields still have one door: a Worker files a proposal, and the proposal
 resolver alone can settle its value or advance its Stage. Three planning Worker types
-also receive narrow authority to write their agreed Day or Sprint result at Closeout.
-The Chief can import reality established outside Panels through explicit reconciliation
-operations. Neither path is a general Ticket Stage setter. A Sprint Item supervisor has no
-private door: it writes through the same domain writers the direct surfaces use, limited
-to its own Item.
+also receive narrow authority to write their agreed Day or Sprint result at Consequences.
+A direct user can complete the unset gate of the current user-owned Stage. The same
+canonical transition settles the value and advances one Stage. There is no arbitrary
+Stage setter. A Sprint Item supervisor has no address of its own: it calls the routes
+every other principal calls, and the rule holds it to its own current child Tickets.
 
-At its ceiling a Ticket either stops or proposes, and there is one approval gate — a
-parked proposal waits for the user. Review holds today's parked proposals and explicit
-Worker help requests. A Sprint Item conversation takes no part in that: nothing starts it
+At its ceiling a Ticket proposes and waits, and there is one approval gate — a parked
+proposal is addressed to somebody, and anyone above the Ticket can decide it. Review
+holds today's owner-addressed parked proposals and explicit Worker help requests. A Sprint Item
+conversation takes no part in that: nothing starts it
 except a message from the user, and it reads the current state of its Item and Tickets
 when they ask.
 
@@ -49,11 +53,11 @@ when they ask.
 
 **The core of the work**
 
+- **Who may act** (`authority.md`) — one address per operation, and the one sentence
+  that decides every call: you may act on anything strictly below you.
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages
-  it moves through, and the proposal resolver, scope, and approval gate that govern
+  it moves through, and the proposal resolver, the ceiling, and the approval gate that govern
   every advance. The correctness heart of the system.
-- **Ticket judgments** (`judgments.md`) — the optional user verdict and worker trouble
-  notes, kept outside the Ticket workflow fields.
 - **Worker types and settings** (`worker-types.md`) — the registry declares each workflow's
   immutable Stages, gates, fields, specialist identity, and starting worker setup. Managed
   settings own prospective Stage defaults and editable specialist-skill content.
@@ -65,7 +69,7 @@ when they ask.
 - **The conversation system** (`conversation-system.md`) — the one way Panels talks to an
   agent, behind a fixed contract: one agent process per conversation, an append-only
   notebook of events, honest send fates, and backend cards. It serves every screen that
-  shows a conversation — a Ticket's, the Chief of Staff's, and the development pane.
+  shows a conversation — a Ticket's and the Chief of Staff's.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.

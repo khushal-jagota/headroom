@@ -8,12 +8,11 @@ state header plus a manifest. The manifest lists every authored part in stable o
 including empty parts. It reports the Unicode character count for
 each part. Pass one optional comma-separated positional list to expand only those parts.
 Each expanded part contains `value` and `proposal`. Ticket field parts contain saved
-values; the separate `proposal` part contains the one current draft and `archive` contains
-the Historical record:
+values, and the separate `proposal` part contains the one current draft:
 
 ```sh
 panels ticket show t_example
-panels ticket show t_example success,approach --json
+panels ticket show t_example success_condition,what_changes --json
 panels sprint show current primary_bet,kickoff
 panels sprint item show si_example body
 panels day show 2026-08-10 focus,watchout
@@ -45,13 +44,10 @@ The command tree matches the system model:
 - `ticket ...` — create, inspect, organize, and approve tickets.
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
 - `worker ...` — worker-only writes such as ticket proposals, recaps, and notes.
-- `chief ...` — explicit intake of work completed outside Panels.
 
-Ordinary command groups do not expose internal runtime controls. Ticket `ticket_status`
-and run claiming remain code-owned. The direct `ticket ownership` command changes a
-declared Stage override; it is not a runtime-status setter. The exceptional `chief` group
-can establish a coherent Ticket Stage from externally completed work; it is not a
-generic Stage setter.
+Ordinary command groups do not expose internal runtime controls. The Ticket's
+worker-step claim remains code-owned, and its status is derived from that claim and the
+Ticket's other facts rather than set. No command performs an arbitrary Stage jump.
 
 ## Bounded list reads
 
@@ -68,8 +64,9 @@ Text and JSON responses report the number of matches and returned rows. They als
 omissions before and after the page, whether the response is complete, and the next
 offset. An empty match set and an empty page at a later offset are different results.
 
-These commands use separate summary reads. Browser collection routes keep their rich
-record shapes. Direct `show` commands also keep their full record shapes.
+These commands ask the one collection read for `detail=summary`. The same address answers
+`detail=full` for a rich record shape, which is what the browser asks for; the paging
+controls belong to the summary level only.
 
 ## The verbs
 
@@ -77,8 +74,8 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Select exactly one destination with `--owner`, `--chief`, `--ticket <id>`, or
   `--sprint-item <id>`.
   Supply the text with `--message` or `--body-file`; `--body-file -` reads stdin. Use
-  `--mode queue`, `--mode steer`, or `--mode send_now`. Queue holds a busy message. Steer
-  injects into current work. Send now interrupts current work. The default is `queue`.
+  `--mode steer`, `--mode queue`, or `--mode send_now`. Steer injects into current work.
+  Queue holds a busy message. Send now interrupts current work. The default is `steer`.
   An employee's `--owner` send records the addressed message in that employee's current
   conversation and reports `recorded`; it does not invoke a backend and fails if the
   sender has no current conversation. Every mode starts a turn when an employee recipient
@@ -105,6 +102,14 @@ record shapes. Direct `show` commands also keep their full record shapes.
   more notes as used in a Ticket. The use operation is atomic. A Ticket Worker can use
   notes only in its own Ticket. A Sprint Item supervisor can use notes only in a current
   child Ticket.
+- **`worker-type show <type>`** — print one Worker type's stored record, in the shape
+  `worker-type save` takes back.
+- **`worker-type save`** — declare a Worker type, or replace the one with that id, from a
+  record on stdin. An optional `skill` block declares the specialist skill with it.
+- **`skill check`** — list every stored skill naming a command, Stage or skill this build
+  does not have. Reports only; it never edits a row.
+- **`worker-type skill <type> --description "..."`** — replace that Worker type's skill
+  text, with the markdown body on stdin.
 - **`worker-type list`** — list the registered Worker type identifiers in registry
   order. Its normal output is one identifier per line; `--json` returns the complete
   served Worker-type manifest for automation. Commands that require `--worker-type`
@@ -115,7 +120,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   carries the same Worker type and placement context as `ticket create`, and it can be
   enabled or disabled. With no kickoff
   context, the created Ticket has no pending proposal, so readiness can start its
-  Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
+  Worker-owned Brief. Supplying kickoff context creates the ordinary proposed Brief
   and waits for approval. By default each
   occurrence resolves direct placement in the current Sprint; `--sprint` selects a fixed
   Sprint, `--backlog` leaves it unscheduled, and independent `--sprint-item` supplies
@@ -128,59 +133,62 @@ record shapes. Direct `show` commands also keep their full record shapes.
   directly.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
   tickets. `ticket create` requires `--worker-type` and can take a `--kickoff-note` /
-  `--kickoff-note-file` intake body for the Kickoff field. `--employee-backend` overrides
+  `--kickoff-note-file` intake body for the Brief field. `--employee-backend` overrides
   the Worker type's registered default, and when it names a different backend
   `--employee-launch-model` has to say which model that backend runs the new Ticket's
   worker on — the Worker type's own model belongs to the Worker type's own backend.
   When `--priority` is omitted, creation uses the parent Sprint Item priority, then an
   assessed Project priority, then P3. An explicit `--priority P0|P1|P2|P3` overrides
-  that default. `ticket list` excludes done and dropped Tickets unless
+  that default. `ticket list` excludes done Tickets unless
   `--include-terminal` is present. Repeat `--stage` or `--exclude-stage` for Stage
   inclusion or exclusion. Repeat `--ticket-status` or `--exclude-ticket-status` for
   control-status inclusion or exclusion. Values inside one filter type use OR. Different
   filter types use AND, and exclusions apply last. A terminal `--stage` also requires
   `--include-terminal`. An unknown Stage produces no matches.
   `--search` performs a case-insensitive substring match across the title, recap, field
-  values, the pending proposal, Ticket guidance, and the Historical record. Search keeps stable Ticket order and combines
+  values, the pending proposal, and Ticket guidance. Search keeps stable Ticket order and combines
   with placement filters and page controls. Results include Ticket state, placement, and
   a short recap preview. Search does not rank matches or return snippets.
   `ticket create` uses Today and the current Sprint when placement is omitted.
   `--sprint <id|current>` selects a Sprint, `--backlog` selects no Sprint, and
   `--sprint-item <id>` adds coherent Item classification.
-  The creating principal becomes the ceiling holder. A proposal that parks at that
-  ceiling is addressed to that exact principal.
-  `ticket set` names one field (`title`, `kickoff-note`, `priority`, or `deadline`).
+  The creating principal becomes the ceiling holder unless `--holder` names another. A
+  proposal that parks at that ceiling is addressed to that exact principal.
+  `ticket set` names one field (`ceiling`, `ceiling-holder`, `title`, `kickoff-note`,
+  `priority`, or `deadline`). Every one of those goes through `PATCH /api/tickets/{id}`,
+  which is the only way to change a field on a Ticket. `ceiling` takes either the stage
+  name or the plain name of the field that stage needs, so `consequences` and `needs_consequences`
+  mean the same thing. Setting `ceiling` leaves the holder alone, and it is refused while a
+  proposal is pending. `ceiling-holder` takes a `--holder` word or id, and it is allowed
+  while a proposal is pending: it re-addresses the proposal without changing what was
+  proposed. Anyone above the Ticket can set it.
+  `ticket complete <ticket-id> <field>` is not a field edit: the user does a user-owned
+  Stage's work themselves, and the Ticket advances exactly one Stage.
   `ticket place <ticket-id>` updates Project, Sprint, and optional Sprint Item as one
   coherent change. Select a Project with `--project` or `--project-id`. Select a Sprint
   with `--sprint <id|current>` or `--backlog`. Select classification with
   `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
   values, and the server rejects an incoherent final combination.
-  `ticket approve` works for the addressed holder and for the owner override. It requires
-  `--ceiling` and `--at-cap`, and it sends the full next holder with every approval.
-  `--holder-kind owner|chief|sprint_item|ticket` and `--holder-id <id>` name that holder.
-  The direct command defaults to the owner holder. Use an explicit ID for a Sprint Item
-  or Ticket holder.
-  `ticket delete` is permanent and requires `--yes`. The user deletes any Ticket, and a
-  Sprint Item supervisor deletes a current child Ticket of its own Item. For the user it
-  normally refuses a Ticket that is running, either because its
-  status says a worker step is out or because its conversation is mid-turn. `--force`
-  deletes such a Ticket anyway, for a Ticket whose status is stuck with no worker
-  running. A supervisor meets no such guard on its own child Tickets, and `--force` adds
-  nothing for it. No actor can delete a Ticket that holds another Ticket's ceiling.
+  `ticket approve` works for anyone standing above the Ticket, whoever the proposal is
+  addressed to. It requires `--ceiling`, and it sends the full next holder with every
+  approval. `--holder` names that holder; leave it out and you keep the ceiling yourself.
+  `ticket delete` is permanent and requires `--yes`. Anyone standing above the Ticket can
+  delete it. For the user it normally refuses a Ticket that is running, either because
+  its status says a worker step is out or because its conversation is mid-turn.
+  `--force` deletes such a Ticket anyway, for a Ticket whose status is stuck with no
+  worker running. An Outcome meets no such guard on its own child Tickets, and `--force`
+  adds nothing for it. No actor can delete a Ticket that holds another Ticket's ceiling.
   Force changes nothing else: the same cascade. Whenever a delete goes ahead over a
   running worker, that worker's turn is killed first.
 - **`ticket employee-configuration <id> --backend <key> --model <id> [--reasoning-effort <e>]`**
   — set what this Ticket's worker launches on. All three go together, because a model id
   belongs to the backend that named it; leave `--reasoning-effort` out for a model that
-  takes none. It changes that choice only during pristine Kickoff, before a conversation
+  takes none. It changes that choice only during a pristine Brief, before a conversation
   exists.
-- **`ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** — set or
-  clear one Stage's ownership override. `default` clears the override so the Worker
-  type's Stage default applies. Terminal and unknown Stages are rejected.
 - **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock / delete`**
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / delete`**
   — manage durable Outcome context through the existing Item identity. Item records
   have no single Sprint and no derived Outcome status. Classification aligns the
   Ticket's Project and preserves its Sprint; removal preserves Project and Sprint.
@@ -193,25 +201,18 @@ record shapes. Direct `show` commands also keep their full record shapes.
   source Sprint and Outcome, `--to` target Sprint, and repeatable `--ticket` IDs. It
   atomically commits the Outcome and moves only that explicit unfinished selection;
   no IDs means commitment only. The source commitment and completed history stay put.
-- **`sprint item supervisor show / context / send / reset`** — inspect the supervisor
-  and launch configuration, read its scoped brief and current Tickets, send a direct
-  user message, or reset its current conversation.
-- **`sprint item supervisor approve / reject`** — resolve a parked proposal on a current
-  child Ticket when that exact Sprint Item is its ceiling holder. Approval requires the
-  next ceiling and cap. It also sends the full next holder. The holder defaults to the
-  same Sprint Item; `--holder-kind` and `--holder-id` can address the next proposal to a
-  different principal. Rejection requires focused revision guidance. One backend prompt
-  carries Panels' lifecycle fact followed by the supervisor-attributed comment. The
-  Ticket decision and both durable prompt rows share one SQLite commit; a definite
-  refusal leaves no conversation or Ticket residue. A post-wire commit failure is
-  uncertain and must not be retried automatically. The holder stays the same for the
-  revised proposal.
-- **`sprint item supervisor ticket-context / history / message-worker`** — read one
-  current child Ticket, page through its current Worker conversation, or send attributed
-  guidance to that Ticket's current conversation. `message-worker` resolves the current
-  conversation at send time and refuses when the Ticket is no longer a current child or
-  has no current Worker conversation.
-- **`sprint item supervisor restart-worker`** — start a current child Ticket's worker
+- **`sprint item workspace / conversation send / conversation reset`** — read an
+  Outcome, its artifacts and one line per current child Ticket; send it a direct user
+  message; or reset its current conversation. `sprint item show` carries the Outcome's
+  agent key, conversation and launch configuration in its header.
+- **`ticket reject`** — reject the proposal parked on a Ticket with focused revision
+  guidance. The Ticket appends that exact comment to guidance, invalidates worker
+  context, and returns the Stage to rest in one SQLite commit. Rejecting leaves the
+  holder alone, except for Khushal: his rejection addresses the revision back to him.
+- **`ticket history`** — page through a Ticket's current Worker conversation. `--limit`
+  with optional `--before` reads back from the end; `--after` reads forwards from a
+  position, which is how a wake-up's own message is fetched.
+- **`ticket restart-worker`** — start a Ticket's worker
   step again, when its Worker is dead. A dead Worker leaves the Ticket looking claimed,
   because the claim is the Ticket's status, so clearing the conversation on its own would
   leave it stuck. This does both: it clears the conversation and gives the claim back, and
@@ -222,48 +223,37 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Ticket launches on from then on, so a Worker that died on its backend does not come
   back on the same one. Leave the options out to restart on what the Ticket already has.
   A worker step gets its first five minutes before it may be restarted, so a Worker that
-  is merely slow is left alone. Only a Worker-owned Stage can be restarted: a paired
+  is merely slow is left alone. Only a Worker-owned Stage can be restarted. A user-owned
   conversation belongs to the user.
-- **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
-  — use item-scoped canonical actions for the owning Item and its current child Tickets.
-  `scope` takes the ceiling as either the stage name or the plain name of the field that
-  stage needs. `--ceiling closeout` and `--ceiling needs_closeout` mean the same thing.
-  A scope change makes that Sprint Item the ceiling holder and cannot retarget a pending
-  proposal.
-- A supervisor creates a child Ticket with ordinary `ticket create --sprint-item`,
-  the same command every other actor uses, and that Ticket is scoped like any other.
-- **`ticket create --ceiling / --at-cap`** — state the new Ticket's scope at creation.
-  The creator that was given the scope states it, so authorized work does not sit waiting
-  for a second approval. That creator is also the ceiling holder. A stated ceiling past
-  the kickoff settles the kickoff and starts the Ticket at the next Stage. Omit both
-  options to keep the default: the kickoff parks for its creator's approval.
-- **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
-  files under the owning Item's `artifacts/` directory.
-- **`worker propose / recap / note / trouble / request-help / my-ticket`** — worker actions.
-  `propose`, `recap`, `note`, and `trouble` take their text on stdin only; there is no
+- An Outcome's supervisor has no commands of its own. It types the same commands Khushal
+  types — `sprint item set`, `ticket set`, `ticket approve`, `ticket reject`,
+  `day add-ticket`, `ticket block`, `ticket create --sprint-item` — and its identity
+  carries its authority, so the server holds it to its own current child Tickets and its
+  own Item. See `authority.md`.
+- **`ticket create --ceiling` / `--holder`** — state the new Ticket's ceiling and who
+  holds it, at creation. The creator that was given the ceiling states it, so authorized work
+  does not sit waiting for a second approval. A stated ceiling past the Brief settles the
+  Brief and starts the Ticket at the next Stage. `--holder` can name anyone, including
+  the user, and the creator does not have to hold anything itself. Omit these options to
+  keep the default: the Brief parks for its creator's approval.
+- **`sprint item artifact list / write / delete`** — manage files under an Item's
+  `artifacts/` directory.
+- **`worker propose / recap / note / request-help / my-ticket`** — worker actions.
+  `propose`, `recap`, and `note` take their text on stdin only; there is no
   file-path option, so no shared `/tmp` file can carry one Ticket's text onto another.
-  `worker propose` infers the current gating field from the Ticket Stage and requires a
-  short recap on `--recap TEXT` in the same request. `worker note <id>` replaces the
+  `worker propose` infers the current gating field from the Ticket Stage and carries only
+  what is being proposed. Below the ceiling it settles that field and the Ticket advances;
+  at the ceiling it parks for approval. The recap is separate: a Worker keeps it current
+  with `worker recap <id>` as it works. `worker note <id>` replaces the
   Ticket guidance document and accepts `--append` to add text with one blank line.
   Empty replacement clears guidance; empty append does nothing. No field argument
   or type lookup is needed. Ticket reads offer `recap` and `guidance` parts. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
-  `worker-types.md`). `worker trouble` appends one short trouble note, read from stdin,
-  to the current worker's Ticket during its active claimed worker step.
+  `worker-types.md`).
   `request-help` reads a message from stdin and sends one canonical addressed message.
   It defaults to the Ticket's current ceiling holder. Exactly one of `--owner`, `--chief`,
   `--ticket`, or `--sprint-item` can select another recipient.
-- **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
-  record reality established outside Panels. Both require an explicit Chief request,
-  a complete Kickoff field value through `--kickoff-note-file`, preserving the report and
-  reconciliation reasoning, and the
-  exact settled field prefix for the target `--stage`. Creation also requires
-  `--worker-type`; `--employee-backend` may override that type's registered default for the
-  new Ticket, and a different backend needs `--employee-launch-model` with it.
-  Reconciliation refuses pending or active Ticket work; both
-  operations move the ceiling to the imported Stage, preserve an explicit Stop
-  (otherwise Propose remains), and apply that Stage's effective ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It keeps ownership while Panels restarts, so the same terminal continues to show the
   server logs.
@@ -317,8 +307,8 @@ A Ticket worker runs with `PLAN_ACTOR=worker` and its own `PLAN_TICKET_ID`. The 
 forwards those as `X-Plan-Actor` and `X-Plan-Ticket-ID`, including when the worker uses
 an ordinary command. The server resolves that pair to the Ticket principal and checks
 that the Ticket exists. Any Ticket
-worker can use the existing commands that move Tickets and add or remove blocking
-links. The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
+worker can use the existing commands that move Tickets and add or remove Ticket blocks.
+The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
 Worker types keep their other narrow day or sprint writes.
 
 This is a truthful local process claim, not a
@@ -331,13 +321,15 @@ Earlier documentation listed verbs that belonged to the old dispatcher-and-claim
 machinery, or to old top-level homes. They no longer exist: **`run heartbeat` / `run
 close`**, **`queue pickup`**, and top-level **`propose` / `recap` / `note` / `item` /
 `idea` / `link` / `queue`**. A worker no longer holds a claim or a lease; Panels starts
-one worker step at a time and writes the Ticket's status itself (see
-`worker-orchestration.md`).
+one worker step at a time and takes the Ticket's worker-step claim itself, and the status
+is derived from it (see `worker-orchestration.md`).
 
 ## Handoffs
 
+- **Who may act** (`authority.md`) — the one sentence that decides whether any of these
+  commands is admitted.
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals, recaps, and notes
-  this tool files, and the scope the server enforces on them.
+  this tool files, and the ceiling the server enforces on them.
 - **Worker orchestration** (`worker-orchestration.md`) — how the worker that drives
   this tool gets started.
 - **Worker types** (`worker-types.md`) — the registry `worker my-ticket` reads the
@@ -352,4 +344,4 @@ and creation options have been removed.
 
 ---
 
-_Last verified: 2026-09-15._
+_Last verified: 2026-09-21._

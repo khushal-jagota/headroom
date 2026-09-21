@@ -115,13 +115,13 @@
     data-conversation-turn-stopped={stopped ? "true" : undefined}
     data-conversation-turn-expanded={expanded ? "true" : "false"}
   >
-    {#if foldVisible}
+    {#if foldVisible && onToggle}
       <button
         type="button"
         class="c2-turn-fold"
         data-conversation-turn-fold
         aria-expanded={expanded}
-        onclick={() => onToggle?.()}
+        onclick={onToggle}
       >
         <span data-conversation-turn-label>{foldLabel}</span>
         {#if expanded}
@@ -129,12 +129,12 @@
         {/if}
         <span aria-hidden="true" class="c2-turn-chevron" class:is-open={expanded}>›</span>
       </button>
-    {:else if settled && !stopped}
-      <!-- Nothing was folded away, so there is nothing to open — but the head stays where
-           it has been since the turn began. It is the same line that was counting a moment
-           ago, and a line that removes itself the instant a turn ends moves everything
-           under it for no reason. Nothing is reserved for the missing chevron: it lives on
-           the far side, where coming and going costs the label nothing.
+    {:else if settled && (!stopped || foldVisible)}
+      <!-- Nothing is folded in this presentation, so there is nothing to open. The head
+           stays where it has been since the turn began. It is the same line that was
+           counting a moment ago, and a line that removes itself when a turn ends moves
+           everything under it for no reason. Nothing is reserved for the missing chevron:
+           it lives on the far side, where coming and going costs the label nothing.
            A turn that stopped without an ending is the one exception: it has no length
            anybody can claim, its own row already says what happened, and "Worked" over a
            dead process would be the head telling a story nobody can stand behind. -->

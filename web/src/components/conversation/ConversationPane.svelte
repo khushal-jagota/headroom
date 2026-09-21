@@ -75,13 +75,13 @@
     onCancelTurn,
     onDiscardHeldPrompt,
     onPromoteHeldPrompt,
-    onNewConversation,
-    ticketId = null
+    onStopDrawingHeldPrompt,
+    onSendHeldPromptAgain,
+    onNewConversation
   }: {
     /** Which conversation is on the screen. A message's files are fetched under it, so a
      *  piece can only ever reach a file kept for the conversation it belongs to. */
     conversationId: string;
-    ticketId?: string | null;
     label: string;
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
@@ -148,6 +148,8 @@
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
     onDiscardHeldPrompt?: (messageId: string) => void;
+    onStopDrawingHeldPrompt?: (senderMessageId: string) => Promise<void> | void;
+    onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
     onPromoteHeldPrompt?: (
       heldPromptId: string,
       mode: "send_now" | "steer"
@@ -353,7 +355,6 @@
 
   <ConversationViewport
     {conversationId}
-    {ticketId}
     {rows}
     visibleRows={rowsForLens}
     {lens}
@@ -414,6 +415,8 @@
       {onCancelTurn}
       {onDiscardHeldPrompt}
       {onPromoteHeldPrompt}
+      {onStopDrawingHeldPrompt}
+      {onSendHeldPromptAgain}
     />
   {/if}
 </div>

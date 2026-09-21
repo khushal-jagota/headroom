@@ -248,10 +248,6 @@ export type ConversationEvent =
       } & AddressedMessageFields
     >
   | Row<
-      "proposal_delivery_failed",
-      { attempt_count: number; last_error: string; sender_message_id: string }
-    >
-  | Row<
       "prompt_discarded",
       StoredMessageContent & { sender_label: string; sender_message_id?: string }
         & AddressedMessageFields
@@ -438,14 +434,6 @@ export type BackendModelEnablementResult = {
   enabled: boolean;
 };
 
-export type StartConversationBody = {
-  conversation_id: string;
-  backend_key?: ConversationBackendKey;
-  model?: string | null;
-  reasoning_effort?: string | null;
-  workspace_folder?: string;
-};
-
 /** A piece as it is sent, which is the one shape that carries bytes.
  *
  * A picture goes out with its own bytes, base64, riding with the message it belongs to.
@@ -564,10 +552,6 @@ function postJson(body: unknown): RequestInit {
   };
 }
 
-export function startConversation(body: StartConversationBody): Promise<ConversationView> {
-  return request<ConversationView>("/conversations", postJson(body));
-}
-
 export function readConversation(conversationId: string): Promise<ConversationView> {
   return request<ConversationView>(`/conversations/${encodeURIComponent(conversationId)}`);
 }
@@ -602,16 +586,6 @@ export async function readToolCallDetail(
     `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`
   );
   return answer.detail;
-}
-
-export function sendPrompt(
-  conversationId: string,
-  body: SendPromptBody
-): Promise<PromptDeliveryFate> {
-  return request<PromptDeliveryFate>(
-    `/conversations/${encodeURIComponent(conversationId)}/send`,
-    postJson(body)
-  );
 }
 
 export async function interruptConversation(conversationId: string): Promise<void> {

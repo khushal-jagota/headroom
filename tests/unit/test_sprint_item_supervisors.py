@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import threading
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,30 +14,22 @@ from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import ConversationStartRequest
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from planner.conversation.message_content import text_message_content
-from planner.core import change_signal
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.server import create_app
 from planner.runtime import conversation_start
-from planner.runtime.logic.worker_step_prompt import proposal_returned_for_revision_prompt
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
-from planner.sprints import supervisor_service
 from planner.tickets import data as tickets_data
-from planner.tickets import views as tickets_views
-from planner.worker_context import data as context_data
+from planner.tickets import revision_feedback
 
 _OWNER_HOLDER = {"kind": "owner", "id": "owner"}
-
-
-def test_return_for_revision_lifecycle_copy_states_the_rejection() -> None:
-    assert proposal_returned_for_revision_prompt() == (
-        "Your proposal was rejected and returned for revision. The decider's comment follows."
-    )
 
 
 def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]:
@@ -76,8 +67,7 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
             "title": "Supervisor review",
             "kickoff_note": "Start here.",
             "sprint_item_id": item_id,
-            "ceiling": "needs_success",
-            "at_cap": "propose",
+            "ceiling": "needs_success_condition",
         },
         headers=_supervisor_headers(item_id),
     )
@@ -100,18 +90,60 @@ def _supervisor_headers(item_id: str) -> dict[str, str]:
     }
 
 
-def test_workspace_artifacts_include_each_file_modified_time(tmp_path: Path) -> None:
+def test_every_route_names_a_proposal_parked_on_the_item_the_same_way(
+    tmp_path: Path,
+) -> None:
+    """The Workspace, the Board, and the Outcome's own reader get one answer.
+
+    Before, the supervisor's own route asked the projection to treat the Item as the
+    approver, so the identical word `awaiting_approval` meant "Khushal's" on two screens
+    and "the supervisor's" on the third. That route is gone and the Outcome reads the
+    ordinary Workspace, so there is no longer a third place for the word to mean
+    something else — and nothing chooses per reader either.
+    """
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_a_proposal(client, str(item["id"]))
+        page = client.get(f"/api/items/{item['id']}/workspace")
+        board = client.get("/api/board")
+        supervisor = client.get(
+            f"/api/items/{item['id']}/workspace",
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert page.status_code == 200, page.text
+    assert board.status_code == 200, board.text
+    assert supervisor.status_code == 200, supervisor.text
+    rows = [
+        next(row for row in page.json()["tickets"] if row["id"] == ticket["id"]),
+        next(row for row in supervisor.json()["tickets"] if row["id"] == ticket["id"]),
+    ]
+    cards = [
+        card
+        for column in board.json()["columns"]
+        for card in column["cards"]
+        if card["id"] == ticket["id"]
+    ]
+    for row in [*rows, *cards]:
+        assert row["awaiting_approval"] is False
+        assert row["awaiting_agent_approval"] is True
+
+
+def test_workspace_artifacts_fold_each_folder_and_carry_its_newest_time(
+    tmp_path: Path,
+) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
         headers = _supervisor_headers(str(item["id"]))
         first = client.put(
-            f"/api/items/{item['id']}/supervisor/artifacts/old/proof.md",
+            f"/files/sprint-items/{item['id']}/artifacts/old/proof.md",
             headers=headers,
             json={"content": "old"},
         )
         second = client.put(
-            f"/api/items/{item['id']}/supervisor/artifacts/new/proof.png",
+            f"/files/sprint-items/{item['id']}/artifacts/new/proof.png",
             headers=headers,
             json={"content": "new"},
         )
@@ -129,252 +161,34 @@ def test_workspace_artifacts_include_each_file_modified_time(tmp_path: Path) -> 
         workspace = client.get(f"/api/items/{item['id']}/workspace")
 
     assert workspace.status_code == 200, workspace.text
-    assert sorted(workspace.json()["artifacts"], key=lambda artifact: artifact["path"]) == [
-        {"path": "artifacts/new/proof.png", "modified_at": 20.0},
-        {"path": "artifacts/old/proof.md", "modified_at": 10.0},
+    assert workspace.json()["artifacts"] == [
+        {
+            "name": "new",
+            "opens": None,
+            "modified_at": 20.0,
+            "children": [
+                {
+                    "name": "proof.png",
+                    "opens": "artifacts/new/proof.png",
+                    "modified_at": 20.0,
+                    "children": [],
+                }
+            ],
+        },
+        {
+            "name": "old",
+            "opens": None,
+            "modified_at": 10.0,
+            "children": [
+                {
+                    "name": "proof.md",
+                    "opens": "artifacts/old/proof.md",
+                    "modified_at": 10.0,
+                    "children": [],
+                }
+            ],
+        },
     ]
-
-
-def test_supervisor_item_routes_refuse_a_cross_item_actor(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        first = _create_item(client, "First")
-        second = _create_item(client, "Second")
-        headers = {
-            "X-Plan-Actor": "sprint_item_supervisor",
-            "X-Plan-Sprint-Item-ID": str(first["id"]),
-        }
-        own = client.get(f"/api/items/{first['id']}/supervisor/context", headers=headers)
-        cross = client.get(f"/api/items/{second['id']}/supervisor/context", headers=headers)
-        write = client.patch(
-            f"/api/items/{first['id']}", json={"body": "not allowed"}, headers=headers
-        )
-
-    assert own.status_code == 200
-    assert own.json()["sprint_item"]["body"] == ""
-    assert own.json()["tickets"] == []
-    assert cross.status_code == 400
-    assert cross.json()["error"]["code"] == "agent_forbidden"
-    assert write.status_code == 400
-    assert write.json()["error"]["code"] == "agent_forbidden"
-
-
-def test_supervisor_context_and_history_use_only_the_current_child_conversation(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-current-worker-history"
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Current child",
-                "kickoff_note": "Start.",
-                "sprint_item_id": item["id"],
-            },
-        ).json()
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                (conversation_id, ticket["id"]),
-            )
-            conn.execute(
-                "INSERT INTO conversations(conversation_id,backend_key,model,"
-                "workspace_folder,access,latest_sequence,created_at) "
-                "VALUES (?, 'codex', 'test', '/tmp', 'full', 2, 1)",
-                (conversation_id,),
-            )
-            conn.executemany(
-                "INSERT INTO conversation_events "
-                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,?,?,?,?)",
-                (
-                    (
-                        conversation_id,
-                        1,
-                        "prompt",
-                        json.dumps({"text": "Start", "sender_label": "automatic-loop"}),
-                        1,
-                    ),
-                    (
-                        conversation_id,
-                        2,
-                        "agent_message",
-                        json.dumps({"text": "Exact Worker update"}),
-                        2,
-                    ),
-                ),
-            )
-            conn.commit()
-        context = client.get(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/context",
-            params={"triggering_message_sequence": 2},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        context_without_trigger = client.get(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/context",
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        history = client.get(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
-            params={"limit": 1},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        signals: list[None] = []
-        unsubscribe = change_signal.subscribe(lambda: signals.append(None))
-        try:
-            quiet_context = client.get(
-                f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/context",
-                headers=_supervisor_headers(str(item["id"])),
-            )
-        finally:
-            unsubscribe()
-
-    assert context.status_code == 200, context.text
-    assert context.json()["triggering_worker_message"]["payload"]["text"] == ("Exact Worker update")
-    assert context.json()["conversation_id"] == conversation_id
-    assert context_without_trigger.json()["triggering_worker_message"] is None
-    assert quiet_context.status_code == 200, quiet_context.text
-    assert signals == []
-    assert history.json()["events"][0]["sequence"] == 2
-    assert history.json()["has_more"] is True
-
-
-def test_ticket_context_serializes_a_concurrent_child_move(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, db_path = _app(tmp_path)
-    move_attempted = threading.Event()
-    move_finished = threading.Event()
-    move_thread: threading.Thread | None = None
-    original_ticket_detail = tickets_views.ticket_detail
-
-    with TestClient(app) as client:
-        first = _create_item(client, "First")
-        second = _create_item(client, "Second")
-        ticket = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Moving child",
-                "kickoff_note": "Start.",
-                "sprint_item_id": first["id"],
-            },
-        ).json()
-
-        def move_child() -> None:
-            with connect(str(db_path)) as moving:
-                move_attempted.set()
-                moving.execute(
-                    "UPDATE tickets SET sprint_item_id = ? WHERE id = ?",
-                    (second["id"], ticket["id"]),
-                )
-                moving.commit()
-            move_finished.set()
-
-        def ticket_detail_during_move(conn: Any, ticket_id: str, now: int) -> dict[str, Any]:
-            nonlocal move_thread
-            move_thread = threading.Thread(target=move_child)
-            move_thread.start()
-            assert move_attempted.wait(1)
-            assert move_finished.wait(1)
-            return original_ticket_detail(conn, ticket_id, now)
-
-        monkeypatch.setattr(tickets_views, "ticket_detail", ticket_detail_during_move)
-        context = client.get(
-            f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/context",
-            headers=_supervisor_headers(str(first["id"])),
-        )
-
-    assert move_thread is not None
-    move_thread.join(timeout=2)
-    assert move_finished.is_set()
-    assert context.status_code == 200, context.text
-    assert context.json()["ticket"]["sprint_item_id"] == first["id"]
-    with connect(str(db_path)) as conn:
-        assert tickets_data.read_ticket(conn, str(ticket["id"])).sprint_item_id == second["id"]
-
-
-def test_history_serializes_a_concurrent_conversation_reset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-history-before-reset"
-    replacement_id = "conv-history-after-reset"
-    reset_attempted = threading.Event()
-    reset_finished = threading.Event()
-    reset_thread: threading.Thread | None = None
-    original_require_current_child = supervisor_service.require_current_child
-
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Reset child",
-                "kickoff_note": "Start.",
-                "sprint_item_id": item["id"],
-            },
-        ).json()
-        with connect(str(db_path)) as conn:
-            conn.executemany(
-                "INSERT INTO conversations(conversation_id,backend_key,model,"
-                "workspace_folder,access,latest_sequence,created_at) "
-                "VALUES (?, 'codex', 'test', '/tmp', 'full', ?, 1)",
-                ((conversation_id, 1), (replacement_id, 0)),
-            )
-            conn.execute(
-                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                (conversation_id, ticket["id"]),
-            )
-            conn.execute(
-                "INSERT INTO conversation_events "
-                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,?,?,?,?)",
-                (
-                    conversation_id,
-                    1,
-                    "agent_message",
-                    json.dumps({"text": "History before reset"}),
-                    1,
-                ),
-            )
-            conn.commit()
-
-        def reset_conversation() -> None:
-            with connect(str(db_path)) as resetting:
-                reset_attempted.set()
-                resetting.execute(
-                    "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                    (replacement_id, ticket["id"]),
-                )
-                resetting.commit()
-            reset_finished.set()
-
-        def require_child_during_reset(*args: Any, **kwargs: Any) -> Any:
-            nonlocal reset_thread
-            ticket_result = original_require_current_child(*args, **kwargs)
-            reset_thread = threading.Thread(target=reset_conversation)
-            reset_thread.start()
-            assert reset_attempted.wait(1)
-            assert reset_finished.wait(1)
-            return ticket_result
-
-        monkeypatch.setattr(supervisor_service, "require_current_child", require_child_during_reset)
-        history = client.get(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert reset_thread is not None
-    reset_thread.join(timeout=2)
-    assert reset_finished.is_set()
-    assert history.status_code == 200, history.text
-    assert history.json()["conversation_id"] == conversation_id
-    assert history.json()["events"][0]["payload"]["text"] == "History before reset"
-    with connect(str(db_path)) as conn:
-        assert tickets_data.read_ticket(conn, str(ticket["id"])).conversation_id == (replacement_id)
 
 
 def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
@@ -404,25 +218,72 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
                 ConversationStartRequest(conversation_id=conversation_id, model="test-model")
             )
         )
-        before = client.get(f"/api/tickets/{ticket['id']}").json()
+        before = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
         sent = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/message",
+            "/api/messages/send",
             json={
+                "target": {"kind": "ticket", "id": ticket["id"]},
                 "message": "Check the acceptance evidence.",
             },
             headers=_supervisor_headers(str(item["id"])),
         )
-        after = client.get(f"/api/tickets/{ticket['id']}").json()
+        after = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
 
     assert sent.status_code == 200, sent.text
-    assert sent.json()["sender"] == item["supervisor"]["agent_key"]
-    for field in ("stage", "ceiling", "at_cap", "ticket_status", "day_ids"):
+    assert sent.json()["target"] == {"kind": "ticket", "id": ticket["id"]}
+    for field in ("stage", "ceiling", "ticket_status", "day_ids"):
         assert after[field] == before[field]
     write = cast(InMemoryConversationSystem, app.state.conversation_system).backend_prompt_writes(
         conversation_id
     )[0]
     assert write.sender_label == f"Sprint Item {item['id']}"
-    assert write.text == f"Sprint Item {item['id']}:\nCheck the acceptance evidence."
+    assert write.text.startswith("[Authenticated Panels reply requirement]")
+    assert f"panels send-message --sprint-item {item['id']}" in write.text
+    assert write.text.endswith(f"Sprint Item {item['id']}:\nCheck the acceptance evidence.")
+
+
+def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path) -> None:
+    """The reply the message above demands must be sendable.
+
+    Messaging down the chain is acting on the recipient, and the rule decides it.
+    Messaging up is only speaking, so a Worker answering its own Outcome is admitted and
+    a Worker reaching a different Outcome is not.
+    """
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        own = _create_item(client, "Own")
+        other = _create_item(client, "Other")
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Current child",
+                "kickoff_note": "Start.",
+                "sprint_item_id": own["id"],
+            },
+        ).json()
+        worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
+        reply = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "sprint_item", "id": own["id"]}, "message": "Answered."},
+            headers=worker,
+        )
+        stranger = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "sprint_item", "id": other["id"]}, "message": "Answered."},
+            headers=worker,
+        )
+        to_owner = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "owner", "id": "owner"}, "message": "Answered."},
+            headers=worker,
+        )
+
+    assert reply.status_code == 200, reply.text
+    assert stranger.json()["error"]["code"] == "agent_forbidden"
+    # Nobody stands above Khushal, so this one asks no authority question at all. It
+    # fails later, on the Ticket having no conversation to send from.
+    assert to_owner.json()["error"]["code"] == "not_found"
 
 
 def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> None:
@@ -431,12 +292,11 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
         first = _create_item(client, "First")
         second = _create_item(client, "Second")
         ticket = _park_a_proposal(client, str(first["id"]))
-        path = f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/approve"
+        path = f"/api/tickets/{ticket['id']}/accept/success_condition"
         cross = client.post(
             path,
             json={
-                "next_ceiling": "needs_approach",
-                "at_cap": "propose",
+                "next_ceiling": "needs_what_changes",
                 "next_holder": _OWNER_HOLDER,
             },
             headers=_supervisor_headers(str(second["id"])),
@@ -444,8 +304,7 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
         approved = client.post(
             path,
             json={
-                "next_ceiling": "needs_approach",
-                "at_cap": "propose",
+                "next_ceiling": "needs_what_changes",
                 "next_holder": _OWNER_HOLDER,
             },
             headers=_supervisor_headers(str(first["id"])),
@@ -454,11 +313,13 @@ def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> Non
     assert cross.status_code == 400
     assert cross.json()["error"]["code"] == "agent_forbidden"
     assert approved.status_code == 200, approved.text
-    assert approved.json()["stage"] == "needs_approach"
-    assert approved.json()["field_values"].get("success") == "The result is verified."
+    assert approved.json()["stage"] == "needs_what_changes"
+    assert approved.json()["field_values"].get("success_condition") == "The result is verified."
 
 
-def test_supervisor_rejection_commits_messages_without_backend_io(tmp_path: Path) -> None:
+def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
+    tmp_path: Path,
+) -> None:
     app, db_path = _app(tmp_path)
     conversation_id = "conv-supervisor-reject"
     with TestClient(app) as client:
@@ -470,9 +331,6 @@ def test_supervisor_rejection_commits_messages_without_backend_io(tmp_path: Path
                 "UPDATE tickets SET conversation_id = ? WHERE id = ?",
                 (conversation_id, ticket["id"]),
             )
-            context_data.set_context(
-                conn, str(ticket["id"]), "ticket_changed", "Read exact guidance."
-            )
             conn.commit()
         asyncio.run(
             app.state.conversation_system.start_conversation(
@@ -480,7 +338,7 @@ def test_supervisor_rejection_commits_messages_without_backend_io(tmp_path: Path
             )
         )
         system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        path = f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject"
+        path = f"/api/tickets/{ticket['id']}/reject"
         cross = client.post(
             path,
             json={"message": "Not your Ticket."},
@@ -497,74 +355,17 @@ def test_supervisor_rejection_commits_messages_without_backend_io(tmp_path: Path
 
     with connect(str(db_path)) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
-        pending_context = context_data.snapshot(conn, str(ticket["id"])).items
-        rows = conn.execute(
-            "SELECT sequence,message,sender_kind,sender_id,state "
-            "FROM ticket_rejection_messages WHERE ticket_id=? ORDER BY sequence",
-            (ticket["id"],),
-        ).fetchall()
+        feedback = revision_feedback.snapshot(conn, str(ticket["id"]))
     assert rejected.status_code == 200, rejected.text
     assert after.pending_proposal is None
-    assert after.ticket_status.value == "agent"
-    assert any(item.text == "Read exact guidance." for item in pending_context)
-    assert [tuple(row) for row in rows] == [
-        (1, proposal_returned_for_revision_prompt(), None, None, "pending"),
-        (2, "State the verification evidence.", "sprint_item", item["id"], "pending"),
-    ]
+    assert after.ticket_status.value == "empty"
+    assert after.guidance == ""
+    assert feedback is not None
+    assert feedback.items[0].sender.kind.value == "sprint_item"
+    assert feedback.items[0].sender.id == str(item["id"])
+    assert feedback.items[0].message == "State the verification evidence."
     assert system.backend_prompt_writes(conversation_id) == ()
     assert system.observations(conversation_id) == ()
-
-
-def test_rejection_mutation_failure_leaves_no_worker_visible_residue(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-reject-mutation-failure"
-    with TestClient(app, raise_server_exceptions=False) as client:
-        item = _create_item(client)
-        ticket = _park_a_proposal(client, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET conversation_id=? WHERE id=?",
-                (conversation_id, ticket["id"]),
-            )
-            conn.commit()
-        asyncio.run(
-            app.state.conversation_system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
-        )
-        system = cast(InMemoryConversationSystem, app.state.conversation_system)
-
-        from planner.proposal_holder_wakes import data as wake_data
-
-        original_insert = wake_data._insert_rejection_message  # noqa: SLF001
-
-        def fail_comment(*args: Any, **kwargs: Any) -> None:
-            if kwargs["sequence"] == 2:
-                raise RuntimeError("injected comment record failure")
-            original_insert(*args, **kwargs)
-
-        monkeypatch.setattr(wake_data, "_insert_rejection_message", fail_comment)
-        response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
-            json={"message": "Revise."},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert response.status_code == 500
-    with connect(str(db_path)) as conn:
-        unchanged = tickets_data.read_ticket(conn, str(ticket["id"]))
-        message_count = conn.execute(
-            "SELECT COUNT(*) FROM ticket_rejection_messages WHERE ticket_id=?",
-            (ticket["id"],),
-        ).fetchone()[0]
-    assert unchanged.pending_proposal is not None
-    assert unchanged.ticket_status.value == "awaiting_approval"
-    assert message_count == 0
-    assert system.backend_prompt_writes(conversation_id) == ()
-    assert system.observations(conversation_id) == ()
-    assert not asyncio.run(system.is_running(conversation_id))
 
 
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
@@ -573,9 +374,9 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
-        before = client.get(f"/api/items/{item['id']}/supervisor").json()
+        before = client.get("/api/items", params={"detail": "full", "id": item["id"]}).json()
         sent = client.post(
-            f"/api/items/{item['id']}/supervisor/conversation/send",
+            f"/api/items/{item['id']}/conversation/send",
             json={
                 "content": [{"piece": "text", "text": "Hello"}],
                 "sender_label": "owner",
@@ -584,7 +385,9 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
             },
         )
         conversation_id = sent.json()["conversation_id"]
-        after_send = client.get(f"/api/items/{item['id']}/supervisor").json()
+        after_send = client.get(
+            "/api/items", params={"detail": "full", "id": item["id"]}
+        ).json()
         with connect(str(db_path)) as conn:
             conn.execute(
                 "INSERT INTO conversations(conversation_id,backend_key,model,"
@@ -601,14 +404,15 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
                 ),
             )
             conn.commit()
-        reset = client.post(f"/api/items/{item['id']}/supervisor/conversation/reset")
+        reset = client.post(f"/api/items/{item['id']}/conversation/reset")
         workspace = client.get(f"/api/items/{item['id']}/workspace")
 
-    assert before["conversation_id"] is None
+    assert before["supervisor"]["conversation_id"] is None
     assert sent.status_code == 200, sent.text
     assert conversation_id.startswith("conv_")
-    assert after_send["launch_configuration"]["employee_launch_model"] == ("gpt-5.6-terra")
-    assert after_send["launch_configuration"]["employee_launch_reasoning_effort"] == "high"
+    launch = after_send["supervisor"]["launch_configuration"]
+    assert launch["employee_launch_model"] == "gpt-5.6-terra"
+    assert launch["employee_launch_reasoning_effort"] == "high"
     assert reset.json() == {"conversation_id": None}
     assert workspace.json()["conversation_history"] == [
         {"conversation_id": conversation_id, "created_at": 1}
@@ -616,7 +420,8 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
     with connect(str(db_path)) as conn:
         assert (
             conn.execute(
-                "SELECT 1 FROM conversations WHERE conversation_id=?", (conversation_id,)
+                "SELECT 1 FROM conversations WHERE conversation_id=?",
+                (conversation_id,),
             ).fetchone()
             is not None
         )
@@ -689,45 +494,6 @@ def test_delete_between_backend_start_and_link_cannot_recreate_the_agent(
     asyncio.run(scenario())
 
 
-def test_supervisor_creates_and_approves_a_ticket_under_its_own_item(tmp_path: Path) -> None:
-    """A supervisor-created Ticket gets the same scope as anyone else's.
-
-    Its kickoff parks for approval like every other kickoff, and the supervisor may
-    approve it because it is a current child of the supervisor's own Item.
-    """
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client, "Owned")
-        headers = _supervisor_headers(str(item["id"]))
-        created = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Child of the Item",
-                "kickoff_note": "Do the work.",
-                "sprint_item_id": str(item["id"]),
-            },
-            headers=headers,
-        )
-        assert created.status_code == 200, created.text
-        ticket_id = str(created.json()["id"])
-        approved = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/approve",
-            json={
-                "next_ceiling": "needs_approach",
-                "at_cap": "propose",
-                "next_holder": _OWNER_HOLDER,
-            },
-            headers=headers,
-        )
-
-    assert created.json()["at_cap"] == "propose"
-    assert created.json()["ticket_status"] == "awaiting_approval"
-    assert approved.status_code == 200, approved.text
-    assert approved.json()["stage"] == "needs_success"
-    assert approved.json()["field_values"].get("kickoff") == "Do the work."
-
-
 def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the Item") -> str:
     created = client.post(
         "/api/tickets",
@@ -742,6 +508,39 @@ def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the I
     return str(created.json()["id"])
 
 
+def test_supervisor_ticket_blocks_stay_inside_its_child_tickets(tmp_path: Path) -> None:
+    """The supervisor writes blocks through the one membership call, with its own authority."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client, "Owned")
+        other_item = _create_item(client, "Other")
+        blocker_id = _child_ticket(client, str(item["id"]), "Blocker")
+        blocked_id = _child_ticket(client, str(item["id"]), "Blocked")
+        outsider_id = _child_ticket(client, str(other_item["id"]), "Outsider")
+        headers = _supervisor_headers(str(item["id"]))
+
+        added = client.put(f"/api/collections/blockers/{blocked_id}/{blocker_id}", headers=headers)
+        cross_item = client.put(
+            f"/api/collections/blockers/{outsider_id}/{blocker_id}", headers=headers
+        )
+        removed = client.delete(
+            f"/api/collections/blockers/{blocked_id}/{blocker_id}", headers=headers
+        )
+
+    assert added.status_code == 200, added.text
+    assert added.json() == {
+        "collection": "blockers",
+        "container_id": blocked_id,
+        "member_id": blocker_id,
+        "ok": True,
+    }
+    assert cross_item.status_code == 400
+    assert cross_item.json()["error"]["code"] == "agent_forbidden"
+    assert removed.status_code == 200, removed.text
+    with connect(str(db_path)) as conn:
+        assert conn.execute("SELECT count(*) FROM ticket_blocks").fetchone()[0] == 0
+
+
 # --- restarting a dead Worker -------------------------------------------------
 
 
@@ -751,7 +550,8 @@ def _stranded_child(
     item_id: str,
     *,
     conversation_id: str = "conv-dead-worker",
-    ticket_status_changed_at: int = 1,
+    worker_step_claim_changed_at: int = 1,
+    worker_type: str = "coding",
 ) -> str:
     """A child Ticket exactly as a dead Worker leaves one: at `agent`, holding nothing.
 
@@ -761,17 +561,20 @@ def _stranded_child(
     ticket = client.post(
         "/api/tickets",
         json={
-            "worker_type": "coding",
+            "worker_type": worker_type,
             "title": "Stranded child",
             "kickoff_note": "Start here.",
             "sprint_item_id": item_id,
         },
     ).json()
     accepted = client.post(
-        f"/api/tickets/{ticket['id']}/accept/kickoff",
+        f"/api/tickets/{ticket['id']}/accept/brief",
         json={
-            "next_ceiling": "needs_success",
-            "at_cap": "propose",
+            "next_ceiling": (
+                "needs_purpose_and_boundaries"
+                if worker_type == "new_worker"
+                else "needs_success_condition"
+            ),
             "next_holder": _OWNER_HOLDER,
         },
     )
@@ -784,9 +587,9 @@ def _stranded_child(
             (conversation_id,),
         )
         conn.execute(
-            "UPDATE tickets SET conversation_id = ?, ticket_status = 'agent', "
-            "ticket_status_changed_at = ? WHERE id = ?",
-            (conversation_id, ticket_status_changed_at, ticket["id"]),
+            "UPDATE tickets SET conversation_id = ?, worker_step_claim = 'out', "
+            "worker_step_claim_changed_at = ? WHERE id = ?",
+            (conversation_id, worker_step_claim_changed_at, ticket["id"]),
         )
         conn.commit()
     return str(ticket["id"])
@@ -801,7 +604,7 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
         item = _create_item(client)
         ticket_id = _stranded_child(client, db_path, str(item["id"]))
         response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            f"/api/tickets/{ticket_id}/restart-worker",
             json={},
             headers=_supervisor_headers(str(item["id"])),
         )
@@ -817,55 +620,170 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
     assert body["employee_configuration"]["employee_backend"] == "codex"
 
 
-def test_restart_clears_an_explicit_error_and_starts_again(tmp_path: Path) -> None:
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            tickets_data.mark_ticket_errored(
-                conn,
-                ticket_id,
-                error="The previous start failed.",
-                now=1,
-            )
-        response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
-            json={},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["started"] is True
-    assert body["ticket_status"] == "agent"
-    assert body["killed_conversation_id"] == "conv-dead-worker"
-    with connect(str(db_path)) as conn:
-        restarted = tickets_data.read_ticket(conn, ticket_id)
-    assert restarted.backend_error is None
-
-
 def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None:
-    """A Paired Stage rests where it departs, so a restart there kills a live discussion."""
+    """A user-owned Stage has a collaborative discussion that restart must preserve."""
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET stage_ownership_overrides = ? WHERE id = ?",
-                (json.dumps({"needs_success": "paired"}), ticket_id),
-            )
-            conn.commit()
+        ticket_id = _stranded_child(
+            client,
+            db_path,
+            str(item["id"]),
+            worker_type="new_worker",
+        )
         response = client.post(
-            f"/api/items/{item['id']}/supervisor/tickets/{ticket_id}/restart-worker",
+            f"/api/tickets/{ticket_id}/restart-worker",
             json={},
             headers=_supervisor_headers(str(item["id"])),
         )
-        after = client.get(f"/api/tickets/{ticket_id}")
+        after = client.get(f"/api/tickets?detail=full&id={ticket_id}")
 
     assert response.status_code == 400, response.text
     assert response.json()["error"]["message"] == (
         "only a Worker-owned Stage has a worker step to restart"
     )
     assert after.json()["conversation_id"] == "conv-dead-worker"
+
+
+def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
+    """The stated exception, at the door that is re-parenting under another name.
+
+    Outcome membership is the write that sets ``tickets.sprint_item_id``. A Ticket that
+    could set its own could move to another Outcome, or leave every Outcome, and pick who
+    is allowed to accept, reject, delete or restart it. Being a thing does not include
+    choosing who is above you.
+    """
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        own = _create_item(client, "Own")
+        other = _create_item(client, "Other")
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Child",
+                "kickoff_note": "Start.",
+                "sprint_item_id": own["id"],
+            },
+        ).json()
+        itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
+        moved = client.put(
+            f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}", headers=itself
+        )
+        orphaned = client.delete(
+            f"/api/collections/outcome_tickets/{own['id']}/{ticket['id']}", headers=itself
+        )
+        parent_moves_it = client.put(
+            f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}",
+            headers=_supervisor_headers(str(own["id"])),
+        )
+        khushal_moves_it = client.put(
+            f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}"
+        )
+        after = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
+
+    assert moved.json()["error"]["code"] == "agent_forbidden"
+    assert orphaned.json()["error"]["code"] == "agent_forbidden"
+    assert parent_moves_it.json()["error"]["code"] == "agent_forbidden"
+    assert khushal_moves_it.status_code == 200, khushal_moves_it.text
+    assert after["sprint_item_id"] == other["id"]
+
+
+def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -> None:
+    """The second door that takes a recipient. It asks the same question as the first."""
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        own = _create_item(client, "Own")
+        mine = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Mine",
+                "kickoff_note": "Start.",
+                "sprint_item_id": own["id"],
+            },
+        ).json()
+        stranger = client.post(
+            "/api/tickets",
+            json={"worker_type": "coding", "title": "Stranger", "kickoff_note": "Start."},
+        ).json()
+        itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
+        into_a_stranger = client.post(
+            f"/api/tickets/{mine['id']}/request-help",
+            json={"message": "Help.", "recipient": {"kind": "ticket", "id": stranger["id"]}},
+            headers=itself,
+        )
+        up_to_its_outcome = client.post(
+            f"/api/tickets/{mine['id']}/request-help",
+            json={"message": "Help.", "recipient": {"kind": "sprint_item", "id": own["id"]}},
+            headers=itself,
+        )
+
+    assert into_a_stranger.json()["error"]["code"] == "agent_forbidden"
+    # Asking its own Outcome for help is speaking up the chain, so it lands.
+    assert up_to_its_outcome.status_code == 200, up_to_its_outcome.text
+    assert up_to_its_outcome.json()["target"] == {"kind": "sprint_item", "id": own["id"]}
+
+
+def test_a_conversation_pages_in_the_direction_it_was_asked_for(tmp_path: Path) -> None:
+    """Five events, so a page of two cannot accidentally be the whole record.
+
+    The read that replaced the Outcome-scoped history has to do both directions. A
+    caller catching up reads on from where it got to; one that has just arrived reads
+    the end, then the page before it. `has_more` means the same thing in both: there is
+    record left in the direction you were reading.
+    """
+    app, db_path = _app(tmp_path)
+    conversation_id = "conv-paging"
+    with TestClient(app) as client:
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "INSERT INTO conversations(conversation_id,backend_key,model,"
+                "workspace_folder,access,latest_sequence,created_at) "
+                "VALUES (?, 'codex', 'test', '/tmp', 'full', 5, 1)",
+                (conversation_id,),
+            )
+            conn.executemany(
+                "INSERT INTO conversation_events "
+                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,?,?,?,?)",
+                (
+                    (conversation_id, n, "agent_message", json.dumps({"text": f"m{n}"}), n)
+                    for n in range(1, 6)
+                ),
+            )
+            conn.commit()
+
+        def read(**params: Any) -> dict[str, Any]:
+            response = client.get(
+                f"/api/conversation/conversations/{conversation_id}/events", params=params
+            )
+            assert response.status_code == 200, response.text
+            return cast(dict[str, Any], response.json())
+
+        def sequences(page: dict[str, Any]) -> list[int]:
+            return [event["sequence"] for event in page["events"]]
+
+        last_page = read(limit=2)
+        page_before_it = read(limit=2, before=4)
+        oldest_page = read(limit=2, before=2)
+        forwards = read(after=1, limit=2)
+        forwards_to_the_end = read(after=3, limit=2)
+        everything = read(after=0)
+        one_direction = client.get(
+            f"/api/conversation/conversations/{conversation_id}/events",
+            params={"after": 1, "before": 4, "limit": 2},
+        )
+        too_large = client.get(
+            f"/api/conversation/conversations/{conversation_id}/events", params={"limit": 101}
+        )
+
+    assert sequences(last_page) == [4, 5] and last_page["has_more"] is True
+    assert sequences(page_before_it) == [2, 3] and page_before_it["has_more"] is True
+    assert sequences(oldest_page) == [1] and oldest_page["has_more"] is False
+    # `after` is honoured alongside `limit`. Reading it as "the last two" would answer
+    # [4, 5] here, which is the opposite end of the record from the one asked for.
+    assert sequences(forwards) == [2, 3] and forwards["has_more"] is True
+    assert sequences(forwards_to_the_end) == [4, 5] and forwards_to_the_end["has_more"] is False
+    assert sequences(everything) == [1, 2, 3, 4, 5] and everything["has_more"] is False
+    assert one_direction.json()["error"]["code"] == "validation"
+    assert too_large.json()["error"]["code"] == "validation"

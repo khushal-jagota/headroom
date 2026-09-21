@@ -13,6 +13,7 @@ from planner.conversation.contracts import (
     PromptDeliveryStarted,
 )
 from planner.conversation.message_content import text_message_content
+from planner.core import authority
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
@@ -59,147 +60,6 @@ def sender_label(ctx: RequestContext) -> str:
     return f"Sprint Item {ctx.principal.id}"
 
 
-async def send_system_message(
-    conversations: ConversationSystem,
-    conn: sqlite3.Connection,
-    clock: Clock,
-    recipient: Principal,
-    message: str,
-    *,
-    sender_message_id: str,
-) -> MessageDeliveryResult:
-    """Send one idempotently named Panels-authored message to an agent principal."""
-    if conn.in_transaction:
-        raise RuntimeError("backend delivery requires a connection outside a transaction")
-    content = text_message_content(message)
-    if recipient.kind is PrincipalKind.ticket:
-        async with conversation_start.conversation_link_lock(f"ticket:{recipient.id}"):
-            ticket = tickets_data.read_ticket(conn, recipient.id)
-            delivered = await conversation_start.send_to_ticket_conversation(
-                conversations,
-                conn,
-                recipient.id,
-                content,
-                conversation_id=ticket.conversation_id,
-                created_conversation_id=conversation_start.new_conversation_id(),
-                sender_label="Panels",
-                sender_message_id=sender_message_id,
-                sender=None,
-                recipient=None,
-                now=clock.now_unix(),
-            )
-    elif recipient.kind is PrincipalKind.chief:
-        async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):
-            delivered = await conversation_start.send_to_agent_conversation(
-                conversations,
-                conn,
-                CHIEF_SETTINGS_KEY,
-                content,
-                conversation_start.agent_resolve(conn),
-                conversation_id=conversation_start.read_agent_conversation(
-                    conn, CHIEF_SETTINGS_KEY
-                ),
-                created_conversation_id=conversation_start.new_conversation_id(),
-                sender_label="Panels",
-                sender_message_id=sender_message_id,
-                sender=None,
-                recipient=None,
-            )
-    elif recipient.kind is PrincipalKind.sprint_item:
-        async with sprints_service.supervisor_lifecycle_lock(recipient.id):
-            item = sprints_data.read_item(conn, recipient.id).item
-            async with conversation_start.conversation_link_lock(
-                f"agent:{item.supervisor_agent_key}"
-            ):
-                delivered = await conversation_start.send_to_agent_conversation(
-                    conversations,
-                    conn,
-                    item.supervisor_agent_key,
-                    content,
-                    conversation_start.sprint_item_supervisor_resolve(item),
-                    conversation_id=conversation_start.read_agent_conversation(
-                        conn, item.supervisor_agent_key
-                    ),
-                    created_conversation_id=conversation_start.new_conversation_id(),
-                    sender_label="Panels",
-                    sender_message_id=sender_message_id,
-                    sender=None,
-                    recipient=None,
-                    required_sprint_item_id=recipient.id,
-                )
-    else:
-        raise PlannerError(
-            ErrorCode.validation,
-            "the proposal holder has no agent conversation",
-            {"kind": recipient.kind.value, "id": recipient.id},
-        )
-    return MessageDeliveryResult(recipient, delivered.conversation_id, delivered.fate)
-
-
-async def send_ticket_outbox_message(
-    conversations: ConversationSystem,
-    conn: sqlite3.Connection,
-    clock: Clock,
-    ticket_id: str,
-    message: str,
-    *,
-    sender: Principal | None,
-    sender_message_id: str,
-) -> MessageDeliveryResult:
-    """Deliver one durable Ticket message without source-turn bookkeeping."""
-    if conn.in_transaction:
-        raise RuntimeError("backend delivery requires a connection outside a transaction")
-    recipient = Principal(PrincipalKind.ticket, ticket_id)
-    if sender is None:
-        return await send_system_message(
-            conversations,
-            conn,
-            clock,
-            recipient,
-            message,
-            sender_message_id=sender_message_id,
-        )
-    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        delivered = await conversation_start.send_to_ticket_conversation(
-            conversations,
-            conn,
-            ticket_id,
-            text_message_content(message),
-            conversation_id=ticket.conversation_id,
-            created_conversation_id=conversation_start.new_conversation_id(),
-            sender_label=sender_label(RequestContext(sender)),
-            sender_message_id=sender_message_id,
-            sender=sender,
-            recipient=recipient,
-            now=clock.now_unix(),
-        )
-    return MessageDeliveryResult(recipient, delivered.conversation_id, delivered.fate)
-
-
-async def record_ticket_outbox_uncertainty(
-    conversations: ConversationSystem,
-    *,
-    ticket_id: str,
-    conversation_id: str,
-    message: str,
-    sender: Principal | None,
-    sender_message_id: str,
-) -> None:
-    """Expose one terminal outbox uncertainty without another backend delivery."""
-    await conversations.record_prompt_delivery_uncertain(
-        conversation_id,
-        text_message_content(message),
-        sender_label="Panels" if sender is None else sender_label(RequestContext(sender)),
-        mode=PromptDeliveryMode.queue,
-        sender_message_id=sender_message_id,
-        sender=sender,
-        recipient=(
-            None if sender is None else Principal(PrincipalKind.ticket, ticket_id)
-        ),
-    )
-
-
 def _prompt_mode(mode: MessageDeliveryMode | PromptDeliveryMode) -> PromptDeliveryMode:
     if isinstance(mode, PromptDeliveryMode):
         return mode
@@ -232,6 +92,49 @@ def _sender_conversation_link_key(conn: sqlite3.Connection, sender: Principal) -
     raise ValueError("the owner has no sender conversation link")
 
 
+def _as_target(principal: Principal) -> authority.Target | None:
+    """The thing this principal is, when something can stand above it.
+
+    Khushal and the Chief are above everything, so nothing is above them and they are no
+    target. A message addressed to either asks no authority question.
+    """
+    if principal.kind is PrincipalKind.ticket:
+        return authority.ticket(principal.id)
+    if principal.kind is PrincipalKind.sprint_item:
+        return authority.outcome(principal.id)
+    return None
+
+
+def require_reach(
+    conn: sqlite3.Connection, caller: Principal, recipient: Principal
+) -> None:
+    """Sending down the chain is acting on the recipient. Sending up is only speaking.
+
+    Two principals in one chain can talk, in both directions. Standing above the
+    recipient is acting on it — starting a turn in a conversation that belongs to
+    something below you — and that is the rule's own question. Standing below it is not:
+    a Worker answering the Outcome that asked it something is speaking, and refusing that
+    would make the reply every addressed prompt requires impossible to send.
+
+    Strangers are neither, and they refuse.
+
+    Asked by the two routes that take a recipient from their caller, and it lives here so
+    they ask the same question rather than two. It is not asked inside ``send_message``:
+    the other callers name a recipient the route has already guarded, and a Ticket asking
+    its own ceiling holder for help names a principal Panels addressed it to, which is not
+    the caller reaching anywhere.
+    """
+    target = _as_target(recipient)
+    if target is None:
+        return
+    if authority.is_above(conn, caller, target):
+        return
+    caller_target = _as_target(caller)
+    if caller_target is not None and authority.is_above(conn, recipient, caller_target):
+        return
+    authority.require_above(conn, caller, target)
+
+
 async def send_message(
     conversations: ConversationSystem,
     conn: sqlite3.Connection,
@@ -246,7 +149,6 @@ async def send_message(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
-    required_sprint_item_id: str | None = None,
 ) -> MessageDeliveryResult:
     """Send one text message to one resolved Panels conversation owner."""
     label = sender_label(ctx)
@@ -260,6 +162,9 @@ async def send_message(
         source_conversation_id = _sender_conversation_id(conn, sender)
         if source_conversation_id is not None:
             source_turn = await conversations.active_turn_reference(source_conversation_id)
+    is_reply = bool(
+        source_turn is not None and await conversations.turn_expects_reply(source_turn, recipient)
+    )
 
     if recipient.kind is PrincipalKind.owner:
         if sender.kind is PrincipalKind.owner:
@@ -313,8 +218,8 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=not is_reply,
                 now=clock.now_unix(),
-                required_sprint_item_id=required_sprint_item_id,
             )
     elif recipient.kind is PrincipalKind.chief:
         async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):
@@ -342,6 +247,7 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+                reply_requested=not is_reply,
             )
     elif recipient.kind is PrincipalKind.sprint_item:
         item_id = recipient.id
@@ -378,6 +284,7 @@ async def send_message(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=not is_reply,
                     required_sprint_item_id=item_id,
                 )
                 if sender.kind is PrincipalKind.owner and (

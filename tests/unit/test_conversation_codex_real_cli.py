@@ -22,7 +22,7 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 import pytest
-from tests.unit.test_conversation_codex_adapter import _RecordingSink
+from tests.support.conversation_codex_app_server_bench import _RecordingSink
 
 from planner.conversation.backends.codex_app_server.adapter import (
     CodexAppServerBackendChild,
@@ -155,32 +155,6 @@ async def _turn(
         reasoning_effort_change=None,
     )
     await sink.wait_for_the_turn_to_end()
-
-
-@real_codex_only
-def test_real_codex_starts_a_thread_and_runs_a_turn(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        child = _real_child(tmp_path, sink)
-        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
-        try:
-            assert sink.vendor_session_cursor is not None
-            await _turn(
-                child,
-                sink,
-                1,
-                text_message_content("Reply with exactly the word: ready. No tools."),
-            )
-
-            assert sink.endings == [ConversationTurnEnding.completed]
-            assert sink.agent_message_texts
-            assert sink.deltas
-            print("REAL CODEX cursor:", sink.vendor_session_cursor)
-            print("REAL CODEX said:", sink.agent_message_texts[-1])
-        finally:
-            await child.stop()
-
-    _run(exercise)
 
 
 @real_codex_only

@@ -46,20 +46,18 @@ try {
     if (path === "/api/sprints/sp_test/tracking") return json({
       sprint, planning_date: "2026-09-08", outcome_groups: [{ outcome, committed: true, tickets: [
         { id: "t_one", title: "Move me", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
-        { id: "t_dropped", title: "Abandoned work", stage: "dropped", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
         { id: "t_done", title: "Leave done", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false }
       ] }], unclassified_tickets: [
         { id: "t_loose_one", title: "Loose from One", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: null, waiting_to_closeout: false },
-        { id: "t_loose_two", title: "Loose from Two", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false },
-        { id: "t_loose_dropped", title: "Dropped loose work", stage: "dropped", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false }
+        { id: "t_loose_two", title: "Loose from Two", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false }
       ]
     });
-    if (path === "/api/projects") return json({ projects: [{ id: "project_one", name: "One", summary: "", priority: "P1", created_at: 1, updated_at: 1 }, { id: "project_two", name: "Two", summary: "", priority: "P2", created_at: 1, updated_at: 1 }] });
+    if (path === "/api/projects?detail=full") return json({ projects: [{ id: "project_one", name: "One", summary: "", priority: "P1", created_at: 1, updated_at: 1 }, { id: "project_two", name: "Two", summary: "", priority: "P2", created_at: 1, updated_at: 1 }] });
     if (path === "/api/day/today") return json({ tickets: [] });
-    if (path === "/api/sprints") return json({ sprints: [sprint, { ...sprint, id: "sp_next", name: "Next" }] });
-    if (path.startsWith("/api/sprint-item-summaries?")) return json({ items: [outcome], page: { match_count: 1, return_count: 1, limit: 30, offset: 0, omitted_before: 0, omitted_after: 0, complete: true, next_offset: null } });
+    if (path === "/api/sprints?detail=full") return json({ sprints: [sprint, { ...sprint, id: "sp_next", name: "Next" }] });
+    if (path.startsWith("/api/items?detail=summary")) return json({ items: [outcome], page: { match_count: 1, return_count: 1, limit: 30, offset: 0, omitted_before: 0, omitted_after: 0, complete: true, next_offset: null } });
     if (path === "/api/items" && method === "POST") return json({ ...outcome, id: "outcome_created", title: body.title });
-    if (path.includes("/outcomes/outcome_created") && method === "PUT") { commitmentAttempts += 1; if (commitmentAttempts === 1) return new Response(JSON.stringify({ error: { code: "failed", message: "Try again" } }), { status: 500, headers: { "Content-Type": "application/json" } }); return json({ sprint_id: "sp_test", outcome_id: "outcome_created" }); }
+    if (path.includes("/collections/sprint_outcomes/") && path.endsWith("/outcome_created") && method === "PUT") { commitmentAttempts += 1; if (commitmentAttempts === 1) return new Response(JSON.stringify({ error: { code: "failed", message: "Try again" } }), { status: 500, headers: { "Content-Type": "application/json" } }); return json({ sprint_id: "sp_test", outcome_id: "outcome_created" }); }
     if (path.endsWith("/outcomes/outcome_existing/carry") && method === "POST") return json(body);
     throw new Error("Unexpected request: " + path);
   }) as typeof fetch;
@@ -146,7 +144,6 @@ with sync_playwright() as playwright:
         assert no_outcome.locator('[data-sprint-ticket-id]:visible').count() == 0
         no_outcome.locator(':scope > summary').click()
         assert no_outcome.locator('[data-sprint-ticket-id]:visible').count() == 2
-        assert no_outcome.locator('[data-sprint-ticket-id="t_loose_dropped"]').count() == 0
         assert no_outcome.locator('[data-sprint-ticket-id="t_loose_one"]').get_attribute('href') == '#/workspace/t_loose_one'
         assert no_outcome.locator('[data-sprint-ticket-id="t_loose_two"]').get_attribute('href') == '#/workspace/t_loose_two'
         assert page.evaluate("""() => Boolean(document.querySelector('[data-sprint-no-outcome]').compareDocumentPosition(document.querySelector('.sprint-outcome-actions')) & Node.DOCUMENT_POSITION_FOLLOWING)""")
@@ -172,7 +169,7 @@ with sync_playwright() as playwright:
         post_count = page.evaluate("window.saved().requests.filter(request => request.path === '/api/items' && request.method === 'POST').length")
         assert post_count == 1
         picker.locator('[data-retry-created-outcome]').click()
-        page.wait_for_function("() => window.saved().requests.filter(request => request.path.includes('/outcomes/outcome_created') && request.method === 'PUT').length === 2")
+        page.wait_for_function("() => window.saved().requests.filter(request => request.path.includes('/collections/sprint_outcomes/') && request.method === 'PUT').length === 2")
         assert page.evaluate("window.saved().requests.filter(request => request.path === '/api/items' && request.method === 'POST').length") == 1
         page.get_by_role("button", name="Switch view").click()
         # Remount reads the persisted document through the real query path.

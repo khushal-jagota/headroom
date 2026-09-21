@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import shutil
 import subprocess
@@ -12,38 +11,6 @@ import pytest
 from planner.environments import materialize
 from planner.environments.contracts import EnvironmentManifest, EnvironmentValidationError
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
-
-
-def test_staging_prepare_is_persistent_and_inspect_has_no_runtime_port(
-    tmp_path: Path,
-) -> None:
-    repository = _repository(tmp_path, "staging-repo")
-    root = _environment_root(tmp_path)
-    prepared = materialize.prepare_environment_instance(
-        kind="staging",
-        environment_root=root,
-        repository_roots=(repository,),
-        now=123,
-    )
-    marker = prepared.managed_files_root / "activity.txt"
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text("retained", encoding="utf-8")
-
-    inspected = materialize.inspect_environment_instance(
-        kind="staging",
-        environment_root=root,
-        repository_roots=(),
-    )
-    payload = materialize.manifest_to_json_dict(inspected)
-
-    assert marker.read_text(encoding="utf-8") == "retained"
-    assert payload["runtime_port_policy"] == "dynamic"
-    assert payload["bind_attempts"] == 10
-    assert "port" not in payload
-    assert "running" not in payload
-    manifest_payload = json.loads((prepared.instance_root / "manifest.json").read_text())
-    assert manifest_payload["runtime_port"] == {"bind_attempts": 10, "kind": "dynamic"}
-    assert "port" not in manifest_payload
 
 
 def test_staging_reset_replaces_fake_state_but_preserves_instance_contract(

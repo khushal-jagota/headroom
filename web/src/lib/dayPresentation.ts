@@ -11,7 +11,7 @@ export type DayVisualTicket = {
 };
 
 export type DayActionTile = {
-  key: "needs-me" | "review" | "working" | "paired" | "done";
+  key: "needs-me" | "review" | "working" | "assigned" | "done";
   label: string;
   count: number;
   href: string;
@@ -25,7 +25,7 @@ function groupKeyFor(ticket: DayTicket): string {
     awaiting_approval: Boolean(ticket.awaiting_approval),
     assigned: Boolean(ticket.assigned)
   });
-  if (attention === "awaiting_approval" && ticket.gating_field === "kickoff") {
+  if (attention === "awaiting_approval" && ticket.gating_field === "brief") {
     return "waiting_for_kickoff";
   }
   if (attention !== null) return attention;
@@ -47,7 +47,7 @@ export function dayVisualTicket(
     return { ticket, state: "completed", ariaLabel: "Done", group };
   }
   if (presentation.state === "upcoming" && group === "assigned") {
-    return { ticket, state: "current-paired", ariaLabel: "Assigned", group };
+    return { ticket, state: "current-assigned", ariaLabel: "Assigned", group };
   }
   if (
     presentation.state === "upcoming" &&
@@ -64,7 +64,7 @@ export function dayVisualTicket(
  * Where each dot state sits in the Day progress row, most urgent first.
  *
  * The Day row only produces `needs-me`, `current-awaiting-approval`,
- * `current-paired`, `current-running`, `upcoming`, and `completed`. The rest are
+ * `current-assigned`, `current-running`, `upcoming`, and `completed`. The rest are
  * ranked so the sort stays total. `errored` sits beside `needs-me`: both mean the
  * ticket stopped and wants the user.
  */
@@ -72,7 +72,7 @@ const dotOrder: Record<FieldStageVisualState, number> = {
   "needs-me": 0,
   errored: 1,
   "current-awaiting-approval": 2,
-  "current-paired": 3,
+  "current-assigned": 3,
   "current-running": 4,
   "current-waiting": 5,
   upcoming: 6,
@@ -95,7 +95,7 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
     "needs-me": 0,
     review: 0,
     working: 0,
-    paired: 0,
+    assigned: 0,
     done: 0
   };
 
@@ -106,7 +106,7 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
       visual.state === "current-awaiting-approval" &&
       (visual.group === "awaiting_approval" || visual.group === "waiting_for_kickoff")
     ) counts.review += 1;
-    else if (visual.state === "current-paired") counts.paired += 1;
+    else if (visual.state === "current-assigned") counts.assigned += 1;
     else if (visual.state === "completed") counts.done += 1;
   }
 
@@ -118,7 +118,7 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
     { key: "needs-me", label: "Need you", href: "#/workspace" },
     { key: "review", label: "To review", href: "#/review" },
     { key: "working", label: "Working", href: "#/workspace" },
-    { key: "paired", label: "Paired", href: "#/workspace" },
+    { key: "assigned", label: "Assigned", href: "#/workspace" },
     { key: "done", label: "Done", href: "#/workspace" }
   ];
 

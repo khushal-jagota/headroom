@@ -47,64 +47,13 @@ verification.
 
 ## Work completed outside Panels
 
-Use `panels chief` only when the user reports that real work was already completed outside Panels and the record now needs to match that reality.
+Record completed external work through ordinary Ticket operations. Search current Tickets first, and update an aligned Ticket instead of creating a duplicate.
 
-Before creating a new external-work Ticket, load and follow
-`panels-ticket-creation`. The creation model applies, while this section remains
-authoritative for whether external-work import is allowed and for its settled prefix,
-provenance, and follow-through.
+If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create the Ticket with `panels ticket create`, then use ordinary field, recap, placement, ceiling, and Day operations. Use `panels ticket complete <ticket-id> <field>` for the unset gate of the current user-owned Stage, and `panels ticket set-value <ticket-id> <field>` to correct a settled earlier value. Panels does not support bulk field prefixes or arbitrary Stage jumps.
 
-Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI sends the required Chief identity. Without it, the server rejects the request as an unattributed actor.
+Preserve the user's report in Brief and recap text. If an existing Worker type no longer contains a live Ticket's Stage, use an explicit repository migration with that Worker change. Do not repair it through the product API.
 
-1. Search the current tickets first. Reconcile an existing aligned ticket rather than creating a duplicate.
-2. Use `panels chief reconcile-ticket-from-external-work <ticket-id> --stage <id>` for
-   an existing Ticket, or `panels chief create-ticket-from-external-work --worker-type
-   <id> --stage <id>` when no aligned Ticket exists.
-3. Preserve the user's report and your reconciliation reasoning in the complete Kickoff field value passed with `--kickoff-note-file`. When reconciling, include any existing Kickoff value that must remain.
-4. Supply the exact settled field prefix required by the target Stage. Valid Stages
-   depend on the Ticket's Worker type — for `coding`: `needs_success`,
-   `needs_approach`, `needs_plan`, `needs_implementation`, `needs_closeout`, `done`.
-   Use repeatable `--field-file FIELD=PATH` for definition-specific fields, including
-   fields belonging to non-coding Worker types. The named `--success-file`,
-   `--approach-file`, `--plan-file`, `--implementation-file`, and `--closeout-file`
-   options remain conveniences for coding fields. Never supply the same field more than
-   once, whether through two `--field-file` options or through both forms. For example,
-   external `new_worker` work settled through Runtime Defaults can be created at Drafting
-   with the complete `understanding → stages → thinking → runtime_defaults` prefix:
-
-   ```sh
-   panels chief create-ticket-from-external-work \
-     --title "Add a research worker" \
-     --worker-type new_worker \
-     --stage needs_drafting \
-     --kickoff-note-file /tmp/kickoff.md \
-     --field-file understanding=/tmp/understanding.md \
-     --field-file stages=/tmp/stages.md \
-     --field-file thinking=/tmp/thinking.md \
-     --field-file runtime_defaults=/tmp/runtime-defaults.md \
-     --json
-   ```
-
-   Always provide the complete settled prefix for the requested Stage. Do not infer that
-   a field belongs to a Worker type or that a prefix is valid from these examples; Panels'
-   API response is authoritative.
-   External intake moves the ceiling to that Stage and preserves an explicit Stop;
-   otherwise Propose remains. The entered Stage's effective ownership determines where
-   the Ticket rests. The intake does not create proposals or imitate worker progress.
-5. Ordinary creation atomically puts a new external-work Ticket on today. For a
-   reconciled existing Ticket, add it to today unless the user explicitly wants it off
-   the roster. If a newly created Ticket should be off today, remove it from the Day as
-   a separate follow-up; backlog placement is an independent choice.
-6. Read the resulting Ticket header with `panels ticket show <id> --json`. Use
-   `panels day list-tickets --json` for today placement. Report the Ticket id,
-   resulting Stage, and today placement.
-
-Do not use these commands for ordinary Ticket edits, convenient Stage jumps, or work a
-Ticket worker is doing inside Panels. Clear ambiguity with the user instead of
-importing a claim you cannot reconcile confidently.
-
-When creating a Ticket that relies on existing Tickets being complete, pass each
-prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
+When a Ticket relies on existing Tickets being complete, pass each prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
 
 ## Authority boundary
 
@@ -144,27 +93,27 @@ For review questions, inspect the review queue or relevant tickets before advisi
 
 List commands return bounded summaries. Read their page facts before you assume that a
 result is complete. Prefer Ticket filters and `--search` before a larger `--limit`. Use
-`--include-terminal` only when finished or dropped work is relevant.
+`--include-terminal` only when finished work is relevant.
 
-For capture, create the smallest correct object. **A Kickoff is intake, not your plan,
+For capture, create the smallest correct object. **A Brief is intake, not your plan,
 interpretation, or extrapolation.** Preserve the user's wording closely and include only
 what the user actually stated. Bring in context from inspected records or other Tickets
 when it is directly relevant and factual; include additional framing from discussion only
 after the user agrees to it. If the user did not state an intention, concern, desired
 outcome, scope, or reason, do not guess one. Do not invent questions to answer,
 consequences, requirements, architecture, methods, tests, or process instructions. When
-missing intent prevents correct capture, ask briefly; otherwise write a light Kickoff and
-let the Ticket's conversation and notes add or correct context. Longer Kickoffs are earned
+missing intent prevents correct capture, ask briefly; otherwise write a light Brief and
+let the Ticket's conversation and notes add or correct context. Longer Briefs are earned
 only by what the user actually supplied or approved. Less is more because the user must
 read and trust the record.
 
 **Expand the referent, not the scope.** When the user alludes to an existing Panels
 feature, message, workflow, Ticket, or mechanism, inspect the relevant code and records
-before writing the Kickoff. Add the smallest factual explanation needed for a later
+before writing the Brief. Add the smallest factual explanation needed for a later
 reader to understand what the user meant. Do not make the user restate context that Chief
 can retrieve.
 
-Every substantive Kickoff sentence must be one of:
+Every substantive Brief sentence must be one of:
 
 1. something the user stated or agreed;
 2. factual context needed to explain a specific thing the user referenced; or
@@ -183,14 +132,14 @@ committed work, capture an idea instead of over-structuring it.
 
 Use the `research` Worker type when the user wants a bounded question answered with
 evidence. The question must already be framed, because this worker plans its evidence
-path, researches, and hands back a sourced synthesis without a paired conversation. It
+path, researches, and hands back a sourced synthesis without a collaborative conversation. It
 does not decide or implement. When the question itself is still undefined, use
 `exploration` instead.
 
 Use the `initiative_review` Worker type when a delivered initiative or another coherent
 multi-Ticket change needs one combined review before integration. It inspects the actual
 combined result, captures the user's specific feedback, and creates the agreed follow-up
-work before closeout.
+work before Consequences.
 
 Use the `amend_worker` Worker type when an existing Worker type needs changing: a Stage
 removed or added, an ownership mode, a runtime default, or its skill guidance. One
@@ -215,8 +164,8 @@ Do not create extra tickets, items, projects, or statuses unless the user asked 
 
 A ticket worker owns one ticket's next gated step. You do not.
 
-Do not draft a Ticket's gated fields (for `coding`: `success`, `approach`, `plan`,
-`implementation`, `closeout`; other Worker types have their own) as if you are
+Do not draft a Ticket's gated fields (for `coding`: `success_condition`, `what_changes`, `plan`,
+`implementation`, `consequences`; other Worker types have their own) as if you are
 completing that Ticket worker step unless the user explicitly asks for a planning draft
 in chat. Even then, present it as a draft for the human or Ticket worker, not as a filed
 worker proposal.

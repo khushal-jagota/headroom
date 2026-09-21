@@ -12,7 +12,7 @@ import httpx
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import seed_probe_worker_type
 
 from planner.cli.main import main as cli_main
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -20,6 +20,7 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.worker_types.configuration import load_worker_runtime_definitions
 
 JsonObject = dict[str, Any]
 
@@ -52,6 +53,9 @@ def cli_app(
     db_path = tmp_path / "cli-verbs.db"
     with connect(str(db_path)) as conn:
         create_schema(conn)
+        # The probe Worker type is stored like any other, so the server reads it from here.
+        seed_probe_worker_type(conn)
+        load_worker_runtime_definitions(conn)
     config = load_config(
         path=None,
         env={
@@ -98,9 +102,13 @@ def cli_app(
             actor: str | None = None,
             stdin: str | None = None,
         ) -> JsonObject:
+            # The identity a launched Worker runs under, which is both variables
+            # together: worker_conversation_role_materials sets PLAN_ACTOR beside the
+            # Ticket id. The CLI sends what the environment says and claims nothing else.
             env = {"PLAN_SERVER_URL": server.base}
             if ticket_id is not None:
                 env["PLAN_TICKET_ID"] = ticket_id
+                env["PLAN_ACTOR"] = "worker"
             if actor is not None:
                 env["PLAN_ACTOR"] = actor
             result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)
@@ -129,54 +137,6 @@ def api(
     cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper],
 ) -> ApiHelper:
     return cli_app[2]
-
-
-@pytest.fixture
-def probe_worker_type() -> Iterator[None]:
-    install_probe_registry()
-    try:
-        yield
-    finally:
-        uninstall_probe_registry()
-
-
-def test_worker_type_list_json_preserves_the_registry_manifest(
-    probe_worker_type: None,
-    server: ServerHandle,
-    cli: Callable[..., JsonObject],
-    api: ApiHelper,
-) -> None:
-    expected = api.get(server, "/api/worker-types")
-
-    listed = cli(server, "worker-type", "list")
-
-    assert listed == expected
-    assert listed["worker_types"][-1]["worker_type"] == "probe"
-
-
-def test_day_cli_round_trips_midday_reconciliation(
-    server: ServerHandle, cli: Callable[..., JsonObject]
-) -> None:
-    updated = cli(
-        server,
-        "day",
-        "set",
-        "midday-reconciliation",
-        "--date",
-        "2026-07-04",
-        "--value",
-        "The morning bet still holds.",
-    )
-    shown = cli(
-        server,
-        "day",
-        "show",
-        "2026-07-04",
-        "midday_reconciliation",
-    )
-
-    assert updated["midday_reconciliation"] == "The morning bet still holds."
-    assert shown["parts"]["midday_reconciliation"]["value"] == "The morning bet still holds."
 
 
 def test_send_message_cli_mode_reaches_the_current_conversation_system(
@@ -337,7 +297,7 @@ def test_record_reads_share_manifests_selection_and_identity(
     )
     project_part = cli(server, "project", "show", "project_other", "summary")
 
-    assert list(ticket_manifest["manifest"])[0] == "kickoff"
+    assert list(ticket_manifest["manifest"])[0] == "brief"
     assert ticket_manifest["header"]["ticket_status"] == "awaiting_approval"
     assert worker_manifest["header"]["worker"] == "panels-worker-coding"
     assert worker_manifest["header"]["id"] == ticket["id"]
@@ -382,7 +342,7 @@ def test_record_reads_share_manifests_selection_and_identity(
 
     human = CliRunner().invoke(
         cli_main,
-        ["ticket", "show", ticket["id"], "kickoff"],
+        ["ticket", "show", ticket["id"], "brief"],
         env={"PLAN_SERVER_URL": server.base},
     )
     assert human.exit_code == 0, human.output
@@ -401,7 +361,6 @@ def test_record_reads_share_manifests_selection_and_identity(
 
 
 def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
-    planning_worker_registry: None,
     server: ServerHandle,
     cli: Callable[..., JsonObject],
 ) -> None:
@@ -518,7 +477,7 @@ def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
         "a-codex-model",
     )
     assert updated["employee_backend"] == "codex"
-    stored = api.get(server, f"/api/tickets/{created['id']}")
+    stored = api.get(server, f"/api/tickets?detail=full&id={created['id']}")
     assert stored["employee_backend"] == "codex"
     assert stored["employee_launch_model"] == "a-codex-model"
 
@@ -641,8 +600,8 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "--kickoff-note",
         "intake context from user",
     )["id"]
-    created = api.get(server, f"/api/tickets/{tid}")
-    assert created["stage"] == "needs_kickoff"
+    created = api.get(server, f"/api/tickets?detail=full&id={tid}")
+    assert created["stage"] == "needs_brief"
     assert created["pending_proposal"]["body"] == "intake context from user"
 
     accepted_kickoff = cli(
@@ -652,29 +611,27 @@ def test_ticket_approval_copy_and_worker_note_shape(
         tid,
         "--ceiling",
         "none",
-        "--at-cap",
-        "propose",
         "--kickoff-note-file",
         "-",
         stdin="updated intake",
     )
-    assert accepted_kickoff["stage"] == "needs_success"
-    assert accepted_kickoff["ceiling"] == "needs_success"
-    assert accepted_kickoff["at_cap"] == "propose"
-    assert accepted_kickoff["field_values"].get("kickoff") == "updated intake"
+    assert accepted_kickoff["stage"] == "needs_success_condition"
+    assert accepted_kickoff["ceiling"] == "needs_success_condition"
+    assert accepted_kickoff["field_values"].get("brief") == "updated intake"
 
     cli(
         server,
         "worker",
         "propose",
-        "--recap",
-        "Ready to approve.",
         ticket_id=tid,
         stdin="success body",
     )
-    approved = cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
-    assert approved["stage"] == "needs_approach"
-    assert approved["field_values"].get("success") == "success body"
+    # The recap is a separate write, so a Worker keeps it current on its own.
+    cli(server, "worker", "recap", tid, ticket_id=tid, stdin="Ready to approve.")
+    assert api.get(server, f"/api/tickets?detail=full&id={tid}")["recap"] == "Ready to approve."
+    approved = cli(server, "ticket", "approve", tid, "--ceiling", "none")
+    assert approved["stage"] == "needs_what_changes"
+    assert approved["field_values"].get("success_condition") == "success body"
 
     cli(
         server,
@@ -693,7 +650,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=tid,
         stdin="additional approach note",
     )
-    appended_detail = api.get(server, f"/api/tickets/{tid}")
+    appended_detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert appended_detail["guidance"] == "approach note\n\nadditional approach note"
     cli(
         server,
@@ -703,7 +660,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=tid,
         stdin="replaced approach note",
     )
-    detail = api.get(server, f"/api/tickets/{tid}")
+    detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert detail["guidance"] == "replaced approach note"
 
     new_worker_id = cli(
@@ -723,7 +680,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=new_worker_id,
         stdin="stages note",
     )
-    new_worker_detail = api.get(server, f"/api/tickets/{new_worker_id}")
+    new_worker_detail = api.get(server, f"/api/tickets?detail=full&id={new_worker_id}")
     assert new_worker_detail["guidance"] == "stages note"
 
     copied = cli(server, "ticket", "copy", tid)
@@ -770,7 +727,7 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
     )
 
     cli(server, "sprint", "item", "add-ticket", item["id"], tid)
-    detail = api.get(server, f"/api/tickets/{tid}")
+    detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert detail["sprint_item_id"] == item["id"]
     assert detail["effective_sprint_id"] == sprint["id"]
 
@@ -779,7 +736,7 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
     assert renamed["name"] == "Renamed CLI sprint"
 
     cli(server, "sprint", "item", "remove-ticket", item["id"], tid)
-    detail = api.get(server, f"/api/tickets/{tid}")
+    detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert detail["sprint_item_id"] is None
     assert detail["effective_sprint_id"] == sprint["id"]
 
@@ -848,3 +805,37 @@ def test_ticket_place_sends_one_coherent_placement_patch(
     assert backlog["project_id"] == "project_vylo"
     assert backlog["sprint_id"] is None
     assert backlog["sprint_item_id"] is None
+
+
+def test_the_ceiling_and_a_settled_value_are_set_like_every_other_field(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
+    """One route changes a field, and the CLI reaches it the ordinary way."""
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Set the ceiling",
+        "--kickoff-note",
+        "intake",
+    )["id"]
+    cli(server, "ticket", "approve", tid, "--ceiling", "needs_success_condition")
+
+    raised = cli(server, "ticket", "set", tid, "ceiling", "--value", "consequences")
+    assert raised["ceiling"] == "needs_consequences"
+
+    corrected = cli(
+        server,
+        "ticket",
+        "set-value",
+        tid,
+        "brief",
+        "--value",
+        "corrected intake",
+    )
+    assert corrected["field_values"]["brief"] == "corrected intake"
+    read = f"/api/tickets?detail=full&id={tid}"
+    assert api.get(server, read)["stage"] == "needs_success_condition"

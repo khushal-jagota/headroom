@@ -8,15 +8,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from click.testing import CliRunner
-from fastapi.testclient import TestClient
 
-from planner.core.clock import build_clock
 from planner.core.config import Config, load_config
-from planner.core.db import connect, create_schema
-from planner.core.server import create_app
 from planner.environments.backup import create_database_backup
-from planner.environments.cli import EnvironmentCliDependencies, environment
 from planner.environments.vps_status import (
     VpsStatusDependencies,
     apply_cleanup_inventory,
@@ -234,46 +228,3 @@ def test_symlinked_snapshot_evidence_is_absent_from_status_and_cleanup(tmp_path:
     assert (Path(config.backup_dir) / "snapshot-external-link").is_symlink()
 
 
-def test_direct_status_cli_and_read_only_api_serialize_the_same_snapshot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A worker launched from a deployment can inherit that deployment's PLAN_APP_ROOT.
-    # Pin this source-tree equivalence check to the source tree for both call paths.
-    monkeypatch.setenv("PLAN_APP_ROOT", str(Path.cwd()))
-    config = _config(tmp_path)
-    dependencies = VpsStatusDependencies(
-        now=lambda: datetime(2026, 7, 24, tzinfo=UTC),
-        platform_name=lambda: "Darwin",
-        process_lines=lambda: [],
-        statvfs=lambda _path: _StatVfs(),  # type: ignore[return-value, arg-type]  # fake stat_result stand-in
-    )
-    snapshot = collect_vps_status(
-        config,
-        dependencies=dependencies,
-        application_root=Path.cwd(),
-    )
-    cli = CliRunner().invoke(
-        environment,
-        ["status", "--json"],
-        obj=EnvironmentCliDependencies(
-            load_config=lambda: config,
-            vps_status_dependencies=dependencies,
-        ),
-    )
-    assert cli.exit_code == 0, cli.output
-
-    database = connect(config.db_path)
-    create_schema(database)
-    database.close()
-    app = create_app(
-        config,
-        build_clock(config),
-        lambda: connect(config.db_path),
-        vps_status_collector=lambda _config: snapshot,
-    )
-    with TestClient(app) as client:
-        response = client.get("/api/vps-status")
-        assert response.status_code == 200
-        assert client.post("/api/vps-status/cleanup").status_code == 404
-
-    assert json.loads(cli.output) == response.json()

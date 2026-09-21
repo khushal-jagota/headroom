@@ -79,6 +79,21 @@ def _stop_server(handle: ServerHandle) -> None:
         handle.proc.wait()
 
 
+def _adopt_the_worker_types_the_server_runs_on(db_path: Path) -> None:
+    """Give this process the Worker types that are in the database it just built.
+
+    A Worker type is a row, and a process holds the set it is running on from the moment
+    it opens a database. The server does that for itself at boot. Tests then write to the
+    same database through planner code inside the pytest process, and that code reads this
+    process's set, so the pytest process has to open the database too.
+    """
+    from planner.core.db import connect
+    from planner.worker_types.configuration import load_worker_runtime_definitions
+
+    with connect(str(db_path)) as conn:
+        load_worker_runtime_definitions(conn)
+
+
 def _start_server(
     srvdir: Path,
     *,
@@ -168,6 +183,7 @@ def _start_server(
             root = httpx.get(f"{base}/", timeout=1.0)
             assert root.status_code == 200, root.status_code
             assert "data-svelte-app" in root.text
+            _adopt_the_worker_types_the_server_runs_on(db_path)
             return handle
         time.sleep(0.1)
 
@@ -422,7 +438,12 @@ def cli() -> Callable[..., JsonObject]:
         env = _scrubbed_env()
         env["PLAN_SERVER_URL"] = server.base
         if ticket_id is not None:
+            # The identity a launched Worker runs under is both variables together:
+            # worker_conversation_role_materials sets PLAN_ACTOR beside the Ticket id.
+            # The CLI sends what the environment says, so an id on its own is not a
+            # claim to be that Ticket.
             env["PLAN_TICKET_ID"] = ticket_id
+            env["PLAN_ACTOR"] = "worker"
         if actor is not None:
             env["PLAN_ACTOR"] = actor
         proc = subprocess.run(
@@ -445,7 +466,7 @@ def cli() -> Callable[..., JsonObject]:
             approve = subprocess.run(
                 [
                     str(PLAN_BIN), "ticket", "approve", data["id"],
-                    "--ceiling", "none", "--at-cap", "propose", "--json",
+                    "--ceiling", "none", "--json",
                 ],
                 capture_output=True,
                 text=True,

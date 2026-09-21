@@ -1,4 +1,4 @@
-"""The scheduled, readiness, proposal-wake, and notification loops one process owns."""
+"""The scheduled, readiness, and notification loops one process owns."""
 
 from __future__ import annotations
 
@@ -11,14 +11,10 @@ from planner.conversation.contracts import ConversationSystem
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import Config
-from planner.core.db import connect
 from planner.notifications.runtime import NotificationLoop
-from planner.proposal_holder_wakes import data as proposal_holder_wakes_data
-from planner.proposal_holder_wakes.runtime import ProposalHolderWakeLoop
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
-from planner.worker_context.contracts import WorkerContextService
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,19 +30,16 @@ class BackgroundLoops:
         shutdown_grace_seconds: float = 30.0,
         scheduled_ticket_loop: ScheduledTicketLoop | None = None,
         notification_loop: NotificationLoop | None = None,
-        proposal_holder_wake_loop: ProposalHolderWakeLoop | None = None,
     ) -> None:
         self.worker_step_readiness_loop = worker_step_readiness_loop
         self.scheduled_ticket_loop = scheduled_ticket_loop
         self.notification_loop = notification_loop
-        self.proposal_holder_wake_loop = proposal_holder_wake_loop
         self._lock_path = lock_path
         self._stop_waking_on_change = stop_waking_on_change
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._stopped = False
-        self._shutdown_settled: bool | None = None
 
-    async def stop(self, *, deadline: float | None = None) -> bool:
+    async def stop(self, *, deadline: float | None = None) -> None:
         """Stop listening, stop polling, let the steps in flight land, release the lock.
 
         The loop is stopped on a worker thread because its own drain waits on tasks that
@@ -54,7 +47,7 @@ class BackgroundLoops:
         """
         global _active
         if self._stopped:
-            return self._shutdown_settled is not False
+            return
         self._stopped = True
         if self._stop_waking_on_change is not None:
             self._stop_waking_on_change()
@@ -76,22 +69,10 @@ class BackgroundLoops:
                 self.worker_step_readiness_loop.stop,
                 deadline=deadline,
             )
-        wake_deliveries_settled = True
-        if self.proposal_holder_wake_loop is not None:
-            wake_deliveries_settled = await asyncio.to_thread(
-                self.proposal_holder_wake_loop.stop,
-                deadline=deadline,
-            )
-        if self._lock_path is not None and wake_deliveries_settled:
+        if self._lock_path is not None:
             release_machine_lock(self._lock_path)
-        elif self._lock_path is not None:
-            _LOGGER.error(
-                "Machine lock retained because proposal-holder wake delivery did not settle"
-            )
-        self._shutdown_settled = wake_deliveries_settled
-        if _active is self and wake_deliveries_settled:
+        if _active is self:
             _active = None
-        return wake_deliveries_settled
 
 
 _active: BackgroundLoops | None = None
@@ -102,7 +83,6 @@ def start_background_loops(
     clock: Clock,
     *,
     conversation_system: ConversationSystem,
-    worker_context_service: WorkerContextService,
     asyncio_loop: asyncio.AbstractEventLoop,
 ) -> BackgroundLoops:
     """Own the background loops when this process holds the machine lock.
@@ -119,7 +99,6 @@ def start_background_loops(
     worker_step_readiness_loop: WorkerStepReadinessLoop | None = None
     scheduled_ticket_loop: ScheduledTicketLoop | None = None
     notification_loop: NotificationLoop | None = None
-    proposal_holder_wake_loop: ProposalHolderWakeLoop | None = None
     lock_path: str | None = None
     stop_waking_on_change: Callable[[], None] | None = None
 
@@ -131,20 +110,8 @@ def start_background_loops(
         candidate_loop: WorkerStepReadinessLoop | None = None
         candidate_schedule_loop: ScheduledTicketLoop | None = None
         candidate_notification_loop: NotificationLoop | None = None
-        candidate_wake_loop: ProposalHolderWakeLoop | None = None
         candidate_unsubscribe: Callable[[], None] | None = None
-        wake_deliveries_settled = True
         try:
-            # Only the machine-lock owner can reset a crash-abandoned delivery claim.
-            # This remains database-only startup work; the wake loop performs all I/O.
-            wake_conn = connect(config.db_path, config.db_busy_timeout_ms)
-            try:
-                proposal_holder_wakes_data.recover_interrupted_deliveries(
-                    wake_conn, now=clock.now_unix()
-                )
-                proposal_holder_wakes_data.reconcile_missing(wake_conn, now=clock.now_unix())
-            finally:
-                wake_conn.close()
             candidate_schedule_loop = ScheduledTicketLoop(
                 config.db_path,
                 clock,
@@ -155,7 +122,6 @@ def start_background_loops(
                 config.db_path,
                 clock,
                 conversation_system=conversation_system,
-                worker_context_service=worker_context_service,
                 asyncio_loop=asyncio_loop,
                 boundary_hour=config.boundary_hour,
                 busy_timeout_ms=config.db_busy_timeout_ms,
@@ -166,13 +132,6 @@ def start_background_loops(
                 canonical_origin=config.trusted_ingress_canonical_origin,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
-            candidate_wake_loop = ProposalHolderWakeLoop(
-                config.db_path,
-                clock,
-                conversation_system=conversation_system,
-                asyncio_loop=asyncio_loop,
-                busy_timeout_ms=config.db_busy_timeout_ms,
-            )
             candidate_schedule_loop.start(config.tick_seconds)
             candidate_loop.start(config.tick_seconds)
             candidate_notification_loop.start(config.tick_seconds)
@@ -180,12 +139,8 @@ def start_background_loops(
             def wake_reconcilers() -> None:
                 candidate_loop.wake()
                 candidate_notification_loop.wake()
-                candidate_wake_loop.wake()
 
             candidate_unsubscribe = change_signal.subscribe(wake_reconcilers)
-            # Start the only loop that can reach a proposal holder last. No later
-            # startup action can fail and orphan one of its delivery tasks.
-            candidate_wake_loop.start(config.tick_seconds)
         except Exception:
             _LOGGER.exception("Background loops failed to start")
             if candidate_unsubscribe is not None:
@@ -205,26 +160,11 @@ def start_background_loops(
                     candidate_notification_loop.stop()
                 except Exception:
                     _LOGGER.exception("partially started notification loop failed to stop")
-            if candidate_wake_loop is not None:
-                try:
-                    wake_deliveries_settled = candidate_wake_loop.stop()
-                except Exception:
-                    wake_deliveries_settled = False
-                    _LOGGER.exception("partially started proposal wake loop failed to stop")
-            if wake_deliveries_settled:
-                release_machine_lock(config.dispatcher_lock_path)
-            else:
-                _LOGGER.error(
-                    "Machine lock retained after startup failure because proposal-holder "
-                    "wake delivery did not settle"
-                )
-                proposal_holder_wake_loop = candidate_wake_loop
-                lock_path = config.dispatcher_lock_path
+            release_machine_lock(config.dispatcher_lock_path)
         else:
             worker_step_readiness_loop = candidate_loop
             scheduled_ticket_loop = candidate_schedule_loop
             notification_loop = candidate_notification_loop
-            proposal_holder_wake_loop = candidate_wake_loop
             stop_waking_on_change = candidate_unsubscribe
             lock_path = config.dispatcher_lock_path
 
@@ -235,7 +175,6 @@ def start_background_loops(
         shutdown_grace_seconds=float(config.shutdown_grace_seconds),
         scheduled_ticket_loop=scheduled_ticket_loop,
         notification_loop=notification_loop,
-        proposal_holder_wake_loop=proposal_holder_wake_loop,
     )
     _active = loops
     return loops

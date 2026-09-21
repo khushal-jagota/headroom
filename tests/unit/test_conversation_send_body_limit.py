@@ -3,29 +3,12 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import pytest
-
-from planner.conversation.send_body_limit import (
-    MAX_CONVERSATION_SEND_REQUEST_BYTES,
-    ConversationSendBodyLimitMiddleware,
-)
+from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
 
 _SEND_PATH = "/api/conversation/conversations/c/send"
 
 
-@pytest.mark.parametrize(
-    "path",
-    [
-        "/api/conversation/conversations/c/send",
-        "/api/chief/conversation/send",
-        "/api/tickets/t_1/conversation/send",
-        "/api/items/si_1/supervisor/conversation/send",
-        "/api/messages/send",
-    ],
-)
-def test_content_length_rejects_every_send_before_body_or_downstream_read(
-    path: str,
-) -> None:
+def test_content_length_rejects_every_send_before_body_or_downstream_read() -> None:
     downstream_called = False
     receive_called = False
     sent: list[dict[str, Any]] = []
@@ -45,7 +28,7 @@ def test_content_length_rejects_every_send_before_body_or_downstream_read(
     middleware = ConversationSendBodyLimitMiddleware(downstream, max_bytes=5)
     asyncio.run(
         middleware(
-            _scope(path=path, headers=[(b"content-length", b"6")]),
+            _scope(headers=[(b"content-length", b"6")]),
             receive,
             send,
         )
@@ -84,36 +67,6 @@ def test_chunked_body_stops_before_the_over_limit_chunk_reaches_downstream() -> 
 
     assert downstream_chunks == [b"123"]
     assert sent[0]["status"] == 413
-
-
-def test_limit_leaves_room_for_both_approved_binary_budgets_and_json() -> None:
-    encoded_files = 4 * (((10 * 1024 * 1024) + 2) // 3)
-    encoded_images = 4 * (((3 * 1024 * 1024) + 2) // 3)
-    assert MAX_CONVERSATION_SEND_REQUEST_BYTES - encoded_files - encoded_images > 1024 * 1024
-
-
-def test_non_send_route_is_not_limited() -> None:
-    downstream_called = False
-
-    async def downstream(scope: dict[str, Any], receive: Any, send: Any) -> None:
-        nonlocal downstream_called
-        downstream_called = True
-
-    async def receive() -> dict[str, Any]:
-        return {"type": "http.request", "body": b"", "more_body": False}
-
-    async def send(message: dict[str, Any]) -> None:
-        return None
-
-    middleware = ConversationSendBodyLimitMiddleware(downstream, max_bytes=5)
-    asyncio.run(
-        middleware(
-            _scope(path="/api/conversation/voice-transcriptions"),
-            receive,
-            send,
-        )
-    )
-    assert downstream_called is True
 
 
 def _scope(

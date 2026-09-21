@@ -34,6 +34,7 @@ planner = [
   "core/migrations/env.py",
   "core/migrations/script.py.mako",
   "core/migrations/versions/*.py",
+  "worker_types/shipped_worker_types.json",
   "skills/*/SKILL.md",
   "skills/*/agents/*.yaml",
   "skills/*/references/*.md",
@@ -52,6 +53,9 @@ select = ["E", "F", "W", "I", "UP", "B"]
 # Migrations hold SQL verbatim, and some column definitions run past 100 cols. Rewrapping
 # them would change text that is meant to stay exactly as it was applied.
 "src/planner/core/migrations/versions/*.py" = ["E501"]
+# The same reason, for the skill text one revision replaces. It is the owner's rows
+# quoted exactly as they stand, so rewrapping it would stop it matching them.
+"src/planner/core/migrations/skill_row_correction_data.py" = ["E501"]
 
 [tool.mypy]
 strict = true
@@ -60,13 +64,22 @@ strict = true
 # them ``Any`` and silently stop checking every call made through them. Moving a type is
 # then meant to list every call site it broke here, in one run, instead of one test run at
 # a time.
-files = ["src", "tests"]
-mypy_path = "src"
+# The tree guard is checked at the same strictness as what it protects. The rest of
+# scripts/ is not: measure_status_gaps.py is an untyped one-off and rewriting it belongs
+# to whoever next touches it.
+files = ["src", "tests", "scripts/tree_environment.py"]
+mypy_path = "src:scripts"
 # ``tests`` has no __init__.py — it is a PEP 420 namespace package rooted at the repo root
 # (see the pytest ``pythonpath`` setting below). Without this, mypy fails on package layout
 # before it checks anything.
 explicit_package_bases = true
 python_version = "3.12"
+# Not analysis: the plugin entry point refuses to load when this mypy comes from
+# another tree's virtualenv. A bare ``mypy`` at a terminal is reported as evidence, and a
+# copied virtualenv checks this source against that other tree's pinned dependency
+# versions. mypy resolves this path against the directory holding this file, so the
+# tree's config always loads the tree's guard.
+plugins = ["scripts/tree_environment.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

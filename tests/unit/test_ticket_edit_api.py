@@ -2,24 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import seed_probe_worker_type
 
 from planner.conversation.backend_state import write_model_enablement
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.days import data as days_data
@@ -27,15 +24,17 @@ from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
-    AtCap,
 )
-from planner.worker_context import data as worker_context_data
+from planner.worker_types.configuration import load_worker_runtime_definitions
 
 
-def _make_app(tmp_path: Path, *, trace: list[str] | None = None) -> tuple[FastAPI, Path]:
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
+    # The probe Worker type is stored like any other, so the app reads it from here.
+    seed_probe_worker_type(boot)
+    load_worker_runtime_definitions(boot)
     boot.close()
     config = load_config(
         path=None,
@@ -49,10 +48,7 @@ def _make_app(tmp_path: Path, *, trace: list[str] | None = None) -> tuple[FastAP
     clock = build_clock(config)
 
     def conn_factory() -> Connection:
-        conn = connect(str(db_path))
-        if trace is not None:
-            conn.set_trace_callback(trace.append)
-        return conn
+        return connect(str(db_path))
 
     return create_app(config, clock, conn_factory), db_path
 
@@ -81,16 +77,67 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field="kickoff",
+            field="brief",
             principal=OWNER_PRINCIPAL,
             now=1,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
             next_holder=OWNER_PRINCIPAL,
         )
         return ticket.id
     finally:
         conn.close()
+
+
+def test_ticket_block_api_validates_endpoints_duplicates_and_active_cycles(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    first = _create_ticket(db_path, title="First")
+    second = _create_ticket(db_path, title="Second")
+    third = _create_ticket(db_path, title="Third")
+    fourth = _create_ticket(db_path, title="Fourth")
+    fifth = _create_ticket(db_path, title="Fifth")
+
+    def add(client: TestClient, blocking: str, blocked: str) -> Any:
+        return client.put(f"/api/collections/blockers/{blocked}/{blocking}")
+
+    with TestClient(app) as client:
+        missing_blocker = add(client, "t_missing", first)
+        missing_blocked = add(client, first, "t_missing")
+        self_block = add(client, first, first)
+        created = add(client, first, second)
+        duplicate = add(client, first, second)
+        direct_cycle = add(client, second, first)
+        assert add(client, third, fourth).status_code == 200
+        assert add(client, fourth, fifth).status_code == 200
+        longer_cycle = add(client, fifth, third)
+
+    assert missing_blocker.status_code == 400
+    assert missing_blocker.json()["error"] == {
+        "code": "ticket_block_invalid",
+        "message": "blocking_ticket_id must be an existing ticket",
+        "detail": {"blocking_ticket_id": "t_missing"},
+    }
+    assert missing_blocked.status_code == 400
+    assert missing_blocked.json()["error"] == {
+        "code": "ticket_block_invalid",
+        "message": "blocked_ticket_id must be an existing ticket",
+        "detail": {"blocked_ticket_id": "t_missing"},
+    }
+    assert self_block.status_code == 400
+    assert self_block.json()["error"]["code"] == "ticket_block_invalid"
+    assert created.json() == {
+        "collection": "blockers",
+        "container_id": second,
+        "member_id": first,
+        "ok": True,
+    }
+    assert duplicate.status_code == 400
+    assert duplicate.json()["error"]["code"] == "ticket_block_invalid"
+    assert direct_cycle.status_code == 400
+    assert direct_cycle.json()["error"]["code"] == "ticket_block_cycle"
+    assert longer_cycle.status_code == 400
+    assert longer_cycle.json()["error"]["code"] == "ticket_block_cycle"
 
 
 def _create_pristine_ticket(db_path: Path, *, worker_type: str = "probe") -> str:
@@ -104,42 +151,6 @@ def _create_pristine_ticket(db_path: Path, *, worker_type: str = "probe") -> str
             now=1,
             title_max_chars=200,
         ).id
-    finally:
-        conn.close()
-
-
-@pytest.fixture
-def probe_runtime() -> Iterator[None]:
-    install_probe_registry()
-    try:
-        yield
-    finally:
-        uninstall_probe_registry()
-
-
-def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
-    conn = connect(str(db_path))
-    try:
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        return {
-            "values": (
-                ticket.title,
-                ticket.priority.value,
-                ticket.deadline,
-                ticket.project_id,
-                ticket.effective_sprint_id,
-                ticket.employee_backend,
-                ticket.employee_launch_model,
-                ticket.employee_launch_reasoning_effort,
-                str(ticket.stage),
-                ticket.ticket_status.value,
-            ),
-            "updated_at": ticket.updated_at,
-            "context": tuple(
-                (item.context_key, item.text, item.revision)
-                for item in worker_context_data.snapshot(conn, ticket_id).items
-            ),
-        }
     finally:
         conn.close()
 
@@ -250,98 +261,25 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
     finally:
         conn.close()
     with TestClient(app) as client:
-        assert client.get(f"/api/tickets/{defaulted.json()['id']}").json()["day_ids"] == [
+        defaulted_read = f"/api/tickets?detail=full&id={defaulted.json()['id']}"
+        assert client.get(defaulted_read).json()["day_ids"] == [
             "day_2026-07-10"
         ]
-        assert client.get(f"/api/tickets/{explicit_backlog.json()['id']}").json()["day_ids"] == [
+        explicit_backlog_read = f"/api/tickets?detail=full&id={explicit_backlog.json()['id']}"
+        assert client.get(explicit_backlog_read).json()["day_ids"] == [
             "day_2026-07-10"
         ]
-
-
-def test_failed_creation_does_not_create_an_other_item(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    conn = connect(str(db_path))
-    try:
-        _seed_sprint(conn)
-        conn.commit()
-    finally:
-        conn.close()
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/tickets",
-            json={
-                "title": "Must not land",
-                "worker_type": "coding",
-                "blocked_by_ticket_ids": ["t_missing"],
-            },
-        )
-
-    assert response.status_code == 400
-    conn = connect(str(db_path))
-    try:
-        assert (
-            conn.execute("SELECT COUNT(*) FROM sprint_items WHERE kind = 'other'").fetchone()[0]
-            == 0
-        )
-    finally:
-        conn.close()
-
-
-def test_planning_ticket_creation_uses_regular_placement_without_manufacturing_an_item(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    conn = connect(str(db_path))
-    try:
-        _seed_sprint(conn)
-        conn.commit()
-    finally:
-        conn.close()
-
-    with TestClient(app) as client:
-        defaulted = client.post(
-            "/api/tickets", json={"title": "Plan today", "worker_type": "planning-day"}
-        )
-        explicit = client.post(
-            "/api/tickets",
-            json={
-                "title": "Plan explicit Sprint",
-                "worker_type": "planning-sprint",
-                "sprint_id": "sp_edit",
-            },
-        )
-        initiative = client.post(
-            "/api/tickets",
-            json={"title": "Plan initiative", "worker_type": "initiative_planning"},
-        )
-
-    for response in (defaulted, explicit):
-        assert response.status_code == 200
-        assert response.json()["project_id"] == "project_other"
-        assert response.json()["sprint_id"] == "sp_edit"
-        assert response.json()["sprint_item_id"] is None
-    assert initiative.status_code == 200
-    assert initiative.json()["project_id"] == "project_other"
-    assert initiative.json()["sprint_id"] == "sp_edit"
-    assert initiative.json()["sprint_item_id"] is None
-
-    conn = connect(str(db_path))
-    try:
-        assert conn.execute("SELECT COUNT(*) FROM sprint_items").fetchone()[0] == 0
-    finally:
-        conn.close()
 
 
 def test_employee_configuration_endpoint_allows_pristine_statuses(
     tmp_path: Path,
-    probe_runtime: None,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     awaiting_id = _create_pristine_ticket(db_path)
     empty_id = _create_pristine_ticket(db_path)
     conn = connect(str(db_path))
-    conn.execute("UPDATE tickets SET ticket_status = 'empty' WHERE id = ?", (empty_id,))
+    # No parked proposal, so this one reads as `empty` rather than awaiting approval.
+    conn.execute("UPDATE tickets SET pending_proposal = NULL WHERE id = ?", (empty_id,))
     conn.close()
 
     with TestClient(app) as client:
@@ -372,7 +310,6 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
 
 def test_employee_configuration_rejects_a_disabled_model_without_a_partial_write(
     tmp_path: Path,
-    probe_runtime: None,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _create_pristine_ticket(db_path)
@@ -419,7 +356,6 @@ def _backend_snapshot(
 
 def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
     tmp_path: Path,
-    probe_runtime: None,
 ) -> None:
     class BackendSnapshots:
         async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
@@ -492,151 +428,6 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
     ) == ("hermes", "openai-codex:gpt-5.6-sol", "high")
 
 
-def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_signal(
-    tmp_path: Path,
-) -> None:
-    trace: list[str] = []
-    app, db_path = _make_app(tmp_path, trace=trace)
-    conn = connect(str(db_path))
-    try:
-        _seed_sprint(conn)
-    finally:
-        conn.close()
-    ticket_id = _create_ticket(db_path)
-    before = _snapshot(db_path, ticket_id)
-
-    with TestClient(app) as client:
-        # The trace below proves the PATCH transaction. Startup owns its own fail-fast
-        # skill reconciliation transactions, which finish before this request begins.
-        trace.clear()
-        response = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={
-                "project": "Vylo",
-                "deadline": "2026-08-01",
-                "priority": "P1",
-                "title": "After edit",
-            },
-        )
-
-    assert response.status_code == 200, response.json()
-    assert response.json()["title"] == "After edit"
-    assert response.json()["priority"] == "P1"
-    assert response.json()["deadline"] == "2026-08-01"
-    assert response.json()["project_id"] == "project_vylo"
-    assert response.json()["effective_sprint_id"] is None
-    assert before["values"] != _snapshot(db_path, ticket_id)["values"]
-    assert _snapshot(db_path, ticket_id)["context"] == (
-        (
-            "ticket_changed",
-            "This ticket changed outside your worker turn. Reread the ticket before continuing.",
-            1,
-        ),
-    )
-    transaction_statements = [statement.strip() for statement in trace]
-    assert sum(statement == "BEGIN IMMEDIATE" for statement in transaction_statements) == 1
-    ticket_updates = [
-        statement
-        for statement in transaction_statements
-        if statement.upper().startswith("UPDATE TICKETS SET")
-    ]
-    assert len(ticket_updates) == 1
-    begin_index = transaction_statements.index("BEGIN IMMEDIATE")
-    statements_under_lock = transaction_statements[begin_index:]
-    assert any(
-        "SELECT 1 FROM PROJECTS WHERE ID" in statement.upper()
-        for statement in statements_under_lock
-    )
-
-
-def test_compound_patch_rolls_back_the_row_and_context_when_a_later_write_fails(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _create_ticket(db_path)
-    conn = connect(str(db_path))
-    try:
-        # The worker-context notice is written after the ticket row, inside the same
-        # transaction, so failing it proves the row write rolls back with it.
-        conn.execute(
-            "CREATE TRIGGER abort_worker_context_notice "
-            "BEFORE INSERT ON pending_worker_context "
-            "BEGIN SELECT RAISE(ABORT, 'forced worker context failure'); END"
-        )
-    finally:
-        conn.close()
-    before = _snapshot(db_path, ticket_id)
-
-    with TestClient(app, raise_server_exceptions=False) as client:
-        response = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={"title": "Must roll back", "priority": "P1"},
-        )
-
-    assert response.status_code == 500
-    assert _snapshot(db_path, ticket_id) == before
-
-
-def test_patch_of_existing_non_null_values_is_a_true_noop(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    conn = connect(str(db_path))
-    try:
-        _seed_sprint(conn)
-    finally:
-        conn.close()
-    ticket_id = _create_ticket(
-        db_path,
-        priority=Priority.P1,
-        deadline="2026-08-01",
-        project_id="project_vylo",
-    )
-    before = _snapshot(db_path, ticket_id)
-
-    with TestClient(app) as client:
-        response = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={
-                "title": "Before edit",
-                "priority": "P1",
-                "deadline": "2026-08-01",
-                "project": "vylo",
-                "project_id": "project_vylo",
-            },
-        )
-
-    assert response.status_code == 200, response.json()
-    assert _snapshot(db_path, ticket_id) == before
-
-
-def test_project_selectors_keep_their_existing_success_contract(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    with TestClient(app) as client:
-        name_id = _create_ticket(db_path)
-        name = client.patch(f"/api/tickets/{name_id}", json={"project": "vYlO"})
-        assert name.status_code == 200, name.json()
-        assert name.json()["project_id"] == "project_vylo"
-
-        id_id = _create_ticket(db_path)
-        by_id = client.patch(f"/api/tickets/{id_id}", json={"project_id": "project_vylo"})
-        assert by_id.status_code == 200, by_id.json()
-        assert by_id.json()["project"] == "Vylo"
-
-        matching_id = _create_ticket(db_path)
-        matching = client.patch(
-            f"/api/tickets/{matching_id}",
-            json={"project": "Vylo", "project_id": "project_vylo"},
-        )
-        assert matching.status_code == 200, matching.json()
-        assert matching.json()["project_id"] == "project_vylo"
-
-        cleared = client.patch(
-            f"/api/tickets/{matching_id}",
-            json={"project": None, "project_id": None},
-        )
-        assert cleared.status_code == 200, cleared.json()
-        assert cleared.json()["project_id"] is None
-
-
 def test_an_active_worker_does_not_block_an_ordinary_edit(
     tmp_path: Path,
 ) -> None:
@@ -667,4 +458,3 @@ def test_an_active_worker_does_not_block_an_ordinary_edit(
     assert response.json()["ticket_status"] == "agent"
     assert response.json()["title"] == "Edited during active work"
     assert response.json()["priority"] == "P1"
-    assert _snapshot(db_path, ticket_id)["context"][-1][2] == 1

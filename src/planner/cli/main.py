@@ -9,11 +9,11 @@ The command tree mirrors the product model:
 * ticket: create, inspect, organize, and approve tickets
 * sprint: create, inspect, edit, and populate sprints and sprint items
 * worker: worker-only writes such as proposals, recaps, and notes
-* chief: import work completed outside Panels
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections.abc import Callable
@@ -31,14 +31,15 @@ from planner.cli.record_projection import (
     project_record,
     render_text,
 )
-from planner.core.contracts import PrincipalKind
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.message_delivery.contracts import MessageDeliveryMode
-from planner.tickets.contracts import AtCap
+from planner.worker_types.contracts import BRIEF_FIELD_ID
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
+_ACTOR_ENV = "PLAN_ACTOR"
+_SPRINT_ITEM_ID_ENV = "PLAN_SPRINT_ITEM_ID"
 
 _DAY_FIELDS = {
     "focus": "focus",
@@ -50,9 +51,56 @@ _DAY_FIELDS = {
 }
 
 
+# One way to name who holds a ceiling, wherever tooling takes one. The kind follows from
+# the id, so the common case — hand this to Khushal — is `--holder me`.
+_HOLDER_ALIASES = {
+    "me": ("owner", "owner"),
+    "owner": ("owner", "owner"),
+    "chief": ("chief", "chief"),
+}
+
+
+def caller_principal() -> dict[str, str]:
+    """The principal this process is, as a holder object.
+
+    A caller who does not say where a ceiling goes next keeps it. Khushal keeps it as the
+    owner, and an Outcome or a Ticket keeps it as itself, which is what the two approval
+    doors each defaulted to before they became one.
+    """
+    actor = os.environ.get(_ACTOR_ENV, "").strip()
+    ticket_id = os.environ.get(_TICKET_ID_ENV, "").strip()
+    sprint_item_id = os.environ.get(_SPRINT_ITEM_ID_ENV, "").strip()
+    if actor == "chief":
+        return {"kind": "chief", "id": "chief"}
+    if actor == "worker" and ticket_id:
+        return {"kind": "ticket", "id": ticket_id}
+    if actor == "sprint_item_supervisor" and sprint_item_id:
+        return {"kind": "sprint_item", "id": sprint_item_id}
+    return {"kind": "owner", "id": "owner"}
+
+
+def resolve_holder(raw: str, as_json: bool) -> dict[str, str]:
+    """Turn a holder word or id into the principal object the API takes."""
+    holder = raw.strip()
+    alias = _HOLDER_ALIASES.get(holder.lower())
+    if alias is not None:
+        return {"kind": alias[0], "id": alias[1]}
+    if holder.startswith("si_"):
+        return {"kind": "sprint_item", "id": holder}
+    if holder.startswith("t_"):
+        return {"kind": "ticket", "id": holder}
+    http.fail_validation(
+        "holder must be me, chief, a Sprint Item id, or a Ticket id",
+        as_json,
+    )
+    raise AssertionError("unreachable")
+
+
 _TICKET_SET_FIELDS = {
+    "ceiling": "ceiling",
+    "ceiling-holder": "ceiling_holder",
     "title": "title",
-    "kickoff-note": "kickoff",
+    "kickoff-note": "brief",
     "priority": "priority",
     "deadline": "deadline",
     "project": "project",
@@ -76,19 +124,6 @@ _ITEM_FIELDS = {
     "deadline": "deadline",
     "project": "project",
     "project-id": "project_id",
-}
-
-_SUPERVISOR_ITEM_FIELDS = {
-    "title": "title",
-    "body": "body",
-    "priority": "priority",
-    "deadline": "deadline",
-}
-
-_SUPERVISOR_TICKET_FIELDS = {
-    "title": "title",
-    "priority": "priority",
-    "deadline": "deadline",
 }
 
 _PROJECT_FIELDS = {
@@ -148,15 +183,6 @@ def read_optional_body(body_file: str | None, as_json: bool) -> str | None:
     return _read_source(body_file, as_json)
 
 
-def read_required_option_body(body_file: str | None, as_json: bool, label: str) -> str:
-    if body_file is None:
-        http.fail_validation(f"{label} required: pass --{label}-file PATH", as_json)
-    text = _read_source(body_file, as_json)
-    if not text.strip():
-        http.fail_validation(f"empty {label}", as_json)
-    return text
-
-
 def read_value_or_file(
     value: str | None,
     body_file: str | None,
@@ -175,16 +201,6 @@ def read_value_or_file(
     if body_file is not None:
         return _read_source(body_file, as_json)
     return value
-
-
-def read_recap(recap: str | None, recap_file: str | None, as_json: bool) -> str:
-    if recap_file is not None:
-        http.fail_validation("--recap-file is no longer supported: pass --recap TEXT", as_json)
-    if recap is None:
-        http.fail_validation("recap required: pass --recap TEXT", as_json)
-    if not recap.strip():
-        http.fail_validation("empty recap", as_json)
-    return recap
 
 
 def resolve_ticket_id(positional: str | None, as_json: bool) -> str:
@@ -211,7 +227,7 @@ def _feedback_list_line(note: dict[str, Any]) -> str:
 
 
 def _current_sprint_id(as_json: bool) -> str:
-    data = http.send("GET", "/api/sprint/current", as_json=as_json, request_actor="ordinary")
+    data = http.send("GET", "/api/sprint/current", as_json=as_json)
     sprint = data.get("sprint") if isinstance(data, dict) else None
     if sprint is None:
         http.fail_validation("no current sprint", as_json)
@@ -254,10 +270,7 @@ def _ticket_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Reco
         "project_id",
         "sprint_item_id",
         "effective_sprint_id",
-        "default_stage_ownership_mode",
-        "effective_stage_ownership_mode",
         "ceiling",
-        "at_cap",
     )
     header = {key: data[key] for key in header_keys if key in data}
     manifest = _worker_type(str(data["worker_type"]), True)
@@ -265,7 +278,6 @@ def _ticket_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Reco
         field["id"]: part(data["field_values"].get(field["id"])) for field in manifest["fields"]
     }
     parts["proposal"] = part(data.get("pending_proposal"))
-    parts["archive"] = part(data.get("archived_field_content", ""))
     parts["recap"] = part(data.get("recap", ""))
     parts["guidance"] = part(data.get("guidance", ""))
     return header, parts
@@ -289,13 +301,21 @@ def _sprint_item_record(
         "priority",
         "deadline",
         "kind",
-        "blocked_by",
-        "blockers_cleared",
     )
-    return (
-        {key: data[key] for key in header_keys if key in data},
-        {"body": part(data["body"])},
-    )
+    header = {key: data[key] for key in header_keys if key in data}
+    # The Outcome's agent is part of the Outcome's record. It used to be a read of its
+    # own, which returned these four values and nothing this read did not already carry.
+    supervisor = data.get("supervisor")
+    if supervisor is not None:
+        launch = supervisor["launch_configuration"]
+        header |= {
+            "supervisor_agent_key": supervisor["agent_key"],
+            "supervisor_conversation_id": supervisor["conversation_id"],
+            "employee_backend": launch["employee_backend"],
+            "employee_launch_model": launch["employee_launch_model"],
+            "employee_launch_reasoning_effort": launch["employee_launch_reasoning_effort"],
+        }
+    return (header, {"body": part(data["body"])})
 
 
 def _day_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, RecordPart]]:
@@ -324,7 +344,7 @@ def _worker_types(as_json: bool) -> dict[str, dict[str, Any]]:
     """The served manifests keyed by Worker type — the single source for Stage order /
     gates / fields / ceiling range per type (no parallel lifecycle encoding in the CLI).
     """
-    data = http.send("GET", "/api/worker-types", as_json=as_json, request_actor="ordinary")
+    data = http.send("GET", "/api/worker-types", as_json=as_json)
     return {m["worker_type"]: m for m in data["worker_types"]}
 
 
@@ -478,7 +498,7 @@ def feedback_group() -> None:
 @feedback_group.command("list")
 @json_option
 def feedback_list(as_json: bool) -> None:
-    result = http.send("GET", "/api/feedback", as_json=as_json, request_actor="ordinary")
+    result = http.send("GET", "/api/feedback", as_json=as_json)
     http.emit(
         result,
         as_json,
@@ -499,7 +519,6 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
         "/api/feedback/use",
         as_json=as_json,
         json_body={"feedback_ids": list(feedback_ids), "ticket_id": ticket_id},
-        request_actor="ordinary",
     )
     http.emit(
         result,
@@ -521,14 +540,14 @@ def feedback_use(ticket_id: str, feedback_ids: tuple[str, ...], as_json: bool) -
 @click.option(
     "--mode",
     type=click.Choice([mode.value for mode in MessageDeliveryMode]),
-    default=MessageDeliveryMode.queue.value,
+    default=MessageDeliveryMode.steer.value,
     show_default=True,
-    help="Queue, steer into the running turn, or interrupt it and send now.",
+    help="Steer into the running turn, queue behind it, or interrupt it and send now.",
 )
 @click.option(
     "--message",
     default=None,
-    help="Message text. If you would like a reply, ask the recipient to send a message back.",
+    help="Message text. Addressed agent turns must reply through Send Message.",
 )
 @click.option("--body-file", default=None, help="Read message text from this file, or -.")
 @json_option
@@ -544,7 +563,7 @@ def send_message(
 ) -> None:
     """Send one message to one Panels conversation owner.
 
-    To request a reply, ask the recipient to send one with `panels send-message`.
+    An addressed agent turn must send one explicit reply before it completes.
     """
     targets = sum(
         1
@@ -583,7 +602,6 @@ def send_message(
         "/api/messages/send",
         as_json=as_json,
         json_body={"target": recipient, "message": text, "mode": mode},
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"message {data['fate']}")
 
@@ -732,7 +750,6 @@ def schedule_create(
         "/api/schedules",
         as_json=as_json,
         json_body=body,
-        request_actor="ordinary",
     )
     http.emit(
         result,
@@ -744,7 +761,7 @@ def schedule_create(
 @schedule_group.command("list")
 @json_option
 def schedule_list(as_json: bool) -> None:
-    result = http.send("GET", "/api/schedules", as_json=as_json, request_actor="ordinary")
+    result = http.send("GET", "/api/schedules", as_json=as_json)
     http.emit(
         result,
         as_json,
@@ -766,7 +783,6 @@ def schedule_show(schedule_id: str, as_json: bool) -> None:
         "GET",
         f"/api/schedules/{schedule_id}",
         as_json=as_json,
-        request_actor="ordinary",
     )
     occurrences = result.get("occurrences", [])
     latest = "never run"
@@ -841,7 +857,6 @@ def schedule_set(
         f"/api/schedules/{schedule_id}",
         as_json=as_json,
         json_body={api_field: body_value},
-        request_actor="ordinary",
     )
     http.emit(result, as_json, f"{result['id']} {field} set")
 
@@ -851,13 +866,13 @@ def schedule_set(
 
 @main.group("worker-type")
 def worker_type_group() -> None:
-    """Discover the configured Worker types."""
+    """Inspect and declare the Worker types."""
 
 
 @worker_type_group.command("list")
 @json_option
 def worker_type_list(as_json: bool) -> None:
-    data = http.send("GET", "/api/worker-types", as_json=as_json, request_actor="ordinary")
+    data = http.send("GET", "/api/worker-types", as_json=as_json)
     http.emit(
         data,
         as_json,
@@ -865,7 +880,80 @@ def worker_type_list(as_json: bool) -> None:
     )
 
 
+@worker_type_group.command("show")
+@click.argument("worker_type")
+@json_option
+def worker_type_show(worker_type: str, as_json: bool) -> None:
+    """Print one Worker type's stored record, in the shape `save` takes back."""
+    data = http.send(
+        "GET",
+        f"/api/worker-types/{worker_type}",
+        as_json=as_json,
+    )
+    http.emit(data, as_json, json.dumps(data, indent=2, ensure_ascii=False))
+
+
+@worker_type_group.command("save")
+@json_option
+def worker_type_save(as_json: bool) -> None:
+    """Declare a Worker type, or replace the one with this id. Record on stdin."""
+    body = read_worker_stdin_body(as_json, "worker type record")
+    try:
+        record = json.loads(body)
+    except ValueError:
+        http.fail_validation("worker type record must be JSON", as_json)
+    if not isinstance(record, dict):
+        http.fail_validation("worker type record must be a JSON object", as_json)
+    data = http.send(
+        "POST",
+        "/api/worker-types",
+        json_body=record,
+        as_json=as_json,
+    )
+    http.emit(data, as_json, f"{data['worker_type']} saved")
+
+
+@worker_type_group.command("skill")
+@click.argument("worker_type")
+@click.option("--description", required=True, help="The one-line description in the frontmatter.")
+@json_option
+def worker_type_skill(worker_type: str, description: str, as_json: bool) -> None:
+    """Replace this Worker type's skill. Markdown body on stdin."""
+    body = read_worker_stdin_body(as_json, "skill body")
+    data = http.send(
+        "PUT",
+        f"/api/workers/{worker_type}/skill",
+        json_body={"description": description, "markdown_body": body},
+        as_json=as_json,
+    )
+    http.emit(data, as_json, f"{data['specialist_skill']['name']} saved")
+
+
 # --- project ------------------------------------------------------------------
+
+
+@main.group("skill")
+def skill_group() -> None:
+    """Inspect the managed skills."""
+
+
+@skill_group.command("check")
+@json_option
+def skill_check(as_json: bool) -> None:
+    """Report every skill row naming a command, Stage or skill this build lacks."""
+    data = http.send("GET", "/api/skills/stale", as_json=as_json)
+    references = data["stale_references"]
+    if not references:
+        http.emit(data, as_json, "every skill row names only things this build has")
+        return
+    http.emit(
+        data,
+        as_json,
+        "\n".join(
+            f"{item['skill_name']}: {item['kind']} {item['reference']}" for item in references
+        )
+        + f"\n\n{len(data['skill_names'])} skills hold something this build does not have",
+    )
 
 
 @main.group("project")
@@ -879,10 +967,9 @@ def project_group() -> None:
 def project_list(limit: int, offset: int, as_json: bool) -> None:
     data = http.send(
         "GET",
-        "/api/project-summaries",
+        "/api/projects",
         as_json=as_json,
-        params={"limit": limit, "offset": offset},
-        request_actor="ordinary",
+        params={"detail": "summary", "limit": limit, "offset": offset},
     )
     http.emit(
         data,
@@ -902,9 +989,9 @@ def project_show(project_id: str, part_names: str | None, as_json: bool) -> None
     """Show a Project manifest or selected comma-separated PART_NAMES."""
     data = http.send(
         "GET",
-        f"/api/projects/{project_id}",
+        "/api/projects",
         as_json=as_json,
-        request_actor="ordinary",
+        params={"detail": "full", "id": project_id},
     )
     header, parts = _project_record(data)
     _emit_record(header, parts, part_names, as_json)
@@ -938,7 +1025,6 @@ def project_create(
         "/api/projects",
         as_json=as_json,
         json_body=body,
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {data['name']}")
 
@@ -977,7 +1063,6 @@ def project_set(
                 else new_value
             )
         },
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
@@ -1013,7 +1098,7 @@ def day_show(
             date_, part_names = date_option, date
     else:
         date_ = date or date_option or "today"
-    data = http.send("GET", f"/api/day/{date_}", as_json=as_json, request_actor="ordinary")
+    data = http.send("GET", f"/api/day/{date_}", as_json=as_json)
     header, parts = _day_record(data)
     _emit_record(header, parts, part_names, as_json)
 
@@ -1028,7 +1113,6 @@ def day_list_tickets(date_: str, limit: int, offset: int, as_json: bool) -> None
         f"/api/day/{date_}/tickets",
         as_json=as_json,
         params={"limit": limit, "offset": offset},
-        request_actor="ordinary",
     )
     http.emit(
         data,
@@ -1059,7 +1143,6 @@ def day_set(
         f"/api/day/{date_}",
         as_json=as_json,
         json_body={api_field: "" if new_value is None else new_value},
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"day {data['id']} {field} set")
 
@@ -1070,13 +1153,11 @@ def day_set(
 @json_option
 def day_add_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
     data = http.send(
-        "POST",
-        f"/api/day/{date_}/tickets",
+        "PUT",
+        f"/api/collections/day_tickets/{date_}/{ticket_id}",
         as_json=as_json,
-        json_body={"ticket_id": ticket_id},
-        request_actor="ordinary",
     )
-    http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
+    http.emit(data, as_json, f"{ticket_id} added to {data['container_id']}")
 
 
 @day.command("remove-ticket")
@@ -1086,11 +1167,10 @@ def day_add_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
 def day_remove_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        f"/api/day/{date_}/tickets/{ticket_id}",
+        f"/api/collections/day_tickets/{date_}/{ticket_id}",
         as_json=as_json,
-        request_actor="ordinary",
     )
-    http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
+    http.emit(data, as_json, f"{ticket_id} removed from {data['container_id']}")
 
 
 # --- ticket -------------------------------------------------------------------
@@ -1140,11 +1220,10 @@ def ticket() -> None:
     help="Initial ceiling, as a stage name or the plain field name that stage needs.",
 )
 @click.option(
-    "--at-cap",
-    "at_cap",
-    type=click.Choice([a.value for a in AtCap]),
+    "--holder",
     default=None,
-    help="Initial behaviour at the ceiling. Omit to park the kickoff for approval.",
+    help="Who holds the ceiling: me, chief, a Sprint Item id, or a Ticket id. "
+    "Absent, the creator holds it.",
 )
 @json_option
 def ticket_create(
@@ -1163,14 +1242,14 @@ def ticket_create(
     kickoff_note: str | None,
     kickoff_note_file: str | None,
     ceiling: str | None,
-    at_cap: str | None,
+    holder: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
     if ceiling is not None:
         body["ceiling"] = ceiling
-    if at_cap is not None:
-        body["at_cap"] = at_cap
+    if holder is not None:
+        body["ceiling_holder"] = resolve_holder(holder, as_json)
     if employee_backend is not None:
         body["employee_backend"] = employee_backend
     if employee_launch_model is not None:
@@ -1203,7 +1282,6 @@ def ticket_create(
         "/api/tickets",
         as_json=as_json,
         json_body=body,
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {data['stage']}")
 
@@ -1215,7 +1293,12 @@ def ticket_create(
 def ticket_show(ticket_id: str | None, part_names: str | None, as_json: bool) -> None:
     """Show a Ticket manifest or selected comma-separated PART_NAMES."""
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
+    data = http.send(
+        "GET",
+        "/api/tickets",
+        as_json=as_json,
+        params={"detail": "full", "id": tid},
+    )
     header, parts = _ticket_record(data)
     _emit_record(header, parts, part_names, as_json)
 
@@ -1244,7 +1327,6 @@ def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) 
         f"/api/tickets/{tid}",
         as_json=as_json,
         params={"force": True} if force else None,
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{tid} permanently deleted")
 
@@ -1266,7 +1348,7 @@ def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) 
     "--include-terminal",
     is_flag=True,
     default=False,
-    help="Include done and dropped Tickets.",
+    help="Include done Tickets.",
 )
 @click.option("--search", default=None, help="Case-insensitive Ticket text search.")
 @click.option("--project", default=None, help="Only show project name.")
@@ -1311,10 +1393,9 @@ def ticket_list(
     )
     data = http.send(
         "GET",
-        "/api/ticket-summaries",
+        "/api/tickets",
         as_json=as_json,
-        params=params,
-        request_actor="ordinary",
+        params={"detail": "summary", **params},
     )
     http.emit(
         data,
@@ -1340,28 +1421,73 @@ def ticket_set(
 ) -> None:
     api_field = _TICKET_SET_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority"} and new_value is None:
+    if field in {"title", "priority", "ceiling", "ceiling-holder"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
     if field == "kickoff-note" and new_value is None:
         new_value = ""
+    body: dict[str, Any]
     if field == "kickoff-note":
-        data = http.send(
-            "PUT",
-            f"/api/tickets/{ticket_id}/value/kickoff",
-            as_json=as_json,
-            json_body={"body": new_value},
-            request_actor="ordinary",
-        )
+        body = {"field_values": {BRIEF_FIELD_ID: new_value}}
+    elif field == "ceiling-holder":
+        body = {api_field: resolve_holder(str(new_value), as_json)}
     else:
-        data = http.send(
-            "PATCH",
-            f"/api/tickets/{ticket_id}",
-            as_json=as_json,
-            json_body={api_field: new_value},
-            request_actor="ordinary",
-        )
+        body = {api_field: new_value}
+    data = http.send(
+        "PATCH",
+        f"/api/tickets/{ticket_id}",
+        as_json=as_json,
+        json_body=body,
+    )
+    http.emit(data, as_json, f"{data['id']} {field} set")
+
+
+@ticket.command("complete")
+@click.argument("ticket_id")
+@click.argument("field")
+@click.option("--value", default=None, help="Complete the gate with this value.")
+@click.option("--body-file", default=None, help="Read the value from this file, or - for stdin.")
+@json_option
+def ticket_complete(
+    ticket_id: str,
+    field: str,
+    value: str | None,
+    body_file: str | None,
+    as_json: bool,
+) -> None:
+    """Do a user-owned Stage's work yourself. The Stage then advances."""
+    body = read_value_or_file(value, body_file, False, as_json, field)
+    data = http.send(
+        "POST",
+        f"/api/tickets/{ticket_id}/complete/{field}",
+        as_json=as_json,
+        json_body={"body": body},
+    )
+    http.emit(data, as_json, f"{data['id']} {field} completed")
+
+
+@ticket.command("set-value")
+@click.argument("ticket_id")
+@click.argument("field")
+@click.option("--value", default=None, help="Set the field to this value.")
+@click.option("--body-file", default=None, help="Read field text from this file, or - for stdin.")
+@json_option
+def ticket_set_value(
+    ticket_id: str,
+    field: str,
+    value: str | None,
+    body_file: str | None,
+    as_json: bool,
+) -> None:
+    """Correct a value the Ticket has already passed."""
+    body = read_value_or_file(value, body_file, False, as_json, field)
+    data = http.send(
+        "PATCH",
+        f"/api/tickets/{ticket_id}",
+        as_json=as_json,
+        json_body={"field_values": {field: body}},
+    )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
 
@@ -1409,7 +1535,6 @@ def ticket_place(
         f"/api/tickets/{ticket_id}",
         as_json=as_json,
         json_body=body,
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} placement set")
 
@@ -1445,7 +1570,6 @@ def ticket_employee_configuration(
             "employee_launch_model": model,
             "employee_launch_reasoning_effort": reasoning_effort,
         },
-        request_actor="ordinary",
     )
     http.emit(
         data,
@@ -1454,60 +1578,35 @@ def ticket_employee_configuration(
     )
 
 
-@ticket.command("ownership")
-@click.argument("ticket_id")
-@click.option("--stage", required=True, help="Stage id to override.")
-@click.option(
-    "--mode",
-    required=True,
-    type=click.Choice(["worker", "user", "paired", "default"]),
-    help="Ownership mode; default clears the override.",
-)
-@json_option
-def ticket_ownership(ticket_id: str, stage: str, mode: str, as_json: bool) -> None:
-    data = http.send(
-        "PUT",
-        f"/api/tickets/{ticket_id}/stage-ownership/{stage}",
-        as_json=as_json,
-        json_body={"ownership_mode": None if mode == "default" else mode},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{data['id']} {stage} ownership set")
-
-
 @ticket.command("approve")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--ceiling", default=None, help="Next ceiling stage or none.")
-@click.option(
-    "--at-cap",
-    default=None,
-    type=click.Choice([a.value for a in AtCap]),
-    help="stop or propose.",
-)
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option(
-    "--holder-kind",
-    default="owner",
-    type=click.Choice([kind.value for kind in PrincipalKind]),
-    help="Principal kind for the next ceiling holder.",
+    "--holder",
+    default=None,
+    help="Who holds the next ceiling: me, chief, a Sprint Item id, or a Ticket id. "
+    "Absent, you keep it.",
 )
-@click.option("--holder-id", default=None, help="Principal id for the next ceiling holder.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
 @click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
 @json_option
 def ticket_approve(
     ticket_id: str | None,
     ceiling: str | None,
-    at_cap: str | None,
     edit_file: str | None,
-    holder_kind: str,
-    holder_id: str | None,
+    holder: str | None,
     kickoff_title: str | None,
     kickoff_note_file: str | None,
     as_json: bool,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
+    detail = http.send(
+        "GET",
+        "/api/tickets",
+        as_json=as_json,
+        params={"detail": "full", "id": tid},
+    )
     stage = detail["stage"]
     manifest = _worker_type(detail["worker_type"], as_json)
     field = _gating_field_for_stage(manifest, stage)
@@ -1516,30 +1615,29 @@ def ticket_approve(
     proposal = detail["pending_proposal"]
     if proposal is None or proposal["field"] != field:
         http.fail_validation(f"no pending {field} proposal", as_json)
-    if ceiling is None or at_cap is None:
-        http.fail_validation("approval requires --ceiling and --at-cap", as_json)
+    if ceiling is None:
+        http.fail_validation("approval requires --ceiling", as_json)
     if kickoff_title is not None:
-        if field != "kickoff":
-            http.fail_validation("--kickoff-title only applies while approving kickoff", as_json)
+        if field != BRIEF_FIELD_ID:
+            http.fail_validation("--kickoff-title only applies while approving the brief", as_json)
         http.send(
             "PATCH",
             f"/api/tickets/{tid}",
             as_json=as_json,
             json_body={"title": kickoff_title},
-            request_actor="ordinary",
         )
-    resolved_holder_id = holder_id or holder_kind
     field_payload: dict[str, Any] = {
         "next_ceiling": ceiling,
-        "at_cap": at_cap,
-        "next_holder": {"kind": holder_kind, "id": resolved_holder_id},
+        "next_holder": (
+            resolve_holder(holder, as_json) if holder is not None else caller_principal()
+        ),
     }
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
     if kickoff_note_file is not None:
-        if field != "kickoff":
+        if field != BRIEF_FIELD_ID:
             http.fail_validation(
-                "--kickoff-note-file only applies while approving kickoff", as_json
+                "--kickoff-note-file only applies while approving the brief", as_json
             )
         if "edited_body" in field_payload:
             http.fail_validation("approval accepts only one edited body option", as_json)
@@ -1549,9 +1647,129 @@ def ticket_approve(
         f"/api/tickets/{tid}/accept/{field}",
         as_json=as_json,
         json_body=field_payload,
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} approved {field}")
+
+
+@ticket.command("reject")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--message", default=None, help="Focused revision guidance.")
+@click.option("--body-file", default=None, help="Read revision guidance from this file, or -.")
+@json_option
+def ticket_reject(
+    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
+) -> None:
+    """Reject the proposal parked on this Ticket, with focused guidance."""
+    tid = resolve_ticket_id(ticket_id, as_json)
+    if (message is None) == (body_file is None):
+        http.fail_validation("reject requires exactly one of --message or --body-file", as_json)
+    text = message if message is not None else _read_source(body_file or "", as_json)
+    data = http.send(
+        "POST",
+        f"/api/tickets/{tid}/reject",
+        as_json=as_json,
+        json_body={"message": text},
+    )
+    http.emit(data, as_json, f"{tid} proposal rejected")
+
+
+@ticket.command("history")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--limit", type=click.IntRange(1, 100), default=30, show_default=True)
+@click.option("--before", type=int, default=None, help="Read the page before this sequence.")
+@click.option(
+    "--after",
+    type=int,
+    default=None,
+    help="Read forwards from this sequence instead of back from the end.",
+)
+@json_option
+def ticket_history(
+    ticket_id: str | None, limit: int, before: int | None, after: int | None, as_json: bool
+) -> None:
+    """Read this Ticket's current Worker conversation."""
+    tid = resolve_ticket_id(ticket_id, as_json)
+    if after is not None and before is not None:
+        http.fail_validation("history reads one direction: --after or --before", as_json)
+    detail = http.send(
+        "GET",
+        "/api/tickets",
+        as_json=as_json,
+        params={"detail": "full", "id": tid},
+    )
+    conversation_id = detail["conversation_id"]
+    if not conversation_id:
+        http.fail_validation("the Ticket has no current Worker conversation", as_json)
+    params = (
+        {"after": after, "limit": limit}
+        if after is not None
+        else _drop_none({"limit": limit, "before": before})
+    )
+    page = http.send(
+        "GET",
+        f"/api/conversation/conversations/{conversation_id}/events",
+        as_json=as_json,
+        params=params,
+    )
+    data = {
+        "ticket_id": tid,
+        "conversation_id": conversation_id,
+        "events": page["events"],
+        "has_more": page["has_more"],
+    }
+    http.emit(data, as_json, f"{tid} {len(data['events'])} history events")
+
+
+@ticket.command("restart-worker")
+@click.argument("ticket_id")
+@click.option("--backend", default=None, help="Registered employee backend to restart on.")
+@click.option("--model", default=None, help="Model that backend runs this Ticket's worker on.")
+@click.option(
+    "--reasoning-effort",
+    default=None,
+    help="Reasoning effort for that model; leave it out for a model that takes none.",
+)
+@json_option
+def ticket_restart_worker(
+    ticket_id: str,
+    backend: str | None,
+    model: str | None,
+    reasoning_effort: str | None,
+    as_json: bool,
+) -> None:
+    """Start this Ticket's worker step again, on a dead Worker.
+
+    Leave the options out to restart on what the Ticket already launches. Naming a
+    configuration changes what this Ticket launches on from now on, so a Worker that died
+    on its backend does not come back on the same one. Backend and model go together,
+    because a model id belongs to the backend that named it.
+    """
+    if (backend is None) != (model is None):
+        http.fail_validation(
+            "restart-worker needs --backend and --model together, or neither", as_json
+        )
+    body: dict[str, Any] = {}
+    if backend is not None:
+        body = {
+            "employee_backend": backend,
+            "employee_launch_model": model,
+            "employee_launch_reasoning_effort": reasoning_effort,
+        }
+    data = http.send(
+        "POST",
+        f"/api/tickets/{ticket_id}/restart-worker",
+        as_json=as_json,
+        json_body=body,
+    )
+    configuration = data["employee_configuration"]
+    launch = f"{configuration['employee_backend']} {configuration['employee_launch_model']}"
+    http.emit(
+        data,
+        as_json,
+        f"{ticket_id} restarted on {launch}"
+        if data["started"]
+        else f"{ticket_id} did not start: {data['not_started_because']}",
+    )
 
 
 @ticket.command("block")
@@ -1560,11 +1778,9 @@ def ticket_approve(
 @json_option
 def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
-        "POST",
-        "/api/links",
+        "PUT",
+        f"/api/collections/blockers/{ticket_id}/{blocker_id}",
         as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} blocked by {blocker_id}")
 
@@ -1576,10 +1792,8 @@ def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
 def ticket_unblock(ticket_id: str, blocker_id: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        "/api/links",
+        f"/api/collections/blockers/{ticket_id}/{blocker_id}",
         as_json=as_json,
-        params={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} unblocked from {blocker_id}")
 
@@ -1593,7 +1807,6 @@ def ticket_copy(ticket_id: str | None, as_json: bool) -> None:
         "GET",
         f"/api/tickets/{tid}/copy-text",
         as_json=as_json,
-        request_actor="ordinary",
     )
     http.emit({"text": text}, as_json, text)
 
@@ -1639,7 +1852,6 @@ def sprint_create(
         "/api/sprints",
         as_json=as_json,
         json_body=body,
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {data['name']}")
 
@@ -1650,10 +1862,9 @@ def sprint_create(
 def sprint_list(limit: int, offset: int, as_json: bool) -> None:
     data = http.send(
         "GET",
-        "/api/sprint-summaries",
+        "/api/sprints",
         as_json=as_json,
-        params={"limit": limit, "offset": offset},
-        request_actor="ordinary",
+        params={"detail": "summary", "limit": limit, "offset": offset},
     )
     http.emit(
         data,
@@ -1676,7 +1887,7 @@ def sprint_show(sprint_id: str | None, part_names: str | None, as_json: bool) ->
     """Show a Sprint manifest or selected comma-separated PART_NAMES."""
     if sprint_id is None or sprint_id == "current":
         current_response = http.send(
-            "GET", "/api/sprint/current", as_json=as_json, request_actor="ordinary"
+            "GET", "/api/sprint/current", as_json=as_json
         )
         data = current_response["sprint"]
         if data is None:
@@ -1684,9 +1895,9 @@ def sprint_show(sprint_id: str | None, part_names: str | None, as_json: bool) ->
     else:
         data = http.send(
             "GET",
-            f"/api/sprints/{sprint_id}",
+            "/api/sprints",
             as_json=as_json,
-            request_actor="ordinary",
+            params={"detail": "full", "id": sprint_id},
         )
     header, parts = _sprint_record(data)
     _emit_record(header, parts, part_names, as_json)
@@ -1719,7 +1930,6 @@ def sprint_set(
         f"/api/sprints/{resolved_sprint_id}",
         as_json=as_json,
         json_body={api_field: "" if new_value is None else new_value},
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
@@ -1758,7 +1968,7 @@ def sprint_item_create(
     if deadline is not None:
         body["deadline"] = deadline
     data = http.send(
-        "POST", "/api/items", as_json=as_json, json_body=body, request_actor="ordinary"
+        "POST", "/api/items", as_json=as_json, json_body=body
     )
     http.emit(data, as_json, f"{data['id']}")
 
@@ -1788,10 +1998,9 @@ def sprint_item_list(
     )
     data = http.send(
         "GET",
-        "/api/sprint-item-summaries",
+        "/api/items",
         as_json=as_json,
-        params=params,
-        request_actor="ordinary",
+        params={"detail": "summary", **params},
     )
     http.emit(
         data,
@@ -1812,7 +2021,12 @@ def sprint_item_list(
 @json_option
 def sprint_item_show(item_id: str, part_names: str | None, as_json: bool) -> None:
     """Show an Item manifest or selected comma-separated PART_NAMES."""
-    data = http.send("GET", f"/api/items/{item_id}", as_json=as_json, request_actor="ordinary")
+    data = http.send(
+        "GET",
+        "/api/items",
+        as_json=as_json,
+        params={"detail": "full", "id": item_id},
+    )
     header, parts = _sprint_item_record(data)
     _emit_record(header, parts, part_names, as_json)
 
@@ -1829,7 +2043,7 @@ def sprint_item_show(item_id: str, part_names: str | None, as_json: bool) -> Non
 def sprint_item_delete(item_id: str, yes: bool, as_json: bool) -> None:
     if not yes:
         http.fail_validation("permanent deletion requires --yes", as_json)
-    data = http.send("DELETE", f"/api/items/{item_id}", as_json=as_json, request_actor="ordinary")
+    data = http.send("DELETE", f"/api/items/{item_id}", as_json=as_json)
     http.emit(data, as_json, f"{item_id} permanently deleted")
 
 
@@ -1859,7 +2073,6 @@ def sprint_item_set(
         f"/api/items/{item_id}",
         as_json=as_json,
         json_body={api_field: new_value},
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
@@ -1871,9 +2084,8 @@ def sprint_item_set(
 def sprint_item_add_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     data = http.send(
         "PUT",
-        f"/api/items/{item_id}/tickets/{ticket_id}",
+        f"/api/collections/outcome_tickets/{item_id}/{ticket_id}",
         as_json=as_json,
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} added to {item_id}")
 
@@ -1885,745 +2097,106 @@ def sprint_item_add_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
 def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        f"/api/items/{item_id}/tickets/{ticket_id}",
+        f"/api/collections/outcome_tickets/{item_id}/{ticket_id}",
         as_json=as_json,
-        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
 
 
-@sprint_item.command("block")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_block(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "POST",
-        "/api/links",
-        as_json=as_json,
-        json_body={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} blocked by {blocker_id}")
-
-
-@sprint_item.command("unblock")
-@click.argument("item_id")
-@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
-@json_option
-def sprint_item_unblock(item_id: str, blocker_id: str, as_json: bool) -> None:
-    data = http.send(
-        "DELETE",
-        "/api/links",
-        as_json=as_json,
-        params={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
-        request_actor="ordinary",
-    )
-    http.emit(data, as_json, f"{item_id} unblocked from {blocker_id}")
-
-
-@sprint_item.group("supervisor")
-def sprint_item_supervisor() -> None:
-    """Inspect and talk to a Sprint Item supervisor."""
-
-
-@sprint_item_supervisor.command("show")
+@sprint_item.command("workspace")
 @click.argument("item_id")
 @json_option
-def sprint_item_supervisor_show(item_id: str, as_json: bool) -> None:
-    data = http.send(
-        "GET",
-        f"/api/items/{item_id}/supervisor",
-        as_json=as_json,
-        request_actor="ordinary",
-    )
-    launch = data["launch_configuration"]
-    http.emit(
-        data,
-        as_json,
-        f"{data['agent_key']} {launch['employee_backend']} / {launch['employee_launch_model']}",
-    )
-
-
-@sprint_item_supervisor.command("context")
-@click.argument("item_id")
-@json_option
-def sprint_item_supervisor_context(item_id: str, as_json: bool) -> None:
-    data = http.send(
-        "GET",
-        f"/api/items/{item_id}/supervisor/context",
-        as_json=as_json,
-        request_actor="ordinary",
-    )
+def sprint_item_workspace(item_id: str, as_json: bool) -> None:
+    """This Outcome, its artifacts, and one line per current child Ticket."""
+    data = http.send("GET", f"/api/items/{item_id}/workspace", as_json=as_json)
     http.emit(data, as_json, f"{item_id} {len(data['tickets'])} current Tickets")
 
 
-@sprint_item_supervisor.command("ticket-context")
+# The Outcome's own subdirectory of its managed files. These commands count paths from
+# it, while the route counts from the Outcome's root, so the prefix is added here.
+_ARTIFACTS_DIRECTORY = "artifacts"
+
+
+@sprint_item.group("artifact")
+def sprint_item_artifact() -> None:
+    """Read and write an Outcome's own artifacts."""
+
+
+@sprint_item_artifact.command("list")
 @click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--triggering-message-sequence", type=int, default=None)
 @json_option
-def sprint_item_supervisor_ticket_context(
-    item_id: str,
-    ticket_id: str,
-    triggering_message_sequence: int | None,
-    as_json: bool,
-) -> None:
-    data = http.send(
-        "GET",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/context",
-        as_json=as_json,
-        params=_drop_none({"triggering_message_sequence": triggering_message_sequence}),
+def sprint_item_artifact_list(item_id: str, as_json: bool) -> None:
+    data = http.send("GET", f"/api/items/{item_id}/workspace", as_json=as_json)
+    prefix = f"{_ARTIFACTS_DIRECTORY}/"
+    artifacts = sorted(
+        str(entry["path"])[len(prefix) :]
+        for entry in data["artifacts"]
+        if str(entry["path"]).startswith(prefix)
     )
-    http.emit(data, as_json, f"{ticket_id} current Worker context")
+    http.emit({"sprint_item_id": item_id, "artifacts": artifacts}, as_json, _lines(artifacts, str))
 
 
-@sprint_item_supervisor.command("history")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--limit", type=click.IntRange(1, 100), default=30, show_default=True)
-@click.option("--before-sequence", type=int, default=None)
-@json_option
-def sprint_item_supervisor_history(
-    item_id: str,
-    ticket_id: str,
-    limit: int,
-    before_sequence: int | None,
-    as_json: bool,
-) -> None:
-    data = http.send(
-        "GET",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/history",
-        as_json=as_json,
-        params=_drop_none({"limit": limit, "before_sequence": before_sequence}),
-    )
-    http.emit(data, as_json, f"{ticket_id} {len(data['events'])} history events")
-
-
-@sprint_item_supervisor.command("message-worker")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--message", default=None, help="Message text.")
-@click.option("--body-file", default=None, help="Read message text from this file, or -.")
-@json_option
-def sprint_item_supervisor_message_worker(
-    item_id: str,
-    ticket_id: str,
-    message: str | None,
-    body_file: str | None,
-    as_json: bool,
-) -> None:
-    if (message is None) == (body_file is None):
-        http.fail_validation(
-            "message-worker requires exactly one of --message or --body-file", as_json
-        )
-    text = message if message is not None else _read_source(body_file or "", as_json)
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/message",
-        as_json=as_json,
-        json_body={"message": text},
-    )
-    http.emit(data, as_json, f"Worker message {data['fate']}")
-
-
-@sprint_item_supervisor.command("restart-worker")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--backend", default=None, help="Registered employee backend to restart on.")
-@click.option("--model", default=None, help="Model that backend runs this Ticket's worker on.")
-@click.option(
-    "--reasoning-effort",
-    default=None,
-    help="Reasoning effort for that model; leave it out for a model that takes none.",
-)
-@json_option
-def sprint_item_supervisor_restart_worker(
-    item_id: str,
-    ticket_id: str,
-    backend: str | None,
-    model: str | None,
-    reasoning_effort: str | None,
-    as_json: bool,
-) -> None:
-    """Start a current child Ticket's worker step again, on a dead Worker.
-
-    Leave the options out to restart on what the Ticket already launches. Naming a
-    configuration changes what this Ticket launches on from now on, so a Worker that died
-    on its backend does not come back on the same one. Backend and model go together,
-    because a model id belongs to the backend that named it.
-    """
-    if (backend is None) != (model is None):
-        http.fail_validation(
-            "restart-worker needs --backend and --model together, or neither", as_json
-        )
-    body: dict[str, Any] = {}
-    if backend is not None:
-        body = {
-            "employee_backend": backend,
-            "employee_launch_model": model,
-            "employee_launch_reasoning_effort": reasoning_effort,
-        }
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/restart-worker",
-        as_json=as_json,
-        json_body=body,
-    )
-    configuration = data["employee_configuration"]
-    launch = f"{configuration['employee_backend']} {configuration['employee_launch_model']}"
-    http.emit(
-        data,
-        as_json,
-        f"{ticket_id} restarted on {launch}"
-        if data["started"]
-        else f"{ticket_id} did not start: {data['not_started_because']}",
-    )
-
-
-@sprint_item_supervisor.command("set-item")
-@click.argument("item_id")
-@click.argument("field", type=click.Choice(sorted(_SUPERVISOR_ITEM_FIELDS)))
-@click.option("--value", default=None)
-@click.option("--body-file", default=None)
-@click.option("--clear", is_flag=True, default=False)
-@json_option
-def sprint_item_supervisor_set_item(
-    item_id: str,
-    field: str,
-    value: str | None,
-    body_file: str | None,
-    clear: bool,
-    as_json: bool,
-) -> None:
-    new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority"} and new_value is None:
-        http.fail_validation(f"{field} cannot be cleared", as_json)
-    data = http.send(
-        "PATCH",
-        f"/api/items/{item_id}/supervisor/item",
-        as_json=as_json,
-        json_body={_SUPERVISOR_ITEM_FIELDS[field]: new_value},
-    )
-    http.emit(data, as_json, f"{item_id} {field} set")
-
-
-@sprint_item_supervisor.command("set-ticket")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.argument("field", type=click.Choice(sorted(_SUPERVISOR_TICKET_FIELDS)))
-@click.option("--value", default=None)
-@click.option("--body-file", default=None)
-@click.option("--clear", is_flag=True, default=False)
-@json_option
-def sprint_item_supervisor_set_ticket(
-    item_id: str,
-    ticket_id: str,
-    field: str,
-    value: str | None,
-    body_file: str | None,
-    clear: bool,
-    as_json: bool,
-) -> None:
-    new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority"} and new_value is None:
-        http.fail_validation(f"{field} cannot be cleared", as_json)
-    data = http.send(
-        "PATCH",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}",
-        as_json=as_json,
-        json_body={_SUPERVISOR_TICKET_FIELDS[field]: new_value},
-    )
-    http.emit(data, as_json, f"{ticket_id} {field} set")
-
-
-@sprint_item_supervisor.command("scope")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--ceiling", required=True)
-@click.option("--at-cap", required=True, type=click.Choice([a.value for a in AtCap]))
-@json_option
-def sprint_item_supervisor_scope(
-    item_id: str, ticket_id: str, ceiling: str, at_cap: str, as_json: bool
-) -> None:
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/scope",
-        as_json=as_json,
-        json_body={"ceiling": ceiling, "at_cap": at_cap},
-    )
-    http.emit(data, as_json, f"{ticket_id} scope set")
-
-
-def _supervisor_day_membership(
-    method: str, item_id: str, ticket_id: str, date_: str, as_json: bool
-) -> None:
-    data = http.send(
-        method,
-        f"/api/items/{item_id}/supervisor/days/{date_}/tickets/{ticket_id}",
-        as_json=as_json,
-    )
-    http.emit(data, as_json, f"{ticket_id} Day membership changed")
-
-
-@sprint_item_supervisor.command("add-to-day")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--date", "date_", default="today")
-@json_option
-def sprint_item_supervisor_add_to_day(
-    item_id: str, ticket_id: str, date_: str, as_json: bool
-) -> None:
-    _supervisor_day_membership("POST", item_id, ticket_id, date_, as_json)
-
-
-@sprint_item_supervisor.command("remove-from-day")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--date", "date_", default="today")
-@json_option
-def sprint_item_supervisor_remove_from_day(
-    item_id: str, ticket_id: str, date_: str, as_json: bool
-) -> None:
-    _supervisor_day_membership("DELETE", item_id, ticket_id, date_, as_json)
-
-
-def _supervisor_block(method: str, item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    kwargs: dict[str, Any] = {"as_json": as_json}
-    if method == "POST":
-        kwargs["json_body"] = {"from_id": from_id, "to_id": to_id}
-    else:
-        kwargs["params"] = {"from_id": from_id, "to_id": to_id}
-    data = http.send(method, f"/api/items/{item_id}/supervisor/blocks", **kwargs)
-    http.emit(data, as_json, f"{from_id} blocks {to_id}: {method.lower()}")
-
-
-@sprint_item_supervisor.command("block")
-@click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
-@json_option
-def sprint_item_supervisor_block(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("POST", item_id, from_id, to_id, as_json)
-
-
-@sprint_item_supervisor.command("unblock")
-@click.argument("item_id")
-@click.option("--from-ticket", "from_id", required=True)
-@click.option("--to", "to_id", required=True)
-@json_option
-def sprint_item_supervisor_unblock(item_id: str, from_id: str, to_id: str, as_json: bool) -> None:
-    _supervisor_block("DELETE", item_id, from_id, to_id, as_json)
-
-
-@sprint_item_supervisor.command("artifact-list")
-@click.argument("item_id")
-@json_option
-def sprint_item_supervisor_artifact_list(item_id: str, as_json: bool) -> None:
-    data = http.send("GET", f"/api/items/{item_id}/supervisor/artifacts", as_json=as_json)
-    http.emit(data, as_json, _lines(data["artifacts"], str))
-
-
-@sprint_item_supervisor.command("artifact-write")
+@sprint_item_artifact.command("write")
 @click.argument("item_id")
 @click.argument("artifact_path")
 @click.option("--body-file", required=True)
 @json_option
-def sprint_item_supervisor_artifact_write(
+def sprint_item_artifact_write(
     item_id: str, artifact_path: str, body_file: str, as_json: bool
 ) -> None:
     data = http.send(
         "PUT",
-        f"/api/items/{item_id}/supervisor/artifacts/{artifact_path}",
+        f"/files/sprint-items/{item_id}/{_ARTIFACTS_DIRECTORY}/{artifact_path}",
         as_json=as_json,
         json_body={"content": _read_source(body_file, as_json)},
     )
     http.emit(data, as_json, data["url"])
 
 
-@sprint_item_supervisor.command("artifact-delete")
+@sprint_item_artifact.command("delete")
 @click.argument("item_id")
 @click.argument("artifact_path")
 @json_option
-def sprint_item_supervisor_artifact_delete(item_id: str, artifact_path: str, as_json: bool) -> None:
+def sprint_item_artifact_delete(item_id: str, artifact_path: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        f"/api/items/{item_id}/supervisor/artifacts/{artifact_path}",
+        f"/files/sprint-items/{item_id}/{_ARTIFACTS_DIRECTORY}/{artifact_path}",
         as_json=as_json,
     )
     http.emit(data, as_json, f"{artifact_path} deleted")
 
 
-@sprint_item_supervisor.command("send")
+@sprint_item.group("conversation")
+def sprint_item_conversation() -> None:
+    """Khushal's own door to an Outcome's agent."""
+
+
+@sprint_item_conversation.command("send")
 @click.argument("item_id")
 @click.option("--message", default=None, help="Message text.")
 @click.option("--body-file", default=None, help="Read message text from this file, or -.")
 @json_option
-def sprint_item_supervisor_send(
+def sprint_item_conversation_send(
     item_id: str, message: str | None, body_file: str | None, as_json: bool
 ) -> None:
     if (message is None) == (body_file is None):
         http.fail_validation("send requires exactly one of --message or --body-file", as_json)
-    if message is not None:
-        text = message
-    else:
-        assert body_file is not None
-        text = _read_source(body_file, as_json)
+    text = message if message is not None else _read_source(body_file or "", as_json)
     data = http.send(
         "POST",
-        f"/api/items/{item_id}/supervisor/conversation/send",
+        f"/api/items/{item_id}/conversation/send",
         as_json=as_json,
-        json_body={
-            "content": [{"piece": "text", "text": text}],
-            "sender_label": "You",
-        },
-        request_actor="ordinary",
+        json_body={"content": [{"piece": "text", "text": text}], "sender_label": "You"},
     )
     http.emit(data, as_json, f"message {data['fate']}")
 
 
-@sprint_item_supervisor.command("reset")
+@sprint_item_conversation.command("reset")
 @click.argument("item_id")
 @json_option
-def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/conversation/reset",
-        as_json=as_json,
-        request_actor="ordinary",
-    )
+def sprint_item_conversation_reset(item_id: str, as_json: bool) -> None:
+    data = http.send("POST", f"/api/items/{item_id}/conversation/reset", as_json=as_json)
     http.emit(data, as_json, f"{item_id} supervisor conversation reset")
-
-
-@sprint_item_supervisor.command("approve")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--ceiling", required=True, help="Next ceiling Stage or none.")
-@click.option(
-    "--at-cap",
-    required=True,
-    type=click.Choice([a.value for a in AtCap]),
-    help="Behaviour at the next ceiling: stop or propose.",
-)
-@click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
-@click.option(
-    "--holder-kind",
-    default="sprint_item",
-    type=click.Choice([kind.value for kind in PrincipalKind]),
-    help="Principal kind for the next ceiling holder.",
-)
-@click.option("--holder-id", default=None, help="Principal id for the next ceiling holder.")
-@json_option
-def sprint_item_supervisor_approve(
-    item_id: str,
-    ticket_id: str,
-    ceiling: str,
-    at_cap: str,
-    edit_file: str | None,
-    holder_kind: str,
-    holder_id: str | None,
-    as_json: bool,
-) -> None:
-    """Approve one parked proposal for this Sprint Item."""
-    body: dict[str, Any] = {
-        "next_ceiling": ceiling,
-        "at_cap": at_cap,
-        "next_holder": {
-            "kind": holder_kind,
-            "id": holder_id or (item_id if holder_kind == "sprint_item" else holder_kind),
-        },
-    }
-    if edit_file is not None:
-        body["edited_body"] = _read_source(edit_file, as_json)
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/approve",
-        as_json=as_json,
-        json_body=body,
-    )
-    http.emit(data, as_json, f"{ticket_id} proposal approved")
-
-
-@sprint_item_supervisor.command("reject")
-@click.argument("item_id")
-@click.argument("ticket_id")
-@click.option("--message", default=None, help="Focused revision guidance.")
-@click.option("--body-file", default=None, help="Read revision guidance from this file, or -.")
-@json_option
-def sprint_item_supervisor_reject(
-    item_id: str,
-    ticket_id: str,
-    message: str | None,
-    body_file: str | None,
-    as_json: bool,
-) -> None:
-    """Reject one parked proposal with focused guidance."""
-    if (message is None) == (body_file is None):
-        http.fail_validation("reject requires exactly one of --message or --body-file", as_json)
-    text = message if message is not None else _read_source(body_file or "", as_json)
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/reject",
-        as_json=as_json,
-        json_body={"message": text},
-    )
-    http.emit(data, as_json, f"{ticket_id} proposal rejected")
-
-
-# --- chief --------------------------------------------------------------------
-
-_EXTERNAL_WORK_RECONCILE_FIXED_KEYS = frozenset({"stage", "kickoff_note", "recap"})
-_EXTERNAL_WORK_CREATE_FIXED_KEYS = _EXTERNAL_WORK_RECONCILE_FIXED_KEYS | frozenset(
-    {
-        "title",
-        "worker_type",
-        "employee_backend",
-        "employee_launch_model",
-        "priority",
-        "deadline",
-        "project",
-        "project_id",
-        "sprint_item_id",
-        "blocked_by_ticket_ids",
-    }
-)
-
-
-def _external_work_body(
-    *,
-    stage: str,
-    kickoff_note_file: str,
-    recap_file: str | None,
-    success_file: str | None,
-    approach_file: str | None,
-    plan_file: str | None,
-    implementation_file: str | None,
-    closeout_file: str | None,
-    field_files: tuple[str, ...],
-    reserved_fixed_keys: frozenset[str],
-    as_json: bool,
-) -> dict[str, Any]:
-    field_sources: dict[str, str] = {}
-    for field, source in (
-        ("success", success_file),
-        ("approach", approach_file),
-        ("plan", plan_file),
-        ("implementation", implementation_file),
-        ("closeout", closeout_file),
-    ):
-        if source is not None:
-            field_sources[field] = source
-    for occurrence in field_files:
-        if "=" not in occurrence:
-            http.fail_validation(f"field file must be FIELD=PATH: {occurrence}", as_json)
-        field, source = occurrence.split("=", 1)
-        if not field or not source:
-            http.fail_validation(f"field file must be FIELD=PATH: {occurrence}", as_json)
-        if field in reserved_fixed_keys:
-            http.fail_validation(f"field file conflicts with fixed request key: {field}", as_json)
-        if field in field_sources:
-            http.fail_validation(f"field file provided more than once: {field}", as_json)
-        field_sources[field] = source
-
-    body: dict[str, Any] = {
-        "stage": stage,
-        "kickoff_note": read_required_option_body(kickoff_note_file, as_json, "kickoff-note"),
-    }
-    if recap_file is not None:
-        body["recap"] = _read_source(recap_file, as_json)
-    for field, source in field_sources.items():
-        body[field] = _read_source(source, as_json)
-    return body
-
-
-@main.group("chief")
-def chief() -> None:
-    """Import work already completed outside Panels."""
-
-
-@chief.command("reconcile-ticket-from-external-work")
-@click.argument("ticket_id")
-@click.option("--stage", required=True, help="Target worker stage (validated per type).")
-@click.option(
-    "--kickoff-note-file",
-    required=True,
-    help="Complete resulting ticket note file, or -.",
-)
-@click.option("--recap-file", default=None, help="Read the recap from this file, or -.")
-@click.option("--success-file", default=None, help="Read settled success from this file, or -.")
-@click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
-@click.option("--plan-file", default=None, help="Read settled plan from this file, or -.")
-@click.option(
-    "--implementation-file",
-    default=None,
-    help="Read settled implementation from this file, or -.",
-)
-@click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
-@click.option(
-    "--field-file",
-    "field_files",
-    multiple=True,
-    help="Read a definition-specific settled field from FIELD=PATH (repeatable).",
-)
-@json_option
-def chief_reconcile_ticket_from_external_work(
-    ticket_id: str,
-    stage: str,
-    kickoff_note_file: str,
-    recap_file: str | None,
-    success_file: str | None,
-    approach_file: str | None,
-    plan_file: str | None,
-    implementation_file: str | None,
-    closeout_file: str | None,
-    field_files: tuple[str, ...],
-    as_json: bool,
-) -> None:
-    body = _external_work_body(
-        stage=stage,
-        kickoff_note_file=kickoff_note_file,
-        recap_file=recap_file,
-        success_file=success_file,
-        approach_file=approach_file,
-        plan_file=plan_file,
-        implementation_file=implementation_file,
-        closeout_file=closeout_file,
-        field_files=field_files,
-        reserved_fixed_keys=_EXTERNAL_WORK_RECONCILE_FIXED_KEYS,
-        as_json=as_json,
-    )
-    data = http.send(
-        "POST",
-        f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-        as_json=as_json,
-        json_body=body,
-        request_actor="chief",
-    )
-    http.emit(
-        data,
-        as_json,
-        f"{data['id']} external work reconciled {data['stage']}",
-    )
-
-
-@chief.command("create-ticket-from-external-work")
-@click.option("--title", required=True, help="Ticket title.")
-@click.option(
-    "--worker-type",
-    "worker_type",
-    required=True,
-    help="Registered Worker type id. List choices with `panels worker-type list`.",
-)
-@click.option("--employee-backend", default=None, help="Registered employee backend override.")
-@click.option(
-    "--employee-launch-model",
-    default=None,
-    help="Model for an overriding backend; required when it is not the Worker type's own.",
-)
-@click.option("--stage", required=True, help="Target worker stage (validated per type).")
-@click.option(
-    "--kickoff-note-file",
-    required=True,
-    help="Complete resulting ticket note file, or -.",
-)
-@click.option("--recap-file", default=None, help="Read the recap from this file, or -.")
-@click.option("--success-file", default=None, help="Read settled success from this file, or -.")
-@click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
-@click.option("--plan-file", default=None, help="Read settled plan from this file, or -.")
-@click.option(
-    "--implementation-file",
-    default=None,
-    help="Read settled implementation from this file, or -.",
-)
-@click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
-@click.option(
-    "--field-file",
-    "field_files",
-    multiple=True,
-    help="Read a definition-specific settled field from FIELD=PATH (repeatable).",
-)
-@click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
-@click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
-@click.option("--project", default=None, help="Project name.")
-@click.option("--project-id", default=None, help="Project id.")
-@click.option("--sprint", "sprint_id", default=None, help="Sprint id.")
-@click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
-@click.option("--backlog", is_flag=True, default=False, help="Leave the Ticket unparented.")
-@click.option(
-    "--blocked-by",
-    "blocked_by_ticket_ids",
-    multiple=True,
-    help="Existing blocking Ticket id (repeatable).",
-)
-@json_option
-def chief_create_ticket_from_external_work(
-    title: str,
-    worker_type: str,
-    employee_backend: str | None,
-    employee_launch_model: str | None,
-    stage: str,
-    kickoff_note_file: str,
-    recap_file: str | None,
-    success_file: str | None,
-    approach_file: str | None,
-    plan_file: str | None,
-    implementation_file: str | None,
-    closeout_file: str | None,
-    field_files: tuple[str, ...],
-    priority: str | None,
-    deadline: str | None,
-    project: str | None,
-    project_id: str | None,
-    sprint_id: str | None,
-    sprint_item: str | None,
-    backlog: bool,
-    blocked_by_ticket_ids: tuple[str, ...],
-    as_json: bool,
-) -> None:
-    body = _external_work_body(
-        stage=stage,
-        kickoff_note_file=kickoff_note_file,
-        recap_file=recap_file,
-        success_file=success_file,
-        approach_file=approach_file,
-        plan_file=plan_file,
-        implementation_file=implementation_file,
-        closeout_file=closeout_file,
-        field_files=field_files,
-        reserved_fixed_keys=_EXTERNAL_WORK_CREATE_FIXED_KEYS,
-        as_json=as_json,
-    )
-    body["title"] = title
-    body["worker_type"] = worker_type
-    if employee_backend is not None:
-        body["employee_backend"] = employee_backend
-    if employee_launch_model is not None:
-        body["employee_launch_model"] = employee_launch_model
-    if priority is not None:
-        body["priority"] = priority
-    if deadline is not None:
-        body["deadline"] = deadline
-    add_project_selectors(
-        body, project=project, project_id=project_id, required=False, as_json=as_json
-    )
-    if sprint_id is not None:
-        body["sprint_id"] = sprint_value_for_write(sprint_id, as_json)
-    if backlog and sprint_id is not None:
-        http.fail_validation("--backlog cannot be combined with --sprint", as_json)
-    if sprint_item is not None:
-        body["sprint_item_id"] = sprint_item
-    if backlog:
-        body["sprint_id"] = None
-    if blocked_by_ticket_ids:
-        body["blocked_by_ticket_ids"] = list(blocked_by_ticket_ids)
-    data = http.send(
-        "POST",
-        "/api/chief/tickets/from-external-work",
-        as_json=as_json,
-        json_body=body,
-        request_actor="chief",
-    )
-    http.emit(data, as_json, f"{data['id']} external work created {data['stage']}")
 
 
 # --- worker -------------------------------------------------------------------
@@ -2658,8 +2231,8 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
 @worker.command("propose")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--body-file", default=None, help="Removed: pipe proposal text on stdin instead.")
-@click.option("--recap", default=None, help="Short recap for the proposal.")
-@click.option("--recap-file", default=None, help="Removed: pass --recap TEXT instead.")
+@click.option("--recap", default=None, help="Removed: use `worker recap` instead.")
+@click.option("--recap-file", default=None, help="Removed: use `worker recap` instead.")
 @json_option
 def worker_propose(
     ticket_id: str | None,
@@ -2670,13 +2243,16 @@ def worker_propose(
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     refuse_worker_body_file(body_file, as_json, "pipe proposal text on stdin instead")
+    if recap is not None or recap_file is not None:
+        http.fail_validation(
+            "a proposal no longer carries the recap: use `panels worker recap` instead", as_json
+        )
     body = read_worker_stdin_body(as_json, "proposal body")
-    recap_text = read_recap(recap, recap_file, as_json)
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/propose",
         as_json=as_json,
-        json_body={"body": body, "recap": recap_text},
+        json_body={"body": body},
     )
     http.emit(data, as_json, f"proposed on {data['id']}")
 
@@ -2730,28 +2306,6 @@ def worker_request_help(
     http.emit(data, as_json, f"help message {data['fate']}")
 
 
-@worker.command("trouble")
-@click.option(
-    "--body-file",
-    default=None,
-    help="Removed: pipe the one-line trouble note on stdin instead.",
-)
-@json_option
-def worker_trouble(body_file: str | None, as_json: bool) -> None:
-    """Record trouble on the current worker's Ticket."""
-    tid = resolve_ticket_id(None, as_json)
-    refuse_worker_body_file(body_file, as_json, "pipe the trouble note on stdin instead")
-    body = read_worker_stdin_body(as_json, "trouble note")
-    data = http.send(
-        "POST",
-        f"/api/tickets/{tid}/trouble-notes",
-        as_json=as_json,
-        json_body={"body": body},
-    )
-    note = data["trouble_note"]
-    http.emit(data, as_json, f"trouble recorded on {tid} as note {note['sequence']}")
-
-
 @worker.command("recap")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--body-file", default=None, help="Removed: pipe recap text on stdin instead.")
@@ -2760,7 +2314,9 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
     refuse_worker_body_file(body_file, as_json, "pipe recap text on stdin instead")
     body = read_worker_stdin_body(as_json, "recap")
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send("PUT", f"/api/tickets/{tid}/recap", as_json=as_json, json_body={"body": body})
+    data = http.send(
+        "PATCH", f"/api/tickets/{tid}", as_json=as_json, json_body={"recap": body}
+    )
     http.emit(data, as_json, f"recap written on {data['id']}")
 
 
@@ -2772,13 +2328,12 @@ def worker_note(ticket_id: str | None, append_note: bool, as_json: bool) -> None
     """Write Ticket guidance from stdin; no field selection is needed."""
     tid = resolve_ticket_id(ticket_id, as_json)
     body = sys.stdin.read()
-    method = "POST" if append_note else "PUT"
-    suffix = "/append" if append_note else ""
+    key = "guidance_append" if append_note else "guidance"
     data = http.send(
-        method,
-        f"/api/tickets/{tid}/guidance{suffix}",
+        "PATCH",
+        f"/api/tickets/{tid}",
         as_json=as_json,
-        json_body={"body": body},
+        json_body={key: body},
     )
     http.emit(data, as_json, f"guidance written on {data['id']}")
 
@@ -2794,9 +2349,8 @@ def _commit_outcome(method: str, sprint_id: str, outcome_id: str, as_json: bool)
         http.fail_validation("a commitment requires a Sprint", as_json)
     result = http.send(
         method,
-        f"/api/sprints/{sid}/outcomes/{outcome_id}",
+        f"/api/collections/sprint_outcomes/{sid}/{outcome_id}",
         as_json=as_json,
-        request_actor="ordinary",
     )
     http.emit(result, as_json, f"{outcome_id} commitment updated for {sid}")
 
@@ -2825,7 +2379,7 @@ def sprint_outcome_list(sprint_id: str, as_json: bool) -> None:
     if sid is None:
         http.fail_validation("tracking requires a Sprint", as_json)
     result = http.send(
-        "GET", f"/api/sprints/{sid}/tracking", as_json=as_json, request_actor="ordinary"
+        "GET", f"/api/sprints/{sid}/tracking", as_json=as_json
     )
     http.emit(
         result,
@@ -2864,7 +2418,6 @@ def sprint_outcome_carry(
         f"/api/sprints/{source}/outcomes/{outcome_id}/carry",
         as_json=as_json,
         json_body={"target_sprint_id": target, "ticket_ids": list(ticket_ids)},
-        request_actor="ordinary",
     )
     http.emit(
         result, as_json, f"{outcome_id} committed to {target}; {len(ticket_ids)} Tickets selected"

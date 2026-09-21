@@ -5,15 +5,15 @@ from __future__ import annotations
 from sqlite3 import Connection
 
 import pytest
-from tests.support.principals import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL
+from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.ticket_progress import advance_ticket
 
-from planner.core.authctx import _classify, require_planning_write, require_ticket_worker_write
+from planner.core import authority
+from planner.core.authctx import _classify
+from planner.core.authority import require_above, require_above_or_self
 from planner.core.clock import TestClock as Clock
-from planner.core.db import connect
 from planner.core.errors import PlannerError
 from planner.sprints import commitments, data, views
-from planner.sprints.supervisor_service import require_current_child
 from planner.tickets import data as tickets
 from planner.tickets.contracts import Ticket
 
@@ -169,23 +169,38 @@ def test_carry_rejects_entire_stale_selection_and_preserves_existing_authority(
         is None
     )
     worker = _classify("worker", valid.id)
-    require_ticket_worker_write(tmp_db, worker)
     with pytest.raises(PlannerError):
         commitments.set_commitment(
             tmp_db,
             second.id,
             outcome.id,
             committed=True,
-            admit=lambda: require_planning_write(tmp_db, worker, "planning-sprint"),
+            admit=lambda: require_above(
+                tmp_db, worker.principal, authority.plan("sprint_outcomes")
+            ),
         )
-    # Classification retains the existing broad Ticket-backed Worker authority.
+    # A Ticket classifies itself, and no longer any Ticket that happens to exist.
+    stale_worker = _classify("worker", stale.id)
+    with pytest.raises(PlannerError):
+        tickets.classify_ticket(
+            tmp_db,
+            stale.id,
+            sprint_item_id=other.id,
+            principal=worker.principal,
+            now=3,
+            admit=lambda: require_above_or_self(
+                tmp_db, worker.principal, authority.ticket(stale.id)
+            ),
+        )
     tickets.classify_ticket(
         tmp_db,
         stale.id,
         sprint_item_id=other.id,
-        principal=TEST_TICKET_PRINCIPAL,
+        principal=stale_worker.principal,
         now=3,
-        admit=lambda: require_ticket_worker_write(tmp_db, worker),
+        admit=lambda: require_above_or_self(
+            tmp_db, stale_worker.principal, authority.ticket(stale.id)
+        ),
     )
     assert tickets.read_ticket(tmp_db, stale.id).sprint_item_id == other.id
     supervisor = _classify("sprint_item_supervisor", None, outcome.id)
@@ -197,80 +212,9 @@ def test_carry_rejects_entire_stale_selection_and_preserves_existing_authority(
         principal=OWNER_PRINCIPAL,
         now=3,
     )
-    assert require_current_child(tmp_db, supervisor, outcome.id, valid.id).id == valid.id
+    require_above(tmp_db, supervisor.principal, authority.ticket(valid.id))
     tickets.classify_ticket(
         tmp_db, valid.id, sprint_item_id=other.id, principal=OWNER_PRINCIPAL, now=4
     )
     with pytest.raises(PlannerError):
-        require_current_child(tmp_db, supervisor, outcome.id, valid.id)
-
-
-def test_creation_validates_explicit_placement_and_blockers_without_an_outcome(
-    tmp_db: Connection,
-) -> None:
-    with pytest.raises(PlannerError, match="invalid sprint_id"):
-        tickets.create_ticket(
-            tmp_db,
-            title="Invalid Sprint",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            worker_type="coding",
-            project_id="project_vylo",
-            sprint_id="missing",
-        )
-    with pytest.raises(PlannerError):
-        tickets.create_ticket(
-            tmp_db,
-            title="Invalid blocker",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            worker_type="coding",
-            blocked_by_ticket_ids=["missing"],
-        )
-    with pytest.raises(PlannerError, match="invalid sprint_id"):
-        tickets.create_ticket_from_external_work(
-            tmp_db,
-            title="Invalid external Sprint",
-            kickoff_note="External context",
-            target_stage="needs_success",
-            provided_values={},
-            principal=CHIEF_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            worker_type="coding",
-            project_id="project_vylo",
-            sprint_id="missing",
-        )
-    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
-
-
-def test_tracking_reads_without_a_writer_lock_and_preserves_the_callers_snapshot(
-    tmp_db: Connection,
-    fake_clock: Clock,
-) -> None:
-    sprint = data.create_sprint(
-        tmp_db,
-        name="Committed name",
-        date_start="2026-07-01",
-        date_end="2026-07-07",
-        clock=fake_clock,
-    )
-    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    writer = connect(path, busy_timeout_ms=20)
-    try:
-        writer.execute("BEGIN IMMEDIATE")
-        writer.execute("UPDATE sprints SET name='Uncommitted name' WHERE id=?", (sprint.id,))
-        current = views.sprint_current_view(tmp_db, "2026-07-04")
-        assert current["sprint"] is not None
-        assert current["sprint"]["name"] == "Committed name"
-        assert not tmp_db.in_transaction
-        tmp_db.execute("BEGIN")
-        explicit = views.sprint_tracking_view(tmp_db, sprint.id, "2026-07-04")
-        assert explicit == current
-        assert tmp_db.in_transaction
-        tmp_db.execute("ROLLBACK")
-    finally:
-        writer.execute("ROLLBACK")
-        writer.close()
+        require_above(tmp_db, supervisor.principal, authority.ticket(valid.id))

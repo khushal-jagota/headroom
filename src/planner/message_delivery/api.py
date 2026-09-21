@@ -59,7 +59,7 @@ def _message_text(raw: object) -> str:
 
 def _message_delivery_mode(raw: object = _MISSING) -> MessageDeliveryMode:
     if raw is _MISSING:
-        return MessageDeliveryMode.queue
+        return MessageDeliveryMode.steer
     if isinstance(raw, str):
         try:
             return MessageDeliveryMode(raw)
@@ -97,6 +97,7 @@ async def send_message(
     conversations: Conversations,
 ) -> JsonDict:
     recipient = _principal(body.get("target"))
+    service.require_reach(conn, ctx.principal, recipient)
     message = _message_text(body.get("message"))
     mode = _message_delivery_mode(body.get("mode", _MISSING))
     result = await service.send_message(conversations, conn, clock, ctx, recipient, message, mode)

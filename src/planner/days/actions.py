@@ -15,12 +15,11 @@ def add_ticket_to_day(
     ticket_id: str,
     *,
     now: int,
-    admit: Callable[[], None] | None = None,
+    admit: Callable[[], None],
 ) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
-        if admit is not None:
-            admit()
+        admit()
         tickets_data.read_ticket(conn, ticket_id)
         changed = days_data.add_day_ticket(conn, day_id, ticket_id, now)
     except BaseException:
@@ -37,12 +36,11 @@ def remove_ticket_from_day(
     ticket_id: str,
     *,
     now: int,
-    admit: Callable[[], None] | None = None,
+    admit: Callable[[], None],
 ) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
-        if admit is not None:
-            admit()
+        admit()
         changed = days_data.remove_day_ticket(conn, day_id, ticket_id, now)
     except BaseException:
         conn.execute("ROLLBACK")

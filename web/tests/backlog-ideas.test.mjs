@@ -95,7 +95,7 @@ try {
     if (path === "/api/review") {
       return json({ running_worker_count: 0, awaiting_approval_count: 0 });
     }
-    if (path === "/api/projects") return json({ projects });
+    if (path === "/api/projects?detail=full") return json({ projects });
     if (path === "/api/worker-types") {
       return json({
         worker_types: [
@@ -104,19 +104,19 @@ try {
         ]
       });
     }
-    if (path === "/api/ticket-summaries?sprint_id=null&limit=30&offset=0") {
+    if (path === "/api/tickets?detail=summary&sprint_id=null&limit=30&offset=0") {
       return json({
         tickets: backlogTickets,
         page: page(backlogTickets.length, backlogTickets.length + 1, 0)
       });
     }
-    if (path === "/api/ticket-summaries?sprint_id=null&limit=30&offset=30") {
+    if (path === "/api/tickets?detail=summary&sprint_id=null&limit=30&offset=30") {
       return json({ tickets: [ticket("ticket_last", "P1")], page: page(1, backlogTickets.length + 1, 30) });
     }
-    if (path === "/api/sprint-item-summaries?limit=30&offset=0") {
+    if (path === "/api/items?detail=summary&limit=30&offset=0") {
       return json({ items: firstItemPage, page: page(30, 31, 0) });
     }
-    if (path === "/api/sprint-item-summaries?limit=30&offset=30") {
+    if (path === "/api/items?detail=summary&limit=30&offset=30") {
       return json({ items: [finalItem], page: page(1, 31, 30) });
     }
     if (path === "/api/tickets" && method === "POST") {
@@ -167,7 +167,7 @@ try {
         conversation_history: []
       });
     }
-    if (path === "/api/items/item_offboard/supervisor/conversation/start-values") {
+    if (path === "/api/items/item_offboard/conversation/start-values") {
       return json({ backend_key: "codex", model: "gpt-5", reasoning_effort: null });
     }
     if (path === "/api/conversation/backends") {
@@ -243,7 +243,7 @@ with sync_playwright() as playwright:
     page.locator('section[data-screen="backlog"]').wait_for()
 
     assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "1–30 of 31"
-    assert not any("sprint-item-summaries" in request["path"] for request in page.evaluate("window.__requests()"))
+    assert not any("/api/items" in request["path"] for request in page.evaluate("window.__requests()"))
     assert page.locator('[data-backlog-outcomes], [data-outcome-picker]').count() == 0
     assert page.locator('[data-backlog-tickets] > .section-heading').count() == 0
     first_ticket = page.locator('[data-ticket-id="ticket_0"]')
@@ -274,6 +274,12 @@ with sync_playwright() as playwright:
     page.locator('[data-create="ticket"] [data-seg="priority"] [data-value="P1"]').click()
     assert priority_control.locator('[data-value="P1"]').get_attribute("aria-pressed") == "true"
     assert priority_control.locator('[data-value="P3"]').get_attribute("aria-pressed") == "false"
+    # Creation names who is asked at the ceiling. Unchanged it is "me"; a Ticket made
+    # for somebody else says so here, and the creator does not have to hold it first.
+    holder_select = page.locator('[data-create="ticket"] [data-input="ceiling-holder"]')
+    assert holder_select.input_value() == "owner"
+    assert [option.inner_text() for option in holder_select.locator("option").all()] == ["me", "Chief"]
+    holder_select.select_option("chief")
     page.locator('[data-create="ticket"] [data-commit]').click()
     created = page.locator('[data-ticket-id="ticket_created"]')
     created.wait_for()
@@ -290,8 +296,9 @@ with sync_playwright() as playwright:
         "priority": "P1",
         "sprint_id": None,
         "sprint_item_id": None,
+        "ceiling_holder": {"kind": "chief", "id": "chief"},
     }
-    assert not any("sprint-item-summaries" in request["path"] for request in page.evaluate("window.__requests()"))
+    assert not any("/api/items" in request["path"] for request in page.evaluate("window.__requests()"))
     page.locator('[data-create="ticket"] > summary').click()
     def assert_backlog_layout(width):
         page.set_viewport_size({"width": width, "height": 900})

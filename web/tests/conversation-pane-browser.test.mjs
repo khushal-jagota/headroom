@@ -27,6 +27,7 @@ try {
   await writeFile(
     hostPath,
     String.raw`<script lang="ts">
+  import { tick } from "svelte";
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import type { ConversationState } from "../src/lib/conversation/conversationState";
 
@@ -46,6 +47,27 @@ try {
   let running = $state(false);
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
+  let composerDisabled = $state(false);
+
+  // Enough command entries to fill the menu, and enough shared letters to narrow it.
+  const composerCatalog = [
+    { kind: "command", display_text: "/recap", insertion_text: "/recap ",
+      description: "Recap the ticket", argument_hint: null },
+    { kind: "command", display_text: "/release", insertion_text: "/release ",
+      description: "Cut a release", argument_hint: null },
+    { kind: "command", display_text: "/rename", insertion_text: "/rename ",
+      description: "Rename the thing", argument_hint: null },
+    { kind: "command", display_text: "/reset", insertion_text: "/reset ",
+      description: "Reset local state", argument_hint: null },
+    { kind: "command", display_text: "/review", insertion_text: "/review ",
+      description: "Review the current diff", argument_hint: null },
+    { kind: "command", display_text: "/start", insertion_text: "/start ",
+      description: "Start the worker", argument_hint: null },
+    { kind: "command", display_text: "/status", insertion_text: "/status ",
+      description: "Show the status", argument_hint: null },
+    { kind: "command", display_text: "/stop", insertion_text: "/stop ",
+      description: "Stop the worker", argument_hint: null }
+  ];
   let conversationState = $state<ConversationState>("rest");
   let lens = $state<"focus" | "full">("focus");
 
@@ -144,6 +166,26 @@ try {
       queueReason: "steer_refused"
     }];
   };
+  (window as any).__showUnansweredSend = () => {
+    supportsSteer = true;
+    heldPromptRows = [{
+      key: "local:sent-into-the-dark",
+      heldPromptId: null,
+      senderMessageId: "sent-into-the-dark",
+      content: [{ piece: "text", text: "did this arrive" }],
+      senderLabel: "owner",
+      sentAtUnixMilliseconds: 10,
+      state: "unknown",
+      queueReason: null
+    }];
+  };
+  (window as any).__setComposerDisabled = (disabled: boolean) => {
+    composerDisabled = disabled;
+  };
+  (window as any).__settle = async () => {
+    await tick();
+    await tick();
+  };
   (window as any).__showSettledFocusRestLine = () => {
     rows = [
       {
@@ -178,6 +220,103 @@ try {
     running = false;
     conversationState = "rest";
   };
+  (window as any).__showSettledTurn = () => {
+    const tool = (index: number) => ({
+      key: "settled-tool-" + index,
+      kind: "tool_call",
+      sequence: 3_100 + index,
+      createdAt: 4_100 + index,
+      toolCallId: "settled-tool-" + index,
+      title: "Tool " + index,
+      toolKind: "read",
+      detail: null,
+      startedDetail: null,
+      status: "completed",
+      progress: null
+    });
+    rows = [
+      {
+        key: "full-prompt",
+        kind: "prompt",
+        sequence: 3_000,
+        createdAt: 4_000,
+        content: [{ piece: "text", text: "show everything" }],
+        senderLabel: "owner",
+        mode: "queue",
+        sentAtUnixMilliseconds: 4_000
+      },
+      {
+        key: "full-commentary",
+        kind: "agent_message",
+        sequence: 3_001,
+        createdAt: 4_001,
+        content: [{ piece: "text", text: "hidden commentary" }]
+      },
+      ...[1, 2, 3, 4].map(tool),
+      {
+        key: "full-answer",
+        kind: "agent_message",
+        sequence: 3_200,
+        createdAt: 4_200,
+        content: [{ piece: "text", text: "final answer" }]
+      },
+      {
+        key: "full-end",
+        kind: "turn_ended",
+        sequence: 3_201,
+        createdAt: 4_201,
+        ending: "completed",
+        errorSummary: null,
+        automaticCompactionResult: null
+      }
+    ];
+    visibleRows = null;
+    lens = "focus";
+    conversationState = "opened";
+  };
+  (window as any).__showTurnEndings = () => {
+    rows = [
+      {
+        key: "failed-prompt",
+        kind: "prompt",
+        sequence: 4_000,
+        createdAt: 5_000,
+        content: [{ piece: "text", text: "run the backend" }],
+        senderLabel: "owner",
+        mode: "queue",
+        sentAtUnixMilliseconds: 5_000
+      },
+      {
+        key: "failed-end",
+        kind: "turn_ended",
+        sequence: 4_001,
+        createdAt: 5_001,
+        ending: "failed",
+        errorSummary: "backend exited",
+        automaticCompactionResult: null
+      },
+      {
+        key: "lost-prompt",
+        kind: "prompt",
+        sequence: 4_002,
+        createdAt: 5_002,
+        content: [{ piece: "text", text: "turn that loses its ending" }],
+        senderLabel: "owner",
+        mode: "queue",
+        sentAtUnixMilliseconds: 5_002
+      },
+      {
+        key: "turn-stopped",
+        kind: "turn_stopped",
+        sequence: 4_003,
+        createdAt: 5_003
+      }
+    ];
+    visibleRows = null;
+    lens = "full";
+    running = false;
+    conversationState = "opened";
+  };
 </script>
 
 <main class="fixture-ticket">
@@ -211,7 +350,15 @@ try {
         effortOptions={["high"]}
         outgoingMessages={[]}
         ownSenderLabel="owner"
+        composerDisabled={composerDisabled}
+        {composerCatalog}
         onSend={captureSend}
+        onStopDrawingHeldPrompt={(senderMessageId: string) => {
+          (window as any).__stoppedDrawing = senderMessageId;
+        }}
+        onSendHeldPromptAgain={(senderMessageId: string) => {
+          (window as any).__sentAgain = senderMessageId;
+        }}
       />
     </div>
   </section>
@@ -290,7 +437,14 @@ try {
 
   const browserScript = String.raw`
 from playwright.sync_api import sync_playwright
+import os
 import sys
+
+# Set this to keep a picture of what the assertions checked. The test proves the same
+# thing with or without it.
+screenshot_dir = os.environ.get("UNANSWERED_SEND_SCREENSHOT_DIR")
+if screenshot_dir:
+    os.makedirs(screenshot_dir, exist_ok=True)
 
 PANE = "[data-conversation-pane]"
 INPUT = "[data-conversation-input]"
@@ -351,8 +505,146 @@ with sync_playwright() as playwright:
     assert page.locator(THREAD).is_visible()
     assert page.locator("[data-conversation-rest-bar]").count() == 0
     send_mode = page.locator("[data-conversation-send-mode]")
-    assert send_mode.input_value() == "steer"
-    assert send_mode.locator("option").all_text_contents() == ["Steer", "Queue", "Send now"]
+    send_mode_trigger = page.locator("[data-conversation-send-mode-trigger]")
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Steer"
+    assert send_mode_trigger.get_attribute("aria-expanded") == "false"
+    assert send_mode_trigger.get_attribute("aria-controls") is None
+
+    # The model chooser uses the same one-tab-stop shell and focus contract.
+    model_picker = page.locator("[data-conversation-model-picker]")
+    model_trigger = model_picker.locator("[data-conversation-picker-trigger]")
+    model_label = model_trigger.get_attribute("aria-label")
+    assert model_trigger.get_attribute("aria-controls") is None
+    model_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
+    model_controlled = model_trigger.get_attribute("aria-controls")
+    assert model_controlled and model_picker.locator(f"#{model_controlled}").get_attribute("role") == "listbox"
+    assert model_picker.locator("button").evaluate_all("buttons => buttons.filter(button => button.tabIndex === 0).length") == 1
+    model_picker.locator('[data-conversation-picker-choice="sonnet"]').hover()
+    # A pointer that moves onto a row makes that row the active one.
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'")
+    assert model_trigger.get_attribute("aria-label") == model_label
+    model_picker.get_by_role("listbox").press("s")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'")
+    model_picker.get_by_role("listbox").press("Enter")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')")
+    assert "sonnet" in model_trigger.get_attribute("aria-label").lower()
+    model_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
+    model_picker.get_by_role("listbox").press("Home")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=opus]')?.getAttribute('data-conversation-picker-active') === 'true'")
+    model_picker.get_by_role("listbox").press(" ")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('opus')")
+    assert "opus" in model_trigger.get_attribute("aria-label").lower()
+
+    model_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
+
+    # The pointer has rested on sonnet since the hover above, and opus is now the chosen
+    # model. When the options mount again the browser sends a mouse move at the pointer's
+    # resting place. That is the browser reporting geometry, not a person choosing a row,
+    # so the chosen model keeps the active mark. Settle first, or the mouse move has not
+    # arrived yet and the check proves nothing.
+    page.wait_for_timeout(200)
+    assert model_picker.locator('[data-conversation-picker-choice="opus"]').get_attribute("data-conversation-picker-active") == "true"
+
+    model_picker.get_by_role("listbox").press("End")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=sonnet]')?.getAttribute('data-conversation-picker-active') === 'true'")
+    model_picker.get_by_role("listbox").press("Enter")
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('sonnet')")
+    assert "sonnet" in model_trigger.get_attribute("aria-label").lower()
+    model_trigger.press("ArrowDown")
+    page.evaluate("window.__setComposerDisabled(true)")
+    assert model_picker.evaluate("root => document.activeElement === root") is True
+    page.evaluate("window.__setComposerDisabled(false)")
+    page.wait_for_function("document.activeElement?.hasAttribute('data-conversation-picker-trigger')")
+
+    # Reset the fixture so keyboard selection coverage does not alter later send scenarios.
+    page.reload(wait_until="domcontentloaded")
+    state(page, "rest")
+    page.locator(INPUT).click()
+    state(page, "peeked")
+    send_mode = page.locator("[data-conversation-send-mode]")
+    send_mode_trigger = page.locator("[data-conversation-send-mode-trigger]")
+
+    # The delivery chooser follows the product picker contract for pointer, keyboard,
+    # focus return, outside dismissal, and disabled state.
+    send_mode_trigger.click()
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
+    send_mode_panel = page.locator("[data-conversation-send-mode-panel]")
+    controlled = send_mode_trigger.get_attribute("aria-controls")
+    assert controlled and send_mode.locator(f"#{controlled}").get_attribute("role") == "listbox"
+    assert send_mode.locator("button").evaluate_all("buttons => buttons.filter(button => button.tabIndex === 0).length") == 1
+    assert send_mode_panel.get_by_role("option").count() == 3
+    assert send_mode_panel.get_by_role("option", name="Steer", exact=True).count() == 1
+    assert send_mode_panel.get_by_role("option", name="Queue", exact=True).count() == 1
+    assert send_mode_panel.get_by_role("option", name="Send now", exact=True).count() == 1
+    assert send_mode_panel.get_by_role("option", name="Steer").get_attribute("aria-selected") == "true"
+    send_mode_panel.get_by_role("option", name="Send now").hover()
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Steer"
+    send_mode_panel.press("Escape")
+    assert page.locator("[data-conversation-send-mode-panel]").count() == 0
+    assert send_mode_trigger.get_attribute("aria-controls") is None
+    assert send_mode_trigger.evaluate("button => document.activeElement === button") is True
+
+    send_mode_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
+    send_mode_panel.press("Tab")
+    assert page.locator("[data-conversation-send-mode-panel]").count() == 0
+    assert send_mode.evaluate("root => !root.contains(document.activeElement)") is True
+
+    send_mode_trigger.focus()
+    send_mode_trigger.press("ArrowDown")
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Steer"
+    send_mode.get_by_role("listbox").press("q")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode] [data-conversation-send-mode-choice=queue]')?.getAttribute('data-listbox-picker-active') === 'true'")
+    assert send_mode_panel.get_by_role("option", name="Queue").get_attribute("data-listbox-picker-active") == "true"
+    send_mode.get_by_role("listbox").press("Enter")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode-trigger]')?.getAttribute('aria-label') === 'Message delivery mode: Queue'")
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Queue"
+    send_mode_trigger.click()
+    page.wait_for_function("document.activeElement?.getAttribute('role') === 'listbox'")
+    send_mode.get_by_role("listbox").press("Home")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode] [data-conversation-send-mode-choice=steer]')?.getAttribute('data-listbox-picker-active') === 'true'")
+    send_mode.get_by_role("listbox").press("ArrowDown")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode] [data-conversation-send-mode-choice=queue]')?.getAttribute('data-listbox-picker-active') === 'true'")
+    send_mode.get_by_role("listbox").press(" ")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode-trigger]')?.getAttribute('aria-label') === 'Message delivery mode: Queue'")
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Queue"
+    page.wait_for_function("document.activeElement?.hasAttribute('data-conversation-send-mode-trigger')")
+    assert send_mode_trigger.evaluate("button => document.activeElement === button") is True
+
+    send_mode_trigger.click()
+    page.locator('[data-conversation-send-mode-choice="send_now"]').click()
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Send now"
+    send_mode_trigger.click()
+    page.locator(INPUT).click()
+    assert page.locator("[data-conversation-send-mode-panel]").count() == 0
+
+    send_mode_trigger.click()
+    page.evaluate("window.__setComposerDisabled(true)")
+    assert send_mode_trigger.is_disabled()
+    assert page.locator("[data-conversation-send-mode-panel]").count() == 0
+    assert send_mode.evaluate("root => document.activeElement === root") is True
+    page.evaluate("window.__setComposerDisabled(false)")
+    assert not send_mode_trigger.is_disabled()
+    page.wait_for_function("document.activeElement?.hasAttribute('data-conversation-send-mode-trigger')")
+
+    # Re-enabling returns focus only while focus remains within the disabled picker.
+    send_mode_trigger.click()
+    page.evaluate("window.__setComposerDisabled(true)")
+    page.wait_for_function("document.querySelector('[data-conversation-send-mode]') === document.activeElement")
+    unrelated_control = page.locator("[data-ticket-behind]")
+    unrelated_control.focus()
+    assert unrelated_control.evaluate("control => document.activeElement === control") is True
+    page.evaluate("window.__setComposerDisabled(false)")
+    page.wait_for_function("!document.querySelector('[data-conversation-send-mode-trigger]').disabled")
+    page.evaluate("window.__settle()")
+    active_after_enable = page.evaluate("document.activeElement?.outerHTML")
+    assert unrelated_control.evaluate("control => document.activeElement === control") is True, active_after_enable
+    send_mode_trigger.click()
+    page.locator('[data-conversation-send-mode-choice="queue"]').click()
 
     page.locator(INPUT).fill("the draft stays exactly here")
     page.locator(INPUT).evaluate("box => box.setSelectionRange(9, 9)")
@@ -363,6 +655,7 @@ with sync_playwright() as playwright:
     state(page, "opened")
     assert draft(page) == expected_draft, (draft(page), expected_draft)
     assert page.evaluate("window.__conversationInputSurvived()") is True
+    assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Queue"
 
     # One shared header control and the F shortcut switch the lens in place. Editable
     # controls keep ordinary F input, and modified shortcuts do nothing.
@@ -468,7 +761,11 @@ with sync_playwright() as playwright:
     assert round(strip_box["height"]) == 34
     assert round(composer_box["y"] - strip_box["y"] - strip_box["height"]) == 8
 
-    # The composer defaults to steer, and its queued fallback reason reaches the held row.
+    # Return to steer for the send-boundary scenarios below.
+    send_mode_trigger.click()
+    page.locator('[data-conversation-send-mode-choice="steer"]').click()
+
+    # The steer selection and its queued fallback reason reach the held row.
     page.locator(INPUT).fill("default steer")
     page.locator(INPUT).press("Enter")
     page.wait_for_function("window.__sentModes?.length === 1")
@@ -476,15 +773,25 @@ with sync_playwright() as playwright:
     page.locator('[data-conversation-held-row="composer-fallback"]').wait_for()
     assert "turn did not accept steering" in page.locator("[data-conversation-held-stack]").inner_text()
 
+    # An explicit chooser selection reaches the send boundary unchanged.
+    send_mode_trigger.click()
+    page.locator('[data-conversation-send-mode-choice="queue"]').click()
+    page.locator(INPUT).fill("explicit queue")
+    page.locator(INPUT).press("Enter")
+    page.wait_for_function("window.__sentModes?.length === 2")
+    assert page.evaluate("window.__sentModes") == ["steer", "queue"]
+    send_mode_trigger.click()
+    page.locator('[data-conversation-send-mode-choice="steer"]').click()
+
     # A run change remains attached to the default steer send. The server-visible
     # fallback is a queued message that explains it is waiting to apply that change.
     page.locator("[data-conversation-picker-model] [data-conversation-picker-trigger]").click()
     page.locator('[data-conversation-picker-choice="sonnet"]').click()
     page.locator(INPUT).fill("steer with a run change")
     page.locator(INPUT).press("Enter")
-    page.wait_for_function("window.__sentModes?.length === 2")
-    assert page.evaluate("window.__sentModes") == ["steer", "steer"]
-    assert page.evaluate("window.__sentRuns[1].model") == "sonnet"
+    page.wait_for_function("window.__sentModes?.length === 3")
+    assert page.evaluate("window.__sentModes") == ["steer", "queue", "steer"]
+    assert page.evaluate("window.__sentRuns[2].model") == "sonnet"
     assert "apply the run change" in page.locator("[data-conversation-held-stack]").inner_text()
 
     # The server capability controls one provider-neutral steering action.
@@ -497,12 +804,121 @@ with sync_playwright() as playwright:
     assert steer.inner_text() == "Steer"
     assert "Hermes" not in page.locator("[data-conversation-held-stack]").inner_text()
 
+    # A send the server never answered sits above the composer, never under the rows, and
+    # carries the two things this tab can do about it on its own.
+    page.evaluate("window.__showUnansweredSend()")
+    page.locator('[data-conversation-held-row="local:sent-into-the-dark"]').wait_for()
+    assert "no answer came" in page.locator("[data-conversation-held-stack]").inner_text()
+    assert page.locator('[data-conversation-outgoing="sent-into-the-dark"]').count() == 0
+    assert page.locator('[data-conversation-held-promote="send_now"]').count() == 0
+    assert page.locator('[data-conversation-held-promote="steer"]').count() == 0
+    send_again = page.locator('[data-conversation-held-send-again="sent-into-the-dark"]')
+    send_again.wait_for()
+    if screenshot_dir:
+        page.locator("[data-conversation-held-stack]").screenshot(
+            path=os.path.join(screenshot_dir, "unanswered-send-above-the-composer.png")
+        )
+    send_again.click()
+    page.wait_for_function("window.__sentAgain === 'sent-into-the-dark'")
+    page.locator('[data-conversation-held-stop-drawing="sent-into-the-dark"]').click()
+    page.wait_for_function("window.__stoppedDrawing === 'sent-into-the-dark'")
+
     # A completed owner turn uses the hidden ending for structure. The collapsed Focus
     # line shows the reply without a live working timer.
     page.evaluate("window.__showSettledFocusRestLine()")
     state(page, "rest")
     assert page.locator("[data-conversation-rest-line]").inner_text() == "settled reply"
     assert page.locator("[data-conversation-rest-bar] .c2-rest-working").count() == 0
+
+    # Focus keeps settled work folded. Full reveals all commentary and every tool call.
+    page.evaluate("window.__showSettledTurn()")
+    assert page.get_by_text("hidden commentary", exact=True).count() == 0
+    assert page.locator('[data-conversation-row="tool_call"]').count() == 0
+    lens_toggle.click()
+    assert page.get_by_text("hidden commentary", exact=True).count() == 1
+    assert page.locator('[data-conversation-row="tool_call"]').count() == 4
+    assert page.locator("[data-conversation-work-fold]").count() == 0
+    assert page.locator("[data-conversation-turn-fold]").count() == 0
+    assert page.locator("[data-conversation-turn-count]").count() == 0
+    assert page.locator("[data-conversation-turn-settled-head]").count() == 1
+
+    # The two endings a reader has to act on are the two the pane spells out: a turn the
+    # backend killed, named with the reason it gave, and a turn whose ending the record
+    # will never contain.
+    page.evaluate("window.__showTurnEndings()")
+    page.get_by_text("turn failed · backend exited", exact=True).wait_for()
+    page.get_by_text("turn stopped without an ending", exact=True).wait_for()
+
+    # The composer catalog menu opens from the keyboard, under a pointer left wherever it
+    # was. A menu that mounts or reflows under a still pointer receives a mouse event at
+    # the pointer's resting place, and that is the browser reporting geometry rather than
+    # a person choosing a row. This section parks the pointer, so it runs last and on a
+    # fresh page.
+    page.reload(wait_until="domcontentloaded")
+    state(page, "rest")
+    page.locator(INPUT).click()
+    state(page, "peeked")
+
+    CATALOG_MENU = "[data-conversation-catalog]"
+    CATALOG_ROW = "[data-conversation-catalog-entry]"
+
+    def catalog_rows(page):
+        return page.locator(CATALOG_ROW).evaluate_all(
+            "rows => rows.map(row => row.getAttribute('data-conversation-catalog-entry'))")
+
+    def highlighted_entry(page):
+        return page.evaluate(
+            "() => document.querySelector('[data-conversation-catalog-active]')"
+            "?.getAttribute('data-conversation-catalog-entry') ?? null")
+
+    def close_catalog_menu(page):
+        page.locator(INPUT).press("Control+a")
+        page.locator(INPUT).press("Backspace")
+        page.wait_for_selector(CATALOG_MENU, state="detached")
+
+    # Where the rows land while the whole catalog shows.
+    page.locator(INPUT).type("/")
+    page.wait_for_selector(CATALOG_MENU)
+    every_entry = catalog_rows(page)
+    assert every_entry[0] == "/recap", every_entry
+    third_row = page.locator(CATALOG_ROW).nth(2).bounding_box()
+    close_catalog_menu(page)
+
+    # Park the pointer over the third row's place. Nothing clicks after this, because a
+    # click would move the pointer and the whole point is that it never moves again.
+    page.mouse.move(third_row["x"] + third_row["width"] / 2,
+                    third_row["y"] + third_row["height"] / 2)
+
+    # The keyboard opens the menu and owns the highlight. Settle first, or the mouse event
+    # has not arrived yet and the check proves nothing.
+    page.locator(INPUT).type("/")
+    page.wait_for_selector(CATALOG_MENU)
+    page.wait_for_timeout(200)
+    assert highlighted_entry(page) == every_entry[0], highlighted_entry(page)
+
+    # Backspace widens the open list, so rows slide back under the still pointer. A new
+    # list starts its highlight at the top, and geometry does not move it. The list must
+    # really grow, or this checks nothing.
+    page.locator(INPUT).type("r")
+    page.wait_for_function("count => document.querySelectorAll('[data-conversation-catalog-entry]')"
+                           ".length < count", arg=len(every_entry))
+    narrowed = catalog_rows(page)
+    page.locator(INPUT).press("Backspace")
+    page.wait_for_function("count => document.querySelectorAll('[data-conversation-catalog-entry]')"
+                           ".length === count", arg=len(every_entry))
+    page.wait_for_timeout(200)
+    widened = catalog_rows(page)
+    assert len(widened) > len(narrowed), (narrowed, widened)
+    assert highlighted_entry(page) == widened[0], (highlighted_entry(page), widened)
+
+    # A real pointer move still moves the highlight. Without this the guard above can be
+    # satisfied by a menu that never responds to the mouse at all.
+    wanted = page.locator(CATALOG_ROW).nth(5)
+    wanted_entry = wanted.get_attribute("data-conversation-catalog-entry")
+    wanted.hover()
+    page.wait_for_function(
+        "entry => document.querySelector('[data-conversation-catalog-active]')"
+        "?.getAttribute('data-conversation-catalog-entry') === entry", arg=wanted_entry)
 
     browser.close()
 

@@ -12,7 +12,8 @@ from datetime import date
 from typing import NamedTuple, cast
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.core import links as core_links
+from planner.core import authority
+from planner.core.authority import require_above
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -30,14 +31,10 @@ from planner.sprints.logic import (
     DateRange,
     find_overlap,
 )
-from planner.tickets import worker_context as ticket_worker_context
-from planner.tickets.logic import admission
 
 
 class ItemRead(NamedTuple):
     item: SprintItem
-    blocking_ticket_ids: list[str]
-    blockers_cleared: bool
 
 
 _ITEM_PLAIN_FIELDS: frozenset[str] = frozenset(
@@ -125,14 +122,6 @@ def _load_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:
     if row is None:
         raise PlannerError(ErrorCode.not_found, "sprint not found", {"id": sprint_id})
     return _row_to_sprint(row)
-
-
-def _set_child_ticket_placement_changed(conn: sqlite3.Connection, item_id: str) -> None:
-    rows = conn.execute(
-        "SELECT id FROM tickets WHERE sprint_item_id = ? ORDER BY id", (item_id,)
-    ).fetchall()
-    for row in rows:
-        ticket_worker_context.set_ticket_placement_changed(conn, str(row["id"]))
 
 
 def _load_item(conn: sqlite3.Connection, item_id: str) -> SprintItem:
@@ -444,7 +433,7 @@ def update_supervisor_launch_configuration(
     clock: Clock,
 ) -> SprintItem:
     """Save the complete configuration that an accepted supervisor message used."""
-    admission.require_direct_principal(principal, "update_supervisor_launch_configuration")
+    require_above(conn, principal, authority.outcome(item_id))
     _load_item(conn, item_id)
     with _tx(conn):
         conn.execute(
@@ -458,54 +447,6 @@ def update_supervisor_launch_configuration(
                 item_id,
             ),
         )
-    return _load_item(conn, item_id)
-
-
-def update_item_field(
-    conn: sqlite3.Connection,
-    item_id: str,
-    field: str,
-    value: str | None,
-    *,
-    clock: Clock,
-) -> SprintItem:
-    if field not in _ITEM_PLAIN_FIELDS:
-        raise PlannerError(
-            ErrorCode.validation,
-            "field is not an editable item field",
-            {"field": field},
-        )
-    _load_item(conn, item_id)
-    stored: str | None = value
-    if field == "priority":
-        if value is None:
-            raise PlannerError(ErrorCode.validation, "invalid priority", {"value": value})
-        try:
-            stored = Priority(value).value
-        except ValueError as exc:
-            raise PlannerError(ErrorCode.validation, "invalid priority", {"value": value}) from exc
-    elif field == "project_id":
-        if value is None:
-            raise PlannerError(ErrorCode.validation, "invalid project_id", {"value": value})
-        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (value,)).fetchone() is None:
-            raise PlannerError(ErrorCode.validation, "invalid project_id", {"project_id": value})
-    now = clock.now_unix()
-    with _tx(conn):
-        conn.execute(
-            f"UPDATE sprint_items SET {field} = ?, updated_at = ? WHERE id = ?",
-            (stored, now, item_id),
-        )
-        if field == "project_id":
-            conn.execute(
-                "UPDATE tickets SET project_id = ?, updated_at = ? WHERE sprint_item_id = ?",
-                (stored, now, item_id),
-            )
-            conn.execute(
-                "UPDATE scheduled_ticket_schedules SET project_id = ?, updated_at = ? "
-                "WHERE sprint_item_id = ?",
-                (stored, now, item_id),
-            )
-            _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 
 
@@ -570,7 +511,6 @@ def update_item(
                     "WHERE sprint_item_id = ?",
                     (item.project_id, now, item_id),
                 )
-                _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 
 
@@ -606,19 +546,6 @@ def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDelet
             "Sprint Item cannot be deleted while it holds a Ticket ceiling",
             {"sprint_item_id": item_id, "held_ticket_id": str(held_ticket["id"])},
         )
-    link_rows = conn.execute(
-        "SELECT from_id, to_id, kind FROM links "
-        "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
-        (item_id, item_id),
-    ).fetchall()
-    linked_entity_ids = tuple(
-        sorted(
-            {
-                str(row["to_id"] if row["from_id"] == item_id else row["from_id"])
-                for row in link_rows
-            }
-        )
-    )
     sprint_ids = tuple(
         str(row[0])
         for row in conn.execute(
@@ -627,19 +554,12 @@ def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDelet
         )
     )
 
-    for row in link_rows:
-        conn.execute(
-            "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
-            (str(row["from_id"]), str(row["to_id"]), str(row["kind"])),
-        )
-
     conn.execute("DELETE FROM sprint_items WHERE id = ?", (item_id,))
     conn.execute("DELETE FROM agents WHERE agent_key = ?", (item.supervisor_agent_key,))
     return SprintItemDeletion(
         sprint_item_id=item_id,
         title=item.title,
         sprint_ids=sprint_ids,
-        linked_entity_ids=linked_entity_ids,
     )
 
 
@@ -648,14 +568,7 @@ def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDelet
 
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     item = _load_item(conn, item_id)
-    blocker_summary = core_links.blocker_summary(conn, item_id)
-    blocking_ticket_ids = [row.ticket_id for row in blocker_summary.blocked_by]
-    blockers_cleared = bool(blocking_ticket_ids) and not blocker_summary.blocked
-    return ItemRead(
-        item=item,
-        blocking_ticket_ids=blocking_ticket_ids,
-        blockers_cleared=blockers_cleared,
-    )
+    return ItemRead(item=item)
 
 
 def read_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:

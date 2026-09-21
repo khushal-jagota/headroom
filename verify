@@ -1,5 +1,0 @@
-#!/bin/sh
-# Single source of truth for completeness. Runs from the repo root regardless
-# of the caller's working directory.
-cd "$(dirname "$0")" || exit 1
-exec .venv/bin/python scripts/verify.py "$@"

@@ -16,7 +16,7 @@ from sqlite3 import Connection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
-from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
+from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
@@ -28,7 +28,6 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.runtime.conversation_start import CONVERSATION_ID_PREFIX
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap
 
 _AGENT = {"X-Plan-Actor": "agent"}
 _TITLE_MAX_CHARS = 200
@@ -158,54 +157,6 @@ def test_an_invalid_first_image_makes_neither_conversation_prompt_nor_file(
     assert not list((db_path.parent / "files" / "conversations").glob("**/*"))
 
 
-def test_the_senders_own_facts_about_a_message_reach_the_conversation(
-    tmp_path: Path,
-) -> None:
-    """The name a browser minted, and the instant it sent, arrive with the message.
-
-    A browser draws a message the moment Enter is pressed and stops drawing it when the
-    record hands it back — which it can only recognise by the name it minted. This door is
-    the only thing standing between the two, so what it does with those values is the whole
-    of whether that ever works.
-
-    Both deliveries are asserted. The message that makes a conversation and the message
-    that joins one already there travel by different paths, and a door that carries the
-    name down one of them says nothing about the other.
-    """
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        conversations = app.state.conversation_system
-        made = _send(
-            client,
-            ticket_id,
-            "the first thing",
-            sender_message_id="minted-first",
-            sent_at_unix_milliseconds=1_700_000_000_123,
-        ).json()["conversation_id"]
-        # The turn the first message started, out of the way: a second message sent while
-        # the agent is busy is held rather than delivered, which is a different question.
-        conversations.complete_running_turn(made)
-        _send(
-            client,
-            ticket_id,
-            "the second thing",
-            conversation_id=made,
-            sender_message_id="minted-second",
-            sent_at_unix_milliseconds=1_700_000_000_456,
-        )
-
-    assert [
-        (observation.text, observation.sender_message_id, observation.sent_at_unix_milliseconds)
-        for observation in conversations.observations(made)
-        if observation.kind is InMemoryConversationObservationKind.prompt_delivered
-    ] == [
-        ("the first thing", "minted-first", 1_700_000_000_123),
-        ("the second thing", "minted-second", 1_700_000_000_456),
-    ]
-
-
 def test_a_message_naming_a_conversation_the_ticket_is_not_in_is_turned_away(
     tmp_path: Path,
 ) -> None:
@@ -285,63 +236,3 @@ def test_both_doors_are_human_only(tmp_path: Path) -> None:
     assert start.json()["error"]["code"] == "agent_forbidden", start.text
     assert reset.json()["error"]["code"] == "agent_forbidden", reset.text
     assert _conversation_id(db_path, ticket_id) is None
-
-
-# --- a person replying to the worker -------------------------------------------------------
-
-
-def _ticket_status(db_path: Path, ticket_id: str) -> str:
-    conn: Connection = connect(str(db_path))
-    try:
-        return str(tickets_data.read_ticket(conn, ticket_id).ticket_status)
-    finally:
-        conn.close()
-
-
-def _past_kickoff(db_path: Path, ticket_id: str) -> None:
-    """Accept the kickoff a new Ticket is parked on, leaving it with nothing waiting."""
-    conn: Connection = connect(str(db_path))
-    try:
-        tickets_data.accept_proposal(
-            conn,
-            ticket_id,
-            field="kickoff",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
-            next_holder=OWNER_PRINCIPAL,
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _park_on_a_proposal(db_path: Path, ticket_id: str) -> None:
-    _past_kickoff(db_path, ticket_id)
-    conn: Connection = connect(str(db_path))
-    try:
-        tickets_data.file_current_proposal_with_recap(
-            conn,
-            ticket_id,
-            body="how we will know",
-            principal=ticket_principal(ticket_id),
-            now=1,
-            recap="Current work",
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def test_the_retired_human_reply_route_cannot_move_a_parked_proposal(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-    _park_on_a_proposal(db_path, ticket_id)
-    assert _ticket_status(db_path, ticket_id) == "awaiting_approval"
-
-    with TestClient(app) as client:
-        replied = client.post(f"/api/tickets/{ticket_id}/human-reply")
-
-    assert replied.status_code == 404
-    assert _ticket_status(db_path, ticket_id) == "awaiting_approval"

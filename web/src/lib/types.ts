@@ -66,9 +66,13 @@ export type Priority = "P0" | "P1" | "P2" | "P3";
 
 export type AgentState = "working" | "idle" | "errored";
 
+// `awaiting_approval` is a proposal the owner holds; `awaiting_agent_approval` is one
+// parked on a supervisor or another Ticket. The server splits them, so the same word
+// means the same thing on every screen and no screen has to guess from the status.
 export type WorkAttention = {
   awaiting_reply: boolean;
   awaiting_approval: boolean;
+  awaiting_agent_approval: boolean;
   assigned: boolean;
   agent_state: AgentState;
 };
@@ -188,7 +192,6 @@ export type PendingTicketProposal = {
   created_at: number;
 };
 
-export type AtCap = "stop" | "propose";
 
 export type Principal = {
   kind: "owner" | "chief" | "sprint_item" | "ticket";
@@ -206,7 +209,7 @@ export type BlockerSummary = {
   blocked_by: BlockedByTicket[];
 };
 
-export type StageOwnershipMode = "worker" | "user" | "paired";
+export type StageOwnershipMode = "worker" | "user";
 
 export type ManagedSkill = {
   name: string;
@@ -219,8 +222,6 @@ export type WorkerManagementSummary = {
   worker_type: string;
   label: string;
   specialist_skill_name: string;
-  suggested_next_ceiling: string;
-  stage_ownership_defaults: Record<string, StageOwnershipMode>;
   launch_defaults: EmployeeConfigurationSnapshot;
 };
 
@@ -243,8 +244,6 @@ export type ChiefManagementSettings = {
 
 export type WorkerManagementSettings = {
   worker_type: string;
-  suggested_next_ceiling: string;
-  stage_ownership_defaults: Record<string, StageOwnershipMode>;
   specialist_skill: ManagedSkill;
   launch_defaults: EmployeeConfigurationSnapshot;
   candidate_specialist_skill?: ManagedSkill;
@@ -284,8 +283,6 @@ export type TicketDetail = {
   stage: string;
   ceiling: string;
   ceiling_holder: Principal;
-  at_cap: AtCap;
-  suggested_next_ceiling: string;
   priority: string;
   deadline?: string | null;
   project_id?: string | null;
@@ -295,10 +292,6 @@ export type TicketDetail = {
   sprint_item_id?: string | null;
   resolved_priority_anchors: ResolvedTicketPriorityAnchors;
   ticket_status?: string;
-  backend_error: string | null;
-  stage_ownership_overrides: Record<string, StageOwnershipMode>;
-  default_stage_ownership_mode: StageOwnershipMode | null;
-  effective_stage_ownership_mode: StageOwnershipMode | null;
   conversation_id: string | null;
   conversation_history: TicketConversationHistoryEntry[];
   day_ids?: string[];
@@ -306,26 +299,13 @@ export type TicketDetail = {
   blocker_summary?: BlockerSummary;
   recap?: string | null;
   guidance: string;
-  verdict: TicketVerdict | null;
-  trouble_notes: TicketTroubleNote[];
   field_values: TicketFieldValues;
   pending_proposal: PendingTicketProposal | null;
-  archived_field_content: string;
   awaiting_reply?: boolean;
   awaiting_approval?: boolean;
+  awaiting_agent_approval?: boolean;
   assigned?: boolean;
   agent_state?: AgentState;
-};
-
-export type TicketVerdict = {
-  rating: number | null;
-  text: string | null;
-};
-
-export type TicketTroubleNote = {
-  sequence: number;
-  body: string;
-  created_at: number;
 };
 
 export type EmployeeConfigurationSnapshot = {
@@ -341,7 +321,7 @@ export type TicketDeletionResponse = {
   day_ids: string[];
   sprint_item_ids: string[];
   sprint_ids: string[];
-  linked_entity_ids: string[];
+  linked_ticket_ids: string[];
 };
 
 export type SprintWireBody = {
@@ -407,7 +387,6 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
   has_pending_proposal: boolean;
   gating_field: string | null;
   blocked: boolean;
-  review_route: AtCap;
   worker_type: string;
   day_ids: string[];
   sprint_id: string | null;
@@ -430,9 +409,14 @@ export type SprintItemWorkspace = SprintItemSummary & {
   conversation_history: TicketConversationHistoryEntry[];
 };
 
+// A folder of files is one artifact. `opens` is the file a reader gets when they pick it:
+// the file itself, or the index of a folder that has one. A folder with no index opens
+// nothing of its own and carries what is directly inside it instead.
 export type SprintItemArtifact = {
-  path: string;
+  name: string;
+  opens: string | null;
   modified_at: number;
+  children: SprintItemArtifact[];
 };
 
 export type ReviewProposalItem = {
@@ -466,6 +450,7 @@ export type BoardSprintItem = {
   conversation_id: string | null;
   awaiting_reply: boolean;
   awaiting_approval: boolean;
+  awaiting_agent_approval: boolean;
   assigned: boolean;
   agent_state: AgentState;
   ticket_rollup: WorkAttention;
@@ -483,7 +468,6 @@ export type BoardCard = WorkAttention & {
   activity_at: number;
   has_pending_proposal: boolean;
   ticket_status: string;
-  backend_error: string | null;
   worker_type: string;
   employee_backend: string;
   stage: string;
@@ -491,7 +475,6 @@ export type BoardCard = WorkAttention & {
   gating_field: string | null;
   gating_field_label: string | null;
   is_done: boolean;
-  is_dropped: boolean;
   blocked: boolean;
   conversation_id: string | null;
   waiting_to_closeout: boolean;
@@ -511,6 +494,7 @@ export type DayTicket = AnyRecord & {
   gating_field?: string | null;
   awaiting_reply?: boolean;
   awaiting_approval?: boolean;
+  awaiting_agent_approval?: boolean;
   assigned?: boolean;
   agent_state?: AgentState;
 };

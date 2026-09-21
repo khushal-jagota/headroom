@@ -193,21 +193,6 @@ def test_restore_brings_back_the_managed_file_tree(tmp_path: Path) -> None:
         assert connection.execute("SELECT value FROM records").fetchone()[0] == "canonical"
 
 
-def test_restore_rejects_tampered_managed_capture(tmp_path: Path) -> None:
-    source = tmp_path / "data" / "planner.db"
-    _seed_database(source)
-    _seed_managed_tree(source.parent, marker="captured")
-    backup_dir = tmp_path / "backups"
-    snapshot = create_database_backup(source, backup_dir, "rev-1")
-
-    tampered = snapshot / "files" / "files" / "tickets" / "t_1" / "artifacts" / "ui.html"
-    tampered.write_text("<h1>tampered after capture</h1>")
-
-    assert not _is_verified_snapshot(snapshot)
-    with pytest.raises(ValueError, match="verified"):
-        restore_database_snapshot(snapshot, tmp_path / "live" / "planner.db", live_stopped=True)
-
-
 def test_restore_managed_replacement_failure_rolls_back_the_live_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

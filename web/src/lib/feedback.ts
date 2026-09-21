@@ -113,11 +113,11 @@ export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisu
   if (ticket.ticket_status === "errored" || ticket.ticket_status === "blocked") return "errored";
   const attention = primaryWorkAttention(ticket);
   if (attention === "awaiting_approval") return "current-awaiting-approval";
-  if (attention === "assigned") return "current-paired";
+  if (attention === "assigned") return "current-assigned";
   if (attention === "awaiting_reply") return "needs-me";
   if (ticket.agent_state === "working") return "current-running";
   if (ticket.agent_state === "errored") return "errored";
-  if (ticket.stage === "needs_closeout") return "current-waiting";
+  if (ticket.stage === "needs_consequences") return "current-waiting";
   return "upcoming";
 }
 
@@ -125,14 +125,16 @@ export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (ticket.stage === "done") return "Done";
   if (ticket.ticket_status === "blocked") return "Blocked";
   const attention = primaryWorkAttention(ticket);
-  if (attention === "awaiting_approval") return "Awaiting approval";
-  if (attention === "assigned") return "Assigned";
-  if (attention === "awaiting_reply") return "Needs you";
+  // The same three facts the Workspace rail and the Sprint Item page head their groups
+  // with, in the same words. One fact is named one way wherever it is read.
+  if (attention === "awaiting_approval") return "Needs your approval";
+  if (attention === "assigned") return "Yours";
+  if (attention === "awaiting_reply") return "Messages";
   if (ticket.agent_state === "working") return "Running";
   if (ticket.agent_state === "errored") return "Errored";
   const labels: Record<string, string> = { errored: "Errored", blocked: "Blocked" };
-  if (ticket.ticket_status === "empty" && ticket.stage === "needs_closeout") {
-    return "Waiting for closeout";
+  if (ticket.ticket_status === "empty" && ticket.stage === "needs_consequences") {
+    return "Waiting on Consequences";
   }
   const stage = ticket.stage.replace(/_/g, " ");
   return labels[ticket.ticket_status] || `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;

@@ -13,7 +13,6 @@ from planner.core.clock import TestClock as MutableClock
 from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
-from planner.runtime import worker_step_readiness
 from planner.scheduled_tickets import actions, data
 from planner.scheduled_tickets.contracts import (
     OccurrenceOutcome,
@@ -27,7 +26,6 @@ from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketStatus
-from planner.worker_types.configuration import configured_worker_type_registry
 
 
 def _now(value: str) -> datetime:
@@ -167,80 +165,6 @@ def test_exact_time_and_cadence_rules_are_planning_neutral() -> None:
     )
 
 
-def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
-    tmp_db: Connection,
-) -> None:
-    _insert_current_sprint(tmp_db)
-    schedule_ids = _production_planning_schedules(tmp_db)
-    morning = _now("2026-07-28T05:05:00")
-    midday = _now("2026-07-28T14:30:00")
-    sprint_end = _now("2026-07-28T17:00:00")
-
-    morning_results = actions.run_current_slot(
-        tmp_db,
-        planning_now=morning,
-        now=int(morning.timestamp()),
-        boundary_hour=5,
-    )
-    repeated_morning = actions.run_current_slot(
-        tmp_db,
-        planning_now=morning.replace(second=59),
-        now=int(morning.timestamp()) + 59,
-        boundary_hour=5,
-    )
-    midday_results = actions.run_current_slot(
-        tmp_db,
-        planning_now=midday,
-        now=int(midday.timestamp()),
-        boundary_hour=5,
-    )
-    sprint_results = actions.run_current_slot(
-        tmp_db,
-        planning_now=sprint_end,
-        now=int(sprint_end.timestamp()),
-        boundary_hour=5,
-    )
-
-    assert repeated_morning == morning_results
-    assert len(morning_results) == 1
-    assert len(midday_results) == 1
-    assert len(sprint_results) == 1
-    results = morning_results + midday_results + sprint_results
-    assert {result.schedule_id for result in results} == set(schedule_ids.values())
-    assert {result.outcome for result in results} == {OccurrenceOutcome.created}
-    assert {result.target_day_id for result in results} == {"day_2026-07-28"}
-
-    registry = configured_worker_type_registry()
-    for result in results:
-        assert result.ticket_id is not None
-        ticket = tickets_data.read_ticket(tmp_db, result.ticket_id)
-        assert ticket.worker_type in schedule_ids
-        assert ticket.priority is Priority.P3
-        assert ticket.deadline is None
-        assert ticket.ticket_status is TicketStatus.empty
-        definition = registry.require(ticket.worker_type)
-        if definition.has_field("kickoff"):
-            assert ticket.pending_proposal is None
-        else:
-            assert ticket.stage == definition.default_ceiling()
-            assert dict(ticket.field_values) == {}
-            assert ticket.pending_proposal is None
-        assert ticket.project_id == "project_personal"
-        assert ticket.effective_sprint_id == "sp_current"
-        assert ticket.sprint_item_id is None
-        assert data.list_occurrences(tmp_db, result.schedule_id) == [result]
-
-        assert worker_step_readiness.is_ready_for_worker_step(
-            tmp_db,
-            ticket,
-            planning_day_id="day_2026-07-28",
-            worker_type_definition=definition,
-        )
-
-    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 3
-    assert tmp_db.execute("SELECT count(*) FROM sprint_items").fetchone()[0] == 0
-
-
 def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill(
     tmp_db: Connection,
 ) -> None:
@@ -317,38 +241,6 @@ def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill
         assert result.ticket_id == prelaid_ids[schedule.template.worker_type]
         assert data.list_occurrences(tmp_db, result.schedule_id) == [result]
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 3
-
-
-def test_production_sprint_schedule_only_qualifies_on_current_sprint_final_day(
-    tmp_db: Connection,
-) -> None:
-    _insert_current_sprint(tmp_db)
-    schedule_ids = _production_planning_schedules(tmp_db)
-    before = _now("2026-07-27T17:00:00")
-
-    before_results = actions.run_current_slot(
-        tmp_db,
-        planning_now=before,
-        now=int(before.timestamp()),
-        boundary_hour=5,
-    )
-
-    assert before_results == []
-    assert data.list_occurrences(tmp_db, schedule_ids["planning-sprint"]) == []
-
-    final = _now("2026-07-28T17:00:00")
-    final_results = actions.run_current_slot(
-        tmp_db,
-        planning_now=final,
-        now=int(final.timestamp()),
-        boundary_hour=5,
-    )
-
-    assert {
-        tickets_data.read_ticket(tmp_db, str(result.ticket_id)).worker_type
-        for result in final_results
-    } == {"planning-sprint"}
-    assert len(data.list_occurrences(tmp_db, schedule_ids["planning-sprint"])) == 1
 
 
 def test_due_occurrence_creates_and_places_one_ordinary_ticket(
@@ -437,7 +329,7 @@ def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
     assert sorted(item.outcome.value for item in results) == ["created", "failed"]
     failure = data.list_occurrences(tmp_db, failed_schedule_id)[0]
     assert failure.outcome is OccurrenceOutcome.failed
-    assert "from_id must be an existing ticket" in (failure.error or "")
+    assert "blocking_ticket_id must be an existing ticket" in (failure.error or "")
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
 
 

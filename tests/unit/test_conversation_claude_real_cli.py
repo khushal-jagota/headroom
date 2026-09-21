@@ -28,13 +28,13 @@ from pathlib import Path
 from tempfile import mkdtemp
 
 import pytest
-from tests.unit.test_conversation_claude_agent_sdk import _RecordingSink
+from tests.support.conversation_claude_agent_sdk_bench import _RecordingSink
 
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkChildLaunch,
 )
-from planner.conversation.backends.contracts import TurnToken
+from planner.conversation.backends.contracts import BackendSteerAccepted, TurnToken
 from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
@@ -168,22 +168,32 @@ def test_claude_really_takes_a_picture_in_a_message_and_can_see_it(tmp_path: Pat
 
 
 @real_claude_only
-def test_a_message_of_only_words_still_reaches_the_real_claude_unchanged(
+def test_a_steer_the_real_claude_folds_into_its_turn_still_lets_it_end(
     tmp_path: Path,
 ) -> None:
-    """The common path, against the real thing, so the richer one cannot have broken it."""
+    """The hang itself, against the claude that produced it.
+
+    The turn runs a shell command slow enough to steer into. Claude takes the steer into
+    the turn already running and answers both in one reply, so no second turn is started
+    and no result ever names the steer. The steer's own lifecycle receipt is the only
+    thing that says it is over.
+
+    The assertion is the wait. A turn that never ends fails this by timing out, which is
+    exactly what a person saw.
+    """
 
     async def exercise() -> None:
         sink = _RecordingSink()
         message_files = ConversationMessageFiles(str(Path(mkdtemp()) / "planner.db"))
         child = _real_child(tmp_path, sink, message_files)
+        turn_token = TurnToken(conversation_id="real-claude", turn_number=1)
         await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
         try:
             content = text_message_content(
-                "Reply with the single word ready and nothing else. Do not use tools."
+                "Run the bash command: sleep 12. Then reply with exactly FIRST."
             )
             await child.write_prompt(
-                TurnToken(conversation_id="real-claude", turn_number=1),
+                turn_token,
                 content,
                 sender_content=content,
                 sender_label="owner",
@@ -191,12 +201,20 @@ def test_a_message_of_only_words_still_reaches_the_real_claude_unchanged(
                 model_change=None,
                 reasoning_effort_change=None,
             )
+            while not sink.tools_started:
+                await asyncio.sleep(0.1)
+
+            steered = text_message_content(
+                "Also append the word STEERED to that reply."
+            )
+            outcome = await child.steer(
+                turn_token, steered, sender_label="owner"
+            )
+            assert isinstance(outcome, BackendSteerAccepted)
+
             await sink.wait_for_the_turn_to_end()
 
-            said = " ".join(
-                message_content_text(content) for _, content in sink.message_contents
-            ).lower()
-            assert "ready" in said
+            assert [ending["turn"] for ending in sink.endings] == [turn_token]
         finally:
             await child.stop()
 

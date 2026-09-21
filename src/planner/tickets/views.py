@@ -6,23 +6,25 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Collection, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 
-from planner.core import links as core_links
+from planner.core import ticket_blocks
 from planner.core.contracts import BlockerSummary, JsonDict
-from planner.judgments import data as judgments_data
 from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
+from planner.tickets import derivation
 from planner.tickets.contracts import (
-    AtCap,
     BoardCard,
     BoardSprintItem,
     Ticket,
     TicketListFilters,
     TicketStatus,
 )
+from planner.tickets.derivation import TicketFacts
 from planner.tickets.logic import fields_codec, machine
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -100,29 +102,12 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             "kind": ticket.ceiling_holder.kind.value,
             "id": ticket.ceiling_holder.id,
         },
-        "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
-        "backend_error": ticket.backend_error,
-        "stage_ownership_overrides": {
-            stage: mode.value for stage, mode in ticket.stage_ownership_overrides.items()
-        },
-        "default_stage_ownership_mode": (
-            ticket.default_stage_ownership_mode.value
-            if ticket.default_stage_ownership_mode is not None
-            else None
-        ),
-        "effective_stage_ownership_mode": (
-            ticket.effective_stage_ownership_mode.value
-            if ticket.effective_stage_ownership_mode is not None
-            else None
-        ),
         "conversation_id": ticket.conversation_id,
-        "alias": ticket.alias,
         "field_values": dict(ticket.field_values),
         "pending_proposal": asdict(ticket.pending_proposal)
         if ticket.pending_proposal is not None
         else None,
-        "archived_field_content": ticket.archived_field_content,
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
     }
@@ -176,13 +161,12 @@ def _ticket_search_text(row: sqlite3.Row) -> str:
     registry = configured_worker_type_registry()
     definition = registry.require(str(row["worker_type"]))
     values = fields_codec.values_from_json(str(row["field_values"]), definition.field_ids())
-    proposal = fields_codec.proposal_from_json(row["pending_proposal"])
+    proposal = fields_codec.proposal_from_json(row["searchable_pending_proposal"])
     return "\n".join(
         (
             str(row["title"]),
             str(row["recap"]),
             str(row["guidance"]),
-            str(row["archived_field_content"]),
             *values.values(),
             proposal.body if proposal is not None else "",
         )
@@ -196,13 +180,13 @@ def _recap_preview(recap: str) -> str:
     return compact[: TICKET_RECAP_PREVIEW_CHARS - 1].rstrip() + "…"
 
 
-def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
+def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
     return {
         "id": str(row["id"]),
         "title": str(row["title"]),
         "worker_type": str(row["worker_type"]),
         "stage": str(row["stage"]),
-        "ticket_status": str(row["ticket_status"]),
+        "ticket_status": facts.ticket_status.value,
         "priority": str(row["priority"]),
         "project_id": (
             str(row["effective_project_id"]) if row["effective_project_id"] is not None else None
@@ -258,19 +242,17 @@ def list_ticket_summaries(
     )
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
-    searchable_archive = "tickets.archived_field_content" if filters.search else "NULL"
     searchable_guidance = "tickets.guidance" if filters.search else "NULL"
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
-        "tickets.ticket_status, tickets.priority, tickets.recap, "
+        "tickets.worker_step_claim, tickets.priority, tickets.recap, "
+        "tickets.pending_proposal, "
         + searchable_guidance
         + " AS guidance, "
         + searchable_fields
         + " AS field_values, "
         + searchable_proposal
-        + " AS pending_proposal, "
-        + searchable_archive
-        + " AS archived_field_content, "
+        + " AS searchable_pending_proposal, "
         "tickets.project_id AS effective_project_id, "
         "projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.title AS sprint_item_title, tickets.sprint_id "
@@ -284,11 +266,17 @@ def list_ticket_summaries(
         tuple(params),
     ).fetchall()
     registry = configured_worker_type_registry()
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     search = filters.search.casefold() if filters.search else None
-    matches: list[sqlite3.Row] = []
+    matches: list[tuple[sqlite3.Row, TicketFacts]] = []
     for row in rows:
         stage = str(row["stage"])
-        status = TicketStatus(str(row["ticket_status"]))
+        facts = derivation.derive_ticket_facts(
+            derivation.stored_facts_from_row(
+                row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
+            )
+        )
+        status = facts.ticket_status
         definition = registry.require(str(row["worker_type"]))
         if not filters.include_terminal and definition.is_terminal(stage):
             continue
@@ -302,24 +290,56 @@ def list_ticket_summaries(
             continue
         if search is not None and search not in _ticket_search_text(row).casefold():
             continue
-        matches.append(row)
+        matches.append((row, facts))
     selected = matches[page_request.offset : page_request.offset + page_request.limit]
     return ListPage(
-        rows=tuple(_ticket_summary_json(row) for row in selected),
+        rows=tuple(_ticket_summary_json(row, facts) for row, facts in selected),
         match_count=len(matches),
         limit=page_request.limit,
         offset=page_request.offset,
     )
 
 
+@contextmanager
+def _coherent_read(conn: sqlite3.Connection) -> Iterator[None]:
+    """Hold one read result together against writes landing under it.
+
+    A deferred ``BEGIN`` fixes one WAL snapshot and does not reserve the writer.
+    ``ROLLBACK`` closes an owned read on every exit without emitting the process change
+    signal. An existing transaction owner keeps ownership and supplies its own boundary.
+
+    This detail is assembled from several queries, so without it a reader could see a
+    Ticket's row from before a move and its Day membership from after. The Outcome-scoped
+    read that used to hold this snapshot is gone; the property belongs to the ordinary
+    read that replaced it, not to the address it was reached through.
+    """
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        if owns_transaction and conn.in_transaction:
+            conn.execute("ROLLBACK")
+
+
 def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDict:
-    ticket = tickets_data.read_ticket(conn, ticket_id)
+    with _coherent_read(conn):
+        # This read is also what fixes the snapshot. A deferred BEGIN reserves nothing
+        # until a statement actually reads, so the Ticket's own row has to be read here
+        # rather than further in, or the rows around it could come from after a write.
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        return _ticket_detail_rows(conn, ticket, now)
+
+
+def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> JsonDict:
+    ticket_id = ticket.id
     detail = ticket_json(ticket, now)
     day_rows = conn.execute(
         "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC",
         (ticket_id,),
     ).fetchall()
-    blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    blocker_summary = ticket_blocks.blocker_summary(conn, ticket_id)
     conversation_rows = conn.execute(
         "SELECT ticket_conversations.conversation_id, conversations.created_at "
         "FROM ticket_conversations JOIN conversations "
@@ -328,7 +348,6 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         "ORDER BY conversations.created_at, ticket_conversations.conversation_id",
         (ticket_id,),
     ).fetchall()
-    judgment = judgments_data.read_ticket_judgment(conn, ticket_id)
     detail.update(
         {
             "blocked": blocker_summary.blocked,
@@ -341,23 +360,6 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
                 }
                 for row in conversation_rows
             ],
-            "verdict": (
-                {
-                    "rating": judgment.verdict_rating,
-                    "text": judgment.verdict_text,
-                }
-                if judgment is not None
-                and (judgment.verdict_rating is not None or judgment.verdict_text is not None)
-                else None
-            ),
-            "trouble_notes": [
-                {
-                    "sequence": note.sequence,
-                    "body": note.body,
-                    "created_at": note.created_at,
-                }
-                for note in (judgment.trouble_notes if judgment is not None else ())
-            ],
         }
     )
     if blocker_summary.blocked:
@@ -368,11 +370,15 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     ticket = tickets_data.read_ticket(conn, ticket_id)
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    ownership = machine.stage_ownership_mode(
+        ticket.stage,
+        worker_type_definition=worker_type_definition,
+    )
 
     def show(value: str | None) -> str:
         return value if value else "(none)"
 
-    blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    blocker_summary = ticket_blocks.blocker_summary(conn, ticket_id)
     blocked_by_rows = tuple(row for row in blocker_summary.blocked_by if row.active)
     blocked_by_block = (
         "\n".join(f"- {row.title} ({row.ticket_id}, {row.stage})" for row in blocked_by_rows)
@@ -389,12 +395,11 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"priority: {ticket.priority.value}\n"
         f"employee_backend: {ticket.employee_backend}\n"
         "owner: "
-        f"{ticket.effective_stage_ownership_mode.value if ticket.effective_stage_ownership_mode is not None else '(none)'}\n"  # noqa: E501
+        f"{ownership.value if ownership is not None else '(none)'}\n"
         f"\n"
         f"{field_blocks}"
         f"pending proposal:\n"
         f"{show(ticket.pending_proposal.body if ticket.pending_proposal else None)}\n"
-        f"\nhistorical record:\n{show(ticket.archived_field_content)}\n"
         f"recap:\n{show(ticket.recap)}\n"
         f"\nguidance:\n{show(ticket.guidance)}\n"
         f"\n"
@@ -405,11 +410,40 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 # --- board (§10.3) -------------------------------------------------------------
 
 
-def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
+def ticket_ids_for_conversations(
+    conn: sqlite3.Connection, conversation_ids: Collection[str]
+) -> frozenset[str]:
+    """Which Tickets own these conversations.
+
+    The caller holds conversations, not Tickets, and a conversation can belong to a
+    Sprint Item's supervisor instead. This matches in Python over one unparameterised
+    scan, so the whole conversation record can be asked about without a bound parameter
+    for each conversation in it.
+    """
+    wanted = frozenset(conversation_ids)
+    if not wanted:
+        return frozenset()
+    rows = conn.execute(
+        "SELECT id, conversation_id FROM tickets WHERE conversation_id IS NOT NULL"
+    ).fetchall()
+    return frozenset(str(row["id"]) for row in rows if str(row["conversation_id"]) in wanted)
+
+
+def board_view(
+    conn: sqlite3.Connection,
+    *,
+    day_id: str,
+    ticket_ids_holding_unread_owner_message: Collection[str] = (),
+) -> JsonDict:
     """The current planning day's roster of Ticket cards, read straight from the database.
 
     Ticket detail remains a separate resource, so narrowing this projection does not
     constrain direct Ticket routes or an already-open inspector.
+
+    The Day is the roster, with one exception. A Ticket holding a message the owner has
+    not read joins it whatever Day it is on, because he has not seen the message and a
+    Day he did not put it on cannot be his answer to it. Everything else keeps the Day
+    rule, and a named Ticket already on the Day is not returned twice.
 
     Each card carries its conversation link. The async route uses it to add the shared
     owner-attention and agent-state projection.
@@ -417,7 +451,11 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     Beside the columns, ``sprint_items`` carries each represented Sprint Item's own
     supervisor conversation. A card answers for its Ticket's worker, and no card answers
     for the Item's own worker, so the rail cannot mark an Item's title without this.
+    Those Items follow the rows, so a Ticket that joined by its unread message brings
+    its own Item with it.
     """
+    named_ticket_ids = tuple(dict.fromkeys(ticket_ids_holding_unread_owner_message))
+    named_placeholders = ",".join("?" for _ in named_ticket_ids)
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
@@ -428,19 +466,17 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "tickets.pending_proposal, tickets.worker_type, "
         "tickets.employee_backend, "
         "tickets.conversation_id, "
-        "tickets.ticket_status, "
-        "tickets.ceiling, tickets.at_cap, "
-        "tickets.backend_error, "
+        "tickets.worker_step_claim, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
-        "JOIN day_tickets ON day_tickets.ticket_id = tickets.id "
-        "WHERE day_tickets.day_id = ? AND tickets.stage != 'dropped'",
-        (day_id,),
+        "WHERE tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)"
+        + (f" OR tickets.id IN ({named_placeholders})" if named_ticket_ids else ""),
+        (day_id, *named_ticket_ids),
     ).fetchall()
     registry = configured_worker_type_registry()
-    blocked_target_ids = core_links.blocked_target_ids(conn)
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
     by_stage: dict[str, list[tuple[tuple[int, int, str, int], BoardCard]]] = {
@@ -469,13 +505,10 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         is_parented = row["sprint_item_id"] is not None
         group_project_id = parent_project_id if is_parented else ticket_project_id
         group_project_name = parent_project_name if is_parented else ticket_project_name
-        ticket_status = str(row["ticket_status"])
-        stopped_at_current_stage = str(
-            row["at_cap"]
-        ) == AtCap.stop.value and machine.at_or_beyond_ceiling(
-            stage,
-            str(row["ceiling"]),
-            worker_type_definition=worker_type_definition,
+        facts = derivation.derive_ticket_facts(
+            derivation.stored_facts_from_row(
+                row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
+            )
         )
         card: BoardCard = {
             "id": str(row["id"]),
@@ -488,10 +521,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "group_project": group_project_name,
             "activity_at": int(row["updated_at"]),
             "has_pending_proposal": row["pending_proposal"] is not None,
-            "ticket_status": ticket_status,
-            "backend_error": (
-                str(row["backend_error"]) if row["backend_error"] is not None else None
-            ),
+            "ticket_status": facts.ticket_status.value,
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
             "stage": stage,
@@ -499,16 +529,11 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "gating_field": gating_field_id,
             "gating_field_label": gating_field_label,
             "is_done": stage == worker_type_definition.completed_stage(),
-            "is_dropped": stage == worker_type_definition.dropped_stage.id,
-            "blocked": str(row["id"]) in blocked_target_ids,
+            "blocked": facts.blocked,
             "conversation_id": (
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
-            "waiting_to_closeout": (
-                gating_field_id == "closeout"
-                and ticket_status == TicketStatus.empty.value
-                and not stopped_at_current_stage
-            ),
+            "waiting_to_closeout": facts.waiting_to_closeout,
             "sprint_item_id": (
                 str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None
             ),
@@ -590,24 +615,24 @@ def _board_sprint_items(
 
 def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
     rows = conn.execute(
-        "SELECT id, title, stage, worker_type, ticket_status, ticket_status_changed_at, "
-        "pending_proposal, ceiling_holder, "
-        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
-        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
-        "AS proposal_surfaced_to_owner FROM tickets "
+        "SELECT id, title, stage, worker_type, worker_step_claim, "
+        "pending_proposal, ceiling_holder FROM tickets "
         "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
         (day_id,),
     ).fetchall()
     registry = configured_worker_type_registry()
+    blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     items: list[JsonDict] = []
     for row in rows:
-        ticket_status = str(row["ticket_status"])
-        if ticket_status != TicketStatus.awaiting_approval.value:
+        facts = derivation.derive_ticket_facts(
+            derivation.stored_facts_from_row(
+                row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
+            )
+        )
+        if facts.ticket_status is not TicketStatus.awaiting_approval:
             continue
         holder = json.loads(str(row["ceiling_holder"]))
-        if holder != {"kind": "owner", "id": "owner"} and not bool(
-            row["proposal_surfaced_to_owner"]
-        ):
+        if holder != {"kind": "owner", "id": "owner"}:
             continue
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])
@@ -636,7 +661,7 @@ def review_view(
     day_id: str,
 ) -> JsonDict:
     running_workers = conn.execute(
-        "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent'"
+        "SELECT COUNT(*) AS count FROM tickets WHERE worker_step_claim = 'out'"
     ).fetchone()
     return {
         "items": _review_items(conn, day_id=day_id),

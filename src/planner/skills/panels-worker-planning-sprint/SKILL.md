@@ -7,20 +7,19 @@ description: Stage-by-stage guidance for reviewing the current sprint and planni
 
 Planning Sprint is the durable final-day carrier for one ordered boundary workflow:
 review the current sprint, then plan the next. The Worker prepares automatically, pauses
-for the user's strategic judgment, and writes only the approved result during Closeout.
+for the user's strategic judgment, and writes only the approved result during Consequences.
 It does not own the day-four Checkpoint, in-sprint reconciliation, daily planning, scheduling,
 or operational cutover.
 
 ### The stages
 
-The sequence is **Kickoff → Review → Next Sprint → Closeout → Done**.
+The sequence is **Brief → Review → Next Sprint → Consequences → Done**.
 
-- **needs_kickoff** — identify the sprint boundary this Ticket owns.
+- **needs_brief** — identify the sprint boundary this Ticket owns.
 - **needs_review** — gather evidence, discuss the current sprint, and settle its review.
 - **needs_next_sprint** — use the approved review to settle the next sprint.
-- **needs_closeout** — write both approved packages and verify the canonical records.
+- **needs_consequences** — write both approved packages and verify the canonical records.
 - **done** — finished.
-- **dropped** — abandoned.
 
 ## Shared judgment
 
@@ -33,7 +32,7 @@ Panels is canonical. Use supported `panels sprint`, `panels sprint item`, and
 detail in Ticket Chat. Use Ticket guidance only for direct user direction, and a ticket-owned
 artifact only when an evidence packet would otherwise overwhelm the conversation.
 
-### needs_kickoff — bind the boundary
+### needs_brief — bind the boundary
 
 Identify the sprint being reviewed, the intended next-sprint window, why the run exists,
 and inherited scope. Make the boundary unambiguous without beginning the review or
@@ -94,16 +93,16 @@ primary bet, the kickoff document, and exact Outcome commitments or creations. N
 existing Outcome IDs. If carrying Tickets, list each approved unfinished Ticket ID;
 otherwise carry only the commitment. Never move all children implicitly. Existing historical sprint ranges remain unchanged.
 
-### needs_closeout — write and verify
+### needs_consequences — write and verify
 
-Closeout is the only canonical-write phase. Refresh affected records and compare them
-with the approved Review and Next Sprint packages. If material drift makes either unsafe,
-request user help rather than improvising.
+The Consequences stage is the only canonical-write phase. Refresh affected records and
+compare them with the approved Review and Next Sprint packages. If material drift makes
+either unsafe, request user help rather than improvising.
 
 For a normal or stale boundary, write the current sprint's `review` document first and
 read it back through `panels sprint show <id> review`.
 For a genuine first sprint, verify the approved no-review result and perform no review
-write. Then create the next (or first) sprint with the approved `primary_bet` and `kickoff`,
+write. Then create the next (or first) sprint with the approved `primary_bet` and `brief`,
 retain its returned id, create only approved new Outcomes, and add only approved
 commitments through `panels sprint outcome add`. For an explicit approved carry list,
 use `panels sprint outcome carry` with each selected Ticket ID. Read tracking and affected
@@ -111,5 +110,5 @@ Tickets back; completed history and unselected work remain in their existing Spr
 avoid duplicate creates on retry, and leave the exact continuation point visible after a
 partial failure.
 
-A good **closeout** briefly names what landed and the readback evidence that it matches
+A good **Consequences** briefly names what landed and the readback evidence that it matches
 both approvals. Do not alter the daily plan or expand into excluded sprint workflows.

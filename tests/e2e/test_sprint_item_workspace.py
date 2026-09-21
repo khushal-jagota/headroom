@@ -84,7 +84,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         },
     )
     committed = httpx.put(
-        f"{server.base}/api/sprints/{sprint['id']}/outcomes/{item['id']}", timeout=10.0
+        f"{server.base}/api/collections/sprint_outcomes/{sprint['id']}/{item['id']}", timeout=10.0
     )
     assert committed.status_code < 300, committed.text
     today_ticket = _post(
@@ -120,15 +120,14 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         },
     )
     removed = httpx.delete(
-        f"{server.base}/api/day/today/tickets/{review_ticket['id']}", timeout=10.0
+        f"{server.base}/api/collections/day_tickets/today/{review_ticket['id']}", timeout=10.0
     )
     assert removed.status_code < 300, removed.text
     api.direct_post(
         server,
-        f"/api/tickets/{review_ticket['id']}/accept/kickoff",
+        f"/api/tickets/{review_ticket['id']}/accept/brief",
         {
-            "next_ceiling": "needs_success",
-            "at_cap": "propose",
+            "next_ceiling": "needs_success_condition",
             "next_holder": {"kind": "owner", "id": "owner"},
         },
     )
@@ -140,7 +139,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     )
     assert proposed.status_code < 300, proposed.text
     artifact = httpx.put(
-        f"{server.base}/api/items/{item['id']}/supervisor/artifacts/proof.md",
+        f"{server.base}/files/sprint-items/{item['id']}/artifacts/proof.md",
         headers={
             "X-Plan-Actor": "sprint_item_supervisor",
             "X-Plan-Sprint-Item-ID": str(item["id"]),
@@ -151,7 +150,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     assert artifact.status_code < 300, artifact.text
     for index in range(6):
         extra = httpx.put(
-            f"{server.base}/api/items/{item['id']}/supervisor/artifacts/evidence-{index}.txt",
+            f"{server.base}/files/sprint-items/{item['id']}/artifacts/evidence-{index}.txt",
             headers={
                 "X-Plan-Actor": "sprint_item_supervisor",
                 "X-Plan-Sprint-Item-ID": str(item["id"]),
@@ -160,6 +159,24 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
             timeout=10.0,
         )
         assert extra.status_code < 300, extra.text
+    # A linked site and a folder of write-ups: the two shapes the strip has to fold. The
+    # stylesheet is what the index loads, so it is not a thing to read on its own.
+    for folded_path, content in (
+        ("site/index.html", "<h1>Site</h1>"),
+        ("site/style.css", "body { color: red; }"),
+        ("notes/one.md", "# One"),
+        ("notes/two.md", "# Two"),
+    ):
+        folded = httpx.put(
+            f"{server.base}/files/sprint-items/{item['id']}/artifacts/{folded_path}",
+            headers={
+                "X-Plan-Actor": "sprint_item_supervisor",
+                "X-Plan-Sprint-Item-ID": str(item["id"]),
+            },
+            json={"content": content},
+            timeout=10.0,
+        )
+        assert folded.status_code < 300, folded.text
     api.direct_patch(
         server,
         f"/api/items/{item['id']}",
@@ -170,7 +187,8 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     active_id = "conv_workspace_active"
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'agent', sprint_id = NULL WHERE id = ?",
+            "UPDATE tickets SET worker_step_claim = 'out', pending_proposal = NULL, "
+            "sprint_id = NULL WHERE id = ?",
             (backlog_ticket["id"],),
         )
         _store_supervisor_conversation(
@@ -205,13 +223,13 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     backlog_title.wait_for(timeout=WAIT_MS)
     backlog_placement.wait_for(state="attached", timeout=WAIT_MS)
     assert backlog_placement.text_content() == "Backlog"
-    assert backlog_row.get_attribute("data-ticket-state") == "current-paired"
+    assert backlog_row.get_attribute("data-ticket-state") == "current-assigned"
     assert backlog_row.get_attribute("href") == (
         f"#/workspace/item/{item['id']}/{backlog_ticket['id']}"
     )
     assert backlog_row.locator("xpath=ancestor::details[1]").get_attribute(
         "data-workspace-group"
-    ) == "current-paired"
+    ) == "current-assigned"
     desktop_geometry = page.evaluate(
         """([rowSelector]) => {
             const row = document.querySelector(rowSelector);
@@ -224,19 +242,31 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     assert desktop_geometry["titleWidth"] > 200, desktop_geometry
     assert abs(desktop_geometry["titleTop"] - desktop_geometry["placementTop"]) < 2
     # Remaining Tickets starts collapsed, and its rows carry the shared row grammar:
-    # the condition is the stage mark's label, not a separate word.
+    # the condition is the stage mark's label, not a separate word, and the word is the
+    # heading the row sits under, lowercased.
     remaining = page.locator('[data-workspace-section="remaining"]')
     assert remaining.get_attribute("open") is None
     remaining.locator("> summary").click()
     off_today = page.locator(f'[data-sprint-ticket-id="{review_ticket["id"]}"]')
     assert off_today.get_attribute("data-ticket-state") == "current-awaiting-approval"
-    off_today.get_by_label("to review").wait_for(timeout=WAIT_MS)
+    off_today.get_by_label("needs your approval").wait_for(timeout=WAIT_MS)
     artifacts = page.locator("[data-artifact-strip]")
     artifacts.wait_for(timeout=WAIT_MS)
-    assert artifacts.locator("[data-artifact-chip]").count() == 7
-    assert artifacts.get_by_role("button", name="+2 more").is_visible()
-    artifacts.get_by_role("button", name="+2 more").click()
+    # Eleven files, nine things to open: the site is its index, and the stylesheet beside
+    # that index never appears on its own.
+    assert artifacts.locator("[data-artifact-chip]").count() == 8
+    assert artifacts.locator('[data-artifact-chip="artifacts/site/index.html"]').count() == 1
+    assert artifacts.locator('[data-artifact-chip="artifacts/site/style.css"]').count() == 0
+    assert artifacts.get_by_role("button", name="+4 more").is_visible()
+    artifacts.get_by_role("button", name="+4 more").click()
     assert artifacts.get_by_role("button", name="Show fewer").is_visible()
+    # A folder with no index opens where it stands rather than sending the reader away.
+    notes = artifacts.locator('[data-artifact-folder="notes"]')
+    assert notes.get_attribute("aria-expanded") == "false"
+    assert artifacts.locator('[data-artifact-chip="artifacts/notes/one.md"]').count() == 0
+    notes.click()
+    artifacts.locator('[data-artifact-chip="artifacts/notes/one.md"]').wait_for(timeout=WAIT_MS)
+    assert notes.get_attribute("aria-expanded") == "true"
 
     brief_link = page.get_by_role("link", name="Open proof")
     brief_link.focus()
@@ -264,10 +294,10 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     page.get_by_text("Past supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
     assert page.locator('[data-conversation-read-only-boundary="true"]').count() == 1
     history.select_option("__current__")
-    assert page.locator("[data-conversation-lens-toggle]").inner_text() == "Focus"
-    assert page.get_by_text("Current supervisor marker", exact=True).count() == 0
-    page.locator("[data-conversation-lens-toggle]").click()
+    assert page.locator("[data-conversation-lens-toggle]").inner_text() == "Full"
     page.get_by_text("Current supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
+    page.locator("[data-conversation-lens-toggle]").click()
+    assert page.get_by_text("Current supervisor marker", exact=True).count() == 0
 
     api.direct_patch(
         server,

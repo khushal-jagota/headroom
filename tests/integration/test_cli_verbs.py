@@ -89,8 +89,6 @@ def test_installed_panels_preserves_worker_identity_for_read_and_write(
             "panels",
             "worker",
             "propose",
-            "--recap",
-            "Installed CLI retained worker context.",
             "--json",
         ],
         input="Success through installed panels.",
@@ -102,5 +100,5 @@ def test_installed_panels_preserves_worker_identity_for_read_and_write(
         timeout=30,
     )
     assert json.loads(proposal.stdout)["id"] == ticket_id
-    detail = api.get(server, f"/api/tickets/{ticket_id}")
+    detail = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     assert detail["pending_proposal"]["body"] == "Success through installed panels."

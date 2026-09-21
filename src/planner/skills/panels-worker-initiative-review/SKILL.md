@@ -11,15 +11,14 @@ Use it selectively. It complements Sprint Item supervisors, Initiative Planning,
 
 ## The stages
 
-The sequence is **Kickoff → Review → Feedback → Follow-ups → Closeout → Done**.
+The sequence is **Brief → Review → Feedback → Follow-ups → Consequences → Done**.
 
-- **needs_kickoff** — identify the intended outcome, combined change, source context, target base, and integration route.
+- **needs_brief** — identify the intended outcome, combined change, source context, target base, and integration route.
 - **needs_review** — inspect the combined result, run proportionate checks, and create the HTML review for an exact commit.
 - **needs_feedback** — review the result with the user and record the agreed meaning and disposition of each comment.
 - **needs_followups** — convert agreed feedback into separate Tickets or other scoped work, with clear integration effects.
-- **needs_closeout** — integrate the approved result when no blocker remains, or preserve the target and report the handoff.
+- **needs_consequences** — integrate the approved result when no blocker remains, or preserve the target and report the handoff.
 - **done** — finished.
-- **dropped** — abandoned.
 
 ## Review identity
 
@@ -29,13 +28,13 @@ Follow the risks and seams of the initiative. Do not apply a fixed checklist. Se
 
 A material source or behavior change invalidates the review and its approval. Return the Ticket to Review before integration. A clean integration does not invalidate approval when it preserves the reviewed tree.
 
-## needs_kickoff — establish the review target
+## needs_brief — establish the review target
 
 Name the intended outcome, the combined branch or change set, and the source records. Identify the target base, the integration route, and any explicit authority for deployment or publication.
 
 Confirm that the review target and its source context exist. Do not assume that the result is ready.
 
-A good **kickoff** lets another worker identify the exact review surface without reconstructing the initiative.
+A good **Brief** lets another worker identify the exact review surface without reconstructing the initiative.
 
 ## needs_review — review the combined result
 
@@ -63,7 +62,7 @@ A good **review** links the artifact and states the reviewed commit, readiness j
 
 ## needs_feedback — capture the user's judgment
 
-This is a paired stage. Open with the artifact, the readiness judgment, and the decisions that require user attention.
+This is a user-owned collaborative stage. Open with the artifact, the readiness judgment, and the decisions that require user attention.
 
 Let the user direct the review. Preserve each concern before interpretation. Ask for clarification until both parties agree on its meaning.
 
@@ -91,7 +90,7 @@ Read every created or updated record back and verify it. Keep a trace from each 
 
 A good **followups** proposal lists the created or updated work and maps every agreed comment to it.
 
-## needs_closeout — integrate or hand off
+## needs_consequences — integrate or hand off
 
 If explicit approval exists and no blocker remains, integrate the exact reviewed result through the defined route. Confirm that the approved tree remains unchanged.
 
@@ -99,7 +98,7 @@ If integration introduces a material source or behavior change, stop. Return the
 
 Do not deploy or publish without explicit authority. If approval does not exist or a blocker remains, leave the target unchanged.
 
-A good **closeout** states the reviewed result, the target state, and the verification. If integration did not occur, it states the blocker, handoff, and next review point.
+A good **Consequences** states the reviewed result, the target state, and the verification. If integration did not occur, it states the blocker, handoff, and next review point.
 
 ## Initiative Review disciplines
 
@@ -107,4 +106,4 @@ A good **closeout** states the reviewed result, the target state, and the verifi
 - Prefer direct evidence over inherited confidence.
 - Keep the artifact proportionate to the result and its risks.
 - Preserve the user's feedback as decisions, not as a loose transcript.
-- Follow `panels-worker` for ownership, proposals, scope, and reconciliation rules.
+- Follow `panels-worker` for ownership, proposals, and ceiling rules.

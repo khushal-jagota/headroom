@@ -60,10 +60,13 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
         runtime_root = tmp_path / "runtime"
         hermes_home = runtime_root / "hermes-home"
         database_parent = runtime_root / "state"
+        database_parent.mkdir(parents=True, exist_ok=True)
+        # Opening a database writes the managed skills home it is seeded with.
+        with connect(str(database_parent / "planner.db")) as seed:
+            create_schema(seed)
         provision_planner_home_skills(
             hermes_home,
             configured_database_parent=database_parent,
-            panels_skills_source_root=REPOSITORY_ROOT / "src" / "planner" / "skills",
         )
 
         # What Panels installed, before any agent is asked to read it: the skill is a link

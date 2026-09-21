@@ -88,6 +88,16 @@
     typeof detail.data?.worker_type === "string" ? (detail.data.worker_type as string) : null
   );
   let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
+  // Approving here sets the next ceiling, so the reviewer gets the same choice of holder
+  // the Ticket page offers, including handing the Ticket back to its own Sprint Item.
+  let reviewSprintItem = $derived(
+    detail.data?.sprint_item_id
+      ? {
+          id: detail.data.sprint_item_id,
+          title: detail.data.resolved_priority_anchors?.sprint_item?.title || "Sprint Item"
+        }
+      : null
+  );
   let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, true));
 
   let manifestMissingWorkerType = $derived(
@@ -176,14 +186,6 @@
     });
   }
 
-  function saveProposal(raw: string): Promise<unknown> {
-    if (!acceptField) throw new Error("Review decision is not a Ticket field");
-    return mutateJson(`/api/tickets/${ticketId}/proposal`, {
-      method: "PUT",
-      body: { field: acceptField, body: raw }
-    });
-  }
-
   async function savePriority(
     priority: string,
     select: HTMLSelectElement,
@@ -210,7 +212,7 @@
     revisionError = null;
     revisionBusy = true;
     try {
-      await mutateJson(`/api/tickets/${ticketId}/return-for-revision`, {
+      await mutateJson(`/api/tickets/${ticketId}/reject`, {
         method: "POST",
         body: { message }
       });
@@ -284,7 +286,7 @@
             </div>
           {/if}
         </div>
-        {#if acceptField === "kickoff"}
+        {#if acceptField === "brief"}
           <div class="review-kickoff-priority">
             <TicketPriorityControl
               priority={ticketDetail.priority}
@@ -320,16 +322,15 @@
             lifecycle={lc}
             ticketStage={ticketDetail.stage}
             ceiling={ticketDetail.ceiling}
-            suggestedNextCeiling={ticketDetail.suggested_next_ceiling}
+            sprintItem={reviewSprintItem}
             stageState={fieldStageVisualStateFor(lc, ticketDetail, acceptField)}
-            approvalDisabled={acceptField === "kickoff" && priorityBusy}
+            approvalDisabled={acceptField === "brief" && priorityBusy}
             onAccept={(payload) => accept(payload)}
-            onSaveProposal={saveProposal}
           />
         {/if}
       </div>
 
-      {#if acceptField !== "kickoff"}
+      {#if acceptField !== "brief"}
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
           <div class="review-revision-box" data-review-voice={voiceState.phase}>
             {#if voiceState.phase !== "idle"}

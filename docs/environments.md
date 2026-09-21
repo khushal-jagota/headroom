@@ -95,17 +95,13 @@ state, logs, locks, and sockets stay in the worktree's local `data/`; their loop
 port is selected for that run. Confirm the imported `planner` package and every
 printed `PLAN_*` path resolve to the worktree before starting a service.
 
-An agent can put the server's explicit-port `localhost` or `127.0.0.1` URL in its
-Ticket conversation. Panels turns that URL into
-`/dev/tickets/<ticket-id>/<port>/...` and proxies the request to that loopback port
-through the same ingress the user already opened. The URL is transient: Panels stores
-no Ticket port or server record. Relative page resources and navigation stay under the
-proxy prefix; a dev server that emits root-origin URLs needs a compatible base-path
-configuration. Panels strips its credentials and cookies before forwarding a request,
-and it does not accept cookies or authentication state back from the dev server.
+Ticket servers stay on the machine loopback interface. Panels does not expose them
+through its application. Use a Ticket-owned HTML, image, Markdown, or other file for
+work that the user must review. Store that durable work in the live Ticket file tree and
+link it through `/files/tickets/<ticket-id>/<relative-path>`.
 
 Stop Ticket services after active work, then remove their local state, worktree, and
-branch at Closeout.
+branch at Consequences.
 
 ## Launch isolation and provider homes
 

@@ -1,4 +1,3 @@
-import type { AtCap } from "./types";
 
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
@@ -7,7 +6,7 @@ export type FieldStageVisualState =
   | "completed"
   | "current-running"
   | "current-waiting"
-  | "current-paired"
+  | "current-assigned"
   | "current-awaiting-approval"
   | "errored"
   | "upcoming"
@@ -17,14 +16,6 @@ export type FieldStageVisualState =
 
 export function stageLabel(value: string): string {
   return String(value).replace(/_/g, " ");
-}
-
-export function atCapLabel(value: AtCap): string {
-  const labels: Record<AtCap, string> = {
-    stop: "stop",
-    propose: "propose"
-  };
-  return labels[value];
 }
 
 // Underscores to spaces; capitalizes the first letter by default. Pass
@@ -46,15 +37,6 @@ export type TicketStageVisualInput = {
   fieldName: string;
   fieldHasProposal?: boolean;
 };
-
-export function markerLabel(value: string): string {
-  const labels: Record<string, string> = {
-    "pending-proposal": "proposal pending",
-    "blockers-cleared": "blockers cleared",
-    frozen: "frozen"
-  };
-  return labels[value] || value;
-}
 
 // The ticket status names are the labels: underscores become spaces.
 export function ticketStatusText(value: string): string {

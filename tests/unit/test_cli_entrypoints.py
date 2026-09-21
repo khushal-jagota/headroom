@@ -10,227 +10,6 @@ from click.testing import CliRunner
 
 from planner.cli import http
 from planner.cli import main as cli_main
-from planner.cli.record_projection import project_record
-from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
-
-
-def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    requested_paths: list[str] = []
-
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        requested_paths.append(path)
-        if path == "/api/worker-types":
-            return {
-                "worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration")]
-            }
-        return {
-            "id": "t_correct",
-            "worker_type": "exploration",
-            "stage": "needs_understanding",
-            "ticket_status": "agent",
-            "priority": "P1",
-            "title": "Correct ticket",
-            "worker": "panels-worker-exploration",
-            "field_values": {},
-            "pending_proposal": None,
-            "archived_field_content": "",
-        }
-
-    monkeypatch.setattr(http, "send", fake_send)
-    result = CliRunner().invoke(
-        cli_main.main,
-        ["worker", "my-ticket"],
-        env={"PLAN_TICKET_ID": "t_correct"},
-    )
-
-    assert result.exit_code == 0, result.output
-    assert requested_paths == [
-        "/api/tickets/t_correct/worker-self",
-        "/api/worker-types",
-    ]
-    assert "id: t_correct" in result.output
-    assert "stage: needs_understanding" in result.output
-
-
-def test_worker_request_help_sends_stdin_to_the_default_holder(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, str, Any]] = []
-
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        calls.append((method, path, kwargs))
-        return {"fate": "recorded"}
-
-    monkeypatch.setattr(http, "send", fake_send)
-    result = CliRunner().invoke(
-        cli_main.main,
-        ["worker", "request-help"],
-        input="Please resolve the product choice.\n",
-        env={"PLAN_TICKET_ID": "t_help"},
-    )
-
-    assert result.exit_code == 0, result.output
-    assert calls == [
-        (
-            "POST",
-            "/api/tickets/t_help/request-help",
-            {"as_json": False, "json_body": {"message": "Please resolve the product choice.\n"}},
-        )
-    ]
-    assert "help message recorded" in result.output
-
-
-def test_ticket_approve_sends_the_explicit_next_holder(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, str, dict[str, Any]]] = []
-
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        calls.append((method, path, kwargs))
-        if path == "/api/tickets/t_child":
-            return {
-                "id": "t_child",
-                "worker_type": "coding",
-                "stage": "needs_success",
-                "pending_proposal": {"field": "success", "body": "Ready"},
-            }
-        if path == "/api/worker-types":
-            return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
-        return {"id": "t_child"}
-
-    monkeypatch.setattr(http, "send", fake_send)
-    result = CliRunner().invoke(
-        cli_main.main,
-        [
-            "ticket",
-            "approve",
-            "t_child",
-            "--ceiling",
-            "needs_approach",
-            "--at-cap",
-            "propose",
-            "--holder-kind",
-            "sprint_item",
-            "--holder-id",
-            "si_parent",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert calls[-1][0:2] == ("POST", "/api/tickets/t_child/accept/success")
-    assert calls[-1][2]["json_body"] == {
-        "next_ceiling": "needs_approach",
-        "at_cap": "propose",
-        "next_holder": {"kind": "sprint_item", "id": "si_parent"},
-    }
-
-
-def test_supervisor_approve_defaults_the_next_holder_to_its_item(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, str, dict[str, Any]]] = []
-
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        calls.append((method, path, kwargs))
-        return {"id": "t_child"}
-
-    monkeypatch.setattr(http, "send", fake_send)
-    result = CliRunner().invoke(
-        cli_main.main,
-        [
-            "sprint",
-            "item",
-            "supervisor",
-            "approve",
-            "si_parent",
-            "t_child",
-            "--ceiling",
-            "needs_approach",
-            "--at-cap",
-            "propose",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert calls == [
-        (
-            "POST",
-            "/api/items/si_parent/supervisor/tickets/t_child/approve",
-            {
-                "as_json": False,
-                "json_body": {
-                    "next_ceiling": "needs_approach",
-                    "at_cap": "propose",
-                    "next_holder": {"kind": "sprint_item", "id": "si_parent"},
-                },
-            },
-        )
-    ]
-
-
-def test_ticket_list_passes_repeatable_filters_and_page_controls(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, str, dict[str, Any]]] = []
-
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        calls.append((method, path, kwargs))
-        return {
-            "tickets": [],
-            "page": {
-                "match_count": 0,
-                "return_count": 0,
-                "limit": 7,
-                "offset": 14,
-                "omitted_before": 0,
-                "omitted_after": 0,
-                "complete": True,
-                "next_offset": None,
-            },
-        }
-
-    monkeypatch.setattr(http, "send", fake_send)
-    result = CliRunner().invoke(
-        cli_main.main,
-        [
-            "ticket",
-            "list",
-            "--stage",
-            "needs_success",
-            "--stage",
-            "needs_approach",
-            "--exclude-stage",
-            "done",
-            "--ticket-status",
-            "agent",
-            "--exclude-ticket-status",
-            "errored",
-            "--include-terminal",
-            "--search",
-            "Needle",
-            "--limit",
-            "7",
-            "--offset",
-            "14",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert calls[0][0:2] == ("GET", "/api/ticket-summaries")
-    assert calls[0][2]["params"] == {
-        "stage": ["needs_success", "needs_approach"],
-        "exclude_stage": ["done"],
-        "ticket_status": ["agent"],
-        "exclude_ticket_status": ["errored"],
-        "include_terminal": True,
-        "search": "Needle",
-        "limit": 7,
-        "offset": 14,
-    }
-    assert "No matches." in result.output
-    assert "Complete: yes." in result.output
 
 
 @pytest.mark.parametrize(
@@ -238,12 +17,12 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
     (
         (
             ("ticket", "list"),
-            "/api/ticket-summaries",
+            "/api/tickets",
             "tickets",
             {
                 "id": "t_one",
                 "title": "One",
-                "stage": "needs_success",
+                "stage": "needs_success_condition",
                 "ticket_status": "empty",
                 "priority": "P1",
                 "project": None,
@@ -252,7 +31,7 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
         ),
         (
             ("sprint", "list"),
-            "/api/sprint-summaries",
+            "/api/sprints",
             "sprints",
             {
                 "id": "sp_one",
@@ -263,7 +42,7 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
         ),
         (
             ("sprint", "item", "list"),
-            "/api/sprint-item-summaries",
+            "/api/items",
             "items",
             {"id": "si_one", "title": "One", "status": "todo", "priority": "P2"},
         ),
@@ -283,7 +62,7 @@ def test_ticket_list_passes_repeatable_filters_and_page_controls(
         ),
         (
             ("project", "list"),
-            "/api/project-summaries",
+            "/api/projects",
             "projects",
             {"id": "project_one", "name": "One"},
         ),
@@ -335,59 +114,3 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
     assert requested_paths == [path, path]
 
 
-@pytest.mark.parametrize(
-    ("options", "method", "suffix"), [([], "PUT", ""), (["--append"], "POST", "/append")]
-)
-def test_worker_note_writes_stdin_once_without_a_field_or_type_read(
-    monkeypatch: pytest.MonkeyPatch, options: list[str], method: str, suffix: str
-) -> None:
-    calls: list[tuple[str, str, Any]] = []
-
-    def fake_send(verb: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        calls.append((verb, path, kwargs.get("json_body")))
-        return {"id": "t_direct", "guidance": kwargs["json_body"]["body"]}
-
-    monkeypatch.setattr(http, "send", fake_send)
-    body = "  Exact stdin\n\n"
-    result = CliRunner().invoke(cli_main.main, ["worker", "note", "t_direct", *options], input=body)
-    assert result.exit_code == 0, result.output
-    assert calls == [(method, "/api/tickets/t_direct/guidance" + suffix, {"body": body})]
-
-
-def test_ticket_parts_expose_guidance_and_recap_without_expanding_default_manifest(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        assert (method, path) == ("GET", "/api/worker-types")
-        return {"worker_types": [PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")]}
-
-    monkeypatch.setattr(http, "send", fake_send)
-    data = {
-        "id": "t_parts",
-        "worker_type": "coding",
-        "field_values": {"kickoff": "request"},
-        "pending_proposal": None,
-        "archived_field_content": "",
-        "recap": "orientation",
-        "guidance": "  exact guidance\n",
-    }
-    header, parts = cli_main._ticket_record(data)
-    manifest = project_record(header, parts, None)
-    assert list(manifest["manifest"]) == [
-        "kickoff",
-        "success",
-        "approach",
-        "plan",
-        "implementation",
-        "closeout",
-        "proposal",
-        "archive",
-        "recap",
-        "guidance",
-    ]
-    assert "parts" not in manifest
-    expanded = project_record(header, parts, ("guidance", "recap"))
-    assert expanded["parts"] == {
-        "guidance": {"value": data["guidance"], "proposal": None},
-        "recap": {"value": "orientation", "proposal": None},
-    }

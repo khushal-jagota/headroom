@@ -32,7 +32,7 @@ At 17:00 local time on day four, the internal schedule creates a personal Checkp
 Ticket in the current sprint. At 17:00 on the final day, it creates a `planning-sprint`
 Ticket in the Personal Project and current Sprint. Its specialist Worker reviews
 the current sprint first, plans the next sprint with the user, and writes only the
-approved result at Closeout. A matching pre-laid Ticket suppresses each scheduled
+approved result at Consequences. A matching pre-laid Ticket suppresses each scheduled
 duplicate. If a run is missed, recovery uses ordinary Ticket creation. Neither schedule
 backfills a missed occurrence, and Planning Sprint stays on the final day.
 
@@ -40,12 +40,12 @@ backfills a missed occurrence, and Planning Sprint stays on the final day.
 
 Sprint tracking shows committed Outcomes under Projects, including Outcomes with no
 Tickets. Each Outcome row links to its workspace. One collapsed **No Outcome** row follows
-all Project groups when the Sprint contains non-dropped unclassified Tickets. It combines
+all Project groups when the Sprint contains unclassified Tickets. It combines
 those Tickets across Projects and reveals their canonical links when opened.
 
-The progress count says how many Tickets are done, excluding dropped Tickets. It does
+The progress count says how many Tickets are done. It does
 not claim that the Outcome has been achieved. It always uses `done/total`, including
-`0/0` for an Outcome with no non-dropped Tickets.
+`0/0` for an Outcome with no Tickets.
 The Sprint review records the user's judgment about actual outcomes.
 
 Add outcome lets the user search and reuse an existing Outcome or create one with a
@@ -56,7 +56,7 @@ the Outcome list.
 Carry forward adds the existing Outcome to a target Sprint and moves only the exact
 unfinished Tickets the user checks. No Ticket is preselected. An empty selection carries
 only the commitment. The whole change validates and commits together. A reclassified,
-newly completed, dropped, or differently scheduled Ticket rejects the request without
+newly completed, or differently scheduled Ticket rejects the request without
 moving the remaining selection. Repeating an unchanged successful request is safe.
 The source commitment and unselected Tickets remain. Completed history never moves as
 a side effect of carrying an Outcome.
@@ -65,7 +65,10 @@ Removing a commitment does not remove a Ticket's Outcome classification. Those T
 remain under that Outcome on Sprint tracking. Only Tickets without an Outcome appear
 under **No Outcome**. The Outcome workspace always holds its full brief, artifacts, and
 Tickets across Sprints. Its header shows open work and work that needs the user. Its
-artifact strip lists files newest first. Today and Other Tickets use the same status
+artifact strip lists what there is to open, newest first. A folder is one thing on it,
+not one thing per file: a folder that holds an `index.html` opens that page, and a folder
+without one opens where it stands and shows what is directly inside. The files an index
+loads, such as its stylesheet and its images, never appear on their own. Today and Other Tickets use the same status
 groups. Other Tickets starts collapsed. Ticket rows omit Sprint names and mark only open,
 unsprinted work as Backlog. The Ticket page does not show Sprint or Backlog placement.
 Commitment links and a Ticket's stored schedule can differ: they state different facts.
@@ -88,8 +91,8 @@ for classification, and ordinary Ticket placement for scheduling.
 `carry <source-sprint> <outcome> --to <target-sprint> --ticket <ticket>` states the exact
 selection. `GET /api/sprints/{id}/tracking` also reads past or future Sprints directly.
 
-Outcome deletion still refuses children. Childless deletion removes its commitments,
-blocking links and managed files through the existing guarded lifecycle.
+Outcome deletion still refuses children. Childless deletion removes its commitments
+and managed files through the existing guarded lifecycle.
 
 ## Outcome supervisors
 
@@ -107,40 +110,43 @@ there. It does more when the user asks it to, and the actions below are how. It 
 manager: it does not push Tickets along, and it does not resolve parked proposals as
 routine work.
 
-A supervisor acts within its own Outcome. It changes Item fields, child Ticket
-fields, Day membership, blocks, scope, proposal review, and Item artifacts through one
-item-scoped service, and every write delegates to the same domain action that direct
-product routes use. A write aimed at another Item, or at a Ticket that is not a current
-child, is refused.
+A supervisor has no routes of its own. It calls the routes Khushal calls, and the one
+rule admits it on its own current child Tickets and on its own Item, because that is what
+it stands above and what it is. A write aimed at another Item, or at a Ticket that is not
+a current child, is refused by the same sentence. See `authority.md`.
+
+That is wider than the eight wrapped operations it used to have. A supervisor now reaches
+every ordinary operation on its own child Tickets, including deciding a proposal it does
+not hold. The one thing it may not do is move a child Ticket to another Outcome: changing
+who stands above a Ticket is handing authority around rather than using it.
 
 A supervisor creates its own child Tickets with the ordinary Ticket creation route. A
-Ticket it creates is scoped like any other: the kickoff parks for the user's approval
-unless the supervisor states a wider scope it was given.
+Ticket it creates carries a ceiling like any other: this Sprint Item becomes the holder,
+so the Brief parks for the Item unless the supervisor states a higher ceiling it was
+given.
 
-A supervisor also deletes a current child Ticket, through the ordinary deletion route.
-The Item is taken from the supervisor's own identity, so it cannot reach a Ticket
-elsewhere. That boundary is the only check. The deletion is permanent and nothing else
-guards it: a Ticket whose Worker is mid-turn is deleted too, and that Worker is killed
-with it.
+It deletes a current child Ticket through that same route. The deletion is permanent and
+nothing else guards it: a Ticket whose Worker is mid-turn is deleted too, and that Worker
+is killed with it.
 
 Config edits the canonical Outcome supervisor role skill. Supported backends read
 that managed source for future conversations. A save does not rewrite an existing
 conversation, its role record, or its history.
 
-A supervisor asking about its own Item gets an overview: the Item itself, and one line
-for each Ticket on it — what the Ticket is called, where it has got to, and which days
-it sits on. Finished Tickets stay in that list. The overview is what a supervisor reads
-to decide where to look, so it never carries a Ticket's written work.
+The Item workspace is the overview: the Item itself, its artifacts, and one line for each
+Ticket on it — what the Ticket is called, where it has got to, and which days it sits on.
+Finished Tickets stay in that list. It is what a supervisor reads to decide where to
+look, so it never carries a Ticket's written work. It names who holds each parked
+proposal, so any reader can see which ones are addressed to them.
 
-Ticket context is where that written work lives. It includes current Ticket facts, Day
-membership, the current Worker conversation, and the exact triggering Worker message when
-its sequence is supplied. The supervisor can read bounded pages from that current
-conversation.
+The written work lives on the Ticket, read the ordinary way. A Ticket's current Worker
+conversation is read where every conversation is read, in bounded pages, forwards from a
+position or backwards from the end.
 
-A targeted Worker message requires the exact current child conversation. Panels records
-the Outcome supervisor agent key as the sender. A missing, reset, stale, or unrelated
-conversation is refused. This message path cannot create a conversation and does not
-change the Ticket Stage, scope, status, or Day membership.
+A message to a Worker goes through Send Message, the one door for messaging any
+principal. It resolves the Ticket's current conversation as it lands, and starts one when
+there is none. Panels records the sender. This path does not change the Ticket Stage,
+ceiling, status, or Day membership.
 
 Nothing a supervisor does reaches the user on its own. Backend prose is runtime output;
 only an explicit Send Message reaches another principal. The Item row in the Workspace
@@ -154,7 +160,10 @@ no second Ticket review or Worker-control route. Worker readiness remains the on
 automatic creator of a Worker step.
 
 Managed item artifacts live under `files/sprint-items/<item-id>/`. The server exposes
-them through `/files/sprint-items/<item-id>/<relative-path>`. Item deletion moves this
+them through `/files/sprint-items/<item-id>/<relative-path>`. Two readings of the same
+directory exist, and they are for different readers. The flat listing returns every file
+at every depth, which is what an agent needs to find the file it wrote. The workspace
+returns folded entries, which is what a person reads. Item deletion moves this
 directory to quarantine before its database transaction. A failed transaction restores
 the directory. A successful deletion removes the item, its agent row, and its files.
 

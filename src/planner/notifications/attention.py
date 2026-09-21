@@ -1,13 +1,16 @@
 """Durable source-side attention transitions.
 
-Writers record transitions in their own transaction.  The projector only turns durable
-rising edges into notification facts, so several commits can safely share one wake-up.
+Writers record transitions in their own transaction.  Queueing only turns durable rising
+edges into deliveries, so several commits can safely share one wake-up.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+
+from planner.tickets import derivation
+from planner.tickets.contracts import TicketStatus
 
 
 def _record(
@@ -98,16 +101,16 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
     from planner.work_attention import ticket_assignment_from_values
 
     row = conn.execute(
-        "SELECT id, stage, worker_type, ticket_status, pending_proposal, ceiling_holder, "
-        "stage_ownership_overrides, default_stage_ownership_mode, conversation_id, "
-        "EXISTS (SELECT 1 FROM proposal_delivery_failures failure "
-        "WHERE failure.ticket_id=tickets.id AND failure.resolved_at IS NULL) "
-        "AS proposal_surfaced_to_owner "
+        "SELECT id, stage, worker_type, worker_step_claim, pending_proposal, ceiling_holder, "
+        f"conversation_id, {derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets WHERE id=?",
         (ticket_id,),
     ).fetchone()
     if row is None:
         return
+    facts = derivation.derive_ticket_facts(
+        derivation.stored_facts_from_row(row, has_live_blocker=bool(row["has_live_blocker"]))
+    )
     conversation = conversation_attention(conn, row["conversation_id"]).get(
         str(row["conversation_id"]), (False, False, 0, 0)
     )
@@ -115,23 +118,14 @@ def capture_ticket_attention(conn: sqlite3.Connection, ticket_id: str, occurred_
     owner_holds = holder.get("kind") == "owner"
     flags = {
         "awaiting_reply": conversation[0],
-        "awaiting_approval": (
-            str(row["ticket_status"]) == "awaiting_approval"
-            and row["pending_proposal"] is not None
-            and (owner_holds or bool(row["proposal_surfaced_to_owner"]))
-        ),
+        "awaiting_approval": facts.ticket_status is TicketStatus.awaiting_approval
+        and owner_holds,
         "assigned": ticket_assignment_from_values(
             stage=str(row["stage"]),
             worker_type=str(row["worker_type"]),
-            stage_ownership_overrides=str(row["stage_ownership_overrides"]),
-            default_stage_ownership_mode=(
-                str(row["default_stage_ownership_mode"])
-                if row["default_stage_ownership_mode"] is not None
-                else None
-            ),
             owner_holds_ceiling=owner_holds,
         ),
-        "errored": str(row["ticket_status"]) == "errored" or conversation[1],
+        "errored": facts.ticket_status is TicketStatus.errored or conversation[1],
     }
     for notification_type, active in flags.items():
         _record(conn, "ticket", ticket_id, notification_type, active, occurred_at)
@@ -172,7 +166,11 @@ def reconcile_attention(
 ) -> None:
     """Fallback for imports and maintenance writes outside canonical runtime doors."""
     prior = {
-        (str(row["subject_kind"]), str(row["subject_id"]), str(row["notification_type"])): (
+        (
+            str(row["subject_kind"]),
+            str(row["subject_id"]),
+            str(row["notification_type"]),
+        ): (
             bool(row["active"]),
             int(row["generation"]),
         )
@@ -181,7 +179,10 @@ def reconcile_attention(
             "FROM notification_attention_state"
         )
     }
-    for (subject_kind, subject_id, notification_type), (active, occurred_at) in desired.items():
+    for (subject_kind, subject_id, notification_type), (
+        active,
+        occurred_at,
+    ) in desired.items():
         key = (subject_kind, subject_id, notification_type)
         prior_value = prior.get(key)
         prior_active, generation = prior_value or (False, 0)

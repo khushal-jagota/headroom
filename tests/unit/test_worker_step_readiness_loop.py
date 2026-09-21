@@ -28,7 +28,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.clock import TestClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
@@ -38,16 +38,9 @@ from planner.runtime.worker_step_readiness_loop import (
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
-from planner.worker_context import data as worker_context_data
-from planner.worker_context.contracts import (
-    PreparedWorkerPrompt,
-    WorkerContextReceipt,
-    WorkerContextService,
-)
-from planner.worker_context.service import SqliteWorkerContextService
+from planner.tickets import revision_feedback
+from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus
 from planner.worker_types.configuration import configured_worker_type_registry
-from planner.worker_types.contracts import WorkerTypeDefinition
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
 BOUNDARY_HOUR = 5
@@ -66,7 +59,6 @@ class _World:
             create_schema(conn)
         self.clock = TestClock(FIXED_NOW)
         self.conversations = InMemoryConversationSystem()
-        self.context = SqliteWorkerContextService(lambda: connect(self.db_path))
 
     def connect(self) -> sqlite3.Connection:
         return connect(self.db_path)
@@ -75,15 +67,17 @@ class _World:
         self,
         *,
         title: str = "T",
-        ownership_mode: StageOwnershipMode | None = None,
+        kickoff_note: str = "",
+        worker_type: str = "coding",
         conversation_id: str | None = None,
         on_today: bool = True,
     ) -> str:
         with self.connect() as conn:
             ticket = tickets_data.create_ticket(
                 conn,
-                worker_type="coding",
+                worker_type=worker_type,
                 title=title,
+                kickoff_note=kickoff_note,
                 principal=OWNER_PRINCIPAL,
                 now=0,
                 title_max_chars=200,
@@ -91,21 +85,12 @@ class _World:
             ticket = tickets_data.accept_proposal(
                 conn,
                 ticket.id,
-                field="kickoff",
+                field="brief",
                 principal=OWNER_PRINCIPAL,
                 now=0,
                 next_ceiling="none",
-                at_cap=AtCap.propose,
                 next_holder=OWNER_PRINCIPAL,
             )
-            if ownership_mode is not None:
-                tickets_data.set_stage_ownership(
-                    conn,
-                    ticket.id,
-                    stage=ticket.stage,
-                    ownership_mode=ownership_mode,
-                    now=0,
-                )
             if conversation_id is not None:
                 conn.execute(
                     "UPDATE tickets SET conversation_id = ? WHERE id = ?",
@@ -122,21 +107,21 @@ class _World:
             )
         )
 
-    def add_pending_context(self, ticket_id: str, key: str, text: str) -> None:
+    def add_revision_feedback(self, ticket_id: str, message: str) -> None:
         with self.connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            worker_context_data.set_context(conn, ticket_id, key, text)
+            ticket = tickets_data.read_ticket(conn, ticket_id)
+            revision_feedback.set_feedback(
+                conn,
+                ticket_id,
+                stage=ticket.stage,
+                sender=OWNER_PRINCIPAL,
+                message=message,
+                now=1,
+            )
 
-    def pending_context_keys(self, ticket_id: str) -> list[str]:
+    def pending_revision_feedback(self, ticket_id: str) -> bool:
         with self.connect() as conn:
-            return [
-                str(row["context_key"])
-                for row in conn.execute(
-                    "SELECT context_key FROM pending_worker_context "
-                    "WHERE worker_entity_id = ? ORDER BY context_key",
-                    (ticket_id,),
-                ).fetchall()
-            ]
+            return revision_feedback.snapshot(conn, ticket_id) is not None
 
     def ticket(self, ticket_id: str) -> Ticket:
         with self.connect() as conn:
@@ -155,7 +140,6 @@ class _World:
                 ticket_id,
                 connect_database=self.connect,
                 conversation_system=cast(ConversationSystem, self.conversations),
-                worker_context_service=cast(WorkerContextService, self.context),
                 worker_type_registry=configured_worker_type_registry(),
                 planning_day_id_resolver=lambda: TODAY_DAY_ID,
                 now=self.clock.now_unix,
@@ -207,60 +191,6 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
 
 
-def test_a_release_does_not_fire_once_the_status_has_been_written_again(
-    tmp_path: Path,
-) -> None:
-    # A delayed release carries the transition revision. A release and re-claim
-    # inside one second share a timestamp and status but have distinct revisions.
-    world = _World(tmp_path)
-    ticket_id = world.ready_ticket()
-    conn = world.connect()
-    try:
-        claimed = tickets_data.claim_ticket_for_worker_step(
-            conn,
-            ticket_id,
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
-            readiness_check=worker_step_readiness.is_ready_for_worker_step,
-            now=100,
-        )
-        assert claimed is not None
-
-        # Someone else takes the Ticket away and hands it back to the worker in the same second.
-        assert tickets_data.release_worker_step_claim(
-            conn,
-            ticket_id,
-            expected_status=claimed.ticket_status,
-            expected_status_revision=claimed.ticket_status_revision,
-            now=100,
-        )
-        reclaimed = tickets_data.claim_ticket_for_worker_step(
-            conn,
-            ticket_id,
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
-            readiness_check=worker_step_readiness.is_ready_for_worker_step,
-            now=100,
-        )
-        assert reclaimed is not None
-        assert reclaimed.ticket_status is claimed.ticket_status
-        assert reclaimed.ticket_status_changed_at == claimed.ticket_status_changed_at
-        assert reclaimed.ticket_status_revision > claimed.ticket_status_revision
-
-        # The first claim's late release finds a different revision despite the same clock.
-        assert (
-            tickets_data.release_worker_step_claim(
-                conn,
-                ticket_id,
-                expected_status=claimed.ticket_status,
-                expected_status_revision=claimed.ticket_status_revision,
-                now=100,
-            )
-            is False
-        )
-    finally:
-        conn.close()
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
-
-
 # --- the per-Ticket flow -------------------------------------------------------
 
 
@@ -287,7 +217,6 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     ticket_id = world.ready_ticket(conversation_id="conv-refuse")
     world.start_conversation("conv-refuse")
     world.conversations.arm_backend_write_failure("conv-refuse")
-    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
 
     with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
         assert world.start_step(ticket_id) is False
@@ -299,14 +228,42 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert ticket_id in message
     assert "conv-refuse" in message
     assert "write_to_backend_failed" in message
-    # A refused delivery reached nobody, so the context is still owed.
-    assert world.pending_context_keys(ticket_id) == ["ticket_changed"]
     assert world.skill_bindings() == []
 
 
-def test_a_refused_paired_opener_rearms_the_stage(world: _World) -> None:
+def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _World) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-revision-feedback")
+    world.start_conversation("conv-revision-feedback")
+    world.add_revision_feedback(ticket_id, "  Preserve this exact feedback.  ")
+    with world.connect() as conn:
+        tickets_data.edit_ticket(
+            conn,
+            ticket_id,
+            edit=TicketEdit(guidance="Mutable guidance changed independently."),
+            title_max_chars=200,
+            principal=OWNER_PRINCIPAL,
+            now=2,
+        )
+    world.conversations.arm_backend_write_failure("conv-revision-feedback")
+
+    assert world.start_step(ticket_id) is False
+    assert world.pending_revision_feedback(ticket_id) is True
+    world.conversations._conversations[  # noqa: SLF001 - focused failure recovery proof
+        "conv-revision-feedback"
+    ].armed_backend_write_failure = False
+    assert world.start_step(ticket_id) is True
+
+    writes = world.conversations.backend_prompt_writes("conv-revision-feedback")
+    assert len(writes) == 1
+    assert "Revision feedback from owner owner for stage needs_success_condition" in writes[0].text
+    assert "  Preserve this exact feedback.  " in writes[0].text
+    assert "Mutable guidance changed independently." in writes[0].text
+    assert world.pending_revision_feedback(ticket_id) is False
+
+
+def test_a_refused_user_owned_opener_rearms_the_stage(world: _World) -> None:
     ticket_id = world.ready_ticket(
-        ownership_mode=StageOwnershipMode.paired,
+        worker_type="new_worker",
         conversation_id="conv-paired-refuse",
     )
     world.start_conversation("conv-paired-refuse")
@@ -326,7 +283,7 @@ def test_a_refused_paired_opener_rearms_the_stage(world: _World) -> None:
             conn,
             tickets_data.read_ticket(conn, ticket_id),
             planning_day_id=TODAY_DAY_ID,
-            worker_type_definition=configured_worker_type_registry().require("coding"),
+                worker_type_definition=configured_worker_type_registry().require("new_worker"),
         )
 
 
@@ -335,7 +292,7 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     # and a held message is delivered work, not a failure.
     ticket_id = world.ready_ticket(conversation_id="conv-queue")
     world.start_conversation("conv-queue")
-    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
+    world.add_revision_feedback(ticket_id, "Queueing still delivers this feedback.")
 
     conn = world.connect()
     try:
@@ -356,8 +313,8 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
         assert tickets_data.release_worker_step_claim(
             conn,
             ticket_id,
-            expected_status=claimed.ticket_status,
-            expected_status_revision=claimed.ticket_status_revision,
+            expected_claim=claimed.worker_step_claim,
+            expected_claim_revision=claimed.worker_step_claim_revision,
             now=2,
         )
     finally:
@@ -369,7 +326,6 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
             ticket_id,
             connect_database=world.connect,
             conversation_system=cast(ConversationSystem, queueing),
-            worker_context_service=cast(WorkerContextService, world.context),
             worker_type_registry=configured_worker_type_registry(),
             planning_day_id_resolver=lambda: TODAY_DAY_ID,
             now=world.clock.now_unix,
@@ -382,7 +338,7 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
     writes = world.conversations.backend_prompt_writes("conv-queue")
     assert [write.sender_label for write in writes] == ["browser"]
     assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
-    assert world.pending_context_keys(ticket_id) == []
+    assert world.pending_revision_feedback(ticket_id) is False
     assert {row["binding_status"] for row in world.skill_bindings()} == {"provisional"}
 
 
@@ -402,7 +358,7 @@ class _QueueingConversationSystem:
     async def send(
         self,
         conversation_id: str,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.queue,
@@ -419,7 +375,7 @@ class _QueueingConversationSystem:
             )
         return await self._system.send(
             conversation_id,
-            text_message_content(text),
+            content,
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,
@@ -438,90 +394,23 @@ class _QueueingConversationSystem:
         return await self._system.has_pending_permission_ask(conversation_id)
 
 
-def test_pending_context_is_acknowledged_only_after_the_send_lands(world: _World) -> None:
-    ticket_id = world.ready_ticket(conversation_id="conv-context")
-    world.start_conversation("conv-context")
-    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
-    world.add_pending_context(ticket_id, "day_changed", "The ticket moved to today.")
-    assert world.pending_context_keys(ticket_id) == ["day_changed", "ticket_changed"]
-
-    assert world.start_step(ticket_id) is True
-    assert world.pending_context_keys(ticket_id) == []
-    assert {row["binding_status"] for row in world.skill_bindings()} == {"final"}
-
-
-class _PreparationFailure:
-    def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
-        raise RuntimeError("prompt preparation failed")
-
-    def acknowledge(
-        self, worker_entity_id: str, receipts: tuple[WorkerContextReceipt, ...]
-    ) -> None:
-        raise AssertionError("nothing was prepared")
-
-
-def test_a_failure_before_send_removes_bindings_and_releases_the_claim(
-    world: _World,
-) -> None:
-    ticket_id = world.ready_ticket(conversation_id="conv-prepare-failure")
-    world.start_conversation("conv-prepare-failure")
-
-    started = asyncio.run(
-        start_ready_worker_step(
-            ticket_id,
-            connect_database=world.connect,
-            conversation_system=cast(ConversationSystem, world.conversations),
-            worker_context_service=cast(WorkerContextService, _PreparationFailure()),
-            worker_type_registry=configured_worker_type_registry(),
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
-            now=world.clock.now_unix,
-        )
+def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
+    ticket_id = world.ready_ticket(
+        title="Ship it",
+        kickoff_note="Use this agreed starting point.",
+        conversation_id="conv-opener",
     )
-
-    assert started is False
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
-    assert world.skill_bindings() == []
-
-
-class _WorkerTypeLookupFailure:
-    """A registry that cannot answer what the Ticket's worker type is."""
-
-    def require(self, worker_type: str) -> WorkerTypeDefinition:
-        raise RuntimeError("the worker type could not be looked up")
-
-
-class _AcknowledgementRefusingContext:
-    """Prepares as usual, then cannot tick the context off."""
-
-    def __init__(self, service: WorkerContextService) -> None:
-        self._service = service
-
-    def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
-        return self._service.prepare(worker_entity_id, prompt_text)
-
-    def acknowledge(
-        self, worker_entity_id: str, receipts: tuple[WorkerContextReceipt, ...]
-    ) -> None:
-        raise RuntimeError("the context store is unreachable")
-
-
-class _UnreadableConversationSystem(InMemoryConversationSystem):
-    """A conversation system whose liveness read fails outright."""
-
-    async def is_running(self, conversation_id: str) -> bool:
-        raise RuntimeError("the conversation system is unreachable")
-
-
-def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-opener")
     world.start_conversation("conv-opener")
     guidance = "Keep the owner’s boundary.\n\n  Exact whitespace stays.  "
     with world.connect() as conn:
-        tickets_data.replace_guidance(
-            conn, ticket_id, body=guidance, principal=OWNER_PRINCIPAL, now=0
+        tickets_data.edit_ticket(
+            conn,
+            ticket_id,
+            edit=TicketEdit(guidance=guidance),
+            title_max_chars=200,
+            principal=OWNER_PRINCIPAL,
+            now=0,
         )
-    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
-
     assert world.start_step(ticket_id) is True
 
     writes = world.conversations.backend_prompt_writes("conv-opener")
@@ -531,106 +420,19 @@ def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _Worl
     sender_message_id = world.conversations.observations("conv-opener")[-1].sender_message_id
     assert sender_message_id is not None
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
-    assert "propose the 'success' field for approval" in writes[0].text
+    assert "propose the 'success_condition' field for approval" in writes[0].text
     assert "Stage owner: worker" in writes[0].text
     assert f"[Ticket guidance]\n{guidance}\n[/Ticket guidance]" in writes[0].text
-    assert world.pending_context_keys(ticket_id) == []
-    assert "The user renamed the ticket." in writes[0].text
+    assert (
+        "[Ticket brief]\nUse this agreed starting point.\n[/Ticket brief]" in writes[0].text
+    )
+    assert "[Pending worker context]" not in writes[0].text
     bindings = world.skill_bindings()
     assert len(bindings) == 3
     assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
 
 
-def test_a_paired_owned_stage_rests_empty_after_its_single_paired_opener(
-    world: _World,
-) -> None:
-    ticket_id = world.ready_ticket(
-        title="Talk it through",
-        ownership_mode=StageOwnershipMode.paired,
-        conversation_id="conv-paired",
-    )
-    world.start_conversation("conv-paired")
-
-    assert world.start_step(ticket_id) is True
-
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
-    text = world.conversations.backend_prompt_writes("conv-paired")[0].text
-    assert "open the paired discussion for the 'success' field" in text
-    assert "Stage owner: paired" in text
-    assert world.start_step(ticket_id) is False
-    assert len(world.conversations.backend_prompt_writes("conv-paired")) == 1
-
-
-def test_a_ticket_that_is_not_ready_is_never_sent_to(world: _World) -> None:
-    ticket_id = world.ready_ticket(conversation_id="conv-unready", on_today=False)
-    world.start_conversation("conv-unready")
-
-    assert world.start_step(ticket_id) is False
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
-    assert world.conversations.backend_prompt_writes("conv-unready") == ()
-
-
 # --- the polling loop ----------------------------------------------------------
-
-
-class _HeldAtTheOccupancyCheck:
-    """The fake, with its first read held open until a test lets it go.
-
-    The occupancy check is the flow's first await, so holding it there keeps a step
-    genuinely in flight while its Ticket is still untouched and still ready.
-    """
-
-    def __init__(self, system: InMemoryConversationSystem) -> None:
-        self._system = system
-        self.reached = threading.Event()
-        self._gate: asyncio.Event | None = None
-
-    def release(self, asyncio_loop: asyncio.AbstractEventLoop) -> None:
-        gate = self._gate
-        if gate is not None:
-            asyncio_loop.call_soon_threadsafe(gate.set)
-
-    async def is_running(self, conversation_id: str) -> bool:
-        if self._gate is None:
-            self._gate = asyncio.Event()
-        self.reached.set()
-        await self._gate.wait()
-        return await self._system.is_running(conversation_id)
-
-    async def start_conversation(self, request: ConversationStartRequest) -> None:
-        await self._system.start_conversation(request)
-
-    async def send(
-        self,
-        conversation_id: str,
-        text: str,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
-        model_change: str | None = None,
-        reasoning_effort_change: str | None = None,
-        sender_message_id: str | None = None,
-        sent_at_unix_milliseconds: int | None = None,
-    ) -> PromptDeliveryFate:
-        return await self._system.send(
-            conversation_id,
-            text_message_content(text),
-            sender_label=sender_label,
-            mode=mode,
-            model_change=model_change,
-            reasoning_effort_change=reasoning_effort_change,
-            sender_message_id=sender_message_id,
-            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-        )
-
-    async def interrupt(self, conversation_id: str) -> None:
-        await self._system.interrupt(conversation_id)
-
-    async def kill(self, conversation_id: str) -> None:
-        await self._system.kill(conversation_id)
-
-    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
-        return await self._system.has_pending_permission_ask(conversation_id)
 
 
 def _loop_in_a_thread(
@@ -650,7 +452,6 @@ def _loop_in_a_thread(
                 if conversation_system is None
                 else conversation_system
             ),
-            worker_context_service=cast(WorkerContextService, world.context),
             asyncio_loop=asyncio_loop,
             boundary_hour=BOUNDARY_HOUR,
         ),
@@ -697,7 +498,7 @@ def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
     with world.connect() as conn:
         for ticket_id in (first, second):
             advance_ticket(
-                conn, ticket_id, new_stage="needs_closeout", principal=OWNER_PRINCIPAL, now=0
+                conn, ticket_id, new_stage="needs_consequences", principal=OWNER_PRINCIPAL, now=0
             )
         conn.execute("UPDATE tickets SET updated_at = 10 WHERE id = ?", (first,))
         conn.execute("UPDATE tickets SET updated_at = 20 WHERE id = ?", (second,))
@@ -728,44 +529,3 @@ def test_a_wake_makes_the_running_loop_poll_before_its_timer(world: _World) -> N
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
         thread.join(5)
         asyncio_loop.close()
-
-
-def test_the_test_mode_route_runs_one_worker_step_against_the_composed_system(
-    tmp_path: Path,
-) -> None:
-    from fastapi.testclient import TestClient
-
-    from planner.core.clock import build_clock
-    from planner.core.config import load_config
-    from planner.core.server import create_app
-
-    world = _World(tmp_path)
-    ticket_id = world.ready_ticket(title="Driven by hand")
-    config = load_config(
-        path=None,
-        env={
-            "PLAN_TEST_MODE": "1",
-            "PLAN_DB_PATH": world.db_path,
-            "PLAN_FAKE_NOW": FIXED_NOW.isoformat(),
-        },
-    )
-    app = create_app(
-        config,
-        build_clock(config),
-        world.connect,
-        # This asserts what the step wrote to the backend, so it needs a conversation
-        # system that records its writes rather than one that spawns an agent.
-        conversation_system_for_test=InMemoryConversationSystem(),
-    )
-
-    with TestClient(app) as client:
-        response = client.post(f"/api/test/run-step/{ticket_id}")
-        assert response.status_code == 200, response.text
-        assert response.json() == {"dispatched": True, "ticket_id": ticket_id}
-        conversation_id = world.ticket(ticket_id).conversation_id
-        assert conversation_id is not None
-        writes = app.state.conversation_system.backend_prompt_writes(conversation_id)
-        assert len(writes) == 1
-        assert writes[0].sender_label == "loop"
-
-    assert world.ticket(ticket_id).ticket_status is TicketStatus.agent

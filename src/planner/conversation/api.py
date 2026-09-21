@@ -107,6 +107,7 @@ from planner.conversation.voice_transcription import (
 )
 from planner.core.authctx import RequestContext, request_context, require_owner
 from planner.core.db import connect
+from planner.core.errors import ErrorCode, PlannerError
 from planner.core.response_compression import answers_with_an_event_stream
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 
@@ -192,8 +193,8 @@ def _require_mutable_conversation(runtime: ConversationRuntime, conversation_id:
     """Reject writes to a Ticket's past conversation.
 
     A conversation with no Ticket association belongs to another surface, such as the
-    Chief or development pane, and remains mutable. A Ticket association makes the
-    Ticket's active pointer authoritative.
+    Chief, and remains mutable. A Ticket association makes the Ticket's active pointer
+    authoritative.
     """
     conn = connect(runtime.database_path)
     try:
@@ -463,14 +464,59 @@ async def advance_owner_read(
     return {"owner_read_through_sequence": record.owner_read_through_sequence}
 
 
+# One page of a conversation's record is capped here, so a reader walking backwards
+# through a long one asks a bounded question every time.
+MAXIMUM_EVENT_PAGE = 100
+
+
 @router.get("/conversations/{conversation_id}/events")
 async def read_conversation_events(
-    conversation_id: str, runtime: Runtime, after: int = 0
+    conversation_id: str,
+    runtime: Runtime,
+    after: int | None = None,
+    before: int | None = None,
+    limit: int | None = None,
 ) -> dict[str, Any]:
+    """This conversation's record, forwards from a position or backwards from its end.
+
+    ``after`` reads on from where a caller got to. ``limit``, with an optional ``before``,
+    reads the other direction: the last events, then the page before those. A reader who
+    is catching up wants the first; a reader who has just arrived wants the second.
+    """
+    if limit is not None and (limit < 1 or limit > MAXIMUM_EVENT_PAGE):
+        raise PlannerError(
+            ErrorCode.validation,
+            f"limit must be between 1 and {MAXIMUM_EVENT_PAGE}",
+            {"limit": limit},
+        )
+    if before is not None and limit is None:
+        raise PlannerError(
+            ErrorCode.validation, "before needs a limit: it reads backwards", {"before": before}
+        )
+    if before is not None and after is not None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "a page reads one direction: after, or before",
+            {"after": after, "before": before},
+        )
     record = await _require_conversation(runtime, conversation_id)
-    events = await runtime.store.read_events_after(conversation_id, after)
+    reads_backwards = after is None
+    if reads_backwards and limit is not None:
+        events = await runtime.store.read_latest_events(
+            conversation_id, before_sequence=before, limit=limit
+        )
+        # Reading back from the end, more to come means older rows before this page.
+        has_more = bool(events) and events[0].sequence > 1
+    else:
+        # Reading on from a position, more to come means rows after this page. One row
+        # past the limit answers that without a second query, and is not returned.
+        events = await runtime.store.read_events_after(conversation_id, after or 0)
+        has_more = limit is not None and len(events) > limit
+        if limit is not None:
+            events = events[:limit]
     return {
-        "events": [_public_event_json(event, backend_key=record.backend_key) for event in events]
+        "events": [_public_event_json(event, backend_key=record.backend_key) for event in events],
+        "has_more": has_more,
     }
 
 

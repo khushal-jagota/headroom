@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
-from planner.core.authctx import require_direct_write
+from planner.core.authority import owner_only, require_above
 from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
+from planner.list_reads.detail import (
+    ReadDetail,
+    parse_read_detail,
+    reject_parameters,
+    require_full_for_one,
+)
 from planner.projects import data as projects_data
 from planner.projects.contracts import CreateProjectBody, UpdateProjectBody
 from planner.tickets.api import Clk, Ctx, DbConn, body_str, parse_enum
@@ -53,34 +59,41 @@ def _nullable_folder_path(raw: Any) -> str | None:
 
 
 @router.get("/projects")
-async def list_projects(conn: DbConn) -> JsonDict:
-    return {
-        "projects": [
-            projects_data.project_json(p) for p in projects_data.list_projects(conn)
-        ]
-    }
-
-
-@router.get("/project-summaries")
-async def list_project_summaries(
-    conn: DbConn, limit: int = DEFAULT_LIST_LIMIT, offset: int = 0
+async def read_projects(
+    conn: DbConn,
+    detail: str | None = None,
+    object_id: Annotated[str | None, Query(alias="id")] = None,
+    limit: int | None = None,
+    offset: int | None = None,
 ) -> JsonDict:
+    """Read Projects at the level the caller asks for, or one Project by id."""
+    level = parse_read_detail(detail)
+    if object_id is not None:
+        require_full_for_one(level)
+        reject_parameters("id", {"limit": limit, "offset": offset})
+        return projects_data.project_json(projects_data.read_project(conn, object_id))
+    if level is ReadDetail.full:
+        reject_parameters("detail=full", {"limit": limit, "offset": offset})
+        return {
+            "projects": [
+                projects_data.project_json(p) for p in projects_data.list_projects(conn)
+            ]
+        }
     page = projects_data.list_project_summaries(
-        conn, page_request=ListPageRequest(limit=limit, offset=offset)
+        conn,
+        page_request=ListPageRequest(
+            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+            offset=0 if offset is None else offset,
+        ),
     )
     return page.response("projects")
-
-
-@router.get("/projects/{project_id}")
-async def get_project(project_id: str, conn: DbConn) -> JsonDict:
-    return projects_data.project_json(projects_data.read_project(conn, project_id))
 
 
 @router.post("/projects")
 async def create_project(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, owner_only("projects"))
     body = _marshal_create_project(raw)
     project = projects_data.create_project(
         conn,
@@ -97,7 +110,7 @@ async def create_project(
 async def update_project(
     project_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, owner_only("projects"))
     body = _marshal_update_project(raw)
     folder_path: dict[str, Any] = {}
     if "folder_path" in body:

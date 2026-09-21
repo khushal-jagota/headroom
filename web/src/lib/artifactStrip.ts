@@ -15,6 +15,7 @@ export type ArtifactStripItem = {
   kind: string;
   href: string | null;
   target: ManagedFileTarget | null;
+  children: ArtifactStripItem[];
 };
 
 function targetKey(target: ManagedFileTarget): string {
@@ -49,24 +50,43 @@ function rows(
       ...input,
       label: collision && parts.parent ? `${parts.parent} / ${parts.stem}` : parts.stem,
       kind: parts.kind,
-      href: input.target ? previewHashHref(input.target) : null
+      href: input.target ? previewHashHref(input.target) : null,
+      children: []
     };
   });
 }
 
 export function sprintItemArtifactStripItems(
   sprintItemId: string,
-  artifacts: SprintItemArtifact[]
+  artifacts: SprintItemArtifact[],
+  parentKey = ""
 ): ArtifactStripItem[] {
-  return rows(
-    [...artifacts]
-      .sort((left, right) => right.modified_at - left.modified_at || left.path.localeCompare(right.path))
-      .map((artifact) => {
-        const target = targetFromHref(`/files/sprint-items/${sprintItemId}/${artifact.path}`);
-        const managed = target.kind === "sprint-item-file" ? target : null;
-        return { key: artifact.path, path: artifact.path, target: managed };
-      })
-  );
+  return artifacts.map((artifact) => {
+    const key = parentKey ? `${parentKey}/${artifact.name}` : artifact.name;
+    const target = artifact.opens
+      ? targetFromHref(`/files/sprint-items/${sprintItemId}/${artifact.opens}`)
+      : null;
+    const managed = target && target.kind === "sprint-item-file" ? target : null;
+    const dot = artifact.name.lastIndexOf(".");
+    const children = sprintItemArtifactStripItems(sprintItemId, artifact.children, key);
+    return {
+      key,
+      path: artifact.opens || key,
+      // The name carries the folder; the extension is already said by the kind beside it.
+      label: dot > 0 ? artifact.name.slice(0, dot) : artifact.name,
+      // A folder with no index opens nothing, so it says how much is inside instead.
+      kind: artifact.opens ? extensionOf(artifact.opens) : String(children.length),
+      href: managed ? previewHashHref(managed) : null,
+      target: managed,
+      children
+    };
+  });
+}
+
+function extensionOf(path: string): string {
+  const file = path.split("/").at(-1) || path;
+  const dot = file.lastIndexOf(".");
+  return dot > 0 ? file.slice(dot + 1) : "file";
 }
 
 function managedTargets(markdown: string): ManagedFileTarget[] {

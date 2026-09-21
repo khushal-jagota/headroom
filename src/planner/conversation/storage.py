@@ -290,6 +290,19 @@ class ConversationStore:
             self._read_events_after_sync, conversation_id, after_sequence
         )
 
+    async def read_latest_events(
+        self, conversation_id: str, *, before_sequence: int | None, limit: int
+    ) -> tuple[StoredConversationEvent, ...]:
+        """The last rows of this conversation's record, in order, ending before a position.
+
+        The backward half of ``read_events_after``. A reader who arrives at a long
+        conversation wants its end, and then the page before that, which is what
+        ``before_sequence`` walks back through.
+        """
+        return await asyncio.to_thread(
+            self._read_latest_events_sync, conversation_id, before_sequence, limit
+        )
+
     async def read_event(
         self, conversation_id: str, sequence: int
     ) -> StoredConversationEvent | None:
@@ -330,6 +343,15 @@ class ConversationStore:
     ) -> dict[str, ConversationAttentionFacts]:
         """Return owner-message and last-turn facts for a list of conversations."""
         return await asyncio.to_thread(self._attention_facts_sync, conversation_ids)
+
+    async def conversation_ids_holding_unread_owner_message(self) -> frozenset[str]:
+        """Every conversation whose newest message to the owner is past his read mark.
+
+        This asks the whole record rather than a list, because the caller is looking for
+        conversations it does not already hold. A caller that has the list wants
+        ``attention_facts``, which answers more about each one.
+        """
+        return await asyncio.to_thread(self._conversation_ids_holding_unread_owner_message_sync)
 
     async def has_delivered_prompt(self, conversation_id: str) -> bool:
         """Whether any prompt has ever reached this conversation's backend.
@@ -703,6 +725,28 @@ class ConversationStore:
             conn.close()
         return tuple(_stored_event(row) for row in rows)
 
+    def _read_latest_events_sync(
+        self, conversation_id: str, before_sequence: int | None, limit: int
+    ) -> tuple[StoredConversationEvent, ...]:
+        conn = self._connect()
+        parameters: list[object] = [conversation_id]
+        before_clause = ""
+        if before_sequence is not None:
+            before_clause = " AND sequence < ?"
+            parameters.append(before_sequence)
+        parameters.append(limit)
+        try:
+            rows = conn.execute(
+                "SELECT * FROM (SELECT conversation_id, sequence, kind, payload, created_at "
+                "FROM conversation_events WHERE conversation_id = ?"
+                + before_clause
+                + " ORDER BY sequence DESC LIMIT ?) ORDER BY sequence",
+                tuple(parameters),
+            ).fetchall()
+        finally:
+            conn.close()
+        return tuple(_stored_event(row) for row in rows)
+
     def _read_event_sync(
         self, conversation_id: str, sequence: int
     ) -> StoredConversationEvent | None:
@@ -727,7 +771,7 @@ class ConversationStore:
                 "WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? "
                 "AND kind IN "
                 "('prompt','prompt_delivery_refused','prompt_delivery_uncertain',"
-                "'prompt_discarded','message_to_owner','proposal_delivery_failed') LIMIT 1",
+                "'prompt_discarded','message_to_owner') LIMIT 1",
                 (conversation_id, sender_message_id),
             ).fetchone()
         finally:
@@ -811,6 +855,20 @@ class ConversationStore:
             )
             for row in rows
         }
+
+    def _conversation_ids_holding_unread_owner_message_sync(self) -> frozenset[str]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT c.conversation_id FROM conversations c "
+                "JOIN conversation_events e ON e.conversation_id = c.conversation_id "
+                "WHERE e.kind = 'message_to_owner' "
+                "GROUP BY c.conversation_id "
+                "HAVING MAX(e.sequence) > c.owner_read_through_sequence"
+            ).fetchall()
+        finally:
+            conn.close()
+        return frozenset(str(row["conversation_id"]) for row in rows)
 
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:
         conn = self._connect()

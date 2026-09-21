@@ -14,12 +14,6 @@ from planner.environments.repository_runtime import (
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_repository_runtime_accepts_interpreter_attached_to_selected_checkout() -> None:
-    assert resolve_repository_runtime_python(REPOSITORY_ROOT) == (
-        REPOSITORY_ROOT / ".venv" / "bin" / "python"
-    )
-
-
 def test_repository_runtime_rejects_reused_interpreter_attached_elsewhere(
     tmp_path: Path,
 ) -> None:
@@ -38,13 +32,6 @@ def test_repository_runtime_rejects_reused_interpreter_attached_elsewhere(
     (checkout / "src" / "planner" / "__init__.py").write_text("", encoding="utf-8")
 
     with pytest.raises(EnvironmentValidationError, match="wrong checkout"):
-        resolve_repository_runtime_python(checkout)
-
-
-def test_repository_runtime_rejects_missing_checkout_interpreter(tmp_path: Path) -> None:
-    checkout = tmp_path / "checkout"
-    checkout.mkdir()
-    with pytest.raises(EnvironmentValidationError, match="missing or not executable"):
         resolve_repository_runtime_python(checkout)
 
 

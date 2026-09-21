@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
+from planner.tickets import derivation
+from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkerTypeDefinition
 
 CloseoutLaneIdentity = tuple[str | None, str]
 
@@ -23,7 +24,7 @@ def closeout_lane_identity(
     worker_type_definition: WorkerTypeDefinition,
 ) -> CloseoutLaneIdentity | None:
     """Return the effective project-and-Worker-type lane for a Closeout Ticket."""
-    if worker_type_definition.gating_field(ticket.stage) != "closeout":
+    if worker_type_definition.gating_field(ticket.stage) != CONSEQUENCES_FIELD_ID:
         return None
     effective_project_id = ticket.project_id
     if ticket.sprint_item_id is not None:
@@ -49,15 +50,15 @@ def _closeout_lane_is_occupied(
     if lane is None:
         return False
     effective_project_id, worker_type = lane
-    closeout_stage = worker_type_definition.stage_gated_by("closeout")
+    closeout_stage = worker_type_definition.stage_gated_by(CONSEQUENCES_FIELD_ID)
     return (
         conn.execute(
             "SELECT 1 FROM tickets t "
             "LEFT JOIN sprint_items si ON si.id = t.sprint_item_id "
             "WHERE t.id != ? AND t.worker_type = ? AND t.stage = ? "
-            # blocked stands in for empty: a blocked Closeout Ticket is resting, so it
-            # does not occupy the lane.
-            "AND t.ticket_status NOT IN ('empty', 'blocked') "
+            # A resting Closeout Ticket does not occupy the lane, and a blocked one is
+            # resting. The predicate is the derivation's own, so the two cannot drift.
+            f"AND NOT ({derivation.RESTS_PREDICATE}) "
             "AND CASE WHEN t.sprint_item_id IS NOT NULL THEN si.project_id "
             "ELSE t.project_id END IS ? LIMIT 1",
             (ticket.id, worker_type, closeout_stage, effective_project_id),
@@ -89,37 +90,22 @@ def worker_step_blocker(
         return "the Ticket is not on today's Day"
     if worker_type_definition.is_terminal(ticket.stage):
         return f"the Stage {ticket.stage} is terminal"
-    ownership_mode = machine.effective_stage_ownership_mode(
+    ownership_mode = machine.stage_ownership_mode(
         ticket.stage,
-        ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
-        default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
-    if ownership_mode is StageOwnershipMode.user:
-        return "the Stage belongs to the user"
-    # `empty` is the only startable control state. Ownership refuses user-owned work.
+    # `empty` is the only startable control state.
     if ticket.ticket_status is not TicketStatus.empty:
         return f"the Ticket is at {ticket.ticket_status.value}, so no worker step is due"
-    if ownership_mode is StageOwnershipMode.paired:
+    if ownership_mode is StageOwnershipMode.user:
         opened = conn.execute(
             "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
             (ticket.id, ticket.stage),
         ).fetchone()
         if opened is not None:
-            return "the paired Stage opener already ran for this Stage entry"
+            return "the user-owned Stage opener already ran for this Stage entry"
     if worker_type_definition.gating_field(ticket.stage) is None:
         return f"the Stage {ticket.stage} has no field for a worker to fill"
-    if ticket.pending_proposal is not None:
-        return "a proposal is parked for the user"
-    if (
-        machine.at_or_beyond_ceiling(
-            ticket.stage,
-            ticket.ceiling,
-            worker_type_definition=worker_type_definition,
-        )
-        and ticket.at_cap is AtCap.stop
-    ):
-        return "the Ticket is at its ceiling and the cap is stop"
     if _closeout_lane_is_occupied(
         conn,
         ticket,

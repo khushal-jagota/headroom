@@ -170,7 +170,6 @@
 {/snippet}
 
 {#snippet sprintItem(item: WorkspaceRailItem)}
-  {@const open = opening.openItemId === item.id}
   {@const selected = opening.markedItemId === item.id}
   {@const presentation = workspaceRowMarkPresentation(item.mark)}
   <section
@@ -187,7 +186,6 @@
         event.stopPropagation();
         selectItem(item.id);
       }}
-      aria-expanded={open}
       aria-current={selected ? "page" : undefined}
     >
       <span
@@ -203,21 +201,16 @@
         aria-label={presentation.ariaLabel}
       />
     </button>
-    {#if open}
-      <!-- A fold or a Ticket inside the Item is not a click on the Item. -->
+    {#if item.groups.length}
+      <!-- What needs him is under the Item whether or not the Item is the one open, so
+           the rail answers that without being opened. A fold or a Ticket inside the Item
+           is still not a click on the Item. -->
       <div
         class="board-workspace-item-groups"
         onclick={(event) => event.stopPropagation()}
         role="presentation"
       >
         {@render ticketGroups(item.groups, false, item.id)}
-      </div>
-    {:else if item.groups.length}
-      <div class="board-workspace-item-line">
-        {#each item.groups as group, index (group.key)}
-          {#if index > 0}<span>·</span>{/if}
-          <span><b>{group.cards.length}</b> {group.label}</span>
-        {/each}
       </div>
     {/if}
   </section>

@@ -15,15 +15,9 @@ from planner.core.contracts import Principal, Priority
 TITLE_MAX_CHARS: Final = 200
 
 
-class AtCap(StrEnum):  # §4.3
-    stop = "stop"
-    propose = "propose"
-
-
 class StageOwnershipMode(StrEnum):
     worker = "worker"
     user = "user"
-    paired = "paired"
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,9 +42,21 @@ class ResolvedTicketPriorityAnchors:
     project: ProjectPriorityAnchor | None
 
 
-class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer transitions
+class WorkerStepClaim(StrEnum):
+    """The one state-of-control fact a Ticket stores, written by data-layer transitions.
+
+    ``out`` means the wakeup system has sent this Ticket's worker its step. It says
+    nothing about whether a turn is live right now: that is a conversation fact.
+    """
+
+    none = "none"
+    out = "out"
+    errored = "errored"
+
+
+class TicketStatus(StrEnum):  # derived at the moment of a read; never stored
     empty = "empty"
-    blocked = "blocked"  # empty's stand-in while a live blocker exists
+    blocked = "blocked"  # what rest is called while a live blocker exists
     agent = "agent"
     awaiting_approval = "awaiting_approval"
     errored = "errored"
@@ -70,7 +76,6 @@ class BoardCard(TypedDict):
     activity_at: int
     has_pending_proposal: bool
     ticket_status: str
-    backend_error: str | None
     worker_type: str
     employee_backend: str
     stage: str
@@ -78,7 +83,6 @@ class BoardCard(TypedDict):
     gating_field: str | None
     gating_field_label: str | None
     is_done: bool
-    is_dropped: bool
     blocked: bool
     conversation_id: str | None
     waiting_to_closeout: bool
@@ -131,23 +135,16 @@ class PendingTicketProposal:
     created_at: int
 
 
-# --- the scope pair (§4.4.7) ---
+# --- the ceiling (§4.4.7) ---
 NO_FURTHER: Final = "none"  # wire sentinel: ceiling = the newly entered Stage
 # A ceiling id is any member of the type's ceiling_range (a str); "none" is the wire
 # sentinel meaning "the newly entered Stage".
 NextCeiling = str | Literal["none"]
 
 
-@dataclass(frozen=True)
-class ScopePair:  # required on every direct accept/edit-accept
-    next_ceiling: str  # a resolved ceiling id (resolve_scope concretizes "none")
-    at_cap: AtCap
-
-
 # --- request bodies (§9 wire shapes) ---
 # Most legacy bodies below are partial wire shapes: an absent key takes its documented
-# default and unknown keys are ignored. External-work bodies are intentionally strict:
-# required keys are encoded here and their API marshal rejects unknown keys.
+# default and unknown keys are ignored.
 
 
 class CreateTicketBody(TypedDict, total=False):  # POST /tickets
@@ -170,74 +167,50 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # states scope creates the Ticket already scoped. Omission keeps the default leash:
     # the kickoff parks for approval.
     ceiling: str | None
-    at_cap: str | None
+    # Who the ceiling is held for. Absent, the creator holds it, as before. A creator can
+    # name any holder here without holding anything first: this is how a Ticket is opened
+    # for somebody else to review.
+    ceiling_holder: object  # full Principal
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
+    """Every field on a Ticket that can be changed, and the only way to change one.
+
+    An operation with a consequence of its own — propose, approve, reject, complete a
+    user-owned gate, drop, delete, ask for help, choose what the Ticket launches on — is
+    not here, and keeps its own route.
+    """
+
     title: str
     priority: Priority
     deadline: str | None
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
+    recap: str
+    guidance: str  # replaces the document
+    guidance_append: str  # adds to it; naming both in one call is refused
+    field_values: Mapping[str, str]  # settled values only, by field id
+    ceiling: str  # how far the Ticket may go; refused while a proposal is parked
+    ceiling_holder: Principal  # who is asked; allowed while a proposal is parked
 
 
-class ReconcileTicketFromExternalWorkBody(TypedDict):
-    stage: str
-    kickoff_note: str
-    recap: NotRequired[str]
-
-
-class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
-    title: str
-    worker_type: str
-    employee_backend: NotRequired[str]
-    employee_launch_model: NotRequired[str]
-    priority: NotRequired[str | None]
-    deadline: NotRequired[str | None]
-    project: NotRequired[str | None]
-    project_id: NotRequired[str | None]
-    sprint_id: NotRequired[str | None]
-    sprint_item_id: NotRequired[str | None]
-    blocked_by_ticket_ids: NotRequired[list[str]]
-
-
-class ProposeWithRecapBody(TypedDict, total=False):  # POST /tickets/{id}/propose
+class ProposalBody(TypedDict, total=False):  # POST /tickets/{id}/propose
     body: str  # default ""
-    recap: str  # required non-empty by the writer
 
 
 class AcceptBody(TypedDict, total=False):  # POST /tickets/{id}/accept/{field}
     edited_body: str | None  # direct edit applied before resolution
-    next_ceiling: str | None  # Stage id or NO_FURTHER; scope pair (§4.4.7)
-    at_cap: str | None  # AtCap value; scope pair (§4.4.7)
+    next_ceiling: str | None  # Stage id or NO_FURTHER; the onward ceiling (§4.4.7)
     next_holder: object  # required full Principal for the next ceiling
 
 
-class GuidanceBody(TypedDict):  # PUT /tickets/{id}/guidance; POST .../guidance/append
-    body: str  # required; empty replaces with an empty document or appends nothing
-
-
-class RecapBody(TypedDict, total=False):  # PUT /tickets/{id}/recap
+class GateCompletionBody(TypedDict, total=False):  # POST /tickets/{id}/complete/{field}
     body: str  # default ""
 
 
-class ValueEditBody(TypedDict, total=False):  # PUT /tickets/{id}/value/{field}
-    body: str  # default ""
-
-
-class PendingProposalEditBody(TypedDict):  # PUT /tickets/{id}/proposal
-    field: str  # Expected current field; rejects stale edits.
-    body: str
-
-
-class RevisionMessageBody(TypedDict, total=False):  # POST /tickets/{id}/return-for-revision
-    message: str  # required non-empty by the writer
-
-
-class ScopeBody(TypedDict, total=False):  # POST /tickets/{id}/scope
-    ceiling: str | None  # Stage id; route requires it (scope_missing)
-    at_cap: str | None  # AtCap value; route requires it (scope_missing)
+class RejectionBody(TypedDict, total=False):  # POST /tickets/{id}/reject
+    message: str | None  # optional guidance for the executing agent
 
 
 class EmployeeConfigurationBody(TypedDict):
@@ -247,12 +220,6 @@ class EmployeeConfigurationBody(TypedDict):
     employee_backend: str
     employee_launch_model: str
     employee_launch_reasoning_effort: str | None
-
-
-class LinkBody(TypedDict, total=False):  # POST /links (ticket-anchored, homed here)
-    from_id: str  # required (default "" fails endpoint checks)
-    to_id: str  # required (default "" fails endpoint checks)
-    kind: str  # LinkKind value; required (default "" is rejected)
 
 
 @dataclass
@@ -280,23 +247,23 @@ class Ticket:  # §3.3 — column names match exactly
     recap: str  # writable only past the type's first worker Stage
     guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
     ceiling: str  # ceiling id; a member of the type's ceiling_range
+    # An address, not an authority. It says which principal a parked proposal is for, so
+    # that Review, attention and notifications can put it in front of them. It says
+    # nothing about who may accept or reject it; the one rule answers that.
     ceiling_holder: Principal = field(kw_only=True)
-    at_cap: AtCap  # default propose
-    ticket_status: TicketStatus  # durable state-of-control; transition functions write it
-    # When ticket_status last actually changed, for display and elapsed-time facts.
-    ticket_status_changed_at: int
-    # Monotonic status-transition identity used by notifications and worker claims.
+    # Derived when the row is read, never stored. Kept on the Ticket because almost
+    # every reader wants the answer, not the facts behind it.
+    ticket_status: TicketStatus
+    # The one stored state-of-control fact: whether this Ticket's worker step is out.
+    worker_step_claim: WorkerStepClaim
+    # When the claim last actually changed, for display and elapsed-time facts.
+    worker_step_claim_changed_at: int
+    # Monotonic claim-transition identity used by notifications and worker claims.
     # Unlike the timestamp, it cannot collide when two transitions share a second.
-    ticket_status_revision: int
-    backend_error: str | None  # concrete confirmed backend Worker failure, else NULL
-    stage_ownership_overrides: Mapping[str, StageOwnershipMode]
-    default_stage_ownership_mode: StageOwnershipMode | None
-    effective_stage_ownership_mode: StageOwnershipMode | None
+    worker_step_claim_revision: int
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
-    alias: str | None  # migration "Ticket ID:" (§12), unique when present
     field_values: TicketFieldValues
     pending_proposal: PendingTicketProposal | None
-    archived_field_content: str
     created_at: int
     updated_at: int
 
@@ -333,4 +300,4 @@ class TicketDeletion:
     day_ids: tuple[str, ...]
     sprint_item_ids: tuple[str, ...]
     sprint_ids: tuple[str, ...]
-    linked_entity_ids: tuple[str, ...]
+    linked_ticket_ids: tuple[str, ...]

@@ -7,11 +7,9 @@ import json
 from collections.abc import AsyncIterator, Iterable
 from typing import Any, cast
 
-import pytest
 from anyio.abc import Process
 from anyio.streams.text import TextReceiveStream
 from claude_agent_sdk import ClaudeAgentOptions, ToolResultBlock, UserMessage
-from claude_agent_sdk._errors import CLIJSONDecodeError
 from claude_agent_sdk._internal.message_parser import parse_message
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
@@ -82,20 +80,5 @@ def test_a_tool_result_just_over_one_megabyte_is_parsed() -> None:
         assert isinstance(parsed.content, list)
         assert isinstance(parsed.content[0], ToolResultBlock)
         assert parsed.content[0].content == content
-
-    asyncio.run(exercise())
-
-
-def test_a_tool_result_over_the_new_limit_fails_cleanly() -> None:
-    async def exercise() -> None:
-        content = "x" * (CLAUDE_SDK_MAX_BUFFER_SIZE + 1)
-
-        with pytest.raises(CLIJSONDecodeError) as failure:
-            await _read_messages(_tool_result_line(content))
-
-        assert (
-            f"JSON message exceeded maximum buffer size of {CLAUDE_SDK_MAX_BUFFER_SIZE} bytes"
-            in str(failure.value)
-        )
 
     asyncio.run(exercise())

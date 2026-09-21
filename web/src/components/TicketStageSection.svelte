@@ -4,10 +4,11 @@
   import StageMark from "./StageMark.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
-  import { labelize, type FieldStageVisualState } from "../lib/ui";
+  import { type FieldStageVisualState } from "../lib/ui";
   import {
     advanceTargetFor,
     fieldIsPassedFor,
+    fieldLabelFor,
     gatingFieldFor,
     type Lifecycle
   } from "../lib/lifecycle";
@@ -20,57 +21,56 @@
     pendingProposal = null,
     ticketStage,
     ceiling,
-    suggestedNextCeiling = null,
     lifecycle = null,
+    sprintItem = null,
     stageState = "upcoming",
     variant = "ticket",
     emptyText = "Not written yet.",
     editableValue = true,
+    editableCurrentValue = false,
     approvalDisabled = false,
     runLabel = null,
     runLabelAttention = false,
-    onRelease,
     contextRow,
     onAccept,
-    onSaveProposal,
-    onSaveValue
+    onSaveValue,
+    onCompleteGate
   }: {
     name: string;
     value?: string;
     pendingProposal?: PendingTicketProposal | null;
     ticketStage: string;
     ceiling: string;
-    suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
+    sprintItem?: { id: string; title: string } | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
     emptyText?: string;
     editableValue?: boolean;
+    editableCurrentValue?: boolean;
     approvalDisabled?: boolean;
     runLabel?: string | null;
     runLabelAttention?: boolean;
-    onRelease?: () => void;
     contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
-    onSaveProposal?: (raw: string) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
+    onCompleteGate?: (raw: string) => Promise<unknown>;
   } = $props();
 
   let reviewVariant = $derived(variant === "review");
-  let fieldLabel = $derived(labelize(name));
-  let isDropped = $derived(ticketStage === "dropped");
+  let fieldLabel = $derived(fieldLabelFor(lifecycle, name));
   let isGating = $derived(gatingFieldFor(lifecycle, ticketStage) === name);
   let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketStage));
   let hasProposal = $derived(pendingProposal?.field === name);
   let nextStage = $derived(advanceTargetFor(lifecycle, ticketStage, ceiling));
+  let canEditValue = $derived(passed);
+  let canCompleteGate = $derived(isGating && editableCurrentValue && !hasProposal);
   let defaultOpen = $derived(isGating);
 
 </script>
 
 {#snippet stageBody()}
-  {#if isDropped}
-    <MarkdownBlock text={value} quiet={emptyText} />
-  {:else if isGating && hasProposal}
+  {#if isGating && hasProposal}
     <ApprovalBlock
       layout="review"
       field={name}
@@ -78,15 +78,18 @@
       proposalBody={pendingProposal?.body || ""}
       proposedBy={pendingProposal?.proposed_by || ""}
       newStage={nextStage}
-      suggestedNextCeiling={name === "kickoff" ? suggestedNextCeiling : null}
       {lifecycle}
+      {sprintItem}
       {contextRow}
       disabled={approvalDisabled}
       onApprove={onAccept}
-      onProposalSave={onSaveProposal}
     />
   {:else}
-    {#if passed && editableValue && onSaveValue}
+    {#if canCompleteGate && editableValue && onCompleteGate}
+      <div class="ticket-field-value">
+        <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onCompleteGate} />
+      </div>
+    {:else if canEditValue && editableValue && onSaveValue}
       <div class="ticket-field-value">
         <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onSaveValue} />
       </div>
@@ -111,7 +114,7 @@
   >
     {#snippet summary()}
       <StageMark state={stageState} />
-      <span class="disclosure-stage-name">{name}</span>
+      <span class="disclosure-stage-name">{fieldLabel}</span>
       {#if runLabel}
         <span
           class="ticket-stage-run"
@@ -119,18 +122,6 @@
           data-stage-run-label={runLabel}
         >
           {runLabel}
-          {#if onRelease}
-            <button
-              type="button"
-              class="ticket-stage-run-action"
-              data-stage-release
-              onclick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onRelease?.();
-              }}
-            >Release</button>
-          {/if}
         </span>
       {/if}
     {/snippet}

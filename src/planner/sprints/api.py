@@ -5,37 +5,33 @@ because the Idea shape lives in this domain's contracts. Sprint writers take a
 
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import Callable
 from datetime import date
 from functools import partial
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query
 
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
 from planner.conversation.contracts import require_conversation_backend_key
-from planner.core.authctx import (
-    reject_agent_fields,
-    require_direct_write,
-    require_planning_write,
-    require_sprint_item_supervisor_read,
-    require_sprint_item_supervisor_ticket_write,
-    require_ticket_worker_write,
-)
-from planner.core.contracts import JsonDict, LinkKind, Principal, PrincipalKind, Priority
-from planner.core.db import connect
+from planner.core import authority
+from planner.core.authority import require_above, require_above_or_self
+from planner.core.contracts import JsonDict, Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days import actions as days_actions
 from planner.days.logic.dates import planning_date, resolve_day_id
+from planner.files import sprint_item_files
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
+from planner.list_reads.detail import (
+    ReadDetail,
+    parse_read_detail,
+    reject_parameters,
+    require_full_for_one,
+)
 from planner.message_delivery import service as message_delivery_service
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
-from planner.runtime.worker_step_readiness_loop import start_ready_worker_step
-from planner.sprints import commitments, supervisor_service
+from planner.sprints import commitments
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import views as sprints_views
@@ -45,9 +41,6 @@ from planner.sprints.contracts import (
     CreateItemBody,
     CreateSprintBody,
 )
-from planner.tickets import actions as tickets_actions
-from planner.tickets import data as tickets_data
-from planner.tickets import views as tickets_views
 from planner.tickets.api import (
     Cfg,
     Clk,
@@ -56,21 +49,12 @@ from planner.tickets.api import (
     Ctx,
     DbConn,
     MessageFiles,
-    WorkerContext,
-    _marshal_accept,
-    _parse_next_ceiling,
-    _parse_required_principal,
-    _parse_scope_at_cap,
     body_opt_str,
     body_str,
     body_str_list,
     parse_enum,
-    resolve_employee_configuration,
-    write_resolved_employee_configuration,
 )
-from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, TicketEdit
 from planner.work_attention import add_work_attention
-from planner.worker_types.configuration import configured_worker_type_registry
 
 router = APIRouter()
 
@@ -159,58 +143,57 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.get("/items")
-async def list_items(
+async def read_items(
     conn: DbConn,
     conversations: Conversations,
     conversation_record: ConversationRecord,
-    project: str | None = None,
-    project_id: str | None = None,
-) -> JsonDict:
-    resolved_project = projects_data.resolve_project(
-        conn, project_id=project_id, project_name=project
-    )
-    rows = sprints_views.list_items(
-        conn,
-        project_id=resolved_project.id if resolved_project is not None else None,
-    )
-    await add_work_attention(conn, conversations, conversation_record, sprint_items=rows)
-    return {"items": rows}
-
-
-@router.get("/sprint-item-summaries")
-async def list_item_summaries(
-    conn: DbConn,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
+    detail: str | None = None,
+    object_id: Annotated[str | None, Query(alias="id")] = None,
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
-    limit: int = DEFAULT_LIST_LIMIT,
-    offset: int = 0,
+    limit: int | None = None,
+    offset: int | None = None,
 ) -> JsonDict:
+    """Read Outcomes at the level the caller asks for, or one Outcome by id."""
+    level = parse_read_detail(detail)
+    if object_id is not None:
+        require_full_for_one(level)
+        reject_parameters(
+            "id",
+            {
+                "search": search,
+                "project": project,
+                "project_id": project_id,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        item = sprints_views.item_detail(conn, object_id)
+        await add_work_attention(conn, conversations, conversation_record, sprint_items=(item,))
+        return item
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
+    resolved_project_id = resolved_project.id if resolved_project is not None else None
+    if level is ReadDetail.full:
+        reject_parameters(
+            "detail=full", {"search": search, "limit": limit, "offset": offset}
+        )
+        rows = sprints_views.list_items(conn, project_id=resolved_project_id)
+        await add_work_attention(conn, conversations, conversation_record, sprint_items=rows)
+        return {"items": rows}
     page = sprints_views.list_item_summaries(
         conn,
-        page_request=ListPageRequest(limit=limit, offset=offset),
-        project_id=resolved_project.id if resolved_project is not None else None,
+        page_request=ListPageRequest(
+            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+            offset=0 if offset is None else offset,
+        ),
+        project_id=resolved_project_id,
         search=search,
     )
     await add_work_attention(conn, conversations, conversation_record, sprint_items=page.rows)
     return page.response("items")
-
-
-@router.get("/items/{item_id}")
-async def get_item(
-    item_id: str,
-    conn: DbConn,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    item = sprints_views.item_detail(conn, item_id)
-    await add_work_attention(conn, conversations, conversation_record, sprint_items=(item,))
-    return item
 
 
 @router.get("/items/{item_id}/workspace")
@@ -223,8 +206,15 @@ async def get_item_workspace(
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    """Return the page facts without creating a second action surface."""
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
+    """Everything a reader of this Outcome needs.
+
+    The two approval words mean the same thing here as on every other route, and the
+    projection makes that split itself: ``awaiting_approval`` is Khushal's own queue,
+    ``awaiting_agent_approval`` is a proposal parked on an agent. A reader that needs to
+    know *which* agent holds one reads ``ceiling_holder`` on the row — the holder is an
+    address, and this is the read of it.
+    """
+    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     result = sprints_views.item_workspace(conn, item_id, planning_day_id)
     await add_work_attention(
@@ -234,416 +224,21 @@ async def get_item_workspace(
         tickets=result["tickets"],
         sprint_items=(result,),
     )
-    result["artifacts"] = supervisor_service.list_artifact_details(conn, ctx, item_id, cfg.db_path)
+    result["artifacts"] = sprint_item_files.list_artifact_entries(
+        conn, ctx.principal, item_id, cfg.db_path
+    )
     return result
 
 
-def _supervisor_json(conn: DbConn, item_id: str) -> JsonDict:
-    item = sprints_data.read_item(conn, item_id).item
-    launch = item.supervisor_launch_configuration
-    return {
-        "sprint_item_id": item.id,
-        "agent_key": item.supervisor_agent_key,
-        "conversation_id": conversation_start.read_agent_conversation(
-            conn, item.supervisor_agent_key
-        ),
-        "launch_configuration": {
-            "employee_backend": launch.employee_backend.value,
-            "employee_launch_model": launch.employee_launch_model,
-            "employee_launch_reasoning_effort": launch.employee_launch_reasoning_effort,
-        },
-    }
+@router.get("/items/{item_id}/conversation/start-values")
+async def get_item_conversation_start_values(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+    """What a first message to this Outcome's agent would start it on.
 
-
-@router.get("/items/{item_id}/supervisor")
-async def get_item_supervisor(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
-    return _supervisor_json(conn, item_id)
-
-
-@router.get("/items/{item_id}/supervisor/context")
-async def get_item_supervisor_context(
-    item_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    """The Item overview: the Item, its supervisor, and one line per child Ticket. The
-    supervisor drills into a Ticket through its own ticket-context route."""
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
-    item = sprints_data.read_item(conn, item_id).item
-    tickets = sprints_views.item_ticket_overview(conn, item_id)
-    response = {
-        "sprint_item": {
-            "id": item.id,
-            "title": item.title,
-            "body": item.body,
-            "priority": item.priority.value,
-            "project_id": item.project_id,
-        },
-        "supervisor": _supervisor_json(conn, item_id),
-        "tickets": tickets,
-    }
-    await add_work_attention(
-        conn,
-        conversations,
-        conversation_record,
-        tickets=tickets,
-    )
-    return response
-
-
-@router.get("/items/{item_id}/supervisor/tickets/{ticket_id}/context")
-async def get_supervisor_ticket_context(
-    item_id: str,
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    triggering_message_sequence: int | None = None,
-) -> JsonDict:
-    return supervisor_service.ticket_context(
-        conn,
-        ctx,
-        item_id,
-        ticket_id,
-        now=clk.now_unix(),
-        triggering_message_sequence=triggering_message_sequence,
-    )
-
-
-@router.get("/items/{item_id}/supervisor/tickets/{ticket_id}/history")
-async def get_supervisor_ticket_history(
-    item_id: str,
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    limit: int = 30,
-    before_sequence: int | None = None,
-) -> JsonDict:
-    return supervisor_service.conversation_history(
-        conn,
-        ctx,
-        item_id,
-        ticket_id,
-        limit=limit,
-        before_sequence=before_sequence,
-    )
-
-
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/message")
-async def supervisor_message_worker(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    return await supervisor_service.message_current_worker(
-        conversations,
-        conn,
-        ctx,
-        item_id,
-        ticket_id,
-        message=body_str(raw, "message"),
-        clock=clk,
-    )
-
-
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/restart-worker")
-async def supervisor_restart_worker(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    request: Request,
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-    conversations: Conversations,
-    worker_context: WorkerContext,
-) -> JsonDict:
-    """Start this child Ticket's worker step again, optionally on a named configuration.
-
-    The configuration is resolved before the service is called, so a backend or model
-    this Ticket cannot launch on is a plain refusal rather than a killed conversation.
-    Item scope is proved before even that: resolving asks the backends what they offer,
-    and no caller reaches a question about a Ticket that is not its own.
+    The Outcome's conversation door, beside the Ticket's and the Chief's. The prefix it
+    lost claimed an authority it never used: this admits Khushal and the Chief, and the
+    Outcome reading its own start values, exactly as before.
     """
-    supervisor_service.require_current_child(conn, ctx, item_id, ticket_id)
-    backend = body_opt_str(raw, "employee_backend")
-    model = body_opt_str(raw, "employee_launch_model")
-    if (backend is None) != (model is None):
-        raise PlannerError(
-            ErrorCode.validation,
-            "a launch configuration needs both a backend and a model",
-            {},
-        )
-    write_configuration: Callable[[sqlite3.Connection], None] | None = None
-    if backend is not None and model is not None:
-        resolved = await resolve_employee_configuration(
-            request,
-            conn,
-            ticket_id,
-            employee_backend=backend,
-            employee_launch_model=model,
-            employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
-        )
-
-        def write_the_resolved_configuration(open_conn: sqlite3.Connection) -> None:
-            write_resolved_employee_configuration(
-                open_conn, ticket_id, resolved, now=clk.now_unix()
-            )
-
-        write_configuration = write_the_resolved_configuration
-
-    planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
-
-    async def start_worker_step() -> bool:
-        return await start_ready_worker_step(
-            ticket_id,
-            connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
-            conversation_system=conversations,
-            worker_context_service=worker_context,
-            worker_type_registry=configured_worker_type_registry(),
-            planning_day_id_resolver=lambda: planning_day_id,
-            now=clk.now_unix,
-        )
-
-    return await supervisor_service.restart_worker(
-        conversations,
-        conn,
-        ctx,
-        item_id,
-        ticket_id,
-        write_employee_configuration=write_configuration,
-        start_worker_step=start_worker_step,
-        planning_day_id=planning_day_id,
-        now=clk.now_unix(),
-    )
-
-
-@router.patch("/items/{item_id}/supervisor/item")
-async def supervisor_update_item(
-    item_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
-    if len(raw) != 1:
-        raise PlannerError(ErrorCode.validation, "set exactly one Sprint Item field", {})
-    field, raw_value = next(iter(raw.items()))
-    if field not in _ITEM_PLAIN_FIELDS:
-        raise PlannerError(ErrorCode.validation, "unknown item field", {"field": field})
-    if raw_value is not None and not isinstance(raw_value, str):
-        raise PlannerError(ErrorCode.validation, "invalid item field value", {"field": field})
-    if field in {"title", "body", "priority", "project_id"} and raw_value is None:
-        raise PlannerError(
-            ErrorCode.validation, "Sprint Item field cannot be cleared", {"field": field}
-        )
-    if field == "title" and raw_value == "":
-        raise PlannerError(ErrorCode.validation, "item title is required", {})
-    if field == "deadline":
-        _marshal_item_deadline(raw_value)
-    item = sprints_data.update_item_field(conn, item_id, field, raw_value, clock=clk)
-    return sprints_views.item_detail(conn, item.id)
-
-
-@router.patch("/items/{item_id}/supervisor/tickets/{ticket_id}")
-async def supervisor_update_ticket(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    supervisor_service.require_current_child(conn, ctx, item_id, ticket_id)
-    if len(raw) != 1:
-        raise PlannerError(ErrorCode.validation, "set exactly one Ticket field", {})
-    field, value = next(iter(raw.items()))
-    edit = TicketEdit()
-    if field == "title":
-        edit["title"] = body_str(raw, field)
-    elif field == "priority":
-        edit["priority"] = parse_enum(Priority, body_str(raw, field), field)
-    elif field == "deadline":
-        edit["deadline"] = body_opt_str(raw, field)
-    else:
-        raise PlannerError(ErrorCode.validation, "unknown Ticket field", {"field": field})
-    ticket = tickets_data.edit_ticket(
-        conn,
-        ticket_id,
-        edit=edit,
-        title_max_chars=TITLE_MAX_CHARS,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        supervisor_sprint_item_id=item_id,
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/scope")
-async def supervisor_change_ticket_scope(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    supervisor_service.require_current_child(conn, ctx, item_id, ticket_id)
-    ceiling = body_str(raw, "ceiling")
-    at_cap_raw = body_str(raw, "at_cap")
-    try:
-        at_cap = AtCap(at_cap_raw)
-    except ValueError:
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
-        ) from None
-    ticket = tickets_data.change_scope(
-        conn,
-        ticket_id,
-        ceiling=ceiling,
-        at_cap=at_cap,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        supervisor_sprint_item_id=item_id,
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
-@router.post("/items/{item_id}/supervisor/days/{date}/tickets/{ticket_id}")
-async def supervisor_add_ticket_to_day(
-    item_id: str,
-    date: str,
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-) -> JsonDict:
-    day_id = resolve_day_id(date, clk.now(), cfg.boundary_hour)
-    days_actions.add_ticket_to_day(
-        conn,
-        day_id,
-        ticket_id,
-        now=clk.now_unix(),
-        admit=lambda: require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id),
-    )
-    return {"sprint_item_id": item_id, "ticket_id": ticket_id, "day_id": day_id}
-
-
-@router.delete("/items/{item_id}/supervisor/days/{date}/tickets/{ticket_id}")
-async def supervisor_remove_ticket_from_day(
-    item_id: str,
-    date: str,
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-) -> JsonDict:
-    day_id = resolve_day_id(date, clk.now(), cfg.boundary_hour)
-    days_actions.remove_ticket_from_day(
-        conn,
-        day_id,
-        ticket_id,
-        now=clk.now_unix(),
-        admit=lambda: require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id),
-    )
-    return {"sprint_item_id": item_id, "ticket_id": ticket_id, "day_id": day_id}
-
-
-def _require_supervisor_block_scope(
-    conn: DbConn, ctx: Ctx, item_id: str, from_id: str, to_id: str
-) -> None:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, from_id)
-    if to_id == item_id:
-        require_sprint_item_supervisor_read(conn, ctx, item_id)
-    else:
-        require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, to_id)
-
-
-@router.post("/items/{item_id}/supervisor/blocks")
-async def supervisor_add_block(
-    item_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    from_id = body_str(raw, "from_id")
-    to_id = body_str(raw, "to_id")
-    tickets_actions.add_link(
-        conn,
-        from_id,
-        to_id,
-        LinkKind.blocks,
-        now=clk.now_unix(),
-        admit=lambda: _require_supervisor_block_scope(conn, ctx, item_id, from_id, to_id),
-    )
-    return {"from_id": from_id, "to_id": to_id, "kind": "blocks"}
-
-
-@router.delete("/items/{item_id}/supervisor/blocks")
-async def supervisor_remove_block(
-    item_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    from_id: str,
-    to_id: str,
-) -> JsonDict:
-    tickets_actions.remove_link(
-        conn,
-        from_id,
-        to_id,
-        LinkKind.blocks,
-        now=clk.now_unix(),
-        admit=lambda: _require_supervisor_block_scope(conn, ctx, item_id, from_id, to_id),
-    )
-    return {"ok": True}
-
-
-@router.get("/items/{item_id}/supervisor/artifacts")
-async def supervisor_list_artifacts(item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg) -> JsonDict:
-    return supervisor_service.list_artifacts(conn, ctx, item_id, cfg.db_path)
-
-
-@router.put("/items/{item_id}/supervisor/artifacts/{artifact_path:path}")
-async def supervisor_write_artifact(
-    item_id: str,
-    artifact_path: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-) -> JsonDict:
-    return supervisor_service.write_artifact(
-        conn, ctx, item_id, cfg.db_path, artifact_path, body_str(raw, "content")
-    )
-
-
-@router.delete("/items/{item_id}/supervisor/artifacts/{artifact_path:path}")
-async def supervisor_delete_artifact(
-    item_id: str,
-    artifact_path: str,
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-) -> JsonDict:
-    return supervisor_service.delete_artifact(conn, ctx, item_id, cfg.db_path, artifact_path)
-
-
-@router.get("/items/{item_id}/supervisor/conversation/start-values")
-async def get_item_supervisor_start_values(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
-    require_sprint_item_supervisor_read(conn, ctx, item_id)
+    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     values = conversation_start.sprint_item_supervisor_resolve(
         sprints_data.read_item(conn, item_id).item
     )
@@ -654,74 +249,8 @@ async def get_item_supervisor_start_values(item_id: str, conn: DbConn, ctx: Ctx)
     }
 
 
-def _supervisor_ticket_field(conn: DbConn, ticket_id: str) -> tuple[str, Any]:
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
-    field = worker_type_definition.gating_field(ticket.stage)
-    if field is None:
-        raise PlannerError(
-            ErrorCode.validation,
-            "ticket has no review field",
-            {"ticket_id": ticket_id, "stage": ticket.stage},
-        )
-    return field, worker_type_definition
-
-
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/approve")
-async def supervisor_approve_ticket(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-) -> JsonDict:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
-    body = _marshal_accept(raw)
-    field, worker_type_definition = _supervisor_ticket_field(conn, ticket_id)
-    now = clk.now_unix()
-    ticket = tickets_data.accept_proposal(
-        conn,
-        ticket_id,
-        field=field,
-        principal=ctx.principal,
-        now=now,
-        edited_body=body["edited_body"],
-        next_ceiling=_parse_next_ceiling(body["next_ceiling"], worker_type_definition),
-        at_cap=_parse_scope_at_cap(body["at_cap"]),
-        next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
-        supervisor_sprint_item_id=item_id,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/reject")
-async def supervisor_reject_ticket(
-    item_id: str,
-    ticket_id: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
-    message = body_str(raw, "message")
-    now = clk.now_unix()
-    ticket = await tickets_actions.return_ticket_for_revision(
-        conversations,
-        conn,
-        ticket_id,
-        message=message,
-        ctx=ctx,
-        clock=clk,
-        supervisor_sprint_item_id=item_id,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/items/{item_id}/supervisor/conversation/send")
-async def send_to_item_supervisor(
+@router.post("/items/{item_id}/conversation/send")
+async def send_to_item_conversation(
     item_id: str,
     body: OwnerSendBody,
     conn: DbConn,
@@ -730,7 +259,13 @@ async def send_to_item_supervisor(
     message_files: MessageFiles,
     clk: Clk,
 ) -> JsonDict:
-    require_direct_write(ctx)
+    """Talk into this Outcome's agent conversation, the way the Ticket door works.
+
+    Not the same operation as POST /messages/send. That command sends one line of text to
+    a principal. This is the door a person types at: it carries the browser's own message
+    name, the files attached to it, and what the conversation is to run on.
+    """
+    require_above(conn, ctx.principal, authority.outcome(item_id))
     return await _send_to_item_supervisor(
         item_id, body, conn, ctx, conversations, message_files, clk
     )
@@ -782,11 +317,12 @@ async def _send_to_item_supervisor(
     return {"conversation_id": delivered.conversation_id, **delivery_fate_json(delivered.fate)}
 
 
-@router.post("/items/{item_id}/supervisor/conversation/reset")
-async def reset_item_supervisor(
+@router.post("/items/{item_id}/conversation/reset")
+async def reset_item_conversation(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
-    require_direct_write(ctx)
+    """Cut this Outcome's agent loose from its conversation. This is what New does."""
+    require_above(conn, ctx.principal, authority.outcome(item_id))
     async with sprints_service.supervisor_lifecycle_lock(item_id):
         item = sprints_data.read_item(conn, item_id).item
         await conversation_start.reset_agent_conversation(
@@ -799,7 +335,7 @@ async def reset_item_supervisor(
 async def delete_item(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
-    require_direct_write(ctx)
+    require_above(conn, ctx.principal, authority.outcome(item_id))
     deleted = await sprints_service.delete_item(
         conversations, conn, item_id, principal=ctx.principal
     )
@@ -808,38 +344,7 @@ async def delete_item(
         "sprint_item_id": deleted.sprint_item_id,
         "title": deleted.title,
         "sprint_ids": list(deleted.sprint_ids),
-        "linked_entity_ids": list(deleted.linked_entity_ids),
     }
-
-
-@router.put("/items/{item_id}/tickets/{ticket_id}")
-async def classify_item_ticket(
-    item_id: str, ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    ticket = tickets_data.classify_ticket(
-        conn,
-        ticket_id,
-        sprint_item_id=item_id,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
-
-
-@router.delete("/items/{item_id}/tickets/{ticket_id}")
-async def unclassify_item_ticket(
-    item_id: str, ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    ticket = tickets_data.unclassify_ticket(
-        conn,
-        ticket_id,
-        sprint_item_id=item_id,
-        principal=ctx.principal,
-        now=clk.now_unix(),
-        admit=lambda: require_ticket_worker_write(conn, ctx),
-    )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
 @router.patch("/items/{item_id}")
@@ -852,8 +357,6 @@ async def patch_item(
             raise PlannerError(ErrorCode.validation, "unknown item field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no item fields to update", {})
-    if ctx.principal.kind is PrincipalKind.sprint_item:
-        reject_agent_fields(ctx, body, recognized)
     edits: dict[str, str | None] = {}
     for field in _ITEM_PLAIN_FIELDS:
         if field in body:
@@ -881,7 +384,9 @@ async def patch_item(
         item_id,
         edits=edits,
         clock=clk,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+        admit=lambda: require_above_or_self(
+            conn, ctx.principal, authority.outcome(item_id, *edits)
+        ),
     )
     return sprints_views.item_detail(conn, item_id)
 
@@ -910,29 +415,36 @@ async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -
         checkpoint=body["checkpoint"],
         review=body["review"],
         clock=clk,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+        admit=lambda: require_above(conn, ctx.principal, authority.plan("sprint")),
     )
     return dict(sprints_views.sprint_json(sprint))
 
 
 @router.get("/sprints")
-async def list_sprints(conn: DbConn) -> JsonDict:
-    return {"sprints": sprints_views.list_sprints(conn)}
-
-
-@router.get("/sprint-summaries")
-async def list_sprint_summaries(
-    conn: DbConn, limit: int = DEFAULT_LIST_LIMIT, offset: int = 0
+async def read_sprints(
+    conn: DbConn,
+    detail: str | None = None,
+    object_id: Annotated[str | None, Query(alias="id")] = None,
+    limit: int | None = None,
+    offset: int | None = None,
 ) -> JsonDict:
+    """Read Sprints at the level the caller asks for, or one Sprint by id."""
+    level = parse_read_detail(detail)
+    if object_id is not None:
+        require_full_for_one(level)
+        reject_parameters("id", {"limit": limit, "offset": offset})
+        return dict(sprints_views.sprint_json(sprints_data.read_sprint(conn, object_id)))
+    if level is ReadDetail.full:
+        reject_parameters("detail=full", {"limit": limit, "offset": offset})
+        return {"sprints": sprints_views.list_sprints(conn)}
     page = sprints_views.list_sprint_summaries(
-        conn, page_request=ListPageRequest(limit=limit, offset=offset)
+        conn,
+        page_request=ListPageRequest(
+            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
+            offset=0 if offset is None else offset,
+        ),
     )
     return page.response("sprints")
-
-
-@router.get("/sprints/{sprint_id}")
-async def get_sprint(sprint_id: str, conn: DbConn) -> JsonDict:
-    return dict(sprints_views.sprint_json(sprints_data.read_sprint(conn, sprint_id)))
 
 
 @router.patch("/sprints/{sprint_id}")
@@ -962,7 +474,7 @@ async def patch_sprint(
         date_start=body_opt_str(body, "date_start"),
         date_end=body_opt_str(body, "date_end"),
         clock=clk,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+        admit=lambda: require_above(conn, ctx.principal, authority.plan("sprint")),
     )
     return dict(sprints_views.sprint_json(sprint))
 
@@ -1015,34 +527,6 @@ async def list_ideas(
     }
 
 
-@router.put("/sprints/{sprint_id}/outcomes/{outcome_id}")
-async def add_outcome_commitment(
-    sprint_id: str, outcome_id: str, conn: DbConn, ctx: Ctx
-) -> JsonDict:
-    result = commitments.set_commitment(
-        conn,
-        sprint_id,
-        outcome_id,
-        committed=True,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
-    )
-    return {"sprint_id": result.sprint_id, "outcome_id": result.outcome_id}
-
-
-@router.delete("/sprints/{sprint_id}/outcomes/{outcome_id}")
-async def remove_outcome_commitment(
-    sprint_id: str, outcome_id: str, conn: DbConn, ctx: Ctx
-) -> JsonDict:
-    result = commitments.set_commitment(
-        conn,
-        sprint_id,
-        outcome_id,
-        committed=False,
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
-    )
-    return {"sprint_id": result.sprint_id, "outcome_id": result.outcome_id}
-
-
 @router.post("/sprints/{source_id}/outcomes/{outcome_id}/carry")
 async def carry_outcome(
     source_id: str, outcome_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
@@ -1060,7 +544,9 @@ async def carry_outcome(
             body_str_list(body, "ticket_ids"),
             principal=ctx.principal,
             now=clk.now_unix(),
-            admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+            admit=lambda: require_above(
+                conn, ctx.principal, authority.plan("sprint_outcomes")
+            ),
         )
     )
 

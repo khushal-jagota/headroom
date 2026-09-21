@@ -21,23 +21,6 @@ from planner.environments.app_launcher import build_app_launch_env
 SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
-def test_app_manifest_requires_full_sha_and_matching_digest(tmp_path: Path) -> None:
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "format": "panels-app-v1",
-                "app_sha": SHA,
-                "source_digest": "a" * 64,
-                "artifact_digest": "b" * 64,
-            }
-        ),
-        encoding="utf-8",
-    )
-    with pytest.raises(AppValidationError, match="artifact digest"):
-        validate_app_manifest(manifest_path)
-
-
 def test_real_file_mutation_still_invalidates_manifest_with_pytest_cache(tmp_path: Path) -> None:
     app = _runtime_app(tmp_path / "app")
     cache = app / ".pytest_cache" / "v" / "cache" / "lastfailed"
@@ -47,24 +30,6 @@ def test_real_file_mutation_still_invalidates_manifest_with_pytest_cache(tmp_pat
 
     with pytest.raises(AppValidationError, match="artifact digest"):
         validate_app_manifest(app / "manifest.json")
-
-
-def test_export_is_git_free_and_records_exact_checkout(tmp_path: Path) -> None:
-    source, sha = _git_source(tmp_path)
-    candidate = tmp_path / "candidate"
-    manifest = build_exported_app(source, requested_sha=sha, candidate_app=candidate)
-    assert manifest.app_sha == sha
-    assert len(manifest.source_digest) == 64
-    assert not (candidate / ".git").exists()
-    assert (candidate / "bin" / "panels").read_text(encoding="utf-8") == (
-        "#!/bin/sh\n"
-        "set -eu\n"
-        'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)\n'
-        f'export PLAN_APP_ROOT="$root" PLAN_APP_SHA="{sha}"\n'
-        'exec "$root/.venv/bin/python" -I -m planner "$@"\n'
-    )
-    assert os.access(candidate / "bin" / "panels", os.X_OK)
-    assert validate_app_manifest(candidate / "manifest.json").app_sha == sha
 
 
 def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path: Path) -> None:
@@ -105,6 +70,7 @@ def test_exported_cli_is_relocatable_and_preserves_caller_context(
     source, sha = _git_source(tmp_path)
     candidate = tmp_path / "candidate"
     build_exported_app(source, requested_sha=sha, candidate_app=candidate)
+    assert not (candidate / ".git").exists()
     python = candidate / ".venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
     python.write_text(

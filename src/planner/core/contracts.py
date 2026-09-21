@@ -1,6 +1,5 @@
-"""Shared vocabulary used across every domain: cross-domain enums,
-the link kinds, the link row, and the
-structured-error contract (ErrorCode, PlannerError) that pure logic raises.
+"""Shared vocabulary used across every domain: principals, priorities,
+Ticket blockers, and the structured-error contract that pure logic raises.
 
 Stdlib only. Nothing here imports another planner module."""
 
@@ -8,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Final, Literal
+from typing import Any, Final
 
 JsonDict = dict[str, Any]  # structured errors and adapter data
 UnixTime = int  # unix seconds
@@ -68,17 +67,6 @@ class Priority(StrEnum):  # SPEC §3.2/§3.3 — homed in core (shared vocabular
     P3 = "P3"
 
 
-class LinkKind(StrEnum):  # the one explicit Ticket relationship
-    blocks = "blocks"  # ticket -> ticket | ticket -> sprint item
-
-
-@dataclass(frozen=True)
-class Link:  # SPEC §3.6 links row
-    from_id: str
-    to_id: str
-    kind: LinkKind
-
-
 @dataclass(frozen=True)
 class BlockedBySummaryRow:
     ticket_id: str
@@ -89,19 +77,9 @@ class BlockedBySummaryRow:
 
 
 @dataclass(frozen=True)
-class BlocksTargetSummaryRow:
-    target_id: str
-    target_kind: Literal["ticket", "sprint_item"]
-    title: str
-    active: bool
-    href: str
-
-
-@dataclass(frozen=True)
 class BlockerSummary:
     blocked: bool
     blocked_by: tuple[BlockedBySummaryRow, ...]
-    blocks: tuple[BlocksTargetSummaryRow, ...]
 
 
 # --- structured errors (SPEC §14: pure logic imports these from contracts) ------
@@ -111,14 +89,13 @@ class BlockerSummary:
 
 
 class ErrorCode(StrEnum):
-    at_cap_stop = "at_cap_stop"  # §4.3 agent proposal at ceiling with stop
-    scope_missing = "scope_missing"  # §4.4.7 accept without the full pair
+    scope_missing = "scope_missing"  # accept or approve without the onward ceiling
     scope_invalid = "scope_invalid"  # next_ceiling before the new Stage / unknown
     stale_claim = "stale_claim"  # §7.6 stale/foreign claim; detail names it
     title_too_long = "title_too_long"  # §3.3 > title_max_chars
     sprint_overlap = "sprint_overlap"  # §3.1 overlapping date ranges
-    link_cycle = "link_cycle"  # blocks active-cycle rejection
-    link_invalid = "link_invalid"  # self-link, duplicate, or bad endpoints
+    ticket_block_cycle = "ticket_block_cycle"
+    ticket_block_invalid = "ticket_block_invalid"
     agent_forbidden = "agent_forbidden"  # attributed agent hits a direct-only action
     gateway_offline = "gateway_offline"  # §11
     already_running = "already_running"  # Hermes 4009 session busy

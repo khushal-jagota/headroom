@@ -4,18 +4,21 @@
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import { atCapLabel, labelize, stageLabel } from "../lib/ui";
+  import { labelize } from "../lib/ui";
   import {
     ceilingOptionsFor,
+    fieldLabelFor,
     fieldStageVisualStateFor,
     gatingFieldFor,
-    lifecycleFor
+    lifecycleFor,
+    stageLabelFor
   } from "../lib/lifecycle";
-  import type {
-    EmployeeConfigurationSnapshot,
-    StageOwnershipMode,
-    TicketDetail
-  } from "../lib/types";
+  import {
+    holderFromValue,
+    holderOptionsFor,
+    holderValue
+  } from "../lib/ceilingHolder";
+  import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
@@ -33,8 +36,6 @@
   import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
-  import TicketVerdict from "../components/TicketVerdict.svelte";
-  import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
   import ArtifactStrip from "../components/ArtifactStrip.svelte";
   import { ticketArtifactStripItems } from "../lib/artifactStrip";
@@ -80,6 +81,25 @@
         !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
     )
   );
+  // The one Sprint Item this Ticket's ceiling can be handed to, named as Khushal names
+  // it. Absent when the Ticket sits outside an Item, and then only me and the Chief show.
+  let ticketSprintItem = $derived(
+    ticket.data?.sprint_item_id
+      ? {
+          id: ticket.data.sprint_item_id,
+          title: ticket.data.resolved_priority_anchors?.sprint_item?.title || "Sprint Item"
+        }
+      : null
+  );
+
+  function holderLabel(detail: TicketDetail): string {
+    const value = holderValue(detail.ceiling_holder);
+    const match = holderOptionsFor(ticketSprintItem, detail.ceiling_holder).find(
+      (option) => option.value === value
+    );
+    return match?.label || value;
+  }
+
   const emptyTicketFieldText = "Not written yet.";
 
   let headerError = $state<unknown>(null);
@@ -88,7 +108,7 @@
 
   /** How far open this page's conversation is.
    *
-   * The state a conversation opens in belongs to the page that shows it. A paired Ticket
+   * The state a conversation opens in belongs to the page that shows it. A user-owned Ticket
    * opens full, and every other Ticket opens at rest. The person moves it from there and
    * the conversation writes back here when they do.
    */
@@ -101,7 +121,7 @@
    */
   let seededConversationStateFromStatus = false;
   $effect(() => {
-    const ownership = ticket.data?.effective_stage_ownership_mode;
+    const ownership = ticket.data && lc ? lc.stageOwnershipMode[ticket.data.stage] : undefined;
     if (
       !ticket.isFetchedAfterMount ||
       !ticket.isSuccess ||
@@ -234,7 +254,7 @@
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/scope`, { method: "POST", body });
+    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
   }
 
   function closeLeash(): void {
@@ -251,46 +271,17 @@
     }
   }
 
-  function currentStageOwnershipOverride(detail: TicketDetail): StageOwnershipMode | null {
-    return detail.stage_ownership_overrides?.[detail.stage] ?? null;
-  }
-
-  function hasExplicitCurrentStageUserOverride(detail: TicketDetail): boolean {
-    return currentStageOwnershipOverride(detail) === "user";
-  }
-
-  function userOwnsCurrentStage(detail: TicketDetail): boolean {
-    return (
-      detail.effective_stage_ownership_mode === "user" ||
-      hasExplicitCurrentStageUserOverride(detail)
-    );
-  }
-
-  function saveStageOwner(detail: TicketDetail, ownershipMode: StageOwnershipMode): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${stableId}/stage-ownership/${encodeURIComponent(detail.stage)}`,
-      { method: "PUT", body: { ownership_mode: ownershipMode } }
-    );
-  }
-
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
-      method: "PUT",
+    return mutateJson(`/api/tickets/${stableId}`, {
+      method: "PATCH",
+      body: { field_values: { [field]: body } }
+    });
+  }
+
+  function completeGate(field: string, body: string): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/complete/${field}`, {
+      method: "POST",
       body: { body }
-    });
-  }
-
-  function saveProposal(field: string, body: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/proposal`, {
-      method: "PUT",
-      body: { field, body }
-    });
-  }
-
-  function saveVerdict(verdict: { rating: number | null; text: string | null }): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}/verdict`, {
-      method: "PUT",
-      body: verdict
     });
   }
 
@@ -307,20 +298,8 @@
     return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
   }
 
-  async function takeover(detail: TicketDetail): Promise<void> {
-    try {
-      if (
-        userOwnsCurrentStage(detail) &&
-        !hasExplicitCurrentStageUserOverride(detail)
-      ) {
-        await saveStageOwner(detail, "worker");
-      } else {
-        const action = userOwnsCurrentStage(detail) ? "release" : "takeover";
-        await mutateJson(`/api/tickets/${stableId}/${action}`, { method: "POST" });
-      }
-    } catch (err) {
-      headerError = err;
-    }
+  function userOwnsCurrentStage(detail: TicketDetail): boolean {
+    return lc?.stageOwnershipMode[detail.stage] === "user";
   }
 
   function currentStageRunLabel(detail: TicketDetail): string | null {
@@ -345,20 +324,18 @@
   // choice is editable. Direct blockers belong to the Ticket itself, so they
   // always stay in the masthead instead of moving into a stage card.
   let kickoffCardShowsContextRow = $derived(
-    gatingFieldFor(lc, ticket.data?.stage ?? "") === "kickoff" &&
-      ticket.data?.pending_proposal?.field === "kickoff" &&
+    gatingFieldFor(lc, ticket.data?.stage ?? "") === "brief" &&
+      ticket.data?.pending_proposal?.field === "brief" &&
       Boolean(ticket.data?.employee_configuration_editable)
   );
 
   async function removeBlocker(blockerTicketId: string): Promise<void> {
     headerError = null;
-    const query = new URLSearchParams({
-      from_id: blockerTicketId,
-      to_id: stableId,
-      kind: "blocks"
-    });
     try {
-      await mutateJson(`/api/links?${query.toString()}`, { method: "DELETE" });
+      await mutateJson(
+        `/api/collections/blockers/${encodeURIComponent(stableId)}/${encodeURIComponent(blockerTicketId)}`,
+        { method: "DELETE" }
+      );
     } catch (err) {
       headerError = err;
     }
@@ -438,53 +415,63 @@
                 multiline
                 placeholder="+ add orientation"
                 onSave={(raw) =>
-                  mutateJson(`/api/tickets/${stableId}/recap`, {
-                    method: "PUT",
-                    body: { body: raw }
+                  mutateJson(`/api/tickets/${stableId}`, {
+                    method: "PATCH",
+                    body: { recap: raw }
                   })}
               />
             </ClampedText>
           </div>
           <div class="ticket-operating">
-            {#if detail.stage !== "done" && detail.stage !== "needs_kickoff" && detail.pending_proposal === null}
+            <!-- The ceiling is set here: how far the Ticket may go, and who is asked when
+                 it gets there. A parked proposal freezes the stage, because moving it
+                 would change what was proposed, and leaves the holder free — which is how
+                 a proposal sitting in the wrong queue gets moved to the right one.
+                 A parked Kickoff is one of those: a Ticket opened for somebody else
+                 parks its Kickoff in their queue, so the holder half belongs here too. -->
+            {#if detail.stage !== "done" && (detail.stage !== "needs_brief" || detail.pending_proposal !== null)}
               <details class="ticket-leash" bind:this={leashMenu} data-leash>
                 <summary
                   class="ticket-leash-face"
-                  class:ticket-leash-face--held={userOwnsCurrentStage(detail)}
                   data-leash-face
                 >
-                  {#if userOwnsCurrentStage(detail)}
-                    <span class="ticket-leash-value">you hold {stageLabel(detail.stage)}</span>,
+                  {#if detail.pending_proposal === null}
+                    Until
+                    <span class="ticket-leash-value" data-leash-ceiling>{stageLabelFor(lc, detail.ceiling)}</span>
+                    <span class="ticket-leash-word" aria-hidden="true">·</span>
                   {/if}
-                  approved until
-                  <span class="ticket-leash-value" data-leash-ceiling>{stageLabel(detail.ceiling)}</span>,
-                  then <span class="ticket-leash-value" data-leash-cap>{atCapLabel(detail.at_cap)}</span>
+                  then
+                  <span class="ticket-leash-value" data-leash-holder>{holderLabel(detail)}</span>
                   <span class="disclosure-chev" aria-hidden="true"></span>
                 </summary>
                 <div class="ticket-leash-menu" role="menu">
+                  {#if detail.pending_proposal === null}
+                    <select
+                      class="ticket-leash-select"
+                      data-scope-ceiling
+                      aria-label="Ceiling stage"
+                      value={detail.ceiling}
+                      onchange={(event) => void updateScope({ ceiling: event.currentTarget.value })}
+                    >
+                      {#each ceilingOptionsFor(lc, detail.stage) as option}
+                        <option value={option.value}>{option.label}</option>
+                      {/each}
+                    </select>
+                  {/if}
                   <select
                     class="ticket-leash-select"
-                    data-scope-ceiling
-                    aria-label="Approved until stage"
-                    value={detail.ceiling}
-                    onchange={(event) => void updateScope({ ceiling: event.currentTarget.value, at_cap: detail.at_cap })}
+                    data-scope-holder
+                    aria-label="Who holds the ceiling"
+                    value={holderValue(detail.ceiling_holder)}
+                    onchange={(event) =>
+                      void updateScope({
+                        ceiling_holder: holderFromValue(event.currentTarget.value, ticketSprintItem)
+                      })}
                   >
-                    {#each ceilingOptionsFor(lc, detail.stage) as option}
+                    {#each holderOptionsFor(ticketSprintItem, detail.ceiling_holder) as option}
                       <option value={option.value}>{option.label}</option>
                     {/each}
                   </select>
-                  <div class="ticket-leash-rule"></div>
-                  <div data-scope-atcap>
-                    <select
-                      class="ticket-leash-select"
-                      aria-label="At the ceiling"
-                      value={detail.at_cap}
-                      onchange={(event) => void updateScope({ ceiling: detail.ceiling, at_cap: event.currentTarget.value })}
-                    >
-                      <option value="stop">then stop</option>
-                      <option value="propose">then propose</option>
-                    </select>
-                  </div>
                 </div>
               </details>
             {/if}
@@ -506,11 +493,6 @@
               {/each}
             </div>
           {/if}
-          {#if detail.backend_error}
-            <div class="ticket-backend-error" data-backend-error role="alert">
-              {detail.backend_error}
-            </div>
-          {/if}
           {#if headerError}<ErrorLine error={headerError} />{/if}
         </header>
 
@@ -518,8 +500,6 @@
           {#if lc}
             <ArtifactStrip items={ticketArtifactStripItems(lc.fieldIds, detail.field_values, detail.pending_proposal)} />
           {/if}
-          <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
-          <TicketTroubleNotes notes={detail.trouble_notes} />
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
@@ -540,7 +520,7 @@
                 <details class="stage-fold" data-stage-fold>
                   <summary class="stage-fold-summary" data-stage-fold-open>
                     <StageMark state="completed" />
-                    <span class="stage-fold-names">{settledFields.join(" · ")}</span>
+                    <span class="stage-fold-names">{settledFields.map((name) => fieldLabelFor(lc, name)).join(" · ")}</span>
                     <span class="disclosure-chev" aria-hidden="true"></span>
                   </summary>
                   <div class="stage-fold-rows">
@@ -554,19 +534,17 @@
                         lifecycle={lc}
                         ticketStage={detail.stage}
                         ceiling={detail.ceiling}
-                        suggestedNextCeiling={detail.suggested_next_ceiling}
+                        sprintItem={ticketSprintItem}
                         emptyText={emptyTicketFieldText}
+                        editableCurrentValue={userOwnsCurrentStage(detail)}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
-                        onRelease={currentStageRunLabel(detail) === "you're on it"
-                          ? () => takeover(detail)
-                          : undefined}
-                        contextRow={name === "kickoff" && kickoffCardShowsContextRow
+                        contextRow={name === "brief" && kickoffCardShowsContextRow
                           ? kickoffContextRow
                           : undefined}
                         onAccept={(payload) => acceptField(name, payload)}
-                        onSaveProposal={(raw) => saveProposal(name, raw)}
                         onSaveValue={(raw) => saveValue(name, raw)}
+                        onCompleteGate={(raw) => completeGate(name, raw)}
                       />
                     {/each}
                     <button
@@ -581,7 +559,7 @@
                   </div>
                 </details>
               {/if}
-              {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name}
+              {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name (`${detail.id}:${name}`)}
                 {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
                 <TicketStageSection
                   {name}
@@ -591,19 +569,17 @@
                   lifecycle={lc}
                   ticketStage={detail.stage}
                   ceiling={detail.ceiling}
-                  suggestedNextCeiling={detail.suggested_next_ceiling}
+                  sprintItem={ticketSprintItem}
                   emptyText={emptyTicketFieldText}
+                  editableCurrentValue={userOwnsCurrentStage(detail)}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
-                  onRelease={currentStageRunLabel(detail) === "you're on it"
-                    ? () => takeover(detail)
-                    : undefined}
-                  contextRow={name === "kickoff" && kickoffCardShowsContextRow
+                  contextRow={name === "brief" && kickoffCardShowsContextRow
                     ? kickoffContextRow
                     : undefined}
                   onAccept={(payload) => acceptField(name, payload)}
-                  onSaveProposal={(raw) => saveProposal(name, raw)}
                   onSaveValue={(raw) => saveValue(name, raw)}
+                  onCompleteGate={(raw) => completeGate(name, raw)}
                 />
               {/each}
             {/if}
@@ -630,7 +606,6 @@
             bind:conversationState
             conversationId={detail.conversation_id}
             persistenceKey={`owner:ticket:${detail.id}`}
-            ticketId={detail.id}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             bind:backends={conversationBackends}

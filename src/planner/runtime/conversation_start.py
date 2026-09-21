@@ -63,7 +63,6 @@ from planner.runtime.logic.conversation_start_resolution import (
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
 from planner.worker_settings.service import (
-    database_parent_from_connection,
     read_chief_settings,
     read_worker_launch_defaults_for_ticket_creation,
 )
@@ -134,9 +133,7 @@ def worker_resolve(
     registry = worker_type_registry
     if registry is None:
         registry = configured_worker_type_registry()
-    launch_defaults = read_worker_launch_defaults_for_ticket_creation(
-        conn, registry, ticket.worker_type
-    )
+    launch_defaults = read_worker_launch_defaults_for_ticket_creation(registry, ticket.worker_type)
     return resolve_worker_conversation_start(
         ticket_id=ticket.id,
         worker_type_launch_defaults=ConversationStartConfiguration(
@@ -181,10 +178,7 @@ def agent_resolve(
     registry = worker_type_registry
     if registry is None:
         registry = configured_worker_type_registry()
-    database_parent = database_parent_from_connection(conn)
-    if database_parent is None:
-        raise RuntimeError("managed Chief settings need a database that lives in a folder")
-    launch_defaults = read_chief_settings(database_parent).launch_defaults
+    launch_defaults = read_chief_settings(conn).launch_defaults
     return resolve_agent_conversation_start(
         chief_launch_defaults=ConversationStartConfiguration(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),
@@ -320,6 +314,7 @@ async def _send_with_addressed_receipt(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
+    reply_requested: bool,
 ) -> AddressedPromptDeliveryReceipt:
     """Use the internal freshness receipt only for an addressed employee send."""
     if sender is not None and recipient is not None:
@@ -334,6 +329,7 @@ async def _send_with_addressed_receipt(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
     fate = await system.send(
         conversation_id,
@@ -366,9 +362,9 @@ async def send_to_ticket_conversation(
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
+    reply_requested: bool = True,
     worker_type_registry: WorkerTypeRegistry | None = None,
     now: int,
-    required_sprint_item_id: str | None = None,
 ) -> DeliveredMessage:
     """Send a message into this Ticket's conversation, making one if there is none yet.
 
@@ -405,22 +401,6 @@ async def send_to_ticket_conversation(
     own values.
     """
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    if required_sprint_item_id is not None:
-        if ticket.sprint_item_id != required_sprint_item_id:
-            raise PlannerError(
-                ErrorCode.agent_forbidden,
-                "the ticket is not a current child of this Sprint Item supervisor",
-                {
-                    "ticket_id": ticket_id,
-                    "sprint_item_id": required_sprint_item_id,
-                },
-            )
-        if ticket.conversation_id is None:
-            raise PlannerError(
-                ErrorCode.not_found,
-                "the ticket has no current Worker conversation",
-                {"ticket_id": ticket_id},
-            )
     if conversation_id is None and ticket.conversation_id is None:
         return await _make_a_conversation_and_send_into_it(
             system,
@@ -435,6 +415,7 @@ async def send_to_ticket_conversation(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
             worker_type_registry=worker_type_registry,
             now=now,
         )
@@ -461,6 +442,7 @@ async def send_to_ticket_conversation(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
+        reply_requested=reply_requested,
         now=now,
     )
 
@@ -479,6 +461,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
+    reply_requested: bool,
     now: int,
 ) -> DeliveredMessage:
     """Deliver into a conversation that is already there, carrying what it changes.
@@ -506,6 +489,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
+        reply_requested=reply_requested,
     )
     fate = receipt.fate
     carries_a_change = runs_under.model is not None or runs_under.reasoning_effort is not None
@@ -544,6 +528,7 @@ async def _make_a_conversation_and_send_into_it(
     sent_at_unix_milliseconds: int | None,
     sender: Principal | None,
     recipient: Principal | None,
+    reply_requested: bool,
     worker_type_registry: WorkerTypeRegistry | None,
     now: int,
 ) -> DeliveredMessage:
@@ -591,6 +576,7 @@ async def _make_a_conversation_and_send_into_it(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
             now=now,
         )
     # From here the conversation is this call's own: it was made here, on the values this
@@ -606,6 +592,7 @@ async def _make_a_conversation_and_send_into_it(
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             sender=sender,
             recipient=recipient,
+            reply_requested=reply_requested,
         )
         fate = receipt.fate
     except BaseException:
@@ -787,6 +774,7 @@ async def send_to_agent_conversation(
     sent_at_unix_milliseconds: int | None = None,
     sender: Principal | None = None,
     recipient: Principal | None = None,
+    reply_requested: bool = True,
     required_sprint_item_id: str | None = None,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
@@ -831,6 +819,7 @@ async def send_to_agent_conversation(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                    reply_requested=reply_requested,
                 )
                 fate = receipt.fate
             except BaseException:
@@ -872,6 +861,7 @@ async def send_to_agent_conversation(
         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         sender=sender,
         recipient=recipient,
+        reply_requested=reply_requested,
     )
     return DeliveredMessage(
         conversation_id=sending_into,
