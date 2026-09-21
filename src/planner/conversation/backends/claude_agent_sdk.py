@@ -200,10 +200,25 @@ CLAUDE_STEER_ADMISSION_TIMEOUT_SECONDS: Final[float] = 5.0
 # result of its own to be named on.
 #
 # ``discarded`` is the child dropping a command it never ran, which is an ending for that
-# command in the only sense this adapter needs.
+# command in the only sense this adapter needs. ``refused`` is the child declining one
+# before it ever reached the queue, which is the same kind of ending.
 TERMINAL_COMMAND_LIFECYCLE_STATES: Final[frozenset[str]] = frozenset(
-    {"completed", "cancelled", "discarded"}
+    {"completed", "cancelled", "discarded", "refused"}
 )
+
+# The lifecycle states that say the command will not run, so the steer behind it was not
+# taken. Each is Claude's own word for a command it will do nothing further with.
+REJECTED_COMMAND_LIFECYCLE_STATES: Final[frozenset[str]] = frozenset(
+    {"cancelled", "discarded", "refused"}
+)
+
+# How long Panels waits for a closing receipt once Claude has admitted the command and the
+# turn it was written into has ended. Claude closes out a folded command before that
+# turn's result, so a receipt still missing here is overdue rather than pending. The bound
+# does not apply to a command Claude has taken up as a turn of its own: that one is
+# running, its closing receipt comes after its own result, and Panels puts no clock on work
+# Claude is doing. 15.0 seconds is what codex and hermes allow a wait of this kind.
+CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS: Final[float] = 15.0
 
 # Stop must not leave a queued steering command behind. A missing cancel receipt is a
 # failed cancellation, which makes the core discard this child and resume its session on
@@ -314,7 +329,11 @@ class ClaudeSdkClient(Protocol):
         ...
 
     async def wait_for_user_message_settlement(self, user_message_uuid: str) -> None:
-        """Return when Claude has finished with this command, however long that takes."""
+        """Return when Claude has finished with this command.
+
+        A command Claude is running is waited out however long it takes. A command nothing
+        is running is waited out only to a bound, because no receipt for it is coming.
+        """
         ...
 
     def receive_messages(self) -> AsyncIterator[Message]: ...
@@ -353,6 +372,10 @@ def claude_sdk_client(options: ClaudeAgentOptions) -> ClaudeSdkClient:
 class _ObservedUserMessage:
     admission: asyncio.Future[bool | None]
     settled: asyncio.Future[None]
+    # Claude drained this command into a turn. Read before and after the settlement bound,
+    # it tells a command folded into the turn that just ended from one Claude has only now
+    # taken up as a turn of its own.
+    started: bool = False
 
 
 def _settle(observed: _ObservedUserMessage) -> None:
@@ -403,10 +426,12 @@ class _ClaudeProtocolTransport(Transport):
                 else None
             )
             if observed is not None:
+                if state == "started":
+                    observed.started = True
                 if not observed.admission.done():
                     if state in {"queued", "started", "completed"}:
                         observed.admission.set_result(True)
-                    elif state in {"cancelled", "discarded"}:
+                    elif state in REJECTED_COMMAND_LIFECYCLE_STATES:
                         observed.admission.set_result(False)
                 if state in TERMINAL_COMMAND_LIFECYCLE_STATES:
                     _settle(observed)
@@ -486,6 +511,23 @@ class _ClaudeProtocolTransport(Transport):
             except TimeoutError:
                 _settle(observed)
                 return
+        drained_before_the_wait = observed.started
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(observed.settled),
+                CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS,
+            )
+            return
+        except TimeoutError:
+            pass
+        if drained_before_the_wait or not observed.started:
+            # Nothing is running this command. Either Claude folded it into the turn that
+            # has already ended and owes a closing receipt it has not sent, or it never
+            # left the queue at all. Both are endings Claude will not now announce.
+            _settle(observed)
+            return
+        # Claude took the command up as a turn of its own while this waited. That turn's
+        # ending is the command's ending, and it arrives when the work is done.
         await asyncio.shield(observed.settled)
 
     async def interrupt_and_cancel_queued(
