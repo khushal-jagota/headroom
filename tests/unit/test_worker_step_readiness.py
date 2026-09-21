@@ -65,7 +65,7 @@ def _ticket(
         field="brief",
         principal=OWNER_PRINCIPAL,
         now=2,
-        next_ceiling=ceiling or definition.first_worker_stage(),
+        next_ceiling=ceiling or definition.stage_ids()[1],
         next_holder=OWNER_PRINCIPAL,
     )
     if planning_day_id is not None:
@@ -280,18 +280,6 @@ def test_a_block_named_at_creation_reaches_the_same_gate(tmp_path: Path) -> None
         assert _ready(conn, born_blocked)
     finally:
         conn.close()
-
-
-_EXPECTED_BLOCKERS = {
-    "membership": "the Ticket is not on today's Day",
-    "status": "the Ticket is at user, so no worker step is due",
-    "terminal": "the Stage done is terminal",
-    "next_gate": "the Stage needs_success_condition has no field for a worker to fill",
-    # Filing a proposal parks it and writes `awaiting_approval` in the same breath, and
-    # the status is asked about first. The Ticket is refused either way.
-    "proposal": "the Ticket is at awaiting_approval, so no worker step is due",
-    "blocker": "the Ticket is at blocked, so no worker step is due",
-}
 
 
 def test_a_ready_ticket_names_no_blocker(tmp_path: Path) -> None:

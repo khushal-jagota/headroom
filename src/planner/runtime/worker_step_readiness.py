@@ -106,8 +106,6 @@ def worker_step_blocker(
             return "the user-owned Stage opener already ran for this Stage entry"
     if worker_type_definition.gating_field(ticket.stage) is None:
         return f"the Stage {ticket.stage} has no field for a worker to fill"
-    if ticket.pending_proposal is not None:
-        return "a proposal is parked for the user"
     if _closeout_lane_is_occupied(
         conn,
         ticket,

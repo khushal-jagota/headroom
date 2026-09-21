@@ -5,11 +5,7 @@ from __future__ import annotations
 import sqlite3
 from collections import deque
 
-from planner.core.contracts import (
-    BlockedBySummaryRow,
-    BlockedTicketSummaryRow,
-    BlockerSummary,
-)
+from planner.core.contracts import BlockedBySummaryRow, BlockerSummary
 from planner.core.errors import ErrorCode, PlannerError
 
 # What makes a block live, as one SQL predicate. Every question about blocking asks it,
@@ -161,13 +157,8 @@ def blocked_ticket_ids(conn: sqlite3.Connection) -> set[str]:
     return {str(row["blocked_ticket_id"]) for row in rows}
 
 
-def is_blocked(conn: sqlite3.Connection, ticket_id: str) -> bool:
-    """Return whether an active Ticket blocks this Ticket."""
-    return blocker_summary(conn, ticket_id).blocked
-
-
 def blocker_summary(conn: sqlite3.Connection, ticket_id: str) -> BlockerSummary:
-    """Return the direct incoming and outgoing Ticket blockers for one Ticket."""
+    """Return the direct incoming Ticket blockers for one Ticket."""
     incoming_rows = conn.execute(
         """
         SELECT blocker.id, blocker.title, blocker.stage
@@ -193,29 +184,7 @@ def blocker_summary(conn: sqlite3.Connection, ticket_id: str) -> BlockerSummary:
         for row in incoming_rows
     )
 
-    source_active = _ticket_is_active(conn, ticket_id)
-    outgoing_rows = conn.execute(
-        """
-        SELECT blocked.id, blocked.title
-        FROM ticket_blocks
-        JOIN tickets blocked ON blocked.id = ticket_blocks.blocked_ticket_id
-        WHERE ticket_blocks.blocking_ticket_id = ?
-        ORDER BY blocked.title COLLATE NOCASE, blocked.id
-        """,
-        (ticket_id,),
-    ).fetchall()
-    blocks = tuple(
-        BlockedTicketSummaryRow(
-            ticket_id=str(row["id"]),
-            title=str(row["title"]),
-            active=source_active,
-            href=f"#/workspace/{row['id']}",
-        )
-        for row in outgoing_rows
-    )
-
     return BlockerSummary(
         blocked=any(row.active for row in blocked_by),
         blocked_by=blocked_by,
-        blocks=blocks,
     )

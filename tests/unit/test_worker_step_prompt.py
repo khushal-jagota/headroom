@@ -91,7 +91,6 @@ def test_revision_feedback_is_the_only_optional_worker_input_after_ticket_inputs
         "Revision feedback from owner owner for stage needs_success_condition:\n"
         "Preserve this exact feedback."
     )
-    assert "[Pending worker context]" not in prompt.model_text
 
 
 def _ticket_at_stage(tmp_db: Connection, stage: str) -> Ticket:

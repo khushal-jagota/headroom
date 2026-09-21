@@ -81,11 +81,6 @@ def derive_ticket_status(stored: StoredTicketFacts) -> TicketStatus:
 RESTS_PREDICATE = "t.worker_step_claim = 'none' AND t.pending_proposal IS NULL"
 
 
-def ticket_rests(stored: StoredTicketFacts) -> bool:
-    """Whether this Ticket is at rest. The Python face of ``RESTS_PREDICATE``."""
-    return derive_ticket_status(stored) in (TicketStatus.empty, TicketStatus.blocked)
-
-
 def derive_ticket_facts(stored: StoredTicketFacts) -> TicketFacts:
     ticket_status = derive_ticket_status(stored)
     gating_field = configured_worker_type_registry().require(stored.worker_type).gating_field(
@@ -167,8 +162,3 @@ def load_ticket_facts(
         )
         for row in rows
     }
-
-
-def ticket_facts(conn: sqlite3.Connection, ticket_id: str) -> TicketFacts | None:
-    """The same answer for one Ticket."""
-    return load_ticket_facts(conn, {ticket_id}).get(ticket_id)

@@ -977,10 +977,6 @@ def read_ticket_by_conversation_id(conn: sqlite3.Connection, conversation_id: st
     return _row_to_ticket(rows[0])
 
 
-def get_effective_sprint_id(conn: sqlite3.Connection, ticket_id: str) -> str | None:
-    return _load_ticket(conn, ticket_id).effective_sprint_id
-
-
 def claim_ticket_for_worker_step(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1162,7 +1158,6 @@ def accept_proposal(
         decision = resolution.decide_accept(
             ticket,
             field,
-            principal,
             edited_body,
             next_ceiling,
             next_holder,

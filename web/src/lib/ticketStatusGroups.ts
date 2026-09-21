@@ -3,15 +3,16 @@ import { sprintTicketCondition, type TicketConditionFacts } from "./sprintPresen
 // The Sprint Item page's order of Ticket status groups, and which of them arrive shut.
 // `quiet` is the single fact that a group is not what the reader came for: the page
 // names and counts it, and arrives with it collapsed. This flag is this page's own.
-// The rail carries every group too, and collapses its own three in
+// The rail carries its own groups too, and collapses two of them in
 // `DEFAULT_COLLAPSED_GROUPS`. The two lists are not the same, because the two screens
-// are read for different reasons, so neither one follows the other.
+// are read for different reasons, so neither one follows the other. Awaiting kickoff is
+// this page's alone: the rail shows only the three attention groups, so it never has one.
 //
 // The workspace rail groups by the shared attention projection and holds its own order in
 // `workspaceRail.ts`. The two screens split a Ticket up differently, but they call the
-// same thing by the same name: a group here and a group there that hold the same
-// Tickets carry one label, and `GROUP_LABELS` in the rail is where the other half of
-// each pair lives. A label changed on one side is changed on both.
+// same thing by the same name: where a group here and a group there hold the same
+// Tickets they carry one label, and `GROUP_LABELS` in the rail is where the other half of
+// such a pair lives. A label changed on one side is changed on both.
 //
 // `errored` and `blocked` go further than a shared label: they carry the rail's own
 // keys. A worker that broke wants the reader, so Errored arrives open on both screens

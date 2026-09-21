@@ -15,14 +15,12 @@ const REMAINDER_GROUP_ORDER: readonly string[] = [
   "agent",
   "waiting_to_closeout",
   "status_awaiting_approval",
-  "waiting_for_kickoff",
   "empty",
   "blocked",
   "done"
 ];
 
 const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
-  "waiting_for_kickoff",
   "blocked",
   "done"
 ]);
@@ -37,8 +35,7 @@ const GROUP_LABELS: Readonly<Record<string, string>> = {
   assigned: "Yours",
   awaiting_reply: "Messages",
   status_awaiting_approval: "Awaiting an agent's approval",
-  waiting_to_closeout: "Waiting on Consequences",
-  waiting_for_kickoff: "Awaiting kickoff"
+  waiting_to_closeout: "Waiting on Consequences"
 };
 
 export type WorkspaceTicketGroup = {

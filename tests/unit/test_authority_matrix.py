@@ -255,7 +255,7 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
     (
         "POST   /tickets/{t}/propose",
         lambda s: Call(
-            "POST", f"/api/tickets/{s.ticket_a}/propose", {"body": "Again.", "recap": "Again"}
+            "POST", f"/api/tickets/{s.ticket_a}/propose", {"body": "Again."}
         ),
     ),
     (

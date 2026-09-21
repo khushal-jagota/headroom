@@ -89,12 +89,6 @@ def validate_definition(
             {"worker_type": worker_type, "last": last.id},
         )
 
-    for stage in definition.stages:
-        if stage.id == "dropped":
-            raise fail(
-                "dropped is not a stage",
-                {"worker_type": worker_type, "stage": "dropped"},
-            )
     for stage in definition.stages[:-1]:
         if stage.id == "done":
             raise fail(

@@ -138,11 +138,6 @@ class WorkerTypeDefinition:
     def default_ceiling(self) -> str:
         return self.ceiling_range()[0]
 
-    def first_worker_stage(self) -> str:
-        if self.stage_ids()[0] == NEEDS_BRIEF_STAGE_ID:
-            return self.stage_ids()[1]
-        return self.stage_ids()[0]
-
     def completed_stage(self) -> str:
         for stage_definition in self.stages:
             if stage_definition.is_terminal:

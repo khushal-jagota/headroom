@@ -1,7 +1,7 @@
 """Durable source-side attention transitions.
 
-Writers record transitions in their own transaction.  The projector only turns durable
-rising edges into notification facts, so several commits can safely share one wake-up.
+Writers record transitions in their own transaction.  Queueing only turns durable rising
+edges into deliveries, so several commits can safely share one wake-up.
 """
 
 from __future__ import annotations

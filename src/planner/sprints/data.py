@@ -450,53 +450,6 @@ def update_supervisor_launch_configuration(
     return _load_item(conn, item_id)
 
 
-def update_item_field(
-    conn: sqlite3.Connection,
-    item_id: str,
-    field: str,
-    value: str | None,
-    *,
-    clock: Clock,
-) -> SprintItem:
-    if field not in _ITEM_PLAIN_FIELDS:
-        raise PlannerError(
-            ErrorCode.validation,
-            "field is not an editable item field",
-            {"field": field},
-        )
-    _load_item(conn, item_id)
-    stored: str | None = value
-    if field == "priority":
-        if value is None:
-            raise PlannerError(ErrorCode.validation, "invalid priority", {"value": value})
-        try:
-            stored = Priority(value).value
-        except ValueError as exc:
-            raise PlannerError(ErrorCode.validation, "invalid priority", {"value": value}) from exc
-    elif field == "project_id":
-        if value is None:
-            raise PlannerError(ErrorCode.validation, "invalid project_id", {"value": value})
-        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (value,)).fetchone() is None:
-            raise PlannerError(ErrorCode.validation, "invalid project_id", {"project_id": value})
-    now = clock.now_unix()
-    with _tx(conn):
-        conn.execute(
-            f"UPDATE sprint_items SET {field} = ?, updated_at = ? WHERE id = ?",
-            (stored, now, item_id),
-        )
-        if field == "project_id":
-            conn.execute(
-                "UPDATE tickets SET project_id = ?, updated_at = ? WHERE sprint_item_id = ?",
-                (stored, now, item_id),
-            )
-            conn.execute(
-                "UPDATE scheduled_ticket_schedules SET project_id = ?, updated_at = ? "
-                "WHERE sprint_item_id = ?",
-                (stored, now, item_id),
-            )
-    return _load_item(conn, item_id)
-
-
 def update_item(
     conn: sqlite3.Connection,
     item_id: str,

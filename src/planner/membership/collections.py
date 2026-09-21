@@ -40,7 +40,7 @@ class MembershipWrite:
     container_id: str
     member_id: str
     now: int
-    admit: Callable[[], None] | None
+    admit: Callable[[], None]
 
 
 Write = Callable[[MembershipWrite], None]
@@ -99,7 +99,7 @@ def _commit_outcome(write: MembershipWrite) -> None:
         write.container_id,
         write.member_id,
         committed=True,
-        admit=_required(write.admit),
+        admit=write.admit,
     )
 
 
@@ -109,7 +109,7 @@ def _uncommit_outcome(write: MembershipWrite) -> None:
         write.container_id,
         write.member_id,
         committed=False,
-        admit=_required(write.admit),
+        admit=write.admit,
     )
 
 
@@ -123,13 +123,6 @@ def _remove_blocker(write: MembershipWrite) -> None:
     tickets_actions.remove_ticket_block(
         write.conn, write.member_id, write.container_id, now=write.now, admit=write.admit
     )
-
-
-def _required(admit: Callable[[], None] | None) -> Callable[[], None]:
-    """Commitment writes always have a rule, so an absent one is a wiring mistake."""
-    if admit is None:
-        raise ValueError("this collection always has an authority rule")
-    return admit
 
 
 # --- the authority rules ------------------------------------------------------

@@ -183,15 +183,6 @@ def read_optional_body(body_file: str | None, as_json: bool) -> str | None:
     return _read_source(body_file, as_json)
 
 
-def read_required_option_body(body_file: str | None, as_json: bool, label: str) -> str:
-    if body_file is None:
-        http.fail_validation(f"{label} required: pass --{label}-file PATH", as_json)
-    text = _read_source(body_file, as_json)
-    if not text.strip():
-        http.fail_validation(f"empty {label}", as_json)
-    return text
-
-
 def read_value_or_file(
     value: str | None,
     body_file: str | None,
@@ -375,26 +366,6 @@ def _gating_field_for_stage(manifest: dict[str, Any], stage: str) -> str | None:
             gating = candidate["gating_field"]
             return str(gating) if gating is not None else None
     return None
-
-
-def _current_gating_field(ticket_id: str, as_json: bool) -> str:
-    """The field this Ticket is parked on right now, read from its own Worker type.
-
-    The supervisor approve route used to resolve this server-side. The ordinary accept
-    route names the field in its path, so the caller resolves it the same way
-    `ticket approve` already does.
-    """
-    detail = http.send(
-        "GET",
-        "/api/tickets",
-        as_json=as_json,
-        params={"detail": "full", "id": ticket_id},
-    )
-    stage = str(detail["stage"])
-    field = _gating_field_for_stage(_worker_type(str(detail["worker_type"]), as_json), stage)
-    if field is None:
-        http.fail_validation(f"ticket in {stage} has nothing to approve", as_json)
-    return str(field)
 
 
 def sprint_value_for_write(raw: str | None, as_json: bool) -> str | None:

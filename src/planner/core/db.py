@@ -61,8 +61,8 @@ PRE_ALEMBIC_TABLE_NAMES: Final = frozenset(
 
 # Checked for the same reason as the tables, and worth checking separately: the ladder
 # wrote its version marker before creating indexes, so a database could carry the marker
-# while still missing one. Adopting that quietly would leave `tickets.alias` without the
-# unique index that keeps aliases unique.
+# while still missing one. Adopting that quietly would leave the database short of an
+# index the ladder promised, so the adoption check names them as they stood then.
 PRE_ALEMBIC_INDEX_NAMES: Final = frozenset(
     {
         "idx_employee_step_runs_one_running",

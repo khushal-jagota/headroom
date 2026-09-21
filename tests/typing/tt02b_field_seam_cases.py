@@ -69,7 +69,6 @@ def _cases(
         resolution.decide_accept(
             ticket,
             foreign_field,
-            OWNER_PRINCIPAL,
             None,
             "none",
             OWNER_PRINCIPAL,

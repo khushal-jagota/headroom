@@ -68,12 +68,6 @@ class Priority(StrEnum):  # SPEC §3.2/§3.3 — homed in core (shared vocabular
 
 
 @dataclass(frozen=True)
-class TicketBlock:
-    blocking_ticket_id: str
-    blocked_ticket_id: str
-
-
-@dataclass(frozen=True)
 class BlockedBySummaryRow:
     ticket_id: str
     title: str
@@ -83,18 +77,9 @@ class BlockedBySummaryRow:
 
 
 @dataclass(frozen=True)
-class BlockedTicketSummaryRow:
-    ticket_id: str
-    title: str
-    active: bool
-    href: str
-
-
-@dataclass(frozen=True)
 class BlockerSummary:
     blocked: bool
     blocked_by: tuple[BlockedBySummaryRow, ...]
-    blocks: tuple[BlockedTicketSummaryRow, ...]
 
 
 # --- structured errors (SPEC §14: pure logic imports these from contracts) ------
@@ -104,7 +89,7 @@ class BlockerSummary:
 
 
 class ErrorCode(StrEnum):
-    scope_missing = "scope_missing"  # §4.4.7 accept without the full pair
+    scope_missing = "scope_missing"  # accept or approve without the onward ceiling
     scope_invalid = "scope_invalid"  # next_ceiling before the new Stage / unknown
     stale_claim = "stale_claim"  # §7.6 stale/foreign claim; detail names it
     title_too_long = "title_too_long"  # §3.3 > title_max_chars

@@ -467,7 +467,6 @@ def board_view(
         "tickets.employee_backend, "
         "tickets.conversation_id, "
         "tickets.worker_step_claim, "
-        "tickets.ceiling, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "

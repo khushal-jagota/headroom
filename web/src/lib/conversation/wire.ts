@@ -434,13 +434,6 @@ export type BackendModelEnablementResult = {
   enabled: boolean;
 };
 
-export type StartConversationBody = {
-  conversation_id: string;
-  backend_key?: ConversationBackendKey;
-  model?: string | null;
-  reasoning_effort?: string | null;
-  workspace_folder?: string;
-};
 
 /** A piece as it is sent, which is the one shape that carries bytes.
  *
@@ -560,9 +553,6 @@ function postJson(body: unknown): RequestInit {
   };
 }
 
-export function startConversation(body: StartConversationBody): Promise<ConversationView> {
-  return request<ConversationView>("/conversations", postJson(body));
-}
 
 export function readConversation(conversationId: string): Promise<ConversationView> {
   return request<ConversationView>(`/conversations/${encodeURIComponent(conversationId)}`);

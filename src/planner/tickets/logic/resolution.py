@@ -117,7 +117,6 @@ def _pending(
 def decide_accept(
     ticket: Ticket,
     field: str,
-    principal: Principal,
     edited_body: str | None,
     next_ceiling: NextCeiling | None,
     next_holder: Principal | None,

@@ -38,9 +38,8 @@ class BackgroundLoops:
         self._stop_waking_on_change = stop_waking_on_change
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._stopped = False
-        self._shutdown_settled: bool | None = None
 
-    async def stop(self, *, deadline: float | None = None) -> bool:
+    async def stop(self, *, deadline: float | None = None) -> None:
         """Stop listening, stop polling, let the steps in flight land, release the lock.
 
         The loop is stopped on a worker thread because its own drain waits on tasks that
@@ -48,7 +47,7 @@ class BackgroundLoops:
         """
         global _active
         if self._stopped:
-            return self._shutdown_settled is not False
+            return
         self._stopped = True
         if self._stop_waking_on_change is not None:
             self._stop_waking_on_change()
@@ -72,10 +71,8 @@ class BackgroundLoops:
             )
         if self._lock_path is not None:
             release_machine_lock(self._lock_path)
-        self._shutdown_settled = True
         if _active is self:
             _active = None
-        return True
 
 
 _active: BackgroundLoops | None = None
