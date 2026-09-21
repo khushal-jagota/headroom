@@ -25,7 +25,6 @@ from planner.core.authority.service import (
     require_above,
     require_above_a_ticket_being_created,
     require_above_or_self,
-    require_holder_can_be_asked,
     require_in_chain,
     require_self,
 )
@@ -47,7 +46,6 @@ __all__ = [
     "require_above",
     "require_above_a_ticket_being_created",
     "require_above_or_self",
-    "require_holder_can_be_asked",
     "require_in_chain",
     "require_self",
     "shares_the_chain",

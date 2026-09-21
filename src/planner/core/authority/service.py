@@ -215,41 +215,6 @@ def require_above_a_ticket_being_created(
         _refuse(caller, target)
 
 
-def require_holder_can_be_asked(
-    conn: sqlite3.Connection,
-    caller: Principal,
-    holder: Principal,
-    *,
-    ticket_id: str,
-    parent_outcome_id: str | None,
-) -> None:
-    """A stated holder is an address for approval, so it must be one that can answer.
-
-    The caller itself is always admitted. Unstated, the creator holds the Ticket, so
-    naming yourself is the existing default said out loud. Anybody else has to stand
-    above the Ticket, because that is what the approval door will ask of them. Without
-    this, a caller can park its proposals on a principal that will never be able to
-    resolve them.
-
-    Asked only where a holder is stated. The stored holder of an existing Ticket is not
-    re-judged, because a row written under an older answer must not lose its next write.
-    """
-    if holder == caller:
-        return
-    facts = _facts_for_a_ticket_being_created(conn, holder, parent_outcome_id=parent_outcome_id)
-    if stands_above(holder, Target(TargetKind.ticket, ticket_id), facts):
-        return
-    raise PlannerError(
-        ErrorCode.agent_forbidden,
-        "a stated ceiling holder must be the caller or stand above the Ticket",
-        {
-            "actor": principal_legacy_actor(caller),
-            "ticket_id": ticket_id,
-            "holder": {"kind": holder.kind.value, "id": holder.id},
-        },
-    )
-
-
 def refuse_outcome_re_parenting(caller: Principal, ticket_id: str) -> None:
     """The one stated exception to the rule, asked wherever a Ticket's Outcome is set.
 
@@ -280,7 +245,6 @@ __all__ = [
     "require_above",
     "require_above_a_ticket_being_created",
     "require_above_or_self",
-    "require_holder_can_be_asked",
     "require_in_chain",
     "require_self",
 ]

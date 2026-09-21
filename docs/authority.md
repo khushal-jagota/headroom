@@ -85,10 +85,10 @@ Chief, and the Outcome the Ticket will sit under can state them. A Worker that s
 Ticket cannot, so the new Ticket gets its Worker type's ordinary ceiling and parks its first
 field instead of running to the end.
 
-A stated holder is an address for an approval, so it has to be one that can answer: the
-caller itself, or a principal that stands above the Ticket. That is asked wherever a holder
-is named — making a Ticket, editing its holder, and approving with a new one. A holder
-already stored on a Ticket is left alone.
+Who holds a ceiling is an address, not a permission. A Ticket can be addressed to its own
+Worker, to an Outcome, or to Khushal, and holding one grants nothing: the approval door
+asks the rule again, of whoever turns up. So the question at creation is only who may
+choose that address, and the answer is the one above.
 
 ## What this is not
 
