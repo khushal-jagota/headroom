@@ -31,6 +31,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryQueued,
     PromptDeliveryRefused,
+    PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
@@ -76,6 +77,7 @@ async def start_ready_worker_step(
     and the claim re-runs the readiness decision under the write lock. Once the send
     reports started or queued the delivery cannot be taken back, so the claim is given
     back only when the send was refused, or when something failed before a fate existed.
+    An uncertain delivery stays visible as an errored claim for supervisor restart.
     """
     conn = connect_database()
     try:
@@ -182,6 +184,27 @@ async def start_ready_worker_step(
             )
             remove_tentative_bindings()
             give_the_claim_back()
+            return False
+
+        if isinstance(fate, PromptDeliveryUncertain):
+            # The backend can have admitted this opener, so returning the claim would
+            # permit an unsafe automatic replay. Keep it visible for the supervisor's
+            # explicit restart route instead. A stale result must not replace a newer
+            # claim that moved while the delivery was in flight.
+            marked_errored = tickets_data.mark_worker_step_claim_errored(
+                conn,
+                ticket_id,
+                expected_claim=taken_claim,
+                expected_claim_revision=taken_claim_revision,
+                now=now(),
+            )
+            if marked_errored:
+                _log.error(
+                    "worker step delivery was uncertain (ticket=%s conversation=%s)",
+                    ticket_id,
+                    conversation_id,
+                )
+            remove_tentative_bindings()
             return False
 
         if not isinstance(fate, PromptDeliveryQueued):

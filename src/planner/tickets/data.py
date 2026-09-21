@@ -1101,6 +1101,31 @@ def release_worker_step_claim(
         return True
 
 
+def mark_worker_step_claim_errored(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    expected_claim: WorkerStepClaim,
+    expected_claim_revision: int,
+    now: int,
+) -> bool:
+    """Expose one failed claim, unless a later claim transition replaced it.
+
+    An uncertain delivery cannot safely return a claim to readiness: the backend can
+    have accepted the opener.  The errored claim leaves that uncertainty visible for
+    the existing supervisor restart route.  The exact claim identity prevents an old
+    delivery result from overwriting a newer worker-step transition.
+    """
+    with _txn(conn):
+        ticket = _load_ticket_for_write(conn, ticket_id)
+        if ticket.worker_step_claim is not expected_claim:
+            return False
+        if ticket.worker_step_claim_revision != expected_claim_revision:
+            return False
+        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.errored, now)
+        return True
+
+
 def mark_ticket_errored(
     conn: sqlite3.Connection,
     ticket_id: str,
