@@ -99,6 +99,18 @@ remains separate because it completes a user-owned Stage directly.
 attention fact and sends the message through the existing help route. `send-message`
 only sends conversation text and does not change that attention fact.
 
+## Worker restart
+
+`ticket restart-worker` resets the dead conversation and makes one explicit start
+attempt. Its JSON response includes `started` and `delivery_fate`. Started, queued, and
+injected fates set `started` to true. Refused and uncertain fates set it to false. A
+failure before delivery sets `delivery_fate` to null and reports `not_started_because`.
+
+An uncertain delivery keeps the Worker claim and does not trigger an automatic retry.
+The human output reports the uncertainty without a restart success claim. Panels does
+not enforce a delay. Use one explicit `ticket restart-worker` call when it is safe to try
+again.
+
 ## Sprint Item membership
 
 The public commands use the user-facing term Sprint Item:

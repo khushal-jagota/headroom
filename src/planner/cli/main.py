@@ -1991,14 +1991,20 @@ def ticket_restart_worker(
     launch = (
         f"{configuration['employee_backend']} {configuration['employee_launch_model']}"
     )
+    if data["started"]:
+        human_result = f"{ticket_id} restarted on {launch}"
+    elif data["delivery_fate"] == "uncertain":
+        human_result = (
+            f"{ticket_id} start delivery is uncertain. The Worker claim remains held."
+        )
+    elif data["delivery_fate"] == "refused":
+        human_result = f"{ticket_id} start delivery was refused"
+    else:
+        human_result = f"{ticket_id} did not start: {data['not_started_because']}"
     http.emit(
         data,
         as_json,
-        (
-            f"{ticket_id} restarted on {launch}"
-            if data["started"]
-            else f"{ticket_id} did not start: {data['not_started_because']}"
-        ),
+        human_result,
     )
 
 

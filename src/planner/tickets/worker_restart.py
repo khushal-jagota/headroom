@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from planner.conversation.contracts import ConversationSystem
 from planner.core import authority
@@ -19,6 +20,9 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import StageOwnershipMode, Ticket, WorkerStepClaim
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
+
+if TYPE_CHECKING:
+    from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
 
 
 def require_restartable(
@@ -73,7 +77,7 @@ async def restart_worker(
     ticket_id: str,
     *,
     write_employee_configuration: Callable[[sqlite3.Connection], None] | None,
-    start_worker_step: Callable[[], Awaitable[bool]],
+    start_worker_step: Callable[[], Awaitable[WorkerStepStartResult]],
     planning_day_id: str,
     now: int,
 ) -> dict[str, object]:
@@ -121,7 +125,7 @@ async def restart_worker(
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
-    started = await start_worker_step()
+    start_result = await start_worker_step()
     restarted = tickets_data.read_ticket(conn, ticket_id)
     return {
         "ticket_id": ticket_id,
@@ -134,10 +138,11 @@ async def restart_worker(
         },
         "ticket_status": restarted.ticket_status.value,
         "conversation_id": restarted.conversation_id,
-        "started": started,
+        "started": start_result.started,
+        "delivery_fate": start_result.delivery_fate,
         "not_started_because": (
             None
-            if started
+            if start_result.started or start_result.delivery_fate is not None
             else worker_step_readiness.worker_step_blocker(
                 conn,
                 restarted,
