@@ -536,6 +536,12 @@ with sync_playwright() as playwright:
     model_picker.get_by_role("listbox").press("Home")
     page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=opus]')?.getAttribute('data-conversation-picker-active') === 'true'")
     model_picker.get_by_role("listbox").press(" ")
+    # Opus takes a reasoning level. Choosing its row retains the popover and moves to
+    # the second step. The trigger still shows the committed Sonnet choice until this
+    # level completes the configuration.
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [role=listbox]')?.getAttribute('aria-label') === 'Reasoning efforts'")
+    assert "sonnet" in model_trigger.get_attribute("aria-label").lower()
+    model_picker.get_by_role("listbox").press("Enter")
     page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('opus')")
     assert "opus" in model_trigger.get_attribute("aria-label").lower()
 

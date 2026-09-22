@@ -115,11 +115,6 @@
         employee_launch_model: model,
         employee_launch_reasoning_effort: reasoningEffort
       })}
-      onChooseReasoningEffort={(reasoningEffort) => void persist({
-        ...selected,
-        employee_launch_model: selected.employee_launch_model ?? picker.defaultModel,
-        employee_launch_reasoning_effort: reasoningEffort
-      })}
     />
     {#if loading}<span class="worker-launch-defaults-state">loading models…</span>{/if}
     {#if backendsError}<ErrorLine error={backendsError} />{/if}
