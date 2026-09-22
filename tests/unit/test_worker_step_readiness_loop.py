@@ -27,6 +27,7 @@ from planner.conversation.contracts import (
     HeldPrompt,
     PromptDeliveryFate,
     PromptDeliveryMode,
+    PromptDeliveryUncertain,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import MessageContent, text_message_content
@@ -43,7 +44,7 @@ from planner.runtime.worker_step_readiness_loop import (
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets import revision_feedback
+from planner.tickets import revision_feedback, worker_restart
 from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -273,6 +274,153 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert "conv-refuse" in message
     assert "write_to_backend_failed" in message
     assert world.skill_bindings() == []
+
+
+def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
+    world: _World, caplog: pytest.LogCaptureFixture
+) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-uncertain")
+    world.start_conversation("conv-uncertain")
+
+    with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
+        started = asyncio.run(
+            start_ready_worker_step(
+                ticket_id,
+                connect_database=world.connect,
+                conversation_system=cast(
+                    ConversationSystem,
+                    _UncertainConversationSystem(world.conversations),
+                ),
+                worker_type_registry=configured_worker_type_registry(),
+                planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                now=world.clock.now_unix,
+            )
+        )
+
+    assert started is False
+    ticket = world.ticket(ticket_id)
+    assert ticket.worker_step_claim is WorkerStepClaim.errored
+    assert ticket.ticket_status is TicketStatus.errored
+    assert world.conversations.backend_prompt_writes("conv-uncertain") == ()
+    assert world.skill_bindings() == []
+    with world.connect() as conn:
+        assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
+        restarted = asyncio.run(
+            worker_restart.restart_worker(
+                world.conversations,
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                write_employee_configuration=None,
+                start_worker_step=lambda: start_ready_worker_step(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=cast(ConversationSystem, world.conversations),
+                    worker_type_registry=configured_worker_type_registry(),
+                    planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                    now=world.clock.now_unix,
+                ),
+                planning_day_id=TODAY_DAY_ID,
+                now=world.clock.now_unix(),
+            )
+        )
+    assert restarted["started"] is True
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert "delivery was uncertain" in errors[0].getMessage()
+
+
+def test_an_uncertain_first_opener_stays_errored_without_a_live_worker(world: _World) -> None:
+    ticket_id = world.ready_ticket()
+
+    started = asyncio.run(
+        start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=cast(
+                ConversationSystem,
+                _UncertainConversationSystem(world.conversations),
+            ),
+            worker_type_registry=configured_worker_type_registry(),
+            planning_day_id_resolver=lambda: TODAY_DAY_ID,
+            now=world.clock.now_unix,
+        )
+    )
+
+    assert started is False
+    ticket = world.ticket(ticket_id)
+    assert ticket.worker_step_claim is WorkerStepClaim.errored
+    assert ticket.conversation_id is not None
+    assert asyncio.run(world.conversations.is_running(ticket.conversation_id)) is False
+    assert world.conversations.backend_prompt_writes(ticket.conversation_id) == ()
+
+
+def test_an_old_uncertain_delivery_cannot_error_a_newer_claim(world: _World) -> None:
+    ticket_id = world.ready_ticket()
+    with world.connect() as conn:
+        first_claim = tickets_data.claim_ticket_for_worker_step(
+            conn,
+            ticket_id,
+            planning_day_id_resolver=lambda: TODAY_DAY_ID,
+            readiness_check=worker_step_readiness.is_ready_for_worker_step,
+            now=1,
+        )
+        assert first_claim is not None
+        assert tickets_data.release_worker_step_claim(
+            conn,
+            ticket_id,
+            expected_claim=first_claim.worker_step_claim,
+            expected_claim_revision=first_claim.worker_step_claim_revision,
+            now=2,
+        )
+        newer_claim = tickets_data.claim_ticket_for_worker_step(
+            conn,
+            ticket_id,
+            planning_day_id_resolver=lambda: TODAY_DAY_ID,
+            readiness_check=worker_step_readiness.is_ready_for_worker_step,
+            now=3,
+        )
+        assert newer_claim is not None
+
+        assert not tickets_data.mark_worker_step_claim_errored(
+            conn,
+            ticket_id,
+            expected_claim=first_claim.worker_step_claim,
+            expected_claim_revision=first_claim.worker_step_claim_revision,
+            now=4,
+        )
+
+    ticket = world.ticket(ticket_id)
+    assert ticket.worker_step_claim is WorkerStepClaim.out
+    assert ticket.worker_step_claim_revision == newer_claim.worker_step_claim_revision
+
+
+class _UncertainConversationSystem:
+    """Report an ambiguous send without admitting the worker-step opener."""
+
+    def __init__(self, system: InMemoryConversationSystem) -> None:
+        self._system = system
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return await self._system.is_running(conversation_id)
+
+    async def start_conversation(self, request: ConversationStartRequest) -> None:
+        await self._system.start_conversation(request)
+
+    async def send(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> PromptDeliveryFate:
+        return PromptDeliveryUncertain()
 
 
 def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _World) -> None:
