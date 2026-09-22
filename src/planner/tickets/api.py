@@ -74,7 +74,10 @@ from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartOverrides,
     ConversationStartValues,
 )
-from planner.runtime.worker_step_readiness_loop import start_ready_worker_step
+from planner.runtime.worker_step_readiness_loop import (
+    WorkerStepStartResult,
+    start_ready_worker_step,
+)
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -879,7 +882,7 @@ async def restart_ticket_worker(
             int(planning_now.timestamp()),
         )
 
-    async def start_worker_step(planning_day_id: str) -> bool:
+    async def start_worker_step(planning_day_id: str) -> WorkerStepStartResult:
         return await start_ready_worker_step(
             ticket_id,
             connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),

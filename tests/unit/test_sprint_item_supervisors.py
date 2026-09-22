@@ -1003,6 +1003,7 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["started"] is True
+    assert body["delivery_fate"] == "started"
     assert body["not_started_because"] is None
     assert body["killed_conversation_id"] == "conv-dead-worker"
     assert body["ticket_status"] == "agent"

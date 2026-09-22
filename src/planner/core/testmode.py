@@ -51,7 +51,7 @@ def build_test_router(config: Config, clock: Clock) -> APIRouter:
         # reaches back into the server module for the workspace folder.
         from planner.runtime.worker_step_readiness_loop import start_ready_worker_step
 
-        started = await start_ready_worker_step(
+        result = await start_ready_worker_step(
             ticket_id,
             connect_database=request.app.state.conn_factory,
             conversation_system=request.app.state.conversation_system,
@@ -61,6 +61,10 @@ def build_test_router(config: Config, clock: Clock) -> APIRouter:
             ),
             now=clock.now_unix,
         )
-        return {"dispatched": started, "ticket_id": ticket_id}
+        return {
+            "dispatched": result.started,
+            "delivery_fate": result.delivery_fate,
+            "ticket_id": ticket_id,
+        }
 
     return router
