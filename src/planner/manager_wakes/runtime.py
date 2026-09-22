@@ -109,7 +109,7 @@ async def deliver_batch(
                     return False
                 created = conversation_start.new_conversation_id()
                 intended_conversation_id = current or created
-                data.record_batch_dispatching(
+                data.record_batch_offering(
                     conn,
                     batch.id,
                     conversation_id=intended_conversation_id,

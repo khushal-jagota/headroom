@@ -13,6 +13,7 @@ class WakeSourceKind(StrEnum):
 
 class WakeBatchStatus(StrEnum):
     pending = "pending"
+    offering = "offering"
     dispatching = "dispatching"
     accepted = "accepted"
     uncertain = "uncertain"

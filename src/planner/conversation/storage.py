@@ -227,7 +227,8 @@ class ConversationStore:
                 for sender_message_id in sender_message_ids:
                     changed += conn.execute(
                         "UPDATE manager_wake_batches SET status='dispatching',updated_at=? "
-                        "WHERE conversation_id=? AND sender_message_id=? AND status='accepted'",
+                        "WHERE conversation_id=? AND sender_message_id=? "
+                        "AND status IN ('offering','accepted')",
                         (self._integer_now(), conversation_id, sender_message_id),
                     ).rowcount
                 return changed

@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Iterable
 from uuid import uuid4
 
+from planner.core.db import commit_without_change_signal
 from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus, WakeSourceKind
 
 
@@ -91,7 +92,7 @@ def _batch_from_row(row: sqlite3.Row) -> WakeBatch:
 def batches_waiting_for_outcome(conn: sqlite3.Connection) -> tuple[WakeBatch, ...]:
     rows = conn.execute(
         "SELECT * FROM manager_wake_batches "
-        "WHERE status IN ('dispatching','accepted','uncertain') "
+        "WHERE status IN ('offering','dispatching','accepted','uncertain') "
         "ORDER BY id"
     ).fetchall()
     return tuple(_batch_from_row(row) for row in rows)
@@ -116,12 +117,17 @@ def release_pending_batch(
     conn: sqlite3.Connection, batch_id: int, *, process_token: str
 ) -> bool:
     """Return a not-yet-sent batch to its source wakes so later events can join it."""
-    with conn:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
         deleted = conn.execute(
             "DELETE FROM manager_wake_batches WHERE id=? AND status='pending' "
             "AND process_token=?",
             (batch_id, process_token),
         )
+        commit_without_change_signal(conn)
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
     return deleted.rowcount == 1
 
 
@@ -132,7 +138,8 @@ def preserve_interrupted_dispatches(
     with conn:
         updated = conn.execute(
             "UPDATE manager_wake_batches SET status='uncertain',updated_at=? "
-            "WHERE status='dispatching' AND (process_token IS NULL OR process_token != ?)",
+            "WHERE status IN ('offering','dispatching') "
+            "AND (process_token IS NULL OR process_token != ?)",
             (now, process_token),
         )
     return updated.rowcount
@@ -160,7 +167,7 @@ def claim_next_batch(
             "SELECT 1 FROM manager_wake_batch_members m "
             "JOIN manager_wake_batches b ON b.id=m.batch_id "
             "WHERE m.wake_id=w.id "
-            "AND b.status IN ('pending','dispatching','accepted','uncertain')) "
+            "AND b.status IN ('pending','offering','dispatching','accepted','uncertain')) "
             "AND NOT EXISTS (SELECT 1 FROM manager_wake_batch_members recent_m "
             "JOIN manager_wake_batches recent_b ON recent_b.id=recent_m.batch_id "
             "WHERE recent_m.wake_id=w.id AND recent_b.status IN ('refused','discarded') "
@@ -178,7 +185,7 @@ def claim_next_batch(
             "SELECT 1 FROM manager_wake_batch_members m "
             "JOIN manager_wake_batches b ON b.id=m.batch_id "
             "WHERE m.wake_id=w.id "
-            "AND b.status IN ('pending','dispatching','accepted','uncertain')) "
+            "AND b.status IN ('pending','offering','dispatching','accepted','uncertain')) "
             "AND NOT EXISTS (SELECT 1 FROM manager_wake_batch_members recent_m "
             "JOIN manager_wake_batches recent_b ON recent_b.id=recent_m.batch_id "
             "WHERE recent_m.wake_id=w.id AND recent_b.status IN ('refused','discarded') "
@@ -236,7 +243,7 @@ def record_batch_accepted(
     with conn:
         conn.execute(
             "UPDATE manager_wake_batches SET status='accepted', conversation_id=?, "
-            "process_token=?, updated_at=? WHERE id=? AND status='dispatching'",
+            "process_token=?, updated_at=? WHERE id=? AND status='offering'",
             (conversation_id, process_token, now, batch_id),
         )
 
@@ -253,7 +260,7 @@ def record_batch_uncertain(
         conn.execute(
             "UPDATE manager_wake_batches SET status='uncertain', conversation_id=?, "
             "process_token=?, updated_at=? WHERE id=? "
-            "AND status IN ('pending','dispatching','accepted')",
+            "AND status IN ('pending','offering','dispatching','accepted')",
             (conversation_id, process_token, now, batch_id),
         )
 
@@ -271,7 +278,7 @@ def record_batch_failure(
     with conn:
         conn.execute(
             "UPDATE manager_wake_batches SET status=?, conversation_id=?, updated_at=? "
-            "WHERE id=? AND status IN ('pending','dispatching','accepted')",
+            "WHERE id=? AND status IN ('pending','offering','dispatching','accepted')",
             (status.value, conversation_id, now, batch_id),
         )
 
@@ -281,7 +288,7 @@ def close_delivered_batch(conn: sqlite3.Connection, batch_id: int, *, now: int) 
     with conn:
         conn.execute(
             "UPDATE manager_wake_batches SET status='delivered',updated_at=? WHERE id=? "
-            "AND status IN ('dispatching','accepted','uncertain')",
+            "AND status IN ('offering','dispatching','accepted','uncertain')",
             (now, batch_id),
         )
         conn.execute(
@@ -304,7 +311,7 @@ def delivery_outcome_kind(
     return None if row is None else str(row["kind"])
 
 
-def record_batch_dispatching(
+def record_batch_offering(
     conn: sqlite3.Connection,
     batch_id: int,
     *,
@@ -314,7 +321,7 @@ def record_batch_dispatching(
 ) -> None:
     with conn:
         conn.execute(
-            "UPDATE manager_wake_batches SET status='dispatching',conversation_id=?,"
+            "UPDATE manager_wake_batches SET status='offering',conversation_id=?,"
             "process_token=?,updated_at=? WHERE id=? AND status='pending'",
             (conversation_id, process_token, now, batch_id),
         )

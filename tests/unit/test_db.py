@@ -160,9 +160,7 @@ def test_database_at_the_pre_collapse_head_is_adopted_with_its_rows_intact(
     conn.close()
 
 
-def test_database_at_a_revision_from_the_collapsed_chain_is_refused(
-    tmp_path: Path,
-) -> None:
+def test_database_at_a_revision_from_the_collapsed_chain_is_refused(tmp_path: Path) -> None:
     """The refusal a single deploy gets, when the database still needs the deleted steps."""
     db_path = tmp_path / "mid-chain.db"
     conn = _build_database_at_the_pre_collapse_head(db_path)
@@ -640,9 +638,9 @@ def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
             )
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert (
-        conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%__rebuilt'").fetchone()[
-            0
-        ]
+        conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%__rebuilt'"
+        ).fetchone()[0]
         == 0
     )
     conn.close()

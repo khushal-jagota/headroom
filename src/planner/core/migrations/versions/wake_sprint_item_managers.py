@@ -44,7 +44,7 @@ def upgrade() -> None:
         "sender_message_id TEXT NOT NULL UNIQUE,"
         "message TEXT NOT NULL,"
         "status TEXT NOT NULL CHECK (status IN "
-        "('pending','dispatching','accepted','uncertain','refused','discarded','delivered')),"
+        '(\'pending\',\'offering\',\'dispatching\',\'accepted\',\'uncertain\',\'refused\',\'discarded\',\'delivered\')),'
         "conversation_id TEXT,process_token TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"
     )
     conn.exec_driver_sql(

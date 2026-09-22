@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
@@ -22,13 +24,18 @@ from planner.conversation.logic.conversation_start_resolution import (
 )
 from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ConversationStore
+from planner.core import change_signal
 from planner.core.clock import TestClock as FakeClock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.manager_wakes import data as wake_data
 from planner.manager_wakes.contracts import WakeBatchStatus, WakeSourceKind
-from planner.manager_wakes.runtime import deliver_batch, reconcile_batch_outcomes
+from planner.manager_wakes.runtime import (
+    ManagerWakeLoop,
+    deliver_batch,
+    reconcile_batch_outcomes,
+)
 from planner.sprints import data as sprints_data
 from planner.sprints.contracts import SprintItemSupervisorLaunchConfiguration
 from planner.tickets import data as tickets_data
@@ -471,7 +478,7 @@ def test_batches_group_wakes_and_close_only_for_the_exact_prompt(
         "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
         "created_at) VALUES ('conv-manager','codex','model','/tmp','full',1)"
     )
-    wake_data.record_batch_dispatching(
+    wake_data.record_batch_offering(
         tmp_db,
         batch.id,
         conversation_id="conv-manager",
@@ -567,6 +574,68 @@ def test_busy_manager_leaves_sources_unclaimed_so_later_wakes_combine(
     assert "filed a proposal" in combined.message
 
 
+def test_wake_loop_active_deferral_does_not_signal_itself_after_release(
+    tmp_db: Connection, fake_clock: FakeClock
+) -> None:
+    item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    wake_data.create_worker_error_wake(
+        tmp_db,
+        sprint_item_id=item_id,
+        ticket_id=ticket_id,
+        claim_revision=1,
+        ticket_title="Managed ticket",
+        now=1,
+    )
+    agent_key = tmp_db.execute(
+        "SELECT supervisor_agent_key FROM sprint_items WHERE id=?", (item_id,)
+    ).fetchone()[0]
+    tmp_db.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
+        "created_at) VALUES ('conv-active','hermes','model','/tmp','full',1)"
+    )
+    tmp_db.execute(
+        "UPDATE agents SET conversation_id='conv-active' WHERE agent_key=?", (agent_key,)
+    )
+    database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+    event_loop = asyncio.new_event_loop()
+    loop_thread = threading.Thread(target=event_loop.run_forever)
+    loop_thread.start()
+    wake_loop = ManagerWakeLoop(
+        str(database_path),
+        fake_clock,
+        conversation_system=_ActiveConversationSystem(database_path),  # type: ignore[arg-type]
+        asyncio_loop=event_loop,
+    )
+    emissions = 0
+
+    def signal_received() -> None:
+        nonlocal emissions
+        emissions += 1
+        wake_loop.wake()
+
+    unsubscribe = change_signal.subscribe(signal_received)
+    try:
+        assert len(wake_loop.poll_once()) == 1
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if (
+                tmp_db.execute("SELECT count(*) FROM manager_wake_batches").fetchone()[0]
+                == 0
+            ):
+                break
+            time.sleep(0.01)
+        assert emissions == 1  # The claim signals. The internal release stays quiet.
+        wake_loop._wake.clear()
+        time.sleep(0.05)
+        assert not wake_loop._wake.is_set()
+    finally:
+        unsubscribe()
+        wake_loop.stop()
+        event_loop.call_soon_threadsafe(event_loop.stop)
+        loop_thread.join()
+        event_loop.close()
+
+
 def test_definite_failure_waits_then_creates_a_new_attempt_id(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
@@ -608,7 +677,7 @@ def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batc
     )
     batch = wake_data.claim_next_batch(tmp_db, process_token="old", now=2)
     assert batch is not None
-    wake_data.record_batch_dispatching(
+    wake_data.record_batch_offering(
         tmp_db,
         batch.id,
         conversation_id="conv-intended",
@@ -644,7 +713,7 @@ def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batc
     )
     queued = wake_data.claim_next_batch(tmp_db, process_token="old", now=6)
     assert queued is not None
-    wake_data.record_batch_dispatching(
+    wake_data.record_batch_offering(
         tmp_db,
         queued.id,
         conversation_id="conv-queued",
@@ -686,7 +755,7 @@ def test_held_wake_is_marked_dispatching_before_it_can_leave_the_queue(
         "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
         "created_at) VALUES ('conv-held','hermes','model','/tmp','full',1)"
     )
-    wake_data.record_batch_dispatching(
+    wake_data.record_batch_offering(
         tmp_db,
         batch.id,
         conversation_id="conv-held",
@@ -719,6 +788,51 @@ def test_held_wake_is_marked_dispatching_before_it_can_leave_the_queue(
     assert wake_data.batches_waiting_for_outcome(tmp_db)[0].status is WakeBatchStatus.uncertain
 
 
+def test_dequeue_marker_wins_the_race_with_the_queued_send_receipt(
+    tmp_db: Connection, fake_clock: FakeClock
+) -> None:
+    item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    wake_data.create_worker_error_wake(
+        tmp_db,
+        sprint_item_id=item_id,
+        ticket_id=ticket_id,
+        claim_revision=1,
+        ticket_title="Managed ticket",
+        now=1,
+    )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=2)
+    assert batch is not None
+    tmp_db.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
+        "created_at) VALUES ('conv-race','hermes','model','/tmp','full',1)"
+    )
+    wake_data.record_batch_offering(
+        tmp_db,
+        batch.id,
+        conversation_id="conv-race",
+        process_token="process",
+        now=3,
+    )
+    database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+    store = ConversationStore(str(database_path), integer_now=lambda: 4)
+    assert asyncio.run(
+        store.mark_held_sender_messages_leaving_queue(
+            "conv-race", (batch.sender_message_id,)
+        )
+    ) == 1
+
+    wake_data.record_batch_accepted(
+        tmp_db,
+        batch.id,
+        conversation_id="conv-race",
+        process_token="process",
+        now=5,
+    )
+
+    stored = wake_data.batches_waiting_for_outcome(tmp_db)[0]
+    assert stored.status is WakeBatchStatus.dispatching
+
+
 def test_late_uncertain_outcome_prevents_restart_replay(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
@@ -737,7 +851,7 @@ def test_late_uncertain_outcome_prevents_restart_replay(
         "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
         "created_at) VALUES ('conv-uncertain','claude','model','/tmp','full',1)"
     )
-    wake_data.record_batch_dispatching(
+    wake_data.record_batch_offering(
         tmp_db,
         batch.id,
         conversation_id="conv-uncertain",

@@ -34,23 +34,23 @@ from planner.conversation.storage import ConversationStore
 
 
 @pytest.fixture(autouse=True)
-def existing_floor_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def existing_floor_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setattr(conversation_start_resolution, "FLOOR_DEFAULT_WORKSPACE_FOLDER", workspace)
+    monkeypatch.setattr(
+        conversation_start_resolution, "FLOOR_DEFAULT_WORKSPACE_FOLDER", workspace
+    )
 
 
 class TestConversationSystemConformance(ConversationContractConformanceSuite):
-    def open_system_under_test(
-        self,
-    ) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
+    def open_system_under_test(self) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
         return open_conversation_system_under_test()
 
 
 class TestInMemoryConversationSystemConformance(ConversationContractConformanceSuite):
-    def open_system_under_test(
-        self,
-    ) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
+    def open_system_under_test(self) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
         return open_in_memory_conversation_system_under_test()
 
 
@@ -246,23 +246,17 @@ def test_a_private_steer_lost_with_its_connection_is_uncertain_and_stoppable() -
                     backend_key=ConversationBackendKey.hermes,
                 )
             )
-            assert (
-                await subject.system.send(
-                    "c", text_message_content("incumbent"), sender_label="owner"
-                )
-                == PromptDeliveryStarted()
-            )
+            assert await subject.system.send(
+                "c", text_message_content("incumbent"), sender_label="owner"
+            ) == PromptDeliveryStarted()
             await subject.arm_backend_connection_loss("c")
 
-            assert (
-                await subject.system.send(
-                    "c",
-                    text_message_content("uncertain steer"),
-                    sender_label="owner",
-                    mode=PromptDeliveryMode.steer,
-                )
-                == PromptDeliveryUncertain()
-            )
+            assert await subject.system.send(
+                "c",
+                text_message_content("uncertain steer"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+            ) == PromptDeliveryUncertain()
             account = await subject.agent_account("c")
             assert account["steer_attempts"] == []
             assert account["steer_writes"] == []
