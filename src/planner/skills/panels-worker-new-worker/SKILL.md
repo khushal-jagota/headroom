@@ -76,7 +76,7 @@ A worker is declared in the database, so landing one is a write, not a deploymen
 
 1. `panels worker-type save`, with the whole record on stdin — `worker_type`, `label`, `stages`, `fields`, `profile`, and a `skill` block holding `description` and `markdown_body`. Take the shape from `panels worker-type show coding` and change what differs. The `skill` block is how a new worker's skill comes into being: a Worker type may only name a skill that exists, and these arrive together or not at all.
 2. Read it back with `panels worker-type show <type>`.
-3. Confirm `panels worker-type list` names it, and that ordinary Ticket creation offers it. The base Worker discovers its specialist from `panels worker my-ticket`; there is no second list to update.
+3. Confirm `panels worker-type list` names it, and that ordinary Ticket creation offers it. The base Worker discovers its specialist from `panels ticket show`; there is no second list to update.
 4. Add `src/planner/skills/<name>/SKILL.md` to the repository, so a fresh install is seeded with this worker's skill. That is an ordinary repository change through the branch and staging route, and it changes nothing on this Panels.
 
 The `profile` carries the backend, model and reasoning effort approved in Model and Effort. There is no second copy of them to keep in step.

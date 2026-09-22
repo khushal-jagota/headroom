@@ -195,8 +195,8 @@ takes whatever was parked on it.
 Each Ticket has one **guidance** document for durable user corrections and constraints.
 It is separate from settled field values and is never approved as a proposal. Review
 shows this document, while the Ticket page does not. The CLI reads it with
-`panels worker my-ticket guidance` and writes it with `panels worker note <id>` from
-stdin; `--append` preserves the existing text. Copy text, Ticket search, and supervisor
+`panels ticket show guidance` and writes it with `panels ticket edit --input-json -`
+using `guidance` or `guidance_append`. Ticket search and supervisor
 context include it too.
 
 No Worker step prompt carries this document. The Stage instruction names the command

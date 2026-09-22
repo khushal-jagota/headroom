@@ -58,7 +58,7 @@ outcome.
 
 Show the factual picture, then ask for the user's reflection before giving the final
 worker interpretation. Pipe that bounded opening to
-`panels worker request-help <ticket-id> --owner`. Useful questions include what happened,
+`panels ticket request-help <ticket-id> --owner`. Useful questions include what happened,
 what the user learned, which assumptions changed, and what deserves to carry forward.
 Use the questions that can change the next decision; do not fill a questionnaire.
 
@@ -75,7 +75,7 @@ replaying status history.
 
 Begin only from the approved Review. Refresh evidence whose change could alter planning,
 then prepare a bounded opening with plausible constraints and material candidate work,
-not a predetermined sprint. Pipe it to `panels worker request-help <ticket-id> --owner`.
+not a predetermined sprint. Pipe it to `panels ticket request-help <ticket-id> --owner`.
 
 Start with the constraint and a concrete primary bet. Discuss supporting work and what
 could make the plan fail when those questions can change the commitment. Then choose
@@ -104,8 +104,8 @@ read it back through `panels sprint show <id> review`.
 For a genuine first sprint, verify the approved no-review result and perform no review
 write. Then create the next (or first) sprint with the approved `primary_bet` and `brief`,
 retain its returned id, create only approved new Outcomes, and add only approved
-commitments through `panels sprint outcome add`. For an explicit approved carry list,
-use `panels sprint outcome carry` with each selected Ticket ID. Read tracking and affected
+commitments through `panels sprint add-item`. For an explicit approved carry list,
+use `panels sprint carry-item` with each selected Ticket ID. Read tracking and affected
 Tickets back; completed history and unselected work remain in their existing Sprints. Use explicit ids,
 avoid duplicate creates on retry, and leave the exact continuation point visible after a
 partial failure.

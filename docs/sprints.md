@@ -94,8 +94,8 @@ not manufacture Planning containers.
 The stable CLI and API still call the stored identity a Sprint Item. Use
 `panels sprint item create/list/show/set` for its record, `add-ticket/remove-ticket`
 for classification, and ordinary Ticket placement for scheduling.
-`panels sprint outcome add/remove/list` manages commitments and tracking;
-`carry <source-sprint> <outcome> --to <target-sprint> --ticket <ticket>` states the exact
+`panels sprint add-item/remove-item/list-items` manages commitments and tracking;
+`carry-item <source-sprint> <item> --to <target-sprint> --ticket <ticket>` states the exact
 selection. `GET /api/sprints/{id}/tracking` also reads past or future Sprints directly.
 
 Outcome deletion still refuses children. Childless deletion removes its commitments

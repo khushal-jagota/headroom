@@ -215,9 +215,11 @@ _Code paths:_ `web/src/`, `assets/`, and `web/dist/`.
 
 ### 8. The CLI and authority boundary
 
-`panels` speaks HTTP to the server. Ordinary groups manage Days, Projects, Sprints,
-Tickets, schedules, and environments. `worker` files Ticket proposals, recaps, notes,
-and help requests. The Chief remains a conversation principal, not a Ticket write group.
+`panels` speaks HTTP to the server. Ordinary help exposes Send Message, Projects, Days,
+Tickets, and Sprints. Ticket creation and edits accept one structured object. One Ticket
+proposal command submits, accepts, or revises the current proposal. Administrative paths
+stay callable but do not appear in ordinary discovery. The Chief remains a conversation
+principal, not a Ticket write group.
 
 Every request resolves to one principal: the owner, Chief, a Sprint Item, or a Ticket.
 An unattributed browser request resolves to the owner. What that principal may then do is
