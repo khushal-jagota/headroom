@@ -214,7 +214,9 @@ def claim_next_batch(
             "INSERT INTO manager_wake_batch_members(batch_id,wake_id) VALUES (?,?)",
             ((batch_id, int(row["id"])) for row in rows),
         )
-        conn.execute("COMMIT")
+        # Wake creation already announced the durable source. Batch construction is
+        # internal queue bookkeeping, so announcing it would wake this loop itself.
+        commit_without_change_signal(conn)
     except BaseException:
         conn.execute("ROLLBACK")
         raise

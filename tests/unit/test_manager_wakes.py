@@ -574,7 +574,7 @@ def test_busy_manager_leaves_sources_unclaimed_so_later_wakes_combine(
     assert "filed a proposal" in combined.message
 
 
-def test_wake_loop_active_deferral_does_not_signal_itself_after_release(
+def test_running_wake_loop_does_not_spin_on_active_manager_bookkeeping(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
@@ -606,28 +606,37 @@ def test_wake_loop_active_deferral_does_not_signal_itself_after_release(
         conversation_system=_ActiveConversationSystem(database_path),  # type: ignore[arg-type]
         asyncio_loop=event_loop,
     )
-    emissions = 0
+    unsubscribe = change_signal.subscribe(wake_loop.wake)
 
-    def signal_received() -> None:
-        nonlocal emissions
-        emissions += 1
-        wake_loop.wake()
+    def batches_minted() -> int:
+        row = tmp_db.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name='manager_wake_batches'"
+        ).fetchone()
+        return 0 if row is None else int(row[0])
 
-    unsubscribe = change_signal.subscribe(signal_received)
-    try:
-        assert len(wake_loop.poll_once()) == 1
+    def wait_for_claim(number: int) -> None:
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
-            if (
-                tmp_db.execute("SELECT count(*) FROM manager_wake_batches").fetchone()[0]
-                == 0
-            ):
-                break
+            batch_count = tmp_db.execute(
+                "SELECT count(*) FROM manager_wake_batches"
+            ).fetchone()[0]
+            if batches_minted() >= number and batch_count == 0:
+                return
             time.sleep(0.01)
-        assert emissions == 1  # The claim signals. The internal release stays quiet.
-        wake_loop._wake.clear()
-        time.sleep(0.05)
-        assert not wake_loop._wake.is_set()
+        raise AssertionError("wake loop did not finish active-manager deferral")
+
+    try:
+        wake_loop.start(interval=10)
+        wait_for_claim(1)
+        time.sleep(0.1)
+        assert batches_minted() == 1
+
+        # A real external change wakes one new attempt. Its internal claim and release
+        # stay quiet, so this also stops at one attempt instead of feeding itself.
+        change_signal.emit()
+        wait_for_claim(2)
+        time.sleep(0.1)
+        assert batches_minted() == 2
     finally:
         unsubscribe()
         wake_loop.stop()
