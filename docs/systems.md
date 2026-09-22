@@ -56,11 +56,11 @@ _Code paths:_ `src/planner/core/db.py`, `src/planner/core/migrations/`, and
 ### 2. The planning domains
 
 Days orient one planning date. Tickets carry bounded work and own their Project and
-optional Sprint placement. Outcomes hold shared context and their supervisor across
-Sprints. A commitment chooses an Outcome for a Sprint before Tickets exist. Carrying
+optional Sprint placement. Sprint Items hold shared context and their supervisor across
+Sprints. A commitment chooses a Sprint Item for a Sprint before Tickets exist. Carrying
 selected unfinished Tickets never moves completed history. Backlog lists unscheduled
-Tickets and offers a collapsed Outcome browser. Ideas remember possibilities. Feedback
-records loose notes and their handled Ticket history. Projects classify Tickets, Outcomes,
+Tickets and offers a collapsed Sprint Item browser. Ideas remember possibilities. Feedback
+records loose notes and their handled Ticket history. Projects classify Tickets, Sprint Items,
 and Ideas.
 
 Each domain owns its contracts, rules, writers, views, and HTTP routes. Cross-domain
@@ -68,7 +68,7 @@ actions use those owners. The planning date changes at 05:00 local time. Stored 
 date ranges remain canonical.
 
 Putting a thing in a collection is one operation, not one per collection. Four
-collections exist: the Tickets on a Day, the Tickets under an Outcome, the Outcomes
+collections exist: the Tickets on a Day, the Tickets under a Sprint Item, the Sprint Items
 committed to a Sprint, and the Tickets that block a Ticket. One call adds a member and
 one call removes it, and the collection is a parameter of the call:
 
@@ -83,7 +83,7 @@ operation. The single entry point looks the collection up and calls that owner. 
 follows the caller, not the address: a Sprint Item supervisor uses the same call as
 everyone else and is held to its own current child Tickets.
 
-Carrying an Outcome forward to another Sprint is not membership. It stays its own
+Carrying a Sprint Item forward to another Sprint is not membership. It stays its own
 operation on the Sprint domain.
 
 _Code path:_ `src/planner/membership/`.
@@ -270,7 +270,7 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
   Packaged skills seed a database that has none. Codex, Claude and Hermes all provision
   every managed Panels skill.
 - **Authority versus your own record.** Standing above a thing is one question. Being
-  the thing — a Ticket proposing, an Outcome writing its own body — is another, and the
+  the thing — a Ticket proposing, a Sprint Item writing its own body — is another, and the
   chain does not decide it.
 
 ## Deferred

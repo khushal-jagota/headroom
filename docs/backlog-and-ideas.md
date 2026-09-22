@@ -15,7 +15,7 @@ Backlog shows committed work that has no sprint. Active unscheduled Tickets are 
 main list. They are fetched as bounded summaries and sorted into P0–P3 groups. Each
 row opens the canonical Ticket in Workspace and shows only its title and Project chip.
 A list that spans pages shows its range and page controls. The page does not request or
-show an Outcome catalog.
+show a Sprint Item catalog.
 
 A faint "+ New ticket" sits at the top, closed and out of the way. It opens a compact
 form for title, kickoff context, Worker type, Project, priority, and optional deadline.
@@ -35,14 +35,14 @@ Below, the ideas are listed newest first. An idea with no note is one line. An i
 with a note gets a small arrow that opens its detail.
 
 _Code paths:_ `web/src/routes/BacklogRoute.svelte`,
-`web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Outcomes hold shared context independently of Sprint commitments. Outcomes and ideas
+`web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Sprint Items hold shared context independently of Sprint commitments. Sprint Items and ideas
 live in `src/planner/sprints/`.
 
 ## Handoffs
 
 - **Feedback** (`feedback.md`) — the loose capture path available from every page.
 - **Days** (`days.md`) — the daily overview and its planned Tickets.
-- **Sprints** (`sprints.md`) — where Tickets are scheduled and Outcomes are chosen for a Sprint.
+- **Sprints** (`sprints.md`) — where Tickets are scheduled and Sprint Items are chosen for a Sprint.
 - **Projects** (`projects.md`) — where the project list comes from.
 
 ## Deferred

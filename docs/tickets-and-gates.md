@@ -231,12 +231,13 @@ proposal to itself addresses it to nobody. Holder Tickets and Sprint Items must 
 when the ceiling is written.
 
 **The holder must stand above the Ticket.** An address that cannot decide is not an
-address. Authority comes from the Ticket's current Outcome, so moving a Ticket to another
-Outcome — or out of every Outcome — can leave the Outcome that holds the ceiling below it.
+address. Authority comes from the Ticket's current Sprint Item, so moving a Ticket to
+another Sprint Item — or out of every Sprint Item — can leave the Sprint Item that holds
+the ceiling below it.
 When a move does that, the ceiling returns to the user in the same transaction, and the
 Ticket's guidance gains one line naming the move that sent it back. The user stands above
 everything, so the ceiling always has somewhere valid to go, and only the user or the
-Chief can move a Ticket between Outcomes in the first place. It is the same question on
+Chief can move a Ticket between Sprint Items in the first place. It is the same question on
 every move, whether or not a proposal is parked right now: a wrong address is wrong before
 anything arrives at it. A holder that still stands above the moved Ticket keeps the
 ceiling. A Ticket that was already stranded stays as it is until something moves it.
@@ -352,7 +353,7 @@ The ceiling cannot change while a proposal waits, so what was proposed stays fix
 
 Owner-held proposals appear in Review and produce the owner's needs-approval notification.
 Anyone else reads proposals from canonical Ticket state through their normal Ticket and
-Outcome views. Filing a manager-routed proposal creates a queued wake, not an owner alert.
+Sprint Item views. Filing a manager-routed proposal creates a queued wake, not an owner alert.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -367,8 +368,8 @@ above a ticket, you may delete it. The ticket UI intentionally has no delete con
 deletion remains a manual API or CLI operation, and the CLI requires `--yes`.
 
 The user's ordinary delete is refused while the Ticket's status says a worker step is
-out, and also while its conversation has a turn running. `--force` deletes it anyway. An
-Outcome can delete its own child Ticket without that activity guard. No actor can
+out, and also while its conversation has a turn running. `--force` deletes it anyway. A
+Sprint Item can delete its own child Ticket without that activity guard. No actor can
 delete a Ticket or Sprint Item that is the ceiling holder for another Ticket. Any delete
 that goes ahead over a running worker kills that worker's turn first, so nothing keeps
 talking into a conversation whose ticket is gone.
