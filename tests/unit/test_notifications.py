@@ -1,25 +1,36 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
 from sqlite3 import Connection
 
+import pytest
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
+from planner.conversation import storage as conversation_storage
+from planner.conversation.events import MessageToOwnerEventPayload
+from planner.conversation.message_content import text_message_content
+from planner.conversation.storage import ConversationStore
 from planner.core.clock import TestClock as MutableClock
 from planner.core.clock import parse_fake_now
 from planner.core.config import load_config
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.notifications import attention
 from planner.notifications import data as notifications_data
 from planner.notifications.contracts import (
+    AttentionEdge,
+    EdgeKey,
     NotificationIntent,
     PushSubscription,
     WebPushIdentity,
     WebPushResult,
 )
+from planner.notifications.logic.policy import decide_notification
 from planner.notifications.runtime import NotificationLoop
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket
@@ -33,6 +44,7 @@ def _ticket(conn: Connection, now: int) -> Ticket:
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
+        kickoff_note="Agreed brief.",
     )
 
 
@@ -99,19 +111,22 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
             subject["key"]: {item["id"] for item in subject["types"]}
             for subject in payload["subjects"]
         }
-        assert sum(len(subject["types"]) for subject in payload["subjects"]) == 8
+        assert sum(len(subject["types"]) for subject in payload["subjects"]) == 11
         assert types_by_subject["tickets"] == {
             "awaiting_reply",
+            "awaiting_answer",
             "awaiting_approval",
             "assigned",
             "errored",
         }
         assert types_by_subject["chief_of_staff"] == {
             "awaiting_reply",
+            "awaiting_answer",
             "errored",
         }
         assert types_by_subject["sprint_item_supervisors"] == {
             "awaiting_reply",
+            "awaiting_answer",
             "errored",
         }
         enabled_by_subject = {
@@ -120,6 +135,7 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
         }
         assert enabled_by_subject["sprint_item_supervisors"] == {
             "awaiting_reply": True,
+            "awaiting_answer": True,
             "errored": False,
         }
         assert all(enabled_by_subject["tickets"].values())
@@ -177,8 +193,12 @@ def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
         canonical_origin="https://panels.example",
         adapter=RecordingAdapter(),
     )
-    assert loop.poll_once() == 2
-    assert [subscription for subscription, _ in sent] == [subscription_id] * 2
+    # One Ticket at a worker-owned Brief earns exactly one push. Every push about a
+    # Ticket carries that Ticket's id as its OS tag, so a second one would replace the
+    # first on the phone and the approval would never be read.
+    assert loop.poll_once() == 1
+    assert [subscription for subscription, _ in sent] == [subscription_id]
+    assert [intent.body for _, intent in sent] == ["Phone-worthy work needs your approval."]
     assert {intent.route for _, intent in sent} == {f"/#/workspace/{ticket.id}"}
     assert {intent.tag for _, intent in sent} == {f"panels-ticket-{ticket.id}"}
 
@@ -191,4 +211,240 @@ def test_the_loop_sends_one_edge_to_the_registered_device_and_records_it(
                 "SELECT notification_type, status, attempts FROM notification_deliveries "
                 "ORDER BY notification_type"
             )
-        ] == [("assigned", "delivered", 1), ("awaiting_approval", "delivered", 1)]
+        ] == [("awaiting_approval", "delivered", 1)]
+
+
+def _conversation_on_a_ticket(conn: Connection, ticket_id: str) -> None:
+    conn.execute(
+        "INSERT INTO conversations"
+        "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+        "VALUES ('c_split', 'codex', '/tmp/workspace', 'full', 0, 1)"
+    )
+    conn.execute("UPDATE tickets SET conversation_id = 'c_split' WHERE id = ?", (ticket_id,))
+
+
+def _conversation_event(conn: Connection, sequence: int, kind: str, payload: str) -> None:
+    conn.execute(
+        "INSERT INTO conversation_events"
+        "(conversation_id, sequence, kind, payload, created_at) VALUES ('c_split', ?, ?, ?, ?)",
+        (sequence, kind, payload, sequence),
+    )
+    conn.execute(
+        "UPDATE conversations SET latest_sequence = ? WHERE conversation_id = 'c_split'",
+        (sequence,),
+    )
+
+
+# The conversation raises two of a Ticket's five signals. The other three come from the
+# Ticket's own stage and proposal, and say nothing about this split.
+_FROM_THE_CONVERSATION = ("awaiting_reply", "awaiting_answer")
+
+
+def _edges(conn: Connection, ticket_id: str) -> list[tuple[str, int]]:
+    return [
+        (str(row["notification_type"]), int(row["generation"]))
+        for row in conn.execute(
+            "SELECT notification_type, generation FROM notification_attention_edges "
+            "WHERE subject_kind='ticket' AND subject_id=? "
+            "AND notification_type IN ('awaiting_reply','awaiting_answer') "
+            "ORDER BY notification_type, generation",
+            (ticket_id,),
+        )
+    ]
+
+
+def test_conversation_capture_reuses_one_result_for_every_linked_ticket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = connect(str(tmp_path / "reused-result.db"))
+    create_schema(conn)
+    first = _ticket(conn, 1)
+    second = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, first.id)
+    conn.execute(
+        "UPDATE tickets SET conversation_id='c_split' WHERE id=?",
+        (second.id,),
+    )
+    result = attention.ConversationAttention(
+        unread_message=True,
+        pending_ask=True,
+        errored=True,
+        latest_sequence=4,
+        occurred_at=2,
+    )
+
+    def unexpected_derivation(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("capture repeated conversation attention derivation")
+
+    monkeypatch.setattr(attention, "conversation_attention", unexpected_derivation)
+    attention.capture_conversation_attention(conn, "c_split", 2, result)
+
+    for ticket in (first, second):
+        assert _edges(conn, ticket.id) == [
+            ("awaiting_answer", 1),
+            ("awaiting_reply", 1),
+        ]
+        errored = conn.execute(
+            "SELECT active FROM notification_attention_state "
+            "WHERE subject_kind='ticket' AND subject_id=? AND notification_type='errored'",
+            (ticket.id,),
+        ).fetchone()
+        assert errored is not None and bool(errored["active"])
+    conn.close()
+
+
+def test_conversation_event_and_attention_edge_roll_back_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "atomic-attention.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, ticket.id)
+    conn.close()
+    store = ConversationStore(str(db_path), integer_now=lambda: 2)
+
+    def fail_before_commit(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("forced rollback")
+
+    monkeypatch.setattr(conversation_storage, "_commit_appended_rows", fail_before_commit)
+
+    async def exercise() -> None:
+        with pytest.raises(RuntimeError, match="forced rollback"):
+            await store.append_event(
+                "c_split",
+                MessageToOwnerEventPayload(
+                    content=text_message_content("status"),
+                    sender=Principal(PrincipalKind.ticket, ticket.id),
+                    recipient=OWNER_PRINCIPAL,
+                    sender_label=ticket.title,
+                ),
+            )
+
+    asyncio.run(exercise())
+    with connect(str(db_path)) as verify:
+        assert verify.execute("SELECT 1 FROM conversation_events").fetchone() is None
+        assert (
+            verify.execute(
+                "SELECT 1 FROM notification_attention_edges "
+                "WHERE subject_kind='ticket' AND subject_id=? "
+                "AND notification_type='awaiting_reply'",
+                (ticket.id,),
+            ).fetchone()
+            is None
+        )
+
+
+def test_a_message_that_arrives_during_an_ask_still_raises_its_own_edge(
+    tmp_path: Path,
+) -> None:
+    """The ask and the message are two things. One flag could only carry one of them.
+
+    With both OR-ed into `awaiting_reply`, the flag was already true when the message
+    landed, so no rising edge was written and the message notified nobody at all.
+    """
+    conn = connect(str(tmp_path / "split.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, ticket.id)
+
+    _conversation_event(conn, 1, "permission_asked", json.dumps({"ask_id": "ask-1"}))
+    attention.capture_ticket_attention(conn, ticket.id, 1)
+    _conversation_event(conn, 2, "message_to_owner", "{}")
+    attention.capture_ticket_attention(conn, ticket.id, 2)
+
+    assert _edges(conn, ticket.id) == [("awaiting_answer", 1), ("awaiting_reply", 1)]
+    conn.close()
+
+
+def test_attention_snapshot_preserves_messages_asks_answers_reads_and_failures(
+    tmp_path: Path,
+) -> None:
+    conn = connect(str(tmp_path / "snapshot.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, ticket.id)
+    events: tuple[tuple[str, dict[str, str]], ...] = (
+        ("permission_asked", {"ask_id": "ask-1"}),
+        ("permission_asked", {"ask_id": "ask-2"}),
+        ("permission_answered", {"ask_id": "ask-1"}),
+        ("user_input_requested", {"request_id": "question-1"}),
+        ("user_input_answered", {"request_id": "unrelated"}),
+        ("message_to_owner", {}),
+        ("prompt", {}),
+        ("turn_ended", {"ending": "failed"}),
+    )
+    for sequence, (kind, payload) in enumerate(events, start=1):
+        _conversation_event(conn, sequence, kind, json.dumps(payload))
+    conn.execute(
+        "UPDATE conversations SET owner_read_through_sequence=5 WHERE conversation_id='c_split'"
+    )
+
+    snapshot = attention.conversation_attention_snapshot(conn, "c_split")
+    assert snapshot is not None
+    assert snapshot.pending_permission_ask_ids == frozenset({"ask-2"})
+    assert snapshot.pending_user_input_request_ids == frozenset({"question-1"})
+    assert snapshot.attention() == attention.conversation_attention(conn, "c_split")["c_split"]
+    assert snapshot.attention() == attention.ConversationAttention(
+        unread_message=True,
+        pending_ask=True,
+        errored=True,
+        latest_sequence=8,
+        occurred_at=8,
+    )
+    conn.close()
+
+
+def test_a_pending_ask_says_it_is_an_ask_and_not_a_message(tmp_path: Path) -> None:
+    """An ask told Khushal the Ticket had a message for him, which it did not."""
+    conn = connect(str(tmp_path / "ask.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, ticket.id)
+
+    _conversation_event(conn, 1, "user_input_requested", json.dumps({"request_id": "q-1"}))
+    attention.capture_ticket_attention(conn, ticket.id, 1)
+
+    assert [kind for kind, _ in _edges(conn, ticket.id)] == ["awaiting_answer"]
+    intent = decide_notification(
+        AttentionEdge(
+            key=EdgeKey(
+                subject_kind="ticket",
+                subject_id=ticket.id,
+                notification_type="awaiting_answer",
+                generation=1,
+            ),
+            subject=Principal(PrincipalKind.ticket, ticket.id),
+            subject_label="Phone-worthy work",
+            occurred_at=1,
+        ),
+        enabled=True,
+    )
+    assert intent is not None
+    assert intent.body == "Phone-worthy work is waiting on your answer."
+    conn.close()
+
+
+def test_an_answered_ask_clears_the_flag_without_another_notification(
+    tmp_path: Path,
+) -> None:
+    conn = connect(str(tmp_path / "answered.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, ticket.id)
+
+    _conversation_event(conn, 1, "permission_asked", json.dumps({"ask_id": "ask-1"}))
+    attention.capture_ticket_attention(conn, ticket.id, 1)
+    _conversation_event(conn, 2, "permission_answered", json.dumps({"ask_id": "ask-1"}))
+    attention.capture_ticket_attention(conn, ticket.id, 2)
+
+    assert [kind for kind, _ in _edges(conn, ticket.id)] == ["awaiting_answer"]
+    assert [
+        (str(row["notification_type"]), bool(row["active"]))
+        for row in conn.execute(
+            "SELECT notification_type, active FROM notification_attention_state "
+            "WHERE subject_kind='ticket' AND subject_id=? AND notification_type='awaiting_answer'",
+            (ticket.id,),
+        )
+    ] == [("awaiting_answer", False)]
+    conn.close()

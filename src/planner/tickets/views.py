@@ -18,8 +18,8 @@ from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets import derivation
 from planner.tickets.contracts import (
-    BoardCard,
-    BoardSprintItem,
+    BoardCardSource,
+    BoardSprintItemSource,
     Ticket,
     TicketListFilters,
     TicketStatus,
@@ -479,7 +479,7 @@ def board_view(
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
-    by_stage: dict[str, list[tuple[tuple[int, int, str, int], BoardCard]]] = {
+    by_stage: dict[str, list[tuple[tuple[int, int, str, int], BoardCardSource]]] = {
         sid: [] for sid in column_order
     }
     for row in rows:
@@ -510,7 +510,7 @@ def board_view(
                 row, has_live_blocker=str(row["id"]) in blocked_ticket_ids
             )
         )
-        card: BoardCard = {
+        card: BoardCardSource = {
             "id": str(row["id"]),
             "title": str(row["title"]),
             "priority": priority,
@@ -578,7 +578,7 @@ def _board_sprint_items(
     conn: sqlite3.Connection,
     *,
     item_ids: list[str],
-) -> list[BoardSprintItem]:
+) -> list[BoardSprintItemSource]:
     """Each Sprint Item's creation stamp and its supervisor's conversation.
 
     The supervisor is an ordinary non-Ticket agent, so its conversation is the one the
@@ -601,7 +601,7 @@ def _board_sprint_items(
         conn, [str(row["supervisor_agent_key"]) for row in rows]
     )
     return [
-        BoardSprintItem(
+        BoardSprintItemSource(
             id=str(row["id"]),
             created_at=int(row["created_at"]),
             conversation_id=conversations.get(str(row["supervisor_agent_key"])),

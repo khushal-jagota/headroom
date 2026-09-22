@@ -51,7 +51,13 @@ from planner.conversation.events import (
 )
 from planner.core.contracts import PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
-from planner.notifications.attention import capture_conversation_attention
+from planner.notifications.attention import (
+    ConversationAttentionSnapshot,
+    advance_conversation_attention,
+    capture_conversation_attention,
+    conversation_attention_snapshot,
+    conversation_attention_snapshot_is_current,
+)
 from planner.skill_versions import settle_worker_step_skill_bindings
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
@@ -199,6 +205,41 @@ class ConversationStore:
             automatic_compaction_confirmed,
             owner_read_through_sequence,
         )
+
+    async def mark_held_sender_messages_leaving_queue(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> int:
+        """Durably mark Panels wake messages before a held delivery can reach a backend."""
+        wake_ids = tuple(
+            sender_message_id
+            for sender_message_id in sender_message_ids
+            if sender_message_id.startswith("supervisor_delivery_wake_")
+        )
+        if not wake_ids:
+            return 0
+        return await asyncio.to_thread(
+            self._mark_held_sender_messages_leaving_queue_sync,
+            conversation_id,
+            wake_ids,
+        )
+
+    def _mark_held_sender_messages_leaving_queue_sync(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> int:
+        conn = self._connect()
+        try:
+            with conn:
+                changed = 0
+                for sender_message_id in sender_message_ids:
+                    changed += conn.execute(
+                        "UPDATE manager_wake_batches SET status='dispatching',updated_at=? "
+                        "WHERE conversation_id=? AND sender_message_id=? "
+                        "AND status IN ('offering','accepted')",
+                        (self._integer_now(), conversation_id, sender_message_id),
+                    ).rowcount
+                return changed
+        finally:
+            conn.close()
 
     async def append_message_to_owner(
         self, conversation_id: str, payload: MessageToOwnerEventPayload
@@ -469,7 +510,7 @@ class ConversationStore:
             raise ValueError("through_sequence must be non-negative")
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            snapshot = self._begin_validated_attention_write(conn, conversation_id)
             try:
                 conn.execute(
                     "UPDATE conversations SET owner_read_through_sequence = "
@@ -477,7 +518,24 @@ class ConversationStore:
                     "WHERE conversation_id = ?",
                     (through_sequence, conversation_id),
                 )
-                capture_conversation_attention(conn, conversation_id, self._integer_now())
+                if snapshot is not None:
+                    occurred_at = self._integer_now()
+                    owner_read_through_sequence = max(
+                        snapshot.owner_read_through_sequence,
+                        min(through_sequence, snapshot.latest_sequence),
+                    )
+                    result = advance_conversation_attention(
+                        snapshot,
+                        (),
+                        owner_read_through_sequence=owner_read_through_sequence,
+                        occurred_at=occurred_at,
+                    )
+                    capture_conversation_attention(
+                        conn,
+                        conversation_id,
+                        occurred_at,
+                        result,
+                    )
             except BaseException:
                 conn.execute("ROLLBACK")
                 raise
@@ -501,7 +559,7 @@ class ConversationStore:
     ) -> StoredConversationEvent:
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            snapshot = self._begin_validated_attention_write(conn, conversation_id)
             written = self._insert_rows(conn, conversation_id, (payload,))
             stored = written[0]
             if agent_activity:
@@ -524,7 +582,17 @@ class ConversationStore:
                     "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
                     (owner_read_through_sequence, conversation_id),
                 )
-            capture_conversation_attention(conn, conversation_id, stored.created_at)
+            assert snapshot is not None
+            read_through = snapshot.owner_read_through_sequence
+            if owner_read_through_sequence is not None:
+                read_through = max(read_through, owner_read_through_sequence)
+            result = advance_conversation_attention(
+                snapshot,
+                (payload,),
+                owner_read_through_sequence=read_through,
+                occurred_at=stored.created_at,
+            )
+            capture_conversation_attention(conn, conversation_id, stored.created_at, result)
             _commit_appended_rows(conn, (payload,))
         except BaseException:
             if conn.in_transaction:
@@ -567,7 +635,7 @@ class ConversationStore:
         )
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            snapshot = self._begin_validated_attention_write(conn, conversation_id)
             written = self._insert_rows(conn, conversation_id, payloads)
             if model_change is not None:
                 conn.execute(
@@ -593,7 +661,17 @@ class ConversationStore:
                     "MAX(owner_read_through_sequence, ?) WHERE conversation_id = ?",
                     (read_through, conversation_id),
                 )
-            capture_conversation_attention(conn, conversation_id, written[-1].created_at)
+            assert snapshot is not None
+            resulting_read_through = snapshot.owner_read_through_sequence
+            if owner_reply_sequences:
+                resulting_read_through = max(resulting_read_through, read_through)
+            result = advance_conversation_attention(
+                snapshot,
+                payloads,
+                owner_read_through_sequence=resulting_read_through,
+                occurred_at=written[-1].created_at,
+            )
+            capture_conversation_attention(conn, conversation_id, written[-1].created_at, result)
             _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
@@ -613,7 +691,7 @@ class ConversationStore:
     ) -> tuple[StoredConversationEvent, ...]:
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            snapshot = self._begin_validated_attention_write(conn, conversation_id)
             written = self._insert_rows(conn, conversation_id, payloads)
             ended = written[-1]
             if agent_activity:
@@ -637,7 +715,14 @@ class ConversationStore:
                     "latest_agent_activity_sequence WHERE conversation_id = ?",
                     (conversation_id,),
                 )
-            capture_conversation_attention(conn, conversation_id, ended.created_at)
+            assert snapshot is not None
+            result = advance_conversation_attention(
+                snapshot,
+                payloads,
+                owner_read_through_sequence=snapshot.owner_read_through_sequence,
+                occurred_at=ended.created_at,
+            )
+            capture_conversation_attention(conn, conversation_id, ended.created_at, result)
             _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
@@ -909,6 +994,25 @@ class ConversationStore:
 
     def _connect(self) -> sqlite3.Connection:
         return connect(self._db_path, self._busy_timeout_ms)
+
+    @staticmethod
+    def _begin_validated_attention_write(
+        conn: sqlite3.Connection, conversation_id: str
+    ) -> ConversationAttentionSnapshot | None:
+        """Acquire the write lock only after deriving and then validating attention."""
+
+        while True:
+            snapshot = conversation_attention_snapshot(conn, conversation_id)
+            conn.execute("BEGIN IMMEDIATE")
+            if snapshot is not None and conversation_attention_snapshot_is_current(conn, snapshot):
+                return snapshot
+            if snapshot is None:
+                exists = conn.execute(
+                    "SELECT 1 FROM conversations WHERE conversation_id=?", (conversation_id,)
+                ).fetchone()
+                if exists is None:
+                    return None
+            conn.execute("ROLLBACK")
 
 
 def _commit_appended_rows(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final, Literal, NotRequired, Required, TypedDict
+from typing import Final, Literal, Required, TypedDict
 
 from planner.core.contracts import Principal, Priority
 
@@ -62,8 +62,19 @@ class TicketStatus(StrEnum):  # derived at the moment of a read; never stored
     errored = "errored"
 
 
-class BoardCard(TypedDict):
-    """The Ticket projection consumed by the Workspace rail."""
+class WorkAttention(TypedDict):
+    """The shared owner-attention and employee-activity projection."""
+
+    awaiting_reply: bool
+    awaiting_answer: bool
+    awaiting_approval: bool
+    awaiting_agent_approval: bool
+    assigned: bool
+    agent_state: str
+
+
+class BoardCardSource(TypedDict):
+    """The stored Ticket projection before live work attention is attached."""
 
     id: str
     title: str
@@ -89,14 +100,14 @@ class BoardCard(TypedDict):
     sprint_item_id: str | None
     sprint_item_title: str | None
     sprint_item_priority: str | None
-    awaiting_reply: NotRequired[bool]
-    awaiting_approval: NotRequired[bool]
-    assigned: NotRequired[bool]
-    agent_state: NotRequired[str]
 
 
-class BoardSprintItem(TypedDict):
-    """A Sprint Item's own identity and its supervisor's conversation.
+class BoardCard(BoardCardSource, WorkAttention):
+    """The complete Ticket projection returned to the Workspace rail."""
+
+
+class BoardSprintItemSource(TypedDict):
+    """A Sprint Item's identity before live work attention is attached.
 
     The shared attention projection adds the Item's own supervisor state and one rollup
     over its child Tickets after this database read.
@@ -105,11 +116,12 @@ class BoardSprintItem(TypedDict):
     id: str
     created_at: int
     conversation_id: str | None
-    awaiting_reply: NotRequired[bool]
-    awaiting_approval: NotRequired[bool]
-    assigned: NotRequired[bool]
-    agent_state: NotRequired[str]
-    ticket_rollup: NotRequired[dict[str, object]]
+
+
+class BoardSprintItem(BoardSprintItemSource, WorkAttention):
+    """The complete Sprint Item projection returned to the Workspace rail."""
+
+    ticket_rollup: WorkAttention
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,8 +7,9 @@ through the in-process API, asserting the exact validation codes per type:
 - a ceiling / stage foreign to the type is rejected with the right code;
 - a coding ticket still accepts coding fields/stages (no regression);
 - a probe proposal parks on the field the registry gates for its stage.
-Plus the ``?stage=`` filter decision: Stage is stored data, so listing compares it
-directly without resolving a Worker type.
+Plus the ``/api/tickets`` read decisions the same harness reaches: the ``?stage=``
+filter, which compares stored data directly without resolving a Worker type, and
+``?search=``, which reads every place a Ticket keeps words.
 """
 
 from __future__ import annotations
@@ -65,6 +66,15 @@ def _create(client: TestClient, worker_type: str) -> str:
     assert r.status_code == 200, r.json()
     ticket_id: str = r.json()["id"]
     return ticket_id
+
+
+def _propose(client: TestClient, ticket_id: str, body: str) -> None:
+    filed = client.post(
+        f"/api/tickets/{ticket_id}/propose",
+        json={"body": body},
+        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+    )
+    assert filed.status_code == 200, filed.json()
 
 
 # --- coding ingress stays byte-identical ---------------------------------------
@@ -235,6 +245,53 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
         assert unknown.json()["tickets"] == []
 
 
+def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> None:
+    """Five places a Ticket keeps words, and each one alone is enough to find it.
+
+    Title, recap, guidance, a settled field value, and the body of a proposal still waiting
+    for its owner. Each Ticket here carries its invented word in exactly one of them, so a
+    search that quietly narrowed to fewer sources returns the wrong Ticket instead of
+    staying green. The word written nowhere proves the filter runs at all: a search that
+    was ignored would answer with every Ticket rather than none.
+    """
+    app, _db = app_db
+    with TestClient(app) as client:
+        in_the_title = _create(client, "coding")
+        client.patch(f"/api/tickets/{in_the_title}", json={"title": "zarquon"})
+
+        in_the_recap = _create(client, "coding")
+        client.patch(f"/api/tickets/{in_the_recap}", json={"recap": "florbish"})
+
+        in_the_guidance = _create(client, "coding")
+        client.patch(f"/api/tickets/{in_the_guidance}", json={"guidance": "wemsley"})
+
+        # A settled value is an accepted proposal, so this word is proposed and accepted.
+        in_a_field_value = _create(client, "coding")
+        _propose(client, in_a_field_value, "quinvex")
+        settled = client.post(
+            f"/api/tickets/{in_a_field_value}/accept/brief",
+            json={"next_ceiling": "needs_success_condition", "next_holder": OWNER},
+        )
+        assert settled.status_code == 200, settled.json()
+        assert settled.json()["field_values"] == {"brief": "quinvex"}
+
+        # This one's proposal stays pending, which is the other half of the same source.
+        in_a_pending_proposal = _create(client, "coding")
+        _propose(client, in_a_pending_proposal, "tarnabel")
+
+        for term, expected in (
+            ("zarquon", [in_the_title]),
+            ("florbish", [in_the_recap]),
+            ("wemsley", [in_the_guidance]),
+            ("quinvex", [in_a_field_value]),
+            ("tarnabel", [in_a_pending_proposal]),
+            ("nobodywrotethis", []),
+        ):
+            found = client.get(f"/api/tickets?detail=summary&search={term}")
+            assert found.status_code == 200, found.json()
+            assert [t["id"] for t in found.json()["tickets"]] == expected, term
+
+
 def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) -> None:
     app, _db = app_db
     with TestClient(app) as client:
@@ -264,3 +321,16 @@ def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) 
             client.put(f"/api/tickets/{ticket_id}/notes/plan", json={"body": "old"}).status_code
             == 404
         )
+
+
+def test_a_create_naming_no_brief_parks_nothing_at_the_http_door(
+    app_db: AppDb, probe_installed: None
+) -> None:
+    """The default path: an absent kickoff_note used to park an empty proposal."""
+    app, _db = app_db
+    with TestClient(app) as client:
+        created = client.post("/api/tickets", json={"title": "No brief", "worker_type": "coding"})
+        assert created.status_code == 200, created.json()
+        detail = client.get(f"/api/tickets?detail=full&id={created.json()['id']}").json()
+        assert detail["ticket_status"] == "empty"
+        assert detail["pending_proposal"] is None

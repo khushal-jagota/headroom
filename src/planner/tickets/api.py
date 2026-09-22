@@ -74,7 +74,10 @@ from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartOverrides,
     ConversationStartValues,
 )
-from planner.runtime.worker_step_readiness_loop import start_ready_worker_step
+from planner.runtime.worker_step_readiness_loop import (
+    WorkerStepStartResult,
+    start_ready_worker_step,
+)
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -856,7 +859,7 @@ async def restart_ticket_worker(
             "a launch configuration needs both a backend and a model",
             {},
         )
-    write_configuration: Callable[[sqlite3.Connection], None] | None = None
+    write_configuration: Callable[[sqlite3.Connection, int], None] | None = None
     if backend is not None and model is not None:
         resolved = await resolve_employee_configuration(
             request,
@@ -867,16 +870,19 @@ async def restart_ticket_worker(
             employee_launch_reasoning_effort=body_opt_str(raw, "employee_launch_reasoning_effort"),
         )
 
-        def write_the_resolved_configuration(open_conn: sqlite3.Connection) -> None:
-            write_resolved_employee_configuration(
-                open_conn, ticket_id, resolved, now=clk.now_unix()
-            )
+        def write_the_resolved_configuration(open_conn: sqlite3.Connection, now: int) -> None:
+            write_resolved_employee_configuration(open_conn, ticket_id, resolved, now=now)
 
         write_configuration = write_the_resolved_configuration
 
-    planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
+    def resolve_planning_write() -> tuple[str, int]:
+        planning_now = clk.now()
+        return (
+            resolve_day_id("today", planning_now, cfg.boundary_hour),
+            int(planning_now.timestamp()),
+        )
 
-    async def start_worker_step() -> bool:
+    async def start_worker_step(planning_day_id: str) -> WorkerStepStartResult:
         return await start_ready_worker_step(
             ticket_id,
             connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
@@ -893,8 +899,8 @@ async def restart_ticket_worker(
         ticket_id,
         write_employee_configuration=write_configuration,
         start_worker_step=start_worker_step,
-        planning_day_id=planning_day_id,
-        now=clk.now_unix(),
+        resolve_planning_write=resolve_planning_write,
+        now=clk.now_unix,
     )
 
 
@@ -997,9 +1003,7 @@ async def patch_ticket(
     if "ceiling_holder" in body:
         edit["ceiling_holder"] = _parse_stated_holder(body["ceiling_holder"], "ceiling_holder")
     if "field_values" in body:
-        edit["field_values"] = _marshal_settled_field_values(
-            conn, ticket_id, body["field_values"]
-        )
+        edit["field_values"] = _marshal_settled_field_values(conn, ticket_id, body["field_values"])
     now = clk.now_unix()
     ticket = tickets_data.edit_ticket(
         conn,
@@ -1070,6 +1074,7 @@ async def reject_ticket_proposal(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
+    cfg: Cfg,
     clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
@@ -1083,6 +1088,7 @@ async def reject_ticket_proposal(
         message=body["message"],
         ctx=ctx,
         clock=clk,
+        boundary_hour=cfg.boundary_hour,
     )
     return tickets_views.ticket_json(ticket, now)
 

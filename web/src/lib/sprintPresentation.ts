@@ -1,6 +1,11 @@
 import type { FieldStageVisualState } from "./ui";
 import type { Priority, ProjectSummary, SprintOutcomeGroup } from "./types";
-import { primaryWorkAttention } from "./workAttentionPresentation";
+import {
+  WORK_ITEM_TICKET_GROUPS,
+  workItemActivityMark,
+  workItemActivityMarkPresentation,
+  workItemTicketGroupKey
+} from "./workItemPresentation";
 
 export type SprintTicket = {
   id: string;
@@ -11,7 +16,9 @@ export type SprintTicket = {
   waiting_to_closeout?: boolean;
   has_pending_proposal?: boolean;
   awaiting_reply: boolean;
+  awaiting_answer?: boolean;
   awaiting_approval: boolean;
+  awaiting_agent_approval?: boolean;
   assigned: boolean;
   agent_state: "working" | "idle" | "errored";
 };
@@ -37,7 +44,9 @@ export type TicketConditionFacts = {
   ticket_status: string;
   waiting_to_closeout?: boolean;
   awaiting_reply: boolean;
+  awaiting_answer?: boolean;
   awaiting_approval: boolean;
+  awaiting_agent_approval?: boolean;
   assigned: boolean;
   agent_state: "working" | "idle" | "errored";
 };
@@ -52,6 +61,17 @@ export type SprintDateRange = {
   date_start: string;
   date_end: string;
 };
+
+function presentationTicket(ticket: TicketConditionFacts & { id?: string; title?: string; priority?: Priority }) {
+  return {
+    ...ticket,
+    id: ticket.id ?? "",
+    title: ticket.title ?? "",
+    priority: ticket.priority ?? "P3",
+    awaiting_answer: Boolean(ticket.awaiting_answer),
+    awaiting_agent_approval: Boolean(ticket.awaiting_agent_approval)
+  } as const;
+}
 
 const millisecondsPerDay = 86_400_000;
 
@@ -94,30 +114,11 @@ function rankPriority(priority: Priority | null | undefined): number {
 }
 
 export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicketCondition {
-  if (ticket.stage === "done") return { mark: "completed", word: "done" };
-  // Two states, one mark, two words. Errored is a worker that broke; blocked is a
-  // Ticket another Ticket holds. They read the same red, and never the same word.
-  if (ticket.agent_state === "errored") return { mark: "errored", word: "errored" };
-  if (ticket.ticket_status === "blocked") return { mark: "errored", word: "blocked" };
-  // The word a row shows is the lowercase of the heading the same Ticket sits under, so
-  // a row and its group never name one fact two ways. The three headings live in
-  // `GROUP_LABELS` in workspaceRail.ts and in `TICKET_STATUS_GROUPS`; a heading changed
-  // there is changed here.
-  const attention = primaryWorkAttention(ticket);
-  if (attention === "awaiting_approval") {
-    return { mark: "current-awaiting-approval", word: "needs your approval" };
-  }
-  if (attention === "assigned") return { mark: "current-assigned", word: "yours" };
-  if (attention === "awaiting_reply") return { mark: "needs-me", word: "messages" };
-  // The durable fact, not the live one. `agent` is what the wakeup system writes when it
-  // sends a worker its step, and it holds until the Ticket moves on. Whether a turn is
-  // live in process is a different question: a worker that ends its turn to wait on a
-  // long job is still the agent's. A live fact can add a Ticket to a group — `errored`
-  // and `awaiting_reply` above both do — but it must never be the only thing carrying a
-  // durable state, or the group empties the moment the process stops.
-  if (ticket.ticket_status === "agent") return { mark: "current-running", word: "working" };
-  if (ticket.waiting_to_closeout) return { mark: "current-waiting", word: "waiting on consequences" };
-  return { mark: "upcoming", word: "to do" };
+  const projected = presentationTicket(ticket);
+  const mark = workItemActivityMarkPresentation(workItemActivityMark(projected)).state;
+  const key = workItemTicketGroupKey(projected);
+  const label = WORK_ITEM_TICKET_GROUPS.find((group) => group.key === key)?.label ?? key;
+  return { mark, word: label.toLocaleLowerCase() };
 }
 
 function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTicket[] {
@@ -126,8 +127,8 @@ function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTic
       // The mark, not the word: errored and blocked read as different words and both
       // belong at the end of the section.
       const blockedDifference =
-        Number(sprintTicketCondition(left).mark === "errored") -
-        Number(sprintTicketCondition(right).mark === "errored");
+        Number(workItemTicketGroupKey(presentationTicket(left)) === "blocked") -
+        Number(workItemTicketGroupKey(presentationTicket(right)) === "blocked");
       if (blockedDifference !== 0) return blockedDifference;
     }
     return rankPriority(left.priority) - rankPriority(right.priority) ||

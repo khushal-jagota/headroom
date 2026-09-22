@@ -1,5 +1,9 @@
 operation                                    owner   chief   outcome_parent  outcome_stranger  ticket_self  ticket_stranger  ticket_planning_day  ticket_planning_sprint
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+POST   /tickets (bare)                       allow   allow   allow           allow             allow        allow            allow                allow                 
+POST   /tickets sprint_item_id               allow   allow   allow           refuse            allow        refuse           refuse               refuse                
+POST   /tickets ceiling                      allow   allow   allow           refuse            refuse       refuse           refuse               refuse                
+POST   /tickets ceiling_holder               allow   allow   allow           refuse            refuse       refuse           refuse               refuse                
 GET    /tickets (detail=full)                allow   allow   allow           allow             allow        allow            allow                allow                 
 PATCH  /tickets/{t} priority                 allow   allow   allow           refuse            allow        refuse           refuse               refuse                
 PATCH  /tickets/{t} title                    allow   allow   allow           refuse            refuse       refuse           refuse               refuse                

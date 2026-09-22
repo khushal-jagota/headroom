@@ -21,7 +21,7 @@ PRE_COLLAPSE_HEAD_REVISION = db_module.PRE_COLLAPSE_HEAD_REVISION
 REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger the baseline builds.
-CURRENT_SCHEMA_OBJECT_COUNT = 55
+CURRENT_SCHEMA_OBJECT_COUNT = 60
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -104,6 +104,12 @@ def _build_database_at_the_pre_collapse_head(path: Path) -> sqlite3.Connection:
     """
     conn = connect(str(path))
     create_schema(conn)
+    # Reconstruct the collapsed head rather than leaving schema from later revisions in
+    # place before we stamp it as old. Post-baseline data-only revisions need no undo.
+    conn.execute("DROP TABLE manager_wake_batch_members")
+    conn.execute("DROP TABLE manager_wake_batches")
+    conn.execute("DROP TABLE manager_wakes")
+    conn.execute("ALTER TABLE tickets DROP COLUMN pending_proposal_revision")
     conn.execute("DELETE FROM alembic_version")
     conn.execute("INSERT INTO alembic_version VALUES (?)", (PRE_COLLAPSE_HEAD_REVISION,))
     conn.execute("PRAGMA user_version=37")
@@ -142,7 +148,7 @@ def test_database_at_the_pre_collapse_head_is_adopted_with_its_rows_intact(
     create_schema(conn)
 
     assert _revision(conn) == _head_revision()
-    assert _schema_objects(conn) == objects_before
+    assert set(objects_before).issubset(_schema_objects(conn))
     assert tuple(
         conn.execute(
             "SELECT title, worker_step_claim FROM tickets WHERE id = 't_carried'"
@@ -177,6 +183,48 @@ def test_database_at_a_revision_from_the_collapsed_chain_is_refused(tmp_path: Pa
     assert conn.execute("SELECT title FROM tickets WHERE id = 't_waiting'").fetchone()[0] == (
         "Waiting on the earlier build"
     )
+    conn.close()
+
+
+def test_manager_wake_migration_backfills_current_unresolved_sources(
+    tmp_path: Path,
+) -> None:
+    conn = _build_database_at_the_pre_collapse_head(tmp_path / "wake-backfill.db")
+    conn.execute("DELETE FROM alembic_version")
+    conn.execute("INSERT INTO alembic_version VALUES ('an_ask_is_its_own_notification')")
+    conn.execute(
+        "INSERT INTO sprint_items(id,title,project_id,created_at,updated_at) "
+        "VALUES ('si_backfill','Backfill','project_vylo',1,1)"
+    )
+    conn.execute(
+        "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,project_id,"
+        "sprint_item_id,ceiling,ceiling_holder,field_values,pending_proposal,created_at,"
+        "updated_at) VALUES ('t_proposal','Proposal','coding','codex',"
+        "'needs_success_condition','project_vylo','si_backfill','needs_success_condition',"
+        "?, '{}', ?, 1, 2)",
+        (
+            '{"kind":"sprint_item","id":"si_backfill"}',
+            '{"field":"success_condition","body":"Ready","proposed_by":"worker","created_at":2}',
+        ),
+    )
+    conn.execute(
+        "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,project_id,"
+        "sprint_item_id,ceiling,ceiling_holder,field_values,worker_step_claim,"
+        "worker_step_claim_revision,worker_step_claim_changed_at,created_at,updated_at) "
+        "VALUES ('t_error','Error','coding','codex','needs_success_condition','project_vylo',"
+        "'si_backfill','needs_success_condition',?, '{}','errored',3,3,1,3)",
+        ('{"kind":"owner","id":"owner"}',),
+    )
+
+    create_schema(conn)
+
+    rows = conn.execute(
+        "SELECT ticket_id,source_kind,source_revision FROM manager_wakes ORDER BY ticket_id"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("t_error", "worker_error", 3),
+        ("t_proposal", "proposal", 1),
+    ]
     conn.close()
 
 
@@ -501,3 +549,98 @@ def test_a_migration_that_leaves_a_dangling_reference_is_rolled_back(
 
 
 # --- the schema the baseline describes ----------------------------------------------------
+
+
+_NOTIFICATION_TABLES = (
+    "notification_preferences",
+    "notification_attention_state",
+    "notification_attention_edges",
+    "notification_deliveries",
+)
+
+
+def _seed_notification_rows(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO notification_preferences"
+        "(subject_key, notification_type, enabled, updated_at) "
+        "VALUES ('tickets', 'awaiting_reply', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO notification_attention_state"
+        "(subject_kind, subject_id, notification_type, active, generation) "
+        "VALUES ('ticket', 't_kept', 'awaiting_reply', 1, 3)"
+    )
+    conn.execute(
+        "INSERT INTO notification_attention_edges"
+        "(subject_kind, subject_id, notification_type, generation, occurred_at) "
+        "VALUES ('ticket', 't_kept', 'awaiting_reply', 3, 7)"
+    )
+    conn.execute(
+        "INSERT INTO notification_push_subscriptions"
+        "(subscription_id, endpoint, p256dh, auth, created_at, updated_at) "
+        "VALUES ('sub_kept', 'https://push.example/kept', 'p', 'a', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO notification_deliveries"
+        "(subject_kind, subject_id, notification_type, generation, subscription_id, "
+        "title, body, route, tag, created_at, status, next_attempt_at) "
+        "VALUES ('ticket', 't_kept', 'awaiting_reply', 3, 'sub_kept', 'Panels', 'body', "
+        "'/', 'tag', 1, 'pending', 1)"
+    )
+
+
+def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Four tables restrict `notification_type` with a CHECK, and SQLite cannot alter one.
+
+    So the revision rebuilds all four, and a rebuild is a DROP: whatever the new table
+    does not declare is gone, and nothing afterwards is left dangling to notice it. This
+    builds the four as they were before the revision, puts a row in each, and reads the
+    tables back after the revision has run against them.
+    """
+    shipped = db_module.MIGRATIONS_DIRECTORY / "versions"
+    tree = _migration_tree(tmp_path, monkeypatch)
+    conn = connect(str(tmp_path / "widened.db"))
+    create_schema(conn)
+    _seed_notification_rows(conn)
+    before = {table: _table_structure(conn, table) for table in _NOTIFICATION_TABLES}
+    for table in _NOTIFICATION_TABLES:
+        sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()[0]
+        assert "awaiting_answer" not in sql
+
+    # Every shipped revision above the baseline, so this keeps working as the chain grows.
+    for revision in sorted(shipped.glob("*.py")):
+        shutil.copy(revision, tree / "versions" / revision.name)
+    create_schema(conn)
+
+    assert _revision(conn) == "wake_sprint_item_managers"
+    for table in _NOTIFICATION_TABLES:
+        sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()[0]
+        assert "'awaiting_answer'" in sql
+        assert _table_structure(conn, table) == before[table]
+        kept = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE notification_type = 'awaiting_reply'"
+        ).fetchone()[0]
+        assert kept == 1, f"{table} lost its row"
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                f"INSERT INTO {table} (subject_kind, subject_id, notification_type) "
+                "VALUES ('ticket', 't_probe', 'not_a_notification_type')"
+                if table != "notification_preferences"
+                else "INSERT INTO notification_preferences "
+                "(subject_key, notification_type, enabled, updated_at) "
+                "VALUES ('tickets', 'not_a_notification_type', 1, 1)"
+            )
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%__rebuilt'"
+        ).fetchone()[0]
+        == 0
+    )
+    conn.close()

@@ -164,6 +164,20 @@ MODEL_THINKING_PULSE_INTERVAL_SECONDS = 0.25
 ROLE_TEXT_PROMPT_SEPARATOR = "\n\n"
 
 
+def _queue_reason_for_refused_steer(
+    refusal_reason: PromptDeliveryRefusalReason,
+) -> PromptQueueReason:
+    """Why a message that could not steer is now waiting.
+
+    A refused steer always goes back to the line. The reason it went back is what the
+    composer reads out, and a command that Codex takes only as its own turn is not the
+    same event as a turn that would not accept steering at all.
+    """
+    if refusal_reason is PromptDeliveryRefusalReason.command_cannot_join_running_turn:
+        return PromptQueueReason.command_needs_its_own_turn
+    return PromptQueueReason.steer_refused
+
+
 def completed_backend_text_event(content: MessageContent) -> None:
     """Classify backend prose as runtime output, never an addressed durable message."""
     del content
@@ -297,6 +311,7 @@ class _ConversationState:
     sender_messages_being_delivered: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
+    held_drain_retry: asyncio.Task[None] | None = None
     reserved_turn: _ReservedTurn | None = None
     running_turn: _RunningTurn | None = None
     last_ended_turn_token: TurnToken | None = None
@@ -959,6 +974,30 @@ class SqliteProcessConversationSystem:
         except PromptWriteFailed:
             steer_outcome = BackendSteerUncertain()
 
+        if isinstance(steer_outcome, BackendSteerRefused) and (
+            steer_outcome.refusal_reason
+            is PromptDeliveryRefusalReason.command_cannot_join_running_turn
+        ):
+            # A command the backend takes only as its own turn. Promoting it was the
+            # right gesture at the wrong moment, so the message goes back to the line
+            # rather than being written down as undeliverable and thrown away.
+            async with state.lock:
+                self._settle_held_deliveries(state, (held,))
+            return await self._queue(
+                state,
+                held.content,
+                held.sender_label,
+                held.model_change,
+                held.reasoning_effort_change,
+                held.sender_message_id,
+                held.sent_at_unix_milliseconds,
+                held.sender,
+                held.recipient,
+                held.reply_requested,
+                held.owner_read_through_sequence,
+                queue_reason=PromptQueueReason.command_needs_its_own_turn,
+            )
+
         async with state.lock:
             fate = await self._record_steer_outcome(
                 state,
@@ -1152,6 +1191,12 @@ class SqliteProcessConversationSystem:
         async with self._conversations_lock:
             states = list(self._conversations.values())
         for state in states:
+            retry = state.held_drain_retry
+            state.held_drain_retry = None
+            if retry is not None:
+                retry.cancel()
+                with suppress(asyncio.CancelledError):
+                    await retry
             pump = state.backend_event_pump
             state.backend_event_pump = None
             if pump is not None:
@@ -1175,6 +1220,9 @@ class SqliteProcessConversationSystem:
                 states = list(self._conversations.values())
             for state in states:
                 await state.backend_event_queue.join()
+                retry = state.held_drain_retry
+                if retry is not None:
+                    await asyncio.shield(retry)
             await asyncio.sleep(0)
             if all(state.backend_event_queue.empty() for state in states):
                 return
@@ -1603,7 +1651,7 @@ class SqliteProcessConversationSystem:
                 recipient,
                 reply_requested,
                 owner_read_through_sequence,
-                queue_reason=PromptQueueReason.steer_refused,
+                queue_reason=_queue_reason_for_refused_steer(steer_outcome.refusal_reason),
             )
 
         async with state.lock:
@@ -2093,6 +2141,19 @@ class SqliteProcessConversationSystem:
                     self._set_phase(state, _ConversationPhase.idle)
                     return
                 batch = leading_run_that_can_share_a_turn(state.held_prompts)
+                try:
+                    await self._store.mark_held_sender_messages_leaving_queue(
+                        state.record.conversation_id,
+                        tuple(
+                            message.sender_message_id
+                            for message in batch
+                            if message.sender_message_id is not None
+                        ),
+                    )
+                except Exception:
+                    self._set_phase(state, _ConversationPhase.idle)
+                    self._schedule_held_drain_retry(state)
+                    raise
                 for _ in batch:
                     state.held_prompts.popleft()
                 self._begin_held_deliveries(state, batch)
@@ -2193,6 +2254,33 @@ class SqliteProcessConversationSystem:
                 raise
             if started:
                 return
+
+    def _schedule_held_drain_retry(self, state: _ConversationState) -> None:
+        retry = state.held_drain_retry
+        if retry is not None and not retry.done():
+            return
+
+        async def retry_until_marked() -> None:
+            try:
+                delay = 0.05
+                while state.held_prompts:
+                    await asyncio.sleep(delay)
+                    try:
+                        await self._drain_held_prompts(state)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        LOGGER.exception(
+                            "conversation %s could not mark a held delivery; retrying",
+                            state.record.conversation_id,
+                        )
+                        delay = min(delay * 2, 5.0)
+                        continue
+                    return
+            finally:
+                state.held_drain_retry = None
+
+        state.held_drain_retry = asyncio.create_task(retry_until_marked())
 
     async def _discard_held_prompts(self, state: _ConversationState) -> None:
         """Throw away everything waiting, writing each one down. The lock must be held.

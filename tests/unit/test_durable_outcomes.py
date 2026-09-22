@@ -107,6 +107,11 @@ def test_two_sprint_outcome_journey_preserves_history_context_and_exact_partitio
         chosen.id: (second.id, "Second"),
         left.id: (first.id, "First"),
     }
+    assert {t["id"]: t["activity_at"] for t in workspace["tickets"]} == {
+        done.id: 2,
+        chosen.id: 2,
+        left.id: 1,
+    }
     tickets.unclassify_ticket(
         tmp_db, chosen.id, sprint_item_id=outcome.id, principal=OWNER_PRINCIPAL, now=4
     )

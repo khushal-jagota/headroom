@@ -5,14 +5,16 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { scratchDirectory } from './support/scratch.mjs';
 
 // Frontend proof with HTTP fixtures: the real Ticket route writes one document,
 // and the real Review card reads that document. No live backend is involved.
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const stem = `.guidance-${process.pid}`;
-const host = join(root, 'tests', `${stem}.svelte`);
-const main = join(root, 'tests', `${stem}.ts`);
-const index = join(root, 'tests', `${stem}.html`);
+const stem = `guidance-${process.pid}`;
+const scratchRoot = await scratchDirectory();
+const host = join(scratchRoot, `${stem}.svelte`);
+const main = join(scratchRoot, `${stem}.ts`);
+const index = join(scratchRoot, `${stem}.html`);
 let server;
 try {
   await writeFile(host, `<script lang="ts">
@@ -75,13 +77,19 @@ def respond(route):
                 placement_writes.append(body)
                 ticket.update(body)
         result=ticket
+    elif path == 'tickets/t_open' and route.request.method == 'PATCH':
+        body=route.request.post_data_json
+        ceiling_writes.append(body)
+        result={**ticket, 'id': 't_open', 'ticket_status': 'empty', 'pending_proposal': None}
     elif path == 'tickets/t_personal/complete/outcome':
         assert route.request.method == 'POST'
         body=route.request.post_data_json
         writes.append({'personal_outcome': body})
-        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_consequences', 'ceiling':'needs_consequences', 'field_values':{'brief':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty'}
+        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_consequences', 'ceiling':'needs_consequences', 'field_values':{'brief':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':False}
     elif path == 'tickets/t_personal':
-        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'brief':'Context'}, 'pending_proposal':None, 'ticket_status':'empty'}
+        # assigned is what the route reads to decide the owner may edit this Stage.
+        # The server puts it on every Ticket payload, so this stand-in carries it too.
+        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'brief':'Context'}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':True}
     elif path == 'tickets/t_kickoff':
         result={**ticket, 'id': 't_kickoff', 'stage': 'needs_brief', 'ceiling': 'needs_brief', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}, 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': {'field': 'brief', 'body': 'Opened for somebody else', 'proposed_by': 'chief', 'created_at': 1}, 'field_values': {}}
     elif path == 'tickets/t_open':
@@ -122,7 +130,9 @@ with sync_playwright() as p:
     parked_leash.locator(':scope > summary').click()
     assert parked_leash.locator('[data-scope-ceiling]').count() == 0
     assert parked_leash.locator('[data-scope-holder]').count() == 1
-    parked_leash.locator('[data-scope-holder]').select_option('owner')
+    parked_leash.locator('[data-scope-holder]').click()
+    expect(parked_leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    parked_leash.locator('[data-ceiling-picker-choice="owner"]').click()
     for _ in range(100):
         if ceiling_writes: break
         page.wait_for_timeout(50)
@@ -135,10 +145,26 @@ with sync_playwright() as p:
     assert 'Until Success' in leash.locator('[data-leash-face]').inner_text()
     assert 'then me' in leash.locator('[data-leash-face]').inner_text()
     leash.locator(':scope > summary').click()
-    assert leash.locator('select').count() == 2
+    assert leash.locator('select').count() == 0
     assert leash.locator('[data-scope-ceiling]').count() == 1
-    assert leash.locator('[data-scope-holder]').count() == 1
-    assert leash.locator('button').count() == 0
+    assert leash.locator('[data-scope-holder]').count() == 0
+    leash.locator('[data-scope-ceiling]').click()
+    expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    leash.get_by_role('listbox').press('End')
+    leash.get_by_role('listbox').press('Enter')
+    expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    assert leash.locator('[data-ceiling-picker-back]').count() == 1
+    leash.locator('[data-ceiling-picker-back]').click()
+    expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    leash.get_by_role('listbox').press('End')
+    leash.get_by_role('listbox').press('Enter')
+    leash.get_by_role('listbox').press('c')
+    leash.get_by_role('listbox').press('Enter')
+    expect(leash.get_by_role('listbox')).to_have_count(0)
+    for _ in range(100):
+        if len(ceiling_writes) == 2: break
+        page.wait_for_timeout(50)
+    assert ceiling_writes[-1] == {'ceiling': 'done', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}}, ceiling_writes
     assert page.locator('[data-copy], [data-ticket-takeover-toggle]').count() == 0
     assert placement_writes == []
     assert 'Copy' not in page.locator('.ticket-operating').inner_text()
@@ -198,8 +224,10 @@ with sync_playwright() as p:
     kickoff_leash.locator(':scope > summary').click()
     assert kickoff_leash.locator('[data-scope-ceiling]').count() == 0
     assert kickoff_leash.locator('[data-scope-holder]').count() == 1
+    kickoff_leash.locator('[data-scope-holder]').click()
     # No Sprint Item on this one, so the Item option is absent.
-    assert [option.inner_text() for option in kickoff_leash.locator('[data-scope-holder] option').all()] == ['me', 'Chief']
+    assert [option.get_attribute('data-ceiling-picker-choice') for option in kickoff_leash.locator('[role="option"]').all()] == ['owner', 'chief']
+    kickoff_leash.get_by_role('listbox').press('Escape')
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()
     assert page.locator('[data-copy]').count() == 0
@@ -219,12 +247,14 @@ with sync_playwright() as p:
     # browser could only ever stay in Khushal's own queue.
     approve_row=page.locator('[data-approval-block][data-field="success_condition"] .approval-control-group')
     assert approve_row.locator('[data-scope-ceiling]').count() == 1
-    holder_select=approve_row.locator('[data-scope-holder]')
-    assert holder_select.input_value() == 'owner'
-    assert [option.inner_text() for option in holder_select.locator('option').all()] == [
-        'me', 'Chief', 'Kept outcome'
+    approve_row.locator('[data-scope-ceiling]').click()
+    expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    approve_row.locator('[data-ceiling-picker-choice="done"]').click()
+    expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    assert [option.get_attribute('data-ceiling-picker-choice') for option in approve_row.locator('[role="option"]').all()] == [
+        'owner', 'chief', 'outcome_kept'
     ]
-    holder_select.select_option('chief')
+    approve_row.locator('[data-ceiling-picker-choice="chief"]').click()
     page.locator('[data-approval-block][data-field="success_condition"] [data-accept]').click()
     for _ in range(100):
         if approvals: break
@@ -239,7 +269,7 @@ with sync_playwright() as p:
     assert stage_table.locator('select, input, [contenteditable]').count() == 0
     browser.close()
 `;
-  const child = spawn(join(root, '..', '.venv', 'bin', 'python'), ['-c', script, `http://127.0.0.1:${address.port}/tests/${stem}.html`], { stdio: 'inherit' });
+  const child = spawn(join(root, '..', '.venv', 'bin', 'python'), ['-c', script, `http://127.0.0.1:${address.port}/.test-scratch/${stem}.html`], { stdio: 'inherit' });
   const code = await new Promise(resolve => child.on('exit', resolve));
   assert.equal(code, 0, 'Ticket guidance browser proof failed');
 } finally {

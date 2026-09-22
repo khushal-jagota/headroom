@@ -15,12 +15,15 @@
     VISIBLE_RUNNING_WORK_ENTRIES
   } from "../../lib/conversation/transcript";
   import type { ToolCallRow as ToolCallRowType } from "../../lib/conversation/transcript";
+  import type { SvelteMap, SvelteSet } from "svelte/reactivity";
 
   let {
     entries,
     conversationId,
     hidden = false,
-    showAll = false
+    showAll = false,
+    openRows,
+    wholeDetails
   }: {
     entries: readonly ToolCallRowType[];
     /** Whose record these rows are, which is where a row's whole output is asked for. */
@@ -29,6 +32,10 @@
     hidden?: boolean;
     /** Full reads every recorded tool call without another nested disclosure. */
     showAll?: boolean;
+    /** Which rows are open, and what they fetched. Both belong to the thread: this run
+     *  goes behind its turn's fold and takes its rows with it. */
+    openRows: SvelteSet<string>;
+    wholeDetails: SvelteMap<string, string>;
   } = $props();
 
   let expanded = $state(false);
@@ -50,7 +57,7 @@
   >
     <div class="acp-steps" data-conversation-work-entries>
       {#each visible as entry (entry.key)}
-        <ToolCallRow row={entry} {conversationId} />
+        <ToolCallRow row={entry} {conversationId} {openRows} {wholeDetails} />
       {/each}
     </div>
     {#if !showAll && hiddenCount > 0}

@@ -5385,6 +5385,9 @@ a.artifact-chip:hover,
 }
 
 .sprint-workspace-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   margin: var(--space-3) 0 0;
   color: var(--text-strong);
   font-family: var(--font-serif);
@@ -5392,6 +5395,10 @@ a.artifact-chip:hover,
   font-weight: 500;
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
+}
+
+.sprint-workspace-title-mark {
+  flex: 0 0 auto;
 }
 
 

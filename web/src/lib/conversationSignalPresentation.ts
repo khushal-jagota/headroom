@@ -2,6 +2,7 @@ import type { FieldStageVisualState } from "./ui";
 
 export type ConversationSignals = {
   awaiting_reply: boolean;
+  awaiting_answer?: boolean;
   agent_state: "working" | "idle" | "errored";
 };
 
@@ -20,8 +21,14 @@ export type ConversationSignalPresentation = {
 export function conversationSignalPresentation(
   signals: ConversationSignals
 ): ConversationSignalPresentation {
+  // The pure white dot is the worker waiting on an answer only the owner can give,
+  // which is what `needs-me` has always said it meant. A message is a different fact
+  // and takes the mark the rail already gave it.
+  if (signals.awaiting_answer) {
+    return { state: "needs-me", ariaLabel: "Needs an answer" };
+  }
   if (signals.awaiting_reply) {
-    return { state: "needs-me", ariaLabel: "Message" };
+    return { state: "current-awaiting-approval", ariaLabel: "Message" };
   }
   if (signals.agent_state === "working") {
     return { state: "current-running", ariaLabel: "Agent working" };

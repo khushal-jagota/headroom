@@ -57,6 +57,7 @@ def _ticket(tmp_db: Connection) -> Ticket:
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
+        kickoff_note="Agreed brief.",
     )
     return tickets_data.accept_proposal(
         tmp_db,

@@ -11,6 +11,7 @@ from planner.conversation.contracts import ConversationSystem
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import Config
+from planner.manager_wakes.runtime import ManagerWakeLoop
 from planner.notifications.runtime import NotificationLoop
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
@@ -30,10 +31,12 @@ class BackgroundLoops:
         shutdown_grace_seconds: float = 30.0,
         scheduled_ticket_loop: ScheduledTicketLoop | None = None,
         notification_loop: NotificationLoop | None = None,
+        manager_wake_loop: ManagerWakeLoop | None = None,
     ) -> None:
         self.worker_step_readiness_loop = worker_step_readiness_loop
         self.scheduled_ticket_loop = scheduled_ticket_loop
         self.notification_loop = notification_loop
+        self.manager_wake_loop = manager_wake_loop
         self._lock_path = lock_path
         self._stop_waking_on_change = stop_waking_on_change
         self._shutdown_grace_seconds = shutdown_grace_seconds
@@ -62,6 +65,11 @@ class BackgroundLoops:
         if self.notification_loop is not None:
             await asyncio.to_thread(
                 self.notification_loop.stop,
+                deadline=deadline,
+            )
+        if self.manager_wake_loop is not None:
+            await asyncio.to_thread(
+                self.manager_wake_loop.stop,
                 deadline=deadline,
             )
         if self.worker_step_readiness_loop is not None:
@@ -99,17 +107,23 @@ def start_background_loops(
     worker_step_readiness_loop: WorkerStepReadinessLoop | None = None
     scheduled_ticket_loop: ScheduledTicketLoop | None = None
     notification_loop: NotificationLoop | None = None
+    manager_wake_loop: ManagerWakeLoop | None = None
     lock_path: str | None = None
     stop_waking_on_change: Callable[[], None] | None = None
 
     if not config.dispatch_enabled:
-        _LOGGER.info("Background scheduling and dispatch disabled (dispatch_enabled=false)")
+        _LOGGER.info(
+            "Background scheduling and dispatch disabled (dispatch_enabled=false)"
+        )
     elif not ensure_machine_lock(config.dispatcher_lock_path):
-        _LOGGER.info("Background loops not started: another process holds the polling lock")
+        _LOGGER.info(
+            "Background loops not started: another process holds the polling lock"
+        )
     else:
         candidate_loop: WorkerStepReadinessLoop | None = None
         candidate_schedule_loop: ScheduledTicketLoop | None = None
         candidate_notification_loop: NotificationLoop | None = None
+        candidate_manager_wake_loop: ManagerWakeLoop | None = None
         candidate_unsubscribe: Callable[[], None] | None = None
         try:
             candidate_schedule_loop = ScheduledTicketLoop(
@@ -132,13 +146,22 @@ def start_background_loops(
                 canonical_origin=config.trusted_ingress_canonical_origin,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
+            candidate_manager_wake_loop = ManagerWakeLoop(
+                config.db_path,
+                clock,
+                conversation_system=conversation_system,
+                asyncio_loop=asyncio_loop,
+                busy_timeout_ms=config.db_busy_timeout_ms,
+            )
             candidate_schedule_loop.start(config.tick_seconds)
             candidate_loop.start(config.tick_seconds)
             candidate_notification_loop.start(config.tick_seconds)
+            candidate_manager_wake_loop.start(config.tick_seconds)
 
             def wake_reconcilers() -> None:
                 candidate_loop.wake()
                 candidate_notification_loop.wake()
+                candidate_manager_wake_loop.wake()
 
             candidate_unsubscribe = change_signal.subscribe(wake_reconcilers)
         except Exception:
@@ -149,22 +172,36 @@ def start_background_loops(
                 try:
                     candidate_loop.stop()
                 except Exception:
-                    _LOGGER.exception("partially started worker-step readiness loop failed to stop")
+                    _LOGGER.exception(
+                        "partially started worker-step readiness loop failed to stop"
+                    )
             if candidate_schedule_loop is not None:
                 try:
                     candidate_schedule_loop.stop()
                 except Exception:
-                    _LOGGER.exception("partially started scheduled Ticket loop failed to stop")
+                    _LOGGER.exception(
+                        "partially started scheduled Ticket loop failed to stop"
+                    )
             if candidate_notification_loop is not None:
                 try:
                     candidate_notification_loop.stop()
                 except Exception:
-                    _LOGGER.exception("partially started notification loop failed to stop")
+                    _LOGGER.exception(
+                        "partially started notification loop failed to stop"
+                    )
+            if candidate_manager_wake_loop is not None:
+                try:
+                    candidate_manager_wake_loop.stop()
+                except Exception:
+                    _LOGGER.exception(
+                        "partially started manager wake loop failed to stop"
+                    )
             release_machine_lock(config.dispatcher_lock_path)
         else:
             worker_step_readiness_loop = candidate_loop
             scheduled_ticket_loop = candidate_schedule_loop
             notification_loop = candidate_notification_loop
+            manager_wake_loop = candidate_manager_wake_loop
             stop_waking_on_change = candidate_unsubscribe
             lock_path = config.dispatcher_lock_path
 
@@ -175,6 +212,7 @@ def start_background_loops(
         shutdown_grace_seconds=float(config.shutdown_grace_seconds),
         scheduled_ticket_loop=scheduled_ticket_loop,
         notification_loop=notification_loop,
+        manager_wake_loop=manager_wake_loop,
     )
     _active = loops
     return loops

@@ -1,23 +1,19 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { labelize } from "../lib/ui";
   import {
-    ceilingOptionsFor,
     fieldLabelFor,
     fieldStageVisualStateFor,
     gatingFieldFor,
     lifecycleFor,
     stageLabelFor
   } from "../lib/lifecycle";
-  import {
-    holderFromValue,
-    holderOptionsFor,
-    holderValue
-  } from "../lib/ceilingHolder";
+  import { holderOptionsFor, holderValue } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -29,6 +25,7 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
+  import CeilingPicker from "../components/CeilingPicker.svelte";
   import ClampedText from "../components/ClampedText.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -151,6 +148,10 @@
   let heldFile = $state<ManagedFileTarget | null>(null);
   let shownFile = $derived(onOpenFile ? openFile : heldFile);
   let artifactReloadSignal = $state(0);
+  // Which stages the reader has opened or closed with their own hands, by field name. A
+  // stage that settles moves into the fold above and is rebuilt there, so the answer
+  // cannot live in the stage. It lives here, where it outlives the move.
+  let readerStageFolds = new SvelteMap<string, boolean>();
 
   /** Show a file on this screen, or close the one it is showing.
    *
@@ -298,10 +299,6 @@
     return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
   }
 
-  function userOwnsCurrentStage(detail: TicketDetail): boolean {
-    return lc?.stageOwnershipMode[detail.stage] === "user";
-  }
-
   function currentStageRunLabel(detail: TicketDetail): string | null {
     if (detail.blocked || detail.ticket_status === "blocked") return null;
     if (detail.awaiting_approval) return "awaiting approval";
@@ -445,33 +442,19 @@
                   <span class="disclosure-chev" aria-hidden="true"></span>
                 </summary>
                 <div class="ticket-leash-menu" role="menu">
-                  {#if detail.pending_proposal === null}
-                    <select
-                      class="ticket-leash-select"
-                      data-scope-ceiling
-                      aria-label="Ceiling stage"
-                      value={detail.ceiling}
-                      onchange={(event) => void updateScope({ ceiling: event.currentTarget.value })}
-                    >
-                      {#each ceilingOptionsFor(lc, detail.stage) as option}
-                        <option value={option.value}>{option.label}</option>
-                      {/each}
-                    </select>
-                  {/if}
-                  <select
-                    class="ticket-leash-select"
-                    data-scope-holder
-                    aria-label="Who holds the ceiling"
-                    value={holderValue(detail.ceiling_holder)}
-                    onchange={(event) =>
-                      void updateScope({
-                        ceiling_holder: holderFromValue(event.currentTarget.value, ticketSprintItem)
-                      })}
-                  >
-                    {#each holderOptionsFor(ticketSprintItem, detail.ceiling_holder) as option}
-                      <option value={option.value}>{option.label}</option>
-                    {/each}
-                  </select>
+                  <CeilingPicker
+                    newStage={detail.stage}
+                    lifecycle={lc}
+                    ceiling={detail.ceiling}
+                    holder={detail.ceiling_holder}
+                    sprintItem={ticketSprintItem}
+                    stageLocked={detail.pending_proposal !== null}
+                    onComplete={(ceiling, holder) => void updateScope(
+                      detail.pending_proposal === null
+                        ? { ceiling, ceiling_holder: holder }
+                        : { ceiling_holder: holder }
+                    )}
+                  />
                 </div>
               </details>
             {/if}
@@ -536,9 +519,11 @@
                         ceiling={detail.ceiling}
                         sprintItem={ticketSprintItem}
                         emptyText={emptyTicketFieldText}
-                        editableCurrentValue={userOwnsCurrentStage(detail)}
+                        editableCurrentValue={detail.assigned}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
+                        readerLeftItOpen={readerStageFolds.get(name) ?? null}
+                        onReaderToggle={(open) => readerStageFolds.set(name, open)}
                         contextRow={name === "brief" && kickoffCardShowsContextRow
                           ? kickoffContextRow
                           : undefined}
@@ -571,9 +556,11 @@
                   ceiling={detail.ceiling}
                   sprintItem={ticketSprintItem}
                   emptyText={emptyTicketFieldText}
-                  editableCurrentValue={userOwnsCurrentStage(detail)}
+                  editableCurrentValue={detail.assigned}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
+                  readerLeftItOpen={readerStageFolds.get(name) ?? null}
+                  onReaderToggle={(open) => readerStageFolds.set(name, open)}
                   contextRow={name === "brief" && kickoffCardShowsContextRow
                     ? kickoffContextRow
                     : undefined}

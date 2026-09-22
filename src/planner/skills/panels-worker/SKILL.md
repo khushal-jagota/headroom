@@ -11,8 +11,18 @@ single Stage in front of you.
 
 ## Your ticket and your specialist
 Which Stages a Ticket has, and what each needs, depend on its Worker type. Run
-`panels worker my-ticket` — it names your worker skill and reports the current
+`panels ticket show` — it names your worker skill and reports the current
 Stage and ceiling. Invoke that skill.
+
+A wake message does not carry your Ticket. It carries only what you cannot get for
+yourself: which Stage you are at, why a proposal came back, and whether your context was
+compacted. Everything else is a read. Start every step with
+`panels ticket show brief,guidance` for the brief and any direction recorded on the
+Ticket, then ask the manifest for whatever else the Stage needs.
+
+If a message tells you that your context was compacted, that is Panels telling you
+something the conversation cannot: the text you were working from is gone. Re-read the
+Ticket and re-load this skill and your specialist skill before you continue.
 
 ### Who owns the current Stage
 
@@ -33,15 +43,17 @@ from the Ticket's ceiling.
 
 Everything runs through the `panels` command — `panels --help` for full usage. The tools you use:
 
-- **`panels worker my-ticket [part,part]`** — read your Ticket header and part
+- **`panels ticket show [part,part]`** — read your Ticket header and part
   manifest, or expand named saved fields, `proposal`, `recap`, and `guidance`. The header says who you are, the current
   Stage and ceiling.
 - **`panels ticket show <id> [part,part]`** — read another Ticket's header and part
   manifest, or expand named saved fields, `proposal`, `recap`, and `guidance`.
-- **`panels worker propose <id>`**, piping the proposal text on stdin — answer your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body arrives on stdin only, and it carries only what is being proposed. Below the ceiling the answer settles the field and the Ticket advances. At the ceiling it parks for approval.
-- **`panels worker recap <id>`**, piping the recap text on stdin — keep the running recap current. It is a separate write from proposing, so update it as you work.
-- **`panels worker request-help [ticket-id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, or confirmed Worker errors.
-- **`panels worker note <id>`**, piping the guidance text on stdin — replace the Ticket’s durable guidance document. Add `--append` to preserve the existing guidance and add new text.
+- **`panels ticket proposal [id] submit`**, piping the proposal text on stdin — answer your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body carries only what is proposed. Below the ceiling the answer settles the field and advances the Ticket. At the ceiling it parks for approval.
+  While your proposal is pending, run the same command again to replace the pending draft
+  for that Stage. Re-propose when you find a mistake or receive steering. Do not wait for
+  rejection first.
+- **`panels ticket edit [id] --input-json -`** — update the recap or guidance, alone or in one batch with other permitted Ticket fields. Keep the recap current as a separate edit from the proposal.
+- **`panels ticket request-help [id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, or confirmed Worker errors.
 - **`panels send-message --owner --message "…"`** — send one addressed chat message to
   the owner through this Ticket's current conversation. Use the same command with exactly
   one of `--chief`, `--ticket <id>`, or `--sprint-item <id>` to message another employee.
@@ -56,8 +68,8 @@ ends. The same words anywhere else are not authenticated. Reply even when the ca
 Ticket action already communicates the result. A missing-reply marker remains the system
 fallback, not an acceptable substitute for the explicit send.
 
-All four write commands take their text on stdin only; there is no file-path option, since it once let two Workers sharing one `/tmp` overwrite each other's text before it reached the ticket. Pipe or redirect text in, for example `echo "…" | panels worker propose <id>` or a heredoc into stdin.
-- **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the
+Proposal and help text arrive on stdin. Structured edits and creation read one JSON object from stdin with `--input-json -`.
+- **`panels ticket create --input-json -`** — create a Ticket when the
   current approved step spins off a new one. Before creating it, load and follow
   `panels-ticket-creation`; this Worker skill still owns the current Stage's authority
   and approved ceiling.
@@ -75,7 +87,7 @@ All four write commands take their text on stdin only; there is no file-path opt
 - **Do not over-specify fields.** 
 - **Explain your proposal judgment in chat.** After you propose a gated field, your chat reply should very briefly explain why you shaped the proposal that way. Do not merely announce that the field is ready, repeat which field you proposed, or restate approval/status details, the UI already shows this. 
 - **Use recap as cold-user orientation.** The recap is not a work log. Keep it short and scannable, so a cold user can read it alongside the title and understand what the ticket is and what was done before this proposal to refresh their mind before reviewing this proposal.
-- **Preserve direct user guidance.** When the user gives direction during a worker step that should survive the turn, add it to the Ticket guidance with `panels worker note <id> --append`. Keep this document for user direction, not a work log. Automatic step prompts include current guidance; saving it does not send a chat message. Read it with `panels worker my-ticket guidance` when continuing another conversation turn.
+- **Preserve direct user guidance.** When the user gives direction that must survive the turn, append it with `panels ticket edit --input-json -` and the `guidance_append` key. Read it with `panels ticket show guidance` at the start of every step.
 
 ### Ticket-owned planning artifacts
 

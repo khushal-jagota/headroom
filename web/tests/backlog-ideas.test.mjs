@@ -7,13 +7,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
 const outputDirectory = await mkdtemp(join(tmpdir(), "panels-backlog-ideas-"));
-const hostPath = join(webRoot, "tests", `.backlog-ideas-host-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.backlog-ideas-main-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.backlog-ideas-index-${process.pid}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `backlog-ideas-host-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `backlog-ideas-main-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `backlog-ideas-index-${process.pid}.html`);
 let serverProcess;
 
 try {
@@ -148,6 +150,20 @@ try {
     if (path === "/api/items/item_offboard/workspace") {
       return json({
         ...finalItem,
+        awaiting_reply: false,
+        awaiting_answer: false,
+        awaiting_approval: false,
+        awaiting_agent_approval: false,
+        assigned: false,
+        agent_state: "idle",
+        ticket_rollup: {
+          awaiting_reply: false,
+          awaiting_answer: false,
+          awaiting_approval: false,
+          awaiting_agent_approval: false,
+          assigned: false,
+          agent_state: "idle"
+        },
         kind: "normal",
         body: "The off-board brief remains readable.",
         committed_sprints: [],

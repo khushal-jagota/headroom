@@ -27,8 +27,8 @@ One screen per part of the system:
 - **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
   walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
   Proposal items add their labelled recap, ask, approval, and send-back controls.
-  Non-owner holders inspect canonical Ticket state through the normal Chief, Sprint Item,
-  and Ticket views; no proposal wake, retry, failure surfacing, or owner fallback remains.
+  A proposal routed to a Sprint Item manager also creates a durable manager wake. Other
+  non-owner holders inspect canonical Ticket state through the normal Chief and Ticket views.
   Keyboard shortcuts drive the actions that apply to the current item when the
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
   approve button sends the next ceiling and owner holder together. Send-back
@@ -44,16 +44,17 @@ One screen per part of the system:
   The Chief of Staff row leads, and under it a selector chooses one of two views
   over the same tickets: **Tickets** or **Sprint Items**.
 
-  The Tickets view starts with three owner-attention groups in this order: Needs your
-  approval, Yours, and Messages. Each name says whose the work is. Needs your approval
-  is a proposal the owner himself holds; a proposal parked on a supervisor or another
-  ticket is a different fact, named Awaiting an agent's approval, and it is never one of
-  the three. Yours is a stage the ticket's worker type gives to the user rather than to
-  a worker. A ticket appears in only its first applicable group.
-  A ticket whose worker broke is named Errored before any of the three, because a broken
-  worker wants the reader more than the request it was carrying. Broken means the ticket
-  is errored, or its last turn ended failed. Otherwise approval takes precedence over
-  assignment, and assignment takes precedence over a reply. Empty groups are not drawn.
+  The Tickets view starts with four owner-attention groups in this order: Needs your
+  approval, Needs your answer, Yours, and Messages. Each name says whose the work is.
+  Needs your approval is a proposal the owner himself holds; a proposal parked on a
+  supervisor or another ticket is a different fact, named Awaiting an agent's approval,
+  and it is never one of the four. Needs your answer is a worker stopped on a permission
+  request or a question, which is why it sits above a stage that is merely the owner's
+  to do. Yours is a stage the ticket's worker type gives to the user rather than to a
+  worker. A ticket appears in only its first applicable group. Owner approval, an owner
+  answer, assignment, and an unread reply take precedence in that order. Errored follows
+  those groups. Broken means the ticket is errored, or its last turn ended failed. Empty
+  groups are not drawn.
   Every ticket outside these groups follows in the existing status order, so no ticket
   becomes unreachable.
 
@@ -67,11 +68,12 @@ One screen per part of the system:
   newest first.
 
   The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
-  shows only its non-empty Needs your approval, Yours, and Messages child groups. Quiet
+  shows only its non-empty Needs your approval, Needs your answer, Yours, and Messages
+  child groups. Quiet
   child tickets remain available in the Tickets view and the Item workspace. An Item
   shows those groups, and their rows, whether or not it is the Item the reader has
   opened. The rail therefore says what needs the reader before anything is clicked, and
-  an Item with none of the three shows its title and its mark alone. Clicking anywhere in
+  an Item with none of the four shows its title and its mark alone. Clicking anywhere in
   the box selects the Item and opens its workspace beside the rail. That is all a click on
   an Item ever does: no click shuts an Item. A reader inside one of its tickets clicks
   the Item to come back to it. The groups sit inside the Item without boxes of their own.
@@ -97,13 +99,17 @@ One screen per part of the system:
   leaves that Item open around it — the address names the Item as well as the ticket —
   and selection moves to the ticket. An open Item carries no selection of its own.
 
-  Every Ticket row keeps its mark slot. A reply waiting for Khushal gives it the filled
-  blue dot. Otherwise active agent work gives it the spinner. Idle and error states
-  leave the slot empty. An Item title rolls up its own facts and every child ticket. A
-  reply waiting for Khushal gives it the filled blue dot. Otherwise any active work gives
-  it the spinner. A waiting reply takes precedence over active work. Approval and
-  assignment alone leave the Item slot empty. The empty Item slot stays in
-  place, so the title layout does not move when its state changes.
+  Every Ticket row and Item title uses one activity mark. A needed approval or answer is
+  a white dot. An unread reply is a blue dot. Active agent work is a spinner. The mark is
+  empty when none applies. That precedence is white, blue, spinner, then empty. The mark
+  never changes the Ticket's group. A Ticket under Yours can therefore show a spinner.
+  An Item title applies the same rule across its supervisor and every child Ticket.
+  The empty mark slot stays in place, so the title layout does not move.
+
+  When an Item is open, the rail Item and detail pane read the same Item workspace
+  snapshot. A change signal refreshes that one query for both renderers. The rail keeps
+  its compact four-group subset. The detail keeps every Ticket split into Today and
+  Other Tickets. Shared Tickets have identical groups, marks, labels, counts, and order.
   A ticket without a Sprint Item appears in the Tickets view like any other. Every
   Ticket row is the shared Ticket row and uses the same blue dot and spinner. It carries
   its priority tile in the Tickets view and drops it inside a Sprint Item, where the Item
@@ -179,11 +185,11 @@ One screen per part of the system:
   A compact artifact strip is the first element under the header when lifecycle fields
   link to managed Ticket or Sprint Item files. It reads the pending proposal first, then
   the lifecycle fields from latest to earliest. It removes duplicate links. The same strip
-  shows an Outcome's own files, where a folder is one chip. A folder with no index opens
+  shows a Sprint Item's own files, where a folder is one chip. A folder with no index opens
   where it stands and its files follow it along the strip.
 - **Sprint** — one tracking overview that presents Projects and their Sprint Items,
   plus a dedicated view for each Item and a separate documents page. The overview shows
-  Item progress as `done/total`. One collapsed **No Outcome** row follows all Projects
+  Item progress as `done/total`. One collapsed **No Sprint Item** row follows all Projects
   when unclassified Tickets exist. It opens their canonical Ticket links. An Item view joins today's Day membership
   to split its Tickets into Today and Other Tickets. Each section uses the same status
   groups and includes its own Done group. Project priority
@@ -191,7 +197,7 @@ One screen per part of the system:
   Review. See `sprints.md`.
 - **Backlog** — active unscheduled Tickets as bounded summaries. Each row shows only its
   title and Project chip, and opens its canonical Workspace screen. The page does not
-  request Outcomes. Its compact form creates an ordinary explicitly unscheduled Ticket.
+  request Sprint Items. Its compact form creates an ordinary explicitly unscheduled Ticket.
 - **Ideas** — remembered possibilities with an optional note and Project. See
   `backlog-and-ideas.md`.
 - **Feedback** — open notes and handled history. Open notes link to their source page.

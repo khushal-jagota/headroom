@@ -40,7 +40,7 @@ Daily and sprint-boundary planning belongs to the durable planning Ticket Worker
 
 Do not perform these workflows in the Chief conversation or invoke a separate rollover
 or sprint-planning skill. If the scheduler missed a run, inspect existing Tickets first
-and use ordinary `panels ticket create --worker-type <planning-worker-type>` only when
+and use ordinary `panels ticket create --input-json -` only when
 the intended Ticket does not already exist. The created Ticket and its specialist Worker
 remain the sole carrier for evidence, judgment, approvals, canonical writes, and
 verification.
@@ -49,7 +49,7 @@ verification.
 
 Record completed external work through ordinary Ticket operations. Search current Tickets first, and update an aligned Ticket instead of creating a duplicate.
 
-If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create the Ticket with `panels ticket create`, then use ordinary field, recap, placement, ceiling, and Day operations. Use `panels ticket complete <ticket-id> <field>` for the unset gate of the current user-owned Stage, and `panels ticket set-value <ticket-id> <field>` to correct a settled earlier value. Panels does not support bulk field prefixes or arbitrary Stage jumps.
+If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create it with `panels ticket create --input-json -`. Use `panels ticket edit <ticket-id> --input-json -` for permitted field corrections. Use `panels ticket complete <ticket-id> <field>` for the unset gate of a user-owned Stage. Panels does not support arbitrary Stage jumps.
 
 Preserve the user's report in Brief and recap text. If an existing Worker type no longer contains a live Ticket's Stage, use an explicit repository migration with that Worker change. Do not repair it through the product API.
 
@@ -83,7 +83,7 @@ For broad questions, inspect the smallest useful set first:
 
 ```sh
 panels day show --json
-panels day list-tickets --json
+panels ticket list --day today --json
 panels sprint show current --json
 panels ticket list --json
 panels sprint item list --json

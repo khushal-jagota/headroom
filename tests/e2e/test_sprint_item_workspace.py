@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections.abc import Callable
 
 import httpx
-from playwright.sync_api import BrowserContext, Page
+from playwright.sync_api import BrowserContext, Page, Route, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 
 
@@ -55,6 +56,205 @@ def _store_supervisor_conversation(
             ),
         ),
     )
+
+
+def test_workspace_rail_and_item_detail_share_one_live_snapshot(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    api: ApiHelper,
+) -> None:
+    project = _post(
+        server,
+        "/api/projects",
+        {"name": "Mirror project", "summary": "", "priority": "P1"},
+    )
+    item = _post(
+        server,
+        "/api/items",
+        {"title": "Mirror Item", "project_id": project["id"], "priority": "P1"},
+    )
+    ticket = _post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Mirror Ticket",
+            "worker_type": "personal",
+            "sprint_item_id": item["id"],
+        },
+    )
+    quiet = {
+        "awaiting_reply": False,
+        "awaiting_answer": False,
+        "awaiting_approval": False,
+        "awaiting_agent_approval": False,
+        "assigned": False,
+        "agent_state": "idle",
+    }
+    mutable = {
+        "awaiting_reply": False,
+        "assigned": True,
+        "agent_state": "working",
+    }
+
+    def attention() -> JsonObject:
+        return {**quiet, **mutable}
+
+    def workspace_ticket() -> JsonObject:
+        return {
+            "id": ticket["id"],
+            "title": "Mirror Ticket",
+            "stage": "needs_brief",
+            "priority": "P1",
+            "activity_at": 20,
+            "ticket_status": "empty",
+            "waiting_to_closeout": False,
+            "has_pending_proposal": False,
+            "gating_field": "brief",
+            "blocked": False,
+            "worker_type": "personal",
+            "day_ids": [],
+            "sprint_id": None,
+            "sprint_name": None,
+            **attention(),
+        }
+
+    def workspace_payload() -> JsonObject:
+        return {
+            "id": item["id"],
+            "title": "Mirror Item",
+            "body": "One source for both panes.",
+            "priority": "P1",
+            "deadline": None,
+            "project_id": project["id"],
+            "project": "Mirror project",
+            "kind": "normal",
+            "created_at": 10,
+            "updated_at": 10,
+            "committed_sprints": [],
+            "supervisor": {
+                "agent_key": item["supervisor"]["agent_key"],
+                "conversation_id": None,
+                "launch_configuration": item["supervisor"]["launch_configuration"],
+            },
+            "planning_day_id": "day_2026-09-22",
+            "today_ticket_ids": [ticket["id"]],
+            "tickets": [workspace_ticket()],
+            "ticket_rollup": attention(),
+            "artifacts": [],
+            "conversation_history": [],
+            **quiet,
+        }
+
+    def board_payload() -> JsonObject:
+        row = {
+            **workspace_ticket(),
+            "deadline": None,
+            "project_id": project["id"],
+            "project": "Mirror project",
+            "group_project_id": project["id"],
+            "group_project": "Mirror project",
+            "stage_label": "Brief",
+            "gating_field_label": "Brief",
+            "is_done": False,
+            "conversation_id": None,
+            "employee_backend": "codex",
+            "sprint_item_id": item["id"],
+            "sprint_item_title": "Mirror Item",
+            "sprint_item_priority": "P1",
+        }
+        summary = {
+            "id": item["id"],
+            "created_at": 10,
+            "conversation_id": None,
+            "ticket_rollup": attention(),
+            **quiet,
+        }
+        return {"columns": [{"stage": "needs_brief", "cards": [row]}], "sprint_items": [summary]}
+
+    context = context_factory()
+
+    def mirror_reads(route: Route) -> None:
+        request_url = route.request.url
+        if request_url.split("?", 1)[0].endswith("/api/board"):
+            route.fulfill(json=board_payload())
+            return
+        if request_url.split("?", 1)[0].endswith(f"/api/items/{item['id']}/workspace"):
+            route.fulfill(json=workspace_payload())
+            return
+        route.continue_()
+
+    context.route("**/api/**", mirror_reads)
+    page = open_page(
+        context,
+        server,
+        f"#/workspace/item/{item['id']}",
+        f'[data-sprint-item-workspace="{item["id"]}"]',
+    )
+    left_item = page.locator(f'[data-sprint-item="{item["id"]}"]')
+    right_item = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
+    left_ticket = left_item.locator(f'[data-ticket-id="{ticket["id"]}"]')
+    right_ticket = right_item.locator(f'[data-sprint-ticket-id="{ticket["id"]}"]')
+
+    for row in (left_ticket, right_ticket):
+        row.wait_for(timeout=WAIT_MS)
+        assert row.get_attribute("data-workspace-mark") == "working"
+    assert left_item.locator('[data-bucket-key="assigned"]').count() == 1
+    assert right_item.locator('[data-workspace-group="assigned"]').count() == 1
+    assert left_item.locator(".board-workspace-item-head [data-workspace-mark]").get_attribute(
+        "data-workspace-mark"
+    ) == "working"
+    assert right_item.locator(".sprint-workspace-title-mark").get_attribute(
+        "data-workspace-mark"
+    ) == "working"
+
+    before = int(page.evaluate("() => window.__plannerDebug.flushes"))
+    mutable.update(awaiting_answer=True, awaiting_reply=True, agent_state="working")
+    api.direct_patch(server, f"/api/tickets/{ticket['id']}", {"title": "Signal mirror refresh"})
+    page.wait_for_function(
+        "previous => window.__plannerDebug.flushes > previous",
+        arg=before,
+        timeout=WAIT_MS,
+    )
+    for row in (left_ticket, right_ticket):
+        row.wait_for(timeout=WAIT_MS)
+        expect(row).to_have_attribute(
+            "data-workspace-mark",
+            "owner-answer",
+            timeout=WAIT_MS,
+        )
+    assert left_item.locator(".board-workspace-item-head [data-workspace-mark]").get_attribute(
+        "data-workspace-mark"
+    ) == "owner-answer"
+    assert right_item.locator(".sprint-workspace-title-mark").get_attribute(
+        "data-workspace-mark"
+    ) == "owner-answer"
+
+    before = int(page.evaluate("() => window.__plannerDebug.flushes"))
+    mutable.update(awaiting_answer=False, agent_state="idle")
+    api.direct_patch(
+        server,
+        f"/api/tickets/{ticket['id']}",
+        {"title": "Signal second mirror refresh"},
+    )
+    page.wait_for_function(
+        "previous => window.__plannerDebug.flushes > previous",
+        arg=before,
+        timeout=WAIT_MS,
+    )
+    for row in (left_ticket, right_ticket):
+        expect(row).to_have_attribute(
+            "data-workspace-mark",
+            "reply",
+            timeout=WAIT_MS,
+        )
+
+    page.reload()
+    right_ticket.wait_for(timeout=WAIT_MS)
+    assert left_ticket.get_attribute("data-workspace-mark") == "reply"
+    assert right_ticket.get_attribute("data-workspace-mark") == "reply"
+    if evidence_path := os.environ.get("PANELS_E2E_EVIDENCE_PATH"):
+        page.screenshot(path=evidence_path, full_page=True)
 
 
 def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
@@ -223,13 +423,14 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     backlog_title.wait_for(timeout=WAIT_MS)
     backlog_placement.wait_for(state="attached", timeout=WAIT_MS)
     assert backlog_placement.text_content() == "Backlog"
-    assert backlog_row.get_attribute("data-ticket-state") == "current-assigned"
+    # The group says that the agent owns the work. The empty mark says no turn runs now.
+    assert backlog_row.get_attribute("data-ticket-state") == "upcoming"
     assert backlog_row.get_attribute("href") == (
         f"#/workspace/item/{item['id']}/{backlog_ticket['id']}"
     )
     assert backlog_row.locator("xpath=ancestor::details[1]").get_attribute(
         "data-workspace-group"
-    ) == "current-assigned"
+    ) == "agent"
     desktop_geometry = page.evaluate(
         """([rowSelector]) => {
             const row = document.querySelector(rowSelector);
@@ -248,8 +449,8 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     assert remaining.get_attribute("open") is None
     remaining.locator("> summary").click()
     off_today = page.locator(f'[data-sprint-ticket-id="{review_ticket["id"]}"]')
-    assert off_today.get_attribute("data-ticket-state") == "current-awaiting-approval"
-    off_today.get_by_label("needs your approval").wait_for(timeout=WAIT_MS)
+    assert off_today.get_attribute("data-ticket-state") == "needs-me"
+    off_today.get_by_label("Needs your approval").wait_for(timeout=WAIT_MS)
     artifacts = page.locator("[data-artifact-strip]")
     artifacts.wait_for(timeout=WAIT_MS)
     # Eleven files, nine things to open: the site is its index, and the stylesheet beside

@@ -24,22 +24,37 @@ from tests.support.ticket_progress import advance_ticket
 from planner.conversation.contracts import (
     ConversationStartRequest,
     ConversationSystem,
+    HeldPrompt,
     PromptDeliveryFate,
+    PromptDeliveryInjected,
     PromptDeliveryMode,
+    PromptDeliveryQueued,
+    PromptDeliveryRefusalReason,
+    PromptDeliveryRefused,
+    PromptDeliveryStarted,
+    PromptDeliveryUncertain,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.clock import TestClock
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
+from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.runtime import worker_step_readiness
+from planner.runtime.logic.worker_step_prompt import (
+    MEMORY_LOSS_NOTICE,
+    READ_YOUR_TICKET_COMMAND,
+)
 from planner.runtime.worker_step_readiness_loop import (
+    WorkerStepDeliveryFate,
     WorkerStepReadinessLoop,
+    WorkerStepStartResult,
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets import revision_feedback
-from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus
+from planner.tickets import revision_feedback, worker_restart
+from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
@@ -67,10 +82,11 @@ class _World:
         self,
         *,
         title: str = "T",
-        kickoff_note: str = "",
+        kickoff_note: str = "Agreed brief.",
         worker_type: str = "coding",
         conversation_id: str | None = None,
         on_today: bool = True,
+        next_ceiling: str = "none",
     ) -> str:
         with self.connect() as conn:
             ticket = tickets_data.create_ticket(
@@ -88,7 +104,7 @@ class _World:
                 field="brief",
                 principal=OWNER_PRINCIPAL,
                 now=0,
-                next_ceiling="none",
+                next_ceiling=next_ceiling,
                 next_holder=OWNER_PRINCIPAL,
             )
             if conversation_id is not None:
@@ -99,6 +115,45 @@ class _World:
             if on_today:
                 days_data.add_day_ticket(conn, TODAY_DAY_ID, ticket.id, 0)
         return ticket.id
+
+    def record_compacted_conversation(
+        self,
+        conversation_id: str,
+        *,
+        last_worker_step_sequence: int,
+        compacted_through: int,
+    ) -> None:
+        """Write the conversation rows the in-memory system does not keep.
+
+        The boundary is read straight off the conversation record, so a test that wants
+        one states it: a worker-step message at one sequence, and a compaction past it.
+        """
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, "
+                "access, created_at, automatically_compacted_through_sequence) VALUES "
+                "(?, 'claude', '/tmp', 'full', 0, ?)",
+                (conversation_id, compacted_through),
+            )
+            conn.execute(
+                "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, "
+                "created_at) VALUES (?, ?, 'prompt', ?, 0)",
+                (
+                    conversation_id,
+                    last_worker_step_sequence,
+                    '{"sender_message_id": "worker_step_message_earlier"}',
+                ),
+            )
+
+    def remove_from_today(self, ticket_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "DELETE FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
+                (TODAY_DAY_ID, ticket_id),
+            )
+
+    def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
+        return asyncio.run(self.conversations.held_prompts(conversation_id))
 
     def start_conversation(self, conversation_id: str) -> None:
         asyncio.run(
@@ -134,7 +189,7 @@ class _World:
                 "FROM worker_step_skill_bindings ORDER BY skill_role"
             ).fetchall()
 
-    def start_step(self, ticket_id: str) -> bool:
+    def start_step(self, ticket_id: str) -> WorkerStepStartResult:
         return asyncio.run(
             start_ready_worker_step(
                 ticket_id,
@@ -147,9 +202,79 @@ class _World:
         )
 
 
+class _MutateOnKillConversationSystem:
+    def __init__(
+        self,
+        base: InMemoryConversationSystem,
+        mutate: Callable[[], None],
+    ) -> None:
+        self.base = base
+        self.mutate = mutate
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return await self.base.is_running(conversation_id)
+
+    async def kill(self, conversation_id: str) -> None:
+        self.mutate()
+        await self.base.kill(conversation_id)
+
+
+class _PauseKillConversationSystem:
+    def __init__(self, base: InMemoryConversationSystem) -> None:
+        self.base = base
+        self.kill_started = asyncio.Event()
+        self.release_kill = asyncio.Event()
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return await self.base.is_running(conversation_id)
+
+    async def kill(self, conversation_id: str) -> None:
+        self.kill_started.set()
+        await self.release_kill.wait()
+        await self.base.kill(conversation_id)
+
+
 @pytest.fixture
 def world(tmp_path: Path) -> _World:
     return _World(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("fate", "started", "delivery_fate"),
+    [
+        (PromptDeliveryStarted(), True, "started"),
+        (PromptDeliveryQueued(queue_position=3), True, "queued"),
+        (PromptDeliveryInjected(), True, "injected"),
+        (
+            PromptDeliveryRefused(PromptDeliveryRefusalReason.write_to_backend_failed),
+            False,
+            "refused",
+        ),
+        (PromptDeliveryUncertain(), False, "uncertain"),
+    ],
+)
+def test_worker_step_start_result_keeps_each_delivery_fate(
+    fate: PromptDeliveryFate, started: bool, delivery_fate: WorkerStepDeliveryFate
+) -> None:
+    assert WorkerStepStartResult.from_delivery_fate(fate) == WorkerStepStartResult(
+        started=started,
+        delivery_fate=delivery_fate,
+    )
+
+
+@pytest.mark.parametrize(
+    ("started", "delivery_fate"),
+    [
+        (True, None),
+        (True, "uncertain"),
+        (False, "started"),
+    ],
+)
+def test_worker_step_start_result_rejects_a_false_success_claim(
+    started: bool, delivery_fate: WorkerStepDeliveryFate | None
+) -> None:
+    with pytest.raises(ValueError, match="started must match the delivery fate"):
+        WorkerStepStartResult(started=started, delivery_fate=delivery_fate)
 
 
 # --- the claim -----------------------------------------------------------------
@@ -205,7 +330,7 @@ def test_an_occupied_worker_is_skipped_without_touching_the_ticket(world: _World
         )
     )
 
-    assert world.start_step(ticket_id) is False
+    assert world.start_step(ticket_id) == WorkerStepStartResult(started=False)
     assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     # Only the turn that was already running ever reached the backend.
     assert len(world.conversations.backend_prompt_writes("conv-busy")) == 1
@@ -219,7 +344,10 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     world.conversations.arm_backend_write_failure("conv-refuse")
 
     with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
-        assert world.start_step(ticket_id) is False
+        result = world.start_step(ticket_id)
+
+    assert result.started is False
+    assert result.delivery_fate == "refused"
 
     assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
@@ -229,6 +357,363 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     assert "conv-refuse" in message
     assert "write_to_backend_failed" in message
     assert world.skill_bindings() == []
+
+
+def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
+    world: _World, caplog: pytest.LogCaptureFixture
+) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-uncertain")
+    world.start_conversation("conv-uncertain")
+
+    with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
+        started = asyncio.run(
+            start_ready_worker_step(
+                ticket_id,
+                connect_database=world.connect,
+                conversation_system=cast(
+                    ConversationSystem,
+                    _UncertainConversationSystem(world.conversations),
+                ),
+                worker_type_registry=configured_worker_type_registry(),
+                planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                now=world.clock.now_unix,
+            )
+        )
+
+    assert started.started is False
+    assert started.delivery_fate == "uncertain"
+    ticket = world.ticket(ticket_id)
+    assert ticket.worker_step_claim is WorkerStepClaim.errored
+    assert ticket.ticket_status is TicketStatus.errored
+    assert world.conversations.backend_prompt_writes("conv-uncertain") == ()
+    assert world.skill_bindings() == []
+    with world.connect() as conn:
+        assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
+        uncertain_restart = asyncio.run(
+            worker_restart.restart_worker(
+                world.conversations,
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                write_employee_configuration=None,
+                start_worker_step=lambda planning_day_id: start_ready_worker_step(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=cast(
+                        ConversationSystem,
+                        _UncertainConversationSystem(world.conversations),
+                    ),
+                    worker_type_registry=configured_worker_type_registry(),
+                    planning_day_id_resolver=lambda: planning_day_id,
+                    now=world.clock.now_unix,
+                ),
+                resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                now=world.clock.now_unix,
+            )
+        )
+        assert uncertain_restart["started"] is False
+        assert uncertain_restart["delivery_fate"] == "uncertain"
+        assert uncertain_restart["not_started_because"] is None
+        assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.errored
+
+        restarted = asyncio.run(
+            worker_restart.restart_worker(
+                world.conversations,
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                write_employee_configuration=None,
+                start_worker_step=lambda planning_day_id: start_ready_worker_step(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=cast(ConversationSystem, world.conversations),
+                    worker_type_registry=configured_worker_type_registry(),
+                    planning_day_id_resolver=lambda: planning_day_id,
+                    now=world.clock.now_unix,
+                ),
+                resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                now=world.clock.now_unix,
+            )
+        )
+    assert restarted["started"] is True
+    assert restarted["delivery_fate"] == "started"
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert len(errors) == 2
+    assert all("delivery was uncertain" in error.getMessage() for error in errors)
+
+
+def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _World) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-restart-race")
+    world.start_conversation("conv-restart-race")
+    assert world.start_step(ticket_id).started is True
+
+    def complete_worker_step() -> None:
+        with world.connect() as other_conn:
+            tickets_data.file_current_proposal(
+                other_conn,
+                ticket_id,
+                body="Completed while restart waited.",
+                principal=Principal(PrincipalKind.ticket, ticket_id),
+                now=world.clock.now_unix(),
+            )
+
+    async def unexpected_start(_planning_day_id: str) -> WorkerStepStartResult:
+        raise AssertionError("a moved Ticket must not start another worker step")
+
+    with world.connect() as conn:
+        with pytest.raises(PlannerError) as raised:
+            asyncio.run(
+                worker_restart.restart_worker(
+                    cast(
+                        ConversationSystem,
+                        _MutateOnKillConversationSystem(
+                            world.conversations,
+                            complete_worker_step,
+                        ),
+                    ),
+                    conn,
+                    OWNER_PRINCIPAL,
+                    ticket_id,
+                    write_employee_configuration=None,
+                    start_worker_step=unexpected_start,
+                    resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                    now=world.clock.now_unix,
+                )
+            )
+
+    assert raised.value.code is ErrorCode.already_running
+    ticket = world.ticket(ticket_id)
+    assert ticket.pending_proposal is not None
+    assert ticket.pending_proposal.body == "Completed while restart waited."
+    assert ticket.worker_step_claim is WorkerStepClaim.none
+    assert ticket.conversation_id == "conv-restart-race"
+
+
+def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _World) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-restart-error-race")
+    world.start_conversation("conv-restart-error-race")
+    assert world.start_step(ticket_id).started is True
+    claimed = world.ticket(ticket_id)
+    with world.connect() as conn:
+        assert tickets_data.mark_worker_step_claim_errored(
+            conn,
+            ticket_id,
+            expected_claim=claimed.worker_step_claim,
+            expected_claim_revision=claimed.worker_step_claim_revision,
+            now=world.clock.now_unix(),
+        )
+    admitted = world.ticket(ticket_id)
+
+    def replace_errored_generation() -> None:
+        with world.connect() as other_conn:
+            assert tickets_data.release_worker_step_claim(
+                other_conn,
+                ticket_id,
+                expected_claim=admitted.worker_step_claim,
+                expected_claim_revision=admitted.worker_step_claim_revision,
+                now=world.clock.now_unix(),
+            )
+            tickets_data.mark_ticket_errored(
+                other_conn,
+                ticket_id,
+                now=world.clock.now_unix(),
+            )
+
+    async def unexpected_start(_planning_day_id: str) -> WorkerStepStartResult:
+        raise AssertionError("a moved Ticket must not start another worker step")
+
+    with world.connect() as conn:
+        with pytest.raises(PlannerError) as raised:
+            asyncio.run(
+                worker_restart.restart_worker(
+                    cast(
+                        ConversationSystem,
+                        _MutateOnKillConversationSystem(
+                            world.conversations,
+                            replace_errored_generation,
+                        ),
+                    ),
+                    conn,
+                    OWNER_PRINCIPAL,
+                    ticket_id,
+                    write_employee_configuration=None,
+                    start_worker_step=unexpected_start,
+                    resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                    now=world.clock.now_unix,
+                )
+            )
+
+    assert raised.value.code is ErrorCode.already_running
+    ticket = world.ticket(ticket_id)
+    assert ticket.worker_step_claim is WorkerStepClaim.errored
+    assert ticket.worker_step_claim_revision > admitted.worker_step_claim_revision
+    assert ticket.conversation_id == "conv-restart-error-race"
+
+
+def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) -> None:
+    conversation_id = "conv-restart-next-opener-race"
+    ticket_id = world.ready_ticket(
+        conversation_id=conversation_id,
+        next_ceiling="needs_plan",
+    )
+    world.start_conversation(conversation_id)
+    assert world.start_step(ticket_id).started is True
+
+    async def run_race() -> tuple[PlannerError, WorkerStepStartResult]:
+        pausing = _PauseKillConversationSystem(world.conversations)
+
+        async def unexpected_restart_start(_planning_day_id: str) -> WorkerStepStartResult:
+            raise AssertionError("a moved restart must not start another worker step")
+
+        with world.connect() as restart_conn:
+            restart_task = asyncio.create_task(
+                worker_restart.restart_worker(
+                    cast(ConversationSystem, pausing),
+                    restart_conn,
+                    OWNER_PRINCIPAL,
+                    ticket_id,
+                    write_employee_configuration=None,
+                    start_worker_step=unexpected_restart_start,
+                    resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                    now=world.clock.now_unix,
+                )
+            )
+            await asyncio.wait_for(pausing.kill_started.wait(), timeout=1)
+
+            with world.connect() as worker_conn:
+                tickets_data.file_current_proposal(
+                    worker_conn,
+                    ticket_id,
+                    body="Advance before the next opener.",
+                    principal=Principal(PrincipalKind.ticket, ticket_id),
+                    now=world.clock.now_unix(),
+                )
+
+            next_step_task = asyncio.create_task(
+                start_ready_worker_step(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=cast(ConversationSystem, world.conversations),
+                    worker_type_registry=configured_worker_type_registry(),
+                    planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                    now=world.clock.now_unix,
+                )
+            )
+            await asyncio.sleep(0)
+            assert next_step_task.done() is False
+
+            pausing.release_kill.set()
+            try:
+                await restart_task
+            except PlannerError as error:
+                restart_error = error
+            else:
+                raise AssertionError("the stale restart must detect the newer worker step")
+            return restart_error, await next_step_task
+
+    restart_error, next_step = asyncio.run(run_race())
+
+    assert restart_error.code is ErrorCode.already_running
+    assert next_step.started is True
+    ticket = world.ticket(ticket_id)
+    assert ticket.stage == "needs_what_changes"
+    assert ticket.worker_step_claim is WorkerStepClaim.out
+    assert ticket.conversation_id == conversation_id
+    assert len(world.conversations.backend_prompt_writes(conversation_id)) == 2
+
+
+def test_an_uncertain_first_opener_stays_errored_without_a_live_worker(world: _World) -> None:
+    ticket_id = world.ready_ticket()
+
+    started = asyncio.run(
+        start_ready_worker_step(
+            ticket_id,
+            connect_database=world.connect,
+            conversation_system=cast(
+                ConversationSystem,
+                _UncertainConversationSystem(world.conversations),
+            ),
+            worker_type_registry=configured_worker_type_registry(),
+            planning_day_id_resolver=lambda: TODAY_DAY_ID,
+            now=world.clock.now_unix,
+        )
+    )
+
+    assert started.started is False
+    assert started.delivery_fate == "uncertain"
+    ticket = world.ticket(ticket_id)
+    assert ticket.worker_step_claim is WorkerStepClaim.errored
+    assert ticket.conversation_id is not None
+    assert asyncio.run(world.conversations.is_running(ticket.conversation_id)) is False
+    assert world.conversations.backend_prompt_writes(ticket.conversation_id) == ()
+
+
+def test_an_old_uncertain_delivery_cannot_error_a_newer_claim(world: _World) -> None:
+    ticket_id = world.ready_ticket()
+    with world.connect() as conn:
+        first_claim = tickets_data.claim_ticket_for_worker_step(
+            conn,
+            ticket_id,
+            planning_day_id_resolver=lambda: TODAY_DAY_ID,
+            readiness_check=worker_step_readiness.is_ready_for_worker_step,
+            now=1,
+        )
+        assert first_claim is not None
+        assert tickets_data.release_worker_step_claim(
+            conn,
+            ticket_id,
+            expected_claim=first_claim.worker_step_claim,
+            expected_claim_revision=first_claim.worker_step_claim_revision,
+            now=2,
+        )
+        newer_claim = tickets_data.claim_ticket_for_worker_step(
+            conn,
+            ticket_id,
+            planning_day_id_resolver=lambda: TODAY_DAY_ID,
+            readiness_check=worker_step_readiness.is_ready_for_worker_step,
+            now=3,
+        )
+        assert newer_claim is not None
+
+        assert not tickets_data.mark_worker_step_claim_errored(
+            conn,
+            ticket_id,
+            expected_claim=first_claim.worker_step_claim,
+            expected_claim_revision=first_claim.worker_step_claim_revision,
+            now=4,
+        )
+
+    ticket = world.ticket(ticket_id)
+    assert ticket.worker_step_claim is WorkerStepClaim.out
+    assert ticket.worker_step_claim_revision == newer_claim.worker_step_claim_revision
+
+
+class _UncertainConversationSystem:
+    """Report an ambiguous send without admitting the worker-step opener."""
+
+    def __init__(self, system: InMemoryConversationSystem) -> None:
+        self._system = system
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return await self._system.is_running(conversation_id)
+
+    async def start_conversation(self, request: ConversationStartRequest) -> None:
+        await self._system.start_conversation(request)
+
+    async def send(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.queue,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
+    ) -> PromptDeliveryFate:
+        return PromptDeliveryUncertain()
 
 
 def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _World) -> None:
@@ -246,18 +731,20 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
         )
     world.conversations.arm_backend_write_failure("conv-revision-feedback")
 
-    assert world.start_step(ticket_id) is False
+    assert world.start_step(ticket_id).started is False
     assert world.pending_revision_feedback(ticket_id) is True
     world.conversations._conversations[  # noqa: SLF001 - focused failure recovery proof
         "conv-revision-feedback"
     ].armed_backend_write_failure = False
-    assert world.start_step(ticket_id) is True
+    assert world.start_step(ticket_id).started is True
 
     writes = world.conversations.backend_prompt_writes("conv-revision-feedback")
     assert len(writes) == 1
     assert "Revision feedback from owner owner for stage needs_success_condition" in writes[0].text
     assert "  Preserve this exact feedback.  " in writes[0].text
-    assert "Mutable guidance changed independently." in writes[0].text
+    # Guidance moves on its own and the worker reads it off the Ticket, so a rejection
+    # carries only the feedback that explains the rejection.
+    assert "Mutable guidance changed independently." not in writes[0].text
     assert world.pending_revision_feedback(ticket_id) is False
 
 
@@ -269,7 +756,7 @@ def test_a_refused_user_owned_opener_rearms_the_stage(world: _World) -> None:
     world.start_conversation("conv-paired-refuse")
     world.conversations.arm_backend_write_failure("conv-paired-refuse")
 
-    assert world.start_step(ticket_id) is False
+    assert world.start_step(ticket_id).started is False
     assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     with world.connect() as conn:
         assert (
@@ -283,7 +770,7 @@ def test_a_refused_user_owned_opener_rearms_the_stage(world: _World) -> None:
             conn,
             tickets_data.read_ticket(conn, ticket_id),
             planning_day_id=TODAY_DAY_ID,
-                worker_type_definition=configured_worker_type_registry().require("new_worker"),
+            worker_type_definition=configured_worker_type_registry().require("new_worker"),
         )
 
 
@@ -332,7 +819,8 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
         )
     )
 
-    assert started is True
+    assert started.started is True
+    assert started.delivery_fate == "queued"
     # Held, not written: only the colliding turn reached the backend, and the opener is
     # waiting behind it. That is a delivery, so nothing is reverted or re-owed.
     writes = world.conversations.backend_prompt_writes("conv-queue")
@@ -394,7 +882,7 @@ class _QueueingConversationSystem:
         return await self._system.has_pending_permission_ask(conversation_id)
 
 
-def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
+def test_the_opener_carries_only_what_the_worker_cannot_get_for_itself(world: _World) -> None:
     ticket_id = world.ready_ticket(
         title="Ship it",
         kickoff_note="Use this agreed starting point.",
@@ -411,7 +899,7 @@ def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
             principal=OWNER_PRINCIPAL,
             now=0,
         )
-    assert world.start_step(ticket_id) is True
+    assert world.start_step(ticket_id).started is True
 
     writes = world.conversations.backend_prompt_writes("conv-opener")
     assert len(writes) == 1
@@ -422,14 +910,135 @@ def test_the_opener_carries_the_ordered_worker_inputs(world: _World) -> None:
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
     assert "propose the 'success_condition' field for approval" in writes[0].text
     assert "Stage owner: worker" in writes[0].text
-    assert f"[Ticket guidance]\n{guidance}\n[/Ticket guidance]" in writes[0].text
-    assert (
-        "[Ticket brief]\nUse this agreed starting point.\n[/Ticket brief]" in writes[0].text
-    )
-    assert "[Pending worker context]" not in writes[0].text
+    assert f"Read your Ticket first: {READ_YOUR_TICKET_COMMAND}." in writes[0].text
+    # The Ticket is a read the worker makes, so neither of these rides the message.
+    assert "Ticket guidance" not in writes[0].text
+    assert "Exact whitespace stays" not in writes[0].text
+    assert "Ticket brief" not in writes[0].text
+    assert "Use this agreed starting point." not in writes[0].text
+    assert MEMORY_LOSS_NOTICE not in writes[0].text
     bindings = world.skill_bindings()
     assert len(bindings) == 3
     assert {row["sender_message_id"] for row in bindings} == {sender_message_id}
+
+
+def test_a_wake_after_a_compaction_leads_with_the_memory_loss_notice(world: _World) -> None:
+    ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-compacted")
+    world.start_conversation("conv-compacted")
+    world.record_compacted_conversation(
+        "conv-compacted", last_worker_step_sequence=4, compacted_through=9
+    )
+
+    assert world.start_step(ticket_id).started is True
+
+    text = world.conversations.backend_prompt_writes("conv-compacted")[0].text
+    assert MEMORY_LOSS_NOTICE in text
+    assert f"Work ticket {ticket_id} — Ship it" in text
+    # It leads: a worker reads why it is confused before it reads what to do.
+    assert text.index(MEMORY_LOSS_NOTICE) < text.index("Work ticket")
+
+
+def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_a_wake(
+    world: _World,
+) -> None:
+    ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-mid-step")
+    world.start_conversation("conv-mid-step")
+    assert world.start_step(ticket_id).started is True
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+    # The step is still out, and the worker is between turns. That is when Panels
+    # compacts an idle worker, and it is the case a later wake never reaches.
+    world.conversations.complete_running_turn("conv-mid-step")
+    world.record_compacted_conversation(
+        "conv-mid-step", last_worker_step_sequence=4, compacted_through=9
+    )
+
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
+        assert _waited_for(
+            lambda: len(world.conversations.backend_prompt_writes("conv-mid-step")) == 2
+        )
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+    notice = world.conversations.backend_prompt_writes("conv-mid-step")[1]
+    assert MEMORY_LOSS_NOTICE in notice.text
+    assert f"part-way through a step on ticket {ticket_id}" in notice.text
+    assert notice.mode is PromptDeliveryMode.queue
+    # The step keeps its claim: the worker was never sent away, only told.
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+
+
+def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _World) -> None:
+    ticket_id = world.ready_ticket(title="Busy", conversation_id="conv-busy")
+    world.start_conversation("conv-busy")
+    assert world.start_step(ticket_id).started is True
+    # The turn runs on, so anything sent now queues behind it and writes no event row.
+    world.record_compacted_conversation(
+        "conv-busy", last_worker_step_sequence=4, compacted_through=9
+    )
+
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
+        assert _waited_for(lambda: len(world.held_prompts("conv-busy")) == 1)
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
+        # The second pass finds its own notice waiting and sends nothing.
+        sleep(0.2)
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+    assert len(world.held_prompts("conv-busy")) == 1
+
+
+def test_a_ticket_that_left_the_day_gets_no_notice(world: _World) -> None:
+    ticket_id = world.ready_ticket(title="Off the Day", conversation_id="conv-off-day")
+    world.start_conversation("conv-off-day")
+    assert world.start_step(ticket_id).started is True
+    world.conversations.complete_running_turn("conv-off-day")
+    world.remove_from_today(ticket_id)
+    world.record_compacted_conversation(
+        "conv-off-day", last_worker_step_sequence=4, compacted_through=9
+    )
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
+
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == []
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+    # One write, the wake. A Ticket off the Day is not woken for any reason.
+    assert len(world.conversations.backend_prompt_writes("conv-off-day")) == 1
+
+
+def test_a_worker_resting_between_steps_is_left_for_its_next_wake(world: _World) -> None:
+    ticket_id = world.ready_ticket(title="Resting", conversation_id="conv-resting")
+    world.start_conversation("conv-resting")
+    world.record_compacted_conversation(
+        "conv-resting", last_worker_step_sequence=4, compacted_through=9
+    )
+    assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.none
+
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == []
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+    assert world.conversations.backend_prompt_writes("conv-resting") == ()
 
 
 # --- the polling loop ----------------------------------------------------------

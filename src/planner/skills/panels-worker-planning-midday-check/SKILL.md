@@ -20,7 +20,7 @@ happened. Raise only slippage or blockers that matter to action now. If morning 
 is missing, say so and continue without inventing a baseline.
 
 Pipe one compact confrontation and bounded recommendation to
-`panels worker request-help --owner`. Make no changes before the user answers and approves.
+`panels ticket request-help --owner`. Make no changes before the user answers and approves.
 After the exchange, propose only the settled changes or `No action`.
 
 ### needs_consequences

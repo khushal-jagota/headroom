@@ -53,6 +53,7 @@ def _passed_ticket(db_path: Path) -> str:
             principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=200,
+            kickoff_note="Agreed brief.",
         )
         ticket = accept_proposal(
             conn,

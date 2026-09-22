@@ -51,6 +51,7 @@ def _ticket(
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
+        kickoff_note="Agreed brief.",
         project_id=project_id,
         sprint_item_id=sprint_item_id,
     )

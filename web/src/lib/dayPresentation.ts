@@ -1,7 +1,10 @@
-import { conversationSignalPresentation } from "./conversationSignalPresentation";
 import type { DayTicket } from "./types";
 import type { FieldStageVisualState } from "./ui";
 import { primaryWorkAttention } from "./workAttentionPresentation";
+import {
+  workItemActivityMark,
+  workItemActivityMarkPresentation
+} from "./workItemPresentation";
 
 export type DayVisualTicket = {
   ticket: DayTicket;
@@ -22,6 +25,7 @@ function groupKeyFor(ticket: DayTicket): string {
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";
   const attention = primaryWorkAttention({
     awaiting_reply: Boolean(ticket.awaiting_reply),
+    awaiting_answer: Boolean(ticket.awaiting_answer),
     awaiting_approval: Boolean(ticket.awaiting_approval),
     assigned: Boolean(ticket.assigned)
   });
@@ -36,37 +40,20 @@ export function dayVisualTicket(
   ticket: DayTicket
 ): DayVisualTicket {
   const group = groupKeyFor(ticket);
-  const presentation = conversationSignalPresentation(
-    {
-      awaiting_reply: Boolean(ticket.awaiting_reply),
-      agent_state: ticket.agent_state ?? "idle"
-    }
-  );
-
-  if (ticket.is_done || ticket.stage === "done") {
-    return { ticket, state: "completed", ariaLabel: "Done", group };
-  }
-  if (presentation.state === "upcoming" && group === "assigned") {
-    return { ticket, state: "current-assigned", ariaLabel: "Assigned", group };
-  }
-  if (
-    presentation.state === "upcoming" &&
-    (group === "awaiting_approval" ||
-      group === "waiting_for_kickoff" ||
-      group === "awaiting_reply")
-  ) {
-    return { ticket, state: "current-awaiting-approval", ariaLabel: "To review", group };
-  }
+  const presentation = workItemActivityMarkPresentation(workItemActivityMark({
+    awaiting_reply: Boolean(ticket.awaiting_reply),
+    awaiting_answer: Boolean(ticket.awaiting_answer),
+    awaiting_approval: Boolean(ticket.awaiting_approval),
+    agent_state: ticket.agent_state ?? "idle"
+  }));
   return { ticket, state: presentation.state, ariaLabel: presentation.ariaLabel, group };
 }
 
 /**
  * Where each dot state sits in the Day progress row, most urgent first.
  *
- * The Day row only produces `needs-me`, `current-awaiting-approval`,
- * `current-assigned`, `current-running`, `upcoming`, and `completed`. The rest are
- * ranked so the sort stays total. `errored` sits beside `needs-me`: both mean the
- * ticket stopped and wants the user.
+ * The Day row uses the shared white, blue, spinner, and empty mark states. The other
+ * states remain ranked so the sort stays total for old or external callers.
  */
 const dotOrder: Record<FieldStageVisualState, number> = {
   "needs-me": 0,
@@ -99,15 +86,17 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
     done: 0
   };
 
+  // Counts follow ownership groups. Marks stay independent, so assigned work can spin.
   for (const visual of visualTickets) {
-    if (visual.state === "needs-me") counts["needs-me"] += 1;
+    if (visual.group === "awaiting_answer" || visual.group === "awaiting_reply") {
+      counts["needs-me"] += 1;
+    }
     else if (visual.state === "current-running") counts.working += 1;
-    else if (
-      visual.state === "current-awaiting-approval" &&
-      (visual.group === "awaiting_approval" || visual.group === "waiting_for_kickoff")
-    ) counts.review += 1;
-    else if (visual.state === "current-assigned") counts.assigned += 1;
-    else if (visual.state === "completed") counts.done += 1;
+    else if (visual.group === "awaiting_approval" || visual.group === "waiting_for_kickoff") {
+      counts.review += 1;
+    }
+    else if (visual.group === "assigned") counts.assigned += 1;
+    else if (visual.group === "done") counts.done += 1;
   }
 
   const definitions: Array<{
@@ -128,5 +117,9 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
 }
 
 export function dayPageState(visualTickets: readonly DayVisualTicket[]): "populated" | "calm" {
-  return visualTickets.some((visual) => visual.state === "needs-me") ? "populated" : "calm";
+  return visualTickets.some(
+    (visual) => visual.group === "awaiting_answer" || visual.group === "awaiting_reply"
+  )
+    ? "populated"
+    : "calm";
 }

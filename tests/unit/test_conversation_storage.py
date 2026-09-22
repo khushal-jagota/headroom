@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from planner.conversation import storage as storage_module
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -33,6 +34,10 @@ from planner.conversation.storage import (
 )
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
+from planner.notifications.attention import (
+    ConversationAttentionSnapshot,
+    conversation_attention_snapshot,
+)
 
 A_PROMPT = PromptEventPayload(
     content=text_message_content("hello"),
@@ -273,6 +278,94 @@ def test_appends_racing_each_other_each_get_a_number_of_their_own(
     asyncio.run(exercise())
 
 
+def test_attention_history_is_read_before_the_conversation_write_lock(
+    store: ConversationStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        conn = connect(str(tmp_path / "conversations.db"))
+        try:
+            with conn:
+                conn.executemany(
+                    "INSERT INTO conversation_events"
+                    "(conversation_id, sequence, kind, payload, created_at) "
+                    "VALUES ('c', ?, 'agent_message', '{}', ?)",
+                    ((sequence, sequence) for sequence in range(1, 2_001)),
+                )
+                conn.execute(
+                    "UPDATE conversations SET latest_sequence=2000 WHERE conversation_id='c'"
+                )
+        finally:
+            conn.close()
+
+        statements: list[str] = []
+        real_connect = connect
+
+        def traced_connect(db_path: str, busy_timeout_ms: int = 5_000) -> sqlite3.Connection:
+            traced = real_connect(db_path, busy_timeout_ms)
+            traced.set_trace_callback(statements.append)
+            return traced
+
+        monkeypatch.setattr(storage_module, "connect", traced_connect)
+        written = await store.append_event("c", AN_AGENT_MESSAGE)
+        assert written.sequence == 2_001
+
+        write_lock = next(
+            index for index, statement in enumerate(statements) if statement == "BEGIN IMMEDIATE"
+        )
+        write_commit = next(
+            index
+            for index in range(write_lock + 1, len(statements))
+            if statements[index] == "COMMIT"
+        )
+        locked_statements = statements[write_lock:write_commit]
+        assert not any("FROM conversation_events" in statement for statement in locked_statements)
+        assert (
+            sum("FROM conversation_events" in statement for statement in statements[:write_lock])
+            == 1
+        )
+
+    asyncio.run(exercise())
+
+
+def test_an_append_refreshes_an_attention_snapshot_made_stale_by_another_append(
+    store: ConversationStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        competing_store = ConversationStore(store._db_path, integer_now=lambda: 1_700_000_001)
+        real_snapshot = conversation_attention_snapshot
+        raced = False
+
+        def snapshot_with_one_race(
+            conn: sqlite3.Connection, conversation_id: str
+        ) -> ConversationAttentionSnapshot | None:
+            nonlocal raced
+            snapshot = real_snapshot(conn, conversation_id)
+            if not raced:
+                raced = True
+                competing_store._append_event_sync(
+                    conversation_id,
+                    AgentMessageEventPayload(content=text_message_content("first")),
+                    False,
+                    False,
+                    None,
+                )
+            return snapshot
+
+        monkeypatch.setattr(
+            storage_module, "conversation_attention_snapshot", snapshot_with_one_race
+        )
+        written = await store.append_event(
+            "c", AgentMessageEventPayload(content=text_message_content("second"))
+        )
+
+        assert written.sequence == 2
+        assert [event.sequence for event in await store.read_events_after("c", 0)] == [1, 2]
+
+    asyncio.run(exercise())
+
+
 # --- a message is what it holds, not only what it says ---------------------------------------
 
 
@@ -294,5 +387,3 @@ def test_a_row_written_before_messages_could_hold_anything_else_still_reads() ->
     assert conversation_event_payload_from_canonical_json(
         ConversationEventKind.agent_message, '{"text":"the answer"}'
     ) == AgentMessageEventPayload(content=(MessageText(text="the answer"),))
-
-

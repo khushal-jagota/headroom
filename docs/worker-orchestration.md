@@ -71,6 +71,25 @@ _Code paths:_ `src/planner/runtime/worker_step_readiness.py`,
 `src/planner/core/change_signal.py`, and the claim and release writers in
 `src/planner/tickets/data.py`.
 
+## Sprint Item manager wakes
+
+Proposals routed to a Sprint Item manager and explicit worker-error transitions create
+durable wakes in the same transaction as their source event. Proposal routing remains a
+separate deterministic decision before wake creation. It contains no TypeSafe call.
+
+The manager wake loop shares the background-loop machine lock. A commit wakes it, and a
+periodic poll recovers missed signals and restart state. The loop groups open wakes for one
+manager into an immutable batch. It sends that batch through the normal supervisor
+conversation boundary in queue mode.
+
+A queued batch remains open while it waits behind active work. The exact durable prompt
+event closes its member wakes. A definite refusal or discard creates a later attempt with a
+new sender message identity. An uncertain delivery remains unresolved and is not replayed
+automatically. Supervisor reset and deletion share a lifecycle lock with delivery.
+
+_Code paths:_ `src/planner/manager_wakes/`, `src/planner/core/loops.py`, and the proposal
+and worker-error writers in `src/planner/tickets/data.py`.
+
 ## Scheduled Ticket handoff
 
 The scheduled-Ticket loop shares the server lifespan and single-machine lock, but not
@@ -83,12 +102,32 @@ occurrences, and suppression.
 
 ## Sending the step
 
-The opening message is composed first as one ordered, inspectable list of Panels inputs:
-the Stage instruction, Ticket guidance when present, the settled Brief, and revision
-feedback for the current Stage when present. The worker sees each one because it is in
-the actual message. Worker skills and conversation history stay separate from this list.
-It is composed before anything else so that a failure here cannot leave a conversation
+The opening message is composed first as one ordered, inspectable list of Panels inputs.
+It carries only what a worker cannot get for itself: a notice when the worker's context
+was compacted, the Stage instruction, and revision feedback for the current Stage when
+there is some. The Stage instruction names the command that reads the Ticket, because
+the Ticket's Brief and guidance are a read the worker makes rather than a payload every
+message carries. Worker skills and conversation history stay separate from this list. It
+is composed before anything else so that a failure here cannot leave a conversation
 behind.
+
+## Telling a worker it lost its memory
+
+Panels compacts a worker that has been idle for fifty minutes, and a backend may compact
+one that fills its context. Either way the conversation the worker was reading gets
+shorter and nothing in it says so. The conversation record keeps the boundary, so Panels
+is the only side that can report it.
+
+A boundary counts as answered once Panels has sent a worker-step message after it. That
+is how the same boundary is never reported twice, and it needs no second record of its
+own. The boundary is read at two moments:
+
+- A step falls due. The wake leads with the notice, and the Stage instruction follows.
+- A step is already in flight — the Ticket's worker-step claim is out. The notice is sent
+  straight away, because a worker part-way through a step is not waiting for a wake, and
+  most compactions are never followed by another one.
+
+_Code path:_ `src/planner/runtime/worker_memory.py`.
 
 Then it is sent, through the one door there is. If the Ticket has a conversation the
 message goes into it. If it has none, the message is what brings one into being — and
@@ -105,13 +144,24 @@ exactly what the next attempt wants to find. The refusal or exception also remov
 start's exact provisional association. Reset differs: it clears the active pointer but
 keeps the association and transcript in the Ticket's history.
 
-The conversation system reports one of three fates:
+The conversation system reports one of five fates:
 
 - **Started** — it is running now.
 - **Queued** — the worker was busy, so the message is held and will run when it is
   free. This counts as delivered: the exact revision feedback batch is removed and the
   step is done being started.
+- **Injected** — the backend admitted the message into the targeted running turn.
 - **Refused** — nothing was delivered. The claim is given back and one line is logged.
+- **Uncertain** — the backend can have admitted the message, but Panels cannot prove it.
+  The claim becomes errored and stays held. Panels does not retry the message.
+
+The start result carries `started` and `delivery_fate`. Started, queued, and injected
+set `started` to true. Refused and uncertain set it to false. A failure before delivery
+has no delivery fate.
+
+An uncertain result requires one explicit `ticket restart-worker` call. Panels keeps the
+backend quarantine and the Worker claim until that call. This prevents a second opener
+when the first opener reached the backend.
 
 Giving a claim back checks the claim it took and the revision of that claim change.
 Every actual change advances the revision, even when two changes share a second. An
@@ -150,23 +200,44 @@ still reads as claimed, and a Ticket with its claim back but still pointing at a
 conversation would talk into it.
 
 Anyone standing above the Ticket can do it, which is Khushal, the Chief, or the Ticket's
-own Outcome. Khushal could not before: no ordinary route restarted a Worker, and the
-only door was the Outcome's. This is a new capability on his surface, not a rename.
+own Sprint Item. Khushal could not before: no ordinary route restarted a Worker, and the
+only door was the Sprint Item's. This is a new capability on his surface, not a rename.
 
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a
 check on that would refuse exactly the Tickets that need recovering. Whoever restarts
-reads the conversation and decides, and two rules bound the action: a Worker-owned
-Stage, and a worker step that has already had five minutes.
+reads the conversation and decides. The action still requires the Ticket to be the
+current child, a Worker-owned Stage, and a worker step that is out. These checks define
+whether a restart is meaningful.
+
+The restart result uses the same delivery contract as an automatic start. An uncertain
+restart does not report success, release its claim, or retry automatically. Panels does
+not enforce a restart delay, so the caller decides when to make the explicit attempt.
+
+The Ticket's launch configuration is frozen while its conversation holds it, so
+`employee-configuration` returns `already_running` in that state. `restart-worker` is the
+route that releases the old step and applies a new backend, model, or reasoning effort
+before the next Worker starts.
+
+One narrow recovery also covers Tickets stranded by an older rejection. It requires a
+Worker-owned Stage, Empty status, no claim, an existing conversation, and pending revision
+feedback for that Stage. Restart adds that Ticket to the current Day and starts normal
+readiness without resetting its conversation. It clears stale running and queued traffic
+first, then sends the revision into the same conversation history. Other prior-Day Tickets
+remain at rest. This recovery preserves the launch configuration, so it refuses restart
+options that name a backend, model, or reasoning effort.
 
 ## Sending a proposal back
 
 When the holder returns a proposal for revision, one Ticket transaction checks every
 authorization and current-parent route. It clears the proposal, appends the exact comment
 to a separate attributed revision-feedback record, and returns the Ticket to its resting
-status. A same-Stage user opener is cleared so the discussion can open again. The next
-normal worker-step prompt carries feedback for that Stage, and only a successful send
-consumes it. Ticket guidance remains independent. Reply bookkeeping credits the source
+status. If the rejected Stage belongs to the Worker, the same transaction adds the Ticket
+to the current Day. Its commit wakes normal readiness, which reuses the existing
+conversation. A same-Stage user opener is cleared so the discussion can open again. The
+next normal worker-step prompt carries feedback for that Stage, and only a successful
+send consumes it. Ticket guidance is not sent with it, and the worker reads that off the
+Ticket. Reply bookkeeping credits the source
 turn after the commit and cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.

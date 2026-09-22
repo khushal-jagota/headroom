@@ -7,12 +7,14 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outputDirectory = await mkdtemp(join(tmpdir(), "panels-sprint-documents-"));
-const hostPath = join(webRoot, "tests", `.sprint-documents-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.sprint-documents-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.sprint-documents-${process.pid}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `sprint-documents-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `sprint-documents-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `sprint-documents-${process.pid}.html`);
 let server;
 try {
   await writeFile(hostPath, `
@@ -52,7 +54,9 @@ try {
         { id: "t_loose_two", title: "Loose from Two", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false }
       ]
     });
-    if (path === "/api/projects?detail=full") return json({ projects: [{ id: "project_one", name: "One", summary: "", priority: "P1", created_at: 1, updated_at: 1 }, { id: "project_two", name: "Two", summary: "", priority: "P2", created_at: 1, updated_at: 1 }] });
+    // The outcome carries its own project word and the project catalogue carries another.
+  // The label on screen says which of the two the screen reads.
+  if (path === "/api/projects?detail=full") return json({ projects: [{ id: "project_one", name: "Catalogue name", summary: "", priority: "P1", created_at: 1, updated_at: 1 }, { id: "project_two", name: "Two", summary: "", priority: "P2", created_at: 1, updated_at: 1 }] });
     if (path === "/api/day/today") return json({ tickets: [] });
     if (path === "/api/sprints?detail=full") return json({ sprints: [sprint, { ...sprint, id: "sp_next", name: "Next" }] });
     if (path.startsWith("/api/items?detail=summary")) return json({ items: [outcome], page: { match_count: 1, return_count: 1, limit: 30, offset: 0, omitted_before: 0, omitted_after: 0, complete: true, next_offset: null } });
@@ -137,6 +141,7 @@ with sync_playwright() as playwright:
         assert page.locator('.sprint-outcome-meta, .sprint-outcome-menu, .sprint-outcome-tickets, .board-workspace-bucket-count').count() == 0
         assert "Committed outcome" not in page.locator('[data-sprint-projects]').inner_text()
         assert "Other work" not in page.locator('[data-sprint-projects]').inner_text()
+        expect(page.locator('[data-sprint-project="project_one"] .board-workspace-bucket-label')).to_have_text("One")
         no_outcome = page.locator('[data-sprint-no-outcome]')
         expect(no_outcome.locator(':scope > summary')).to_contain_text("No Outcome")
         expect(no_outcome.locator(':scope > summary .sprint-item-rollup')).to_have_text("1/2")

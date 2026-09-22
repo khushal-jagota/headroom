@@ -13,6 +13,7 @@ import {
   type TicketStageVisualInput
 } from "./ui";
 import type { StageOwnershipMode, TicketDetail } from "./types";
+import { agentHoldsTicket } from "./workAttentionPresentation";
 
 // --- served worker_types manifest shapes ----------------------------------------
 
@@ -147,8 +148,9 @@ export function preferredScopeCeilingFor(
 ): string | null {
   if (!lc) return null;
   const options = ceilingOptionsFor(lc, newStage || lc.ceilingRange[0] || "needs_success_condition");
-  const advanced = newStage ? lc.advance[newStage] : null;
-  if (advanced && options.some((option) => option.value === advanced)) return advanced;
+  // Approval passes the stage after the pending proposal here. Advancing again skipped
+  // the next approval gate for every Worker type.
+  if (newStage && options.some((option) => option.value === newStage)) return newStage;
   const terminal = [...options].reverse().find((option) =>
     !Object.prototype.hasOwnProperty.call(lc.advance, option.value)
   );
@@ -196,17 +198,18 @@ export function fieldStageVisualStateFor(
   detail: TicketDetail,
   fieldName: string
 ): FieldStageVisualState {
+  // One rule answers whether a worker has this Ticket, and every screen calls it. This
+  // page used to rewrite `agent` to `empty` whenever no turn was live, so a worker that
+  // paused to wait on a long job left its own Ticket reading as an untouched Stage.
   const projectedStatus = detail.awaiting_approval
     ? "awaiting_approval"
     : detail.assigned
       ? "assigned"
-      : detail.agent_state === "working"
-        ? "agent"
-        : detail.agent_state === "errored"
-          ? "errored"
-          : detail.ticket_status === "agent"
-            ? "empty"
-            : detail.ticket_status;
+      : detail.agent_state === "errored"
+        ? "errored"
+        : agentHoldsTicket(detail)
+          ? "agent"
+          : detail.ticket_status;
   return ticketStageVisualStateFor(lc, {
     ticketStage: detail.stage,
     ticketStatus: projectedStatus,

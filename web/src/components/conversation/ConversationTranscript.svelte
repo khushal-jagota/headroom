@@ -30,6 +30,7 @@
   } from "../../lib/conversation/transcript";
   import { modelDisplayName } from "../../lib/conversation/composer";
   import type { BackendModel } from "../../lib/conversation/wire";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
   let {
     rows,
@@ -58,6 +59,12 @@
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
   let expandedTurns = $state<Record<string, boolean>>({});
+  // Which tool calls the reader opened, and the whole output each of them fetched. A
+  // settling turn folds its work away, which destroys those rows, so the answer is kept
+  // here — by the thread, which outlives every fold in it — and keyed by tool call id
+  // rather than by where the row sat on the page.
+  let openToolCallRows = new SvelteSet<string>();
+  let wholeToolCallDetails = new SvelteMap<string, string>();
   // A settled turn reads as one paragraph you can open. Everything it said on the way to
   // that paragraph is dropped from the thread until its fold is opened, and comes back in
   // the place it happened rather than gathered up at the end.
@@ -118,6 +125,8 @@
       />
     {:else if item.kind === "work_group"}
       <WorkGroup
+        openRows={openToolCallRows}
+        wholeDetails={wholeToolCallDetails}
         entries={item.entries}
         hidden={lens !== "full" && item.settled && expandedTurns[item.turnKey] !== true}
         showAll={lens === "full"}

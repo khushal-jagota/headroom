@@ -71,6 +71,7 @@ export type AgentState = "working" | "idle" | "errored";
 // means the same thing on every screen and no screen has to guess from the status.
 export type WorkAttention = {
   awaiting_reply: boolean;
+  awaiting_answer: boolean;
   awaiting_approval: boolean;
   awaiting_agent_approval: boolean;
   assigned: boolean;
@@ -302,6 +303,7 @@ export type TicketDetail = {
   field_values: TicketFieldValues;
   pending_proposal: PendingTicketProposal | null;
   awaiting_reply?: boolean;
+  awaiting_answer?: boolean;
   awaiting_approval?: boolean;
   awaiting_agent_approval?: boolean;
   assigned?: boolean;
@@ -382,6 +384,7 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
   title: string;
   stage: string;
   priority: Priority;
+  activity_at: number;
   ticket_status: string;
   waiting_to_closeout: boolean;
   has_pending_proposal: boolean;
@@ -405,6 +408,7 @@ export type SprintItemWorkspace = SprintItemSummary & {
   planning_day_id: string;
   today_ticket_ids: string[];
   tickets: SprintItemWorkspaceTicket[];
+  ticket_rollup: WorkAttention;
   artifacts: SprintItemArtifact[];
   conversation_history: TicketConversationHistoryEntry[];
 };
@@ -449,6 +453,7 @@ export type BoardSprintItem = {
   created_at: number;
   conversation_id: string | null;
   awaiting_reply: boolean;
+  awaiting_answer: boolean;
   awaiting_approval: boolean;
   awaiting_agent_approval: boolean;
   assigned: boolean;
@@ -493,6 +498,7 @@ export type DayTicket = AnyRecord & {
   waiting_to_closeout?: boolean;
   gating_field?: string | null;
   awaiting_reply?: boolean;
+  awaiting_answer?: boolean;
   awaiting_approval?: boolean;
   awaiting_agent_approval?: boolean;
   assigned?: boolean;

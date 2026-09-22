@@ -35,6 +35,12 @@ NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
         True,
     ),
     NotificationType(
+        "awaiting_answer",
+        "Needs an answer",
+        "A worker is waiting on an answer only you can give.",
+        True,
+    ),
+    NotificationType(
         "awaiting_approval",
         "Needs approval",
         "A Ticket has a proposal waiting for your decision.",
@@ -67,6 +73,7 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
         PrincipalKind.ticket,
         (
             "awaiting_reply",
+            "awaiting_answer",
             "awaiting_approval",
             "assigned",
             "errored",
@@ -76,13 +83,13 @@ NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
         "chief_of_staff",
         "Chief of Staff",
         PrincipalKind.chief,
-        ("awaiting_reply", "errored"),
+        ("awaiting_reply", "awaiting_answer", "errored"),
     ),
     NotificationSubject(
         SPRINT_ITEM_SUPERVISOR_NOTIFICATION_SUBJECT_KEY,
         "Sprint Item supervisors",
         PrincipalKind.sprint_item,
-        ("awaiting_reply", "errored"),
+        ("awaiting_reply", "awaiting_answer", "errored"),
     ),
 )
 NOTIFICATION_SUBJECT_BY_KEY: Final[dict[str, NotificationSubject]] = {

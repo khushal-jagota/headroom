@@ -14,13 +14,15 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
 const temporaryDirectory = await mkdtemp(join(tmpdir(), "panels-conversation-layer-"));
-const hostPath = join(webRoot, "tests", `.conversation-layer-host-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.conversation-layer-main-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.conversation-layer-index-${process.pid}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `conversation-layer-host-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `conversation-layer-main-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.html`);
 let serverProcess;
 
 try {
@@ -534,6 +536,12 @@ with sync_playwright() as playwright:
     model_picker.get_by_role("listbox").press("Home")
     page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-choice=opus]')?.getAttribute('data-conversation-picker-active') === 'true'")
     model_picker.get_by_role("listbox").press(" ")
+    # Opus takes a reasoning level. Choosing its row retains the popover and moves to
+    # the second step. The trigger still shows the committed Sonnet choice until this
+    # level completes the configuration.
+    page.wait_for_function("document.querySelector('[data-conversation-model-picker] [role=listbox]')?.getAttribute('aria-label') === 'Reasoning efforts'")
+    assert "sonnet" in model_trigger.get_attribute("aria-label").lower()
+    model_picker.get_by_role("listbox").press("Enter")
     page.wait_for_function("document.querySelector('[data-conversation-model-picker] [data-conversation-picker-trigger]')?.getAttribute('aria-label')?.toLowerCase().includes('opus')")
     assert "opus" in model_trigger.get_attribute("aria-label").lower()
 

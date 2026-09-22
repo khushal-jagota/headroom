@@ -1,32 +1,19 @@
-import {
-  TICKET_STATUS_GROUPS,
-  ticketStatusGroupKey,
-  type TicketStatusGroupDefinition
-} from "./ticketStatusGroups";
+import { ticketStatusGroupKey } from "./ticketStatusGroups";
 import type { SprintItemWorkspace, SprintItemWorkspaceTicket } from "./types";
+import {
+  workItemTicketGroups,
+  type WorkItemTicketGroupDefinition
+} from "./workItemPresentation";
 
-export type WorkspaceTicketGroup = TicketStatusGroupDefinition & {
+export type WorkspaceTicketGroup = WorkItemTicketGroupDefinition & {
   tickets: SprintItemWorkspaceTicket[];
 };
-
-function ticketOrder(left: SprintItemWorkspaceTicket, right: SprintItemWorkspaceTicket): number {
-  return (
-    Number(left.priority.slice(1)) - Number(right.priority.slice(1)) ||
-    left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
-    left.id.localeCompare(right.id)
-  );
-}
 
 // Today and Remaining are the same structure. The only thing the split says is whether
 // the Ticket is on the Day, so both blocks group their own Tickets the same way and
 // both carry a Done group.
 function groupTickets(tickets: SprintItemWorkspaceTicket[]): WorkspaceTicketGroup[] {
-  return TICKET_STATUS_GROUPS.flatMap((group) => {
-    const grouped = tickets
-      .filter((ticket) => ticketStatusGroupKey(ticket) === group.key)
-      .sort(ticketOrder);
-    return grouped.length ? [{ ...group, tickets: grouped }] : [];
-  });
+  return workItemTicketGroups(tickets);
 }
 
 export function todayWorkspaceTicketGroups(workspace: SprintItemWorkspace): WorkspaceTicketGroup[] {
@@ -46,7 +33,10 @@ export function workspaceProgress(workspace: SprintItemWorkspace): string {
   if (!tickets.length) return "No Tickets";
   const open = tickets.filter((ticket) => ticket.stage !== "done");
   if (!open.length) return `All ${tickets.length} done`;
-  const needsYou = open.filter((ticket) => ticketStatusGroupKey(ticket) === "needs-me").length;
+  const needsYou = open.filter((ticket) => {
+    const group = ticketStatusGroupKey(ticket);
+    return group === "awaiting_approval" || group === "awaiting_answer";
+  }).length;
   return `${open.length} open${needsYou ? ` · ${needsYou} needs you` : ""}`;
 }
 

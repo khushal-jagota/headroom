@@ -9,27 +9,33 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from planner.conversation.contracts import ConversationSystem
 from planner.core import authority
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
+from planner.days import data as days_data
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import StageOwnershipMode, Ticket, WorkerStepClaim
+from planner.tickets import revision_feedback
+from planner.tickets.contracts import (
+    StageOwnershipMode,
+    Ticket,
+    TicketStatus,
+    WorkerStepClaim,
+)
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
 
-# A worker step gets this long to prove it is alive before anyone may restart it.
-WORKER_STEP_RESTART_FLOOR_SECONDS = 300
+if TYPE_CHECKING:
+    from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
 
 
 def require_restartable(
     conn: sqlite3.Connection,
     principal: Principal,
     ticket_id: str,
-    *,
-    now: int,
 ) -> Ticket:
     """Return the Ticket, once every reason not to restart it has been ruled out.
 
@@ -57,25 +63,19 @@ def require_restartable(
             {"ticket_id": ticket_id, "stage": ticket.stage},
         )
     if ticket.worker_step_claim is WorkerStepClaim.out:
-        age = now - ticket.worker_step_claim_changed_at
-        if age < WORKER_STEP_RESTART_FLOOR_SECONDS:
-            # The one bound on a restart loop: each restart resets this clock, so a
-            # caller that keeps restarting has to wait out the floor every time.
-            raise PlannerError(
-                ErrorCode.validation,
-                "this worker step is too young to restart",
-                {
-                    "ticket_id": ticket_id,
-                    "age_seconds": age,
-                    "floor_seconds": WORKER_STEP_RESTART_FLOOR_SECONDS,
-                },
-            )
         return ticket
     if ticket.worker_step_claim is WorkerStepClaim.errored:
         return ticket
     if ticket.conversation_id is None:
         # A restart whose start was refused lands here. Restarting again is how a
         # caller corrects the launch configuration it named the first time.
+        return ticket
+    if (
+        ticket.ticket_status is TicketStatus.empty
+        and revision_feedback.snapshot(conn, ticket_id) is not None
+    ):
+        # Rejections before the rollover repair could leave revision work off today's
+        # Day. Its conversation remains the right one, so restart only has to rearm it.
         return ticket
     raise PlannerError(
         ErrorCode.validation,
@@ -84,16 +84,35 @@ def require_restartable(
     )
 
 
+def _require_same_restart_target(
+    conn: sqlite3.Connection,
+    principal: Principal,
+    expected: Ticket,
+) -> Ticket:
+    current = tickets_data.read_ticket(conn, expected.id)
+    if (
+        current.worker_step_claim is not expected.worker_step_claim
+        or current.worker_step_claim_revision != expected.worker_step_claim_revision
+        or current.conversation_id != expected.conversation_id
+    ):
+        raise PlannerError(
+            ErrorCode.already_running,
+            "the Ticket moved while it was being restarted",
+            {"ticket_id": expected.id},
+        )
+    return require_restartable(conn, principal, expected.id)
+
+
 async def restart_worker(
     conversations: ConversationSystem,
     conn: sqlite3.Connection,
     principal: Principal,
     ticket_id: str,
     *,
-    write_employee_configuration: Callable[[sqlite3.Connection], None] | None,
-    start_worker_step: Callable[[], Awaitable[bool]],
-    planning_day_id: str,
-    now: int,
+    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
+    start_worker_step: Callable[[str], Awaitable[WorkerStepStartResult]],
+    resolve_planning_write: Callable[[], tuple[str, int]],
+    now: Callable[[], int],
 ) -> dict[str, object]:
     """Kill this Ticket's dead conversation, give the claim back, and start again.
 
@@ -105,41 +124,73 @@ async def restart_worker(
     bad argument costs the Ticket nothing. It runs in the same transaction as the claim,
     after it, because the launch values unfreeze only once the claim is back.
     """
-    ticket = require_restartable(conn, principal, ticket_id, now=now)
-    killed_conversation_id = ticket.conversation_id
-    killed_conversation_looked_running = (
-        await conversations.is_running(killed_conversation_id)
-        if killed_conversation_id is not None
-        else False
+    ticket = require_restartable(conn, principal, ticket_id)
+    rearming_idle_revision = (
+        ticket.worker_step_claim is WorkerStepClaim.none and ticket.conversation_id is not None
     )
-    if killed_conversation_id is not None:
-        await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        if ticket.worker_step_claim is WorkerStepClaim.out:
-            given_back = tickets_data.release_worker_step_claim(
-                conn,
-                ticket_id,
-                expected_claim=ticket.worker_step_claim,
-                expected_claim_revision=ticket.worker_step_claim_revision,
-                now=now,
+    if rearming_idle_revision and write_employee_configuration is not None:
+        raise PlannerError(
+            ErrorCode.already_running,
+            "Employee configuration is frozen while a conversation or a worker step holds it",
+            {"ticket_id": ticket_id},
+        )
+    killed_conversation_id = ticket.conversation_id
+    killed_conversation_looked_running = False
+    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+        _require_same_restart_target(conn, principal, ticket)
+        if killed_conversation_id is not None:
+            killed_conversation_looked_running = await conversations.is_running(
+                killed_conversation_id
             )
-            if not given_back:
-                raise PlannerError(
-                    ErrorCode.already_running,
-                    "the Ticket moved while it was being restarted",
-                    {"ticket_id": ticket_id},
+            # Live-state bookkeeping can be stale, so it cannot decide admission. Kill
+            # the exact old traffic without a database write lock. A later send can resume
+            # this conversation if the Ticket moves while kill is awaited.
+            await conversations.kill(killed_conversation_id)
+
+        planning_day_id, write_now = resolve_planning_write()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _require_same_restart_target(conn, principal, ticket)
+            if ticket.worker_step_claim in {
+                WorkerStepClaim.out,
+                WorkerStepClaim.errored,
+            }:
+                given_back = tickets_data.release_worker_step_claim(
+                    conn,
+                    ticket_id,
+                    expected_claim=ticket.worker_step_claim,
+                    expected_claim_revision=ticket.worker_step_claim_revision,
+                    now=write_now,
                 )
-        elif ticket.worker_step_claim is WorkerStepClaim.errored:
-            tickets_data.clear_ticket_error_for_restart(conn, ticket_id, now=now)
-        if write_employee_configuration is not None:
-            write_employee_configuration(conn)
-        conn.execute("COMMIT")
-    except BaseException:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
-    started = await start_worker_step()
+                if not given_back:
+                    raise PlannerError(
+                        ErrorCode.already_running,
+                        "the Ticket moved while it was being restarted",
+                        {"ticket_id": ticket_id},
+                    )
+                if killed_conversation_id is not None:
+                    unlinked = tickets_data.clear_ticket_conversation_link(
+                        conn,
+                        ticket_id,
+                        expected_conversation_id=killed_conversation_id,
+                        now=write_now,
+                    )
+                    if not unlinked:
+                        raise PlannerError(
+                            ErrorCode.already_running,
+                            "the Ticket moved while it was being restarted",
+                            {"ticket_id": ticket_id},
+                        )
+            elif rearming_idle_revision:
+                days_data.add_day_ticket(conn, planning_day_id, ticket_id, write_now)
+            if write_employee_configuration is not None:
+                write_employee_configuration(conn, write_now)
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+    start_result = await start_worker_step(planning_day_id)
     restarted = tickets_data.read_ticket(conn, ticket_id)
     return {
         "ticket_id": ticket_id,
@@ -152,10 +203,11 @@ async def restart_worker(
         },
         "ticket_status": restarted.ticket_status.value,
         "conversation_id": restarted.conversation_id,
-        "started": started,
+        "started": start_result.started,
+        "delivery_fate": start_result.delivery_fate,
         "not_started_because": (
             None
-            if started
+            if start_result.started or start_result.delivery_fate is not None
             else worker_step_readiness.worker_step_blocker(
                 conn,
                 restarted,

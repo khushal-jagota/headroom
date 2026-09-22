@@ -1,0 +1,75 @@
+# Every check this repository has, run directly on every pull request.
+#
+# There is no wrapper. Each check below is one command, and each fails the job on its
+# own exit code. Nothing is piped, because a pipe reports the pipe's exit status and
+# not the command's. A missing tool is a command-not-found and fails its step.
+#
+# The runner is the machine that serves live Panels, so this job stays inside its own
+# workspace. It creates its own virtual environment, and config.yaml sets only relative
+# paths (data/planning.db, data/logs, data/dispatcher.lock), so every default lands
+# under GITHUB_WORKSPACE. The runner service carries no PLAN_* variable, and every test
+# that starts a server goes through tests/e2e/conftest.py, which drops ambient PLAN_*
+# variables, makes its own database in a temporary directory, and takes a free port.
+# Nothing here reads or writes ~/Deployments/Panels/current, port 8767, or the live
+# database. No PANELS_REAL_* variable is set, so the paid provider tests stay off.
+#
+# One runner is registered on this machine and it runs one job at a time, so a checks
+# run and a deploy can never overlap. The cost runs the other way: a checks run delays
+# a deploy that is waiting. The concurrency group cancels a superseded run instead of
+# queueing it, and timeout-minutes stops a hung check from holding the runner.
+name: Checks
+on:
+  pull_request:
+concurrency:
+  group: checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: [self-hosted, linux, production, panels-deploy]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build the virtual environment
+        run: |
+          python3 -m venv .venv
+          ./.venv/bin/python -m pip install -r requirements.txt
+          ./.venv/bin/python -m pip install --editable .
+      - name: Install the pinned browser
+        run: ./.venv/bin/python -m playwright install chromium
+      - name: Install the web dependencies
+        run: npm ci --prefix web
+      # The e2e tests and the web/tests browser scripts drive a real server, and that
+      # server serves web/dist. Without this step they measure a placeholder page.
+      # Its id is the one condition the checks below read: it is the last setup step,
+      # so it succeeds only when every setup step before it succeeded.
+      - name: Build the frontend bundle
+        id: setup
+        run: npm --prefix web run build
+      # Each check runs even when an earlier check failed, so one red check cannot
+      # hide the other seven. The three pytest commands stay three processes:
+      # Playwright's sync API holds an event loop, and one combined run reports
+      # hundreds of failures that are not real.
+      - name: ruff
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: ./.venv/bin/ruff check .
+      - name: mypy
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: ./.venv/bin/mypy
+      - name: pytest tests/unit
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: ./.venv/bin/pytest tests/unit
+      - name: pytest tests/integration
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: ./.venv/bin/pytest tests/integration
+      - name: pytest tests/e2e
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: ./.venv/bin/pytest tests/e2e
+      - name: npm run check
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: npm --prefix web run check
+      - name: npm run test:vitest
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: npm --prefix web run test:vitest
+      - name: npm run test:legacy
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: npm --prefix web run test:legacy

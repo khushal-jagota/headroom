@@ -7,13 +7,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
 const temporaryDirectory = await mkdtemp(join(tmpdir(), "panels-model-picker-"));
-const hostPath = join(webRoot, "tests", `.model-picker-host-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.model-picker-main-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.model-picker-index-${process.pid}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `model-picker-host-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `model-picker-main-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `model-picker-index-${process.pid}.html`);
 let serverProcess;
 
 for (const fileName of ["WorkerConfigurationSetup.svelte", "ManagedLaunchDefaults.svelte"]) {
@@ -249,19 +251,20 @@ with sync_playwright() as p:
 
     page.evaluate("window.__rejectNextTicketSave()")
     picker.locator('[data-conversation-picker-choice="codex-native"]').click()
+    assert picker.locator('[data-conversation-picker-choice="low"]').count() == 1
+    picker.locator('[data-conversation-picker-choice="low"]').click()
     page.wait_for_function("window.__ticketSaves().length === 1")
     page.wait_for_selector("[data-employee-configuration-save-error]")
     assert "codex-gone extreme" in trigger.inner_text()
-    assert picker.locator("[data-conversation-picker-panel]").count() == 1
+    assert picker.locator("[data-conversation-picker-panel]").count() == 0
     page.keyboard.press("Escape")
     assert trigger.get_attribute("aria-controls") is None
 
     trigger.click()
     picker.locator('[data-conversation-picker-choice="codex-native"]').click()
-    page.wait_for_function("window.__ticketSaves().length === 2")
     assert picker.locator('[data-conversation-picker-choice="low"]').count() == 1
     picker.locator('[data-conversation-picker-choice="low"]').click()
-    page.wait_for_function("window.__ticketSaves().length === 3")
+    page.wait_for_function("window.__ticketSaves().length === 2")
     assert page.evaluate("window.__ticketSaves()[0]") == {
         "employee_backend": "codex", "employee_launch_model": "codex-native",
         "employee_launch_reasoning_effort": "low"
@@ -272,7 +275,7 @@ with sync_playwright() as p:
         "rows => rows.map(row => row.getAttribute('data-conversation-backend'))"
     ) == ["claude", "codex", "hermes"]
     picker.locator('[data-conversation-backend="codex"]').click()
-    assert page.evaluate("window.__ticketSaves().length") == 3
+    assert page.evaluate("window.__ticketSaves().length") == 2
     assert picker.locator("[data-conversation-picker-panel]").count() == 1
     hermes = picker.locator('[data-conversation-backend="hermes"]')
     assert hermes.get_attribute("aria-disabled") == "true"
@@ -280,8 +283,8 @@ with sync_playwright() as p:
     assert picker.locator("[data-conversation-picker-feedback]").inner_text() == "Hermes has no configured model."
     page.evaluate("window.__holdNextTicketSave()")
     picker.locator('[data-conversation-backend="claude"]').click()
-    page.wait_for_function("window.__ticketSaves().length === 4")
-    assert page.evaluate("window.__ticketSaves()[3]") == {
+    page.wait_for_function("window.__ticketSaves().length === 3")
+    assert page.evaluate("window.__ticketSaves()[2]") == {
         "employee_backend": "claude", "employee_launch_model": "claude-a",
         "employee_launch_reasoning_effort": None
     }

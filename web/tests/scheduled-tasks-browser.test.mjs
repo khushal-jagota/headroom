@@ -7,13 +7,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { build } from "vite";
+import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
 const outputDirectory = await mkdtemp(join(tmpdir(), "panels-scheduled-tasks-"));
-const hostPath = join(webRoot, "tests", `.scheduled-tasks-host-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.scheduled-tasks-main-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.scheduled-tasks-index-${process.pid}.html`);
+const scratchRoot = await scratchDirectory();
+const hostPath = join(scratchRoot, `scheduled-tasks-host-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `scheduled-tasks-main-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `scheduled-tasks-index-${process.pid}.html`);
 let serverProcess;
 
 try {

@@ -7,8 +7,12 @@ Panels.
 
 ## What becomes a notification
 
-Panels derives four attention flags for each subject: a reply is waiting, a proposal is
-waiting for approval, a stage is assigned to Khushal, and something failed. A flag that
+Panels derives five attention flags for each subject: a message is waiting for a reply,
+a worker is waiting for an answer, a proposal is waiting for approval, a stage is
+assigned to Khushal, and something failed. A message and a waiting ask are two flags
+because they are two different things. Held as one, whichever arrived second changed
+nothing, so it raised no edge and reached nobody, and an ask announced itself as a
+message. A flag that
 turns from false to true is an edge, and an edge is the only thing that can become a
 notification. The writer records the flag and the edge in its own transaction, so several
 commits stay distinct even when one wake-up covers them.
@@ -21,14 +25,16 @@ contract as requests and messages.
 This chokepoint is intentional. The source adapters, user choices, wording, and delivery
 provider do not decide independently what counts. The server owns one catalogue, and
 the Notifications screen renders its subject groups and choices directly. It offers
-four choices for Tickets:
+five choices for Tickets:
 
-- an unread addressed message, input request, or permission request awaits a reply;
+- an unread addressed message awaits a reply;
+- a permission request or an input request awaits an answer;
 - an owner-held Ticket proposal awaits approval;
 - a Ticket stage becomes assigned to Khushal; and
 - a worker turn fails or a Ticket errors.
 
-Chief of Staff and Sprint Item supervisors each offer awaiting reply and errored.
+Chief of Staff and Sprint Item supervisors each offer awaiting reply, needs an answer,
+and errored.
 Approval and assignment belong to Tickets only. Each saved choice uses its subject and
 notification type as one key, so a Chief choice never changes the matching Ticket choice.
 

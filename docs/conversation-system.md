@@ -345,6 +345,12 @@ or run a native continuation. Panels does not classify those paths. It keeps the
 messages, tools, asks, results, and running usage under one turn token until Claude marks
 each UUID on a correlated result. That result supplies the exact terminal receipt.
 
+A steered command that Claude has taken up is waited out for as long as the work takes,
+because its ending arrives with the work. A steered command that nothing is running is
+waited out only briefly. If Claude admits a command and then goes quiet about it, Panels
+stops waiting after fifteen seconds and ends the turn on the result it is holding, rather
+than leaving the turn open with no ending at all.
+
 Claude Stop sends one interrupt that also cancels queued UUIDs. Panels waits for the
 provider receipt, verifies that no owned UUID remains queued, and waits for the active
 command result. If any proof is absent, Panels discards the child. The next prompt resumes
@@ -626,6 +632,14 @@ enabled skills, callable installed apps, and enabled installed plugins with the 
 callability comes from `app/installed`. This prevents an installed but unusable connector
 from appearing in the menu.
 
+Codex runs each of those commands through a call of its own, and every one of those
+calls starts a turn. So a Codex command cannot join a turn that is already running. A
+command steered into a running Codex turn is not sent as text: the adapter says it
+cannot take it, and the message goes back to the held line and runs as its own turn when
+the current one ends. The held row says it is waiting because a command runs as its own
+turn. Hermes and Claude take a steered command inside the running turn, and keep their
+behaviour.
+
 Codex refreshes the complete catalog after skill or app change notifications. Refreshes
 run beside the app-server reader and merge repeated notifications. Each source is read
 independently. A failed source contributes nothing to the new snapshot, while fresh
@@ -658,6 +672,69 @@ notifications are therefore ignored rather than decoded into a second result.
 The last catalog reported is kept on the conversation. The menu still works when no
 child process runs. A conversation with no report yet offers nothing.
 
+## Proving the three backends
+
+The contract's proof runs every backend key against one scripted agent. That proves the
+core three times over, not the three adapters. What each real agent CLI actually does is
+proved by four opt-in exercises that make real model calls against the logins on this
+host. They are off unless you switch them on, and nothing runs them on a push, a pull
+request, or a schedule. A person runs them or nobody does.
+
+The whole set takes about four minutes. Cost is not the reason to skip them.
+
+Each exercise is its own `pytest` command, from the repository root with the tree's own
+virtual environment:
+
+| Switch on | Point it at | Cases |
+| --- | --- | --- |
+| `PANELS_REAL_CLAUDE_TESTS=1` | `tests/unit/test_conversation_claude_real_cli.py` and `tests/unit/test_conversation_claude_agent_sdk.py` | 8 |
+| `PANELS_REAL_CODEX_TESTS=1` | `tests/unit/test_conversation_codex_real_cli.py` | 12 |
+| `PANELS_REAL_HERMES_TESTS=1` | `tests/unit/test_conversation_hermes_acp.py` | 4 |
+| `PANELS_REAL_SYSTEM_STEERING_TESTS=1` | `tests/integration/test_conversation_real_provider_steering.py` | 3 |
+
+The first three drive one adapter directly. The fourth is the only one that runs the whole
+conversation system and its HTTP API against all three real agent processes, and it is
+where a steer is proved to cross into a live turn.
+
+That fourth exercise asks for more before it will start. It refuses a dirty tree, so
+`git status --short` must come back empty. It needs a directory to write its receipts
+into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs three credential
+directories, because it gives each agent a private home rather than borrowing yours:
+
+- `PANELS_REAL_HERMES_HOME_TEMPLATE` — a copy of `~/.hermes`.
+- `PANELS_REAL_CODEX_HOME_TEMPLATE` — a directory holding `auth.json` and `config.toml`.
+- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — a directory holding `.credentials.json` and
+  `settings.json`.
+
+You build those three yourself. Nothing in the repository makes them for you, and a stale
+copy fails as a login problem rather than as a missing file.
+
+### A red run is expected today
+
+Seven or eight of the twenty-seven fail, and none of it is Panels being wrong. Expect it,
+and do not go looking for a defect you did not cause. Four groups:
+
+- **The whole steering exercise, one failure per backend.** All three die on the same
+  assertion, that a steer sent while nothing is running is refused. Panels now starts a turn
+  instead, and has since the send modes were named. Worth repairing, and it is one line:
+  these three cases are the only thing here that runs the contract against real adapters.
+- **Two claude cases, and they are not reliably red.** Both plant a codeword and ask for it
+  back, and the model reads that as an attempt to smuggle instructions past it — sometimes.
+  One run fails both, the next fails one. A case that turns on whether a model feels like
+  complying is worse than one that always fails, because it teaches you to ignore it. Worth
+  repairing, by asking for something a model will agree to do.
+- **Two hermes cases.** They ask for a long count, sleep two seconds, then cancel and expect
+  an interrupted turn. The turn has already finished. Worth repairing, by timing the cancel
+  off the first streamed token instead of the clock.
+- **One codex case.** It changes the model mid-conversation to one a ChatGPT-account login
+  cannot use, and codex says so plainly. Not worth repairing: a hardcoded vendor model name
+  has to stay valid forever on whichever account is logged in, and the claim that carries
+  weight — that a model sent with a turn reaches the model call — is proved by the case next
+  to it, which sends a model that does not exist and reads the refusal back.
+
+What passes is worth knowing too. Every run so far has each of the three backends accept a
+steer into a turn that was genuinely running, on a receipt from the provider process itself.
+
 ## Code paths
 
 - Contract and floor defaults: `src/planner/conversation/contracts.py` (the
@@ -676,7 +753,11 @@ child process runs. A conversation with no report yet offers nothing.
   and the routes that mount them.
 - The contract's proof: `tests/support/conversation_contract_conformance.py`,
   run against the real system in
-  `tests/unit/test_conversation_conformance.py`.
+  `tests/unit/test_conversation_conformance.py`. Every backend key is bound to the
+  same scripted agent in `tests/support/conversation_system_under_test.py`.
+- The real-agent exercises: the four files named above, plus
+  `tests/support/conversation_claude_agent_sdk_bench.py` and
+  `conversation_codex_app_server_bench.py`.
 
 ## Handoffs
 
