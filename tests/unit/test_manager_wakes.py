@@ -14,7 +14,6 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     PromptDeliveryMode,
-    PromptDeliveryQueued,
     PromptDeliveryStarted,
 )
 from planner.conversation.events import PromptEventPayload
@@ -94,40 +93,16 @@ class _DurableStartedConversationSystem:
     async def kill(self, _conversation_id: str) -> None:
         return None
 
+    async def is_running(self, _conversation_id: str) -> bool:
+        return False
 
-class _DurableBusyConversationSystem(_DurableStartedConversationSystem):
-    def __init__(self, database_path: Path) -> None:
-        super().__init__(database_path)
-        self.held: tuple[str, MessageContent, str, PromptDeliveryMode] | None = None
 
-    async def send(
-        self,
-        conversation_id: str,
-        content: MessageContent,
-        *,
-        sender_label: str,
-        mode: PromptDeliveryMode,
-        sender_message_id: str | None = None,
-        **_unused: Any,
-    ) -> PromptDeliveryQueued:
-        assert sender_message_id is not None
-        self.held = (conversation_id, content, sender_label, mode)
-        self._sender_message_id = sender_message_id
-        return PromptDeliveryQueued(queue_position=1)
+class _ActiveConversationSystem(_DurableStartedConversationSystem):
+    async def is_running(self, _conversation_id: str) -> bool:
+        return True
 
-    async def promote(self) -> None:
-        assert self.held is not None
-        conversation_id, content, sender_label, mode = self.held
-        await self.store.append_event(
-            conversation_id,
-            PromptEventPayload(
-                content=content,
-                sender_label=sender_label,
-                mode=mode,
-                sender_message_id=self._sender_message_id,
-            ),
-        )
-        self.held = None
+    async def send(self, *_args: Any, **_kwargs: Any) -> PromptDeliveryStarted:
+        raise AssertionError("a busy manager must not receive or interrupt a prompt")
 
 
 def test_manager_proposal_wakes_are_atomic_and_each_file_gets_a_generation(
@@ -329,6 +304,41 @@ def test_readdressing_a_parked_proposal_to_the_item_manager_creates_one_new_wake
     assert len(_wake_rows(tmp_db)) == 1
 
 
+def test_readdressing_to_a_non_manager_item_does_not_create_a_wake(
+    tmp_db: Connection,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprint_items(id,title,project_id,kind,created_at,updated_at) "
+        "VALUES ('si_other','Not managed','project_vylo','other',1,1)"
+    )
+    ticket = tickets_data.create_ticket(
+        tmp_db,
+        title="Owner ticket",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Start",
+        stated_ceiling="needs_success_condition",
+    )
+    tickets_data.file_current_proposal(
+        tmp_db,
+        ticket.id,
+        body="Parked",
+        principal=Principal(PrincipalKind.ticket, ticket.id),
+        now=2,
+    )
+    tickets_data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit={"ceiling_holder": Principal(PrincipalKind.sprint_item, "si_other")},
+        title_max_chars=TITLE_MAX_CHARS,
+        principal=OWNER_PRINCIPAL,
+        now=3,
+    )
+    assert _wake_rows(tmp_db) == []
+
+
 def test_moving_a_parked_proposal_wakes_the_new_manager_and_removes_old_authority(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
@@ -488,7 +498,7 @@ def test_batches_group_wakes_and_close_only_for_the_exact_prompt(
     assert all(row["closed_at"] == 23 for row in _wake_rows(tmp_db))
 
 
-def test_busy_manager_queues_without_interruption_then_exact_promotion_closes(
+def test_busy_manager_leaves_sources_unclaimed_so_later_wakes_combine(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
@@ -503,24 +513,58 @@ def test_busy_manager_queues_without_interruption_then_exact_promotion_closes(
     batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=2)
     assert batch is not None
     database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
-    system = _DurableBusyConversationSystem(database_path)
+    setup_system = _DurableStartedConversationSystem(database_path)
+
+    assert asyncio.run(
+        deliver_batch(
+            batch,
+            connect_database=lambda: connect(str(database_path)),
+            conversation_system=setup_system,  # type: ignore[arg-type]
+            process_token="process",
+            now=lambda: 50,
+        )
+    )
+    wake_data.create_worker_error_wake(
+        tmp_db,
+        sprint_item_id=item_id,
+        ticket_id=ticket_id,
+        claim_revision=2,
+        ticket_title="Managed ticket",
+        now=51,
+    )
+    waiting = wake_data.claim_next_batch(tmp_db, process_token="process", now=52)
+    assert waiting is not None
+    system = _ActiveConversationSystem(database_path)
 
     delivered = asyncio.run(
         deliver_batch(
-            batch,
+            waiting,
             connect_database=lambda: connect(str(database_path)),
             conversation_system=system,  # type: ignore[arg-type]
             process_token="process",
             now=lambda: 50,
         )
     )
-    assert delivered is True
-    assert system.held is not None
-    assert all(row["closed_at"] is None for row in _wake_rows(tmp_db))
-
-    asyncio.run(system.promote())
-    assert reconcile_batch_outcomes(tmp_db, now=51) == 1
-    assert all(row["closed_at"] == 51 for row in _wake_rows(tmp_db))
+    assert delivered is False
+    assert (
+        tmp_db.execute(
+            "SELECT count(*) FROM manager_wake_batches WHERE id=?", (waiting.id,)
+        ).fetchone()[0]
+        == 0
+    )
+    wake_data.create_proposal_wake(
+        tmp_db,
+        sprint_item_id=item_id,
+        ticket_id=ticket_id,
+        proposal_revision=1,
+        ticket_title="Managed ticket",
+        proposal_field="success_condition",
+        now=53,
+    )
+    combined = wake_data.claim_next_batch(tmp_db, process_token="process", now=54)
+    assert combined is not None
+    assert "explicit worker-error" in combined.message
+    assert "filed a proposal" in combined.message
 
 
 def test_definite_failure_waits_then_creates_a_new_attempt_id(
@@ -550,7 +594,7 @@ def test_definite_failure_waits_then_creates_a_new_attempt_id(
     assert second.sender_message_id != first.sender_message_id
 
 
-def test_restart_preserves_dispatching_and_accepted_batches_as_uncertain(
+def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batch(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
@@ -575,7 +619,7 @@ def test_restart_preserves_dispatching_and_accepted_batches_as_uncertain(
     stored = wake_data.batches_waiting_for_outcome(tmp_db)[0]
     assert stored.status is WakeBatchStatus.uncertain
     assert (
-        wake_data.preserve_accepted_batches_from_other_processes(tmp_db, process_token="new", now=5)
+        wake_data.recover_accepted_batches_from_other_processes(tmp_db, process_token="new", now=5)
         == 0
     )
 
@@ -615,30 +659,64 @@ def test_restart_preserves_dispatching_and_accepted_batches_as_uncertain(
         now=6,
     )
     assert (
-        wake_data.preserve_accepted_batches_from_other_processes(tmp_db, process_token="new", now=7)
+        wake_data.recover_accepted_batches_from_other_processes(tmp_db, process_token="new", now=7)
         == 1
     )
-    preserved = next(
-        row for row in wake_data.batches_waiting_for_outcome(tmp_db) if row.id == queued.id
-    )
-    assert preserved.status is WakeBatchStatus.uncertain
-    assert preserved.sender_message_id == queued.sender_message_id
-    assert preserved.conversation_id == "conv-queued"
-    assert wake_data.pending_batches(tmp_db) == ()
+    recovered = wake_data.pending_batches(tmp_db)[0]
+    assert recovered.id == queued.id
+    assert recovered.sender_message_id == queued.sender_message_id
+    assert recovered.conversation_id is None
 
+
+def test_held_wake_is_marked_dispatching_before_it_can_leave_the_queue(
+    tmp_db: Connection, fake_clock: FakeClock
+) -> None:
+    item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    wake_data.create_worker_error_wake(
+        tmp_db,
+        sprint_item_id=item_id,
+        ticket_id=ticket_id,
+        claim_revision=1,
+        ticket_title="Managed ticket",
+        now=1,
+    )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="old", now=2)
+    assert batch is not None
     tmp_db.execute(
         "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
-        "created_at) VALUES ('conv-queued','codex','model','/tmp','full',1)"
+        "created_at) VALUES ('conv-held','hermes','model','/tmp','full',1)"
     )
-    tmp_db.execute(
-        "INSERT INTO conversation_events(conversation_id,sequence,kind,payload,created_at) "
-        "VALUES ('conv-queued',1,'prompt',?,8)",
-        (json.dumps({"sender_message_id": queued.sender_message_id}),),
+    wake_data.record_batch_dispatching(
+        tmp_db,
+        batch.id,
+        conversation_id="conv-held",
+        process_token="old",
+        now=3,
     )
-    assert reconcile_batch_outcomes(tmp_db, now=8) == 1
-    closed = next(row for row in _wake_rows(tmp_db) if row["ticket_id"] == second_ticket.id)
-    assert closed["closed_at"] == 8
-    assert wake_data.claim_next_batch(tmp_db, process_token="new", now=20) is None
+    wake_data.record_batch_accepted(
+        tmp_db,
+        batch.id,
+        conversation_id="conv-held",
+        process_token="old",
+        now=4,
+    )
+    database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+    store = ConversationStore(str(database_path), integer_now=lambda: 5)
+
+    assert (
+        asyncio.run(
+            store.mark_held_sender_messages_leaving_queue("conv-held", (batch.sender_message_id,))
+        )
+        == 1
+    )
+    marked = wake_data.batches_waiting_for_outcome(tmp_db)[0]
+    assert marked.status is WakeBatchStatus.dispatching
+    assert (
+        wake_data.recover_accepted_batches_from_other_processes(tmp_db, process_token="new", now=6)
+        == 0
+    )
+    assert wake_data.preserve_interrupted_dispatches(tmp_db, process_token="new", now=6) == 1
+    assert wake_data.batches_waiting_for_outcome(tmp_db)[0].status is WakeBatchStatus.uncertain
 
 
 def test_late_uncertain_outcome_prevents_restart_replay(
@@ -681,7 +759,7 @@ def test_late_uncertain_outcome_prevents_restart_replay(
     assert reconcile_batch_outcomes(tmp_db, now=6) == 1
     assert wake_data.batches_waiting_for_outcome(tmp_db)[0].status is WakeBatchStatus.uncertain
     assert (
-        wake_data.preserve_accepted_batches_from_other_processes(tmp_db, process_token="new", now=7)
+        wake_data.recover_accepted_batches_from_other_processes(tmp_db, process_token="new", now=7)
         == 0
     )
 

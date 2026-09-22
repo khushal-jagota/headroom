@@ -24,11 +24,13 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     PromptDeliveryMode,
+    PromptDeliveryQueued,
     PromptDeliveryStarted,
     PromptDeliveryUncertain,
 )
 from planner.conversation.logic import conversation_start_resolution
 from planner.conversation.message_content import text_message_content
+from planner.conversation.storage import ConversationStore
 
 
 @pytest.fixture(autouse=True)
@@ -135,6 +137,101 @@ def test_supervisor_wake_message_crosses_the_hermes_adapter_prompt_boundary() ->
             assert prompts[0].text == "Review the manager wake."
             assert prompts[0].sender_label == "Panels"
             assert prompts[0].mode is PromptDeliveryMode.queue
+
+    asyncio.run(exercise())
+
+
+def test_busy_manager_holds_a_wake_without_interrupt_then_delivers_it() -> None:
+    async def exercise() -> None:
+        async with open_conversation_system_under_test() as subject:
+            await subject.system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="busy-manager",
+                    backend_key=ConversationBackendKey.hermes,
+                    model="a-model",
+                )
+            )
+            assert (
+                await subject.system.send(
+                    "busy-manager",
+                    text_message_content("incumbent work"),
+                    sender_label="owner",
+                )
+                == PromptDeliveryStarted()
+            )
+            queued = await subject.system.send(
+                "busy-manager",
+                text_message_content("Review the manager wake."),
+                sender_label="Panels",
+                mode=PromptDeliveryMode.queue,
+                sender_message_id="supervisor_delivery_wake_busy",
+            )
+            assert queued == PromptDeliveryQueued(queue_position=1)
+            assert await subject.backend_cancellations("busy-manager") == 0
+            before = await subject.backend_writes("busy-manager")
+            assert len(before) == 1
+            assert before[0].text.endswith("incumbent work")
+
+            await subject.complete_running_turn("busy-manager")
+
+            assert await subject.backend_cancellations("busy-manager") == 0
+            writes = await subject.backend_writes("busy-manager")
+            assert len(writes) == 2
+            assert writes[0].text.endswith("incumbent work")
+            assert writes[1].text.endswith("Review the manager wake.")
+            assert writes[1].sender_label == "Panels"
+
+    asyncio.run(exercise())
+
+
+def test_marker_failure_leaves_the_wake_held_and_the_retry_delivers_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = ConversationStore.mark_held_sender_messages_leaving_queue
+    calls = 0
+
+    async def fail_once(
+        store: ConversationStore,
+        conversation_id: str,
+        sender_message_ids: tuple[str, ...],
+    ) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("marker unavailable")
+        return await original(store, conversation_id, sender_message_ids)
+
+    monkeypatch.setattr(ConversationStore, "mark_held_sender_messages_leaving_queue", fail_once)
+
+    async def exercise() -> None:
+        async with open_conversation_system_under_test() as subject:
+            await subject.system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="marker-retry",
+                    backend_key=ConversationBackendKey.hermes,
+                    model="a-model",
+                )
+            )
+            await subject.system.send(
+                "marker-retry",
+                text_message_content("incumbent work"),
+                sender_label="owner",
+            )
+            assert await subject.system.send(
+                "marker-retry",
+                text_message_content("Review the manager wake."),
+                sender_label="Panels",
+                mode=PromptDeliveryMode.queue,
+                sender_message_id="supervisor_delivery_wake_retry",
+            ) == PromptDeliveryQueued(queue_position=1)
+
+            await subject.complete_running_turn("marker-retry")
+
+            writes = await subject.backend_writes("marker-retry")
+            assert len(writes) == 2
+            assert writes[0].text.endswith("incumbent work")
+            assert writes[1].text.endswith("Review the manager wake.")
+            assert calls == 2
 
     asyncio.run(exercise())
 

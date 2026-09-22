@@ -21,7 +21,6 @@ class ProposalRouteKind(StrEnum):
 class ProposalRoute:
     kind: ProposalRouteKind
     sprint_item_id: str | None = None
-    holder: Principal | None = None
 
 
 def route_proposal(
@@ -40,7 +39,7 @@ def route_proposal(
         return ProposalRoute(ProposalRouteKind.auto_accept)
     if holder.kind is PrincipalKind.sprint_item:
         return ProposalRoute(ProposalRouteKind.item_manager, holder.id)
-    return ProposalRoute(ProposalRouteKind.owner, holder=holder)
+    return ProposalRoute(ProposalRouteKind.owner)
 
 
 def parked_destination(route: ProposalRoute) -> Principal | None:
@@ -50,4 +49,4 @@ def parked_destination(route: ProposalRoute) -> Principal | None:
     if route.kind is ProposalRouteKind.item_manager:
         assert route.sprint_item_id is not None
         return Principal(PrincipalKind.sprint_item, route.sprint_item_id)
-    return route.holder or OWNER_PRINCIPAL
+    return OWNER_PRINCIPAL

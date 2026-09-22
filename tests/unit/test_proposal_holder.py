@@ -44,13 +44,23 @@ def _park(
         kickoff_note="Agreed kickoff",
         stated_ceiling=stated_ceiling,
     )
-    return data.file_current_proposal(
+    parked = data.file_current_proposal(
         conn,
         ticket.id,
         body="Success proposal",
         principal=Principal(PrincipalKind.ticket, ticket.id),
         now=now + 1,
     )
+    if parked.ceiling_holder != holder:
+        return data.edit_ticket(
+            conn,
+            ticket.id,
+            edit=TicketEdit(ceiling_holder=holder),
+            title_max_chars=TITLE_MAX_CHARS,
+            principal=OWNER_PRINCIPAL,
+            now=now + 2,
+        )
+    return parked
 
 
 def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(

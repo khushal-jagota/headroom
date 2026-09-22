@@ -311,6 +311,7 @@ class _ConversationState:
     sender_messages_being_delivered: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
+    held_drain_retry: asyncio.Task[None] | None = None
     reserved_turn: _ReservedTurn | None = None
     running_turn: _RunningTurn | None = None
     last_ended_turn_token: TurnToken | None = None
@@ -1190,6 +1191,12 @@ class SqliteProcessConversationSystem:
         async with self._conversations_lock:
             states = list(self._conversations.values())
         for state in states:
+            retry = state.held_drain_retry
+            state.held_drain_retry = None
+            if retry is not None:
+                retry.cancel()
+                with suppress(asyncio.CancelledError):
+                    await retry
             pump = state.backend_event_pump
             state.backend_event_pump = None
             if pump is not None:
@@ -1213,6 +1220,9 @@ class SqliteProcessConversationSystem:
                 states = list(self._conversations.values())
             for state in states:
                 await state.backend_event_queue.join()
+                retry = state.held_drain_retry
+                if retry is not None:
+                    await asyncio.shield(retry)
             await asyncio.sleep(0)
             if all(state.backend_event_queue.empty() for state in states):
                 return
@@ -2131,6 +2141,19 @@ class SqliteProcessConversationSystem:
                     self._set_phase(state, _ConversationPhase.idle)
                     return
                 batch = leading_run_that_can_share_a_turn(state.held_prompts)
+                try:
+                    await self._store.mark_held_sender_messages_leaving_queue(
+                        state.record.conversation_id,
+                        tuple(
+                            message.sender_message_id
+                            for message in batch
+                            if message.sender_message_id is not None
+                        ),
+                    )
+                except Exception:
+                    self._set_phase(state, _ConversationPhase.idle)
+                    self._schedule_held_drain_retry(state)
+                    raise
                 for _ in batch:
                     state.held_prompts.popleft()
                 self._begin_held_deliveries(state, batch)
@@ -2231,6 +2254,33 @@ class SqliteProcessConversationSystem:
                 raise
             if started:
                 return
+
+    def _schedule_held_drain_retry(self, state: _ConversationState) -> None:
+        retry = state.held_drain_retry
+        if retry is not None and not retry.done():
+            return
+
+        async def retry_until_marked() -> None:
+            try:
+                delay = 0.05
+                while state.held_prompts:
+                    await asyncio.sleep(delay)
+                    try:
+                        await self._drain_held_prompts(state)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        LOGGER.exception(
+                            "conversation %s could not mark a held delivery; retrying",
+                            state.record.conversation_id,
+                        )
+                        delay = min(delay * 2, 5.0)
+                        continue
+                    return
+            finally:
+                state.held_drain_retry = None
+
+        state.held_drain_retry = asyncio.create_task(retry_until_marked())
 
     async def _discard_held_prompts(self, state: _ConversationState) -> None:
         """Throw away everything waiting, writing each one down. The lock must be held.

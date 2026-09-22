@@ -943,7 +943,7 @@ def create_ticket(
             settle=routed_holder is None,
             worker_type_definition=worker_type_definition,
         )
-        if routed_holder is not None:
+        if initial_proposal is not None and routed_holder is not None:
             ceiling_holder = routed_holder
         values_json = fields_codec.values_to_json(initial_values)
         conn.execute(
@@ -1758,6 +1758,11 @@ def edit_ticket(
                 route.kind is proposal_routing.ProposalRouteKind.item_manager
                 and route.sprint_item_id is not None
                 and updated.pending_proposal is not None
+                and conn.execute(
+                    "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'",
+                    (route.sprint_item_id,),
+                ).fetchone()
+                is not None
             ):
                 manager_wakes_data.create_proposal_wake(
                     conn,

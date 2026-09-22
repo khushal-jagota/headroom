@@ -97,23 +97,32 @@ def batches_waiting_for_outcome(conn: sqlite3.Connection) -> tuple[WakeBatch, ..
     return tuple(_batch_from_row(row) for row in rows)
 
 
-def preserve_accepted_batches_from_other_processes(
+def recover_accepted_batches_from_other_processes(
     conn: sqlite3.Connection, *, process_token: str, now: int
 ) -> int:
-    """Keep a prior process's accepted send unresolved instead of replaying it.
-
-    A queued message can leave the held line and reach the backend before its prompt row
-    commits. Process loss in that window looks exactly like a message still in memory, so
-    neither case is safe to resend.
-    """
+    """Retry a known-held delivery after the process that held it ended."""
     with conn:
         updated = conn.execute(
-            "UPDATE manager_wake_batches SET status='uncertain', updated_at=? "
+            "UPDATE manager_wake_batches SET status='pending',process_token=NULL,"
+            "conversation_id=NULL,updated_at=? "
             "WHERE status='accepted' "
             "AND (process_token IS NULL OR process_token != ?)",
             (now, process_token),
         )
     return updated.rowcount
+
+
+def release_pending_batch(
+    conn: sqlite3.Connection, batch_id: int, *, process_token: str
+) -> bool:
+    """Return a not-yet-sent batch to its source wakes so later events can join it."""
+    with conn:
+        deleted = conn.execute(
+            "DELETE FROM manager_wake_batches WHERE id=? AND status='pending' "
+            "AND process_token=?",
+            (batch_id, process_token),
+        )
+    return deleted.rowcount == 1
 
 
 def preserve_interrupted_dispatches(

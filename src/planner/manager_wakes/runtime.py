@@ -102,6 +102,11 @@ async def deliver_batch(
                 current = conversation_start.read_agent_conversation(
                     conn, item.supervisor_agent_key
                 )
+                if current is not None and await conversation_system.is_running(current):
+                    data.release_pending_batch(
+                        conn, batch.id, process_token=process_token
+                    )
+                    return False
                 created = conversation_start.new_conversation_id()
                 intended_conversation_id = current or created
                 data.record_batch_dispatching(
@@ -204,7 +209,7 @@ class ManagerWakeLoop:
             data.preserve_interrupted_dispatches(
                 conn, process_token=self._process_token, now=now
             )
-            data.preserve_accepted_batches_from_other_processes(
+            data.recover_accepted_batches_from_other_processes(
                 conn, process_token=self._process_token, now=now
             )
             batches = list(data.pending_batches(conn))
