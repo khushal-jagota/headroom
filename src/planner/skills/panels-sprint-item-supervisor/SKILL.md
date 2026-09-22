@@ -27,6 +27,18 @@ Use messages to guide the same employee. Create a new Ticket only for genuinely 
 work. Use canonical lifecycle actions for state; never simulate approval, scope, placement,
 or completion with a message.
 
+## Keep Ticket briefs about the work
+
+A Brief gives the Worker its actual job: the outcome or problem, context and evidence that
+help, real constraints, and any specific steering that should shape judgment. Keep it as
+short as the work permits.
+
+Do not restate the Worker lifecycle, Stage responsibilities, proposal routing, review
+holder, ceiling behavior, or other mechanics Panels and the Worker skills already enforce.
+Express those facts through the system controls that own them. Add procedural guidance only
+when it is a deliberate exception or materially changes how this particular job should be
+done.
+
 ## Choose the Worker from the real uncertainty
 
 Name the Ticket after the actual problem or outcome, not a downstream symptom.
