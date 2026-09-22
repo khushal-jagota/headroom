@@ -133,14 +133,16 @@ claim the running deployment is fixed when work exists only on staging.
 
 Use the same object commands as every other Panels agent:
 
-- `panels sprint item set` changes one Sprint Item field.
-- `panels ticket edit --input-json -` changes one or more permitted child Ticket fields.
-- `panels ticket proposal accept` accepts a parked proposal.
-- `panels ticket proposal revise` returns a parked proposal with focused guidance.
-- `panels day add-ticket` and `panels day remove-ticket` change Day membership.
-- `panels ticket block` and `panels ticket unblock` change blocker links.
-- `panels sprint item artifact list` lists Sprint Item artifacts. Use the sibling
-  `write` and `delete` commands to change them.
+- `panels sprint item set <item-id> <field> --value <value>` changes one Sprint Item field.
+- `panels ticket edit <ticket-id> --input-json -` changes permitted child Ticket fields.
+- `panels ticket proposal <ticket-id> accept --ceiling <stage>` accepts a parked proposal.
+- `panels ticket proposal <ticket-id> revise` reads focused guidance from stdin.
+- `panels day add-ticket <ticket-id>` and `panels day remove-ticket <ticket-id>` change Day
+  membership.
+- `panels ticket block <ticket-id> --by <blocker-ticket-id>` and the matching `unblock`
+  command change blocker links.
+- `panels sprint item artifact list <item-id>` lists Sprint Item artifacts. Use the sibling
+  `write <item-id> <path> --body-file -` and `delete <item-id> <path>` commands to change them.
 
 Authority comes from the authenticated supervisor context. Command names do not grant it.
 

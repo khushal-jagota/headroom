@@ -34,7 +34,6 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.loops import start_background_loops
 
-
 adapter_spec = importlib.util.spec_from_file_location(
     "wake_dogfood_adapter",
     Path(__file__).resolve().parents[4] / "tests/unit/test_conversation_system.py",

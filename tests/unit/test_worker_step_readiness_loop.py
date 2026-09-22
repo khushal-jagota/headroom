@@ -37,7 +37,9 @@ from planner.conversation.contracts import (
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.clock import TestClock
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
+from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.runtime import worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
@@ -84,6 +86,7 @@ class _World:
         worker_type: str = "coding",
         conversation_id: str | None = None,
         on_today: bool = True,
+        next_ceiling: str = "none",
     ) -> str:
         with self.connect() as conn:
             ticket = tickets_data.create_ticket(
@@ -101,7 +104,7 @@ class _World:
                 field="brief",
                 principal=OWNER_PRINCIPAL,
                 now=0,
-                next_ceiling="none",
+                next_ceiling=next_ceiling,
                 next_holder=OWNER_PRINCIPAL,
             )
             if conversation_id is not None:
@@ -197,6 +200,38 @@ class _World:
                 now=self.clock.now_unix,
             )
         )
+
+
+class _MutateOnKillConversationSystem:
+    def __init__(
+        self,
+        base: InMemoryConversationSystem,
+        mutate: Callable[[], None],
+    ) -> None:
+        self.base = base
+        self.mutate = mutate
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return await self.base.is_running(conversation_id)
+
+    async def kill(self, conversation_id: str) -> None:
+        self.mutate()
+        await self.base.kill(conversation_id)
+
+
+class _PauseKillConversationSystem:
+    def __init__(self, base: InMemoryConversationSystem) -> None:
+        self.base = base
+        self.kill_started = asyncio.Event()
+        self.release_kill = asyncio.Event()
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return await self.base.is_running(conversation_id)
+
+    async def kill(self, conversation_id: str) -> None:
+        self.kill_started.set()
+        await self.release_kill.wait()
+        await self.base.kill(conversation_id)
 
 
 @pytest.fixture
@@ -406,6 +441,186 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
     errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
     assert len(errors) == 2
     assert all("delivery was uncertain" in error.getMessage() for error in errors)
+
+
+def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _World) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-restart-race")
+    world.start_conversation("conv-restart-race")
+    assert world.start_step(ticket_id).started is True
+
+    def complete_worker_step() -> None:
+        with world.connect() as other_conn:
+            tickets_data.file_current_proposal(
+                other_conn,
+                ticket_id,
+                body="Completed while restart waited.",
+                principal=Principal(PrincipalKind.ticket, ticket_id),
+                now=world.clock.now_unix(),
+            )
+
+    async def unexpected_start(_planning_day_id: str) -> WorkerStepStartResult:
+        raise AssertionError("a moved Ticket must not start another worker step")
+
+    with world.connect() as conn:
+        with pytest.raises(PlannerError) as raised:
+            asyncio.run(
+                worker_restart.restart_worker(
+                    cast(
+                        ConversationSystem,
+                        _MutateOnKillConversationSystem(
+                            world.conversations,
+                            complete_worker_step,
+                        ),
+                    ),
+                    conn,
+                    OWNER_PRINCIPAL,
+                    ticket_id,
+                    write_employee_configuration=None,
+                    start_worker_step=unexpected_start,
+                    resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                    now=world.clock.now_unix,
+                )
+            )
+
+    assert raised.value.code is ErrorCode.already_running
+    ticket = world.ticket(ticket_id)
+    assert ticket.pending_proposal is not None
+    assert ticket.pending_proposal.body == "Completed while restart waited."
+    assert ticket.worker_step_claim is WorkerStepClaim.none
+    assert ticket.conversation_id == "conv-restart-race"
+
+
+def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _World) -> None:
+    ticket_id = world.ready_ticket(conversation_id="conv-restart-error-race")
+    world.start_conversation("conv-restart-error-race")
+    assert world.start_step(ticket_id).started is True
+    claimed = world.ticket(ticket_id)
+    with world.connect() as conn:
+        assert tickets_data.mark_worker_step_claim_errored(
+            conn,
+            ticket_id,
+            expected_claim=claimed.worker_step_claim,
+            expected_claim_revision=claimed.worker_step_claim_revision,
+            now=world.clock.now_unix(),
+        )
+    admitted = world.ticket(ticket_id)
+
+    def replace_errored_generation() -> None:
+        with world.connect() as other_conn:
+            assert tickets_data.release_worker_step_claim(
+                other_conn,
+                ticket_id,
+                expected_claim=admitted.worker_step_claim,
+                expected_claim_revision=admitted.worker_step_claim_revision,
+                now=world.clock.now_unix(),
+            )
+            tickets_data.mark_ticket_errored(
+                other_conn,
+                ticket_id,
+                now=world.clock.now_unix(),
+            )
+
+    async def unexpected_start(_planning_day_id: str) -> WorkerStepStartResult:
+        raise AssertionError("a moved Ticket must not start another worker step")
+
+    with world.connect() as conn:
+        with pytest.raises(PlannerError) as raised:
+            asyncio.run(
+                worker_restart.restart_worker(
+                    cast(
+                        ConversationSystem,
+                        _MutateOnKillConversationSystem(
+                            world.conversations,
+                            replace_errored_generation,
+                        ),
+                    ),
+                    conn,
+                    OWNER_PRINCIPAL,
+                    ticket_id,
+                    write_employee_configuration=None,
+                    start_worker_step=unexpected_start,
+                    resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                    now=world.clock.now_unix,
+                )
+            )
+
+    assert raised.value.code is ErrorCode.already_running
+    ticket = world.ticket(ticket_id)
+    assert ticket.worker_step_claim is WorkerStepClaim.errored
+    assert ticket.worker_step_claim_revision > admitted.worker_step_claim_revision
+    assert ticket.conversation_id == "conv-restart-error-race"
+
+
+def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) -> None:
+    conversation_id = "conv-restart-next-opener-race"
+    ticket_id = world.ready_ticket(
+        conversation_id=conversation_id,
+        next_ceiling="needs_plan",
+    )
+    world.start_conversation(conversation_id)
+    assert world.start_step(ticket_id).started is True
+
+    async def run_race() -> tuple[PlannerError, WorkerStepStartResult]:
+        pausing = _PauseKillConversationSystem(world.conversations)
+
+        async def unexpected_restart_start(_planning_day_id: str) -> WorkerStepStartResult:
+            raise AssertionError("a moved restart must not start another worker step")
+
+        with world.connect() as restart_conn:
+            restart_task = asyncio.create_task(
+                worker_restart.restart_worker(
+                    cast(ConversationSystem, pausing),
+                    restart_conn,
+                    OWNER_PRINCIPAL,
+                    ticket_id,
+                    write_employee_configuration=None,
+                    start_worker_step=unexpected_restart_start,
+                    resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                    now=world.clock.now_unix,
+                )
+            )
+            await asyncio.wait_for(pausing.kill_started.wait(), timeout=1)
+
+            with world.connect() as worker_conn:
+                tickets_data.file_current_proposal(
+                    worker_conn,
+                    ticket_id,
+                    body="Advance before the next opener.",
+                    principal=Principal(PrincipalKind.ticket, ticket_id),
+                    now=world.clock.now_unix(),
+                )
+
+            next_step_task = asyncio.create_task(
+                start_ready_worker_step(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=cast(ConversationSystem, world.conversations),
+                    worker_type_registry=configured_worker_type_registry(),
+                    planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                    now=world.clock.now_unix,
+                )
+            )
+            await asyncio.sleep(0)
+            assert next_step_task.done() is False
+
+            pausing.release_kill.set()
+            try:
+                await restart_task
+            except PlannerError as error:
+                restart_error = error
+            else:
+                raise AssertionError("the stale restart must detect the newer worker step")
+            return restart_error, await next_step_task
+
+    restart_error, next_step = asyncio.run(run_race())
+
+    assert restart_error.code is ErrorCode.already_running
+    assert next_step.started is True
+    ticket = world.ticket(ticket_id)
+    assert ticket.stage == "needs_what_changes"
+    assert ticket.worker_step_claim is WorkerStepClaim.out
+    assert ticket.conversation_id == conversation_id
+    assert len(world.conversations.backend_prompt_writes(conversation_id)) == 2
 
 
 def test_an_uncertain_first_opener_stays_errored_without_a_live_worker(world: _World) -> None:

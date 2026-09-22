@@ -122,8 +122,11 @@ async def start_ready_worker_step(
     given back only when the send was refused, or when a failure occurred before a fate.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
     """
-    conn = connect_database()
+    link_lock = conversation_start.conversation_link_lock(f"ticket:{ticket_id}")
+    await link_lock.acquire()
+    conn: sqlite3.Connection | None = None
     try:
+        conn = connect_database()
         ticket = tickets_data.read_ticket(conn, ticket_id)
         conversation_id = ticket.conversation_id
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
@@ -275,7 +278,9 @@ async def start_ready_worker_step(
                 )
         return WorkerStepStartResult.from_delivery_fate(fate)
     finally:
-        conn.close()
+        link_lock.release()
+        if conn is not None:
+            conn.close()
 
 
 async def tell_a_worker_it_lost_its_memory(

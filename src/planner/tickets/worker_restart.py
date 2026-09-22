@@ -84,6 +84,25 @@ def require_restartable(
     )
 
 
+def _require_same_restart_target(
+    conn: sqlite3.Connection,
+    principal: Principal,
+    expected: Ticket,
+) -> Ticket:
+    current = tickets_data.read_ticket(conn, expected.id)
+    if (
+        current.worker_step_claim is not expected.worker_step_claim
+        or current.worker_step_claim_revision != expected.worker_step_claim_revision
+        or current.conversation_id != expected.conversation_id
+    ):
+        raise PlannerError(
+            ErrorCode.already_running,
+            "the Ticket moved while it was being restarted",
+            {"ticket_id": expected.id},
+        )
+    return require_restartable(conn, principal, expected.id)
+
+
 async def restart_worker(
     conversations: ConversationSystem,
     conn: sqlite3.Connection,
@@ -115,50 +134,62 @@ async def restart_worker(
             "Employee configuration is frozen while a conversation or a worker step holds it",
             {"ticket_id": ticket_id},
         )
-    existing_conversation_looked_running = (
-        await conversations.is_running(ticket.conversation_id)
-        if ticket.conversation_id is not None
-        else False
-    )
     killed_conversation_id = ticket.conversation_id
-    killed_conversation_looked_running = existing_conversation_looked_running
-    if rearming_idle_revision:
-        # Live-state bookkeeping can be stale, so it cannot decide admission. Kill any
-        # traffic it names, but keep the Ticket association and conversation history.
-        assert ticket.conversation_id is not None
-        await conversations.kill(ticket.conversation_id)
-    elif killed_conversation_id is not None:
-        await conversation_start.reset_ticket_conversation(
-            conversations, conn, ticket_id, now=now()
-        )
-    planning_day_id, write_now = resolve_planning_write()
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        if ticket.worker_step_claim is WorkerStepClaim.out:
-            given_back = tickets_data.release_worker_step_claim(
-                conn,
-                ticket_id,
-                expected_claim=ticket.worker_step_claim,
-                expected_claim_revision=ticket.worker_step_claim_revision,
-                now=write_now,
+    killed_conversation_looked_running = False
+    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+        _require_same_restart_target(conn, principal, ticket)
+        if killed_conversation_id is not None:
+            killed_conversation_looked_running = await conversations.is_running(
+                killed_conversation_id
             )
-            if not given_back:
-                raise PlannerError(
-                    ErrorCode.already_running,
-                    "the Ticket moved while it was being restarted",
-                    {"ticket_id": ticket_id},
+            # Live-state bookkeeping can be stale, so it cannot decide admission. Kill
+            # the exact old traffic without a database write lock. A later send can resume
+            # this conversation if the Ticket moves while kill is awaited.
+            await conversations.kill(killed_conversation_id)
+
+        planning_day_id, write_now = resolve_planning_write()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _require_same_restart_target(conn, principal, ticket)
+            if ticket.worker_step_claim in {
+                WorkerStepClaim.out,
+                WorkerStepClaim.errored,
+            }:
+                given_back = tickets_data.release_worker_step_claim(
+                    conn,
+                    ticket_id,
+                    expected_claim=ticket.worker_step_claim,
+                    expected_claim_revision=ticket.worker_step_claim_revision,
+                    now=write_now,
                 )
-        elif ticket.worker_step_claim is WorkerStepClaim.errored:
-            tickets_data.clear_ticket_error_for_restart(conn, ticket_id, now=write_now)
-        elif rearming_idle_revision:
-            days_data.add_day_ticket(conn, planning_day_id, ticket_id, write_now)
-        if write_employee_configuration is not None:
-            write_employee_configuration(conn, write_now)
-        conn.execute("COMMIT")
-    except BaseException:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
+                if not given_back:
+                    raise PlannerError(
+                        ErrorCode.already_running,
+                        "the Ticket moved while it was being restarted",
+                        {"ticket_id": ticket_id},
+                    )
+                if killed_conversation_id is not None:
+                    unlinked = tickets_data.clear_ticket_conversation_link(
+                        conn,
+                        ticket_id,
+                        expected_conversation_id=killed_conversation_id,
+                        now=write_now,
+                    )
+                    if not unlinked:
+                        raise PlannerError(
+                            ErrorCode.already_running,
+                            "the Ticket moved while it was being restarted",
+                            {"ticket_id": ticket_id},
+                        )
+            elif rearming_idle_revision:
+                days_data.add_day_ticket(conn, planning_day_id, ticket_id, write_now)
+            if write_employee_configuration is not None:
+                write_employee_configuration(conn, write_now)
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
     start_result = await start_worker_step(planning_day_id)
     restarted = tickets_data.read_ticket(conn, ticket_id)
     return {

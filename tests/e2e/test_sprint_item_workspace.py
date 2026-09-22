@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Callable
 
 import httpx
-from playwright.sync_api import BrowserContext, Page, Route
+from playwright.sync_api import BrowserContext, Page, Route, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 
 
@@ -218,9 +218,9 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
     )
     for row in (left_ticket, right_ticket):
         row.wait_for(timeout=WAIT_MS)
-        page.wait_for_function(
-            "element => element.dataset.workspaceMark === 'owner-answer'",
-            arg=row.element_handle(),
+        expect(row).to_have_attribute(
+            "data-workspace-mark",
+            "owner-answer",
             timeout=WAIT_MS,
         )
     assert left_item.locator(".board-workspace-item-head [data-workspace-mark]").get_attribute(
@@ -243,9 +243,9 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         timeout=WAIT_MS,
     )
     for row in (left_ticket, right_ticket):
-        page.wait_for_function(
-            "element => element.dataset.workspaceMark === 'reply'",
-            arg=row.element_handle(),
+        expect(row).to_have_attribute(
+            "data-workspace-mark",
+            "reply",
             timeout=WAIT_MS,
         )
 
