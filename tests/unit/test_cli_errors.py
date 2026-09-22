@@ -98,10 +98,11 @@ def _registered_command_paths() -> tuple[tuple[str, ...], ...]:
 
 
 @pytest.mark.parametrize(
-    ("arguments", "expected"),
+    ("arguments", "expected_exit", "expected"),
     (
         (
             ("ticket",),
+            2,
             (
                 "error: panels ticket needs a command.",
                 "No panels call can be named until an action is selected.",
@@ -109,6 +110,7 @@ def _registered_command_paths() -> tuple[tuple[str, ...], ...]:
         ),
         (
             ("ticket", "shwo"),
+            2,
             (
                 'error: "shwo" is not a command under panels ticket.',
                 "Use: panels ticket show [OPTIONS] [TICKET_ID] [PART_NAMES]",
@@ -116,6 +118,7 @@ def _registered_command_paths() -> tuple[tuple[str, ...], ...]:
         ),
         (
             ("ticket", "unknown"),
+            2,
             (
                 'error: "unknown" is not a command under panels ticket.',
                 'No replacement panels command can be inferred for "unknown".',
@@ -123,6 +126,7 @@ def _registered_command_paths() -> tuple[tuple[str, ...], ...]:
         ),
         (
             ("ticket", "show", "t_example", "--field", "brief"),
+            2,
             (
                 'error: "--field" is not an option for panels ticket show.',
                 "Use: panels ticket show [OPTIONS] [TICKET_ID] [PART_NAMES]",
@@ -130,9 +134,11 @@ def _registered_command_paths() -> tuple[tuple[str, ...], ...]:
         ),
         (
             ("ticket", "create"),
+            1,
             (
-                "error: Missing option '--title'.",
-                "Use: panels ticket create --title TEXT --worker-type TEXT [OPTIONS]",
+                "error: Ticket creation requires --input-json "
+                "(legacy calls require --title and --worker-type)",
+                "Use: panels ticket create --input-json FILE",
             ),
         ),
         (
@@ -146,14 +152,16 @@ def _registered_command_paths() -> tuple[tuple[str, ...], ...]:
                 "--priority",
                 "PX",
             ),
+            2,
             (
                 "error: Invalid value for '--priority': "
                 "'PX' is not one of 'P0', 'P1', 'P2', 'P3'.",
-                "Use: panels ticket create --title TEXT --worker-type TEXT [OPTIONS]",
+                "Use: panels ticket create --input-json FILE",
             ),
         ),
         (
             ("feedback", "list", "extra"),
+            2,
             (
                 "error: Got unexpected extra argument (extra)",
                 "Use: panels feedback list [OPTIONS]",
@@ -161,19 +169,20 @@ def _registered_command_paths() -> tuple[tuple[str, ...], ...]:
         ),
         (
             ("sprint", "item", "supervisor", "approve"),
+            2,
             (
                 'error: "supervisor" is not a command under panels sprint item.',
-                "Use: panels ticket approve TICKET_ID --ceiling STAGE",
+                "Use: panels ticket proposal TICKET_ID accept --ceiling STAGE",
             ),
         ),
     ),
 )
 def test_click_refusals_are_short_and_name_registered_recovery_calls(
-    arguments: tuple[str, ...], expected: tuple[str, str]
+    arguments: tuple[str, ...], expected_exit: int, expected: tuple[str, str]
 ) -> None:
     result = CliRunner().invoke(cli_main, list(arguments))
 
-    assert result.exit_code == 2
+    assert result.exit_code == expected_exit
     assert _lines(result.stderr) == list(expected)
     assert "Usage:" not in result.stderr
     if expected[1].startswith("Use: "):
@@ -189,7 +198,9 @@ def test_every_registered_command_has_concise_unknown_option_output(
 
     assert result.exit_code == 2
     assert 1 <= len(lines) <= 2
-    assert lines[0].startswith('error: "--not-a-panels-option" is not an option for panels')
+    assert lines[0].startswith(
+        'error: "--not-a-panels-option" is not an option for panels'
+    )
     assert "Usage:" not in result.stderr
     if lines[-1].startswith("Use: "):
         _assert_registered_call(lines[-1].removeprefix("Use: "))
@@ -215,7 +226,9 @@ def test_each_manual_validation_recovery_names_a_registered_call(recovery: str) 
     _assert_registered_call(recovery)
 
 
-def test_local_validation_uses_a_complete_call_and_keeps_existing_good_guidance() -> None:
+def test_local_validation_uses_a_complete_call_and_keeps_existing_good_guidance() -> (
+    None
+):
     missing_target = CliRunner().invoke(cli_main, ["send-message"])
     retired_recap = CliRunner().invoke(
         cli_main,

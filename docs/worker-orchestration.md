@@ -144,13 +144,24 @@ exactly what the next attempt wants to find. The refusal or exception also remov
 start's exact provisional association. Reset differs: it clears the active pointer but
 keeps the association and transcript in the Ticket's history.
 
-The conversation system reports one of three fates:
+The conversation system reports one of five fates:
 
 - **Started** — it is running now.
 - **Queued** — the worker was busy, so the message is held and will run when it is
   free. This counts as delivered: the exact revision feedback batch is removed and the
   step is done being started.
+- **Injected** — the backend admitted the message into the targeted running turn.
 - **Refused** — nothing was delivered. The claim is given back and one line is logged.
+- **Uncertain** — the backend can have admitted the message, but Panels cannot prove it.
+  The claim becomes errored and stays held. Panels does not retry the message.
+
+The start result carries `started` and `delivery_fate`. Started, queued, and injected
+set `started` to true. Refused and uncertain set it to false. A failure before delivery
+has no delivery fate.
+
+An uncertain result requires one explicit `ticket restart-worker` call. Panels keeps the
+backend quarantine and the Worker claim until that call. This prevents a second opener
+when the first opener reached the backend.
 
 Giving a claim back checks the claim it took and the revision of that claim change.
 Every actual change advances the revision, even when two changes share a second. An
@@ -189,30 +200,43 @@ still reads as claimed, and a Ticket with its claim back but still pointing at a
 conversation would talk into it.
 
 Anyone standing above the Ticket can do it, which is Khushal, the Chief, or the Ticket's
-own Outcome. Khushal could not before: no ordinary route restarted a Worker, and the
-only door was the Outcome's. This is a new capability on his surface, not a rename.
+own Sprint Item. Khushal could not before: no ordinary route restarted a Worker, and the
+only door was the Sprint Item's. This is a new capability on his surface, not a rename.
 
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a
 check on that would refuse exactly the Tickets that need recovering. Whoever restarts
 reads the conversation and decides. The action still requires the Ticket to be the
 current child, a Worker-owned Stage, and a worker step that is out. These checks define
-whether a restart is meaningful. The action does not add a delay or a bound for a caller
-that restarts repeatedly.
+whether a restart is meaningful.
+
+The restart result uses the same delivery contract as an automatic start. An uncertain
+restart does not report success, release its claim, or retry automatically. Panels does
+not enforce a restart delay, so the caller decides when to make the explicit attempt.
 
 The Ticket's launch configuration is frozen while its conversation holds it, so
 `employee-configuration` returns `already_running` in that state. `restart-worker` is the
 route that releases the old step and applies a new backend, model, or reasoning effort
 before the next Worker starts.
 
+One narrow recovery also covers Tickets stranded by an older rejection. It requires a
+Worker-owned Stage, Empty status, no claim, an existing conversation, and pending revision
+feedback for that Stage. Restart adds that Ticket to the current Day and starts normal
+readiness without resetting its conversation. It clears stale running and queued traffic
+first, then sends the revision into the same conversation history. Other prior-Day Tickets
+remain at rest. This recovery preserves the launch configuration, so it refuses restart
+options that name a backend, model, or reasoning effort.
+
 ## Sending a proposal back
 
 When the holder returns a proposal for revision, one Ticket transaction checks every
 authorization and current-parent route. It clears the proposal, appends the exact comment
 to a separate attributed revision-feedback record, and returns the Ticket to its resting
-status. A same-Stage user opener is cleared so the discussion can open again. The next
-normal worker-step prompt carries feedback for that Stage, and only a successful send
-consumes it. Ticket guidance is not sent with it, and the worker reads that off the
+status. If the rejected Stage belongs to the Worker, the same transaction adds the Ticket
+to the current Day. Its commit wakes normal readiness, which reuses the existing
+conversation. A same-Stage user opener is cleared so the discussion can open again. The
+next normal worker-step prompt carries feedback for that Stage, and only a successful
+send consumes it. Ticket guidance is not sent with it, and the worker reads that off the
 Ticket. Reply bookkeeping credits the source
 turn after the commit and cannot undo the rejection.
 

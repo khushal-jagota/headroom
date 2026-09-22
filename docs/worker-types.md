@@ -434,7 +434,7 @@ registry; `src/planner/tickets/data.py` stores and freezes the Ticket setup; and
 The launched base role is `panels-worker`. It knows how to work one Ticket step at a time,
 but it does not contain the substance of every Worker type.
 
-The worker runs `panels worker my-ticket`. The default response contains a header and
+The worker runs `panels ticket show`. The default response contains a header and
 the Ticket part manifest. The header includes the Ticket's stored Worker type and the
 specialist skill named by its `WorkerTypeDefinition`. The worker can pass one
 comma-separated part list to expand only the needed fields. It loads the specialist
@@ -500,7 +500,7 @@ One new Worker type needs one definition and one production registration path:
 4. Add the packaged `src/planner/skills/<name>/SKILL.md` to the repository, so a database
    with no skills in it is seeded with the same text.
 5. Confirm that ordinary Ticket creation lists the new type. The base Worker discovers
-   its specialist through `panels worker my-ticket`; it has no manual specialist list.
+   its specialist through `panels ticket show`; it has no manual specialist list.
 
 The shared Brief and completion ids are structural rules, not imported lifecycle
 constants. The new definition still declares them directly: `needs_brief` gating

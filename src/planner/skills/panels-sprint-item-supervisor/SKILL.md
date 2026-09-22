@@ -131,15 +131,18 @@ claim the running deployment is fixed when work exists only on staging.
 
 ## Canonical actions
 
-Use the canonical action that owns the fact:
+Use the same object commands as every other Panels agent:
 
-- `set-item` changes one plain Sprint Item field.
-- `set-ticket` changes one current child Ticket field.
-- `scope` changes a child Ticket's ceiling and review route.
-- `approve`, `reject`, and `transfer-to-user-review` resolve a parked proposal.
-- `add-to-day` and `remove-from-day` change Day membership.
-- `block` and `unblock` change blocker links inside the Item boundary.
-- `artifact-list`, `artifact-write`, and `artifact-delete` manage Item artifacts.
+- `panels sprint item set` changes one Sprint Item field.
+- `panels ticket edit --input-json -` changes one or more permitted child Ticket fields.
+- `panels ticket proposal accept` accepts a parked proposal.
+- `panels ticket proposal revise` returns a parked proposal with focused guidance.
+- `panels day add-ticket` and `panels day remove-ticket` change Day membership.
+- `panels ticket block` and `panels ticket unblock` change blocker links.
+- `panels sprint item artifact list` lists Sprint Item artifacts. Use the sibling
+  `write` and `delete` commands to change them.
+
+Authority comes from the authenticated supervisor context. Command names do not grant it.
 
 Never expose internal IDs in user-facing communication. Stay within this Sprint Item unless
 the user explicitly expands the scope.

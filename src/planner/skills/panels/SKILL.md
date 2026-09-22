@@ -85,16 +85,21 @@ Before creating any Ticket, load and follow **`panels-ticket-creation`**. It own
 shared creation model; the role-specific skill that sent you there still owns whether
 creation is authorized and what follow-up its workflow requires.
 
-The command groups describe both the object being changed and the operation's authority:
+Ordinary help exposes five object and intent based roots:
 
+- `panels send-message ...` for existing conversations.
+- `panels project ...` for Projects.
 - `panels day ...` for planning and operating on a day.
-- `panels ticket ...` for ordinary, actor-neutral ticket creation, inspection, organization, and approval.
+- `panels ticket ...` for Ticket creation, inspection, edits, proposals, and lifecycle actions.
 - `panels sprint ...` and `panels sprint item ...` for planning and populating sprints.
-- `panels worker ...` for the gated worker flow: proposals, recaps, and notes.
-- `panels send-message --chief ...` addresses the Chief conversation. Ticket creation and edits stay under `panels ticket ...`.
+
+The server derives the caller from runtime context and enforces authority at each route.
+Administrative commands remain callable when a specialist skill names one, but they do
+not appear in ordinary root help.
 
 The main list reads are bounded summaries. `ticket list`, `sprint list`, `sprint item
-list`, `day list-tickets`, and `project list` return 30 rows by default. Their text and
+list`, and `project list` return 30 rows by default. Use `ticket list --day` for Day
+membership. Their text and
 JSON output state the omissions and the next offset. Use `--limit` and `--offset` for
 another page. Ticket lists exclude terminal Tickets by default. Use repeatable Stage and
 `ticket_status` filters, exclusions, `--include-terminal`, and `--search` to narrow the

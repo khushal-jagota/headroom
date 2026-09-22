@@ -26,7 +26,12 @@ from planner.conversation.contracts import (
     ConversationSystem,
     HeldPrompt,
     PromptDeliveryFate,
+    PromptDeliveryInjected,
     PromptDeliveryMode,
+    PromptDeliveryQueued,
+    PromptDeliveryRefusalReason,
+    PromptDeliveryRefused,
+    PromptDeliveryStarted,
     PromptDeliveryUncertain,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -40,7 +45,9 @@ from planner.runtime.logic.worker_step_prompt import (
     READ_YOUR_TICKET_COMMAND,
 )
 from planner.runtime.worker_step_readiness_loop import (
+    WorkerStepDeliveryFate,
     WorkerStepReadinessLoop,
+    WorkerStepStartResult,
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
@@ -179,7 +186,7 @@ class _World:
                 "FROM worker_step_skill_bindings ORDER BY skill_role"
             ).fetchall()
 
-    def start_step(self, ticket_id: str) -> bool:
+    def start_step(self, ticket_id: str) -> WorkerStepStartResult:
         return asyncio.run(
             start_ready_worker_step(
                 ticket_id,
@@ -195,6 +202,44 @@ class _World:
 @pytest.fixture
 def world(tmp_path: Path) -> _World:
     return _World(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("fate", "started", "delivery_fate"),
+    [
+        (PromptDeliveryStarted(), True, "started"),
+        (PromptDeliveryQueued(queue_position=3), True, "queued"),
+        (PromptDeliveryInjected(), True, "injected"),
+        (
+            PromptDeliveryRefused(PromptDeliveryRefusalReason.write_to_backend_failed),
+            False,
+            "refused",
+        ),
+        (PromptDeliveryUncertain(), False, "uncertain"),
+    ],
+)
+def test_worker_step_start_result_keeps_each_delivery_fate(
+    fate: PromptDeliveryFate, started: bool, delivery_fate: WorkerStepDeliveryFate
+) -> None:
+    assert WorkerStepStartResult.from_delivery_fate(fate) == WorkerStepStartResult(
+        started=started,
+        delivery_fate=delivery_fate,
+    )
+
+
+@pytest.mark.parametrize(
+    ("started", "delivery_fate"),
+    [
+        (True, None),
+        (True, "uncertain"),
+        (False, "started"),
+    ],
+)
+def test_worker_step_start_result_rejects_a_false_success_claim(
+    started: bool, delivery_fate: WorkerStepDeliveryFate | None
+) -> None:
+    with pytest.raises(ValueError, match="started must match the delivery fate"):
+        WorkerStepStartResult(started=started, delivery_fate=delivery_fate)
 
 
 # --- the claim -----------------------------------------------------------------
@@ -250,7 +295,7 @@ def test_an_occupied_worker_is_skipped_without_touching_the_ticket(world: _World
         )
     )
 
-    assert world.start_step(ticket_id) is False
+    assert world.start_step(ticket_id) == WorkerStepStartResult(started=False)
     assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     # Only the turn that was already running ever reached the backend.
     assert len(world.conversations.backend_prompt_writes("conv-busy")) == 1
@@ -264,7 +309,10 @@ def test_a_refused_send_gives_the_claim_back_and_says_so_once(
     world.conversations.arm_backend_write_failure("conv-refuse")
 
     with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
-        assert world.start_step(ticket_id) is False
+        result = world.start_step(ticket_id)
+
+    assert result.started is False
+    assert result.delivery_fate == "refused"
 
     assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
@@ -297,7 +345,8 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
             )
         )
 
-    assert started is False
+    assert started.started is False
+    assert started.delivery_fate == "uncertain"
     ticket = world.ticket(ticket_id)
     assert ticket.worker_step_claim is WorkerStepClaim.errored
     assert ticket.ticket_status is TicketStatus.errored
@@ -305,6 +354,33 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
     assert world.skill_bindings() == []
     with world.connect() as conn:
         assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
+        uncertain_restart = asyncio.run(
+            worker_restart.restart_worker(
+                world.conversations,
+                conn,
+                OWNER_PRINCIPAL,
+                ticket_id,
+                write_employee_configuration=None,
+                start_worker_step=lambda planning_day_id: start_ready_worker_step(
+                    ticket_id,
+                    connect_database=world.connect,
+                    conversation_system=cast(
+                        ConversationSystem,
+                        _UncertainConversationSystem(world.conversations),
+                    ),
+                    worker_type_registry=configured_worker_type_registry(),
+                    planning_day_id_resolver=lambda: planning_day_id,
+                    now=world.clock.now_unix,
+                ),
+                resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                now=world.clock.now_unix,
+            )
+        )
+        assert uncertain_restart["started"] is False
+        assert uncertain_restart["delivery_fate"] == "uncertain"
+        assert uncertain_restart["not_started_because"] is None
+        assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.errored
+
         restarted = asyncio.run(
             worker_restart.restart_worker(
                 world.conversations,
@@ -312,23 +388,24 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                 OWNER_PRINCIPAL,
                 ticket_id,
                 write_employee_configuration=None,
-                start_worker_step=lambda: start_ready_worker_step(
+                start_worker_step=lambda planning_day_id: start_ready_worker_step(
                     ticket_id,
                     connect_database=world.connect,
                     conversation_system=cast(ConversationSystem, world.conversations),
                     worker_type_registry=configured_worker_type_registry(),
-                    planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                    planning_day_id_resolver=lambda: planning_day_id,
                     now=world.clock.now_unix,
                 ),
-                planning_day_id=TODAY_DAY_ID,
-                now=world.clock.now_unix(),
+                resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                now=world.clock.now_unix,
             )
         )
     assert restarted["started"] is True
+    assert restarted["delivery_fate"] == "started"
     assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
     errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
-    assert len(errors) == 1
-    assert "delivery was uncertain" in errors[0].getMessage()
+    assert len(errors) == 2
+    assert all("delivery was uncertain" in error.getMessage() for error in errors)
 
 
 def test_an_uncertain_first_opener_stays_errored_without_a_live_worker(world: _World) -> None:
@@ -348,7 +425,8 @@ def test_an_uncertain_first_opener_stays_errored_without_a_live_worker(world: _W
         )
     )
 
-    assert started is False
+    assert started.started is False
+    assert started.delivery_fate == "uncertain"
     ticket = world.ticket(ticket_id)
     assert ticket.worker_step_claim is WorkerStepClaim.errored
     assert ticket.conversation_id is not None
@@ -438,12 +516,12 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
         )
     world.conversations.arm_backend_write_failure("conv-revision-feedback")
 
-    assert world.start_step(ticket_id) is False
+    assert world.start_step(ticket_id).started is False
     assert world.pending_revision_feedback(ticket_id) is True
     world.conversations._conversations[  # noqa: SLF001 - focused failure recovery proof
         "conv-revision-feedback"
     ].armed_backend_write_failure = False
-    assert world.start_step(ticket_id) is True
+    assert world.start_step(ticket_id).started is True
 
     writes = world.conversations.backend_prompt_writes("conv-revision-feedback")
     assert len(writes) == 1
@@ -463,7 +541,7 @@ def test_a_refused_user_owned_opener_rearms_the_stage(world: _World) -> None:
     world.start_conversation("conv-paired-refuse")
     world.conversations.arm_backend_write_failure("conv-paired-refuse")
 
-    assert world.start_step(ticket_id) is False
+    assert world.start_step(ticket_id).started is False
     assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
     with world.connect() as conn:
         assert (
@@ -477,7 +555,7 @@ def test_a_refused_user_owned_opener_rearms_the_stage(world: _World) -> None:
             conn,
             tickets_data.read_ticket(conn, ticket_id),
             planning_day_id=TODAY_DAY_ID,
-                worker_type_definition=configured_worker_type_registry().require("new_worker"),
+            worker_type_definition=configured_worker_type_registry().require("new_worker"),
         )
 
 
@@ -526,7 +604,8 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
         )
     )
 
-    assert started is True
+    assert started.started is True
+    assert started.delivery_fate == "queued"
     # Held, not written: only the colliding turn reached the backend, and the opener is
     # waiting behind it. That is a delivery, so nothing is reverted or re-owed.
     writes = world.conversations.backend_prompt_writes("conv-queue")
@@ -605,7 +684,7 @@ def test_the_opener_carries_only_what_the_worker_cannot_get_for_itself(world: _W
             principal=OWNER_PRINCIPAL,
             now=0,
         )
-    assert world.start_step(ticket_id) is True
+    assert world.start_step(ticket_id).started is True
 
     writes = world.conversations.backend_prompt_writes("conv-opener")
     assert len(writes) == 1
@@ -635,7 +714,7 @@ def test_a_wake_after_a_compaction_leads_with_the_memory_loss_notice(world: _Wor
         "conv-compacted", last_worker_step_sequence=4, compacted_through=9
     )
 
-    assert world.start_step(ticket_id) is True
+    assert world.start_step(ticket_id).started is True
 
     text = world.conversations.backend_prompt_writes("conv-compacted")[0].text
     assert MEMORY_LOSS_NOTICE in text
@@ -649,7 +728,7 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
 ) -> None:
     ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-mid-step")
     world.start_conversation("conv-mid-step")
-    assert world.start_step(ticket_id) is True
+    assert world.start_step(ticket_id).started is True
     assert world.ticket(ticket_id).worker_step_claim is WorkerStepClaim.out
     # The step is still out, and the worker is between turns. That is when Panels
     # compacts an idle worker, and it is the case a later wake never reaches.
@@ -681,7 +760,7 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
 def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _World) -> None:
     ticket_id = world.ready_ticket(title="Busy", conversation_id="conv-busy")
     world.start_conversation("conv-busy")
-    assert world.start_step(ticket_id) is True
+    assert world.start_step(ticket_id).started is True
     # The turn runs on, so anything sent now queues behind it and writes no event row.
     world.record_compacted_conversation(
         "conv-busy", last_worker_step_sequence=4, compacted_through=9
@@ -706,7 +785,7 @@ def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _Wo
 def test_a_ticket_that_left_the_day_gets_no_notice(world: _World) -> None:
     ticket_id = world.ready_ticket(title="Off the Day", conversation_id="conv-off-day")
     world.start_conversation("conv-off-day")
-    assert world.start_step(ticket_id) is True
+    assert world.start_step(ticket_id).started is True
     world.conversations.complete_running_turn("conv-off-day")
     world.remove_from_today(ticket_id)
     world.record_compacted_conversation(

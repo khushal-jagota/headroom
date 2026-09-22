@@ -23,14 +23,18 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from time import monotonic as _monotonic
-from typing import Final
+from typing import Any, Final, Literal
 
 from planner.conversation.contracts import (
     ConversationSystem,
+    PromptDeliveryFate,
+    PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
     PromptDeliveryRefused,
+    PromptDeliveryStarted,
     PromptDeliveryUncertain,
 )
 from planner.conversation.message_content import text_message_content
@@ -62,6 +66,45 @@ _CANDIDATE_SQL = (
 )
 
 
+type WorkerStepDeliveryFate = Literal[
+    "started",
+    "queued",
+    "injected",
+    "refused",
+    "uncertain",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerStepStartResult:
+    """The truthful outcome of one attempt to start a Worker step.
+
+    A missing delivery fate means that the attempt stopped before a send produced one.
+    """
+
+    started: bool
+    delivery_fate: WorkerStepDeliveryFate | None = None
+
+    def __post_init__(self) -> None:
+        successful_fates = {"started", "queued", "injected"}
+        if self.started != (self.delivery_fate in successful_fates):
+            raise ValueError("started must match the delivery fate")
+
+    @classmethod
+    def from_delivery_fate(cls, fate: PromptDeliveryFate) -> WorkerStepStartResult:
+        match fate:
+            case PromptDeliveryStarted():
+                return cls(started=True, delivery_fate="started")
+            case PromptDeliveryQueued():
+                return cls(started=True, delivery_fate="queued")
+            case PromptDeliveryInjected():
+                return cls(started=True, delivery_fate="injected")
+            case PromptDeliveryRefused():
+                return cls(started=False, delivery_fate="refused")
+            case PromptDeliveryUncertain():
+                return cls(started=False, delivery_fate="uncertain")
+
+
 async def start_ready_worker_step(
     ticket_id: str,
     *,
@@ -70,13 +113,13 @@ async def start_ready_worker_step(
     worker_type_registry: WorkerTypeRegistry,
     planning_day_id_resolver: Callable[[], str],
     now: Callable[[], int],
-) -> bool:
+) -> WorkerStepStartResult:
     """Start one worker step for this Ticket. Reports whether the send got anywhere.
 
     Every check happens before anything is sent: an occupied worker is skipped outright,
     and the claim re-runs the readiness decision under the write lock. Once the send
-    reports started or queued the delivery cannot be taken back, so the claim is given
-    back only when the send was refused, or when something failed before a fate existed.
+    reports started, queued, or injected, the delivery cannot be taken back. The claim is
+    given back only when the send was refused, or when a failure occurred before a fate.
     An uncertain delivery stays visible as an errored claim for supervisor restart.
     """
     conn = connect_database()
@@ -86,7 +129,7 @@ async def start_ready_worker_step(
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
             # An occupied worker is left alone for this pass. Queueing stays the answer
             # only for a collision that slipped between this check and the send.
-            return False
+            return WorkerStepStartResult(started=False)
 
         claimed = tickets_data.claim_ticket_for_worker_step(
             conn,
@@ -96,7 +139,7 @@ async def start_ready_worker_step(
             now=now(),
         )
         if claimed is None:
-            return False
+            return WorkerStepStartResult(started=False)
         taken_claim = claimed.worker_step_claim
         taken_claim_revision = claimed.worker_step_claim_revision
         paired_opener = (
@@ -171,7 +214,7 @@ async def start_ready_worker_step(
             )
             remove_tentative_bindings()
             give_the_claim_back()
-            return False
+            return WorkerStepStartResult(started=False)
 
         if isinstance(fate, PromptDeliveryRefused):
             # The refusal is on the record before the claim is given back, so a release
@@ -184,7 +227,7 @@ async def start_ready_worker_step(
             )
             remove_tentative_bindings()
             give_the_claim_back()
-            return False
+            return WorkerStepStartResult.from_delivery_fate(fate)
 
         if isinstance(fate, PromptDeliveryUncertain):
             # The backend can have admitted this opener, so returning the claim would
@@ -205,7 +248,7 @@ async def start_ready_worker_step(
                     conversation_id,
                 )
             remove_tentative_bindings()
-            return False
+            return WorkerStepStartResult.from_delivery_fate(fate)
 
         if not isinstance(fate, PromptDeliveryQueued):
             # The durable conversation record normally finalizes this in the same
@@ -230,7 +273,7 @@ async def start_ready_worker_step(
                     "delivered revision feedback could not be acknowledged (ticket=%s)",
                     ticket_id,
                 )
-        return True
+        return WorkerStepStartResult.from_delivery_fate(fate)
     finally:
         conn.close()
 
@@ -332,7 +375,7 @@ class WorkerStepReadinessLoop:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._in_flight_lock = threading.Lock()
-        self._in_flight: dict[concurrent.futures.Future[bool], str] = {}
+        self._in_flight: dict[concurrent.futures.Future[Any], str] = {}
 
     def wake(self) -> None:
         """Ask the loop to poll now; the periodic timer remains the backstop."""
@@ -451,7 +494,7 @@ class WorkerStepReadinessLoop:
         future.add_done_callback(self._step_ended)
         return True
 
-    def _step_ended(self, future: concurrent.futures.Future[bool]) -> None:
+    def _step_ended(self, future: concurrent.futures.Future[Any]) -> None:
         """Forget a finished step, and say so when it ended in a way nothing else saw.
 
         The flow handles its own failures, but the ground it stands on can give way

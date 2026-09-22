@@ -9,16 +9,27 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 from planner.conversation.contracts import ConversationSystem
 from planner.core import authority
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
+from planner.days import data as days_data
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import StageOwnershipMode, Ticket, WorkerStepClaim
+from planner.tickets import revision_feedback
+from planner.tickets.contracts import (
+    StageOwnershipMode,
+    Ticket,
+    TicketStatus,
+    WorkerStepClaim,
+)
 from planner.tickets.logic import machine
 from planner.worker_types.configuration import configured_worker_type_registry
+
+if TYPE_CHECKING:
+    from planner.runtime.worker_step_readiness_loop import WorkerStepStartResult
 
 
 def require_restartable(
@@ -59,6 +70,13 @@ def require_restartable(
         # A restart whose start was refused lands here. Restarting again is how a
         # caller corrects the launch configuration it named the first time.
         return ticket
+    if (
+        ticket.ticket_status is TicketStatus.empty
+        and revision_feedback.snapshot(conn, ticket_id) is not None
+    ):
+        # Rejections before the rollover repair could leave revision work off today's
+        # Day. Its conversation remains the right one, so restart only has to rearm it.
+        return ticket
     raise PlannerError(
         ErrorCode.validation,
         "the Ticket has no worker step out to restart",
@@ -72,10 +90,10 @@ async def restart_worker(
     principal: Principal,
     ticket_id: str,
     *,
-    write_employee_configuration: Callable[[sqlite3.Connection], None] | None,
-    start_worker_step: Callable[[], Awaitable[bool]],
-    planning_day_id: str,
-    now: int,
+    write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
+    start_worker_step: Callable[[str], Awaitable[WorkerStepStartResult]],
+    resolve_planning_write: Callable[[], tuple[str, int]],
+    now: Callable[[], int],
 ) -> dict[str, object]:
     """Kill this Ticket's dead conversation, give the claim back, and start again.
 
@@ -88,14 +106,32 @@ async def restart_worker(
     after it, because the launch values unfreeze only once the claim is back.
     """
     ticket = require_restartable(conn, principal, ticket_id)
-    killed_conversation_id = ticket.conversation_id
-    killed_conversation_looked_running = (
-        await conversations.is_running(killed_conversation_id)
-        if killed_conversation_id is not None
+    rearming_idle_revision = (
+        ticket.worker_step_claim is WorkerStepClaim.none and ticket.conversation_id is not None
+    )
+    if rearming_idle_revision and write_employee_configuration is not None:
+        raise PlannerError(
+            ErrorCode.already_running,
+            "Employee configuration is frozen while a conversation or a worker step holds it",
+            {"ticket_id": ticket_id},
+        )
+    existing_conversation_looked_running = (
+        await conversations.is_running(ticket.conversation_id)
+        if ticket.conversation_id is not None
         else False
     )
-    if killed_conversation_id is not None:
-        await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
+    killed_conversation_id = ticket.conversation_id
+    killed_conversation_looked_running = existing_conversation_looked_running
+    if rearming_idle_revision:
+        # Live-state bookkeeping can be stale, so it cannot decide admission. Kill any
+        # traffic it names, but keep the Ticket association and conversation history.
+        assert ticket.conversation_id is not None
+        await conversations.kill(ticket.conversation_id)
+    elif killed_conversation_id is not None:
+        await conversation_start.reset_ticket_conversation(
+            conversations, conn, ticket_id, now=now()
+        )
+    planning_day_id, write_now = resolve_planning_write()
     conn.execute("BEGIN IMMEDIATE")
     try:
         if ticket.worker_step_claim is WorkerStepClaim.out:
@@ -104,7 +140,7 @@ async def restart_worker(
                 ticket_id,
                 expected_claim=ticket.worker_step_claim,
                 expected_claim_revision=ticket.worker_step_claim_revision,
-                now=now,
+                now=write_now,
             )
             if not given_back:
                 raise PlannerError(
@@ -113,15 +149,17 @@ async def restart_worker(
                     {"ticket_id": ticket_id},
                 )
         elif ticket.worker_step_claim is WorkerStepClaim.errored:
-            tickets_data.clear_ticket_error_for_restart(conn, ticket_id, now=now)
+            tickets_data.clear_ticket_error_for_restart(conn, ticket_id, now=write_now)
+        elif rearming_idle_revision:
+            days_data.add_day_ticket(conn, planning_day_id, ticket_id, write_now)
         if write_employee_configuration is not None:
-            write_employee_configuration(conn)
+            write_employee_configuration(conn, write_now)
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
-    started = await start_worker_step()
+    start_result = await start_worker_step(planning_day_id)
     restarted = tickets_data.read_ticket(conn, ticket_id)
     return {
         "ticket_id": ticket_id,
@@ -134,10 +172,11 @@ async def restart_worker(
         },
         "ticket_status": restarted.ticket_status.value,
         "conversation_id": restarted.conversation_id,
-        "started": started,
+        "started": start_result.started,
+        "delivery_fate": start_result.delivery_fate,
         "not_started_because": (
             None
-            if started
+            if start_result.started or start_result.delivery_fate is not None
             else worker_step_readiness.worker_step_blocker(
                 conn,
                 restarted,

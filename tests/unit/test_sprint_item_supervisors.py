@@ -14,15 +14,17 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.contracts import ConversationStartRequest, ConversationSystem
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import text_message_content
-from planner.core.clock import RealClock, build_clock
+from planner.core.clock import RealClock, build_clock, parse_fake_now
+from planner.core.clock import TestClock as MutableClock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
+from planner.core.loops import BackgroundLoops, start_background_loops
 from planner.core.server import create_app
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
@@ -33,13 +35,31 @@ from planner.tickets import revision_feedback
 _OWNER_HOLDER = {"kind": "owner", "id": "owner"}
 
 
+class _AdvanceClockOnOccupancyCheck:
+    def __init__(self, system: InMemoryConversationSystem, clock: MutableClock) -> None:
+        self._system = system
+        self._clock = clock
+
+    async def is_running(self, conversation_id: str) -> bool:
+        self._clock.set(parse_fake_now("2026-09-22T05:01:00+02:00"))
+        return await self._system.is_running(conversation_id)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._system, name)
+
+
 def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(str(db_path))
     create_schema(conn)
     conn.close()
-    env = {"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)}
+    env = {
+        "PLAN_TEST_MODE": "1",
+        "PLAN_DB_PATH": str(db_path),
+        "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+        "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "dispatcher.lock"),
+    }
     if fake_now is not None:
         env["PLAN_FAKE_NOW"] = fake_now
     config = load_config(path=None, env=env)
@@ -369,6 +389,355 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
     assert system.observations(conversation_id) == ()
 
 
+def test_rejection_after_the_day_boundary_rearms_one_worker_step(tmp_path: Path) -> None:
+    app, db_path = _app(tmp_path, fake_now="2026-09-22T04:59:00+02:00")
+    conversation_id = "conv-rollover-revision"
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_a_proposal(client, str(item["id"]))
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                (conversation_id, ticket["id"]),
+            )
+            before_claim_revision = tickets_data.read_ticket(
+                conn, str(ticket["id"])
+            ).worker_step_claim_revision
+            conn.commit()
+        system = cast(InMemoryConversationSystem, app.state.conversation_system)
+        asyncio.run(
+            system.start_conversation(
+                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
+            )
+        )
+        assert client.portal is not None
+
+        async def start_test_loops() -> BackgroundLoops:
+            return start_background_loops(
+                app.state.config,
+                app.state.clock,
+                conversation_system=system,
+                asyncio_loop=asyncio.get_running_loop(),
+            )
+
+        loops = client.portal.call(start_test_loops)
+        try:
+            moved = client.post(
+                "/api/test/set-now",
+                json={"now": "2026-09-22T05:01:00+02:00"},
+            )
+            assert moved.status_code == 200, moved.text
+            rejected = client.post(
+                f"/api/tickets/{ticket['id']}/reject",
+                json={"message": "Keep the rollover evidence exact."},
+                headers=_supervisor_headers(str(item["id"])),
+            )
+            assert rejected.status_code == 200, rejected.text
+
+            deadline = time.monotonic() + 5
+            while (
+                time.monotonic() < deadline
+                and len(system.backend_prompt_writes(conversation_id)) < 1
+            ):
+                time.sleep(0.01)
+
+            repeated = client.post(f"/api/test/run-step/{ticket['id']}")
+            current = client.get(f"/api/tickets?detail=full&id={ticket['id']}")
+        finally:
+            client.portal.call(loops.stop)
+
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["dispatched"] is False
+    assert current.status_code == 200, current.text
+    assert current.json()["ticket_status"] == "agent"
+    assert current.json()["conversation_id"] == conversation_id
+    writes = system.backend_prompt_writes(conversation_id)
+    assert len(writes) == 1
+    assert writes[0].sender_label == "loop"
+    assert writes[0].text.count("Keep the rollover evidence exact.") == 1
+    assert asyncio.run(system.is_running(conversation_id)) is True
+    with connect(str(db_path)) as conn:
+        after = tickets_data.read_ticket(conn, str(ticket["id"]))
+        day_ids = {
+            str(row["day_id"])
+            for row in conn.execute(
+                "SELECT day_id FROM day_tickets WHERE ticket_id = ?", (ticket["id"],)
+            )
+        }
+        assert revision_feedback.snapshot(conn, str(ticket["id"])) is None
+    assert day_ids == {"day_2026-09-21", "day_2026-09-22"}
+    assert after.worker_step_claim.value == "out"
+    assert after.worker_step_claim_revision == before_claim_revision + 1
+
+
+def test_restart_rearms_only_the_legacy_idle_revision_shape(tmp_path: Path) -> None:
+    app, db_path = _app(tmp_path, fake_now="2026-09-22T04:59:00+02:00")
+    legacy_conversation_id = "conv-legacy-revision"
+    unrelated_conversation_id = "conv-unrelated-prior-day"
+    with connect(str(db_path)) as conn:
+        ticket_ids: list[str] = []
+        for title, conversation_id in (
+            ("Legacy revision", legacy_conversation_id),
+            ("Unrelated prior Day", unrelated_conversation_id),
+        ):
+            created = tickets_data.create_ticket(
+                conn,
+                worker_type="coding",
+                title=title,
+                kickoff_note="Start here.",
+                principal=OWNER_PRINCIPAL,
+                now=1,
+                title_max_chars=200,
+                day_id="day_2026-09-21",
+            )
+            ready = tickets_data.accept_proposal(
+                conn,
+                created.id,
+                field="brief",
+                principal=OWNER_PRINCIPAL,
+                now=2,
+                next_ceiling="none",
+                next_holder=OWNER_PRINCIPAL,
+            )
+            conn.execute(
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                (conversation_id, ready.id),
+            )
+            ticket_ids.append(ready.id)
+        revision_feedback.set_feedback(
+            conn,
+            ticket_ids[0],
+            stage="needs_success_condition",
+            sender=OWNER_PRINCIPAL,
+            message="Recover this stranded revision.",
+            now=3,
+        )
+        conn.commit()
+
+    with TestClient(app) as client:
+        system = cast(InMemoryConversationSystem, app.state.conversation_system)
+        asyncio.run(
+            system.start_conversation(
+                ConversationStartRequest(conversation_id=legacy_conversation_id, model="test-model")
+            )
+        )
+        asyncio.run(
+            system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id=unrelated_conversation_id, model="test-model"
+                )
+            )
+        )
+        app.state.conversation_system = cast(
+            ConversationSystem,
+            _AdvanceClockOnOccupancyCheck(system, cast(MutableClock, app.state.clock)),
+        )
+        recovered = client.post(f"/api/tickets/{ticket_ids[0]}/restart-worker", json={})
+        refused = client.post(f"/api/tickets/{ticket_ids[1]}/restart-worker", json={})
+
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["started"] is True
+    assert recovered.json()["killed_conversation_id"] == legacy_conversation_id
+    assert recovered.json()["conversation_id"] == legacy_conversation_id
+    assert recovered.json()["ticket_status"] == "agent"
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["message"] == "the Ticket has no worker step out to restart"
+    writes = system.backend_prompt_writes(legacy_conversation_id)
+    assert len(writes) == 1
+    assert writes[0].text.count("Recover this stranded revision.") == 1
+    assert system.backend_prompt_writes(unrelated_conversation_id) == ()
+    with connect(str(db_path)) as conn:
+        recovered_days = {
+            str(row["day_id"])
+            for row in conn.execute(
+                "SELECT day_id FROM day_tickets WHERE ticket_id = ?", (ticket_ids[0],)
+            )
+        }
+        unrelated_days = {
+            str(row["day_id"])
+            for row in conn.execute(
+                "SELECT day_id FROM day_tickets WHERE ticket_id = ?", (ticket_ids[1],)
+            )
+        }
+        assert revision_feedback.snapshot(conn, ticket_ids[0]) is None
+    assert recovered_days == {"day_2026-09-21", "day_2026-09-22"}
+    assert unrelated_days == {"day_2026-09-21"}
+
+
+def test_legacy_recovery_does_not_trust_stale_running_bookkeeping(tmp_path: Path) -> None:
+    app, db_path = _app(tmp_path, fake_now="2026-09-22T06:00:00+02:00")
+    conversation_id = "conv-stale-running-revision"
+    with connect(str(db_path)) as conn:
+        created = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title="Stale running revision",
+            kickoff_note="Start here.",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+            day_id="day_2026-09-21",
+        )
+        ready = tickets_data.accept_proposal(
+            conn,
+            created.id,
+            field="brief",
+            principal=OWNER_PRINCIPAL,
+            now=2,
+            next_ceiling="none",
+            next_holder=OWNER_PRINCIPAL,
+        )
+        conn.execute(
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+            (conversation_id, ready.id),
+        )
+        revision_feedback.set_feedback(
+            conn,
+            ready.id,
+            stage="needs_success_condition",
+            sender=OWNER_PRINCIPAL,
+            message="Keep this revision pending.",
+            now=3,
+        )
+        conn.commit()
+
+    with TestClient(app) as client:
+        system = cast(InMemoryConversationSystem, app.state.conversation_system)
+        asyncio.run(
+            system.start_conversation(
+                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
+            )
+        )
+        asyncio.run(
+            system.send(
+                conversation_id,
+                text_message_content("Stale running turn."),
+                sender_label="loop",
+            )
+        )
+        recovered = client.post(f"/api/tickets/{ready.id}/restart-worker", json={})
+
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["started"] is True
+    assert recovered.json()["killed_conversation_id"] == conversation_id
+    assert recovered.json()["killed_conversation_looked_running"] is True
+    assert recovered.json()["conversation_id"] == conversation_id
+    writes = system.backend_prompt_writes(conversation_id)
+    assert len(writes) == 2
+    assert writes[0].text.endswith("Stale running turn.")
+    assert writes[1].text.count("Keep this revision pending.") == 1
+    interrupted_turns = [
+        observation
+        for observation in system.observations(conversation_id)
+        if observation.kind.value == "turn_ended"
+        and observation.turn_ending is not None
+        and observation.turn_ending.value == "interrupted"
+    ]
+    assert len(interrupted_turns) == 1
+    assert asyncio.run(system.is_running(conversation_id)) is True
+    with connect(str(db_path)) as conn:
+        current = tickets_data.read_ticket(conn, ready.id)
+        day_ids = {
+            str(row["day_id"])
+            for row in conn.execute(
+                "SELECT day_id FROM day_tickets WHERE ticket_id = ?", (ready.id,)
+            )
+        }
+        assert revision_feedback.snapshot(conn, ready.id) is None
+    assert current.conversation_id == conversation_id
+    assert current.worker_step_claim.value == "out"
+    assert day_ids == {"day_2026-09-21", "day_2026-09-22"}
+
+
+def test_legacy_recovery_refuses_a_launch_override_before_mutation(tmp_path: Path) -> None:
+    app, db_path = _app(tmp_path, fake_now="2026-09-22T06:00:00+02:00")
+    conversation_id = "conv-legacy-override-refusal"
+    with connect(str(db_path)) as conn:
+        created = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title="Legacy override refusal",
+            kickoff_note="Start here.",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+            day_id="day_2026-09-21",
+        )
+        ready = tickets_data.accept_proposal(
+            conn,
+            created.id,
+            field="brief",
+            principal=OWNER_PRINCIPAL,
+            now=2,
+            next_ceiling="none",
+            next_holder=OWNER_PRINCIPAL,
+        )
+        conn.execute(
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+            (conversation_id, ready.id),
+        )
+        revision_feedback.set_feedback(
+            conn,
+            ready.id,
+            stage="needs_success_condition",
+            sender=OWNER_PRINCIPAL,
+            message="This feedback must remain pending.",
+            now=3,
+        )
+        conn.commit()
+
+    with TestClient(app) as client:
+        system = cast(InMemoryConversationSystem, app.state.conversation_system)
+        asyncio.run(
+            system.start_conversation(
+                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
+            )
+        )
+        asyncio.run(
+            system.send(
+                conversation_id,
+                text_message_content("Do not interrupt this turn."),
+                sender_label="loop",
+            )
+        )
+        refused = client.post(
+            f"/api/tickets/{ready.id}/restart-worker",
+            json={
+                "employee_backend": "claude",
+                "employee_launch_model": "claude-model",
+            },
+        )
+
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error"] == {
+            "code": "already_running",
+            "message": (
+                "Employee configuration is frozen while a conversation or a worker step holds it"
+            ),
+            "detail": {"ticket_id": ready.id},
+        }
+        assert asyncio.run(system.is_running(conversation_id)) is True
+        writes = system.backend_prompt_writes(conversation_id)
+        assert len(writes) == 1
+        assert writes[0].text.endswith("Do not interrupt this turn.")
+
+    with connect(str(db_path)) as conn:
+        unchanged = tickets_data.read_ticket(conn, ready.id)
+        day_ids = {
+            str(row["day_id"])
+            for row in conn.execute(
+                "SELECT day_id FROM day_tickets WHERE ticket_id = ?", (ready.id,)
+            )
+        }
+        feedback = revision_feedback.snapshot(conn, ready.id)
+    assert unchanged.conversation_id == conversation_id
+    assert unchanged.worker_step_claim.value == "none"
+    assert unchanged.employee_backend == "codex"
+    assert day_ids == {"day_2026-09-21"}
+    assert feedback is not None
+    assert feedback.text.count("This feedback must remain pending.") == 1
+
+
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
     tmp_path: Path,
 ) -> None:
@@ -386,9 +755,7 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
             },
         )
         conversation_id = sent.json()["conversation_id"]
-        after_send = client.get(
-            "/api/items", params={"detail": "full", "id": item["id"]}
-        ).json()
+        after_send = client.get("/api/items", params={"detail": "full", "id": item["id"]}).json()
         with connect(str(db_path)) as conn:
             conn.execute(
                 "INSERT INTO conversations(conversation_id,backend_key,model,"
@@ -636,6 +1003,7 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["started"] is True
+    assert body["delivery_fate"] == "started"
     assert body["not_started_because"] is None
     assert body["killed_conversation_id"] == "conv-dead-worker"
     assert body["ticket_status"] == "agent"
