@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
 from sqlite3 import Connection
 
+import pytest
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
+from planner.conversation import storage as conversation_storage
+from planner.conversation.events import MessageToOwnerEventPayload
+from planner.conversation.message_content import text_message_content
+from planner.conversation.storage import ConversationStore
 from planner.core.clock import TestClock as MutableClock
 from planner.core.clock import parse_fake_now
 from planner.core.config import load_config
@@ -214,9 +220,7 @@ def _conversation_on_a_ticket(conn: Connection, ticket_id: str) -> None:
         "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
         "VALUES ('c_split', 'codex', '/tmp/workspace', 'full', 0, 1)"
     )
-    conn.execute(
-        "UPDATE tickets SET conversation_id = 'c_split' WHERE id = ?", (ticket_id,)
-    )
+    conn.execute("UPDATE tickets SET conversation_id = 'c_split' WHERE id = ?", (ticket_id,))
 
 
 def _conversation_event(conn: Connection, sequence: int, kind: str, payload: str) -> None:
@@ -249,6 +253,88 @@ def _edges(conn: Connection, ticket_id: str) -> list[tuple[str, int]]:
     ]
 
 
+def test_conversation_capture_reuses_one_result_for_every_linked_ticket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = connect(str(tmp_path / "reused-result.db"))
+    create_schema(conn)
+    first = _ticket(conn, 1)
+    second = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, first.id)
+    conn.execute(
+        "UPDATE tickets SET conversation_id='c_split' WHERE id=?",
+        (second.id,),
+    )
+    result = attention.ConversationAttention(
+        unread_message=True,
+        pending_ask=True,
+        errored=True,
+        latest_sequence=4,
+        occurred_at=2,
+    )
+
+    def unexpected_derivation(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("capture repeated conversation attention derivation")
+
+    monkeypatch.setattr(attention, "conversation_attention", unexpected_derivation)
+    attention.capture_conversation_attention(conn, "c_split", 2, result)
+
+    for ticket in (first, second):
+        assert _edges(conn, ticket.id) == [
+            ("awaiting_answer", 1),
+            ("awaiting_reply", 1),
+        ]
+        errored = conn.execute(
+            "SELECT active FROM notification_attention_state "
+            "WHERE subject_kind='ticket' AND subject_id=? AND notification_type='errored'",
+            (ticket.id,),
+        ).fetchone()
+        assert errored is not None and bool(errored["active"])
+    conn.close()
+
+
+def test_conversation_event_and_attention_edge_roll_back_together(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "atomic-attention.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, ticket.id)
+    conn.close()
+    store = ConversationStore(str(db_path), integer_now=lambda: 2)
+
+    def fail_before_commit(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("forced rollback")
+
+    monkeypatch.setattr(conversation_storage, "_commit_appended_rows", fail_before_commit)
+
+    async def exercise() -> None:
+        with pytest.raises(RuntimeError, match="forced rollback"):
+            await store.append_event(
+                "c_split",
+                MessageToOwnerEventPayload(
+                    content=text_message_content("status"),
+                    sender=Principal(PrincipalKind.ticket, ticket.id),
+                    recipient=OWNER_PRINCIPAL,
+                    sender_label=ticket.title,
+                ),
+            )
+
+    asyncio.run(exercise())
+    with connect(str(db_path)) as verify:
+        assert verify.execute("SELECT 1 FROM conversation_events").fetchone() is None
+        assert (
+            verify.execute(
+                "SELECT 1 FROM notification_attention_edges "
+                "WHERE subject_kind='ticket' AND subject_id=? "
+                "AND notification_type='awaiting_reply'",
+                (ticket.id,),
+            ).fetchone()
+            is None
+        )
+
+
 def test_a_message_that_arrives_during_an_ask_still_raises_its_own_edge(
     tmp_path: Path,
 ) -> None:
@@ -268,6 +354,44 @@ def test_a_message_that_arrives_during_an_ask_still_raises_its_own_edge(
     attention.capture_ticket_attention(conn, ticket.id, 2)
 
     assert _edges(conn, ticket.id) == [("awaiting_answer", 1), ("awaiting_reply", 1)]
+    conn.close()
+
+
+def test_attention_snapshot_preserves_messages_asks_answers_reads_and_failures(
+    tmp_path: Path,
+) -> None:
+    conn = connect(str(tmp_path / "snapshot.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, ticket.id)
+    events = (
+        ("permission_asked", {"ask_id": "ask-1"}),
+        ("permission_asked", {"ask_id": "ask-2"}),
+        ("permission_answered", {"ask_id": "ask-1"}),
+        ("user_input_requested", {"request_id": "question-1"}),
+        ("user_input_answered", {"request_id": "unrelated"}),
+        ("message_to_owner", {}),
+        ("prompt", {}),
+        ("turn_ended", {"ending": "failed"}),
+    )
+    for sequence, (kind, payload) in enumerate(events, start=1):
+        _conversation_event(conn, sequence, kind, json.dumps(payload))
+    conn.execute(
+        "UPDATE conversations SET owner_read_through_sequence=5 WHERE conversation_id='c_split'"
+    )
+
+    snapshot = attention.conversation_attention_snapshot(conn, "c_split")
+    assert snapshot is not None
+    assert snapshot.pending_permission_ask_ids == frozenset({"ask-2"})
+    assert snapshot.pending_user_input_request_ids == frozenset({"question-1"})
+    assert snapshot.attention() == attention.conversation_attention(conn, "c_split")["c_split"]
+    assert snapshot.attention() == attention.ConversationAttention(
+        unread_message=True,
+        pending_ask=True,
+        errored=True,
+        latest_sequence=8,
+        occurred_at=8,
+    )
     conn.close()
 
 
