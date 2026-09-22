@@ -1363,6 +1363,7 @@ def reject_proposal(
     *,
     message: str | None,
     principal: Principal,
+    planning_day_id: str,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
 ) -> Ticket:
@@ -1402,6 +1403,14 @@ def reject_proposal(
             (ticket_id, ticket.stage),
         )
         _give_back_worker_step_claim(conn, updated, now=now)
+        if (
+            machine.stage_ownership_mode(
+                updated.stage,
+                worker_type_definition=worker_type_definition,
+            )
+            is StageOwnershipMode.worker
+        ):
+            days_data.add_day_ticket(conn, planning_day_id, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 

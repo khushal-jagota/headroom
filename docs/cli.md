@@ -95,6 +95,10 @@ Submit remains restricted to the authenticated Worker for its own current Stage.
 and revise retain the existing proposal resolver and authority checks. `ticket complete`
 remains separate because it completes a user-owned Stage directly.
 
+Revise stores the attributed feedback, removes the proposal, and returns the Stage to
+rest in one commit. A Worker-owned Stage also returns to the current Day. Normal readiness
+then reuses the existing conversation for one revision prompt.
+
 `ticket request-help` reads its message from standard input. It records the Ticket
 attention fact and sends the message through the existing help route. `send-message`
 only sends conversation text and does not change that attention fact.
@@ -130,6 +134,11 @@ path.
 Hidden aliases keep the old Worker, Ticket edit, proposal, Day list, Sprint outcome, and
 Sprint Item conversation paths callable during skill migration. They call the same
 handlers and routes as before. They do not appear in help.
+
+`ticket restart-worker` also recovers an older rejected Ticket only when it is
+Worker-owned, Empty, claim-free, attached to a conversation, and holds matching revision
+feedback. Recovery keeps that conversation, returns the Ticket to the current Day, and
+refuses launch overrides. Other prior-Day Tickets remain at rest.
 
 Human errors use one cause line and, when a valid recovery exists, one exact command
 shape. JSON errors keep the existing envelope and exit code. Authority refusals do not

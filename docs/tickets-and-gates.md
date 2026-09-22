@@ -336,9 +336,11 @@ The Review screen can also send an owner-addressed ticket back instead of accept
 whatever field is currently gated. The owner writes short guidance in the review card.
 The Ticket transaction validates authority and route. It stores the exact attributed
 comment as one-use feedback for the current Stage, clears the pending proposal, and
-returns the Ticket to its resting control status. Ticket guidance is unchanged. The next
-normal worker-step prompt carries the feedback, which is consumed only after that prompt
-is accepted. The ticket's stage never changes. Settled values remain. The gated field can
+returns the Ticket to its resting control status. A Worker-owned Stage also returns to the
+current Day in that transaction. The commit wakes normal readiness, and readiness reuses
+the Ticket conversation. Ticket guidance is unchanged. The next normal worker-step prompt
+carries the feedback, which is consumed only after that prompt is accepted. The ticket's
+stage never changes. Settled values remain. The gated field can
 therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision. Rejecting re-addresses the revision only when the owner does it:

@@ -361,7 +361,7 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                 OWNER_PRINCIPAL,
                 ticket_id,
                 write_employee_configuration=None,
-                start_worker_step=lambda: start_ready_worker_step(
+                start_worker_step=lambda planning_day_id: start_ready_worker_step(
                     ticket_id,
                     connect_database=world.connect,
                     conversation_system=cast(
@@ -369,11 +369,11 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                         _UncertainConversationSystem(world.conversations),
                     ),
                     worker_type_registry=configured_worker_type_registry(),
-                    planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                    planning_day_id_resolver=lambda: planning_day_id,
                     now=world.clock.now_unix,
                 ),
-                planning_day_id=TODAY_DAY_ID,
-                now=world.clock.now_unix(),
+                resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                now=world.clock.now_unix,
             )
         )
         assert uncertain_restart["started"] is False
@@ -388,16 +388,16 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                 OWNER_PRINCIPAL,
                 ticket_id,
                 write_employee_configuration=None,
-                start_worker_step=lambda: start_ready_worker_step(
+                start_worker_step=lambda planning_day_id: start_ready_worker_step(
                     ticket_id,
                     connect_database=world.connect,
                     conversation_system=cast(ConversationSystem, world.conversations),
                     worker_type_registry=configured_worker_type_registry(),
-                    planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                    planning_day_id_resolver=lambda: planning_day_id,
                     now=world.clock.now_unix,
                 ),
-                planning_day_id=TODAY_DAY_ID,
-                now=world.clock.now_unix(),
+                resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
+                now=world.clock.now_unix,
             )
         )
     assert restarted["started"] is True
@@ -555,7 +555,7 @@ def test_a_refused_user_owned_opener_rearms_the_stage(world: _World) -> None:
             conn,
             tickets_data.read_ticket(conn, ticket_id),
             planning_day_id=TODAY_DAY_ID,
-                worker_type_definition=configured_worker_type_registry().require("new_worker"),
+            worker_type_definition=configured_worker_type_registry().require("new_worker"),
         )
 
 
