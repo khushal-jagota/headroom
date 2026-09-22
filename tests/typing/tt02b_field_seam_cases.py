@@ -61,6 +61,7 @@ def _cases(
             "b",
             TEST_TICKET_PRINCIPAL,
             0,
+            parked_destination=ticket.ceiling_holder,
             worker_type_definition=definition,
         ),
         Decision,

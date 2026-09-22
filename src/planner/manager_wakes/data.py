@@ -97,14 +97,19 @@ def batches_waiting_for_outcome(conn: sqlite3.Connection) -> tuple[WakeBatch, ..
     return tuple(_batch_from_row(row) for row in rows)
 
 
-def recover_accepted_batches_from_other_processes(
+def preserve_accepted_batches_from_other_processes(
     conn: sqlite3.Connection, *, process_token: str, now: int
 ) -> int:
-    """Make memory-only queued deliveries eligible after their owning process ended."""
+    """Keep a prior process's accepted send unresolved instead of replaying it.
+
+    A queued message can leave the held line and reach the backend before its prompt row
+    commits. Process loss in that window looks exactly like a message still in memory, so
+    neither case is safe to resend.
+    """
     with conn:
         updated = conn.execute(
-            "UPDATE manager_wake_batches SET status='pending', process_token=NULL, "
-            "conversation_id=NULL, updated_at=? WHERE status='accepted' "
+            "UPDATE manager_wake_batches SET status='uncertain', updated_at=? "
+            "WHERE status='accepted' "
             "AND (process_token IS NULL OR process_token != ?)",
             (now, process_token),
         )

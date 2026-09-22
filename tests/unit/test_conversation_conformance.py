@@ -35,9 +35,7 @@ from planner.conversation.message_content import text_message_content
 def existing_floor_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setattr(
-        conversation_start_resolution, "FLOOR_DEFAULT_WORKSPACE_FOLDER", workspace
-    )
+    monkeypatch.setattr(conversation_start_resolution, "FLOOR_DEFAULT_WORKSPACE_FOLDER", workspace)
 
 
 class TestConversationSystemConformance(ConversationContractConformanceSuite):
@@ -110,30 +108,27 @@ for _exercise in BACKEND_WRITE_ATTESTED_EXERCISES:
 del _exercise
 
 
-@pytest.mark.parametrize("backend_key", tuple(ConversationBackendKey))
-def test_supervisor_wake_message_uses_the_same_durable_prompt_boundary_for_every_backend(
-    backend_key: ConversationBackendKey,
-) -> None:
+def test_supervisor_wake_message_crosses_the_hermes_adapter_prompt_boundary() -> None:
     async def exercise() -> None:
         async with open_conversation_system_under_test() as subject:
             await subject.system.start_conversation(
                 ConversationStartRequest(
-                    conversation_id=f"wake-{backend_key.value}",
-                    backend_key=backend_key,
+                    conversation_id="wake-hermes",
+                    backend_key=ConversationBackendKey.hermes,
                     model="a-model",
                 )
             )
             fate = await subject.system.send(
-                f"wake-{backend_key.value}",
+                "wake-hermes",
                 text_message_content("Review the manager wake."),
                 sender_label="Panels",
                 mode=PromptDeliveryMode.queue,
-                sender_message_id=f"supervisor_delivery_{backend_key.value}",
+                sender_message_id="supervisor_delivery_hermes",
             )
             assert fate == PromptDeliveryStarted()
             prompts = tuple(
                 fact
-                for fact in await subject.recorded_facts(f"wake-{backend_key.value}")
+                for fact in await subject.recorded_facts("wake-hermes")
                 if fact.kind is RecordedFactKind.prompt_delivered
             )
             assert len(prompts) == 1

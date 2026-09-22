@@ -204,7 +204,7 @@ class ManagerWakeLoop:
             data.preserve_interrupted_dispatches(
                 conn, process_token=self._process_token, now=now
             )
-            data.recover_accepted_batches_from_other_processes(
+            data.preserve_accepted_batches_from_other_processes(
                 conn, process_token=self._process_token, now=now
             )
             batches = list(data.pending_batches(conn))

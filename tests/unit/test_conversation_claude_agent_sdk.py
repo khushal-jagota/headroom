@@ -41,6 +41,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerAccepted,
     NeedsRebind,
     SessionLoadFailed,
+    TurnToken,
 )
 from planner.conversation.contracts import PromptDeliveryMode
 from planner.conversation.events import ConversationTurnEnding, UserInputAnswer
@@ -72,6 +73,31 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         # The stored cursor remains safe to try on one replacement child.
         with pytest.raises(NeedsRebind):
             await _write(child, "again")
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        content = text_message_content("Review the manager wake.")
+        await child.write_prompt(
+            TurnToken(conversation_id="c-claude-1", turn_number=1),
+            content,
+            sender_content=content,
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+        assert len(clients[0].prompts) == 1
+        assert "Panels" in clients[0].prompts[0]
+        assert "Review the manager wake." in clients[0].prompts[0]
         await child.stop()
 
     _run(exercise)
@@ -156,9 +182,7 @@ def test_real_claude_accepts_a_uuid_steer_and_keeps_one_panels_turn(
         assert isinstance(outcome, BackendSteerAccepted)
         second_outcome = await child.steer(
             TURN,
-            text_message_content(
-                "Also include PANELS-SECOND-STEER in your final reply."
-            ),
+            text_message_content("Also include PANELS-SECOND-STEER in your final reply."),
             sender_label="owner",
         )
         assert isinstance(second_outcome, BackendSteerAccepted)
@@ -195,9 +219,7 @@ def test_real_claude_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
             await asyncio.sleep(0.1)
         steer_outcome = await child.steer(
             TURN,
-            text_message_content(
-                "After the command, reply with exactly MUST-NOT-RUN-AFTER-STOP."
-            ),
+            text_message_content("After the command, reply with exactly MUST-NOT-RUN-AFTER-STOP."),
             sender_label="owner",
         )
         assert isinstance(steer_outcome, BackendSteerAccepted)
@@ -212,9 +234,7 @@ def test_real_claude_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
         assert "RESUMED-AFTER-STOP" in " ".join(
             text for token, text in sink.message_texts if token == TURN_2
         )
-        assert "MUST-NOT-RUN-AFTER-STOP" not in " ".join(
-            text for _, text in sink.message_texts
-        )
+        assert "MUST-NOT-RUN-AFTER-STOP" not in " ".join(text for _, text in sink.message_texts)
         await child.stop()
 
     _run(exercise, seconds=300.0)
@@ -236,9 +256,7 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(
         await _until_the_turn_ends(sink)
 
         with pytest.raises(NeedsRebind):
-            content = text_message_content(
-                "What was the codeword? Reply with just the word."
-            )
+            content = text_message_content("What was the codeword? Reply with just the word.")
             await child.write_prompt(
                 TURN,
                 content,
@@ -250,9 +268,7 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(
             )
         await child.stop()
 
-        on_the_new_model = _start_request(
-            workspace_folder=tmp_path, model=CLAUDE_OTHER_MODEL
-        )
+        on_the_new_model = _start_request(workspace_folder=tmp_path, model=CLAUDE_OTHER_MODEL)
         rebound, rebound_sink, _ = _bench_on_real_claude(on_the_new_model)
         await rebound.start(on_the_new_model, vendor_session_cursor=cursor)
         await rebound.write_prompt(
@@ -299,9 +315,7 @@ def test_real_claude_is_told_the_answer_the_owner_chose(tmp_path: Path) -> None:
         await asyncio.wait_for(until_asked(), 120.0)
         request = sink.user_input_requests[0]
         question = request.questions[0]
-        blue = next(
-            option for option in question.options if "blue" in option.label.lower()
-        )
+        blue = next(option for option in question.options if "blue" in option.label.lower())
 
         await child.answer_user_input(
             request.request_id,
