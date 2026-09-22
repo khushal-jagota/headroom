@@ -44,9 +44,9 @@ Before asking the user anything, resolve the sprint being reviewed and classify 
 as normal, stale, or first-sprint. Read:
 
 - the sprint's primary bet, kickoff, checkpoint, and review documents;
-- its committed Outcomes and all directly scheduled Sprint Tickets;
-- the relevant Outcome context and child Tickets across Sprints;
-- unscheduled Tickets and relevant reusable Outcome briefs; and
+- its committed Sprint Items and all directly scheduled Sprint Tickets;
+- the relevant Sprint Item context and child Tickets across Sprints;
+- unscheduled Tickets and relevant reusable Sprint Item briefs; and
 - the project list.
 
 Inspect individual records only where their detail can change the judgment. Turn the
@@ -79,18 +79,18 @@ not a predetermined sprint. Pipe it to `panels ticket request-help <ticket-id> -
 
 Start with the constraint and a concrete primary bet. Discuss supporting work and what
 could make the plan fail when those questions can change the commitment. Then choose
-Outcomes that earn a Sprint commitment, reusing their existing identities. Preserve the useful reasoning in one
+Sprint Items that earn a Sprint commitment, reusing their existing identities. Preserve the useful reasoning in one
 kickoff document; headings are optional, not fields that must all be filled.
 
-Consider approved carry-forward candidates, existing Outcomes, outcomes required by the bet
-and supports, and genuinely new work. Reuse an existing Outcome where it already
+Consider approved carry-forward candidates, existing Sprint Items, outcomes required by the bet
+and supports, and genuinely new work. Reuse an existing Sprint Item where it already
 represents the outcome; create one only when it does not. Do not create child Tickets,
 put sprint work onto today, or let backlog volume choose the strategy.
 
 After explicit Release, propose one concise **next sprint** package. Give a start date
 and an end date that define exactly seven inclusive dates. Include the name, a short
-primary bet, the kickoff document, and exact Outcome commitments or creations. Name
-existing Outcome IDs. If carrying Tickets, list each approved unfinished Ticket ID;
+primary bet, the kickoff document, and exact Sprint Item commitments or creations. Name
+existing Sprint Item IDs. If carrying Tickets, list each approved unfinished Ticket ID;
 otherwise carry only the commitment. Never move all children implicitly. Existing historical sprint ranges remain unchanged.
 
 ### needs_consequences — write and verify
@@ -103,7 +103,7 @@ For a normal or stale boundary, write the current sprint's `review` document fir
 read it back through `panels sprint show <id> review`.
 For a genuine first sprint, verify the approved no-review result and perform no review
 write. Then create the next (or first) sprint with the approved `primary_bet` and `brief`,
-retain its returned id, create only approved new Outcomes, and add only approved
+retain its returned id, create only approved new Sprint Items, and add only approved
 commitments through `panels sprint add-item`. For an explicit approved carry list,
 use `panels sprint carry-item` with each selected Ticket ID. Read tracking and affected
 Tickets back; completed history and unselected work remain in their existing Sprints. Use explicit ids,

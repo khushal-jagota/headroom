@@ -60,6 +60,79 @@ def test_administrative_and_legacy_paths_are_hidden_but_registered() -> None:
     assert sprint.commands["outcome"].hidden is True
 
 
+def _ticket_record(ticket_id: str) -> dict[str, Any]:
+    return {
+        "id": ticket_id,
+        "title": "Selected parts",
+        "worker_type": "coding",
+        "worker": "panels-worker-coding",
+        "stage": "needs_success_condition",
+        "ticket_status": "agent",
+        "priority": "P1",
+        "ceiling": "needs_success_condition",
+        "field_values": {"brief": "The brief."},
+        "pending_proposal": None,
+        "recap": "",
+        "guidance": "Keep it exact.",
+    }
+
+
+def test_ticket_show_reads_selected_parts_from_current_worker_ticket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        if path == "/api/worker-types":
+            return {
+                "worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]
+            }
+        return _ticket_record("t_current")
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        main,
+        ["ticket", "show", "brief,guidance", "--json"],
+        env={"PLAN_TICKET_ID": "t_current"},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["parts"] == {
+        "brief": {"value": "The brief.", "proposal": None},
+        "guidance": {"value": "Keep it exact.", "proposal": None},
+    }
+    assert calls[0][1] == "/api/tickets/t_current/worker-self"
+
+
+def test_ticket_show_reads_selected_parts_from_named_ticket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        if path == "/api/worker-types":
+            return {
+                "worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]
+            }
+        return _ticket_record("t_named")
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        main,
+        ["ticket", "show", "t_named", "brief,guidance", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert list(json.loads(result.stdout)["parts"]) == ["brief", "guidance"]
+    assert calls[0] == (
+        "GET",
+        "/api/tickets",
+        {"as_json": True, "params": {"detail": "full", "id": "t_named"}},
+    )
+
+
 def test_structured_create_forwards_the_existing_create_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

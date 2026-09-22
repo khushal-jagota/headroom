@@ -1403,8 +1403,17 @@ def ticket_create(
 @json_option
 def ticket_show(ticket_id: str | None, part_names: str | None, as_json: bool) -> None:
     """Read the current Worker's Ticket, or read a named Ticket."""
+    named_ticket = ticket_id is not None and ticket_id.startswith("t_")
+    if ticket_id is not None and not named_ticket:
+        if part_names is not None:
+            http.fail_validation(
+                "a current-Ticket part list cannot be followed by another argument",
+                as_json,
+            )
+        part_names = ticket_id
+        ticket_id = None
     tid = resolve_ticket_id(ticket_id, as_json)
-    if ticket_id is None:
+    if not named_ticket:
         data = http.send("GET", f"/api/tickets/{tid}/worker-self", as_json=as_json)
     else:
         data = http.send(
