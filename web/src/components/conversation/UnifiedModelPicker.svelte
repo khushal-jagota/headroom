@@ -6,6 +6,7 @@
     type ModelPickerChoice,
     type ModelPickerView
   } from "../../lib/conversation/modelPicker";
+  import { effortOptionsFor } from "../../lib/conversation/composer";
   import {
     backendRefreshControl,
     refreshBackendSnapshots
@@ -31,8 +32,7 @@
     attributes = {},
     afterChoose,
     onChooseBackend,
-    onChooseModel,
-    onChooseReasoningEffort
+    onChooseModel
   }: {
     view: ModelPickerView;
     snapshots: readonly BackendSnapshot[];
@@ -52,15 +52,19 @@
       defaults: { model: string | null; reasoningEffort: string | null }
     ) => void;
     onChooseModel: (model: string, reasoningEffort: string | null) => void;
-    onChooseReasoningEffort: (reasoningEffort: string) => void;
   } = $props();
 
   let showing = $state<"models" | "efforts">("models");
+  let pendingModel = $state<string | null>(null);
   let feedback = $state<string | null>(null);
   let refreshing = $state(false);
   let picker = $state<ListboxPickerController>(null!);
 
-  let rows = $derived((showing === "models" ? view.models : view.efforts) as readonly ListboxPickerItem[]);
+  let effortRows = $derived(
+    effortOptionsFor(models, pendingModel ?? view.modelValue, backendEffortOptions)
+      .map((effort) => ({ value: effort, name: effort }))
+  );
+  let rows = $derived((showing === "models" ? view.models : effortRows) as readonly ListboxPickerItem[]);
   let chosenValue = $derived(showing === "models" ? view.modelValue : view.reasoningEffort);
   let foot = $derived(feedback ?? view.staleModelReason);
   let pickerBusy = $derived(disabled || refreshing);
@@ -84,6 +88,7 @@
 
   function preparePanel(): void {
     showing = "models";
+    pendingModel = null;
     feedback = null;
   }
 
@@ -97,18 +102,19 @@
         view.reasoningEffort || null,
         view.defaultReasoningEffort
       );
-      onChooseModel(choice.value, effort);
-
-      if (effort !== null) {
-        showing = "efforts";
-        void tick()
-          .then(() => {
-            picker.setActiveValue(effort);
-          });
+      if (effort === null) {
+        onChooseModel(choice.value, null);
+        picker.close(!afterChoose);
+        if (afterChoose) void tick().then(afterChoose);
         return;
       }
+      pendingModel = choice.value;
+      showing = "efforts";
+      void tick().then(() => picker.setActiveValue(effort));
+      return;
     } else {
-      onChooseReasoningEffort(choice.value);
+      onChooseModel(pendingModel ?? view.modelValue, choice.value);
+      pendingModel = null;
     }
     picker.close(!afterChoose);
     if (afterChoose) void tick().then(afterChoose);
@@ -122,6 +128,7 @@
     }
     feedback = null;
     showing = "models";
+    pendingModel = null;
     if (key === view.backendKey) {
       picker.setActiveValue(view.modelValue);
       return;
@@ -137,8 +144,16 @@
       return;
     }
     feedback = null;
+    pendingModel = null;
     showing = "efforts";
     void tick().then(() => picker.setActiveValue(view.reasoningEffort));
+  }
+
+  function showModels(): void {
+    if (disabled) return;
+    showing = "models";
+    pendingModel = null;
+    void tick().then(() => picker.setActiveValue(view.modelValue));
   }
 
   async function runRefresh(): Promise<void> {
@@ -211,6 +226,22 @@
           </button>
         {/each}
         <div class="model-picker-tools">
+          {#if showing === "efforts"}
+            <button
+              type="button"
+              class="model-picker-rail-row"
+              data-conversation-picker-models
+              aria-pressed={false}
+              disabled={pickerBusy}
+              tabindex="-1"
+              data-listbox-picker-action
+              onmousedown={(event) => event.preventDefault()}
+              onclick={showModels}
+            >
+              <span aria-hidden="true">←</span>
+              <span>Models</span>
+            </button>
+          {/if}
           <button
             type="button"
             class="model-picker-rail-row"

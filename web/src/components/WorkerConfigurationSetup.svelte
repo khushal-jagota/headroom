@@ -136,11 +136,6 @@
       employee_launch_model: model,
       employee_launch_reasoning_effort: reasoningEffort
     })}
-    onChooseReasoningEffort={(reasoningEffort) => void persist({
-      employee_backend: selectedBackend,
-      employee_launch_model: selectedModel ?? picker.defaultModel,
-      employee_launch_reasoning_effort: reasoningEffort
-    })}
   />
 
   {#if backendsLoading}

@@ -28,7 +28,6 @@
   afterChoose={() => {}}
   onChooseBackend={(backend) => intents.chooseBackend(backend)}
   onChooseModel={intents.chooseModel}
-  onChooseReasoningEffort={intents.chooseReasoningEffort}
 />
 
 <div class="chat-submit">

@@ -7,18 +7,13 @@
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { labelize } from "../lib/ui";
   import {
-    ceilingOptionsFor,
     fieldLabelFor,
     fieldStageVisualStateFor,
     gatingFieldFor,
     lifecycleFor,
     stageLabelFor
   } from "../lib/lifecycle";
-  import {
-    holderFromValue,
-    holderOptionsFor,
-    holderValue
-  } from "../lib/ceilingHolder";
+  import { holderOptionsFor, holderValue } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -30,6 +25,7 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
+  import CeilingPicker from "../components/CeilingPicker.svelte";
   import ClampedText from "../components/ClampedText.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -446,33 +442,18 @@
                   <span class="disclosure-chev" aria-hidden="true"></span>
                 </summary>
                 <div class="ticket-leash-menu" role="menu">
-                  {#if detail.pending_proposal === null}
-                    <select
-                      class="ticket-leash-select"
-                      data-scope-ceiling
-                      aria-label="Ceiling stage"
-                      value={detail.ceiling}
-                      onchange={(event) => void updateScope({ ceiling: event.currentTarget.value })}
-                    >
-                      {#each ceilingOptionsFor(lc, detail.stage) as option}
-                        <option value={option.value}>{option.label}</option>
-                      {/each}
-                    </select>
-                  {/if}
-                  <select
-                    class="ticket-leash-select"
-                    data-scope-holder
-                    aria-label="Who holds the ceiling"
-                    value={holderValue(detail.ceiling_holder)}
-                    onchange={(event) =>
-                      void updateScope({
-                        ceiling_holder: holderFromValue(event.currentTarget.value, ticketSprintItem)
-                      })}
-                  >
-                    {#each holderOptionsFor(ticketSprintItem, detail.ceiling_holder) as option}
-                      <option value={option.value}>{option.label}</option>
-                    {/each}
-                  </select>
+                  <CeilingPicker
+                    newStage={detail.stage}
+                    lifecycle={lc}
+                    ceiling={detail.ceiling}
+                    holder={detail.ceiling_holder}
+                    sprintItem={ticketSprintItem}
+                    stageLocked={detail.pending_proposal !== null}
+                    onComplete={(ceiling, holder) => void updateScope({
+                      ceiling,
+                      ceiling_holder: holder
+                    })}
+                  />
                 </div>
               </details>
             {/if}
