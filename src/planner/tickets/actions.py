@@ -197,15 +197,18 @@ async def reject_ticket_proposal(
     message: str | None,
     ctx: RequestContext,
     clock: Clock,
+    boundary_hour: int,
 ) -> Ticket:
     """Send the proposal back, with guidance for the executing agent or without."""
     if message is not None:
         admission.validate_revision_guidance(message)
     principal = ctx.principal
-    now = clock.now_unix()
     source_turn = await message_delivery_service.revision_source_turn(
         conversation_system, conn, ctx=ctx
     )
+    planning_now = clock.now()
+    now = int(planning_now.timestamp())
+    planning_day_id = resolve_day_id("today", planning_now, boundary_hour)
     ticket = tickets_data.require_reject(
         conn,
         ticket_id,
@@ -217,6 +220,7 @@ async def reject_ticket_proposal(
         ticket_id,
         message=message,
         principal=principal,
+        planning_day_id=planning_day_id,
         now=now,
         expected_proposal=ticket.pending_proposal,
     )

@@ -226,9 +226,10 @@ controls belong to the summary level only.
   message; or reset its current conversation. `sprint item show` carries the Outcome's
   agent key, conversation and launch configuration in its header.
 - **`ticket reject`** — reject the proposal parked on a Ticket with focused revision
-  guidance. The Ticket appends that exact comment to guidance, invalidates worker
-  context, and returns the Stage to rest in one SQLite commit. Rejecting leaves the
-  holder alone, except for Khushal: his rejection addresses the revision back to him.
+  guidance. One SQLite commit stores that exact attributed feedback, removes the proposal,
+  and returns the Stage to rest. A Worker-owned Stage also returns to the current Day, so
+  normal readiness can reuse its conversation. Rejecting leaves the holder alone, except
+  for Khushal: his rejection addresses the revision back to him.
 - **`ticket history`** — page through a Ticket's current Worker conversation. `--limit`
   with optional `--before` reads back from the end; `--after` reads forwards from a
   position, which is how a wake-up's own message is fetched.
@@ -247,6 +248,12 @@ controls belong to the summary level only.
   with the launch options to change the backend, model, or reasoning effort before the next
   Worker starts. The command requires a current child, a Worker-owned Stage, and a worker
   step that is out. It does not add a delay or a bound for a caller that restarts repeatedly.
+  It also recovers an older rejected Ticket only when that Ticket is Empty, claim-free,
+  holds its conversation, and has pending revision feedback. That recovery keeps the
+  conversation and adds the Ticket to the current Day. It clears stale running and queued
+  traffic first, then sends the revision into the same history. Other prior-Day Tickets
+  remain at rest. Because this recovery preserves the conversation, it refuses launch
+  configuration options.
 - An Outcome's supervisor has no commands of its own. It types the same commands Khushal
   types — `sprint item set`, `ticket set`, `ticket approve`, `ticket reject`,
   `day add-ticket`, `ticket block`, `ticket create --sprint-item` — and its identity

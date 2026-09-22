@@ -205,14 +205,24 @@ The Ticket's launch configuration is frozen while its conversation holds it, so
 route that releases the old step and applies a new backend, model, or reasoning effort
 before the next Worker starts.
 
+One narrow recovery also covers Tickets stranded by an older rejection. It requires a
+Worker-owned Stage, Empty status, no claim, an existing conversation, and pending revision
+feedback for that Stage. Restart adds that Ticket to the current Day and starts normal
+readiness without resetting its conversation. It clears stale running and queued traffic
+first, then sends the revision into the same conversation history. Other prior-Day Tickets
+remain at rest. This recovery preserves the launch configuration, so it refuses restart
+options that name a backend, model, or reasoning effort.
+
 ## Sending a proposal back
 
 When the holder returns a proposal for revision, one Ticket transaction checks every
 authorization and current-parent route. It clears the proposal, appends the exact comment
 to a separate attributed revision-feedback record, and returns the Ticket to its resting
-status. A same-Stage user opener is cleared so the discussion can open again. The next
-normal worker-step prompt carries feedback for that Stage, and only a successful send
-consumes it. Ticket guidance is not sent with it, and the worker reads that off the
+status. If the rejected Stage belongs to the Worker, the same transaction adds the Ticket
+to the current Day. Its commit wakes normal readiness, which reuses the existing
+conversation. A same-Stage user opener is cleared so the discussion can open again. The
+next normal worker-step prompt carries feedback for that Stage, and only a successful
+send consumes it. Ticket guidance is not sent with it, and the worker reads that off the
 Ticket. Reply bookkeeping credits the source
 turn after the commit and cannot undo the rejection.
 
