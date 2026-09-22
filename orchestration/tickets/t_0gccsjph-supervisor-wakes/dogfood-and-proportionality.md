@@ -21,8 +21,8 @@ small delegating wrapper returned `PromptDeliveryUncertain` only for one explici
 armed Worker opener; every manager send delegated to the real SQLite conversation
 system. The ignored harness was not committed.
 
-No live deployment database, path, port, process, or staging integration was read or
-written. The isolated server was stopped cleanly after the run.
+The dogfood did not read or write a live deployment database, data path, port, or
+process. It did not integrate to `staging`. The isolated server was stopped cleanly.
 
 ## Exercised flows
 
