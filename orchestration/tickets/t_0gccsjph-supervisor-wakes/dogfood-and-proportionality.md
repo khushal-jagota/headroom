@@ -1,122 +1,79 @@
 # Supervisor wake dogfood and proportionality
 
-## Runtime boundary
+## Authoritative runtime boundary
 
-The dogfood exercised branch `ticket/t_0gccsjph-supervisor-wakes` at
+The authoritative run exercised branch `ticket/t_0gccsjph-supervisor-wakes` at report
+head `6faf8b397f03117363e621691b34ce0fb0dd6571`; product implementation head remained
 `60181b826d35e188ad919e8684f5de3559f9d654`.
 
-- Isolated root: `/tmp/panels-wake-dogfood-final-svBWEW`
-- Server: `127.0.0.1:32797`
-- Mode: `PLAN_TEST_MODE=1`, fixed clock `2026-09-22T12:00:00+02:00`
-- Poll interval: `PLAN_TICK_SECONDS=60`, the repository default
-- Isolated state: `planner.db`, `dispatcher.lock`, `logs/`, `backups/`,
-  `server.sock`, and `hermes-home/` all lived below the isolated root.
-- `PLAN_APP_ROOT` named this ticket worktree.
+- Isolated root: `/tmp/panels-wake-codex-30nrdwk7`
+- Server: `127.0.0.1:32967`
+- `PLAN_TEST_MODE=1`, fixed clock `2026-09-22T12:00:00+02:00`
+- `PLAN_TICK_SECONDS=60`, the repository default
+- DB, dispatcher lock, logs, backups, control socket, and Hermes home were separate
+  paths below the isolated root; `PLAN_APP_ROOT` named this worktree.
 
-The ignored dogfood harness ran the real FastAPI application, SQLite conversation
-system and store, `BackgroundLoops`, Worker proposal API, Worker readiness path,
-manager-wake loop, and durable wake store. It replaced only the backend child with the
-repository scripted backend adapter. The conversation system itself was not faked. A
-small delegating wrapper returned `PromptDeliveryUncertain` only for one explicitly
-armed Worker opener; every manager send delegated to the real SQLite conversation
-system. The ignored harness was not committed.
+The harness ran the real FastAPI app, SQLite conversation system/store,
+`BackgroundLoops`, Worker API/readiness flow, manager-wake loop, and wake store. Role
+identity selected the backend boundary: Ticket Workers (`PLAN_TICKET_ID`) used the
+production Codex app-server child, while the Sprint Item manager used the scripted child
+so its incumbent could be held and completed deterministically. Only the explicitly
+armed error Ticket's opener returned `PromptDeliveryUncertain`; all manager deliveries
+used the real conversation system. See [evidence](evidence/run-transcript.md), including
+the [sanitized harness](evidence/hybrid_dogfood_server.py),
+[server log](evidence/server-log-sanitized.txt), [backend snapshots](evidence/backend-state.json),
+and [final SQL state](evidence/final-state.json).
 
-The dogfood did not read or write a live deployment database, data path, port, or
-process. It did not integrate to `staging`. The isolated server was stopped cleanly.
+No live deployment database, state path, port, or process was touched, and nothing was
+integrated to staging. The isolated server stopped cleanly.
 
-## Exercised flows
+## Results
 
-### Idle manager proposal
+Three production Codex Workers received real durable Worker prompts and independently
+called `panels worker propose`:
 
-1. Worker `t_wrfh3ct2` filed its proposal through
-   `POST /api/tickets/t_wrfh3ct2/propose`.
-2. The real wake loop created wake 1 and delivered batch 1 into newly linked manager
-   conversation `conv_0fa7fe71786b4269bf7617d6760d9773`.
-3. Conversation event 1 was the exact durable `prompt` carrying batch 1's
-   `sender_message_id`.
-4. Only after that row existed did batch 1 become `delivered` and wake 1 close.
+- `t_nzwycxjn`, tool-result event 15, created idle proposal wake 1;
+- `t_4m5x08ta`, tool-result event 14, created active-manager proposal wake 2;
+- `t_dwk2jvzp`, tool-result event 17, created restart-recovery wake 4.
 
-The scripted backend had one active write and zero cancellations.
+All were minimal coding Tickets created directly at `needs_success_condition`, Item-held,
+with no kickoff or pending proposal.
 
-### Active manager, real Worker error plus proposal
+Idle delivery created batch 1 and exact manager prompt event 1 before wake 1 closed. With
+that manager turn active, the second Codex proposal remained open. The canonical
+`/api/test/run-step/t_zh967ydd` uncertain path atomically wrote an errored claim at
+revision 2 and worker-error wake 3 at source revision 2. The active manager had one
+write and zero cancellations. After its exact completion, batch 4 combined wakes 2 and
+3; exact prompt event 3 then closed both. The manager had two writes and still zero
+cancellations.
 
-1. The manager's first turn remained genuinely active. Background loops were stopped
-   without completing or interrupting that turn.
-2. Error Ticket `t_50vk6fxm` was put on Today, armed, and driven through
-   `POST /api/test/run-step/t_50vk6fxm`. The real readiness flow claimed the Worker
-   step, received `PromptDeliveryUncertain`, and atomically wrote
-   `worker_step_claim=errored`, claim revision 2, and worker-error wake 2 with source
-   revision 2.
-3. Worker `t_zc38hg09` filed a proposal through its real proposal API, creating
-   proposal wake 3 with source revision 1.
-4. Background loops restarted while the manager was still active. Both wakes remained
-   open, the incumbent remained the only backend write, and cancellation count stayed
-   zero.
-5. Completing the incumbent recorded `turn_ended` event 2. The wake loop then created
-   batch 3 with wake members 2 and 3 and delivered one combined message.
-6. Exact `prompt` event 3 carried batch 3's `sender_message_id`; only then did the batch
-   become `delivered` and both wakes close.
+For restart recovery, loops were stopped while the manager remained active, the third
+Codex Worker created open wake 4, and the server stopped with no retained batch for that
+wake. Restarting the same isolated DB with real background loops created batch 5 and
+exact prompt event 4, then closed wake 4. The restarted scripted backend observed one
+write and zero cancellations.
 
-The backend finished with two writes and zero cancellations.
-
-### Restart with an undelivered wake
-
-1. While the combined manager turn was active, Worker `t_dhpq6rxp` filed a proposal,
-   creating wake 4 with source revision 1.
-2. The active-manager preflight left wake 4 open and without a retained batch.
-3. The server stopped cleanly. The same isolated database was restarted with real
-   background loops enabled; no in-memory backend or held prompt survived the restart.
-4. The restored manager conversation was idle. The wake loop created batch 5 and sent
-   the wake through the normal conversation path.
-5. Exact durable `prompt` event 4 carried batch 5's `sender_message_id`; batch 5 then
-   became `delivered` and wake 4 closed.
-
-The restarted backend observed exactly one write and zero cancellations.
-
-## Final durable state
-
-- Ticket `t_50vk6fxm`: `worker_step_claim=errored`, claim revision 2.
-- Wakes 1 through 4: closed.
-- Wake sources: proposal revision 1, worker-error revision 2, proposal revision 1,
-  proposal revision 1.
-- Batches 1, 3, and 5: `delivered` to
-  `conv_0fa7fe71786b4269bf7617d6760d9773`.
-- Batch membership: `1 -> [1]`, `3 -> [2, 3]`, `5 -> [4]`.
-- Conversation events: prompt 1, completed turn 2, combined prompt 3, recovered prompt 4.
-- Each prompt event contained the exact sender ID of its batch.
+Final durable state was wakes 1–4 closed; batches 1, 4, and 5 delivered; memberships
+`1 -> [1]`, `4 -> [2, 3]`, `5 -> [4]`; and manager events prompt 1, completed turn 2,
+combined prompt 3, recovered prompt 4. Every prompt carried its batch's exact sender ID.
 
 ## Proportionality finding
 
-The active-manager preflight claims a durable batch before checking whether the manager
-is running, then quietly deletes that batch when it defers. Wake creation is the useful
-external signal, but every later periodic poll and every unrelated commit carried by the
-shared change signal repeats this claim/delete cycle while an open wake and active
-manager coexist.
+The active-manager preflight claims a durable batch before checking activity, then
+quietly deletes it on deferral. Periodic polls and unrelated shared change signals can
+therefore repeat a claim/delete while an open wake and active manager coexist. In this
+preserved default-60-second run, `sqlite_sequence` reached 5 while only batches 1, 4,
+and 5 survived: two transient active-preflight batch IDs were minted and deleted. An
+earlier 1-second exploratory run suggested larger proportional churn, but its raw
+evidence was not retained and is not treated as an authoritative count.
 
-Observed mapping:
+This caused no interruption, replay, retained-row growth, or failure to combine. It is
+still avoidable write and sequence-ID churn. The preflight is removable in a follow-up
+because queue mode already avoids interruption and combines delivery into a later turn;
+any removal must preserve exact-prompt closure, restart-safe `accepted`/`dispatching`,
+and intended wake coalescing.
 
-| Run | Tick | Active interval result |
-| --- | ---: | --- |
-| Stress investigation | 1 second | 68 transient batch IDs were minted and deleted |
-| Clean final run | 60 seconds | one expected transient batch ID was minted and deleted |
-
-This did not interrupt the manager, resend a message, leave durable batch rows behind,
-or prevent wake combination. It is nevertheless real write and sequence-ID churn, and
-unrelated application writes can amplify it through the shared signal.
-
-The preflight is removable in a follow-up design because queue delivery already avoids
-interrupting an active turn and can combine work for the later turn. Removing it should
-retain the exact-prompt closure rule and restart-safe `accepted`/`dispatching` boundary;
-the change should be judged on whether later wakes still coalesce into the intended
-single manager turn.
-
-Safe cleanup candidates, separate from this implementation, are:
-
-- move the scripted backend adapter out of the private unit-test module into reusable
-  `tests/support` infrastructure;
-- turn the ignored dogfood harness into a maintained isolated-runtime helper if this
-  scenario will be repeated;
-- document the queue-mode/coalescing contract beside the wake runtime;
-- keep any formatter-only cleanup confined to dedicated changes, especially in broad
-  files such as `tickets/data.py`, resolution helpers, database tests, and backend
-  conformance tests.
+Safe separate cleanup candidates are moving the scripted adapter into `tests/support`,
+turning this harness into a maintained isolated-runtime helper, documenting queue-mode
+coalescing beside the wake runtime, and keeping formatter-only cleanup in dedicated
+changes rather than broad product/test diffs.

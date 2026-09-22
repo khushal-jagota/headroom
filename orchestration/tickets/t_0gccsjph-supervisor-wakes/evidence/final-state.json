@@ -1,0 +1,52 @@
+{
+  "tickets": {
+    "t_nzwycxjn": {
+      "conversation_id": "conv_f5042ddb38c74a4189c04bc118e16201",
+      "claim": "none",
+      "claim_revision": 2,
+      "proposal_field": "success_condition",
+      "codex_propose_event": 15
+    },
+    "t_4m5x08ta": {
+      "conversation_id": "conv_8b1df2924bc84ab18627acea15b19cc7",
+      "claim": "none",
+      "claim_revision": 2,
+      "proposal_field": "success_condition",
+      "codex_propose_event": 14
+    },
+    "t_zh967ydd": {
+      "conversation_id": "conv_367b0bfab4aa4dbb98072cfe02171445",
+      "claim": "errored",
+      "claim_revision": 2,
+      "proposal_field": null
+    },
+    "t_dwk2jvzp": {
+      "conversation_id": "conv_68b8738e60344ea7b7bd9be3da7583f9",
+      "claim": "none",
+      "claim_revision": 2,
+      "proposal_field": "success_condition",
+      "codex_propose_event": 17
+    }
+  },
+  "wakes": [
+    {"id": 1, "kind": "proposal", "source_revision": 1, "closed": true},
+    {"id": 2, "kind": "proposal", "source_revision": 1, "closed": true},
+    {"id": 3, "kind": "worker_error", "source_revision": 2, "closed": true},
+    {"id": 4, "kind": "proposal", "source_revision": 1, "closed": true}
+  ],
+  "batches": [
+    {"id": 1, "status": "delivered", "wake_ids": [1], "prompt_sequence": 1},
+    {"id": 4, "status": "delivered", "wake_ids": [2, 3], "prompt_sequence": 3},
+    {"id": 5, "status": "delivered", "wake_ids": [4], "prompt_sequence": 4}
+  ],
+  "manager_conversation": {
+    "id": "conv_79c973e8c8684d1ca1944e5bd7bd0951",
+    "events": [
+      {"sequence": 1, "kind": "prompt", "batch_id": 1},
+      {"sequence": 2, "kind": "turn_ended", "ending": "completed"},
+      {"sequence": 3, "kind": "prompt", "batch_id": 4},
+      {"sequence": 4, "kind": "prompt", "batch_id": 5}
+    ]
+  },
+  "manager_wake_batch_sqlite_sequence": 5
+}

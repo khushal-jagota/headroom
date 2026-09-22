@@ -1,0 +1,20 @@
+{
+  "before_combined_completion": {
+    "conversation_id": "conv_79c973e8c8684d1ca1944e5bd7bd0951",
+    "running": true,
+    "write_count": 1,
+    "cancellations": 0
+  },
+  "after_combined_delivery": {
+    "conversation_id": "conv_79c973e8c8684d1ca1944e5bd7bd0951",
+    "running": true,
+    "write_count": 2,
+    "cancellations": 0
+  },
+  "after_restart_recovery": {
+    "conversation_id": "conv_79c973e8c8684d1ca1944e5bd7bd0951",
+    "running": true,
+    "write_count_in_restarted_process": 1,
+    "cancellations": 0
+  }
+}
