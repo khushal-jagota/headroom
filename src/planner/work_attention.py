@@ -199,7 +199,7 @@ async def add_work_attention(
         placeholders = ",".join("?" for _ in item_ids)
         rows = conn.execute(
             "SELECT si.id, a.conversation_id FROM sprint_items si LEFT JOIN agents a "
-            "ON a.agent_key = si.supervisor_agent_key "
+            "ON a.agent_key = 'sprint_item_supervisor_' || si.id "
             f"WHERE si.id IN ({placeholders})",
             tuple(sorted(item_ids)),
         ).fetchall()

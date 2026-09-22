@@ -24,7 +24,6 @@ from planner.sprints.contracts import (
     Sprint,
     SprintItem,
     SprintItemDeletion,
-    SprintItemKind,
     SprintItemSupervisorLaunchConfiguration,
 )
 from planner.sprints.logic import (
@@ -38,7 +37,7 @@ class ItemRead(NamedTuple):
 
 
 _ITEM_PLAIN_FIELDS: frozenset[str] = frozenset(
-    {"title", "body", "priority", "deadline", "project_id"}
+    {"title", "body", "priority", "project_id"}
 )
 _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(SPRINT_DOCUMENT_FIELDS + ("primary_bet", "name"))
 PERSONAL_PROJECT_ID = "project_personal"
@@ -98,10 +97,8 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
         title=row["title"],
         body=row["body"],
         priority=Priority(row["priority"]),
-        deadline=row["deadline"],
         project_id=row["project_id"],
         project_name=row["project_name"],
-        supervisor_agent_key=str(row["supervisor_agent_key"]),
         supervisor_launch_configuration=SprintItemSupervisorLaunchConfiguration(
             employee_backend=ConversationBackendKey(str(row["supervisor_backend"])),
             employee_launch_model=str(row["supervisor_model"]),
@@ -111,7 +108,6 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
                 else None
             ),
         ),
-        kind=SprintItemKind(row["kind"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -356,7 +352,6 @@ def create_item(
     project_id: str,
     body: str = "",
     priority: Priority = Priority.P3,
-    deadline: str | None = None,
     clock: Clock,
 ) -> SprintItem:
     if not title:
@@ -368,22 +363,20 @@ def create_item(
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
             )
-        agent_key = _create_supervisor(conn, item_id)
+        _create_supervisor(conn, item_id)
         defaults = SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
         conn.execute(
             "INSERT INTO sprint_items ("
-            "id, title, body, priority, deadline, project_id, "
-            "supervisor_agent_key, supervisor_backend, supervisor_model, "
+            "id, title, body, priority, project_id, "
+            "supervisor_backend, supervisor_model, "
             "supervisor_reasoning_effort, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item_id,
                 title,
                 body,
                 priority.value,
-                deadline,
                 project_id,
-                agent_key,
                 defaults.employee_backend.value,
                 defaults.employee_launch_model,
                 defaults.employee_launch_reasoning_effort,
@@ -502,8 +495,8 @@ def update_item(
             if "project_id" in stored_edits:
                 item = _load_item(conn, item_id)
                 conn.execute(
-                    "UPDATE tickets SET project_id = ?, updated_at = ? WHERE sprint_item_id = ?",
-                    (item.project_id, now, item_id),
+                    "UPDATE tickets SET updated_at = ? WHERE sprint_item_id = ?",
+                    (now, item_id),
                 )
                 conn.execute(
                     "UPDATE scheduled_ticket_schedules SET project_id = ?, "

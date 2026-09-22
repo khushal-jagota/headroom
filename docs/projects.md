@@ -24,17 +24,18 @@ for humans and agents: what the project is, what matters about it, and any repo 
 file locations worth remembering. A repository can be one item inside the Project
 folder. Panels does not define or manage the folder contents.
 
-Tickets, Sprint Items, and ideas store `project_id`. API responses
+Sprint Items, ideas, and standalone Tickets store `project_id`. A parented Ticket derives
+its Project from its Sprint Item. API responses
 also include the legacy `project` field as the display name so older callers can keep
 reading it. Placement and categorization writes accept either `project_id` or the
 legacy project name. If both are sent and they point to different rows, the server
 rejects the request.
 
-A Ticket carries its own Project and optional Sprint. When it names a Sprint Item,
-their Projects must match. Moving a Sprint Item to another Project moves classified Ticket
-and schedule Projects in the same transaction, without changing any Sprint placement.
+A Ticket has an effective Project and an optional Sprint. When it names a Sprint Item,
+the Item owns its Project classification. Moving a Sprint Item changes each child Ticket's
+effective Project and updates schedule templates, without changing any Sprint placement.
 
-The Workspace board groups Tickets by their direct Project. Tickets without one appear
+The Workspace board groups Tickets by their effective Project. Tickets without one appear
 under `No project`.
 
 ## Surfaces
@@ -60,7 +61,7 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 ## Handoffs
 
 - **Sprints** (`sprints.md`) — Tickets and Sprint Items use Projects in sprint tracking.
-- **Tickets & the gates** (`tickets-and-gates.md`) — all Tickets carry direct Project
+- **Tickets & the gates** (`tickets-and-gates.md`) — Tickets expose effective Project
   placement.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — both capture surfaces use the catalog.
 
@@ -71,4 +72,4 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 
 ---
 
-_Last verified: 2026-08-12._
+_Last verified: 2026-09-23._

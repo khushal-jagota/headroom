@@ -320,7 +320,8 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
 
     agent_rows = conn.execute(
         "SELECT a.agent_key, a.conversation_id, i.id AS item_id, i.title AS item_title "
-        "FROM agents a LEFT JOIN sprint_items i ON i.supervisor_agent_key = a.agent_key "
+        "FROM agents a LEFT JOIN sprint_items i "
+        "ON a.agent_key = 'sprint_item_supervisor_' || i.id "
         "WHERE a.agent_key = ? OR i.id IS NOT NULL",
         (CHIEF_SETTINGS_KEY,),
     ).fetchall()

@@ -250,7 +250,7 @@ class Ticket:  # §3.3 — column names match exactly
     stage: str  # directly stored Stage id
     priority: Priority  # default P3
     deadline: str | None  # ISO date
-    project_id: str | None  # canonical Ticket Project placement
+    project_id: str | None  # effective Project placement, derived from the parent when present
     project_name: str | None
     sprint_id: str | None  # canonical Ticket Sprint placement; NULL is backlog
     sprint_item_id: str | None
@@ -268,8 +268,6 @@ class Ticket:  # §3.3 — column names match exactly
     ticket_status: TicketStatus
     # The one stored state-of-control fact: whether this Ticket's worker step is out.
     worker_step_claim: WorkerStepClaim
-    # When the claim last actually changed, for display and elapsed-time facts.
-    worker_step_claim_changed_at: int
     # Monotonic claim-transition identity used by notifications and worker claims.
     # Unlike the timestamp, it cannot collide when two transitions share a second.
     worker_step_claim_revision: int

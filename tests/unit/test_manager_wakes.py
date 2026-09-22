@@ -311,12 +311,11 @@ def test_readdressing_a_parked_proposal_to_the_item_manager_creates_one_new_wake
     assert len(_wake_rows(tmp_db)) == 1
 
 
-def test_readdressing_to_a_non_manager_item_does_not_create_a_wake(
-    tmp_db: Connection,
+def test_readdressing_to_any_item_creates_a_manager_wake(
+    tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
-    tmp_db.execute(
-        "INSERT INTO sprint_items(id,title,project_id,kind,created_at,updated_at) "
-        "VALUES ('si_other','Not managed','project_vylo','other',1,1)"
+    item = sprints_data.create_item(
+        tmp_db, title="Managed", project_id="project_vylo", clock=fake_clock
     )
     ticket = tickets_data.create_ticket(
         tmp_db,
@@ -338,12 +337,14 @@ def test_readdressing_to_a_non_manager_item_does_not_create_a_wake(
     tickets_data.edit_ticket(
         tmp_db,
         ticket.id,
-        edit={"ceiling_holder": Principal(PrincipalKind.sprint_item, "si_other")},
+        edit={"ceiling_holder": Principal(PrincipalKind.sprint_item, item.id)},
         title_max_chars=TITLE_MAX_CHARS,
         principal=OWNER_PRINCIPAL,
         now=3,
     )
-    assert _wake_rows(tmp_db) == []
+    assert [(row["sprint_item_id"], row["source_revision"]) for row in _wake_rows(tmp_db)] == [
+        (item.id, 2)
+    ]
 
 
 def test_moving_a_parked_proposal_wakes_the_new_manager_and_removes_old_authority(
@@ -586,9 +587,7 @@ def test_running_wake_loop_does_not_spin_on_active_manager_bookkeeping(
         ticket_title="Managed ticket",
         now=1,
     )
-    agent_key = tmp_db.execute(
-        "SELECT supervisor_agent_key FROM sprint_items WHERE id=?", (item_id,)
-    ).fetchone()[0]
+    agent_key = sprints_data.supervisor_agent_key(item_id)
     tmp_db.execute(
         "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
         "created_at) VALUES ('conv-active','hermes','model','/tmp','full',1)"
