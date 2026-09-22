@@ -34,7 +34,7 @@ DAY_MIDDAY_FIELD: Final = "midday_reconciliation"
 # What an Outcome is, as sprint planning shapes it: its words and its placement. Not its
 # existence, not its agent, and not its files. Sprint planning writes briefs; it does not
 # delete Outcomes or reach into a manager's conversation, and the declaration says so.
-OUTCOME_BRIEF_FIELDS: Final = ("title", "body", "priority", "deadline", "project_id")
+OUTCOME_BRIEF_FIELDS: Final = ("title", "body", "priority", "project_id")
 
 STANDS_ABOVE_BY_WORKER_TYPE: Final[dict[str, tuple[Target, ...]]] = {
     # The morning overview, and which Tickets are on the Day. A Day's notes stay

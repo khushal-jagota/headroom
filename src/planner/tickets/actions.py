@@ -33,6 +33,7 @@ def resolve_creation_placement(
     sprint_id: str | None,
     sprint_id_explicit: bool,
     worker_type: str,
+    project_id_explicit: bool = False,
 ) -> tuple[str, str, str | None, str | None]:
     """Resolve defaults for a newly created Ticket without overriding placement intent."""
     day_id = resolve_day_id("today", planning_now, boundary_hour)
@@ -41,6 +42,8 @@ def resolve_creation_placement(
             "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
         ).fetchone()
         if item is not None:
+            if project_id_explicit and project_id is None:
+                raise PlannerError(ErrorCode.validation, "ticket Project does not match Outcome")
             if project_id is not None and project_id != item["project_id"]:
                 raise PlannerError(ErrorCode.validation, "ticket Project does not match Outcome")
             project_id = str(item["project_id"])
@@ -80,6 +83,7 @@ def create_ticket(
     boundary_hour: int = 5,
     sprint_item_id_explicit: bool = False,
     sprint_id_explicit: bool = False,
+    project_id_explicit: bool = False,
     stated_ceiling: str | None = None,
     stated_holder: Principal | None = None,
 ) -> Ticket:
@@ -92,6 +96,7 @@ def create_ticket(
             boundary_hour=boundary_hour,
             sprint_item_id=sprint_item_id,
             project_id=project_id,
+            project_id_explicit=project_id_explicit,
             sprint_id=sprint_id,
             sprint_id_explicit=sprint_id_explicit,
             worker_type=worker_type,

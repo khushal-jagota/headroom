@@ -321,7 +321,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         stage=stage,
         priority=Priority(row["priority"]),
         deadline=row["deadline"],
-        project_id=row["project_id"],
+        project_id=row["effective_project_id"],
         project_name=row["project_name"],
         sprint_id=row["sprint_id"],
         sprint_item_id=row["sprint_item_id"],
@@ -338,7 +338,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
             ),
             project=(
                 ProjectPriorityAnchor(
-                    id=str(row["project_id"]),
+                    id=str(row["effective_project_id"]),
                     name=str(row["project_name"]),
                     priority=(
                         Priority(str(row["priority_project_priority"]))
@@ -346,7 +346,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
                         else None
                     ),
                 )
-                if row["project_id"] is not None
+                if row["effective_project_id"] is not None
                 else None
             ),
         ),
@@ -358,7 +358,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
             derivation.stored_facts_from_row(row, has_live_blocker=bool(row["has_live_blocker"]))
         ),
         worker_step_claim=WorkerStepClaim(row["worker_step_claim"]),
-        worker_step_claim_changed_at=int(row["worker_step_claim_changed_at"]),
         worker_step_claim_revision=int(row["worker_step_claim_revision"]),
         conversation_id=row["conversation_id"],
         field_values=fields_codec.values_from_json(
@@ -382,13 +381,16 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
 
 def _ticket_row(conn: sqlite3.Connection, ticket_id: str) -> sqlite3.Row:
     row: sqlite3.Row | None = conn.execute(
-        "SELECT tickets.*, projects.name AS project_name, "
+        "SELECT tickets.*, CASE WHEN tickets.sprint_item_id IS NOT NULL "
+        "THEN sprint_items.project_id ELSE tickets.project_id END AS effective_project_id, "
+        "projects.name AS project_name, "
         "projects.priority AS priority_project_priority, "
         "sprint_items.title AS priority_sprint_item_title, "
         "sprint_items.priority AS priority_sprint_item_priority, "
         f"{derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects ON projects.id = tickets.project_id "
+        "LEFT JOIN projects ON projects.id = CASE WHEN tickets.sprint_item_id IS NOT NULL "
+        "THEN sprint_items.project_id ELSE tickets.project_id END "
         "WHERE tickets.id = ?",
         (ticket_id,),
     ).fetchone()
@@ -568,9 +570,6 @@ def _write_worker_step_claim(
     worker_step_claim: WorkerStepClaim,
     now: int,
 ) -> None:
-    # worker_step_claim_changed_at answers "how long has this Ticket been where it is",
-    # so it moves only when the value really moves — rewriting the same claim is not a
-    # change. The CASE keeps that comparison against the stored row, in the one write.
     before = conn.execute(
         "SELECT worker_step_claim,worker_step_claim_revision,sprint_item_id,title "
         "FROM tickets WHERE id=?",
@@ -578,13 +577,9 @@ def _write_worker_step_claim(
     ).fetchone()
     conn.execute(
         "UPDATE tickets SET worker_step_claim = ?, updated_at = ?, "
-        "worker_step_claim_changed_at = CASE WHEN worker_step_claim = ? "
-        "THEN worker_step_claim_changed_at ELSE ? END, "
         "worker_step_claim_revision = CASE WHEN worker_step_claim = ? "
         "THEN worker_step_claim_revision ELSE worker_step_claim_revision + 1 END WHERE id = ?",
         (
-            worker_step_claim.value,
-            now,
             worker_step_claim.value,
             now,
             worker_step_claim.value,
@@ -597,7 +592,7 @@ def _write_worker_step_claim(
         and worker_step_claim is WorkerStepClaim.errored
         and before["sprint_item_id"] is not None
         and conn.execute(
-            "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'",
+            "SELECT 1 FROM sprint_items WHERE id=?",
             (before["sprint_item_id"],),
         ).fetchone()
         is not None
@@ -953,9 +948,9 @@ def create_ticket(
             "project_id, sprint_id, sprint_item_id, "
             "recap, ceiling, ceiling_holder, "
             "conversation_id, field_values, pending_proposal, pending_proposal_revision, "
-            "created_at, updated_at, worker_step_claim_changed_at) "
+            "created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
-            "?, ?, ?, ?, ?, ?)",
+            "?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -966,7 +961,7 @@ def create_ticket(
                 stage,
                 stored_priority.value,
                 deadline,
-                project_id,
+                None if sprint_item_id is not None else project_id,
                 sprint_id,
                 sprint_item_id,
                 ceiling,
@@ -976,7 +971,6 @@ def create_ticket(
                 int(initial_proposal is not None),
                 now,
                 now,
-                now,
             ),
         )
         if (
@@ -984,7 +978,7 @@ def create_ticket(
             and initial_proposal_route.sprint_item_id is not None
             and initial_proposal is not None
             and conn.execute(
-                "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'",
+                "SELECT 1 FROM sprint_items WHERE id=?",
                 (initial_proposal_route.sprint_item_id,),
             ).fetchone()
             is not None
@@ -1032,13 +1026,16 @@ def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
 def read_ticket_by_conversation_id(conn: sqlite3.Connection, conversation_id: str) -> Ticket:
     """Resolve the Ticket that owns this durable Employee conversation."""
     rows = conn.execute(
-        "SELECT tickets.*, projects.name AS project_name, "
+        "SELECT tickets.*, CASE WHEN tickets.sprint_item_id IS NOT NULL "
+        "THEN sprint_items.project_id ELSE tickets.project_id END AS effective_project_id, "
+        "projects.name AS project_name, "
         "projects.priority AS priority_project_priority, "
         "sprint_items.title AS priority_sprint_item_title, "
         "sprint_items.priority AS priority_sprint_item_priority, "
         f"{derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects ON projects.id = tickets.project_id "
+        "LEFT JOIN projects ON projects.id = CASE WHEN tickets.sprint_item_id IS NOT NULL "
+        "THEN sprint_items.project_id ELSE tickets.project_id END "
         "JOIN ticket_conversations ON ticket_conversations.ticket_id = tickets.id "
         "WHERE ticket_conversations.conversation_id = ? ORDER BY tickets.id",
         (conversation_id,),
@@ -1249,7 +1246,7 @@ def file_current_proposal(
             and route.sprint_item_id is not None
             and updated.pending_proposal is not None
             and conn.execute(
-                "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'",
+                "SELECT 1 FROM sprint_items WHERE id=?",
                 (route.sprint_item_id,),
             ).fetchone()
             is not None
@@ -1622,11 +1619,38 @@ def edit_ticket(
         title = edit["title"] if "title" in edit else ticket.title
         priority = edit["priority"] if "priority" in edit else ticket.priority
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
-        project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
         sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
         sprint_item_id = (
             edit["sprint_item_id"] if "sprint_item_id" in edit else ticket.sprint_item_id
         )
+        stored_project_row = conn.execute(
+            "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
+        ).fetchone()
+        assert stored_project_row is not None
+        old_stored_project_id = stored_project_row["project_id"]
+        effective_project_id: str | None
+        stored_project_id: str | None
+        if sprint_item_id is not None:
+            item = conn.execute(
+                "SELECT project_id FROM sprint_items WHERE id=?", (sprint_item_id,)
+            ).fetchone()
+            if item is None:
+                raise PlannerError(
+                    ErrorCode.not_found,
+                    "sprint item not found",
+                    {"sprint_item_id": sprint_item_id},
+                )
+            effective_project_id = str(item["project_id"])
+            if "project_id" in edit and edit["project_id"] != effective_project_id:
+                raise PlannerError(
+                    ErrorCode.validation, "ticket placement does not match sprint item"
+                )
+            stored_project_id = None
+        else:
+            effective_project_id = (
+                edit["project_id"] if "project_id" in edit else ticket.project_id
+            )
+            stored_project_id = effective_project_id
 
         # Validate the intended final Ticket before its first durable effect. Parent
         # restrictions use request-key presence: explicitly assigning the same/null
@@ -1635,7 +1659,7 @@ def edit_ticket(
         admission.validate_deadline(deadline)
         _validate_ticket_creation_placement(
             conn,
-            project_id=project_id,
+            project_id=effective_project_id,
             sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
             blocked_by_ticket_ids=None,
@@ -1644,7 +1668,7 @@ def edit_ticket(
             ("title", "title", ticket.title, title),
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
-            ("project_id", "project_id", ticket.project_id, project_id),
+            ("project_id", "project_id", old_stored_project_id, stored_project_id),
             ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
             ("sprint_item_id", "sprint_item_id", ticket.sprint_item_id, sprint_item_id),
         )
@@ -1768,7 +1792,7 @@ def edit_ticket(
                 and route.sprint_item_id is not None
                 and updated.pending_proposal is not None
                 and conn.execute(
-                    "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'",
+                    "SELECT 1 FROM sprint_items WHERE id=?",
                     (route.sprint_item_id,),
                 ).fetchone()
                 is not None
@@ -1810,8 +1834,8 @@ def classify_ticket(
         if ticket.sprint_item_id == sprint_item_id:
             return ticket
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = ?, project_id = ?, updated_at = ? WHERE id = ?",
-            (sprint_item_id, str(item["project_id"]), now, ticket_id),
+            "UPDATE tickets SET sprint_item_id = ?, project_id = NULL, updated_at = ? WHERE id = ?",
+            (sprint_item_id, now, ticket_id),
         )
         _release_a_holder_the_move_left_below(
             conn,
@@ -1853,8 +1877,9 @@ def unclassify_ticket(
         if ticket.sprint_item_id != sprint_item_id:
             raise PlannerError(ErrorCode.validation, "Ticket has a different Outcome")
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = NULL, updated_at = ? WHERE id = ?",
-            (now, ticket_id),
+            "UPDATE tickets SET sprint_item_id = NULL, project_id = ?, updated_at = ? "
+            "WHERE id = ?",
+            (str(item["project_id"]), now, ticket_id),
         )
         _release_a_holder_the_move_left_below(
             conn,

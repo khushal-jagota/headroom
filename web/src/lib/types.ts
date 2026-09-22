@@ -114,7 +114,6 @@ export type OutcomeSummary = WorkAttention & {
   id: string;
   title: string;
   priority: Priority;
-  deadline: string | null;
   project_id: string;
   project: string;
   created_at: number;
@@ -128,10 +127,7 @@ export type SprintItemSummariesResponse = {
   page: ListPageFacts;
 };
 
-export type SprintItemKind = "normal";
-
 export type SprintItemSummary = OutcomeSummary & {
-  kind: SprintItemKind;
   committed_sprints: SprintSummary[];
 };
 
@@ -399,7 +395,6 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
 export type SprintItemWorkspace = SprintItemSummary & {
   body: string;
   priority: Priority;
-  deadline: string | null;
   supervisor: {
     agent_key: string;
     conversation_id: string | null;

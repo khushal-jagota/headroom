@@ -53,8 +53,13 @@ def test_sprint_item_files_use_an_isolated_root_and_route(tmp_path: Path) -> Non
     target.write_text("brief", encoding="utf-8")
     with connect(str(db_path)) as conn:
         conn.execute(
-            "INSERT INTO sprint_items(id,title,project_id,created_at,updated_at) "
-            "VALUES ('si_files','Files','project_vylo',1,1)"
+            "INSERT INTO agents(agent_key,conversation_id) "
+            "VALUES ('sprint_item_supervisor_si_files',NULL)"
+        )
+        conn.execute(
+            "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
+            "supervisor_reasoning_effort,created_at,updated_at) "
+            "VALUES ('si_files','Files','project_vylo','codex','gpt-5.6-sol','medium',1,1)"
         )
         conn.commit()
 

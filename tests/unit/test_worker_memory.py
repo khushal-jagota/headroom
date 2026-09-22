@@ -63,8 +63,8 @@ def _add_ticket(
     conn.execute(
         "INSERT INTO tickets (id, worker_type, employee_backend, title, stage, priority, "
         "ceiling, field_values, created_at, updated_at, worker_step_claim, "
-        "worker_step_claim_changed_at, conversation_id) VALUES (?, 'coding', 'claude', ?, "
-        "'needs_plan', 'P2', 'done', '{}', 0, 0, ?, 0, ?)",
+        "conversation_id) VALUES (?, 'coding', 'claude', ?, "
+        "'needs_plan', 'P2', 'done', '{}', 0, 0, ?, ?)",
         (ticket_id, ticket_id, claim, conversation_id),
     )
 

@@ -1064,7 +1064,7 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
     reclaimed = _claim_ready_worker_step(tmp_db, t.id, now=now + 5)
     assert reclaimed is not None
     assert reclaimed.ticket_status is claimed.ticket_status
-    assert reclaimed.worker_step_claim_changed_at != claimed.worker_step_claim_changed_at
+    assert reclaimed.worker_step_claim_revision != claimed.worker_step_claim_revision
 
     assert (
         data.release_worker_step_claim(

@@ -15,6 +15,7 @@ from planner.core.contracts import BlockerSummary, JsonDict
 from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
+from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets import derivation
 from planner.tickets.contracts import (
@@ -132,7 +133,10 @@ def list_tickets(
         clauses.append("tickets.stage = ?")
         params.append(str(stage))
     if project_id is not None:
-        clauses.append("tickets.project_id = ?")
+        clauses.append(
+            "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "
+            "ELSE tickets.project_id END = ?"
+        )
         params.append(project_id)
     if sprint_id is not None:
         if sprint_id == "null":
@@ -218,7 +222,10 @@ def list_ticket_summaries(
     clauses: list[str] = []
     params: list[str] = []
     if project_id is not None:
-        clauses.append("tickets.project_id = ?")
+        clauses.append(
+            "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "
+            "ELSE tickets.project_id END = ?"
+        )
         params.append(project_id)
     if sprint_id is not None:
         if sprint_id == "null":
@@ -253,12 +260,14 @@ def list_ticket_summaries(
         + " AS field_values, "
         + searchable_proposal
         + " AS searchable_pending_proposal, "
-        "tickets.project_id AS effective_project_id, "
+        "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "
+        "ELSE tickets.project_id END AS effective_project_id, "
         "projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.title AS sprint_item_title, tickets.sprint_id "
         "FROM tickets "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects ON projects.id = tickets.project_id"
+        "LEFT JOIN projects ON projects.id = CASE WHEN tickets.sprint_item_id IS NOT NULL "
+        "THEN sprint_items.project_id ELSE tickets.project_id END"
         + join_day
         + where
         + " ORDER BY "
@@ -582,7 +591,7 @@ def _board_sprint_items(
     """Each Sprint Item's creation stamp and its supervisor's conversation.
 
     The supervisor is an ordinary non-Ticket agent, so its conversation is the one the
-    ``agents`` roster holds under the Item's ``supervisor_agent_key``. An Item nobody
+    ``agents`` roster holds under the key derived from the Item id. An Item nobody
     has spoken to has none, and reads as ``None``.
 
     The Item's half of the row mark is its conversation's last turn end, the same fact a
@@ -593,18 +602,19 @@ def _board_sprint_items(
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        "SELECT id, created_at, supervisor_agent_key "
-        f"FROM sprint_items WHERE id IN ({placeholders})",
+        "SELECT id, created_at " f"FROM sprint_items WHERE id IN ({placeholders})",
         item_ids,
     ).fetchall()
     conversations = conversation_start.read_agent_conversations(
-        conn, [str(row["supervisor_agent_key"]) for row in rows]
+        conn, [sprints_data.supervisor_agent_key(str(row["id"])) for row in rows]
     )
     return [
         BoardSprintItemSource(
             id=str(row["id"]),
             created_at=int(row["created_at"]),
-            conversation_id=conversations.get(str(row["supervisor_agent_key"])),
+            conversation_id=conversations.get(
+                sprints_data.supervisor_agent_key(str(row["id"]))
+            ),
         )
         for row in sorted(rows, key=lambda row: str(row["id"]))
     ]

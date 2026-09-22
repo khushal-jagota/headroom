@@ -11,7 +11,7 @@ is ``tickets.sprint_item_id``. A planning Ticket's reach is declared in
 A position is a truthful local claim, exactly as it was before: the caller's
 ``X-Plan-Actor`` and its one id header, resolved once in
 :mod:`planner.core.authctx`. Nothing here authenticates a claim, and nothing here
-compares a claimed Outcome manager against ``sprint_items.supervisor_agent_key``. What
+compares a claimed Outcome manager against an agent key. What
 the rule does add is that a claim must name the thing being acted on.
 """
 
@@ -42,15 +42,14 @@ _ABOVE_EVERY_OUTCOME = frozenset({PrincipalKind.owner, PrincipalKind.chief})
 def _target_parent_outcome_id(conn: sqlite3.Connection, target: Target) -> str | None:
     """The Outcome a Ticket target sits under right now, if it sits under one.
 
-    Only a ``normal`` Sprint Item counts, which is the rule the guards this replaces
-    already applied: an ``other`` Item has no supervisor and so is nobody's position.
+    Every Sprint Item is an Outcome with a supervisor identity.
     """
     if target.kind is not TargetKind.ticket:
         return None
     row = conn.execute(
         "SELECT item.id AS id FROM tickets AS ticket "
         "JOIN sprint_items AS item ON item.id = ticket.sprint_item_id "
-        "WHERE ticket.id = ? AND item.kind = 'normal'",
+        "WHERE ticket.id = ?",
         (target.id,),
     ).fetchone()
     return None if row is None else str(row["id"])
@@ -73,33 +72,26 @@ def _caller_declared_targets(conn: sqlite3.Connection, caller: Principal) -> tup
 def _caller_parent_outcome_id(conn: sqlite3.Connection, caller: Principal) -> str | None:
     """The Outcome the caller sits under, if the caller is a Ticket that sits under one.
 
-    The same column and the same ``normal`` restriction as ``_target_parent_outcome_id``,
-    asked about the caller. Only the chain question reads it.
+    The same column as ``_target_parent_outcome_id``, asked about the caller.
     """
     if caller.kind is not PrincipalKind.ticket:
         return None
     row = conn.execute(
         "SELECT item.id AS id FROM tickets AS ticket "
         "JOIN sprint_items AS item ON item.id = ticket.sprint_item_id "
-        "WHERE ticket.id = ? AND item.kind = 'normal'",
+        "WHERE ticket.id = ?",
         (caller.id,),
     ).fetchone()
     return None if row is None else str(row["id"])
 
 
 def _target_is_itself_a_principal(conn: sqlite3.Connection, target: Target) -> bool:
-    """Whether the target is a thing that can act: a real Ticket, or a ``normal`` Outcome.
-
-    An ``other`` Sprint Item is a per-project bucket. Its supervisor columns are held NULL
-    by a trigger, so it has no identity and nothing can claim to be it.
-    """
+    """Whether the target is a real Ticket or Sprint Item that can act."""
     if target.kind is TargetKind.ticket:
         row = conn.execute("SELECT 1 FROM tickets WHERE id = ?", (target.id,)).fetchone()
         return row is not None
     if target.kind is TargetKind.outcome:
-        row = conn.execute(
-            "SELECT 1 FROM sprint_items WHERE id = ? AND kind = 'normal'", (target.id,)
-        ).fetchone()
+        row = conn.execute("SELECT 1 FROM sprint_items WHERE id = ?", (target.id,)).fetchone()
         return row is not None
     return False
 

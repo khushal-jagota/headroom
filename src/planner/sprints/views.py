@@ -40,10 +40,8 @@ def item_json(item: SprintItem) -> JsonDict:
         "title": item.title,
         "body": item.body,
         "priority": item.priority.value,
-        "deadline": item.deadline,
         "project_id": item.project_id,
         "project": item.project_name,
-        "kind": item.kind.value,
         "supervisor": {
             "agent_key": item.supervisor_agent_key,
             "launch_configuration": {
@@ -103,8 +101,11 @@ def item_tickets(
     the condition alone cannot see. Without them the Sprint Item page and the workspace
     rail would sort the same Ticket into different groups."""
     rows = conn.execute(
-        "SELECT t.*, s.name AS sprint_name FROM tickets t "
-        "LEFT JOIN sprints s ON s.id=t.sprint_id WHERE "
+        "SELECT t.*, s.name AS sprint_name,"
+        "CASE WHEN t.sprint_item_id IS NOT NULL THEN parent.project_id "
+        "ELSE t.project_id END AS effective_project_id FROM tickets t "
+        "LEFT JOIN sprints s ON s.id=t.sprint_id "
+        "LEFT JOIN sprint_items parent ON parent.id=t.sprint_item_id WHERE "
         + ("t.sprint_item_id = ?" if item_id is not None else "t.sprint_id = ?")
         + " ORDER BY t.created_at, t.id",
         (item_id if item_id is not None else sprint_id,),
@@ -127,7 +128,7 @@ def item_tickets(
                 "title": str(r["title"]),
                 "sprint_id": r["sprint_id"],
                 "sprint_name": r["sprint_name"],
-                "project_id": r["project_id"],
+                "project_id": r["effective_project_id"],
                 "sprint_item_id": r["sprint_item_id"],
                 "stage": stage,
                 "priority": str(r["priority"]),
@@ -248,7 +249,6 @@ def outcome_summary(item: SprintItem) -> OutcomeSummary:
         id=item.id,
         title=item.title,
         priority=item.priority.value,
-        deadline=item.deadline,
         project_id=item.project_id,
         project=item.project_name,
         created_at=item.created_at,

@@ -2,8 +2,8 @@
 
 A Sprint is an inclusive, non-overlapping date range. Normal planning chooses seven
 calendar dates. A Sprint Item holds shared intent, artifacts, and its supervisor
-conversation across Sprints. A Ticket owns its Project and optional Sprint directly.
-Its optional Sprint Item identifies the shared context it belongs to.
+conversation across Sprints. A standalone Ticket stores its Project and optional Sprint.
+Its optional Sprint Item identifies its shared context and supplies its Project.
 
 A commitment means “we chose this Sprint Item for this Sprint.” It can exist before any
 Tickets are created. The same Sprint Item can be committed to several Sprints. Committing
@@ -80,11 +80,11 @@ spinner means that an agent works now. The mark is empty otherwise. Ownership gr
 activity marks are independent. The rail stays compact, while Today and Other Tickets
 show the full set.
 
-Sprint Item and Ticket Projects remain coherent. Classifying a Ticket aligns its Project
-and preserves its Sprint. Removing its Sprint Item preserves both Project and Sprint.
-Changing a Sprint Item's Project moves child and template Projects in one transaction,
-without changing their Sprint destinations. A Ticket Project patch must explicitly
-clear an incompatible Sprint Item; the server rejects inconsistent final placement.
+Sprint Item and Ticket Projects remain coherent. Classifying a Ticket clears its redundant
+Project storage and preserves its Sprint. Removing its Sprint Item copies the prior effective
+Project onto the Ticket. Changing a Sprint Item's Project changes child classification and
+updates template Projects, without changing Sprint destinations. The server rejects an
+explicit Project that conflicts with the final Sprint Item.
 
 Ordinary creation defaults to Today and the current Sprint; explicit backlog leaves
 Sprint empty. Sprint Item context does not choose a Sprint. Existing Planning Sprint Items keep
@@ -103,10 +103,9 @@ and managed files through the existing guarded lifecycle.
 
 ## Sprint Item supervisors
 
-Each normal Sprint Item owns one supervisor identity. Panels creates the identity and
+Each Sprint Item owns one supervisor identity derived from its Item ID. Panels creates it and
 its launch configuration with the item. Existing items received the same fixed
-configuration during migration. The Other section is a view of loose Tickets and owns
-no supervisor.
+configuration during migration. The Other section is a view of loose Tickets, not an Item.
 
 The supervisor conversation starts when the user sends it a message or when Panels
 delivers a manager wake. A reset kills current work and clears the agent link.
