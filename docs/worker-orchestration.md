@@ -71,6 +71,25 @@ _Code paths:_ `src/planner/runtime/worker_step_readiness.py`,
 `src/planner/core/change_signal.py`, and the claim and release writers in
 `src/planner/tickets/data.py`.
 
+## Sprint Item manager wakes
+
+Proposals routed to a Sprint Item manager and explicit worker-error transitions create
+durable wakes in the same transaction as their source event. Proposal routing remains a
+separate deterministic decision before wake creation. It contains no TypeSafe call.
+
+The manager wake loop shares the background-loop machine lock. A commit wakes it, and a
+periodic poll recovers missed signals and restart state. The loop groups open wakes for one
+manager into an immutable batch. It sends that batch through the normal supervisor
+conversation boundary in queue mode.
+
+A queued batch remains open while it waits behind active work. The exact durable prompt
+event closes its member wakes. A definite refusal or discard creates a later attempt with a
+new sender message identity. An uncertain delivery remains unresolved and is not replayed
+automatically. Supervisor reset and deletion share a lifecycle lock with delivery.
+
+_Code paths:_ `src/planner/manager_wakes/`, `src/planner/core/loops.py`, and the proposal
+and worker-error writers in `src/planner/tickets/data.py`.
+
 ## Scheduled Ticket handoff
 
 The scheduled-Ticket loop shares the server lifespan and single-machine lock, but not
@@ -170,8 +189,8 @@ still reads as claimed, and a Ticket with its claim back but still pointing at a
 conversation would talk into it.
 
 Anyone standing above the Ticket can do it, which is Khushal, the Chief, or the Ticket's
-own Outcome. Khushal could not before: no ordinary route restarted a Worker, and the
-only door was the Outcome's. This is a new capability on his surface, not a rename.
+own Sprint Item. Khushal could not before: no ordinary route restarted a Worker, and the
+only door was the Sprint Item's. This is a new capability on his surface, not a rename.
 
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a
@@ -186,14 +205,24 @@ The Ticket's launch configuration is frozen while its conversation holds it, so
 route that releases the old step and applies a new backend, model, or reasoning effort
 before the next Worker starts.
 
+One narrow recovery also covers Tickets stranded by an older rejection. It requires a
+Worker-owned Stage, Empty status, no claim, an existing conversation, and pending revision
+feedback for that Stage. Restart adds that Ticket to the current Day and starts normal
+readiness without resetting its conversation. It clears stale running and queued traffic
+first, then sends the revision into the same conversation history. Other prior-Day Tickets
+remain at rest. This recovery preserves the launch configuration, so it refuses restart
+options that name a backend, model, or reasoning effort.
+
 ## Sending a proposal back
 
 When the holder returns a proposal for revision, one Ticket transaction checks every
 authorization and current-parent route. It clears the proposal, appends the exact comment
 to a separate attributed revision-feedback record, and returns the Ticket to its resting
-status. A same-Stage user opener is cleared so the discussion can open again. The next
-normal worker-step prompt carries feedback for that Stage, and only a successful send
-consumes it. Ticket guidance is not sent with it, and the worker reads that off the
+status. If the rejected Stage belongs to the Worker, the same transaction adds the Ticket
+to the current Day. Its commit wakes normal readiness, which reuses the existing
+conversation. A same-Stage user opener is cleared so the discussion can open again. The
+next normal worker-step prompt carries feedback for that Stage, and only a successful
+send consumes it. Ticket guidance is not sent with it, and the worker reads that off the
 Ticket. Reply bookkeeping credits the source
 turn after the commit and cannot undo the rejection.
 

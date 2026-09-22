@@ -200,6 +200,41 @@ class ConversationStore:
             owner_read_through_sequence,
         )
 
+    async def mark_held_sender_messages_leaving_queue(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> int:
+        """Durably mark Panels wake messages before a held delivery can reach a backend."""
+        wake_ids = tuple(
+            sender_message_id
+            for sender_message_id in sender_message_ids
+            if sender_message_id.startswith("supervisor_delivery_wake_")
+        )
+        if not wake_ids:
+            return 0
+        return await asyncio.to_thread(
+            self._mark_held_sender_messages_leaving_queue_sync,
+            conversation_id,
+            wake_ids,
+        )
+
+    def _mark_held_sender_messages_leaving_queue_sync(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> int:
+        conn = self._connect()
+        try:
+            with conn:
+                changed = 0
+                for sender_message_id in sender_message_ids:
+                    changed += conn.execute(
+                        "UPDATE manager_wake_batches SET status='dispatching',updated_at=? "
+                        "WHERE conversation_id=? AND sender_message_id=? "
+                        "AND status IN ('offering','accepted')",
+                        (self._integer_now(), conversation_id, sender_message_id),
+                    ).rowcount
+                return changed
+        finally:
+            conn.close()
+
     async def append_message_to_owner(
         self, conversation_id: str, payload: MessageToOwnerEventPayload
     ) -> StoredConversationEvent:

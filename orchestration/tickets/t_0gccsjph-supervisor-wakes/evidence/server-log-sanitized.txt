@@ -1,0 +1,28 @@
+INFO Started server on http://127.0.0.1:32967
+INFO Application startup complete
+INFO POST /api/test/run-step/t_nzwycxjn 200
+WARN Codex optional app/list catalogue request returned 403; Worker turn continued
+INFO Codex Worker tool result: proposed on t_nzwycxjn
+INFO POST /dogfood/start-loops 200
+INFO POST /dogfood/stop-loops 200
+INFO POST /api/test/run-step/t_4m5x08ta 200
+WARN Codex optional app/list catalogue request returned 403; Worker turn continued
+INFO Codex Worker tool result: proposed on t_4m5x08ta
+INFO POST /dogfood/arm-worker-error/t_zh967ydd 200
+ERROR worker step delivery was uncertain (ticket=t_zh967ydd conversation=conv_367b0bfab4aa4dbb98072cfe02171445)
+INFO POST /api/test/run-step/t_zh967ydd 200
+INFO POST /dogfood/start-loops 200
+INFO manager backend before completion: running=true writes=1 cancellations=0
+INFO POST /dogfood/complete/conv_79c973e8c8684d1ca1944e5bd7bd0951 200
+INFO manager backend after combined delivery: running=true writes=2 cancellations=0
+INFO POST /dogfood/stop-loops 200
+INFO POST /api/test/run-step/t_dwk2jvzp 200
+WARN Codex optional app/list catalogue request returned 403; Worker turn continued
+INFO Codex Worker tool result: proposed on t_dwk2jvzp
+INFO server stopped with wake 4 open and no retained batch
+INFO restarted same isolated DB with DOGFOOD_AUTO_LOOPS=1
+INFO recovered manager backend: running=true writes=1 cancellations=0
+INFO Application shutdown complete
+
+Raw catalogue error bodies were deliberately omitted because they contained transient
+challenge parameters unrelated to the dogfood result.

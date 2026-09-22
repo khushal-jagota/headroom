@@ -195,8 +195,8 @@ takes whatever was parked on it.
 Each Ticket has one **guidance** document for durable user corrections and constraints.
 It is separate from settled field values and is never approved as a proposal. Review
 shows this document, while the Ticket page does not. The CLI reads it with
-`panels worker my-ticket guidance` and writes it with `panels worker note <id>` from
-stdin; `--append` preserves the existing text. Copy text, Ticket search, and supervisor
+`panels ticket show guidance` and writes it with `panels ticket edit --input-json -`
+using `guidance` or `guidance_append`. Ticket search and supervisor
 context include it too.
 
 No Worker step prompt carries this document. The Stage instruction names the command
@@ -231,12 +231,13 @@ proposal to itself addresses it to nobody. Holder Tickets and Sprint Items must 
 when the ceiling is written.
 
 **The holder must stand above the Ticket.** An address that cannot decide is not an
-address. Authority comes from the Ticket's current Outcome, so moving a Ticket to another
-Outcome — or out of every Outcome — can leave the Outcome that holds the ceiling below it.
+address. Authority comes from the Ticket's current Sprint Item, so moving a Ticket to
+another Sprint Item — or out of every Sprint Item — can leave the Sprint Item that holds
+the ceiling below it.
 When a move does that, the ceiling returns to the user in the same transaction, and the
 Ticket's guidance gains one line naming the move that sent it back. The user stands above
 everything, so the ceiling always has somewhere valid to go, and only the user or the
-Chief can move a Ticket between Outcomes in the first place. It is the same question on
+Chief can move a Ticket between Sprint Items in the first place. It is the same question on
 every move, whether or not a proposal is parked right now: a wrong address is wrong before
 anything arrives at it. A holder that still stands above the moved Ticket keeps the
 ceiling. A Ticket that was already stranded stays as it is until something moves it.
@@ -318,17 +319,16 @@ While a proposal is pending, the leash drops its ceiling select and keeps its ho
 The ceiling cannot change without silently changing what was proposed, and the proposal can
 still be re-addressed.
 
-Review's single, oldest-first walk shows today's owner-addressed proposals. Anyone else a
-proposal is addressed to inspects canonical Ticket state through their normal Chief,
-Sprint Item, and Ticket views; no proposal wake, retry, failure surfacing, or owner
-fallback remains. A parked proposal keeps its approval and revision controls. A Worker
+Review's single, oldest-first walk shows today's owner-addressed proposals. A proposal
+routed to a Sprint Item manager creates a durable manager wake. Other holders inspect
+canonical Ticket state through their normal Chief and Ticket views. A parked proposal
+keeps its approval and revision controls. A Worker
 help request is an addressed conversation message. Its unread state feeds the shared
 attention projection, and the answer belongs in that conversation.
 
 Replying to the worker does not decide its proposal. The proposal stays pending and
-addressed to its holder until a decision or a replacement proposal arrives. Panels does
-not wake the holder, retry proposal delivery, or surface a delivery failure, and nothing
-about delivery moves an address. The one thing that returns a ceiling to the user is a
+addressed to its holder until a decision or a replacement proposal arrives. Manager wake
+delivery never moves that address or decides the proposal. The one thing that returns a ceiling to the user is a
 move that leaves its holder below the Ticket, described above. Owner-held proposals remain
 on Review.
 
@@ -336,9 +336,11 @@ The Review screen can also send an owner-addressed ticket back instead of accept
 whatever field is currently gated. The owner writes short guidance in the review card.
 The Ticket transaction validates authority and route. It stores the exact attributed
 comment as one-use feedback for the current Stage, clears the pending proposal, and
-returns the Ticket to its resting control status. Ticket guidance is unchanged. The next
-normal worker-step prompt carries the feedback, which is consumed only after that prompt
-is accepted. The ticket's stage never changes. Settled values remain. The gated field can
+returns the Ticket to its resting control status. A Worker-owned Stage also returns to the
+current Day in that transaction. The commit wakes normal readiness, and readiness reuses
+the Ticket conversation. Ticket guidance is unchanged. The next normal worker-step prompt
+carries the feedback, which is consumed only after that prompt is accepted. The ticket's
+stage never changes. Settled values remain. The gated field can
 therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision. Rejecting re-addresses the revision only when the owner does it:
@@ -353,7 +355,7 @@ The ceiling cannot change while a proposal waits, so what was proposed stays fix
 
 Owner-held proposals appear in Review and produce the owner's needs-approval notification.
 Anyone else reads proposals from canonical Ticket state through their normal Ticket and
-Outcome views. Filing a proposal does not send a separate alert.
+Sprint Item views. Filing a manager-routed proposal creates a queued wake, not an owner alert.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -368,8 +370,8 @@ above a ticket, you may delete it. The ticket UI intentionally has no delete con
 deletion remains a manual API or CLI operation, and the CLI requires `--yes`.
 
 The user's ordinary delete is refused while the Ticket's status says a worker step is
-out, and also while its conversation has a turn running. `--force` deletes it anyway. An
-Outcome can delete its own child Ticket without that activity guard. No actor can
+out, and also while its conversation has a turn running. `--force` deletes it anyway. A
+Sprint Item can delete its own child Ticket without that activity guard. No actor can
 delete a Ticket or Sprint Item that is the ceiling holder for another Ticket. Any delete
 that goes ahead over a running worker kills that worker's turn first, so nothing keeps
 talking into a conversation whose ticket is gone.

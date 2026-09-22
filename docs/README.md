@@ -3,9 +3,9 @@
 Panels is a personal planning and work system that runs on one host. Its record contains
 **Days**, **Sprints**, **Sprint Items**, **Tickets**, **Ideas**, **Feedback**, and **Projects**. Tickets
 can carry worker-owned work or user-owned work with an agent alongside. Each Ticket
-owns its Project and optional Sprint placement. An Outcome holds optional shared context across Sprints. Explicit commitments select
-Outcomes before Tickets exist; Tickets keep their own scheduling. The stored Item
-identity and its supervisor conversation remain stable.
+owns its Project and optional Sprint placement. A Sprint Item holds optional shared context across Sprints. Explicit commitments select
+Sprint Items before Tickets exist; Tickets keep their own scheduling. The stored Sprint
+Item identity and its supervisor conversation remain stable.
 
 This is the entry point. Read it to find which system owns a question, then read
 that system's doc.

@@ -1,12 +1,12 @@
-# Sprints and Outcomes
+# Sprints and Sprint Items
 
 A Sprint is an inclusive, non-overlapping date range. Normal planning chooses seven
-calendar dates. An Outcome holds shared intent, artifacts, and its supervisor
+calendar dates. A Sprint Item holds shared intent, artifacts, and its supervisor
 conversation across Sprints. A Ticket owns its Project and optional Sprint directly.
-Its optional Outcome identifies the shared context it belongs to.
+Its optional Sprint Item identifies the shared context it belongs to.
 
-A commitment means “we chose this Outcome for this Sprint.” It can exist before any
-Tickets are created. The same Outcome can be committed to several Sprints. Committing
+A commitment means “we chose this Sprint Item for this Sprint.” It can exist before any
+Tickets are created. The same Sprint Item can be committed to several Sprints. Committing
 or removing it never schedules, unschedules, or relocates its Tickets.
 
 ## Sprint documents — the thinking
@@ -38,32 +38,32 @@ backfills a missed occurrence, and Planning Sprint stays on the final day.
 
 ## Tracking and carry-forward
 
-Sprint tracking shows committed Outcomes under Projects, including Outcomes with no
-Tickets. Each Outcome row links to its workspace. One collapsed **No Outcome** row follows
+Sprint tracking shows committed Sprint Items under Projects, including Sprint Items with no
+Tickets. Each Sprint Item row links to its workspace. One collapsed **No Sprint Item** row follows
 all Project groups when the Sprint contains unclassified Tickets. It combines
 those Tickets across Projects and reveals their canonical links when opened.
 
 The progress count says how many Tickets are done. It does
-not claim that the Outcome has been achieved. It always uses `done/total`, including
-`0/0` for an Outcome with no Tickets.
+not claim that the Sprint Item has been achieved. It always uses `done/total`, including
+`0/0` for a Sprint Item with no Tickets.
 The Sprint review records the user's judgment about actual outcomes.
 
-Add outcome lets the user search and reuse an existing Outcome or create one with a
+Add Sprint Item lets the user search and reuse an existing Sprint Item or create one with a
 Project and optional brief. New creation retains the returned identity if commitment
-fails, so retrying the commitment does not create another Outcome. The control follows
-the Outcome list.
+fails, so retrying the commitment does not create another Sprint Item. The control follows
+the Sprint Item list.
 
-Carry forward adds the existing Outcome to a target Sprint and moves only the exact
+Carry forward adds the existing Sprint Item to a target Sprint and moves only the exact
 unfinished Tickets the user checks. No Ticket is preselected. An empty selection carries
 only the commitment. The whole change validates and commits together. A reclassified,
 newly completed, or differently scheduled Ticket rejects the request without
 moving the remaining selection. Repeating an unchanged successful request is safe.
 The source commitment and unselected Tickets remain. Completed history never moves as
-a side effect of carrying an Outcome.
+a side effect of carrying a Sprint Item.
 
-Removing a commitment does not remove a Ticket's Outcome classification. Those Tickets
-remain under that Outcome on Sprint tracking. Only Tickets without an Outcome appear
-under **No Outcome**. The Outcome workspace always holds its full brief, artifacts, and
+Removing a commitment does not remove a Ticket's Sprint Item classification. Those Tickets
+remain under that Sprint Item on Sprint tracking. Only Tickets without a Sprint Item appear
+under **No Sprint Item**. The Sprint Item workspace always holds its full brief, artifacts, and
 Tickets across Sprints. Its header shows open work and work that needs the user. Its
 artifact strip lists what there is to open, newest first. A folder is one thing on it,
 not one thing per file: a folder that holds an `index.html` opens that page, and a folder
@@ -80,42 +80,49 @@ spinner means that an agent works now. The mark is empty otherwise. Ownership gr
 activity marks are independent. The rail stays compact, while Today and Other Tickets
 show the full set.
 
-Outcome and Ticket Projects remain coherent. Classifying a Ticket aligns its Project
-and preserves its Sprint. Removing its Outcome preserves both Project and Sprint.
-Changing an Outcome's Project moves child and template Projects in one transaction,
+Sprint Item and Ticket Projects remain coherent. Classifying a Ticket aligns its Project
+and preserves its Sprint. Removing its Sprint Item preserves both Project and Sprint.
+Changing a Sprint Item's Project moves child and template Projects in one transaction,
 without changing their Sprint destinations. A Ticket Project patch must explicitly
-clear an incompatible Outcome; the server rejects inconsistent final placement.
+clear an incompatible Sprint Item; the server rejects inconsistent final placement.
 
 Ordinary creation defaults to Today and the current Sprint; explicit backlog leaves
-Sprint empty. Outcome context does not choose a Sprint. Existing Planning Outcomes keep
+Sprint empty. Sprint Item context does not choose a Sprint. Existing Planning Sprint Items keep
 all their text, children and supervisor history. New Sprints and planning Tickets do
 not manufacture Planning containers.
 
 The stable CLI and API still call the stored identity a Sprint Item. Use
 `panels sprint item create/list/show/set` for its record, `add-ticket/remove-ticket`
 for classification, and ordinary Ticket placement for scheduling.
-`panels sprint outcome add/remove/list` manages commitments and tracking;
-`carry <source-sprint> <outcome> --to <target-sprint> --ticket <ticket>` states the exact
+`panels sprint add-item/remove-item/list-items` manages commitments and tracking;
+`carry-item <source-sprint> <item> --to <target-sprint> --ticket <ticket>` states the exact
 selection. `GET /api/sprints/{id}/tracking` also reads past or future Sprints directly.
 
-Outcome deletion still refuses children. Childless deletion removes its commitments
+Sprint Item deletion still refuses children. Childless deletion removes its commitments
 and managed files through the existing guarded lifecycle.
 
-## Outcome supervisors
+## Sprint Item supervisors
 
-Each normal Outcome owns one supervisor identity. Panels creates the identity and
+Each normal Sprint Item owns one supervisor identity. Panels creates the identity and
 its launch configuration with the item. Existing items received the same fixed
 configuration during migration. The Other section is a view of loose Tickets and owns
 no supervisor.
 
-The supervisor conversation starts only when the user sends it a message. Nothing else
-starts one. A reset kills current work and clears the agent link. Conversation records and
-message files remain as history. The Outcome body is the shared brief.
+The supervisor conversation starts when the user sends it a message or when Panels
+delivers a manager wake. A reset kills current work and clears the agent link.
+Conversation records and message files remain as history. The Sprint Item body is the shared
+brief.
 
 Its job is small. It creates Tickets under its Item, and it answers what is going on
 there. It does more when the user asks it to, and the actions below are how. It is not a
-manager: it does not push Tickets along, and it does not resolve parked proposals as
-routine work.
+manager: it does not push Tickets along. A wake asks it to inspect one or more routed
+proposals or explicit worker errors. It reads canonical state before it decides what to do.
+
+Manager wakes use one durable queue. Panels groups open wakes for a Sprint Item and sends a
+normal queued message. A busy supervisor finishes its current turn first. Panels closes a
+wake only when the exact prompt reaches the durable conversation record. Definite refusals
+and discarded queued prompts get a later attempt. An uncertain send is retained without an
+automatic replay. Open wakes survive server restarts.
 
 A supervisor has no routes of its own. It calls the routes Khushal calls, and the one
 rule admits it on its own current child Tickets and on its own Item, because that is what
@@ -124,7 +131,7 @@ a current child, is refused by the same sentence. See `authority.md`.
 
 That is wider than the eight wrapped operations it used to have. A supervisor now reaches
 every ordinary operation on its own child Tickets, including deciding a proposal it does
-not hold. The one thing it may not do is move a child Ticket to another Outcome: changing
+not hold. The one thing it may not do is move a child Ticket to another Sprint Item: changing
 who stands above a Ticket is handing authority around rather than using it.
 
 A supervisor creates its own child Tickets with the ordinary Ticket creation route. A
@@ -136,7 +143,7 @@ It deletes a current child Ticket through that same route. The deletion is perma
 nothing else guards it: a Ticket whose Worker is mid-turn is deleted too, and that Worker
 is killed with it.
 
-Config edits the canonical Outcome supervisor role skill. Supported backends read
+Config edits the canonical Sprint Item supervisor role skill. Supported backends read
 that managed source for future conversations. A save does not rewrite an existing
 conversation, its role record, or its history.
 

@@ -29,7 +29,7 @@ backlog. Explicit backlog placement also leaves the Ticket outside a Sprint.
 
 Sprint Item membership is optional classification. Inspect the relevant Project and
 Sprint Items, and use an existing Item only when it genuinely describes the Ticket. The
-Outcome's Project must match the Ticket; Sprint placement is independent. Do not create an Item only to classify
+Sprint Item's Project must match the Ticket; Sprint placement is independent. Do not create an Item only to classify
 otherwise coherent work. Unclassified Sprint Tickets appear in the view-only Other
 group, not in a stored fallback Item.
 
@@ -76,7 +76,7 @@ resolved. Do not use either as a second priority scale.
 By default a new Ticket parks its Brief for its creator's approval. That default is right
 for ordinary intake: somebody wants to sense-check what work exists before it starts.
 
-State the ceiling instead when the user gave you the ceiling to grant. `--ceiling` says the
+State the ceiling instead when the user gave you the ceiling to grant. The `ceiling` key says the
 last thing the new Worker may do: it does that thing, proposes it, and waits for the
 user. Stating a ceiling past the Brief settles the
 Brief and starts the Ticket at its next Stage, so work the user has already authorized
@@ -89,3 +89,24 @@ After creation, read the Ticket back as a whole. Its title, Worker type, Brief,
 today status, direct Project and Sprint, optional Sprint Item, priority,
 deadline, and blockers should tell one coherent story. Correct a mismatch through the
 ordinary owning surface rather than compensating for it in prose.
+
+Create the Ticket through one structured body:
+
+```sh
+panels ticket create --input-json - <<'JSON'
+{
+  "title": "Clear outcome title",
+  "worker_type": "coding",
+  "project_id": "project_example",
+  "sprint_id": "sprint_example",
+  "sprint_item_id": "si_example",
+  "kickoff_note": "Faithful intake context",
+  "ceiling": "needs_success_condition",
+  "ceiling_holder": {"kind": "sprint_item", "id": "si_example"}
+}
+JSON
+```
+
+Only `title` and `worker_type` are always required. Add optional keys only when the
+creation decision supplies them. Use canonical IDs and `null` for explicit backlog
+placement. Read the created Ticket with `panels ticket show <id>`.

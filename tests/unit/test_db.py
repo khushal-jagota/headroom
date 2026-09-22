@@ -21,7 +21,7 @@ PRE_COLLAPSE_HEAD_REVISION = db_module.PRE_COLLAPSE_HEAD_REVISION
 REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger the baseline builds.
-CURRENT_SCHEMA_OBJECT_COUNT = 55
+CURRENT_SCHEMA_OBJECT_COUNT = 60
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -104,6 +104,12 @@ def _build_database_at_the_pre_collapse_head(path: Path) -> sqlite3.Connection:
     """
     conn = connect(str(path))
     create_schema(conn)
+    # Reconstruct the collapsed head rather than leaving schema from later revisions in
+    # place before we stamp it as old. Post-baseline data-only revisions need no undo.
+    conn.execute("DROP TABLE manager_wake_batch_members")
+    conn.execute("DROP TABLE manager_wake_batches")
+    conn.execute("DROP TABLE manager_wakes")
+    conn.execute("ALTER TABLE tickets DROP COLUMN pending_proposal_revision")
     conn.execute("DELETE FROM alembic_version")
     conn.execute("INSERT INTO alembic_version VALUES (?)", (PRE_COLLAPSE_HEAD_REVISION,))
     conn.execute("PRAGMA user_version=37")
@@ -142,7 +148,7 @@ def test_database_at_the_pre_collapse_head_is_adopted_with_its_rows_intact(
     create_schema(conn)
 
     assert _revision(conn) == _head_revision()
-    assert _schema_objects(conn) == objects_before
+    assert set(objects_before).issubset(_schema_objects(conn))
     assert tuple(
         conn.execute(
             "SELECT title, worker_step_claim FROM tickets WHERE id = 't_carried'"
@@ -177,6 +183,48 @@ def test_database_at_a_revision_from_the_collapsed_chain_is_refused(tmp_path: Pa
     assert conn.execute("SELECT title FROM tickets WHERE id = 't_waiting'").fetchone()[0] == (
         "Waiting on the earlier build"
     )
+    conn.close()
+
+
+def test_manager_wake_migration_backfills_current_unresolved_sources(
+    tmp_path: Path,
+) -> None:
+    conn = _build_database_at_the_pre_collapse_head(tmp_path / "wake-backfill.db")
+    conn.execute("DELETE FROM alembic_version")
+    conn.execute("INSERT INTO alembic_version VALUES ('an_ask_is_its_own_notification')")
+    conn.execute(
+        "INSERT INTO sprint_items(id,title,project_id,created_at,updated_at) "
+        "VALUES ('si_backfill','Backfill','project_vylo',1,1)"
+    )
+    conn.execute(
+        "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,project_id,"
+        "sprint_item_id,ceiling,ceiling_holder,field_values,pending_proposal,created_at,"
+        "updated_at) VALUES ('t_proposal','Proposal','coding','codex',"
+        "'needs_success_condition','project_vylo','si_backfill','needs_success_condition',"
+        "?, '{}', ?, 1, 2)",
+        (
+            '{"kind":"sprint_item","id":"si_backfill"}',
+            '{"field":"success_condition","body":"Ready","proposed_by":"worker","created_at":2}',
+        ),
+    )
+    conn.execute(
+        "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,project_id,"
+        "sprint_item_id,ceiling,ceiling_holder,field_values,worker_step_claim,"
+        "worker_step_claim_revision,worker_step_claim_changed_at,created_at,updated_at) "
+        "VALUES ('t_error','Error','coding','codex','needs_success_condition','project_vylo',"
+        "'si_backfill','needs_success_condition',?, '{}','errored',3,3,1,3)",
+        ('{"kind":"owner","id":"owner"}',),
+    )
+
+    create_schema(conn)
+
+    rows = conn.execute(
+        "SELECT ticket_id,source_kind,source_revision FROM manager_wakes ORDER BY ticket_id"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("t_error", "worker_error", 3),
+        ("t_proposal", "proposal", 1),
+    ]
     conn.close()
 
 
@@ -568,7 +616,7 @@ def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
         shutil.copy(revision, tree / "versions" / revision.name)
     create_schema(conn)
 
-    assert _revision(conn) == "an_ask_is_its_own_notification"
+    assert _revision(conn) == "wake_sprint_item_managers"
     for table in _NOTIFICATION_TABLES:
         sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)

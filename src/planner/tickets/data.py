@@ -28,6 +28,7 @@ from planner.core.contracts import (
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
+from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import derivation, revision_feedback
 from planner.tickets.contracts import (
@@ -49,6 +50,7 @@ from planner.tickets.logic import (
     employee_configuration,
     fields_codec,
     machine,
+    proposal_routing,
     resolution,
 )
 from planner.tickets.logic.decisions import Decision
@@ -353,9 +355,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         ceiling=str(row["ceiling"]),
         ceiling_holder=_principal_from_json(str(row["ceiling_holder"])),
         ticket_status=derivation.derive_ticket_status(
-            derivation.stored_facts_from_row(
-                row, has_live_blocker=bool(row["has_live_blocker"])
-            )
+            derivation.stored_facts_from_row(row, has_live_blocker=bool(row["has_live_blocker"]))
         ),
         worker_step_claim=WorkerStepClaim(row["worker_step_claim"]),
         worker_step_claim_changed_at=int(row["worker_step_claim_changed_at"]),
@@ -432,6 +432,7 @@ def _seed_kickoff(
     *,
     stage: str,
     ceiling: str,
+    settle: bool,
     worker_type_definition: WorkerTypeDefinition,
 ) -> tuple[str, TicketFieldValues, PendingTicketProposal | None]:
     ownership = machine.stage_ownership_mode(
@@ -451,18 +452,13 @@ def _seed_kickoff(
         return stage, {}, None
     # A stated ceiling past kickoff settles the kickoff on the spot: below the ceiling a
     # worker-owned Stage writes its field and moves on, and creation is that write.
-    below_the_ceiling = ownership is StageOwnershipMode.worker and not machine.at_or_beyond_ceiling(
-        stage, ceiling, worker_type_definition=worker_type_definition
-    )
-    target = worker_type_definition.advance_target(stage) if below_the_ceiling else None
+    target = worker_type_definition.advance_target(stage) if settle else None
     if target is not None:
         return target, {BRIEF_FIELD_ID: kickoff_note}, None
     return (
         stage,
         {},
-        PendingTicketProposal(
-            BRIEF_FIELD_ID, kickoff_note, principal_legacy_actor(principal), now
-        ),
+        PendingTicketProposal(BRIEF_FIELD_ID, kickoff_note, principal_legacy_actor(principal), now),
     )
 
 
@@ -480,20 +476,27 @@ def _blocked_ticket_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, 
 
 
 def _release_ticket_blocks(
-    conn: sqlite3.Connection, ticket_id: str, blocked_ticket_ids: tuple[str, ...], now: int
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    blocked_ticket_ids: tuple[str, ...],
+    now: int,
 ) -> None:
     """Remove a completed Ticket's blocks. What each blocked Ticket then shows is derived."""
     for blocked_ticket_id in blocked_ticket_ids:
         conn.execute(
-            "DELETE FROM ticket_blocks "
-            "WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
+            "DELETE FROM ticket_blocks WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
             (ticket_id, blocked_ticket_id),
         )
         ticket_blocks.touch_blocked_ticket(conn, blocked_ticket_id, now)
 
 
 def _apply_decision(
-    conn: sqlite3.Connection, ticket: Ticket, decision: Decision, now: int
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+    decision: Decision,
+    now: int,
+    *,
+    newly_filed_proposal: bool = False,
 ) -> Ticket:
     new_stage = decision.stage
     new_ceiling = decision.ceiling
@@ -526,12 +529,15 @@ def _apply_decision(
                             "blocked_ticket_id": blocked_ticket_id,
                         },
                     )
+    proposal_changed = newly_filed_proposal and decision.pending_proposal is not None
     conn.execute(
         "UPDATE tickets SET field_values = ?, pending_proposal = ?, "
+        "pending_proposal_revision = pending_proposal_revision + ?, "
         "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ? WHERE id = ?",
         (
             fields_codec.values_to_json(decision.field_values),
             fields_codec.proposal_to_json(decision.pending_proposal),
+            int(proposal_changed),
             str(new_stage),
             str(new_ceiling),
             _principal_to_json(decision.ceiling_holder),
@@ -565,6 +571,11 @@ def _write_worker_step_claim(
     # worker_step_claim_changed_at answers "how long has this Ticket been where it is",
     # so it moves only when the value really moves — rewriting the same claim is not a
     # change. The CASE keeps that comparison against the stored row, in the one write.
+    before = conn.execute(
+        "SELECT worker_step_claim,worker_step_claim_revision,sprint_item_id,title "
+        "FROM tickets WHERE id=?",
+        (ticket_id,),
+    ).fetchone()
     conn.execute(
         "UPDATE tickets SET worker_step_claim = ?, updated_at = ?, "
         "worker_step_claim_changed_at = CASE WHEN worker_step_claim = ? "
@@ -580,6 +591,25 @@ def _write_worker_step_claim(
             ticket_id,
         ),
     )
+    if (
+        before is not None
+        and str(before["worker_step_claim"]) != worker_step_claim.value
+        and worker_step_claim is WorkerStepClaim.errored
+        and before["sprint_item_id"] is not None
+        and conn.execute(
+            "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'",
+            (before["sprint_item_id"],),
+        ).fetchone()
+        is not None
+    ):
+        manager_wakes_data.create_worker_error_wake(
+            conn,
+            sprint_item_id=str(before["sprint_item_id"]),
+            ticket_id=ticket_id,
+            claim_revision=int(before["worker_step_claim_revision"]) + 1,
+            ticket_title=str(before["title"]),
+            now=now,
+        )
     capture_ticket_attention(conn, ticket_id, now)
 
 
@@ -897,14 +927,24 @@ def create_ticket(
             if stated_ceiling is None
             else worker_type_definition.resolve_ceiling(stated_ceiling)
         )
+        initial_proposal_route = proposal_routing.route_proposal(
+            stage=initial_stage,
+            ceiling=ceiling,
+            holder=ceiling_holder,
+            worker_type_definition=worker_type_definition,
+        )
+        routed_holder = proposal_routing.parked_destination(initial_proposal_route)
         stage, initial_values, initial_proposal = _seed_kickoff(
             kickoff_note,
             principal,
             now,
             stage=initial_stage,
             ceiling=ceiling,
+            settle=routed_holder is None,
             worker_type_definition=worker_type_definition,
         )
+        if initial_proposal is not None and routed_holder is not None:
+            ceiling_holder = routed_holder
         values_json = fields_codec.values_to_json(initial_values)
         conn.execute(
             "INSERT INTO tickets ("
@@ -912,10 +952,10 @@ def create_ticket(
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_id, sprint_item_id, "
             "recap, ceiling, ceiling_holder, "
-            "conversation_id, field_values, pending_proposal, "
+            "conversation_id, field_values, pending_proposal, pending_proposal_revision, "
             "created_at, updated_at, worker_step_claim_changed_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
-            "?, ?, ?, ?, ?)",
+            "?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -933,11 +973,31 @@ def create_ticket(
                 _principal_to_json(ceiling_holder),
                 values_json,
                 fields_codec.proposal_to_json(initial_proposal),
+                int(initial_proposal is not None),
                 now,
                 now,
                 now,
             ),
         )
+        if (
+            initial_proposal_route.kind is proposal_routing.ProposalRouteKind.item_manager
+            and initial_proposal_route.sprint_item_id is not None
+            and initial_proposal is not None
+            and conn.execute(
+                "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'",
+                (initial_proposal_route.sprint_item_id,),
+            ).fetchone()
+            is not None
+        ):
+            manager_wakes_data.create_proposal_wake(
+                conn,
+                sprint_item_id=initial_proposal_route.sprint_item_id,
+                ticket_id=ticket_id,
+                proposal_revision=1,
+                ticket_title=title,
+                proposal_field=initial_proposal.field,
+                now=now,
+            )
         if day_id is not None:
             days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
@@ -953,7 +1013,13 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
                 conn, str(row["id"])
             )
             require_conversation_backend_key(ticket.employee_backend)
-        except (PlannerError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        except (
+            PlannerError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as exc:
             raise RuntimeError(
                 f"ticket integrity audit failed: id={row['id']} reason={exc}"
             ) from exc
@@ -1163,14 +1229,46 @@ def file_current_proposal(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
+        route = proposal_routing.route_proposal(
+            stage=ticket.stage,
+            ceiling=ticket.ceiling,
+            holder=ticket.ceiling_holder,
+            worker_type_definition=worker_type_definition,
+        )
         decision = resolution.decide_file_proposal(
             ticket,
             body,
             principal,
             now,
+            parked_destination=proposal_routing.parked_destination(route),
             worker_type_definition=worker_type_definition,
         )
-        _apply_decision(conn, ticket, decision, now)
+        updated = _apply_decision(conn, ticket, decision, now, newly_filed_proposal=True)
+        if (
+            route.kind is proposal_routing.ProposalRouteKind.item_manager
+            and route.sprint_item_id is not None
+            and updated.pending_proposal is not None
+            and conn.execute(
+                "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'",
+                (route.sprint_item_id,),
+            ).fetchone()
+            is not None
+        ):
+            proposal_revision = int(
+                conn.execute(
+                    "SELECT pending_proposal_revision FROM tickets WHERE id=?",
+                    (ticket_id,),
+                ).fetchone()[0]
+            )
+            manager_wakes_data.create_proposal_wake(
+                conn,
+                sprint_item_id=route.sprint_item_id,
+                ticket_id=ticket_id,
+                proposal_revision=proposal_revision,
+                ticket_title=ticket.title,
+                proposal_field=updated.pending_proposal.field,
+                now=now,
+            )
         # Filing is the end of the worker's step, whether the answer parked or settled.
         _give_back_worker_step_claim(conn, _load_ticket_for_write(conn, ticket_id), now=now)
         return _load_ticket_for_write(conn, ticket_id)
@@ -1265,6 +1363,7 @@ def reject_proposal(
     *,
     message: str | None,
     principal: Principal,
+    planning_day_id: str,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
 ) -> Ticket:
@@ -1304,6 +1403,14 @@ def reject_proposal(
             (ticket_id, ticket.stage),
         )
         _give_back_worker_step_claim(conn, updated, now=now)
+        if (
+            machine.stage_ownership_mode(
+                updated.stage,
+                worker_type_definition=worker_type_definition,
+            )
+            is StageOwnershipMode.worker
+        ):
+            days_data.add_day_ticket(conn, planning_day_id, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1382,14 +1489,11 @@ def delete_ticket(
             days_data.remove_day_ticket(conn, day_id, ticket_id, now)
         for row in ticket_block_rows:
             conn.execute(
-                "DELETE FROM ticket_blocks "
-                "WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
+                "DELETE FROM ticket_blocks WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
                 (str(row["blocking_ticket_id"]), str(row["blocked_ticket_id"])),
             )
             if str(row["blocking_ticket_id"]) == ticket_id:
-                ticket_blocks.touch_blocked_ticket(
-                    conn, str(row["blocked_ticket_id"]), now
-                )
+                ticket_blocks.touch_blocked_ticket(conn, str(row["blocked_ticket_id"]), now)
 
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
         return TicketDeletion(
@@ -1405,9 +1509,7 @@ def delete_ticket(
 def _outcome_title(conn: sqlite3.Connection, sprint_item_id: str | None) -> str | None:
     if sprint_item_id is None:
         return None
-    row = conn.execute(
-        "SELECT title FROM sprint_items WHERE id = ?", (sprint_item_id,)
-    ).fetchone()
+    row = conn.execute("SELECT title FROM sprint_items WHERE id = ?", (sprint_item_id,)).fetchone()
     return None if row is None else str(row["title"])
 
 
@@ -1598,9 +1700,7 @@ def edit_ticket(
                 changes.append(("ceiling", "ceiling", ticket.ceiling, ceiling_decision.ceiling))
 
         if "ceiling_holder" in edit:
-            holder_decision = resolution.decide_set_ceiling_holder(
-                ticket, edit["ceiling_holder"]
-            )
+            holder_decision = resolution.decide_set_ceiling_holder(ticket, edit["ceiling_holder"])
             if holder_decision.ceiling_holder != ticket.ceiling_holder:
                 _validate_ceiling_holder(conn, holder_decision.ceiling_holder, ticket_id=ticket.id)
                 changes.append(
@@ -1611,6 +1711,27 @@ def edit_ticket(
                         _principal_to_json(holder_decision.ceiling_holder),
                     )
                 )
+
+        holder_changed = next(
+            (new for field, _column, _old, new in changes if field == "ceiling_holder"),
+            None,
+        )
+        proposal_readdressed = ticket.pending_proposal is not None and holder_changed is not None
+        proposal_revision: int | None = None
+        if proposal_readdressed:
+            revision_row = conn.execute(
+                "SELECT pending_proposal_revision FROM tickets WHERE id=?", (ticket_id,)
+            ).fetchone()
+            assert revision_row is not None
+            proposal_revision = int(revision_row["pending_proposal_revision"]) + 1
+            changes.append(
+                (
+                    "pending_proposal_revision",
+                    "pending_proposal_revision",
+                    proposal_revision - 1,
+                    proposal_revision,
+                )
+            )
 
         if not changes:
             return ticket
@@ -1633,7 +1754,35 @@ def edit_ticket(
         # new holder re-derives its attention.
         if "ceiling" in edit or "ceiling_holder" in edit:
             capture_ticket_attention(conn, ticket_id, now)
-        return _load_ticket_for_write(conn, ticket_id)
+        updated = _load_ticket_for_write(conn, ticket_id)
+        if proposal_readdressed:
+            assert proposal_revision is not None
+            route = proposal_routing.route_proposal(
+                stage=updated.stage,
+                ceiling=updated.ceiling,
+                holder=updated.ceiling_holder,
+                worker_type_definition=worker_type_definition,
+            )
+            if (
+                route.kind is proposal_routing.ProposalRouteKind.item_manager
+                and route.sprint_item_id is not None
+                and updated.pending_proposal is not None
+                and conn.execute(
+                    "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal'",
+                    (route.sprint_item_id,),
+                ).fetchone()
+                is not None
+            ):
+                manager_wakes_data.create_proposal_wake(
+                    conn,
+                    sprint_item_id=route.sprint_item_id,
+                    ticket_id=ticket_id,
+                    proposal_revision=proposal_revision,
+                    ticket_title=updated.title,
+                    proposal_field=updated.pending_proposal.field,
+                    now=now,
+                )
+        return updated
 
 
 def classify_ticket(

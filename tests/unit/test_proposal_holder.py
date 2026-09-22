@@ -11,7 +11,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from planner.core.authctx import RequestContext
-from planner.core.clock import Clock
+from planner.core.clock import Clock, parse_fake_now
+from planner.core.clock import TestClock as MutableClock
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
@@ -21,6 +22,7 @@ from planner.core.contracts import (
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
+from planner.message_delivery import service as message_delivery_service
 from planner.sprints import data as sprints_data
 from planner.tickets import actions, data, revision_feedback, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
@@ -44,13 +46,23 @@ def _park(
         kickoff_note="Agreed kickoff",
         stated_ceiling=stated_ceiling,
     )
-    return data.file_current_proposal(
+    parked = data.file_current_proposal(
         conn,
         ticket.id,
         body="Success proposal",
         principal=Principal(PrincipalKind.ticket, ticket.id),
         now=now + 1,
     )
+    if parked.ceiling_holder != holder:
+        return data.edit_ticket(
+            conn,
+            ticket.id,
+            edit=TicketEdit(ceiling_holder=holder),
+            title_max_chars=TITLE_MAX_CHARS,
+            principal=OWNER_PRINCIPAL,
+            now=now + 2,
+        )
+    return parked
 
 
 def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
@@ -203,6 +215,7 @@ def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and
             message="  Preserve exact spacing.  ",
             ctx=RequestContext(OWNER_PRINCIPAL),
             clock=fake_clock,
+            boundary_hour=5,
         )
     )
 
@@ -214,20 +227,91 @@ def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and
     assert feedback.stage == ticket.stage
     assert feedback.items[0].sender == OWNER_PRINCIPAL
     assert feedback.items[0].message == "  Preserve exact spacing.  "
+    assert [row.ticket_id for row in days_data.list_day_tickets(tmp_db, "day_2026-07-04")] == [
+        ticket.id
+    ]
+
+
+def test_rejection_rolls_back_feedback_proposal_day_and_claim_together(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticket = _park(tmp_db, OWNER_PRINCIPAL)
+    tmp_db.execute(
+        "UPDATE tickets SET conversation_id = 'c_atomic_rejection' WHERE id = ?",
+        (ticket.id,),
+    )
+
+    def fail_day_placement(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("day placement failed")
+
+    monkeypatch.setattr(days_data, "add_day_ticket", fail_day_placement)
+    with pytest.raises(RuntimeError, match="day placement failed"):
+        data.reject_proposal(
+            tmp_db,
+            ticket.id,
+            message="Keep all rejection writes atomic.",
+            principal=OWNER_PRINCIPAL,
+            planning_day_id="day_2026-07-04",
+            now=20,
+        )
+
+    unchanged = data.read_ticket(tmp_db, ticket.id)
+    assert unchanged.pending_proposal == ticket.pending_proposal
+    assert unchanged.worker_step_claim.value == "none"
+    assert revision_feedback.snapshot(tmp_db, ticket.id) is None
+    assert days_data.list_day_tickets(tmp_db, "day_2026-07-04") == []
+
+
+def test_rejection_resolves_the_day_after_awaited_reply_lookup(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticket = _park(tmp_db, OWNER_PRINCIPAL)
+    tmp_db.execute(
+        "UPDATE tickets SET conversation_id = 'c_boundary_rejection' WHERE id = ?",
+        (ticket.id,),
+    )
+    clock = MutableClock(parse_fake_now("2026-09-22T04:59:00+02:00"))
+
+    async def cross_the_boundary(*_args: object, **_kwargs: object) -> None:
+        clock.set(parse_fake_now("2026-09-22T05:01:00+02:00"))
+
+    monkeypatch.setattr(
+        message_delivery_service,
+        "revision_source_turn",
+        cross_the_boundary,
+    )
+    revised = asyncio.run(
+        actions.reject_ticket_proposal(
+            AsyncMock(),
+            tmp_db,
+            ticket.id,
+            message="Resolve the Day after the reply lookup.",
+            ctx=RequestContext(OWNER_PRINCIPAL),
+            clock=clock,
+            boundary_hour=5,
+        )
+    )
+
+    assert revised.pending_proposal is None
+    assert [row.ticket_id for row in days_data.list_day_tickets(tmp_db, "day_2026-09-22")] == [
+        ticket.id
+    ]
+    assert days_data.list_day_tickets(tmp_db, "day_2026-09-21") == []
 
 
 def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
     tmp_db: Connection,
 ) -> None:
     ticket = _park(tmp_db, OWNER_PRINCIPAL)
-    tmp_db.execute(
-        "UPDATE tickets SET conversation_id='c_stage_scope' WHERE id=?", (ticket.id,)
-    )
+    tmp_db.execute("UPDATE tickets SET conversation_id='c_stage_scope' WHERE id=?", (ticket.id,))
     data.reject_proposal(
         tmp_db,
         ticket.id,
         message="Revise only this stage.",
         principal=OWNER_PRINCIPAL,
+        planning_day_id="day_2026-07-04",
         now=20,
     )
     data.file_current_proposal(
@@ -430,15 +514,11 @@ def test_a_worker_cannot_move_its_own_ticket_holder(tmp_db: Connection) -> None:
     assert data.read_ticket(tmp_db, ticket.id).ceiling_holder == CHIEF_PRINCIPAL
 
 
-
-
 # --- a move that leaves the holder below the Ticket -----------------------------
 
 
 def _outcome(conn: Connection, title: str, clock: Clock) -> str:
-    return sprints_data.create_item(
-        conn, title=title, project_id="project_vylo", clock=clock
-    ).id
+    return sprints_data.create_item(conn, title=title, project_id="project_vylo", clock=clock).id
 
 
 def _park_under(conn: Connection, outcome_id: str, *, now: int = 10) -> Ticket:

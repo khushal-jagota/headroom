@@ -27,7 +27,7 @@ from planner.conversation.backends.contracts import (
     SessionLoadFailed,
     TurnToken,
 )
-from planner.conversation.contracts import PromptDeliveryRefusalReason
+from planner.conversation.contracts import PromptDeliveryMode, PromptDeliveryRefusalReason
 from planner.conversation.message_content import text_message_content
 
 
@@ -45,6 +45,29 @@ def test_a_resume_that_came_back_with_another_thread_is_refused(tmp_path: Path) 
             with pytest.raises(SessionLoadFailed) as refused:
                 await scripted.start(cursor="thread-earlier")
             assert "thread-somebody-else" in str(refused.value)
+
+    _run(exercise)
+
+
+def test_a_manager_wake_crosses_the_codex_adapter_with_its_sender_label(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={"turns": [{"actions": []}]}) as scripted:
+            await scripted.start(cursor=None)
+            content = text_message_content("Review the manager wake.")
+            await scripted.child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                content,
+                sender_content=content,
+                sender_label="Panels",
+                mode=PromptDeliveryMode.queue,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            wire = json.dumps(scripted.sent("turn/start"))
+            assert "Panels" in wire
+            assert "Review the manager wake." in wire
 
     _run(exercise)
 

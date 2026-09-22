@@ -41,6 +41,7 @@ from planner.conversation.backends.contracts import (
     BackendSteerAccepted,
     NeedsRebind,
     SessionLoadFailed,
+    TurnToken,
 )
 from planner.conversation.contracts import PromptDeliveryMode
 from planner.conversation.events import ConversationTurnEnding, UserInputAnswer
@@ -72,6 +73,31 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         # The stored cursor remains safe to try on one replacement child.
         with pytest.raises(NeedsRebind):
             await _write(child, "again")
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        start = _start_request(workspace_folder=tmp_path)
+        child, _sink, clients = _bench(start)
+        await child.start(start, vendor_session_cursor=None)
+        content = text_message_content("Review the manager wake.")
+        await child.write_prompt(
+            TurnToken(conversation_id="c-claude-1", turn_number=1),
+            content,
+            sender_content=content,
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+        assert len(clients[0].prompts) == 1
+        assert "Panels" in clients[0].prompts[0]
+        assert "Review the manager wake." in clients[0].prompts[0]
         await child.stop()
 
     _run(exercise)

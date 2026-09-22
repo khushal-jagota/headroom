@@ -27,8 +27,8 @@ One screen per part of the system:
 - **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
   walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
   Proposal items add their labelled recap, ask, approval, and send-back controls.
-  Non-owner holders inspect canonical Ticket state through the normal Chief, Sprint Item,
-  and Ticket views; no proposal wake, retry, failure surfacing, or owner fallback remains.
+  A proposal routed to a Sprint Item manager also creates a durable manager wake. Other
+  non-owner holders inspect canonical Ticket state through the normal Chief and Ticket views.
   Keyboard shortcuts drive the actions that apply to the current item when the
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
   approve button sends the next ceiling and owner holder together. Send-back
@@ -185,11 +185,11 @@ One screen per part of the system:
   A compact artifact strip is the first element under the header when lifecycle fields
   link to managed Ticket or Sprint Item files. It reads the pending proposal first, then
   the lifecycle fields from latest to earliest. It removes duplicate links. The same strip
-  shows an Outcome's own files, where a folder is one chip. A folder with no index opens
+  shows a Sprint Item's own files, where a folder is one chip. A folder with no index opens
   where it stands and its files follow it along the strip.
 - **Sprint** — one tracking overview that presents Projects and their Sprint Items,
   plus a dedicated view for each Item and a separate documents page. The overview shows
-  Item progress as `done/total`. One collapsed **No Outcome** row follows all Projects
+  Item progress as `done/total`. One collapsed **No Sprint Item** row follows all Projects
   when unclassified Tickets exist. It opens their canonical Ticket links. An Item view joins today's Day membership
   to split its Tickets into Today and Other Tickets. Each section uses the same status
   groups and includes its own Done group. Project priority
@@ -197,7 +197,7 @@ One screen per part of the system:
   Review. See `sprints.md`.
 - **Backlog** — active unscheduled Tickets as bounded summaries. Each row shows only its
   title and Project chip, and opens its canonical Workspace screen. The page does not
-  request Outcomes. Its compact form creates an ordinary explicitly unscheduled Ticket.
+  request Sprint Items. Its compact form creates an ordinary explicitly unscheduled Ticket.
 - **Ideas** — remembered possibilities with an optional note and Project. See
   `backlog-and-ideas.md`.
 - **Feedback** — open notes and handled history. Open notes link to their source page.

@@ -55,6 +55,7 @@ def decide_file_proposal(
     principal: Principal,
     now: int,
     *,
+    parked_destination: Principal | None,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     """What a worker's answer to the current Stage becomes.
@@ -76,16 +77,7 @@ def decide_file_proposal(
         field,
         worker_type_definition=worker_type_definition,
     )
-    ownership = machine.stage_ownership_mode(
-        ticket.stage,
-        worker_type_definition=worker_type_definition,
-    )
-    below_the_ceiling = not machine.at_or_beyond_ceiling(
-        ticket.stage,
-        ticket.ceiling,
-        worker_type_definition=worker_type_definition,
-    )
-    if ownership is StageOwnershipMode.worker and below_the_ceiling:
+    if parked_destination is None:
         return _accept_gating_proposal(
             ticket, field, body, None, worker_type_definition=worker_type_definition
         )
@@ -94,6 +86,7 @@ def decide_file_proposal(
         pending_proposal=PendingTicketProposal(
             field, body, principal_legacy_actor(principal), now
         ),
+        ceiling_holder=parked_destination,
     )
 
 
