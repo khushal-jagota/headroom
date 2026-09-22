@@ -49,8 +49,8 @@ Ticket uses the Personal Project and direct current-Sprint placement. Repeat or 
 matching Tickets suppress duplicates.
 
 If a scheduled run is missed, recovery is ordinary creation of the intended planning
-Ticket with `panels ticket create --worker-type planning-day` or
-`--worker-type planning-midday-check`, with the Personal Project and intended Sprint selected. There is no backfill and no rollover fallback.
+Ticket with `panels ticket create --input-json -` and the applicable planning Worker type,
+with the Personal Project and intended Sprint selected. There is no backfill and no rollover fallback.
 
 ## Quick capture
 

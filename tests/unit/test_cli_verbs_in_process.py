@@ -15,7 +15,9 @@ from fastapi.testclient import TestClient
 from tests.support.probe import seed_probe_worker_type
 
 from planner.cli.main import main as cli_main
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -88,7 +90,12 @@ def cli_app(
             return cast(
                 httpx.Response,
                 client.request(
-                    method, path, json=json, params=params, headers=headers, content=content
+                    method,
+                    path,
+                    json=json,
+                    params=params,
+                    headers=headers,
+                    content=content,
                 ),
             )
 
@@ -100,6 +107,7 @@ def cli_app(
             *args: str,
             ticket_id: str | None = None,
             actor: str | None = None,
+            sprint_item_id: str | None = None,
             stdin: str | None = None,
         ) -> JsonObject:
             # The identity a launched Worker runs under, which is both variables
@@ -111,11 +119,73 @@ def cli_app(
                 env["PLAN_ACTOR"] = "worker"
             if actor is not None:
                 env["PLAN_ACTOR"] = actor
-            result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)
+            if sprint_item_id is not None:
+                env["PLAN_SPRINT_ITEM_ID"] = sprint_item_id
+            result = CliRunner().invoke(
+                cli_main, [*args, "--json"], input=stdin, env=env
+            )
             assert result.exit_code == 0, result.output
             return cast(JsonObject, json.loads(result.stdout))
 
         yield server, invoke, ApiHelper(client)
+
+
+def test_structured_create_and_supervisor_revision_use_neutral_ticket_commands(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
+    item = cli(
+        server,
+        "sprint",
+        "item",
+        "create",
+        "--title",
+        "Neutral supervisor flow",
+        "--project-id",
+        "project_other",
+    )
+    create_body = {
+        "title": "Review through neutral commands",
+        "worker_type": "coding",
+        "project_id": "project_other",
+        "sprint_item_id": item["id"],
+        "kickoff_note": "Review this intake.",
+    }
+    ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--input-json",
+        "-",
+        actor="sprint_item_supervisor",
+        sprint_item_id=item["id"],
+        stdin=json.dumps(create_body),
+    )
+    cli(
+        server,
+        "send-message",
+        "--ticket",
+        ticket["id"],
+        "--message",
+        "Prepare for review.",
+        actor="sprint_item_supervisor",
+        sprint_item_id=item["id"],
+    )
+
+    revised = cli(
+        server,
+        "ticket",
+        "proposal",
+        ticket["id"],
+        "revise",
+        actor="sprint_item_supervisor",
+        sprint_item_id=item["id"],
+        stdin="Keep the Brief focused.",
+    )
+
+    assert revised["pending_proposal"] is None
+    detail = api.get(server, f"/api/tickets?detail=full&id={ticket['id']}")
+    assert detail["pending_proposal"] is None
+    assert detail["stage"] == "needs_brief"
 
 
 @pytest.fixture
@@ -302,7 +372,12 @@ def test_record_reads_share_manifests_selection_and_identity(
     assert worker_manifest["header"]["worker"] == "panels-worker-coding"
     assert worker_manifest["header"]["id"] == ticket["id"]
     assert sprint_manifest["header"]["id"] == sprint["id"]
-    assert list(sprint_manifest["manifest"]) == ["primary_bet", "kickoff", "checkpoint", "review"]
+    assert list(sprint_manifest["manifest"]) == [
+        "primary_bet",
+        "kickoff",
+        "checkpoint",
+        "review",
+    ]
     assert item_part["parts"]["body"]["value"] == "Show one part. 🌱"
     assert "rollup" not in item_part["header"]
     assert "tickets" not in day_manifest
@@ -357,7 +432,9 @@ def test_record_reads_share_manifests_selection_and_identity(
     )
     assert invalid.exit_code == 1
     error = json.loads(invalid.stderr)["error"]
-    assert error["message"] == ("unknown part names: missing; valid part names: summary")
+    assert error["message"] == (
+        "unknown part names: missing; valid part names: summary"
+    )
 
 
 def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
@@ -437,7 +514,9 @@ def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
 
     assert day["focus"] == "Ship the planning boundary."
     assert midday["midday_reconciliation"] == "The morning bet still holds."
-    assert sprint_readback["parts"]["primary_bet"]["value"] == "Use one canonical sprint."
+    assert (
+        sprint_readback["parts"]["primary_bet"]["value"] == "Use one canonical sprint."
+    )
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
@@ -607,8 +686,9 @@ def test_ticket_approval_copy_and_worker_note_shape(
     accepted_kickoff = cli(
         server,
         "ticket",
-        "approve",
+        "proposal",
         tid,
+        "accept",
         "--ceiling",
         "none",
         "--kickoff-note-file",
@@ -621,44 +701,62 @@ def test_ticket_approval_copy_and_worker_note_shape(
 
     cli(
         server,
-        "worker",
-        "propose",
+        "ticket",
+        "proposal",
+        tid,
+        "submit",
         ticket_id=tid,
         stdin="success body",
     )
-    # The recap is a separate write, so a Worker keeps it current on its own.
-    cli(server, "worker", "recap", tid, ticket_id=tid, stdin="Ready to approve.")
-    assert api.get(server, f"/api/tickets?detail=full&id={tid}")["recap"] == "Ready to approve."
-    approved = cli(server, "ticket", "approve", tid, "--ceiling", "none")
+    cli(
+        server,
+        "ticket",
+        "edit",
+        tid,
+        "--input-json",
+        "-",
+        ticket_id=tid,
+        stdin=json.dumps({"recap": "Ready to approve."}),
+    )
+    assert (
+        api.get(server, f"/api/tickets?detail=full&id={tid}")["recap"]
+        == "Ready to approve."
+    )
+    approved = cli(server, "ticket", "proposal", tid, "accept", "--ceiling", "none")
     assert approved["stage"] == "needs_what_changes"
     assert approved["field_values"].get("success_condition") == "success body"
 
     cli(
         server,
-        "worker",
-        "note",
+        "ticket",
+        "edit",
         tid,
+        "--input-json",
+        "-",
         ticket_id=tid,
-        stdin="approach note",
+        stdin=json.dumps({"guidance": "approach note"}),
     )
     cli(
         server,
-        "worker",
-        "note",
+        "ticket",
+        "edit",
         tid,
-        "--append",
+        "--input-json",
+        "-",
         ticket_id=tid,
-        stdin="additional approach note",
+        stdin=json.dumps({"guidance_append": "additional approach note"}),
     )
     appended_detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert appended_detail["guidance"] == "approach note\n\nadditional approach note"
     cli(
         server,
-        "worker",
-        "note",
+        "ticket",
+        "edit",
         tid,
+        "--input-json",
+        "-",
         ticket_id=tid,
-        stdin="replaced approach note",
+        stdin=json.dumps({"guidance": "replaced approach note"}),
     )
     detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
     assert detail["guidance"] == "replaced approach note"
@@ -731,7 +829,9 @@ def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
     assert detail["sprint_item_id"] == item["id"]
     assert detail["effective_sprint_id"] == sprint["id"]
 
-    renamed = cli(server, "sprint", "set", "current", "name", "--value", "Renamed CLI sprint")
+    renamed = cli(
+        server, "sprint", "set", "current", "name", "--value", "Renamed CLI sprint"
+    )
     assert renamed["id"] == sprint["id"]
     assert renamed["name"] == "Renamed CLI sprint"
 

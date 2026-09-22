@@ -17,16 +17,16 @@ LEGACY_SUPERVISOR_RECOVERIES: dict[str, str] = {
     "message-worker": "panels send-message --ticket TICKET_ID --message TEXT",
     "restart-worker": "panels ticket restart-worker TICKET_ID",
     "set-item": "panels sprint item set ITEM_ID FIELD --value VALUE",
-    "set-ticket": "panels ticket set TICKET_ID FIELD --value VALUE",
+    "set-ticket": "panels ticket edit TICKET_ID --input-json FILE",
     "artifact-list": "panels sprint item artifact list ITEM_ID",
     "artifact-write": (
         "panels sprint item artifact write ITEM_ID ARTIFACT_PATH --body-file FILE"
     ),
     "artifact-delete": "panels sprint item artifact delete ITEM_ID ARTIFACT_PATH",
-    "send": "panels sprint item conversation send ITEM_ID --message TEXT",
+    "send": "panels send-message --sprint-item ITEM_ID --message TEXT",
     "reset": "panels sprint item conversation reset ITEM_ID",
-    "approve": "panels ticket approve TICKET_ID --ceiling STAGE",
-    "reject": "panels ticket reject TICKET_ID --message TEXT",
+    "approve": "panels ticket proposal TICKET_ID accept --ceiling STAGE",
+    "reject": "panels ticket proposal TICKET_ID revise < GUIDANCE_FILE",
 }
 
 # These commands enforce one input rule after Click parses their options. Their shortest
@@ -42,6 +42,10 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels project set": "panels project set PROJECT_ID FIELD --value VALUE",
     "panels day set": "panels day set FIELD --value TEXT",
     "panels ticket delete": "panels ticket delete TICKET_ID --yes",
+    "panels ticket create": "panels ticket create --input-json FILE",
+    "panels ticket edit": "panels ticket edit TICKET_ID --input-json FILE",
+    "panels ticket proposal": "panels ticket proposal TICKET_ID ACTION",
+    "panels ticket request-help": "panels ticket request-help TICKET_ID < MESSAGE_FILE",
     "panels ticket set": "panels ticket set TICKET_ID FIELD --value VALUE",
     "panels ticket complete": "panels ticket complete TICKET_ID FIELD --value VALUE",
     "panels ticket set-value": "panels ticket set-value TICKET_ID FIELD --value VALUE",
@@ -84,7 +88,9 @@ def _canonical_command_path(ctx: click.Context) -> str:
 
 
 def _option_shape(option: click.Option, ctx: click.Context) -> str:
-    option_name = next((name for name in option.opts if name.startswith("--")), option.opts[0])
+    option_name = next(
+        (name for name in option.opts if name.startswith("--")), option.opts[0]
+    )
     if option.is_flag:
         return option_name
     return f"{option_name} {option.make_metavar(ctx)}"
@@ -224,7 +230,10 @@ def _show_click_exception(
     ctx = _resolved_context(root, args)
     path = _canonical_command_path(ctx)
     message = error.format_message()
-    if path == "panels environment run" and message == "environment instance is not prepared":
+    if (
+        path == "panels environment run"
+        and message == "environment instance is not prepared"
+    ):
         render_human_error(
             message,
             recovery=(

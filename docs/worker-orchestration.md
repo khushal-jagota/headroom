@@ -189,8 +189,8 @@ still reads as claimed, and a Ticket with its claim back but still pointing at a
 conversation would talk into it.
 
 Anyone standing above the Ticket can do it, which is Khushal, the Chief, or the Ticket's
-own Outcome. Khushal could not before: no ordinary route restarted a Worker, and the
-only door was the Outcome's. This is a new capability on his surface, not a rename.
+own Sprint Item. Khushal could not before: no ordinary route restarted a Worker, and the
+only door was the Sprint Item's. This is a new capability on his surface, not a rename.
 
 Nothing there asks whether the old Worker was alive, because nothing can answer. A
 Worker that dies without ending its turn goes on looking like one that is running, so a
