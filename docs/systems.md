@@ -117,10 +117,14 @@ claim is the only control fact stored. One shared list projection derives whethe
 awaits Khushal's reply, awaits his approval, awaits an agent's approval, is assigned to
 Khushal, and whether the agent is working, idle, or errored. A parked proposal is split
 by who holds the ceiling there, once, so no route decides whose approval "awaiting
-approval" means. Review contains today's owner-addressed proposals. Non-owner
-holders inspect canonical Ticket state through the normal Chief, Sprint Item, and Ticket
-views; no proposal wake, retry, failure surfacing, or owner fallback remains.
+approval" means. Review contains today's owner-addressed proposals. A proposal routed to
+a Sprint Item manager creates a durable wake for that manager. Other non-owner holders
+inspect canonical Ticket state through the normal Chief and Ticket views.
 Addressed help messages stay in conversation and appear through the same attention facts.
+
+The manager wake loop shares the server's machine lock, change signal, and periodic
+recovery timer. It also receives explicit worker-error transitions. It groups open wakes,
+uses the normal supervisor conversation queue, and closes only exact delivered prompts.
 
 Read **Tickets & the gates** (`tickets-and-gates.md`) and **Worker types**
 (`worker-types.md`).

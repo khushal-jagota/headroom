@@ -32,9 +32,7 @@ from planner.conversation.message_content import text_message_content
 
 
 @pytest.fixture(autouse=True)
-def existing_floor_workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def existing_floor_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.setattr(
@@ -43,12 +41,16 @@ def existing_floor_workspace(
 
 
 class TestConversationSystemConformance(ConversationContractConformanceSuite):
-    def open_system_under_test(self) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
+    def open_system_under_test(
+        self,
+    ) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
         return open_conversation_system_under_test()
 
 
 class TestInMemoryConversationSystemConformance(ConversationContractConformanceSuite):
-    def open_system_under_test(self) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
+    def open_system_under_test(
+        self,
+    ) -> AbstractAsyncContextManager[ConversationSystemUnderTest]:
         return open_in_memory_conversation_system_under_test()
 
 
@@ -108,6 +110,40 @@ for _exercise in BACKEND_WRITE_ATTESTED_EXERCISES:
 del _exercise
 
 
+@pytest.mark.parametrize("backend_key", tuple(ConversationBackendKey))
+def test_supervisor_wake_message_uses_the_same_durable_prompt_boundary_for_every_backend(
+    backend_key: ConversationBackendKey,
+) -> None:
+    async def exercise() -> None:
+        async with open_conversation_system_under_test() as subject:
+            await subject.system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id=f"wake-{backend_key.value}",
+                    backend_key=backend_key,
+                    model="a-model",
+                )
+            )
+            fate = await subject.system.send(
+                f"wake-{backend_key.value}",
+                text_message_content("Review the manager wake."),
+                sender_label="Panels",
+                mode=PromptDeliveryMode.queue,
+                sender_message_id=f"supervisor_delivery_{backend_key.value}",
+            )
+            assert fate == PromptDeliveryStarted()
+            prompts = tuple(
+                fact
+                for fact in await subject.recorded_facts(f"wake-{backend_key.value}")
+                if fact.kind is RecordedFactKind.prompt_delivered
+            )
+            assert len(prompts) == 1
+            assert prompts[0].text == "Review the manager wake."
+            assert prompts[0].sender_label == "Panels"
+            assert prompts[0].mode is PromptDeliveryMode.queue
+
+    asyncio.run(exercise())
+
+
 def test_a_private_steer_lost_with_its_connection_is_uncertain_and_stoppable() -> None:
     async def exercise() -> None:
         async with open_conversation_system_under_test() as subject:
@@ -118,17 +154,23 @@ def test_a_private_steer_lost_with_its_connection_is_uncertain_and_stoppable() -
                     backend_key=ConversationBackendKey.hermes,
                 )
             )
-            assert await subject.system.send(
-                "c", text_message_content("incumbent"), sender_label="owner"
-            ) == PromptDeliveryStarted()
+            assert (
+                await subject.system.send(
+                    "c", text_message_content("incumbent"), sender_label="owner"
+                )
+                == PromptDeliveryStarted()
+            )
             await subject.arm_backend_connection_loss("c")
 
-            assert await subject.system.send(
-                "c",
-                text_message_content("uncertain steer"),
-                sender_label="owner",
-                mode=PromptDeliveryMode.steer,
-            ) == PromptDeliveryUncertain()
+            assert (
+                await subject.system.send(
+                    "c",
+                    text_message_content("uncertain steer"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
+                )
+                == PromptDeliveryUncertain()
+            )
             account = await subject.agent_account("c")
             assert account["steer_attempts"] == []
             assert account["steer_writes"] == []

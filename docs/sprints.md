@@ -108,14 +108,21 @@ its launch configuration with the item. Existing items received the same fixed
 configuration during migration. The Other section is a view of loose Tickets and owns
 no supervisor.
 
-The supervisor conversation starts only when the user sends it a message. Nothing else
-starts one. A reset kills current work and clears the agent link. Conversation records and
-message files remain as history. The Outcome body is the shared brief.
+The supervisor conversation starts when the user sends it a message or when Panels
+delivers a manager wake. A reset kills current work and clears the agent link.
+Conversation records and message files remain as history. The Outcome body is the shared
+brief.
 
 Its job is small. It creates Tickets under its Item, and it answers what is going on
 there. It does more when the user asks it to, and the actions below are how. It is not a
-manager: it does not push Tickets along, and it does not resolve parked proposals as
-routine work.
+manager: it does not push Tickets along. A wake asks it to inspect one or more routed
+proposals or explicit worker errors. It reads canonical state before it decides what to do.
+
+Manager wakes use one durable queue. Panels groups open wakes for an Outcome and sends a
+normal queued message. A busy supervisor finishes its current turn first. Panels closes a
+wake only when the exact prompt reaches the durable conversation record. Definite refusals
+and discarded queued prompts get a later attempt. An uncertain send is retained without an
+automatic replay. Open wakes survive server restarts.
 
 A supervisor has no routes of its own. It calls the routes Khushal calls, and the one
 rule admits it on its own current child Tickets and on its own Item, because that is what

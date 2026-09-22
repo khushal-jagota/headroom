@@ -318,17 +318,16 @@ While a proposal is pending, the leash drops its ceiling select and keeps its ho
 The ceiling cannot change without silently changing what was proposed, and the proposal can
 still be re-addressed.
 
-Review's single, oldest-first walk shows today's owner-addressed proposals. Anyone else a
-proposal is addressed to inspects canonical Ticket state through their normal Chief,
-Sprint Item, and Ticket views; no proposal wake, retry, failure surfacing, or owner
-fallback remains. A parked proposal keeps its approval and revision controls. A Worker
+Review's single, oldest-first walk shows today's owner-addressed proposals. A proposal
+routed to a Sprint Item manager creates a durable manager wake. Other holders inspect
+canonical Ticket state through their normal Chief and Ticket views. A parked proposal
+keeps its approval and revision controls. A Worker
 help request is an addressed conversation message. Its unread state feeds the shared
 attention projection, and the answer belongs in that conversation.
 
 Replying to the worker does not decide its proposal. The proposal stays pending and
-addressed to its holder until a decision or a replacement proposal arrives. Panels does
-not wake the holder, retry proposal delivery, or surface a delivery failure, and nothing
-about delivery moves an address. The one thing that returns a ceiling to the user is a
+addressed to its holder until a decision or a replacement proposal arrives. Manager wake
+delivery never moves that address or decides the proposal. The one thing that returns a ceiling to the user is a
 move that leaves its holder below the Ticket, described above. Owner-held proposals remain
 on Review.
 
@@ -353,7 +352,7 @@ The ceiling cannot change while a proposal waits, so what was proposed stays fix
 
 Owner-held proposals appear in Review and produce the owner's needs-approval notification.
 Anyone else reads proposals from canonical Ticket state through their normal Ticket and
-Outcome views. Filing a proposal does not send a separate alert.
+Outcome views. Filing a manager-routed proposal creates a queued wake, not an owner alert.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`

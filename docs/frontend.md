@@ -27,8 +27,8 @@ One screen per part of the system:
 - **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
   walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
   Proposal items add their labelled recap, ask, approval, and send-back controls.
-  Non-owner holders inspect canonical Ticket state through the normal Chief, Sprint Item,
-  and Ticket views; no proposal wake, retry, failure surfacing, or owner fallback remains.
+  A proposal routed to a Sprint Item manager also creates a durable manager wake. Other
+  non-owner holders inspect canonical Ticket state through the normal Chief and Ticket views.
   Keyboard shortcuts drive the actions that apply to the current item when the
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
   approve button sends the next ceiling and owner holder together. Send-back

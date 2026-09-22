@@ -71,6 +71,25 @@ _Code paths:_ `src/planner/runtime/worker_step_readiness.py`,
 `src/planner/core/change_signal.py`, and the claim and release writers in
 `src/planner/tickets/data.py`.
 
+## Sprint Item manager wakes
+
+Proposals routed to a Sprint Item manager and explicit worker-error transitions create
+durable wakes in the same transaction as their source event. Proposal routing remains a
+separate deterministic decision before wake creation. It contains no TypeSafe call.
+
+The manager wake loop shares the background-loop machine lock. A commit wakes it, and a
+periodic poll recovers missed signals and restart state. The loop groups open wakes for one
+manager into an immutable batch. It sends that batch through the normal supervisor
+conversation boundary in queue mode.
+
+A queued batch remains open while it waits behind active work. The exact durable prompt
+event closes its member wakes. A definite refusal or discard creates a later attempt with a
+new sender message identity. An uncertain delivery remains unresolved and is not replayed
+automatically. Supervisor reset and deletion share a lifecycle lock with delivery.
+
+_Code paths:_ `src/planner/manager_wakes/`, `src/planner/core/loops.py`, and the proposal
+and worker-error writers in `src/planner/tickets/data.py`.
+
 ## Scheduled Ticket handoff
 
 The scheduled-Ticket loop shares the server lifespan and single-machine lock, but not
