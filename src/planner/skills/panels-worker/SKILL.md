@@ -49,6 +49,9 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **`panels ticket show <id> [part,part]`** — read another Ticket's header and part
   manifest, or expand named saved fields, `proposal`, `recap`, and `guidance`.
 - **`panels worker propose <id>`**, piping the proposal text on stdin — answer your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body arrives on stdin only, and it carries only what is being proposed. Below the ceiling the answer settles the field and the Ticket advances. At the ceiling it parks for approval.
+  While your proposal is pending, you can run `propose` again. The new proposal replaces
+  your pending draft for the same Stage. Re-propose when you find a mistake or receive
+  steering. Do not wait for rejection first.
 - **`panels worker recap <id>`**, piping the recap text on stdin — keep the running recap current. It is a separate write from proposing, so update it as you work.
 - **`panels worker request-help [ticket-id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, or confirmed Worker errors.
 - **`panels worker note <id>`**, piping the guidance text on stdin — replace the Ticket’s durable guidance document. Add `--append` to preserve the existing guidance and add new text.
