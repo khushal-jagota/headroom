@@ -1346,8 +1346,10 @@ def ticket_create(
                 "--input-json cannot be combined with legacy Ticket create options",
                 as_json,
             )
-        body = _read_json_object(input_json, as_json, "Ticket create input")
-        data = http.send("POST", "/api/tickets", as_json=as_json, json_body=body)
+        structured_body = _read_json_object(input_json, as_json, "Ticket create input")
+        data = http.send(
+            "POST", "/api/tickets", as_json=as_json, json_body=structured_body
+        )
         http.emit(data, as_json, f"{data['id']} {data['stage']}")
         return
     if title is None or worker_type is None:
@@ -1740,22 +1742,7 @@ def ticket_employee_configuration(
     )
 
 
-@ticket.command("approve", hidden=True)
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--ceiling", default=None, help="Next ceiling stage or none.")
-@click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
-@click.option(
-    "--holder",
-    default=None,
-    help="Who holds the next ceiling: me, chief, a Sprint Item id, or a Ticket id. "
-    "Absent, you keep it.",
-)
-@click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
-@click.option(
-    "--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin."
-)
-@json_option
-def ticket_approve(
+def _approve_ticket_proposal(
     ticket_id: str | None,
     ceiling: str | None,
     edit_file: str | None,
@@ -1829,17 +1816,44 @@ def ticket_approve(
     http.emit(data, as_json, f"{data['id']} approved {field}")
 
 
-@ticket.command("reject", hidden=True)
+@ticket.command("approve", hidden=True)
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--message", default=None, help="Focused revision guidance.")
+@click.option("--ceiling", default=None, help="Next ceiling stage or none.")
+@click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option(
-    "--body-file", default=None, help="Read revision guidance from this file, or -."
+    "--holder",
+    default=None,
+    help="Who holds the next ceiling: me, chief, a Sprint Item id, or a Ticket id. "
+    "Absent, you keep it.",
+)
+@click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
+@click.option(
+    "--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin."
 )
 @json_option
-def ticket_reject(
+def ticket_approve(
+    ticket_id: str | None,
+    ceiling: str | None,
+    edit_file: str | None,
+    holder: str | None,
+    kickoff_title: str | None,
+    kickoff_note_file: str | None,
+    as_json: bool,
+) -> None:
+    _approve_ticket_proposal(
+        ticket_id,
+        ceiling,
+        edit_file,
+        holder,
+        kickoff_title,
+        kickoff_note_file,
+        as_json,
+    )
+
+
+def _revise_ticket_proposal(
     ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
 ) -> None:
-    """Reject the proposal parked on this Ticket, with focused guidance."""
     tid = resolve_ticket_id(ticket_id, as_json)
     if (message is None) == (body_file is None):
         http.fail_validation(
@@ -1853,6 +1867,20 @@ def ticket_reject(
         json_body={"message": text},
     )
     http.emit(data, as_json, f"{tid} proposal rejected")
+
+
+@ticket.command("reject", hidden=True)
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--message", default=None, help="Focused revision guidance.")
+@click.option(
+    "--body-file", default=None, help="Read revision guidance from this file, or -."
+)
+@json_option
+def ticket_reject(
+    ticket_id: str | None, message: str | None, body_file: str | None, as_json: bool
+) -> None:
+    """Reject the proposal parked on this Ticket, with focused guidance."""
+    _revise_ticket_proposal(ticket_id, message, body_file, as_json)
 
 
 @ticket.command("history")
@@ -2451,15 +2479,7 @@ def worker_my_ticket(part_names: str | None, as_json: bool) -> None:
     _emit_record(header, parts, part_names, as_json)
 
 
-@worker.command("propose")
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option(
-    "--body-file", default=None, help="Removed: pipe proposal text on stdin instead."
-)
-@click.option("--recap", default=None, help="Removed: use `worker recap` instead.")
-@click.option("--recap-file", default=None, help="Removed: use `worker recap` instead.")
-@json_option
-def worker_propose(
+def _submit_ticket_proposal(
     ticket_id: str | None,
     body_file: str | None,
     recap: str | None,
@@ -2483,21 +2503,25 @@ def worker_propose(
     http.emit(data, as_json, f"proposed on {data['id']}")
 
 
-@worker.command("request-help")
+@worker.command("propose")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--owner", is_flag=True, help="Ask Khushal for help.")
-@click.option("--chief", is_flag=True, help="Ask the Chief of Staff for help.")
 @click.option(
-    "--ticket", "recipient_ticket_id", default=None, help="Ask another Ticket worker."
+    "--body-file", default=None, help="Removed: pipe proposal text on stdin instead."
 )
-@click.option(
-    "--sprint-item",
-    "recipient_sprint_item_id",
-    default=None,
-    help="Ask a Sprint Item supervisor.",
-)
+@click.option("--recap", default=None, help="Removed: use `worker recap` instead.")
+@click.option("--recap-file", default=None, help="Removed: use `worker recap` instead.")
 @json_option
-def worker_request_help(
+def worker_propose(
+    ticket_id: str | None,
+    body_file: str | None,
+    recap: str | None,
+    recap_file: str | None,
+    as_json: bool,
+) -> None:
+    _submit_ticket_proposal(ticket_id, body_file, recap, recap_file, as_json)
+
+
+def _request_ticket_help(
     ticket_id: str | None,
     owner: bool,
     chief: bool,
@@ -2534,6 +2558,38 @@ def worker_request_help(
         "POST", f"/api/tickets/{tid}/request-help", as_json=as_json, json_body=body
     )
     http.emit(data, as_json, f"help message {data['fate']}")
+
+
+@worker.command("request-help")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--owner", is_flag=True, help="Ask Khushal for help.")
+@click.option("--chief", is_flag=True, help="Ask the Chief of Staff for help.")
+@click.option(
+    "--ticket", "recipient_ticket_id", default=None, help="Ask another Ticket worker."
+)
+@click.option(
+    "--sprint-item",
+    "recipient_sprint_item_id",
+    default=None,
+    help="Ask a Sprint Item supervisor.",
+)
+@json_option
+def worker_request_help(
+    ticket_id: str | None,
+    owner: bool,
+    chief: bool,
+    recipient_ticket_id: str | None,
+    recipient_sprint_item_id: str | None,
+    as_json: bool,
+) -> None:
+    _request_ticket_help(
+        ticket_id,
+        owner,
+        chief,
+        recipient_ticket_id,
+        recipient_sprint_item_id,
+        as_json,
+    )
 
 
 @worker.command("recap")
@@ -2610,12 +2666,12 @@ def ticket_proposal(
             f"{action} does not accept proposal approval options", as_json
         )
     if action == "submit":
-        worker_propose.callback(ticket_id, None, None, None, as_json)
+        _submit_ticket_proposal(ticket_id, None, None, None, as_json)
         return
     if action == "revise":
-        ticket_reject.callback(ticket_id, None, "-", as_json)
+        _revise_ticket_proposal(ticket_id, None, "-", as_json)
         return
-    ticket_approve.callback(
+    _approve_ticket_proposal(
         ticket_id,
         ceiling,
         edit_file,
@@ -2646,7 +2702,7 @@ def ticket_request_help(
     as_json: bool,
 ) -> None:
     """Record that this Ticket needs help and send the stdin message to one recipient."""
-    worker_request_help.callback(
+    _request_ticket_help(
         ticket_id,
         owner,
         chief,
@@ -2691,10 +2747,7 @@ def sprint_outcome_remove(sprint_id: str, outcome_id: str, as_json: bool) -> Non
     _commit_outcome("DELETE", sprint_id, outcome_id, as_json)
 
 
-@sprint_outcome.command("list")
-@click.argument("sprint_id")
-@json_option
-def sprint_outcome_list(sprint_id: str, as_json: bool) -> None:
+def _list_sprint_items(sprint_id: str, as_json: bool) -> None:
     sid = sprint_value_for_write(sprint_id, as_json)
     if sid is None:
         http.fail_validation("tracking requires a Sprint", as_json)
@@ -2706,6 +2759,37 @@ def sprint_outcome_list(sprint_id: str, as_json: bool) -> None:
             result["outcome_groups"],
             lambda group: f"{group['outcome']['id']} {group['outcome']['title']}",
         ),
+    )
+
+
+@sprint_outcome.command("list")
+@click.argument("sprint_id")
+@json_option
+def sprint_outcome_list(sprint_id: str, as_json: bool) -> None:
+    _list_sprint_items(sprint_id, as_json)
+
+
+def _carry_sprint_item(
+    source_sprint_id: str,
+    outcome_id: str,
+    target_sprint_id: str,
+    ticket_ids: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    source = sprint_value_for_write(source_sprint_id, as_json)
+    target = sprint_value_for_write(target_sprint_id, as_json)
+    if source is None or target is None:
+        http.fail_validation("carry requires source and target Sprints", as_json)
+    result = http.send(
+        "POST",
+        f"/api/sprints/{source}/outcomes/{outcome_id}/carry",
+        as_json=as_json,
+        json_body={"target_sprint_id": target, "ticket_ids": list(ticket_ids)},
+    )
+    http.emit(
+        result,
+        as_json,
+        f"{outcome_id} committed to {target}; {len(ticket_ids)} Tickets selected",
     )
 
 
@@ -2727,20 +2811,8 @@ def sprint_outcome_carry(
     ticket_ids: tuple[str, ...],
     as_json: bool,
 ) -> None:
-    source = sprint_value_for_write(source_sprint_id, as_json)
-    target = sprint_value_for_write(target_sprint_id, as_json)
-    if source is None or target is None:
-        http.fail_validation("carry requires source and target Sprints", as_json)
-    result = http.send(
-        "POST",
-        f"/api/sprints/{source}/outcomes/{outcome_id}/carry",
-        as_json=as_json,
-        json_body={"target_sprint_id": target, "ticket_ids": list(ticket_ids)},
-    )
-    http.emit(
-        result,
-        as_json,
-        f"{outcome_id} committed to {target}; {len(ticket_ids)} Tickets selected",
+    _carry_sprint_item(
+        source_sprint_id, outcome_id, target_sprint_id, ticket_ids, as_json
     )
 
 
@@ -2767,7 +2839,7 @@ def sprint_remove_item(sprint_id: str, item_id: str, as_json: bool) -> None:
 @json_option
 def sprint_list_items(sprint_id: str, as_json: bool) -> None:
     """List the Sprint Items committed to one Sprint."""
-    sprint_outcome_list.callback(sprint_id, as_json)
+    _list_sprint_items(sprint_id, as_json)
 
 
 @sprint.command("carry-item")
@@ -2789,9 +2861,7 @@ def sprint_carry_item(
     as_json: bool,
 ) -> None:
     """Carry one Sprint Item and selected unfinished Tickets to another Sprint."""
-    sprint_outcome_carry.callback(
-        source_sprint_id, item_id, target_sprint_id, ticket_ids, as_json
-    )
+    _carry_sprint_item(source_sprint_id, item_id, target_sprint_id, ticket_ids, as_json)
 
 
 _PUBLIC_COMMAND_HELP = {
