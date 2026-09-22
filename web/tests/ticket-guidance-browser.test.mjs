@@ -154,6 +154,19 @@ with sync_playwright() as p:
     assert leash.locator('[data-scope-holder]').count() == 0
     leash.locator('[data-scope-ceiling]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    # A stage chosen and then abandoned is a draft. Escape discards it: nothing is sent,
+    # the shut trigger still reads the saved ceiling, and the list ticks it again.
+    leash.get_by_role('listbox').press('End')
+    leash.get_by_role('listbox').press('Enter')
+    expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    leash.get_by_role('listbox').press('Escape')
+    expect(leash.get_by_role('listbox')).to_have_count(0)
+    page.wait_for_timeout(200)
+    assert ceiling_writes == [{'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}], ceiling_writes
+    assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Success · then me'
+    leash.locator('[data-scope-ceiling]').click()
+    expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    assert leash.locator('[role="option"][aria-selected="true"]').get_attribute('data-ceiling-picker-choice') == 'needs_success_condition'
     # The rail names both halves and reaches either one directly. What each is set to is
     # on the trigger above the panel.
     assert 'Until Success' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
@@ -280,6 +293,22 @@ with sync_playwright() as p:
     assert approve_row.locator('[data-scope-ceiling]').count() == 1
     approve_row.locator('[data-scope-ceiling]').click()
     expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    # The reviewer can be answered first. Approving still needs a stage, so the panel
+    # asks for the half that is missing rather than taking a default.
+    approve_row.locator('[data-ceiling-part="holder"]').click()
+    approve_row.locator('[data-ceiling-picker-choice="chief"]').click()
+    expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    assert page.locator('[data-approval-block][data-field="success_condition"] [data-accept]').is_disabled()
+    # Dismissed by a click elsewhere, that reviewer was never chosen: the control keeps
+    # nothing, and reopening offers the Ticket's own reviewer again.
+    page.locator('[data-approval-block][data-field="success_condition"] [data-content-section="proposal"]').click()
+    expect(approve_row.get_by_role('listbox')).to_have_count(0)
+    assert approve_row.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Choose ceiling · then me'
+    assert page.locator('[data-approval-block][data-field="success_condition"] [data-accept]').is_disabled()
+    approve_row.locator('[data-scope-ceiling]').click()
+    approve_row.locator('[data-ceiling-part="holder"]').click()
+    assert approve_row.locator('[role="option"][aria-selected="true"]').get_attribute('data-ceiling-picker-choice') == 'owner'
+    approve_row.locator('[data-ceiling-part="ceiling"]').click()
     approve_row.locator('[data-ceiling-picker-choice="done"]').click()
     expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     assert [option.get_attribute('data-ceiling-picker-choice') for option in approve_row.locator('[role="option"]').all()] == [

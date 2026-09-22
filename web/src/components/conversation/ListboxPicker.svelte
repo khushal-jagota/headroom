@@ -30,6 +30,7 @@
     panelBusy = false,
     controller = $bindable(),
     onOpen,
+    onClose,
     onChoose,
     triggerContent,
     beforeList,
@@ -57,6 +58,8 @@
     panelBusy?: boolean;
     controller?: ListboxPickerController;
     onOpen?: () => void;
+    /** Every close, dismissal or not. A picker with a draft discards it here. */
+    onClose?: () => void;
     onChoose: (value: string) => void;
     triggerContent: Snippet<[boolean]>;
     beforeList?: Snippet;
@@ -91,6 +94,7 @@
 
   function close(returnFocus = true): void {
     if (returnFocus) trigger?.focus();
+    if (open) onClose?.();
     open = false;
     typeahead = "";
     if (typeaheadTimer !== undefined) clearTimeout(typeaheadTimer);

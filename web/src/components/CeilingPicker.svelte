@@ -39,8 +39,13 @@
     onComplete?: (change: { ceiling?: string; holder: Principal | null }) => void;
   } = $props();
 
+  // Everything the reader is part-way through is a draft. Nothing reaches the bound
+  // values or `onComplete` until both halves are answered, so a dismissed panel leaves
+  // the Ticket exactly as it found it and the closed trigger never shows an unsaved
+  // choice.
   let showing = $state<"ceiling" | "holder">("ceiling");
-  let selectedCeiling = $state<string | null>(null);
+  let draftCeiling = $state<string | null>(null);
+  let draftHolder = $state<Principal | null>(null);
   let ceilingTouched = $state(false);
   let holderTouched = $state(false);
   let picker = $state<ListboxPickerController>(null!);
@@ -53,19 +58,20 @@
     value: option.value, name: option.label
   })));
   let rows = $derived((showing === "ceiling" ? ceilingOptions : holders) as readonly ListboxPickerItem[]);
-  let selectedValue = $derived(showing === "ceiling" ? selectedCeiling : holderValue(holder));
-  // What the control reports right now: the host's value until the user picks another.
-  let shownCeiling = $derived(ceilingTouched ? selectedCeiling : ceiling);
-  let ceilingName = $derived(ceilingOptions.find((option) => option.value === shownCeiling)?.name ?? null);
+  let draftHolderValue = $derived(holderValue(draftHolder ?? holder));
+  let selectedValue = $derived(showing === "ceiling" ? draftCeiling : draftHolderValue);
+  // The trigger reports the saved ceiling, never a draft.
+  let ceilingName = $derived(ceilingOptions.find((option) => option.value === ceiling)?.name ?? null);
   let holderName = $derived(holders.find((option) => option.value === holderValue(holder))?.name ?? "Choose holder");
 
-  $effect(() => {
-    if (!lifecycle) return;
-    if (selectedCeiling === null) selectedCeiling = ceiling ?? preferredScopeCeilingFor(lifecycle, newStage) ?? "none";
-  });
+  function preferredCeiling(): string | null {
+    return ceiling ?? preferredScopeCeilingFor(lifecycle, newStage) ?? "none";
+  }
 
+  // Drafts start and end with the panel, so a dismissal discards them.
   function reset(): void {
-    selectedCeiling = ceiling ?? preferredScopeCeilingFor(lifecycle, newStage) ?? "none";
+    draftCeiling = preferredCeiling();
+    draftHolder = null;
     ceilingTouched = false;
     holderTouched = false;
     showing = stageLocked ? "holder" : "ceiling";
@@ -74,27 +80,28 @@
   function show(part: "ceiling" | "holder"): void {
     if (part === "ceiling" && stageLocked) return;
     showing = part;
-    void tick().then(() => picker.setActiveValue(part === "ceiling" ? selectedCeiling : holderValue(holder)));
+    void tick().then(() => picker.setActiveValue(part === "ceiling" ? draftCeiling : draftHolderValue));
   }
 
-  // One save, carrying only what the user answered in this visit to the panel.
+  // The one place a draft is published: both halves are answered, so the bound values
+  // and the host's save happen together.
   function commit(): void {
-    if (ceilingTouched && selectedCeiling !== null) ceiling = selectedCeiling;
-    onComplete?.({
-      ...(ceilingTouched && selectedCeiling !== null ? { ceiling: selectedCeiling } : {}),
-      holder
-    });
+    const nextHolder = draftHolder ?? holder;
+    const nextCeiling = ceilingTouched ? draftCeiling : null;
+    if (nextCeiling !== null) ceiling = nextCeiling;
+    holder = nextHolder;
+    onComplete?.({ ...(nextCeiling !== null ? { ceiling: nextCeiling } : {}), holder: nextHolder });
     picker.close(false);
   }
 
   function choose(value: string): void {
     if (showing === "ceiling") {
-      selectedCeiling = value;
+      draftCeiling = value;
       ceilingTouched = true;
       if (holderTouched) return commit();
       return show("holder");
     }
-    holder = holderFromValue(value, sprintItem);
+    draftHolder = holderFromValue(value, sprintItem);
     holderTouched = true;
     // The approve row starts with no ceiling at all and cannot approve without one, so
     // the unanswered half is asked for rather than guessed.
@@ -115,6 +122,7 @@
   panelAttributes={{ "data-ceiling-picker-panel": "" }}
   bind:controller={picker}
   onOpen={reset}
+  onClose={reset}
   onChoose={choose}
   optionAttributes={(choice) => ({
     "data-ceiling-picker-choice": choice.value,
