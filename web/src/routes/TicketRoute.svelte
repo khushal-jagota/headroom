@@ -449,10 +449,11 @@
                     holder={detail.ceiling_holder}
                     sprintItem={ticketSprintItem}
                     stageLocked={detail.pending_proposal !== null}
-                    onComplete={(ceiling, holder) => void updateScope({
-                      ceiling,
-                      ceiling_holder: holder
-                    })}
+                    onComplete={(ceiling, holder) => void updateScope(
+                      detail.pending_proposal === null
+                        ? { ceiling, ceiling_holder: holder }
+                        : { ceiling_holder: holder }
+                    )}
                   />
                 </div>
               </details>

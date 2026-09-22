@@ -88,7 +88,7 @@
   listLabel={showing === "ceiling" ? "Ceiling stage" : "Who holds the ceiling"}
   kind="compact"
   attributes={{ "data-ceiling-picker": "" }}
-  triggerAttributes={{ "data-scope-ceiling": "" }}
+  triggerAttributes={stageLocked ? { "data-scope-holder": "" } : { "data-scope-ceiling": "" }}
   panelAttributes={{ "data-ceiling-picker-panel": "" }}
   bind:controller={picker}
   onOpen={reset}
