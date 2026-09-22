@@ -83,14 +83,19 @@
     void tick().then(() => picker.setActiveValue(part === "ceiling" ? draftCeiling : draftHolderValue));
   }
 
-  // The one place a draft is published: both halves are answered, so the bound values
-  // and the host's save happen together.
+  // The one place a draft is published. A host that saves owns the value: it is told
+  // once and the control reads back whatever the Ticket then has, so a refused save
+  // cannot leave this trigger claiming a ceiling the Ticket never took. A host that only
+  // binds, like the approve row, has nowhere else to keep it, so it is written here.
   function commit(): void {
     const nextHolder = draftHolder ?? holder;
     const nextCeiling = ceilingTouched ? draftCeiling : null;
-    if (nextCeiling !== null) ceiling = nextCeiling;
-    holder = nextHolder;
-    onComplete?.({ ...(nextCeiling !== null ? { ceiling: nextCeiling } : {}), holder: nextHolder });
+    if (onComplete) {
+      onComplete({ ...(nextCeiling !== null ? { ceiling: nextCeiling } : {}), holder: nextHolder });
+    } else {
+      if (nextCeiling !== null) ceiling = nextCeiling;
+      holder = nextHolder;
+    }
     picker.close(false);
   }
 
@@ -104,8 +109,9 @@
     draftHolder = holderFromValue(value, sprintItem);
     holderTouched = true;
     // The approve row starts with no ceiling at all and cannot approve without one, so
-    // the unanswered half is asked for rather than guessed.
-    if (!ceilingTouched && ceiling === null) return show("ceiling");
+    // the unanswered half is asked for rather than guessed. A held stage cannot be
+    // asked for, so there the reviewer alone completes the choice.
+    if (!ceilingTouched && ceiling === null && !stageLocked) return show("ceiling");
     commit();
   }
 </script>

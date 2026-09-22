@@ -89,15 +89,22 @@
   function setActiveValue(value: string | null): void {
     const index = value === null ? -1 : items.findIndex((item) => item.value === value);
     activeIndex = Math.max(0, index);
+    // A rail switch puts different words in the list. Letters typed at the old one must
+    // not join letters typed at the new one, or the match silently finds nothing.
+    forgetTypeahead();
     focusList();
+  }
+
+  function forgetTypeahead(): void {
+    typeahead = "";
+    if (typeaheadTimer !== undefined) clearTimeout(typeaheadTimer);
   }
 
   function close(returnFocus = true): void {
     if (returnFocus) trigger?.focus();
     if (open) onClose?.();
     open = false;
-    typeahead = "";
-    if (typeaheadTimer !== undefined) clearTimeout(typeaheadTimer);
+    forgetTypeahead();
   }
 
   controller = { close, focusList, setActiveValue };

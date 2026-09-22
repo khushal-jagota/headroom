@@ -134,8 +134,11 @@ with sync_playwright() as p:
     expect(parked_leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     assert parked_leash.locator('[data-ceiling-picker-locked]').count() == 1
     assert parked_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
-    parked_leash.locator('[data-ceiling-part="ceiling"]').click(force=True)
-    expect(parked_leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    # The held half is not reachable from the keyboard either: ArrowLeft out of the list
+    # lands on the reviewer row, because a disabled row is not one of the panel's actions.
+    parked_leash.get_by_role('listbox').press('ArrowLeft')
+    assert page.evaluate("document.activeElement.getAttribute('data-ceiling-part')") == 'holder'
+    page.keyboard.press('ArrowRight')
     parked_leash.locator('[data-ceiling-picker-choice="owner"]').click()
     for _ in range(100):
         if ceiling_writes: break
@@ -200,15 +203,20 @@ with sync_playwright() as p:
         page.wait_for_timeout(50)
     assert ceiling_writes[-1] == {'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}, ceiling_writes
 
-    # Opening and dismissing writes nothing, and the panel reports canonical values.
+    # A reviewer chosen and then abandoned is discarded too, and letters typed at one
+    # half never join letters typed at the other.
     leash.locator(':scope > summary').click()
     leash.locator('[data-scope-ceiling]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
-    leash.get_by_role('listbox').press('End')
+    leash.get_by_role('listbox').press('d')
+    leash.locator('[data-ceiling-part="holder"]').click()
+    leash.get_by_role('listbox').press('c')
+    assert leash.locator('[data-listbox-picker-active]').get_attribute('data-ceiling-picker-choice') == 'chief'
     leash.get_by_role('listbox').press('Escape')
     expect(leash.get_by_role('listbox')).to_have_count(0)
     page.wait_for_timeout(200)
     assert len(ceiling_writes) == 3, ceiling_writes
+    assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Success · then me'
     assert page.locator('[data-copy], [data-ticket-takeover-toggle]').count() == 0
     assert placement_writes == []
     assert 'Copy' not in page.locator('.ticket-operating').inner_text()
