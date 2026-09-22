@@ -17,6 +17,8 @@
     type ListboxPickerController,
     type ListboxPickerItem
   } from "./ListboxPicker.svelte";
+  import PickerRail from "./PickerRail.svelte";
+  import PickerRailRow from "./PickerRailRow.svelte";
   import UsageRings from "./UsageRings.svelte";
 
   let {
@@ -177,7 +179,7 @@
   {keepOpenWhenDisabled}
   label={`${label}: ${view.backendName} ${view.face}`.trim()}
   listLabel={showing === "models" ? "Models" : "Reasoning efforts"}
-  kind="model"
+  kind="rail"
   {below}
   attributes={{ "data-conversation-model-picker": "", ...attributes }}
   panelBusy={pickerBusy}
@@ -200,81 +202,72 @@
     {#if view.face}<span class="model-picker-face">{view.face}</span>{/if}
   {/snippet}
   {#snippet beforeList()}
-    <div class="model-picker-rail" data-conversation-backend-rail role="group" aria-label="Backend and reasoning">
-        {#each view.backends as backend (backend.key)}
-          <button
-            type="button"
-            class="model-picker-rail-row"
-            class:held={backend.selected}
-            class:on={backend.selected && showing === "models"}
-            class:dim={backend.unavailableReason !== null}
-            data-conversation-backend={backend.key}
-            data-conversation-backend-showing={backend.selected ? "true" : undefined}
-            aria-pressed={backend.selected && showing === "models"}
-            aria-disabled={backend.unavailableReason !== null}
-            disabled={pickerBusy}
-            tabindex="-1"
-            data-listbox-picker-action
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => chooseBackend(backend.key, backend.unavailableReason)}
-          >
-            <BackendMark backend={backend.key} />
-            <span>{backend.name}</span>
+    <PickerRail label="Backend and reasoning" attributes={{ "data-conversation-backend-rail": "" }}>
+      {#each view.backends as backend (backend.key)}
+        <PickerRailRow
+          held={backend.selected}
+          on={backend.selected && showing === "models"}
+          dim={backend.unavailableReason !== null}
+          disabled={pickerBusy}
+          label={backend.name}
+          attributes={{
+            "data-conversation-backend": backend.key,
+            "data-conversation-backend-showing": backend.selected ? "true" : undefined,
+            "aria-pressed": backend.selected && showing === "models" ? "true" : "false",
+            "aria-disabled": backend.unavailableReason !== null ? "true" : undefined
+          }}
+          onclick={() => chooseBackend(backend.key, backend.unavailableReason)}
+        >
+          {#snippet icon()}<BackendMark backend={backend.key} />{/snippet}
+          {#snippet trailing()}
             {#if showUsage && showsBackendUsage(backend.key)}
               <UsageRings windows={snapshotFor(backend.key)?.cached_usage?.windows ?? []} compact />
             {/if}
-          </button>
-        {/each}
-        <div class="model-picker-tools">
-          {#if showing === "efforts"}
-            <button
-              type="button"
-              class="model-picker-rail-row"
-              data-conversation-picker-models
-              aria-pressed={false}
-              disabled={pickerBusy}
-              tabindex="-1"
-              data-listbox-picker-action
-              onmousedown={(event) => event.preventDefault()}
-              onclick={showModels}
-            >
-              <span aria-hidden="true">←</span>
-              <span>Models</span>
-            </button>
-          {/if}
-          <button
-            type="button"
-            class="model-picker-rail-row"
-            data-conversation-picker-refresh
-            aria-busy={refreshControl.busy}
+          {/snippet}
+        </PickerRailRow>
+      {/each}
+      <div class="model-picker-tools">
+        {#if showing === "efforts"}
+          <PickerRailRow
             disabled={pickerBusy}
-            tabindex="-1"
-            data-listbox-picker-action
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => void runRefresh()}
+            label="Models"
+            attributes={{ "data-conversation-picker-models": "", "aria-pressed": "false" }}
+            onclick={showModels}
           >
+            {#snippet icon()}<span aria-hidden="true">←</span>{/snippet}
+          </PickerRailRow>
+        {/if}
+        <PickerRailRow
+          disabled={pickerBusy}
+          label={refreshControl.label}
+          attributes={{
+            "data-conversation-picker-refresh": "",
+            "aria-busy": refreshControl.busy ? "true" : "false"
+          }}
+          onclick={() => void runRefresh()}
+        >
+          {#snippet icon()}
             <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M19 8a8 8 0 1 0 1 7M19 3v5h-5" /></svg>
-            <span>{refreshControl.label}</span>
-          </button>
-          <button
-            type="button"
-            class="model-picker-rail-row"
-            class:on={showing === "efforts"}
-            class:dim={view.reasoningUnavailableReason !== null}
-            data-conversation-picker-reasoning
-            aria-pressed={showing === "efforts"}
-            aria-disabled={view.reasoningUnavailableReason !== null}
-            disabled={pickerBusy}
-            tabindex="-1"
-            data-listbox-picker-action
-            onmousedown={(event) => event.preventDefault()}
-            onclick={showReasoning}
-          >
+          {/snippet}
+        </PickerRailRow>
+        <PickerRailRow
+          on={showing === "efforts"}
+          dim={view.reasoningUnavailableReason !== null}
+          disabled={pickerBusy}
+          label="Reasoning"
+          attributes={{
+            "data-conversation-picker-reasoning": "",
+            "aria-pressed": showing === "efforts" ? "true" : "false",
+            "aria-disabled": view.reasoningUnavailableReason !== null ? "true" : undefined
+          }}
+          onclick={showReasoning}
+        >
+          {#snippet icon()}
             <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3.5 14h3.4v6.5H3.5Zm6.8-4h3.4v10.5h-3.4Zm6.8-6.5h3.4v17h-3.4Z" /></svg>
-            <span>Reasoning</span>
-          </button>
-        </div>
-    </div>
+          {/snippet}
+        </PickerRailRow>
+      </div>
+    </PickerRail>
   {/snippet}
   {#snippet optionContent(choice, selected)}
     <span class="model-picker-choice-name">{choice.name}</span>
@@ -296,20 +289,6 @@
 
 <style>
   .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-picker-rail { display: flex; flex-direction: column; border-inline-end: var(--border-hairline) solid var(--border-color); padding-block: var(--space-1); }
-  .model-picker-rail-row {
-    display: flex; align-items: center; gap: var(--space-2); width: 100%; background: transparent;
-    border: 0; color: var(--text-faint); cursor: pointer; font-family: var(--font-mono);
-    font-size: var(--type-xs); padding: var(--space-2) var(--space-3); text-align: left; white-space: nowrap;
-  }
-  .model-picker-rail-row > span:nth-child(2) { flex: 1; }
-  .model-picker-rail-row:hover { background-image: var(--interaction-hover); color: var(--text-muted); }
-  .model-picker-rail-row.held { color: var(--text-strong); }
-  .model-picker-rail-row.on { background: var(--surface-recessed); color: var(--text-strong); }
-  .model-picker-rail-row.dim { color: var(--text-faintest); opacity: .45; }
-  .model-picker-rail-row.dim:hover { background: transparent; color: var(--text-faintest); }
-  .model-picker-rail-row.dim :global(.model-picker-mark:not(.hermes)) { filter: grayscale(1); }
-  :global(.listbox-picker-panel[aria-busy="true"]) .model-picker-rail-row { cursor: progress; opacity: .55; }
   .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }
   .model-picker-choice-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -128,9 +128,13 @@ with sync_playwright() as p:
     assert 'then Chief' in parked_leash.locator('[data-leash-face]').inner_text()
     assert 'Until' not in parked_leash.locator('[data-leash-face]').inner_text()
     parked_leash.locator(':scope > summary').click()
-    assert parked_leash.locator('[data-scope-ceiling]').count() == 0
-    assert parked_leash.locator('[data-scope-holder]').count() == 1
-    parked_leash.locator('[data-scope-holder]').click()
+    assert parked_leash.locator('[data-scope-ceiling]').count() == 1
+    parked_leash.locator('[data-scope-ceiling]').click()
+    # The panel opens on the reviewer, and says why the other half cannot be touched.
+    expect(parked_leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    assert parked_leash.locator('[data-ceiling-picker-locked]').count() == 1
+    assert parked_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
+    parked_leash.locator('[data-ceiling-part="ceiling"]').click(force=True)
     expect(parked_leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     parked_leash.locator('[data-ceiling-picker-choice="owner"]').click()
     for _ in range(100):
@@ -150,14 +154,18 @@ with sync_playwright() as p:
     assert leash.locator('[data-scope-holder]').count() == 0
     leash.locator('[data-scope-ceiling]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
-    leash.get_by_role('listbox').press('End')
-    leash.get_by_role('listbox').press('Enter')
+    # The rail names both halves and reaches either one directly. What each is set to is
+    # on the trigger above the panel.
+    assert 'Until Success' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
+    assert 'then me' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
+    leash.locator('[data-ceiling-part="holder"]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
-    assert leash.locator('[data-ceiling-picker-back]').count() == 1
-    leash.locator('[data-ceiling-picker-back]').click()
+    leash.locator('[data-ceiling-part="ceiling"]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
     leash.get_by_role('listbox').press('End')
     leash.get_by_role('listbox').press('Enter')
+    # A stage choice still leads to the reviewer, so setting both stays one sequence.
+    expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     leash.get_by_role('listbox').press('c')
     leash.get_by_role('listbox').press('Enter')
     expect(leash.get_by_role('listbox')).to_have_count(0)
@@ -165,6 +173,29 @@ with sync_playwright() as p:
         if len(ceiling_writes) == 2: break
         page.wait_for_timeout(50)
     assert ceiling_writes[-1] == {'ceiling': 'done', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}}, ceiling_writes
+
+    # A reviewer changed on its own writes the reviewer alone. The ceiling is not sent,
+    # so a Ticket cannot have its ceiling moved by a reader who only changed the queue.
+    leash.locator(':scope > summary').click()
+    leash.locator('[data-scope-ceiling]').click()
+    leash.locator('[data-ceiling-part="holder"]').click()
+    expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    leash.locator('[data-ceiling-picker-choice="owner"]').click()
+    expect(leash.get_by_role('listbox')).to_have_count(0)
+    for _ in range(100):
+        if len(ceiling_writes) == 3: break
+        page.wait_for_timeout(50)
+    assert ceiling_writes[-1] == {'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}, ceiling_writes
+
+    # Opening and dismissing writes nothing, and the panel reports canonical values.
+    leash.locator(':scope > summary').click()
+    leash.locator('[data-scope-ceiling]').click()
+    expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    leash.get_by_role('listbox').press('End')
+    leash.get_by_role('listbox').press('Escape')
+    expect(leash.get_by_role('listbox')).to_have_count(0)
+    page.wait_for_timeout(200)
+    assert len(ceiling_writes) == 3, ceiling_writes
     assert page.locator('[data-copy], [data-ticket-takeover-toggle]').count() == 0
     assert placement_writes == []
     assert 'Copy' not in page.locator('.ticket-operating').inner_text()
@@ -222,9 +253,9 @@ with sync_playwright() as p:
     assert kickoff_leash.count() == 1
     assert kickoff_leash.locator('[data-leash-face]').inner_text().strip() == 'then Chief'
     kickoff_leash.locator(':scope > summary').click()
-    assert kickoff_leash.locator('[data-scope-ceiling]').count() == 0
-    assert kickoff_leash.locator('[data-scope-holder]').count() == 1
-    kickoff_leash.locator('[data-scope-holder]').click()
+    assert kickoff_leash.locator('[data-scope-ceiling]').count() == 1
+    kickoff_leash.locator('[data-scope-ceiling]').click()
+    assert kickoff_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
     # No Sprint Item on this one, so the Item option is absent.
     assert [option.get_attribute('data-ceiling-picker-choice') for option in kickoff_leash.locator('[role="option"]').all()] == ['owner', 'chief']
     kickoff_leash.get_by_role('listbox').press('Escape')

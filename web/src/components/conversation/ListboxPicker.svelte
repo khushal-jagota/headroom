@@ -43,7 +43,7 @@
     keepOpenWhenDisabled?: boolean;
     label: string;
     listLabel?: string;
-    kind?: "model" | "compact";
+    kind?: "rail" | "compact";
     below?: boolean;
     align?: "left" | "right";
     attributes?: Record<string, string | undefined>;
@@ -252,7 +252,7 @@
   }
 </script>
 
-<div class="listbox-picker" class:model={kind === "model"} bind:this={root} tabindex="-1" {...attributes}>
+<div class="listbox-picker" bind:this={root} tabindex="-1" {...attributes}>
   <button
     type="button"
     class="listbox-picker-trigger"
@@ -274,7 +274,7 @@
   {#if open}
     <div
       class="listbox-picker-panel"
-      class:model={kind === "model"}
+      class:rail={kind === "rail"}
       class:compact={kind === "compact"}
       class:below
       class:right={align === "right"}
@@ -343,7 +343,7 @@
     background: var(--surface-2); border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-lg); overflow: hidden;
   }
-  .listbox-picker-panel.model {
+  .listbox-picker-panel.rail {
     display: grid; grid-template-columns: auto minmax(0, 1fr); width: 296px;
     max-width: calc(100vw - var(--space-4) * 2);
   }
@@ -367,6 +367,6 @@
   .listbox-picker-tick { flex: none; font-family: var(--font-mono); font-size: var(--type-xs); }
   .listbox-picker-panel[aria-busy="true"] .listbox-picker-option { cursor: progress; opacity: .55; }
   @media (max-width: 620px) {
-    .listbox-picker-panel.model { width: min(274px, calc(100vw - var(--space-4) * 2)); }
+    .listbox-picker-panel.rail { width: min(274px, calc(100vw - var(--space-4) * 2)); }
   }
 </style>

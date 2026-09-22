@@ -4,16 +4,19 @@
     type ListboxPickerController,
     type ListboxPickerItem
   } from "./conversation/ListboxPicker.svelte";
+  import PickerRail from "./conversation/PickerRail.svelte";
+  import PickerRailRow from "./conversation/PickerRailRow.svelte";
   import { ceilingOptionsFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import { holderOptionsFor, holderValue, holderFromValue } from "../lib/ceilingHolder";
   import type { Principal } from "../lib/types";
 
   // The whole ceiling in one control: how far the Ticket may go, and who is asked when
   // it gets there. It reads "Until Approach · then me", and the approve row is where a
-  // ceiling is set with both halves live. The Ticket page leash and the Backlog create
-  // form are their own markup because they write on change rather than on a button, but
-  // all three take their words and their options from `ceilingHolder.ts`, so a change
-  // there lands on every one of them.
+  // ceiling is set with both halves live. The two halves sit in a rail on the left, the
+  // same shape as the model picker, so either one can be edited on its own — changing
+  // the reviewer never touches the ceiling. The Backlog create form is its own markup
+  // because it writes on change and offers no ceiling, but it takes its words and its
+  // options from `ceilingHolder.ts`, so a change there lands on both.
   let {
     newStage,
     lifecycle = null,
@@ -21,6 +24,7 @@
     holder = $bindable<Principal | null>(null),
     sprintItem = null,
     stageLocked = false,
+    below = false,
     onComplete
   }: {
     newStage: string | null;
@@ -29,11 +33,16 @@
     holder?: Principal | null;
     sprintItem?: { id: string; title: string } | null;
     stageLocked?: boolean;
-    onComplete?: (ceiling: string, holder: Principal | null) => void;
+    /** Open the panel downward, for a host that sits under the page header. */
+    below?: boolean;
+    /** Only the halves the user set. A reviewer chosen on its own carries no ceiling. */
+    onComplete?: (change: { ceiling?: string; holder: Principal | null }) => void;
   } = $props();
 
   let showing = $state<"ceiling" | "holder">("ceiling");
   let selectedCeiling = $state<string | null>(null);
+  let ceilingTouched = $state(false);
+  let holderTouched = $state(false);
   let picker = $state<ListboxPickerController>(null!);
   let ceilingOptions = $derived([
     { value: "none", name: "No further" },
@@ -45,7 +54,9 @@
   })));
   let rows = $derived((showing === "ceiling" ? ceilingOptions : holders) as readonly ListboxPickerItem[]);
   let selectedValue = $derived(showing === "ceiling" ? selectedCeiling : holderValue(holder));
-  let ceilingName = $derived(ceilingOptions.find((option) => option.value === (ceiling ?? selectedCeiling))?.name ?? "Choose ceiling");
+  // What the control reports right now: the host's value until the user picks another.
+  let shownCeiling = $derived(ceilingTouched ? selectedCeiling : ceiling);
+  let ceilingName = $derived(ceilingOptions.find((option) => option.value === shownCeiling)?.name ?? null);
   let holderName = $derived(holders.find((option) => option.value === holderValue(holder))?.name ?? "Choose holder");
 
   $effect(() => {
@@ -55,40 +66,52 @@
 
   function reset(): void {
     selectedCeiling = ceiling ?? preferredScopeCeilingFor(lifecycle, newStage) ?? "none";
+    ceilingTouched = false;
+    holderTouched = false;
     showing = stageLocked ? "holder" : "ceiling";
+  }
+
+  function show(part: "ceiling" | "holder"): void {
+    if (part === "ceiling" && stageLocked) return;
+    showing = part;
+    void tick().then(() => picker.setActiveValue(part === "ceiling" ? selectedCeiling : holderValue(holder)));
+  }
+
+  // One save, carrying only what the user answered in this visit to the panel.
+  function commit(): void {
+    if (ceilingTouched && selectedCeiling !== null) ceiling = selectedCeiling;
+    onComplete?.({
+      ...(ceilingTouched && selectedCeiling !== null ? { ceiling: selectedCeiling } : {}),
+      holder
+    });
+    picker.close(false);
   }
 
   function choose(value: string): void {
     if (showing === "ceiling") {
       selectedCeiling = value;
-      showing = "holder";
-      void tick().then(() => picker.setActiveValue(holderValue(holder)));
-      return;
+      ceilingTouched = true;
+      if (holderTouched) return commit();
+      return show("holder");
     }
-    const nextCeiling = selectedCeiling ?? ceiling;
-    if (nextCeiling === null) return;
-    const nextHolder = holderFromValue(value, sprintItem);
-    ceiling = nextCeiling;
-    holder = nextHolder;
-    onComplete?.(nextCeiling, nextHolder);
-    picker.close(false);
-  }
-
-  function back(): void {
-    if (stageLocked) return;
-    showing = "ceiling";
-    void tick().then(() => picker.setActiveValue(selectedCeiling));
+    holder = holderFromValue(value, sprintItem);
+    holderTouched = true;
+    // The approve row starts with no ceiling at all and cannot approve without one, so
+    // the unanswered half is asked for rather than guessed.
+    if (!ceilingTouched && ceiling === null) return show("ceiling");
+    commit();
   }
 </script>
 
 <ListboxPicker
   items={rows}
   {selectedValue}
-  label={`Until ${ceilingName} · then ${holderName}`}
+  label={`Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`}
   listLabel={showing === "ceiling" ? "Ceiling stage" : "Who holds the ceiling"}
-  kind="compact"
+  kind="rail"
+  {below}
   attributes={{ "data-ceiling-picker": "" }}
-  triggerAttributes={stageLocked ? { "data-scope-holder": "" } : { "data-scope-ceiling": "" }}
+  triggerAttributes={{ "data-scope-ceiling": "" }}
   panelAttributes={{ "data-ceiling-picker-panel": "" }}
   bind:controller={picker}
   onOpen={reset}
@@ -99,19 +122,49 @@
   })}
 >
   {#snippet triggerContent()}
-    <span>Until {ceilingName} · then {holderName}</span>
+    <span>Until {ceilingName ?? "Choose ceiling"} · then {holderName}</span>
   {/snippet}
   {#snippet beforeList()}
-    {#if showing === "holder" && !stageLocked}
-      <button type="button" class="ceiling-picker-back" data-ceiling-picker-back data-listbox-picker-action onmousedown={(event) => event.preventDefault()} onclick={back}>← Ceiling stage</button>
-    {/if}
+    <PickerRail label="Parts of the ceiling" attributes={{ "data-ceiling-rail": "" }}>
+      <!-- The rail names the halves. What each one is set to is in the trigger right
+           above the panel, and on the ticked row in the list. -->
+      <PickerRailRow
+        on={showing === "ceiling"}
+        dim={stageLocked}
+        disabled={stageLocked}
+        label="How far"
+        attributes={{
+          "data-ceiling-part": "ceiling",
+          "aria-pressed": showing === "ceiling" ? "true" : "false",
+          "aria-disabled": stageLocked ? "true" : undefined
+        }}
+        onclick={() => show("ceiling")}
+      />
+      <PickerRailRow
+        on={showing === "holder"}
+        label="Who reviews"
+        attributes={{
+          "data-ceiling-part": "holder",
+          "aria-pressed": showing === "holder" ? "true" : "false"
+        }}
+        onclick={() => show("holder")}
+      />
+    </PickerRail>
   {/snippet}
   {#snippet optionContent(choice, selected)}
     <span>{choice.name}</span>
   {/snippet}
+  {#snippet afterList()}
+    {#if stageLocked}
+      <div class="ceiling-picker-foot" data-ceiling-picker-locked>A parked proposal holds the stage.</div>
+    {/if}
+  {/snippet}
 </ListboxPicker>
 
 <style>
-  .ceiling-picker-back { width: 100%; border: 0; border-bottom: var(--border-hairline) solid var(--border-color); background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; font-size: var(--type-xs); padding: var(--space-2) var(--space-3); text-align: left; }
-  .ceiling-picker-back:hover { background-image: var(--interaction-hover); color: var(--text-strong); }
+  .ceiling-picker-foot {
+    grid-column: 1 / -1; border-top: var(--border-hairline) solid var(--border-color);
+    background: var(--surface-recessed); color: var(--text-faint); font-size: var(--type-xs);
+    line-height: 1.45; padding: var(--space-2) var(--space-3);
+  }
 </style>
