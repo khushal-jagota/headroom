@@ -34,6 +34,10 @@ from planner.conversation.storage import (
 )
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
+from planner.notifications.attention import (
+    ConversationAttentionSnapshot,
+    conversation_attention_snapshot,
+)
 
 A_PROMPT = PromptEventPayload(
     content=text_message_content("hello"),
@@ -295,7 +299,7 @@ def test_attention_history_is_read_before_the_conversation_write_lock(
             conn.close()
 
         statements: list[str] = []
-        real_connect = storage_module.connect
+        real_connect = connect
 
         def traced_connect(db_path: str, busy_timeout_ms: int = 5_000) -> sqlite3.Connection:
             traced = real_connect(db_path, busy_timeout_ms)
@@ -330,12 +334,12 @@ def test_an_append_refreshes_an_attention_snapshot_made_stale_by_another_append(
     async def exercise() -> None:
         await store.create_conversation(_resolved())
         competing_store = ConversationStore(store._db_path, integer_now=lambda: 1_700_000_001)
-        real_snapshot = storage_module.conversation_attention_snapshot
+        real_snapshot = conversation_attention_snapshot
         raced = False
 
         def snapshot_with_one_race(
             conn: sqlite3.Connection, conversation_id: str
-        ) -> storage_module.ConversationAttentionSnapshot | None:
+        ) -> ConversationAttentionSnapshot | None:
             nonlocal raced
             snapshot = real_snapshot(conn, conversation_id)
             if not raced:

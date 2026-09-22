@@ -364,7 +364,7 @@ def test_attention_snapshot_preserves_messages_asks_answers_reads_and_failures(
     create_schema(conn)
     ticket = _ticket(conn, 1)
     _conversation_on_a_ticket(conn, ticket.id)
-    events = (
+    events: tuple[tuple[str, dict[str, str]], ...] = (
         ("permission_asked", {"ask_id": "ask-1"}),
         ("permission_asked", {"ask_id": "ask-2"}),
         ("permission_answered", {"ask_id": "ask-1"}),
