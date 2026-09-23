@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mimetypes
 import re
+from email.utils import formatdate
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,11 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import sprint_item_files
 from planner.files.logic.paths import resolve_sprint_item_file, resolve_ticket_file
-from planner.files.logic.reuse import content_validator, holds_the_current_copy
+from planner.files.logic.reuse import (
+    holds_the_current_copy,
+    is_played_with_ranges,
+    read_representation_within_bound,
+)
 from planner.tickets.api import body_str
 
 router = APIRouter()
@@ -76,7 +81,7 @@ async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> R
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    return await _reusable(request, response, ticket_file.absolute_path)
+    return await _reusable(request, response, ticket_file.absolute_path, media_type)
 
 
 @router.get("/files/sprint-items/{sprint_item_id}/{file_path:path}")
@@ -105,46 +110,59 @@ async def get_sprint_item_file(
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    return await _reusable(request, response, managed_file.absolute_path)
+    return await _reusable(request, response, managed_file.absolute_path, media_type)
 
 
-async def _reusable(request: Request, response: FileResponse, path: Path) -> Response:
+async def _reusable(
+    request: Request, response: FileResponse, path: Path, media_type: str
+) -> Response:
     """Let a browser reuse the copy it holds, and never let it hold a stale one.
 
     Both routes reach here only after deciding that this reader may have this file and
     that the file is there, so a 304 is an answer that passed both.
 
-    ``private`` because these files are answered per reader — a shared cache must never
-    hand one reader's artifact to another. ``no-cache`` because a stored copy is checked
-    before every use, which is what keeps a rewritten artifact from being missed.
+    Every answer carries the policy, whatever shape it takes: ``private`` because these
+    files are answered per reader and a shared cache must never hand one reader's
+    artifact to another, and ``no-cache`` because a stored copy is checked before every
+    use.
 
-    **A request asking for a byte range is left exactly as it was.** A range answer's
-    size and offsets come from the stat ``FileResponse`` takes as it sends, and its
-    ``If-Range`` is judged against whatever entity tag the response carries. Putting a
-    tag on it computed from an earlier read would let those two disagree: a rewrite
-    landing in between would be answered 206 — "your copy is unchanged, here is part of
-    it" — carrying bytes from a file the reader has never seen. So a range request keeps
-    the tag ``FileResponse`` derives from its own stat, and is never answered 304. Ranges
-    are how a video is played, and a video is not what was being read twice.
+    Reuse itself is offered only where the tag can be made to describe the exact bytes
+    that travel. Three answers are left to ``FileResponse``, and none of them is ever
+    told its copy is unchanged:
 
-    **The window that is left.** The tag comes from one read and the body from another,
-    so a rewrite in between labels new bytes with the previous tag. The browser
-    revalidates before its next use, is told the tag differs, and reads again: one extra
-    read. It fails to heal in one case — the artifact is written back to exactly its
-    earlier bytes, so the old tag matches again and the browser keeps the copy it took in
-    between. That needs a rewrite inside a sub-millisecond window followed by a
-    byte-identical revert. It is a narrower window than the 4 ms the stat-based tag loses
-    to on every same-size rewrite, which is what this replaced.
+    * a request asking for a byte range — the range arithmetic comes from the stat taken
+      as the body is sent, and a tag from any other read could disagree with it;
+    * sound and video — they are seeked, so they keep the framework's range handling,
+      and they were never what was being read twice;
+    * anything larger than the bound — read once would not be bounded memory, so reuse
+      is declined rather than approximated.
     """
-    if "range" in request.headers:
-        return response
-    # Reads the whole file, so it goes to a thread rather than the event loop.
-    etag = await anyio.to_thread.run_sync(content_validator, path)
-    response.headers["ETag"] = etag
     response.headers["Cache-Control"] = "private, no-cache"
-    if holds_the_current_copy(request.headers.get("if-none-match"), etag):
+    if "range" in request.headers or is_played_with_ranges(media_type):
+        return response
+    # Reads from disk, so it goes to a thread rather than the event loop.
+    representation = await anyio.to_thread.run_sync(read_representation_within_bound, path)
+    if representation is None:
+        return response
+    if holds_the_current_copy(request.headers.get("if-none-match"), representation.etag):
+        response.headers["ETag"] = representation.etag
         return NotModifiedResponse(Headers(raw=response.raw_headers))
-    return response
+    # The bytes that were read are the bytes that are sent, so the tag cannot describe
+    # anything else — whatever happens to the file from here.
+    kept = Response(
+        content=representation.body,
+        media_type=media_type,
+        headers={
+            "ETag": representation.etag,
+            "Cache-Control": "private, no-cache",
+            "Content-Disposition": response.headers["content-disposition"],
+            "Last-Modified": formatdate(representation.last_modified_epoch, usegmt=True),
+            "X-Content-Type-Options": "nosniff",
+            # Honest: a request that asks for a range is served one, by the branch above.
+            "Accept-Ranges": "bytes",
+        },
+    )
+    return kept
 
 
 @router.put("/files/sprint-items/{sprint_item_id}/{file_path:path}")

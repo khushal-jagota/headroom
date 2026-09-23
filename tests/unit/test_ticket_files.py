@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -13,9 +14,11 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.files import api
 from planner.files.contracts import SprintItemFile
+from planner.files.logic import reuse
 from planner.files.logic.paths import resolve_sprint_item_file
-from planner.files.logic.reuse import content_validator
+from planner.files.logic.reuse import read_representation_within_bound
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -221,16 +224,18 @@ def test_a_range_request_is_answered_exactly_as_it_always_was(tmp_path: Path) ->
     # The copy the range was meant for is gone, so the reader gets the current one whole.
     assert with_stale_validator.status_code == 200
     assert with_stale_validator.content == body
-    # A range request carries no policy that would make a browser store the piece.
-    assert "cache-control" not in part.headers
-    # And its tag is the one the sending stat derived, never the byte-derived tag: that
-    # is what keeps the tag and the range arithmetic describing the same snapshot.
-    assert part.headers["etag"] != content_validator(
+    # It still carries the policy: a stored piece is checked before it is used, and a
+    # shared cache may not keep it at all.
+    assert part.headers["cache-control"] == "private, no-cache"
+    # Its tag is the one the sending stat derived, never a byte-derived one: that is
+    # what keeps the tag and the range arithmetic describing the same snapshot. A video
+    # keeps that tag on every answer, range or not, because it is seeked.
+    representation = read_representation_within_bound(
         _ticket_root(db_path) / "t_reuse01" / "clip.mp4"
     )
-    assert whole.headers["etag"] == content_validator(
-        _ticket_root(db_path) / "t_reuse01" / "clip.mp4"
-    )
+    assert representation is not None
+    assert part.headers["etag"] != representation.etag
+    assert whole.headers["etag"] != representation.etag
 
 
 def test_a_range_request_is_never_answered_not_modified(tmp_path: Path) -> None:
@@ -324,3 +329,85 @@ def test_the_sprint_item_route_answers_conditionally_too(tmp_path: Path) -> None
 
     assert first.headers["cache-control"] == "private, no-cache"
     assert again.status_code == 304
+
+
+def test_the_tag_always_describes_the_bytes_that_were_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A worker rewrites an artifact mid-answer, then writes it back as it was.
+
+    This is the case that makes a two-read design unsafe. Hash the file, send it from
+    disk separately, and a rewrite in between travels under a tag describing bytes nobody
+    received. Restore the artifact and the reader's stale copy is then confirmed by a
+    304, permanently. Reading once removes the window rather than narrowing it: the
+    mutation below lands after the read and cannot affect what was sent.
+    """
+    app, db_path = _make_app(tmp_path)
+    target = _ticket_file(db_path, b"A" * 64)
+    original = reuse.read_representation_within_bound
+
+    def rewrite_the_artifact_mid_answer(path: Path) -> reuse.Representation | None:
+        representation = original(path)
+        target.write_bytes(b"B" * 64)  # same size, different bytes
+        return representation
+
+    monkeypatch.setattr(api, "read_representation_within_bound", rewrite_the_artifact_mid_answer)
+    with TestClient(app) as client:
+        answer = client.get("/files/tickets/t_reuse01/notes.md")
+
+    served = f'"{hashlib.sha256(answer.content).hexdigest()}"'
+    assert answer.headers["etag"] == served, "the tag must describe the bytes that travelled"
+    assert answer.content == b"A" * 64
+
+    # The artifact goes back to what it was when the reader took its copy. The reader's
+    # copy really is current now, so confirming it is correct.
+    monkeypatch.undo()
+    target.write_bytes(b"A" * 64)
+    with TestClient(app) as client:
+        revalidated = client.get(
+            "/files/tickets/t_reuse01/notes.md",
+            headers={"If-None-Match": answer.headers["etag"]},
+        )
+    assert revalidated.status_code == 304
+
+
+def test_an_artifact_larger_than_the_bound_keeps_the_streaming_answer(
+    tmp_path: Path,
+) -> None:
+    """Reuse is declined rather than approximated when it cannot be made consistent."""
+    app, db_path = _make_app(tmp_path)
+    body = b"z" * (reuse.REUSE_MEMORY_BOUND_BYTES + 1)
+    _ticket_file(db_path, body, name="huge.txt")
+
+    with TestClient(app) as client:
+        answer = client.get("/files/tickets/t_reuse01/huge.txt")
+        asked_again = client.get(
+            "/files/tickets/t_reuse01/huge.txt",
+            headers={"If-None-Match": answer.headers["etag"]},
+        )
+
+    assert answer.status_code == 200
+    assert answer.content == body
+    # The policy is still on it, and it is never told its copy is unchanged.
+    assert answer.headers["cache-control"] == "private, no-cache"
+    assert asked_again.status_code == 200
+
+
+def test_sound_and_video_keep_the_framework_answer_at_any_size(tmp_path: Path) -> None:
+    """Media is seeked, so it keeps range handling and a tag that agrees with it."""
+    app, db_path = _make_app(tmp_path)
+    _ticket_file(db_path, b"\x00" * 2048, name="clip.mp4")
+    _ticket_file(db_path, b"\x00" * 2048, name="note.mp3")
+
+    with TestClient(app) as client:
+        video = client.get("/files/tickets/t_reuse01/clip.mp4")
+        audio = client.get("/files/tickets/t_reuse01/note.mp3")
+        video_again = client.get(
+            "/files/tickets/t_reuse01/clip.mp4",
+            headers={"If-None-Match": video.headers["etag"]},
+        )
+
+    for answer in (video, audio):
+        assert answer.headers["cache-control"] == "private, no-cache"
+        assert answer.headers["accept-ranges"] == "bytes"
+    assert video_again.status_code == 200
