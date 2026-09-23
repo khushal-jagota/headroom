@@ -2306,6 +2306,11 @@ button.list-row:hover .list-row-title {
 .chat-image:disabled { opacity: 0.5; cursor: default; }
 .chat-image svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.35; }
 .chat-image-input { display: none; }
+/* The model chip and the delivery chip are pills, not icons, so they set their height
+ * from their text and came out short of the others. Raise them to the same target here
+ * rather than in the picker itself: the same picker draws the Ceiling control on a page
+ * this Ticket does not touch. */
+.chat-foot .listbox-picker-trigger { min-height: 32px; }
 .chat-submit {
   margin-left: auto;
   display: flex;
