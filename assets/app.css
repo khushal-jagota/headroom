@@ -1733,7 +1733,7 @@ button.list-row:hover .list-row-title {
   background: transparent;
   border: 0;
   text-align: left;
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
   color: var(--text-muted);
 }
 .acp-step--expandable { cursor: pointer; }
@@ -1762,6 +1762,7 @@ button.list-row:hover .list-row-title {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--type-sm);
+  letter-spacing: var(--tracking-mono);
   color: var(--text-muted);
 }
 .acp-step-mark {
@@ -2081,7 +2082,7 @@ button.list-row:hover .list-row-title {
   border-radius: var(--radius-lg);
   padding: var(--space-2) var(--space-3);
   font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
+  font-size: var(--type-serif-md);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -2090,17 +2091,35 @@ button.list-row:hover .list-row-title {
   align-self: stretch;
   color: var(--text-default);
   font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
-  line-height: 1.6;
+  font-size: var(--type-serif-md);
+  line-height: 1.68;
   overflow-wrap: anywhere;
 }
+/* Two messages in a row from the same worker are two messages, not one long one.
+   A short mark the width of a few characters hangs above the second, marking the break
+   without ruling the column. Full already has the turn's work between them, so this
+   belongs to Focus, where that work is not drawn. */
+[data-conversation-lens="focus"] .chat-a + .chat-a {
+  position: relative;
+  margin-block-start: var(--space-4);
+}
+[data-conversation-lens="focus"] .chat-a + .chat-a::before {
+  content: "";
+  position: absolute;
+  inset-block-start: calc(var(--space-3) * -1);
+  inset-inline-start: 0;
+  inline-size: var(--space-6);
+  border-block-start: var(--border-hairline) solid var(--text-faintest);
+  opacity: 0.55;
+}
+
 /* programmatic prompts = visible system context, never hidden or mistaken for user prose */
 .chat-system {
   align-self: stretch;
   border-inline-start: var(--border-hairline) solid var(--text-faint);
   color: var(--text-faint);
   font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
+  font-size: var(--type-serif-md);
   line-height: 1.6;
   padding-inline-start: var(--space-3);
   overflow-wrap: anywhere;

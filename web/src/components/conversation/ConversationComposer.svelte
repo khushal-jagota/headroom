@@ -244,6 +244,28 @@
     })
   );
   let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
+  /** The Add menu, and the camera the design's third choice needs. */
+  let addMenuOpen = $state(false);
+  let addMenuElement = $state<HTMLDivElement | null>(null);
+  let cameraInput = $state<HTMLInputElement | null>(null);
+
+  /** Escape shuts this menu before it means anything else.
+   *
+   * The pane reads the same key to step the conversation back one height, and it stands
+   * aside for a key something else has already answered. Both listen on the window, and
+   * the pane is the older listener, so this one has to be in the capture phase to get
+   * there first. */
+  $effect(() => {
+    if (!addMenuOpen) return;
+    const shutTheMenu = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      addMenuOpen = false;
+    };
+    window.addEventListener("keydown", shutTheMenu, true);
+    return () => window.removeEventListener("keydown", shutTheMenu, true);
+  });
+
   let runControlsInput = $derived<ComposerRunControlsInput>({
     selection: runSelection,
     backendKey,
@@ -762,6 +784,15 @@
   });
 </script>
 
+<svelte:window
+  onpointerdown={(event) => {
+    if (!addMenuOpen) return;
+    const pressed = event.target;
+    if (pressed instanceof Node && addMenuElement?.contains(pressed)) return;
+    addMenuOpen = false;
+  }}
+/>
+
 <section
   class="c2-composer"
   data-conversation-composer
@@ -975,70 +1006,93 @@
             </svg>
           </button>
         {:else}
-          <!-- Pressing this leaves the cursor in the box rather than taking it, because
-               everything it does is done to what is being written there. -->
-          <button
-            type="button"
-            class="chat-slash"
-            data-conversation-slash
-            aria-label="Write a command"
-            title="Write a command"
-            disabled={inputDisabled}
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => void startWritingACommand()}
-          >/</button>
-
-          <button
-            type="button"
-            class="chat-image"
-            class:on={pendingImages.length > 0}
-            data-conversation-image
-            data-conversation-image-count={pendingImages.length || undefined}
-            aria-label={pendingImages.length > 0 ? "Attach more images" : "Attach images"}
-            title={pendingImages.length > 0
-              ? `${pendingImages.length} image${pendingImages.length === 1 ? "" : "s"} selected`
-              : "Attach images"}
-            disabled={inputDisabled}
-            onclick={() => imageInput?.click()}
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            class="chat-image"
-            class:on={pendingFiles.length > 0}
-            data-conversation-file
-            data-conversation-file-count={pendingFiles.length || undefined}
-            aria-label={pendingFiles.length > 0 ? "Attach more files" : "Attach files"}
-            title={pendingFiles.length > 0
-              ? `${pendingFiles.length} file${pendingFiles.length === 1 ? "" : "s"} selected`
-              : "Attach files"}
-            disabled={inputDisabled}
-            onclick={() => fileInput?.click()}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M8 12.5l6.8-6.8a3 3 0 0 1 4.2 4.2l-8.2 8.2a5 5 0 0 1-7.1-7.1l8-8" />
-            </svg>
-          </button>
-          {#if voiceAvailable}
-            <!-- Recording from a composer with words already in it appends to them. -->
+          <!-- One place to add something, rather than a row of separate buttons. What it
+               offers is still the same set of things, and each of them still does exactly
+               what its own button did. -->
+          <div class="chat-add" bind:this={addMenuElement}>
             <button
               type="button"
-              class="chat-image chat-voice-mic"
-              data-voice-record
-              aria-label="Record a voice message"
-              title="Record a voice message"
+              class="chat-image chat-add-btn"
+              class:on={pendingImages.length + pendingFiles.length > 0}
+              data-conversation-add
+              aria-haspopup="menu"
+              aria-expanded={addMenuOpen}
+              aria-label="Add a picture, a file, or a command"
+              title="Add a picture, a file, or a command"
               disabled={inputDisabled}
-              onclick={() => void voice?.startRecording()}
+              onclick={() => (addMenuOpen = !addMenuOpen)}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="9" y="3" width="6" height="11" rx="3" />
-                <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                <path d="M12 5v14M5 12h14" />
               </svg>
             </button>
-          {/if}
+            {#if addMenuOpen}
+              <div class="chat-add-menu" role="menu">
+                <button
+                  type="button"
+                  class="chat-add-item"
+                  role="menuitem"
+                  data-conversation-image
+                  data-conversation-image-count={pendingImages.length || undefined}
+                  onclick={() => { addMenuOpen = false; imageInput?.click(); }}
+                >
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01" />
+                  </svg>
+                  <span>Picture</span>
+                  {#if pendingImages.length > 0}<span class="chat-add-count">{pendingImages.length}</span>{/if}
+                </button>
+                <button
+                  type="button"
+                  class="chat-add-item"
+                  role="menuitem"
+                  data-conversation-file
+                  data-conversation-file-count={pendingFiles.length || undefined}
+                  onclick={() => { addMenuOpen = false; fileInput?.click(); }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 12.5l6.8-6.8a3 3 0 0 1 4.2 4.2l-8.2 8.2a5 5 0 0 1-7.1-7.1l8-8" />
+                  </svg>
+                  <span>File</span>
+                  {#if pendingFiles.length > 0}<span class="chat-add-count">{pendingFiles.length}</span>{/if}
+                </button>
+                <button
+                  type="button"
+                  class="chat-add-item"
+                  role="menuitem"
+                  data-conversation-camera
+                  onclick={() => { addMenuOpen = false; cameraInput?.click(); }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 8.5h4l1.5-2h7L17 8.5h4v10H3zM12 16a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
+                  </svg>
+                  <span>Take a picture</span>
+                </button>
+                <!-- The cursor stays in the box: everything this does is done to what is
+                     being written there. -->
+                <button
+                  type="button"
+                  class="chat-add-item"
+                  role="menuitem"
+                  data-conversation-slash
+                  onmousedown={(event) => event.preventDefault()}
+                  onclick={() => { addMenuOpen = false; void startWritingACommand(); }}
+                >
+                  <span class="chat-add-glyph" aria-hidden="true">/</span>
+                  <span>Write a command</span>
+                </button>
+              </div>
+            {/if}
+          </div>
+          <input
+            bind:this={cameraInput}
+            class="chat-image-input"
+            data-conversation-camera-input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onchange={() => void intakeFiles(cameraInput?.files)}
+          />
           <input
             bind:this={imageInput}
             class="chat-image-input"
@@ -1058,12 +1112,34 @@
             onchange={() => void intakeFiles(fileInput?.files)}
           />
 
+          {#snippet microphone()}
+            {#if voiceAvailable}
+              <!-- Recording from a composer with words already in it appends to them. -->
+              <button
+                type="button"
+                class="chat-image chat-voice-mic"
+                data-voice-record
+                aria-label="Record a voice message"
+                title="Record a voice message"
+                disabled={inputDisabled}
+                onclick={() => void voice?.startRecording()}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                </svg>
+              </button>
+            {/if}
+          {/snippet}
           {#if showRunPicker}
             <ComposerRunControls
               view={runControlsView}
               intents={runControlIntents}
               bind:snapshots={backends}
+              beforeSubmit={microphone}
             />
+          {:else}
+            <span class="chat-submit">{@render microphone()}</span>
           {/if}
         {/if}
       </div>
@@ -1082,6 +1158,66 @@
 </section>
 
 <style>
+  /* One affordance where three used to be, at the size a finger can find. */
+  .chat-add { position: relative; display: inline-flex; }
+  .chat-add-btn { min-width: 32px; min-height: 32px; }
+  .chat-add-menu {
+    position: absolute;
+    inset-block-end: calc(100% + var(--space-2));
+    inset-inline-start: 0;
+    z-index: 5;
+    min-width: 224px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: var(--space-1);
+    background: var(--surface-2);
+    border: var(--border-hairline) solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
+  }
+  .chat-add-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    min-height: 32px;
+    padding: var(--space-2) var(--space-3);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--type-md);
+    text-align: left;
+    cursor: pointer;
+  }
+  .chat-add-item:hover,
+  .chat-add-item:focus-visible { color: var(--text-strong); background: var(--surface-1); }
+  .chat-add-item svg {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.35;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .chat-add-glyph {
+    width: 20px;
+    flex: none;
+    text-align: center;
+    font-family: var(--font-mono);
+    color: var(--text-faint);
+  }
+  .chat-add-count {
+    margin-inline-start: auto;
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    color: var(--accent-bright);
+  }
+
   .c2-composer { display: grid; gap: var(--space-2); }
   /* An ask is a band on top of the box, not a replacement for it: the input keeps its
      resting height underneath, so the composer stays exactly the size it always was. */

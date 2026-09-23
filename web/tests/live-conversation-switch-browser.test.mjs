@@ -194,23 +194,24 @@ with sync_playwright() as playwright:
     page.set_default_timeout(5_000)
     page.goto(sys.argv[1], wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
-    lens_toggle = page.locator("[data-conversation-lens-toggle]")
-    lens_toggle.click()
-    assert lens_toggle.inner_text() == "Full"
+    full_choice = page.locator('[data-conversation-lens-choice="full"]')
+    full_choice.click()
+    assert full_choice.get_attribute("aria-pressed") == "true"
 
     page.evaluate("window.__switchConversation('conversation-b')")
     page.wait_for_function("window.__tailExists?.('conversation-b')")
-    assert lens_toggle.inner_text() == "Full"
+    assert full_choice.get_attribute("aria-pressed") == "true"
 
     page.locator('[aria-label="Conversation options"]').click()
     page.locator("[data-conversation-new-arm]").click()
     page.locator("[data-conversation-new-confirm]").click()
-    assert lens_toggle.inner_text() == "Full"
+    assert full_choice.get_attribute("aria-pressed") == "true"
     page.evaluate("window.__switchConversation('conversation-b')")
     page.wait_for_function("window.__tailExists?.('conversation-b')")
-    assert lens_toggle.inner_text() == "Full"
-    lens_toggle.click()
-    assert lens_toggle.inner_text() == "Focus"
+    assert full_choice.get_attribute("aria-pressed") == "true"
+    focus_choice = page.locator('[data-conversation-lens-choice="focus"]')
+    focus_choice.click()
+    assert focus_choice.get_attribute("aria-pressed") == "true"
 
     page.evaluate("""window.__emitConversationRow('conversation-a', {
       conversation_id: 'conversation-a',
@@ -240,8 +241,8 @@ with sync_playwright() as playwright:
     assert page.evaluate("window.__ownerReads") == [
         {"conversationId": "conversation-b", "sequence": 4}
     ]
-    lens_toggle.click()
-    assert lens_toggle.inner_text() == "Full"
+    full_choice.click()
+    assert full_choice.get_attribute("aria-pressed") == "true"
     page.evaluate("""window.__emitConversationRow('conversation-b', {
       conversation_id: 'conversation-b',
       sequence: 5,
@@ -271,7 +272,7 @@ with sync_playwright() as playwright:
     page.evaluate("window.__releaseDelayedASnapshot()")
     page.wait_for_timeout(150)
     assert page.get_by_text("current B reply", exact=True).count() == 1
-    assert lens_toggle.inner_text() == "Full"
+    assert full_choice.get_attribute("aria-pressed") == "true"
     assert page.evaluate("window.__ownerReads") == [
         {"conversationId": "conversation-b", "sequence": 4},
         {"conversationId": "conversation-b", "sequence": 5}
@@ -279,7 +280,7 @@ with sync_playwright() as playwright:
 
     page.reload(wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
-    assert lens_toggle.inner_text() == "Full"
+    assert full_choice.get_attribute("aria-pressed") == "true"
     browser.close()
 
 print("live-conversation-switch-browser.test.mjs: all assertions passed")

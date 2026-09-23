@@ -9,11 +9,14 @@
   let {
     view,
     intents,
-    snapshots = $bindable()
+    snapshots = $bindable(),
+    beforeSubmit
   }: {
     view: ComposerRunControlsView;
     intents: ComposerRunControlIntents;
     snapshots: readonly import("../../../lib/conversation/wire").BackendSnapshot[];
+    /** What goes at the head of the right-hand group, before the sending controls. */
+    beforeSubmit?: import("svelte").Snippet;
   } = $props();
 </script>
 
@@ -31,6 +34,7 @@
 />
 
 <div class="chat-submit">
+  {#if beforeSubmit}{@render beforeSubmit()}{/if}
   <DeliveryModePicker
     value={view.deliveryMode}
     disabled={view.disabled}

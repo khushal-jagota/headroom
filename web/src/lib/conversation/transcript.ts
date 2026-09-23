@@ -80,6 +80,9 @@ export type TranscriptRow =
       sequence: number;
       createdAt: number;
       content: readonly MessagePiece[];
+      /** The record calls this one a message to the owner rather than ordinary output.
+       *  It is the only kind of row that counts as a reply somebody is owed. */
+      toOwner: boolean;
     }
   | {
       key: string;
@@ -333,7 +336,8 @@ export function transcriptRows(
           kind: "agent_message",
           sequence,
           createdAt,
-          content: messageContentOf(event.payload)
+          content: messageContentOf(event.payload),
+          toOwner: event.kind === "message_to_owner"
         });
         break;
       case "explicit_reply_missing":

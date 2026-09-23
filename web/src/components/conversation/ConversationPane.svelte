@@ -65,6 +65,7 @@
     composerDisabled = false,
     showRunPicker = true,
     readOnly = false,
+    ownerReadThroughSequence = 0,
     lens = $bindable("focus"),
     conversationState = $bindable(null),
     emptyState,
@@ -131,6 +132,8 @@
     /** A historical transcript is visible through this single boundary. No mutation
      *  control is rendered inside it. */
     readOnly?: boolean;
+    /** How far through the record this person has read, from the conversation view. */
+    ownerReadThroughSequence?: number;
     /** Which projection of this conversation record is visible. */
     lens?: ConversationLens;
     /** How far open the conversation is, or null for a page that is not making a layer of
@@ -189,7 +192,8 @@
           rows,
           ownSenderLabel ?? "",
           { ...taskProgress, turnRunning: running },
-          { visibleRows: rowsForLens, lens }
+          { visibleRows: rowsForLens, lens },
+          ownerReadThroughSequence
         )
       : null
   );
@@ -251,10 +255,13 @@
     else if (conversationState === "peeked") conversationState = "rest";
   }
 
-  /** The control was pressed: forward from peeked, back from opened. */
+  /** The control was pressed: the card's height, and nothing else.
+   *
+   * It is one control with two meanings, and both are about how tall the conversation
+   * is. Putting it away entirely is what Escape and a press on the page behind it do. */
   function moveThroughTheStates(): void {
     if (conversationState === "peeked") conversationState = "opened";
-    else if (conversationState === "opened") conversationState = "rest";
+    else if (conversationState === "opened") conversationState = "peeked";
   }
 
   function confirmNewConversation(): void {
@@ -274,6 +281,7 @@
   data-conversation-read-only={readOnly ? "true" : undefined}
   data-conversation-read-only-boundary={readOnly ? "true" : undefined}
   data-conversation-state={conversationState}
+  data-conversation-lens={lens}
   bind:this={paneElement}
 >
   <div class="chat-head">
@@ -286,16 +294,32 @@
         {headerException.text}
       </span>
     {/if}
-    <div class="chat-head-right">
+    <!-- Two named choices rather than one control whose label is the state it is in:
+         which lens you are in and which you can move to are both on the screen. -->
+    <div
+      class="chat-lens"
+      role="group"
+      aria-label="How much of the conversation to show (F)"
+      data-conversation-lens-group
+    >
       <button
         type="button"
-        class="chat-lens-toggle"
-        data-conversation-lens-toggle
-        data-conversation-lens={lens}
-        aria-label={`Show ${lens === "focus" ? "Full" : "Focus"} conversation (F)`}
-        title={`Show ${lens === "focus" ? "Full" : "Focus"} conversation (F)`}
-        onclick={() => (lens = lens === "focus" ? "full" : "focus")}
-      >{lens === "focus" ? "Focus" : "Full"}</button>
+        class="chat-lens-choice"
+        data-conversation-lens-choice="focus"
+        aria-pressed={lens === "focus"}
+        title="The exchange only (F)"
+        onclick={() => (lens = "focus")}
+      >Focus</button>
+      <button
+        type="button"
+        class="chat-lens-choice"
+        data-conversation-lens-choice="full"
+        aria-pressed={lens === "full"}
+        title="The exchange and the work (F)"
+        onclick={() => (lens = "full")}
+      >Full</button>
+    </div>
+    <div class="chat-head-right">
       {#if workspaceFolder && conversationState !== "opened"}
         <span class="chat-usage" data-conversation-workspace>{workspaceFolder}</span>
       {/if}
@@ -422,7 +446,22 @@
 </div>
 
 <style>
-  :global([data-conversation-pane]) { gap: var(--space-2); }
+  /* The component measures itself, not the window. The same pane is narrow in a side
+     panel on a wide screen, and a host that names no container of its own — the Chief
+     conversation is one — still gets the adaptation. */
+  :global([data-conversation-pane]) {
+    gap: var(--space-2);
+    container-type: inline-size;
+    container-name: conversation-pane;
+  }
+  /* A narrow pane gives its width to the words, not to two sets of edges. */
+  @container conversation-pane (max-width: 480px) {
+    :global([data-conversation-pane] .chat-thread) {
+      padding-inline: var(--space-3);
+    }
+    :global([data-conversation-pane] .chat-u) { max-width: 86%; }
+    :global([data-conversation-pane] .chat-head) { padding-inline-start: var(--space-3); }
+  }
   /* Inside the conversation card the well and rest line are two halves of one card. */
   :global(.conversation-layer [data-conversation-pane]) { gap: 0; }
   /* Rest keeps the same child viewport mounted, but gives its head and thread no display. */
@@ -430,20 +469,30 @@
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-thread-shell) {
     display: none;
   }
-  .chat-lens-toggle {
-    border: var(--border-hairline) solid var(--border-color);
+  .chat-lens {
+    display: inline-flex;
+    gap: var(--space-1);
+    margin-inline-start: var(--space-2);
+  }
+  .chat-lens-choice {
+    border: var(--border-hairline) solid transparent;
     border-radius: var(--radius-pill);
     background: transparent;
-    color: var(--text-muted);
-    padding: 2px var(--space-2);
+    color: var(--text-faint);
+    /* A target a finger can find, at the size the rest of the head uses. */
+    min-height: 32px;
+    padding: 6px var(--space-3);
     font: inherit;
-    font-size: var(--type-xs);
+    font-size: var(--type-sm);
     cursor: pointer;
+    transition:
+      color var(--motion-fast, 90ms) ease,
+      background var(--motion-fast, 90ms) ease;
   }
-  .chat-lens-toggle:hover,
-  .chat-lens-toggle:focus-visible {
-    border-color: var(--accent-bright);
-    color: var(--text-default);
+  .chat-lens-choice:hover { color: var(--text-strong); }
+  .chat-lens-choice[aria-pressed="true"] {
+    background: var(--surface-2);
+    color: var(--text-strong);
   }
   .conversation-read-only {
     flex: none;

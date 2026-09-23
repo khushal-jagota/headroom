@@ -47,6 +47,25 @@ export type RestLine = {
   waiting: boolean;
   /** When a turn is running, when it started — so the bar counts as the turn head does. */
   workingSinceUnixMilliseconds: number | null;
+  /** What the line shows without words. */
+  marks: RestLineMarks;
+};
+
+/** The four things the line says without words.
+ *
+ * They are four independent axes, not one status: a turn can be running while a reply
+ * nobody has read is still above it, and a failed turn does not stop something else
+ * waiting on an answer. Each one is its own mark or it is nothing.
+ */
+export type RestLineMarks = {
+  /** A turn is running now. */
+  running: boolean;
+  /** The worker addressed the owner and the owner has not got that far yet. */
+  unreadReply: boolean;
+  /** A permission or a question is waiting on this person. */
+  needsYou: boolean;
+  /** The last turn to end, ended failed. */
+  failed: boolean;
 };
 
 export type RestLinePresentation = {
@@ -74,13 +93,69 @@ const YOU = "you";
  */
 export const REST_LINE_MAXIMUM_CHARACTERS = 120;
 
+/** The four marks, read from the complete record rather than from what a lens draws.
+ *
+ * A reply the owner has not read is the record's own idea of one — a message addressed
+ * to them, past the position they have read through — and not simply anything with a
+ * later sequence than their watermark. Tool calls and turn endings are not replies.
+ */
+export function restLineMarksFrom(
+  rows: readonly TranscriptRow[],
+  ownerReadThroughSequence: number,
+  turnRunning: boolean,
+  needsYou: boolean
+): RestLineMarks {
+  let unreadReply = false;
+  let failed = false;
+  let endingFound = false;
+  for (let at = rows.length - 1; at >= 0; at -= 1) {
+    const row = rows[at];
+    if (row === undefined) continue;
+    if (!endingFound && row.kind === "turn_ended") {
+      failed = row.ending === "failed";
+      endingFound = true;
+    }
+    if (
+      !unreadReply
+      && row.kind === "agent_message"
+      && row.toOwner
+      && row.sequence > ownerReadThroughSequence
+    ) {
+      unreadReply = true;
+    }
+    if (unreadReply && endingFound) break;
+  }
+  return { running: turnRunning, unreadReply, needsYou, failed };
+}
+
 /** What the line says, or nothing at all when nothing has happened yet. */
 export function restLineFrom(
   rows: readonly TranscriptRow[],
   ownSenderLabel: string,
   progress: ConversationTaskProgress = taskProgressFrom(rows),
-  presentation: RestLinePresentation = { visibleRows: rows, lens: "full" }
+  presentation: RestLinePresentation = { visibleRows: rows, lens: "full" },
+  ownerReadThroughSequence = Number.POSITIVE_INFINITY
 ): RestLine | null {
+  const line = restLineBodyFrom(rows, ownSenderLabel, progress, presentation);
+  if (line === null) return null;
+  return {
+    ...line,
+    marks: restLineMarksFrom(
+      rows,
+      ownerReadThroughSequence,
+      progress.turnRunning,
+      line.waiting
+    )
+  };
+}
+
+/** The line's words and who said them, before the marks are worked out. */
+function restLineBodyFrom(
+  rows: readonly TranscriptRow[],
+  ownSenderLabel: string,
+  progress: ConversationTaskProgress,
+  presentation: RestLinePresentation
+): Omit<RestLine, "marks"> | null {
   const ask = liveAskFrom(presentation.visibleRows);
   if (ask !== null) {
     return {

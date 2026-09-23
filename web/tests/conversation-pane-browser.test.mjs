@@ -47,6 +47,7 @@ try {
   let visibleRows = $state<any[] | null>(null);
   let nextRowIndex = 28;
   let running = $state(false);
+  let ownerReadThroughSequence = $state(0);
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
   let composerDisabled = $state(false);
@@ -187,6 +188,45 @@ try {
   (window as any).__settle = async () => {
     await tick();
     await tick();
+  };
+  (window as any).__showEveryMark = () => {
+    ownerReadThroughSequence = 3_000;
+    running = true;
+    rows = [
+      {
+        key: "mark-reply",
+        kind: "agent_message",
+        sequence: 3_001,
+        createdAt: 4_000,
+        content: [{ piece: "text", text: "the reply nobody has read" }],
+        toOwner: true
+      },
+      {
+        key: "mark-end",
+        kind: "turn_ended",
+        sequence: 3_002,
+        createdAt: 4_001,
+        ending: "failed",
+        errorSummary: "backend exited",
+        automaticCompactionResult: null
+      }
+    ];
+    visibleRows = rows;
+  };
+  (window as any).__showOrdinaryOutputOnly = () => {
+    ownerReadThroughSequence = 3_000;
+    running = false;
+    rows = [
+      {
+        key: "chatter",
+        kind: "agent_message",
+        sequence: 3_010,
+        createdAt: 4_010,
+        content: [{ piece: "text", text: "ordinary output, not a reply" }],
+        toOwner: false
+      }
+    ];
+    visibleRows = rows;
   };
   (window as any).__showSettledFocusRestLine = () => {
     rows = [
@@ -340,6 +380,7 @@ try {
         {rows}
         {visibleRows}
         {running}
+        {ownerReadThroughSequence}
         {heldPromptRows}
         {supportsSteer}
         backendKey="claude"
@@ -665,18 +706,29 @@ with sync_playwright() as playwright:
     assert page.evaluate("window.__conversationInputSurvived()") is True
     assert send_mode_trigger.get_attribute("aria-label") == "Message delivery mode: Queue"
 
-    # One shared header control and the F shortcut switch the lens in place. Editable
-    # controls keep ordinary F input, and modified shortcuts do nothing.
-    lens_toggle = page.locator("[data-conversation-lens-toggle]")
-    assert lens_toggle.inner_text() == "Focus"
-    lens_toggle.click()
-    assert lens_toggle.inner_text() == "Full"
+    # A named pair in the header, and the F shortcut, switch the lens in place. Both
+    # names stay on the screen and the pressed one says where you are. Editable controls
+    # keep ordinary F input, and modified shortcuts do nothing.
+    focus_choice = page.locator('[data-conversation-lens-choice="focus"]')
+    full_choice = page.locator('[data-conversation-lens-choice="full"]')
+
+    def lens_now():
+        assert focus_choice.get_attribute("aria-pressed") != full_choice.get_attribute(
+            "aria-pressed"
+        ), "exactly one lens is pressed"
+        return "focus" if focus_choice.get_attribute("aria-pressed") == "true" else "full"
+
+    assert focus_choice.inner_text() == "Focus"
+    assert full_choice.inner_text() == "Full"
+    assert lens_now() == "focus"
+    full_choice.click()
+    assert lens_now() == "full"
     page.keyboard.press("f")
-    assert lens_toggle.inner_text() == "Focus"
+    assert lens_now() == "focus"
     page.keyboard.press("Control+f")
-    assert lens_toggle.inner_text() == "Focus"
+    assert lens_now() == "focus"
     page.locator(INPUT).press("f")
-    assert lens_toggle.inner_text() == "Focus"
+    assert lens_now() == "focus"
     expected_draft = draft(page)
 
     # Ticket content dismisses opened in one step without replacing or clearing the draft.
@@ -831,6 +883,63 @@ with sync_playwright() as playwright:
     page.locator('[data-conversation-held-stop-drawing="sent-into-the-dark"]').click()
     page.wait_for_function("window.__stoppedDrawing === 'sent-into-the-dark'")
 
+    # Opening is an open, not a restore. A reader who moves up the thread and then puts
+    # the conversation away comes back to the end of it, which is where the newest work
+    # is. Nothing else about keeping their place changes.
+    while page.locator(f'{PANE}[data-conversation-state="rest"]').count() == 0:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(50)
+    page.locator(INPUT).click()
+    state(page, "peeked")
+    page.wait_for_function(
+        """() => {
+            const t = document.querySelector('[data-conversation-thread]');
+            return t && t.scrollHeight - t.scrollTop - t.clientHeight <= 2;
+        }"""
+    )
+    page.locator(THREAD).hover()
+    for _ in range(8):
+        page.mouse.wheel(0, -400)
+    page.wait_for_function(
+        """() => {
+            const t = document.querySelector('[data-conversation-thread]');
+            return t && t.scrollHeight - t.scrollTop - t.clientHeight > 200;
+        }"""
+    )
+    page.keyboard.press("Escape")
+    state(page, "rest")
+    page.locator(INPUT).click()
+    state(page, "peeked")
+    page.wait_for_function(
+        """() => {
+            const t = document.querySelector('[data-conversation-thread]');
+            return t && t.scrollHeight - t.scrollTop - t.clientHeight <= 2;
+        }"""
+    )
+    page.keyboard.press("Escape")
+    state(page, "rest")
+
+    # The line at rest says what it always said, and says the rest of it without words:
+    # four independent axes, four marks, drawn together rather than one winning.
+    page.evaluate("window.__showEveryMark()")
+    marks = page.locator("[data-conversation-rest-marks] [data-conversation-mark]")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-mark]').length === 3"
+    )
+    assert marks.evaluate_all("els => els.map(e => e.dataset.conversationMark)") == [
+        "running",
+        "reply",
+        "failed",
+    ]
+    assert page.locator("[data-conversation-rest-line]").inner_text() != ""
+    assert page.get_by_text("waiting for you", exact=True).count() == 0
+
+    # Ordinary output past the read position is not a reply anybody is owed.
+    page.evaluate("window.__showOrdinaryOutputOnly()")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-mark]').length === 0"
+    )
+
     # A completed owner turn uses the hidden ending for structure. The collapsed Focus
     # line shows the reply without a live working timer.
     page.evaluate("window.__showSettledFocusRestLine()")
@@ -842,7 +951,7 @@ with sync_playwright() as playwright:
     page.evaluate("window.__showSettledTurn()")
     assert page.get_by_text("hidden commentary", exact=True).count() == 0
     assert page.locator('[data-conversation-row="tool_call"]').count() == 0
-    lens_toggle.click()
+    page.locator('[data-conversation-lens-choice="full"]').click()
     assert page.get_by_text("hidden commentary", exact=True).count() == 1
     assert page.locator('[data-conversation-row="tool_call"]').count() == 4
     assert page.locator("[data-conversation-work-fold]").count() == 0

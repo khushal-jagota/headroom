@@ -384,6 +384,7 @@
     if (openedId !== id) return;
     view = snapshot;
     connectionTrouble = false;
+    let theOpenAlreadyReadTheView = true;
     let localStream: ConversationStream;
     localStream = createConversationStream(
       id,
@@ -415,9 +416,15 @@
       },
       // Every connect asks the system about itself again, after the rows are in. This is
       // the after-a-restart path: the rows still leave a turn open, and only the system
-      // can say nothing is running behind it any more.
+      // can say nothing is running behind it any more. The first connect of an open is
+      // the exception: the view it would ask for was read a moment ago, by the open.
       () => {
-        if (openedId === id && stream === localStream) void refreshView(id);
+        if (openedId !== id || stream !== localStream) return;
+        if (theOpenAlreadyReadTheView) {
+          theOpenAlreadyReadTheView = false;
+          return;
+        }
+        void refreshView(id);
       },
       () => {
         if (openedId === id && stream === localStream) void refreshView(id);
@@ -458,14 +465,29 @@
     if (told !== sentMessages) void holdOnTo(told);
   }
 
+  /** A read of the view that is already on its way, so callers can join it.
+   *
+   * Opening a conversation reads the view, and then the tail immediately says it is
+   * connected and hands over its held prompts. Each of those asks for the view again.
+   * They are asking the same question at the same moment, so they are answered by one
+   * request instead of three. Anything that arrives later still gets its own read. */
+  let viewBeingRead: { conversationId: string; done: Promise<void> } | null = null;
+
   async function refreshView(requestedId: string | null = openedId): Promise<void> {
     if (requestedId === null || openedId !== requestedId) return;
-    try {
-      const refreshed = await readConversation(requestedId);
-      if (openedId === requestedId) view = refreshed;
-    } catch {
-      // The rows are the record; a snapshot that did not come back changes nothing here.
-    }
+    if (viewBeingRead?.conversationId === requestedId) return viewBeingRead.done;
+    const reading = (async () => {
+      try {
+        const refreshed = await readConversation(requestedId);
+        if (openedId === requestedId) view = refreshed;
+      } catch {
+        // The rows are the record; a snapshot that did not come back changes nothing.
+      } finally {
+        if (viewBeingRead?.conversationId === requestedId) viewBeingRead = null;
+      }
+    })();
+    viewBeingRead = { conversationId: requestedId, done: reading };
+    return reading;
   }
 
   function sentenceFor(error: unknown): string {
@@ -864,6 +886,7 @@
   {errorNote}
   {connectionTrouble}
   {readOnly}
+  ownerReadThroughSequence={view?.owner_read_through_sequence ?? 0}
   bind:lens
   composerPlaceholder={composerPlaceholder
     ?? (started ? `Message ${label}...` : "Send the first message to start it...")}

@@ -26,6 +26,8 @@ export type ThreadGeometry = {
   newestLineIsInSight(cachedNewestLineBottomPixels: number): boolean;
   newestLineScrollTop(cachedNewestLineBottomPixels: number): number;
   sentMessage(messageId: string): Element | null;
+  /** Where the thread must be for this element to sit at the top, clear of the fade. */
+  elementAtTheTopScrollTop(element: Element): number;
   answerRoomMessage(): Element | null;
   answerRoomPixels(message: Element): number;
   sentMessageScrollTop(message: Element): number;
@@ -152,6 +154,10 @@ export function threadGeometry(
           - SENT_MESSAGE_TOP_GAP_PIXELS
         )
       );
+    },
+
+    elementAtTheTopScrollTop(element: Element): number {
+      return Math.max(0, topWithin(element) - SENT_MESSAGE_TOP_GAP_PIXELS);
     },
 
     sentMessageScrollTop(message: Element): number {
