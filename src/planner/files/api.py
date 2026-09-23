@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import mimetypes
 import re
-from email.utils import formatdate
 from pathlib import Path
 from typing import Any
 
@@ -112,33 +111,38 @@ async def get_sprint_item_file(
 async def _reusable(request: Request, response: FileResponse, path: Path) -> Response:
     """Let a browser reuse the copy it holds, and never let it hold a stale one.
 
-    Both routes reach here only after they have decided that this reader may have this
-    file and that the file is there. A 304 is an answer that passed both.
+    Both routes reach here only after deciding that this reader may have this file and
+    that the file is there, so a 304 is an answer that passed both.
 
     ``private`` because these files are answered per reader — a shared cache must never
-    hand one reader's artifact to another. ``no-cache`` because a stored copy must be
-    checked before every use, which is what keeps a rewritten artifact from being missed.
+    hand one reader's artifact to another. ``no-cache`` because a stored copy is checked
+    before every use, which is what keeps a rewritten artifact from being missed.
 
-    Content-length is left to ``FileResponse``, which stats the file as it sends. The
-    body and its length therefore always agree, even if the artifact is replaced between
-    this decision and that send. The validator can lag by one write in that window: the
-    browser then stores the new bytes under the previous validator, revalidates before
-    its next use, is told they differ, and reads again. It costs one extra read and never
-    shows anybody a stale artifact.
+    **A request asking for a byte range is left exactly as it was.** A range answer's
+    size and offsets come from the stat ``FileResponse`` takes as it sends, and its
+    ``If-Range`` is judged against whatever entity tag the response carries. Putting a
+    tag on it computed from an earlier read would let those two disagree: a rewrite
+    landing in between would be answered 206 — "your copy is unchanged, here is part of
+    it" — carrying bytes from a file the reader has never seen. So a range request keeps
+    the tag ``FileResponse`` derives from its own stat, and is never answered 304. Ranges
+    are how a video is played, and a video is not what was being read twice.
+
+    **The window that is left.** The tag comes from one read and the body from another,
+    so a rewrite in between labels new bytes with the previous tag. The browser
+    revalidates before its next use, is told the tag differs, and reads again: one extra
+    read. It fails to heal in one case — the artifact is written back to exactly its
+    earlier bytes, so the old tag matches again and the browser keeps the copy it took in
+    between. That needs a rewrite inside a sub-millisecond window followed by a
+    byte-identical revert. It is a narrower window than the 4 ms the stat-based tag loses
+    to on every same-size rewrite, which is what this replaced.
     """
-    statistics = await anyio.to_thread.run_sync(path.stat)
-    last_modified = formatdate(statistics.st_mtime, usegmt=True)
+    if "range" in request.headers:
+        return response
     # Reads the whole file, so it goes to a thread rather than the event loop.
     etag = await anyio.to_thread.run_sync(content_validator, path)
     response.headers["ETag"] = etag
-    response.headers["Last-Modified"] = last_modified
     response.headers["Cache-Control"] = "private, no-cache"
-    if holds_the_current_copy(
-        request.headers.get("if-none-match"),
-        request.headers.get("if-modified-since"),
-        etag,
-        last_modified,
-    ):
+    if holds_the_current_copy(request.headers.get("if-none-match"), etag):
         return NotModifiedResponse(Headers(raw=response.raw_headers))
     return response
 

@@ -1,9 +1,7 @@
 """Whether a browser may reuse the copy of a managed file it already holds.
 
-Framework-free. The route hands in the request's headers and the file on disk, and gets
-back a validator and a yes or no.
-
-Two decisions live here.
+Framework-free. The route hands in what the request asked with and the file on disk, and
+gets back a validator and a yes or no.
 
 **What the validator is made of.** Starlette builds one from the file's modification time
 and size. That cannot tell two same-size writes apart: this machine's filesystem moves a
@@ -11,16 +9,16 @@ modification time in 4 ms ticks, and a managed artifact is written by a worker r
 than a person. Measured, the stat-based validator gave the same answer for 198 of 200
 same-size rewrites. So the validator is the file's own bytes.
 
-**Which header decides.** A browser sends both ``If-None-Match`` and
-``If-Modified-Since``. When the first is present it decides alone. Falling through to the
-date would let a stale validator become a hit because a second-resolution timestamp still
-matched, which is exactly how a reader ends up looking at an artifact that has moved on.
+**Only the entity tag decides.** A browser sends ``If-Modified-Since`` as well, and
+answering from it would let a stale copy be confirmed because a timestamp that is only
+accurate to the second still matched — the very thing the byte-derived tag is here to
+prevent. Every answer from these routes carries an entity tag, so nothing needs the date
+and the date is never consulted.
 """
 
 from __future__ import annotations
 
 import hashlib
-from email.utils import parsedate
 from pathlib import Path
 
 _READ_CHUNK_BYTES = 1 << 20
@@ -39,15 +37,9 @@ def content_validator(path: Path) -> str:
     return f'"{digest.hexdigest()}"'
 
 
-def holds_the_current_copy(
-    if_none_match: str | None, if_modified_since: str | None, etag: str, last_modified: str
-) -> bool:
-    """True when the browser's copy is the one this file would send."""
-    if if_none_match is not None:
-        candidates = [tag.strip().removeprefix("W/") for tag in if_none_match.split(",")]
-        return "*" in candidates or etag in candidates
-    if if_modified_since is None:
+def holds_the_current_copy(if_none_match: str | None, etag: str) -> bool:
+    """True when the copy the browser names is the one this file would send."""
+    if if_none_match is None:
         return False
-    asked = parsedate(if_modified_since)
-    served = parsedate(last_modified)
-    return asked is not None and served is not None and asked >= served
+    named = [tag.strip().removeprefix("W/") for tag in if_none_match.split(",")]
+    return "*" in named or etag in named

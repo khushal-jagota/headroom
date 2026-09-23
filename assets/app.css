@@ -1231,11 +1231,13 @@ textarea {
   display: none;
 }
 
-/* A media preload of "none" means the player is empty until it is pressed: no frame and
-   no duration. The name is what tells the reader which file the player is. */
-.file-preview--managed[data-file-preview-kind="video"] > .file-preview-name-link,
-.file-preview--managed[data-file-preview-kind="audio"] > .file-preview-name-link {
-  display: inline;
+/* An embedded media preview loads nothing until it is pressed, so the player is empty:
+   no frame and no duration. The name is what tells the reader which file it is, and it
+   stays when the media fails, where it names the file the failure belongs to. A block,
+   because an inline box drops the margin that separates it from the player. */
+.file-preview--embedded.file-preview--managed[data-file-preview-kind="video"] > .file-preview-name-link,
+.file-preview--embedded.file-preview--managed[data-file-preview-kind="audio"] > .file-preview-name-link {
+  display: block;
   margin-block-end: var(--space-1);
 }
 

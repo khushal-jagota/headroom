@@ -15,6 +15,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.files.contracts import SprintItemFile
 from planner.files.logic.paths import resolve_sprint_item_file
+from planner.files.logic.reuse import content_validator
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -188,10 +189,14 @@ def test_a_stale_validator_is_not_rescued_by_a_matching_date(tmp_path: Path) -> 
     assert answer.content == b"the artifact"
 
 
-def test_range_requests_still_work_and_a_stale_if_range_gives_the_whole_file(
-    tmp_path: Path,
-) -> None:
-    """Video seeking rides on these two behaviours."""
+def test_a_range_request_is_answered_exactly_as_it_always_was(tmp_path: Path) -> None:
+    """Video playback rides on this, and a validator from an earlier read would break it.
+
+    A range answer's size and offsets come from the stat taken as the body is sent. An
+    entity tag computed before that, from a separate read, can disagree with it — and a
+    disagreeing tag is worse than none, because ``If-Range`` would confirm a copy the
+    reader does not have and then hand over bytes from a different one.
+    """
     app, db_path = _make_app(tmp_path)
     body = bytes(range(256)) * 64
     _ticket_file(db_path, body, name="clip.mp4")
@@ -203,7 +208,7 @@ def test_range_requests_still_work_and_a_stale_if_range_gives_the_whole_file(
         )
         with_live_validator = client.get(
             "/files/tickets/t_reuse01/clip.mp4",
-            headers={"Range": "bytes=10-19", "If-Range": whole.headers["etag"]},
+            headers={"Range": "bytes=10-19", "If-Range": part.headers["etag"]},
         )
         with_stale_validator = client.get(
             "/files/tickets/t_reuse01/clip.mp4",
@@ -216,26 +221,90 @@ def test_range_requests_still_work_and_a_stale_if_range_gives_the_whole_file(
     # The copy the range was meant for is gone, so the reader gets the current one whole.
     assert with_stale_validator.status_code == 200
     assert with_stale_validator.content == body
+    # A range request carries no policy that would make a browser store the piece.
+    assert "cache-control" not in part.headers
+    # And its tag is the one the sending stat derived, never the byte-derived tag: that
+    # is what keeps the tag and the range arithmetic describing the same snapshot.
+    assert part.headers["etag"] != content_validator(
+        _ticket_root(db_path) / "t_reuse01" / "clip.mp4"
+    )
+    assert whole.headers["etag"] == content_validator(
+        _ticket_root(db_path) / "t_reuse01" / "clip.mp4"
+    )
+
+
+def test_a_range_request_is_never_answered_not_modified(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    _ticket_file(db_path, b"C" * 512, name="clip.mp4")
+
+    with TestClient(app) as client:
+        plain = client.get("/files/tickets/t_reuse01/clip.mp4")
+        ranged = client.get(
+            "/files/tickets/t_reuse01/clip.mp4",
+            headers={"Range": "bytes=0-9", "If-None-Match": plain.headers["etag"]},
+        )
+
+    assert ranged.status_code == 206
+    assert ranged.content == b"C" * 10
+
+
+def test_a_date_alone_never_confirms_a_copy(tmp_path: Path) -> None:
+    """A second-resolution timestamp cannot see a rewrite inside the same second.
+
+    Every answer carries an entity tag, so nothing needs the date, and consulting it
+    would reintroduce exactly the staleness the byte-derived tag removes.
+    """
+    app, db_path = _make_app(tmp_path)
+    target = _ticket_file(db_path, b"A" * 12)
+
+    with TestClient(app) as client:
+        served = client.get("/files/tickets/t_reuse01/notes.md")
+        target.write_bytes(b"B" * 12)  # same size, same second
+        answer = client.get(
+            "/files/tickets/t_reuse01/notes.md",
+            headers={"If-Modified-Since": served.headers["last-modified"]},
+        )
+
+    assert answer.status_code == 200
+    assert answer.content == b"B" * 12
 
 
 def test_a_conditional_request_never_answers_before_the_route_has_checked(
     tmp_path: Path,
 ) -> None:
-    """A 304 is an answer. It may only be given to a reader who could have had the file."""
+    """A 304 is an answer. Only a reader who could have had the file may be given one.
+
+    The refusal here is the authority gate, not a missing file: the Sprint Item exists
+    and so does the artifact, and the caller is another Sprint Item's supervisor.
+    """
     app, db_path = _make_app(tmp_path)
     _ticket_file(db_path, b"the artifact")
+    item = _sprint_item_root(db_path) / "si_reuse01"
+    item.mkdir(parents=True)
+    (item / "brief.md").write_text("the outcome", encoding="utf-8")
 
     with TestClient(app) as client:
-        etag = client.get("/files/tickets/t_reuse01/notes.md").headers["etag"]
+        readable = client.get("/files/sprint-items/si_reuse01/brief.md")
+        assert readable.status_code == 200, readable.text
+        etag = readable.headers["etag"]
+        somebody_else = client.get(
+            "/files/sprint-items/si_reuse01/brief.md",
+            headers={
+                "If-None-Match": etag,
+                "X-Plan-Actor": "sprint_item_supervisor",
+                "X-Plan-Sprint-Item-Id": "si_someone_else",
+            },
+        )
         missing = client.get(
             "/files/tickets/t_reuse01/absent.md", headers={"If-None-Match": etag}
         )
-        unreadable = client.get(
-            "/files/sprint-items/si_nobody/notes.md", headers={"If-None-Match": etag}
-        )
 
+    # Refused by the authority gate, with the copy it named still current: the check ran
+    # first. The refusal must be that gate, not a file the caller simply could not find,
+    # which is what makes this an ordering proof at all.
+    assert somebody_else.json()["error"]["code"] == "agent_forbidden", somebody_else.text
+    assert somebody_else.json()["error"]["detail"]["target_id"] == "si_reuse01"
     assert missing.status_code == 404
-    assert unreadable.status_code in (403, 404)
 
 
 def test_the_sprint_item_route_answers_conditionally_too(tmp_path: Path) -> None:
