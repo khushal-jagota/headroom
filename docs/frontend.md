@@ -460,7 +460,10 @@ hand-rolling the same shapes per screen. Each does one job:
 - **StageMark** — the single stage dot showing a field's progress.
 - **ApprovalBlock** — the approval surface: an editable proposal draft, the ceiling
   picker, the holder control, and the approve/accept action. Approving names the next
-  ceiling and its holder together; naming no holder keeps it with the approver.
+  ceiling and its holder together. Its displayed immediate-next Stage and owner are the
+  actual bound values, so Approve can submit them without a picker interaction. A new
+  proposal or changed lifecycle context resets them. An unrelated refresh preserves an
+  edit or explicit scope choice.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the priority control on a Brief, the approval control, and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same

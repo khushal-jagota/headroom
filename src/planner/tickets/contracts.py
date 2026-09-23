@@ -276,6 +276,9 @@ class Ticket:  # §3.3 — column names match exactly
     pending_proposal: PendingTicketProposal | None
     created_at: int
     updated_at: int
+    # Monotonic proposal identity. Proposal timestamps have whole-second precision, so
+    # readers use this when they must distinguish a replacement filed in the same second.
+    pending_proposal_revision: int = field(default=0, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
