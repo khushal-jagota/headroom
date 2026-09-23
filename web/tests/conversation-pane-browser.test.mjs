@@ -213,6 +213,14 @@ try {
     ];
     visibleRows = rows;
   };
+  (window as any).__showQuietComposer = () => {
+    running = false;
+    rows = [];
+    visibleRows = rows;
+  };
+  (window as any).__showWorkRunning = () => {
+    running = true;
+  };
   (window as any).__showRunningAndNeedsYou = () => {
     ownerReadThroughSequence = 3_000;
     running = true;
@@ -952,6 +960,66 @@ with sync_playwright() as playwright:
     ]
     assert page.locator("[data-conversation-rest-line]").inner_text() != ""
     assert page.get_by_text("waiting for you", exact=True).count() == 0
+
+    # The right of the composer is what there is to do, in the agreed order. A composer
+    # with nothing in it offers no Send at all — not a greyed-out one — and the control
+    # that stops the work sits before the microphone.
+    def submit_order(page):
+        return page.locator(".chat-submit > *").evaluate_all(
+            """els => els.map(e =>
+                e.dataset.conversationStop !== undefined ? 'stop'
+              : e.dataset.voiceRecord !== undefined ? 'mic'
+              : e.dataset.conversationSend !== undefined ? 'send'
+              : 'delivery')"""
+        )
+
+    page.evaluate("window.__showQuietComposer()")
+    page.locator(INPUT).click()
+    state(page, "peeked")
+    page.locator(INPUT).fill("")
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-send]') === null"
+    )
+    assert submit_order(page) == ["delivery", "mic"]
+
+    page.locator(INPUT).fill("something to send")
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-send]') !== null"
+    )
+    assert submit_order(page) == ["delivery", "mic", "send"]
+
+    page.evaluate("window.__showWorkRunning()")
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-stop]') !== null"
+    )
+    assert submit_order(page) == ["delivery", "stop", "mic", "send"]
+    page.locator(INPUT).fill("")
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-send]') === null"
+    )
+    assert submit_order(page) == ["delivery", "stop", "mic"]
+
+    # The head carries no worker title and no launch folder. The folder is still one
+    # press away, where the card keeps everything else it is not showing.
+    assert page.locator(".chat-lbl").count() == 0
+    assert page.locator(".chat-head [data-conversation-workspace]").count() == 0
+
+    # One card, one outline: the well is a band with a seam above it, not a second box.
+    well = page.locator(".chat-box").evaluate(
+        """box => {
+            const s = getComputedStyle(box);
+            return {top: s.borderTopWidth, left: s.borderLeftWidth,
+                    bottom: s.borderBottomWidth, radius: s.borderTopLeftRadius};
+        }"""
+    )
+    assert well["top"] == "1px", well
+    assert well["left"] == "0px" and well["bottom"] == "0px", well
+    assert well["radius"] == "0px", well
+
+    # Back to rest, where the line lives.
+    while page.locator(f'{PANE}[data-conversation-state="rest"]').count() == 0:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(50)
 
     # Two axes at once, which is the whole reason they are four marks and not one state.
     page.evaluate("window.__showRunningAndNeedsYou()")

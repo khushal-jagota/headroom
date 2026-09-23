@@ -173,16 +173,6 @@
     return null;
   });
 
-  // A layered card still identifies the employee. Full height uses the plain worker type
-  // that its route supplies, while a non-layer conversation uses its label unchanged.
-  let headerLabel = $derived(
-    conversationState === "rest" || conversationState === "peeked"
-      ? /worker$/i.test(label)
-        ? label
-        : `${label} worker`
-      : label
-  );
-
   // Only at rest is there a bar to put it in. Peeked and opened have the turn head.
   let rowsForLens = $derived(visibleRows ?? rows);
   let taskProgress = $derived(taskProgressFrom(rowsForLens));
@@ -288,7 +278,6 @@
     {#if connectionTrouble}
       <span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>
     {/if}
-    <span class="chat-lbl">{headerLabel}</span>
     {#if headerException && conversationState !== "opened"}
       <span class={`chat-state ${headerException.accent ? "chat-state--attn" : ""}`}>
         {headerException.text}
@@ -320,9 +309,6 @@
       >Full</button>
     </div>
     <div class="chat-head-right">
-      {#if workspaceFolder && conversationState !== "opened"}
-        <span class="chat-usage" data-conversation-workspace>{workspaceFolder}</span>
-      {/if}
       <!-- One state control survives as its meaning changes, preserving keyboard focus. -->
       {#if stateControl !== null}
         <button
@@ -367,7 +353,7 @@
                   >New conversation</button>
                 {/if}
               </div>
-              {#if conversationState === "opened" && workspaceFolder}
+              {#if workspaceFolder}
                 <div class="chat-overflow-path" data-conversation-workspace>{workspaceFolder}</div>
               {/if}
             </div>
