@@ -18,9 +18,9 @@ import sqlite3
 import time
 from collections.abc import Callable
 
+from measure.test_baseline import _open, _seed, _seed_thread
 from playwright.sync_api import BrowserContext, Page
 from tests.e2e.harness import WAIT_MS, JsonObject, ServerHandle
-from measure.test_baseline import _seed, _seed_thread, _open
 
 CONDITION = os.environ.get("PANELS_CONDITION", "baseline")
 
@@ -68,7 +68,7 @@ class Phase:
               f"304s {not_modified:>4}   bytes {total:>12,}   repeated files {len(repeats)}")
         if repeats:
             top = sorted(repeats.items(), key=lambda kv: -kv[1])[:3]
-            print(f"               repeated: " + ", ".join(f"{v}x {k}" for k, v in top))
+            print("               repeated: " + ", ".join(f"{v}x {k}" for k, v in top))
         self.hits.clear()
         self.last = time.monotonic()
 

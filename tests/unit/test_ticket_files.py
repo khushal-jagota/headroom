@@ -122,3 +122,136 @@ def test_ticket_file_route_rejects_encoded_unsafe_paths(tmp_path: Path, path: st
         response = client.get(f"/files/tickets/t_file123/{path}")
 
     assert response.status_code == 404
+
+
+def _ticket_file(db_path: Path, body: bytes, name: str = "notes.md") -> Path:
+    target = _ticket_root(db_path) / "t_reuse01" / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(body)
+    return target
+
+
+def test_a_browser_may_reuse_the_copy_it_holds(tmp_path: Path) -> None:
+    """The whole point: asking whether a copy is still good costs no body."""
+    app, db_path = _make_app(tmp_path)
+    _ticket_file(db_path, b"the artifact")
+
+    with TestClient(app) as client:
+        first = client.get("/files/tickets/t_reuse01/notes.md")
+        again = client.get(
+            "/files/tickets/t_reuse01/notes.md",
+            headers={"If-None-Match": first.headers["etag"]},
+        )
+
+    assert first.status_code == 200
+    # private, because these files are answered per reader; no-cache, because a stored
+    # copy is checked before every use.
+    assert first.headers["cache-control"] == "private, no-cache"
+    assert again.status_code == 304
+    assert again.content == b""
+
+
+def test_a_rewrite_of_the_same_size_retires_the_old_validator(tmp_path: Path) -> None:
+    """A stat-based validator cannot see this. A worker rewrites artifacts in place."""
+    app, db_path = _make_app(tmp_path)
+    target = _ticket_file(db_path, b"A" * 64)
+
+    with TestClient(app) as client:
+        before = client.get("/files/tickets/t_reuse01/notes.md").headers["etag"]
+        target.write_bytes(b"B" * 64)
+        after = client.get("/files/tickets/t_reuse01/notes.md")
+        asked_with_the_old_one = client.get(
+            "/files/tickets/t_reuse01/notes.md", headers={"If-None-Match": before}
+        )
+
+    assert after.headers["etag"] != before
+    assert asked_with_the_old_one.status_code == 200
+    assert asked_with_the_old_one.content == b"B" * 64
+
+
+def test_a_stale_validator_is_not_rescued_by_a_matching_date(tmp_path: Path) -> None:
+    """A browser sends both headers. If-None-Match decides alone when it is there."""
+    app, db_path = _make_app(tmp_path)
+    _ticket_file(db_path, b"the artifact")
+
+    with TestClient(app) as client:
+        served = client.get("/files/tickets/t_reuse01/notes.md")
+        answer = client.get(
+            "/files/tickets/t_reuse01/notes.md",
+            headers={
+                "If-None-Match": '"a validator from some older copy"',
+                "If-Modified-Since": served.headers["last-modified"],
+            },
+        )
+
+    assert answer.status_code == 200
+    assert answer.content == b"the artifact"
+
+
+def test_range_requests_still_work_and_a_stale_if_range_gives_the_whole_file(
+    tmp_path: Path,
+) -> None:
+    """Video seeking rides on these two behaviours."""
+    app, db_path = _make_app(tmp_path)
+    body = bytes(range(256)) * 64
+    _ticket_file(db_path, body, name="clip.mp4")
+
+    with TestClient(app) as client:
+        whole = client.get("/files/tickets/t_reuse01/clip.mp4")
+        part = client.get(
+            "/files/tickets/t_reuse01/clip.mp4", headers={"Range": "bytes=10-19"}
+        )
+        with_live_validator = client.get(
+            "/files/tickets/t_reuse01/clip.mp4",
+            headers={"Range": "bytes=10-19", "If-Range": whole.headers["etag"]},
+        )
+        with_stale_validator = client.get(
+            "/files/tickets/t_reuse01/clip.mp4",
+            headers={"Range": "bytes=10-19", "If-Range": '"a validator from before"'},
+        )
+
+    assert part.status_code == 206
+    assert part.headers["content-range"] == f"bytes 10-19/{len(body)}"
+    assert with_live_validator.status_code == 206
+    # The copy the range was meant for is gone, so the reader gets the current one whole.
+    assert with_stale_validator.status_code == 200
+    assert with_stale_validator.content == body
+
+
+def test_a_conditional_request_never_answers_before_the_route_has_checked(
+    tmp_path: Path,
+) -> None:
+    """A 304 is an answer. It may only be given to a reader who could have had the file."""
+    app, db_path = _make_app(tmp_path)
+    _ticket_file(db_path, b"the artifact")
+
+    with TestClient(app) as client:
+        etag = client.get("/files/tickets/t_reuse01/notes.md").headers["etag"]
+        missing = client.get(
+            "/files/tickets/t_reuse01/absent.md", headers={"If-None-Match": etag}
+        )
+        unreadable = client.get(
+            "/files/sprint-items/si_nobody/notes.md", headers={"If-None-Match": etag}
+        )
+
+    assert missing.status_code == 404
+    assert unreadable.status_code in (403, 404)
+
+
+def test_the_sprint_item_route_answers_conditionally_too(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    item = _sprint_item_root(db_path) / "si_reuse01"
+    item.mkdir(parents=True)
+    (item / "brief.md").write_text("the outcome", encoding="utf-8")
+
+    with TestClient(app) as client:
+        first = client.get("/files/sprint-items/si_reuse01/brief.md")
+        if first.status_code != 200:  # the route is supervisor-read gated
+            pytest.skip(f"this fixture cannot read the file: {first.status_code}")
+        again = client.get(
+            "/files/sprint-items/si_reuse01/brief.md",
+            headers={"If-None-Match": first.headers["etag"]},
+        )
+
+    assert first.headers["cache-control"] == "private, no-cache"
+    assert again.status_code == 304

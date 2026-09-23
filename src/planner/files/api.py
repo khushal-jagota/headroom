@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import mimetypes
 import re
+from email.utils import formatdate
+from pathlib import Path
 from typing import Any
 
+import anyio.to_thread
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse
+from starlette.datastructures import Headers
+from starlette.responses import Response
+from starlette.staticfiles import NotModifiedResponse
 
 from planner.core import authority
 from planner.core.authctx import request_context
@@ -17,6 +23,7 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import sprint_item_files
 from planner.files.logic.paths import resolve_sprint_item_file, resolve_ticket_file
+from planner.files.logic.reuse import content_validator, holds_the_current_copy
 from planner.tickets.api import body_str
 
 router = APIRouter()
@@ -52,7 +59,7 @@ _INLINE_MEDIA_TYPES = _INLINE_IMAGE_TYPES | frozenset(
 
 
 @router.get("/files/tickets/{ticket_id}/{file_path:path}")
-async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> FileResponse:
+async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> Response:
     _reject_raw_encoded_unsafe_path(request)
     try:
         ticket_file = resolve_ticket_file(request.app.state.config.db_path, ticket_id, file_path)
@@ -70,13 +77,13 @@ async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> F
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    return response
+    return await _reusable(request, response, ticket_file.absolute_path)
 
 
 @router.get("/files/sprint-items/{sprint_item_id}/{file_path:path}")
 async def get_sprint_item_file(
     request: Request, sprint_item_id: str, file_path: str
-) -> FileResponse:
+) -> Response:
     _reject_raw_encoded_unsafe_path(request, "Sprint Item file not found")
     with connect(request.app.state.config.db_path) as conn:
         require_above_or_self(
@@ -99,6 +106,40 @@ async def get_sprint_item_file(
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
+    return await _reusable(request, response, managed_file.absolute_path)
+
+
+async def _reusable(request: Request, response: FileResponse, path: Path) -> Response:
+    """Let a browser reuse the copy it holds, and never let it hold a stale one.
+
+    Both routes reach here only after they have decided that this reader may have this
+    file and that the file is there. A 304 is an answer that passed both.
+
+    ``private`` because these files are answered per reader — a shared cache must never
+    hand one reader's artifact to another. ``no-cache`` because a stored copy must be
+    checked before every use, which is what keeps a rewritten artifact from being missed.
+
+    Content-length is left to ``FileResponse``, which stats the file as it sends. The
+    body and its length therefore always agree, even if the artifact is replaced between
+    this decision and that send. The validator can lag by one write in that window: the
+    browser then stores the new bytes under the previous validator, revalidates before
+    its next use, is told they differ, and reads again. It costs one extra read and never
+    shows anybody a stale artifact.
+    """
+    statistics = await anyio.to_thread.run_sync(path.stat)
+    last_modified = formatdate(statistics.st_mtime, usegmt=True)
+    # Reads the whole file, so it goes to a thread rather than the event loop.
+    etag = await anyio.to_thread.run_sync(content_validator, path)
+    response.headers["ETag"] = etag
+    response.headers["Last-Modified"] = last_modified
+    response.headers["Cache-Control"] = "private, no-cache"
+    if holds_the_current_copy(
+        request.headers.get("if-none-match"),
+        request.headers.get("if-modified-since"),
+        etag,
+        last_modified,
+    ):
+        return NotModifiedResponse(Headers(raw=response.raw_headers))
     return response
 
 

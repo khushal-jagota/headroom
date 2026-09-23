@@ -1227,8 +1227,16 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.file-preview-mobile-link {
+.file-preview-name-link {
   display: none;
+}
+
+/* A media preload of "none" means the player is empty until it is pressed: no frame and
+   no duration. The name is what tells the reader which file the player is. */
+.file-preview--managed[data-file-preview-kind="video"] > .file-preview-name-link,
+.file-preview--managed[data-file-preview-kind="audio"] > .file-preview-name-link {
+  display: inline;
+  margin-block-end: var(--space-1);
 }
 
 .file-preview-image,
@@ -1288,7 +1296,7 @@ textarea {
 }
 
 @media (max-width: 40rem) {
-  .file-preview--embedded.file-preview--managed .file-preview-mobile-link {
+  .file-preview--embedded.file-preview--managed .file-preview-name-link {
     display: inline;
   }
 

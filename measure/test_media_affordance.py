@@ -1,11 +1,15 @@
 """With preload=none, is the preview still visibly a playable thing, and does it play?"""
 from __future__ import annotations
-import shutil, sqlite3, subprocess
+
+import json
+import sqlite3
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
+
+from measure.test_baseline import _open, _seed, _seed_thread
 from playwright.sync_api import BrowserContext
-from tests.e2e.harness import WAIT_MS, JsonObject, ServerHandle
-from measure.test_baseline import _seed, _seed_thread, _open, VIDEO
+from tests.e2e.harness import JsonObject, ServerHandle
 
 SHOT = Path(__file__).parent / "shots"
 
@@ -21,12 +25,17 @@ def test_media(server: ServerHandle, context_factory: Callable[[], BrowserContex
                     str(root / "audio.mp3")], check=True, capture_output=True)
     with sqlite3.connect(server.db_path) as conn:
         _seed_thread(conn, ticket_id, paths)
+        payload = json.dumps({
+            "text": f"And the sound.\n\n[audio.mp3](/files/tickets/{ticket_id}/audio.mp3)",
+            "sender_label": "Coding worker",
+            "sender": {"kind": "ticket", "id": ticket_id},
+            "recipient": {"kind": "owner", "id": "owner"},
+        })
         conn.execute(
-            "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, created_at)"
-            " VALUES ('conv_base', 999, 'message_to_owner', ?, 1700009999)",
-            ('{"text": "And the sound.\\n\\n[audio.mp3](/files/tickets/%s/audio.mp3)",'
-             ' "sender_label": "Coding worker", "sender": {"kind": "ticket", "id": "%s"},'
-             ' "recipient": {"kind": "owner", "id": "owner"}}' % (ticket_id, ticket_id),),
+            "INSERT INTO conversation_events "
+            "(conversation_id, sequence, kind, payload, created_at) "
+            "VALUES ('conv_base', 999, 'message_to_owner', ?, 1700009999)",
+            (payload,),
         )
         conn.execute("UPDATE conversations SET latest_sequence = 999 "
                      "WHERE conversation_id = 'conv_base'")
@@ -57,7 +66,8 @@ def test_media(server: ServerHandle, context_factory: Callable[[], BrowserContex
     video.evaluate("v => { v.muted = true; return v.play(); }")
     page.wait_for_timeout(2500)
     state = video.evaluate("v => [v.currentTime, v.duration, v.readyState, v.paused]")
-    print(f"after one play: t={state[0]:.2f}s of {state[1]}s readyState={state[2]} paused={state[3]}")
+    print(f"after one play: t={state[0]:.2f}s of {state[1]}s "
+          f"readyState={state[2]} paused={state[3]}")
     video.evaluate("v => { v.currentTime = v.duration * 0.7; return v.play(); }")
     page.wait_for_timeout(2000)
     sought = video.evaluate("v => [v.currentTime, v.readyState, v.paused]")

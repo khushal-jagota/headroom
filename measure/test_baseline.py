@@ -11,18 +11,24 @@ different facts:
 
 from __future__ import annotations
 
+import base64
 import collections
 import json
-import time
 import shutil
 import sqlite3
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page
 from tests.e2e.harness import WAIT_MS, JsonObject, ServerHandle
-from measure.test_measure_duplicate_fetches import PNG
+
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAW0lEQVR4nO3PQQ0AIBDAsAP/"
+    "nuGNAvZoFSzZOjNnyNi1dwfgUQCeBOBJAI4E4EkAngTgSQCeBOBJAI4E4EkAngTgSQCeBOBJ"
+    "AI4E4EkAngTgSQCeBOBJAI4E4EkAngTgSQCeBOBJAN4A2icCftL8UqQAAAAASUVORK5CYII="
+)
 
 VIDEO = Path(__file__).parent / "assets" / "walkthrough.mp4"
 
@@ -104,7 +110,7 @@ def _seed_thread(conn: sqlite3.Connection, ticket_id: str, paths: list[str]) -> 
             body = "Here is the package.\n\n" + _links(ticket_id, paths)
         elif turn in (5, 7):
             # A worker links its artifacts again when it refers back to them.
-            body = f"As in the walkthrough.\n\n" + _links(
+            body = "As in the walkthrough.\n\n" + _links(
                 ticket_id, ["video/walkthrough.mp4", "notes/note-0.md", "report-0.html"]
             )
         else:
@@ -123,7 +129,9 @@ def _seed_thread(conn: sqlite3.Connection, ticket_id: str, paths: list[str]) -> 
                      [(s, k, json.dumps(p), 1_700_000_000 + s) for s, k, p in events])
     conn.execute("INSERT INTO ticket_conversations (conversation_id, ticket_id) "
                  "VALUES ('conv_base', ?)", (ticket_id,))
-    conn.execute("UPDATE tickets SET conversation_id = 'conv_base' WHERE id = ?", (ticket_id,))
+    conn.execute(
+        "UPDATE tickets SET conversation_id = 'conv_base' WHERE id = ?", (ticket_id,)
+    )
 
 
 class Tally:
