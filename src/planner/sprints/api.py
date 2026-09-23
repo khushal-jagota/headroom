@@ -59,7 +59,7 @@ from planner.work_attention import add_work_attention
 router = APIRouter()
 
 _SPRINT_TEXT_FIELDS = ("name", "primary_bet") + SPRINT_DOCUMENT_FIELDS
-_ITEM_PLAIN_FIELDS = ("title", "body", "priority", "deadline", "project_id")
+_ITEM_PLAIN_FIELDS = ("title", "body", "priority", "project_id")
 
 
 # --- request-body marshallers (contract shapes in sprints/contracts.py) ---------
@@ -74,7 +74,6 @@ def _marshal_create_item(raw: JsonDict) -> CreateItemBody:
         project_id=body_opt_str(raw, "project_id"),
         body=body_str(raw, "body"),
         priority=body_opt_str(raw, "priority"),
-        deadline=body_opt_str(raw, "deadline"),
     )
 
 
@@ -103,17 +102,6 @@ def _marshal_create_idea(raw: JsonDict) -> CreateIdeaBody:
     )
 
 
-def _marshal_item_deadline(raw: object) -> None:
-    if raw is None:
-        return
-    if not isinstance(raw, str):
-        raise PlannerError(ErrorCode.validation, "invalid deadline", {"deadline": raw})
-    try:
-        date.fromisoformat(raw)
-    except ValueError as exc:
-        raise PlannerError(ErrorCode.validation, "invalid deadline", {"deadline": raw}) from exc
-
-
 # --- item routes ---------------------------------------------------------------
 
 
@@ -129,14 +117,12 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
         if body["priority"] is not None
         else Priority.P3
     )
-    _marshal_item_deadline(body["deadline"])
     item = sprints_data.create_item(
         conn,
         title=body["title"],
         project_id=project.id,
         body=body["body"],
         priority=priority,
-        deadline=body["deadline"],
         clock=clk,
     )
     return sprints_views.item_detail(conn, item.id)
@@ -362,10 +348,7 @@ async def patch_item(
         if field in body:
             if field == "project_id":
                 continue
-            if field == "deadline":
-                value = body_opt_str(body, "deadline")
-                _marshal_item_deadline(value)
-            elif field in ("title", "body", "priority"):
+            if field in ("title", "body", "priority"):
                 value = body_str(body, field)
             else:
                 value = body[field]

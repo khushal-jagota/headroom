@@ -165,3 +165,76 @@ def test_html_artifact_interacts_loads_sibling_assets_and_refreshes_in_place(
     assert page.evaluate("window.__artifactInPlaceMarker") == "kept"
     assert page.locator(ticket_selector).count() == 1
     assert artifact.is_visible()
+
+
+def test_a_media_preview_costs_nothing_until_it_is_played_and_then_it_plays(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """A real browser and a real route, because nothing smaller can prove this.
+
+    The risk is that a media preview which downloads nothing up front cannot then play
+    or seek. Playing and seeking are the browser's own media stack talking to the
+    route's range handling, over a real socket. A component test has no range server and
+    a unit test has no media stack, so neither can tell a working preview from one that
+    shows a player and then refuses.
+    """
+    ticket_id = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "Media preview"
+    )["id"]
+    _write_ticket_files(server, ticket_id)
+    root = _ticket_files_dir(server, ticket_id)
+    clip = Path(__file__).parent / "fixtures" / "playable_clip.mp4"
+    (root / "video" / "clip.mp4").write_bytes(clip.read_bytes())
+    _settle_success(
+        server,
+        ticket_id,
+        f"Take a look.\n\n[clip.mp4](/files/tickets/{ticket_id}/video/clip.mp4)",
+    )
+
+    context = context_factory()
+    page = context.new_page()
+    asked_for_the_clip: list[str] = []
+    page.on(
+        "request",
+        lambda request: asked_for_the_clip.append(request.url)
+        if "video/clip.mp4" in request.url
+        else None,
+    )
+    page.goto(server.base + f"/#/workspace/{ticket_id}")
+    page.wait_for_selector(
+        f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
+    )
+    _open_ticket_field(page, "success_condition")
+    video = page.locator("video").first
+    video.wait_for(timeout=WAIT_MS)
+    page.wait_for_timeout(1500)
+
+    # Nothing has been asked for: the reader has not asked for it.
+    assert asked_for_the_clip == [], asked_for_the_clip
+    # The reader can still see which file the player is.
+    name = page.locator('[data-file-preview-kind="video"] .file-preview-name-link').first
+    assert name.is_visible(), "a player with no frame must still name its file"
+    assert "clip.mp4" in name.inner_text()
+
+    # It plays on the first action.
+    video.evaluate("node => { node.muted = true; return node.play(); }")
+    page.wait_for_function(
+        "() => { const v = document.querySelector('video');"
+        " return v !== null && v.readyState >= 3; }",
+        timeout=WAIT_MS,
+    )
+    assert asked_for_the_clip, "playing must fetch the clip"
+
+    # And it seeks.
+    video.evaluate("node => { node.currentTime = 2.0; }")
+    page.wait_for_function(
+        "() => { const v = document.querySelector('video');"
+        " return v !== null && v.currentTime >= 1.9 && v.readyState >= 3; }",
+        timeout=WAIT_MS,
+    )
+    played = video.evaluate("node => [node.currentTime, node.duration, node.readyState]")
+    assert played[0] >= 1.9, played
+    assert played[1] > 2.5, played

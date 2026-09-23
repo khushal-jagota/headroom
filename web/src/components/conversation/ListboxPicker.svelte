@@ -30,6 +30,7 @@
     panelBusy = false,
     controller = $bindable(),
     onOpen,
+    onClose,
     onChoose,
     triggerContent,
     beforeList,
@@ -43,7 +44,7 @@
     keepOpenWhenDisabled?: boolean;
     label: string;
     listLabel?: string;
-    kind?: "model" | "compact";
+    kind?: "rail" | "compact";
     below?: boolean;
     align?: "left" | "right";
     attributes?: Record<string, string | undefined>;
@@ -57,6 +58,8 @@
     panelBusy?: boolean;
     controller?: ListboxPickerController;
     onOpen?: () => void;
+    /** Every close, dismissal or not. A picker with a draft discards it here. */
+    onClose?: () => void;
     onChoose: (value: string) => void;
     triggerContent: Snippet<[boolean]>;
     beforeList?: Snippet;
@@ -86,14 +89,22 @@
   function setActiveValue(value: string | null): void {
     const index = value === null ? -1 : items.findIndex((item) => item.value === value);
     activeIndex = Math.max(0, index);
+    // A rail switch puts different words in the list. Letters typed at the old one must
+    // not join letters typed at the new one, or the match silently finds nothing.
+    forgetTypeahead();
     focusList();
+  }
+
+  function forgetTypeahead(): void {
+    typeahead = "";
+    if (typeaheadTimer !== undefined) clearTimeout(typeaheadTimer);
   }
 
   function close(returnFocus = true): void {
     if (returnFocus) trigger?.focus();
+    if (open) onClose?.();
     open = false;
-    typeahead = "";
-    if (typeaheadTimer !== undefined) clearTimeout(typeaheadTimer);
+    forgetTypeahead();
   }
 
   controller = { close, focusList, setActiveValue };
@@ -252,7 +263,7 @@
   }
 </script>
 
-<div class="listbox-picker" class:model={kind === "model"} bind:this={root} tabindex="-1" {...attributes}>
+<div class="listbox-picker" bind:this={root} tabindex="-1" {...attributes}>
   <button
     type="button"
     class="listbox-picker-trigger"
@@ -274,7 +285,7 @@
   {#if open}
     <div
       class="listbox-picker-panel"
-      class:model={kind === "model"}
+      class:rail={kind === "rail"}
       class:compact={kind === "compact"}
       class:below
       class:right={align === "right"}
@@ -343,7 +354,7 @@
     background: var(--surface-2); border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-lg); overflow: hidden;
   }
-  .listbox-picker-panel.model {
+  .listbox-picker-panel.rail {
     display: grid; grid-template-columns: auto minmax(0, 1fr); width: 296px;
     max-width: calc(100vw - var(--space-4) * 2);
   }
@@ -367,6 +378,6 @@
   .listbox-picker-tick { flex: none; font-family: var(--font-mono); font-size: var(--type-xs); }
   .listbox-picker-panel[aria-busy="true"] .listbox-picker-option { cursor: progress; opacity: .55; }
   @media (max-width: 620px) {
-    .listbox-picker-panel.model { width: min(274px, calc(100vw - var(--space-4) * 2)); }
+    .listbox-picker-panel.rail { width: min(274px, calc(100vw - var(--space-4) * 2)); }
   }
 </style>

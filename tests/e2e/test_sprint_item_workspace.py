@@ -125,10 +125,8 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
             "title": "Mirror Item",
             "body": "One source for both panes.",
             "priority": "P1",
-            "deadline": None,
             "project_id": project["id"],
             "project": "Mirror project",
-            "kind": "normal",
             "created_at": 10,
             "updated_at": 10,
             "committed_sprints": [],
@@ -491,13 +489,16 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     history.select_option(past_id)
     page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
     assert page.get_by_text("Past supervisor marker", exact=True).count() == 0
-    page.locator("[data-conversation-lens-toggle]").click()
+    page.locator('[data-conversation-lens-choice="full"]').click()
     page.get_by_text("Past supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
     assert page.locator('[data-conversation-read-only-boundary="true"]').count() == 1
     history.select_option("__current__")
-    assert page.locator("[data-conversation-lens-toggle]").inner_text() == "Full"
+    assert (
+        page.locator('[data-conversation-lens-choice="full"]').get_attribute("aria-pressed")
+        == "true"
+    )
     page.get_by_text("Current supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
-    page.locator("[data-conversation-lens-toggle]").click()
+    page.locator('[data-conversation-lens-choice="focus"]').click()
     assert page.get_by_text("Current supervisor marker", exact=True).count() == 0
 
     api.direct_patch(

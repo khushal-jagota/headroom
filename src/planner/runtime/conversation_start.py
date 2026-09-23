@@ -743,8 +743,8 @@ async def start_agent_conversation(
             linked = conn.execute(
                 "UPDATE agents SET conversation_id=? WHERE agent_key=? "
                 "AND conversation_id IS NULL AND EXISTS ("
-                "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal' "
-                "AND supervisor_agent_key=agents.agent_key)",
+                "SELECT 1 FROM sprint_items WHERE id=? "
+                "AND 'sprint_item_supervisor_' || id=agents.agent_key)",
                 (conversation_id, agent_key, required_sprint_item_id),
             )
             if linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None:

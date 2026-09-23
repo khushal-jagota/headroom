@@ -425,7 +425,8 @@
                  would change what was proposed, and leaves the holder free — which is how
                  a proposal sitting in the wrong queue gets moved to the right one.
                  A parked Kickoff is one of those: a Ticket opened for somebody else
-                 parks its Kickoff in their queue, so the holder half belongs here too. -->
+                 parks its Kickoff in their queue, so the holder half belongs here too.
+                 The picker reports which halves the reader set, and only those are written. -->
             {#if detail.stage !== "done" && (detail.stage !== "needs_brief" || detail.pending_proposal !== null)}
               <details class="ticket-leash" bind:this={leashMenu} data-leash>
                 <summary
@@ -449,10 +450,11 @@
                     holder={detail.ceiling_holder}
                     sprintItem={ticketSprintItem}
                     stageLocked={detail.pending_proposal !== null}
-                    onComplete={(ceiling, holder) => void updateScope(
-                      detail.pending_proposal === null
-                        ? { ceiling, ceiling_holder: holder }
-                        : { ceiling_holder: holder }
+                    below
+                    onComplete={(change) => void updateScope(
+                      change.ceiling === undefined
+                        ? { ceiling_holder: change.holder }
+                        : { ceiling: change.ceiling, ceiling_holder: change.holder }
                     )}
                   />
                 </div>

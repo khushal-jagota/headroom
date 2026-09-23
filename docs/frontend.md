@@ -164,8 +164,9 @@ One screen per part of the system:
   priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
   Item appears only when the Ticket has one. Project and Sprint Item are static facts.
   The eyebrow states no Sprint and has no placement controls. The Ticket details
-  disclosure is the leash: a ceiling select and a holder select. A parked proposal drops
-  the ceiling half and keeps the holder one. Direct blockers get
+  disclosure is the leash: one control holding both halves of the ceiling. A parked
+  proposal shows the ceiling half greyed and unselectable, with the reason under the
+  list, and leaves the holder half free. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
@@ -513,12 +514,19 @@ hand-rolling the same shapes per screen. Each does one job:
   that text at its adapter boundary. The browser does not store vendor identifiers or
   construct structured Codex input.
 - **SegmentedControl** — a small set of toggle options (Backlog Project/priority).
-- **CeilingPicker** — the "approve until …" ceiling control.
+- **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
+  may go, and who reviews it — sit in a rail on the left, so either can be edited on its
+  own. A half-finished choice stays in the open panel: dismissing it writes nothing and
+  leaves nothing behind, and only a completed pair reaches the Ticket.
+- **PickerRail**, **PickerRailRow** — the left rail a picker panel uses to name the parts
+  of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.
 
 The Ticket page shows the leash from the moment a ceiling can move. A pending proposal
-drops its ceiling select and keeps its holder one, matching the server rule: the ceiling is
-frozen under a filed proposal, and the proposal can still be re-addressed.
+holds its ceiling half visible but unselectable and keeps its holder half free, matching
+the server rule: the ceiling is frozen under a filed proposal, and the proposal can still
+be re-addressed. A reviewer changed on its own is written on its own, so moving a
+proposal to another queue never moves the ceiling.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each

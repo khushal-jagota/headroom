@@ -478,6 +478,7 @@ async def create_ticket(
         boundary_hour=cfg.boundary_hour,
         sprint_item_id_explicit="sprint_item_id" in raw,
         sprint_id_explicit="sprint_id" in raw,
+        project_id_explicit="project" in raw or "project_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )

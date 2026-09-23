@@ -40,7 +40,6 @@ def _ticket(*, stage: str = "needs_success_condition") -> Ticket:
         ceiling_holder=OWNER_PRINCIPAL,
         ticket_status=TicketStatus.awaiting_approval,
         worker_step_claim=WorkerStepClaim.none,
-        worker_step_claim_changed_at=0,
         worker_step_claim_revision=0,
         conversation_id=None,
         field_values={},

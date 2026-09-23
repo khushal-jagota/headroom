@@ -3,16 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Final, TypedDict
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import Priority
-
-
-class SprintItemKind(StrEnum):
-    normal = "normal"
-    other = "other"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,14 +49,16 @@ class SprintItem:  # §3.2
     title: str
     body: str
     priority: Priority
-    deadline: str | None
     project_id: str
     project_name: str
-    supervisor_agent_key: str
     supervisor_launch_configuration: SprintItemSupervisorLaunchConfiguration
-    kind: SprintItemKind = SprintItemKind.normal
     created_at: int = 0
     updated_at: int = 0
+
+    @property
+    def supervisor_agent_key(self) -> str:
+        """The supervisor identity is the Sprint Item identity in agent-key form."""
+        return f"sprint_item_supervisor_{self.id}"
 
 
 @dataclass(frozen=True)
@@ -88,7 +84,6 @@ class CreateItemBody(TypedDict, total=False):  # POST /items
     project_id: str | None
     body: str  # default ""
     priority: str | None  # Priority value; default P3
-    deadline: str | None  # ISO date
 
 
 class CreateSprintBody(TypedDict, total=False):  # POST /sprints
@@ -157,7 +152,6 @@ class OutcomeSummary(TypedDict):
     id: str
     title: str
     priority: str
-    deadline: str | None
     project_id: str
     project: str
     created_at: int

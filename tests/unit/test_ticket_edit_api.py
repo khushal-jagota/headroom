@@ -178,7 +178,6 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
         conn.commit()
     finally:
         conn.close()
-
     with TestClient(app) as client:
         defaulted = client.post(
             "/api/tickets", json={"title": "Default placement", "worker_type": "coding"}
@@ -254,10 +253,9 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
 
     conn = connect(str(db_path))
     try:
-        assert (
-            conn.execute("SELECT count(*) FROM sprint_items WHERE kind = 'other'").fetchone()[0]
-            == 0
-        )
+        assert "kind" not in {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(sprint_items)")
+        }
     finally:
         conn.close()
     with TestClient(app) as client:
@@ -269,6 +267,93 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
         assert client.get(explicit_backlog_read).json()["day_ids"] == [
             "day_2026-07-10"
         ]
+
+
+def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    with TestClient(app) as client:
+        vylo_item = client.post(
+            "/api/items", json={"title": "Vylo outcome", "project_id": "project_vylo"}
+        ).json()
+        personal_item = client.post(
+            "/api/items", json={"title": "Personal outcome", "project_id": "project_personal"}
+        ).json()
+        created = client.post(
+            "/api/tickets",
+            json={
+                "title": "Derived project ticket",
+                "worker_type": "coding",
+                "sprint_item_id": vylo_item["id"],
+            },
+        )
+        assert created.status_code == 200, created.text
+        ticket_id = str(created.json()["id"])
+        assert created.json()["project_id"] == "project_vylo"
+        with connect(str(db_path)) as conn:
+            assert conn.execute(
+                "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
+            ).fetchone()[0] is None
+
+        full = client.get("/api/tickets?detail=full&project_id=project_vylo")
+        summary = client.get(
+            "/api/tickets?detail=summary&project_id=project_vylo&search=Derived"
+        )
+        assert ticket_id in {row["id"] for row in full.json()["tickets"]}
+        assert ticket_id in {row["id"] for row in summary.json()["tickets"]}
+
+        incompatible = client.patch(
+            f"/api/tickets/{ticket_id}",
+            json={
+                "sprint_item_id": personal_item["id"],
+                "project_id": "project_vylo",
+            },
+        )
+        assert incompatible.status_code == 400
+        unchanged = client.get(f"/api/tickets?detail=full&id={ticket_id}").json()
+        assert unchanged["sprint_item_id"] == vylo_item["id"]
+        assert unchanged["project_id"] == "project_vylo"
+
+        moved = client.patch(
+            f"/api/tickets/{ticket_id}",
+            json={
+                "sprint_item_id": personal_item["id"],
+                "project_id": "project_personal",
+            },
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["project_id"] == "project_personal"
+        with connect(str(db_path)) as conn:
+            assert conn.execute(
+                "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
+            ).fetchone()[0] is None
+
+        detached = client.patch(
+            f"/api/tickets/{ticket_id}", json={"sprint_item_id": None}
+        )
+        assert detached.status_code == 200, detached.text
+        assert detached.json()["project_id"] == "project_personal"
+        with connect(str(db_path)) as conn:
+            assert conn.execute(
+                "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
+            ).fetchone()[0] == "project_personal"
+
+        reattached = client.patch(
+            f"/api/tickets/{ticket_id}",
+            json={"sprint_item_id": personal_item["id"]},
+        )
+        assert reattached.status_code == 200, reattached.text
+        replacement = client.patch(
+            f"/api/tickets/{ticket_id}",
+            json={"sprint_item_id": None, "project_id": "project_vylo"},
+        )
+        assert replacement.status_code == 200, replacement.text
+        assert replacement.json()["project_id"] == "project_vylo"
+        with connect(str(db_path)) as conn:
+            assert conn.execute(
+                "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
+            ).fetchone()[0] == "project_vylo"
 
 
 def test_employee_configuration_endpoint_allows_pristine_statuses(

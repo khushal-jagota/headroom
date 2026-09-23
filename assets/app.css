@@ -1227,8 +1227,18 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.file-preview-mobile-link {
+.file-preview-name-link {
   display: none;
+}
+
+/* An embedded media preview loads nothing until it is pressed, so the player is empty:
+   no frame and no duration. The name is what tells the reader which file it is, and it
+   stays when the media fails, where it names the file the failure belongs to. A block,
+   because an inline box drops the margin that separates it from the player. */
+.file-preview--embedded.file-preview--managed[data-file-preview-kind="video"] > .file-preview-name-link,
+.file-preview--embedded.file-preview--managed[data-file-preview-kind="audio"] > .file-preview-name-link {
+  display: block;
+  margin-block-end: var(--space-1);
 }
 
 .file-preview-image,
@@ -1288,7 +1298,7 @@ textarea {
 }
 
 @media (max-width: 40rem) {
-  .file-preview--embedded.file-preview--managed .file-preview-mobile-link {
+  .file-preview--embedded.file-preview--managed .file-preview-name-link {
     display: inline;
   }
 
@@ -1733,7 +1743,7 @@ button.list-row:hover .list-row-title {
   background: transparent;
   border: 0;
   text-align: left;
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
   color: var(--text-muted);
 }
 .acp-step--expandable { cursor: pointer; }
@@ -1762,6 +1772,7 @@ button.list-row:hover .list-row-title {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--type-sm);
+  letter-spacing: var(--tracking-mono);
   color: var(--text-muted);
 }
 .acp-step-mark {
@@ -1871,18 +1882,6 @@ button.list-row:hover .list-row-title {
   background: var(--accent-error);
 }
 
-.chat-lbl {
-  /* Squeezed, the name loses its tail to an ellipsis; wrapping would stack it a
-   * letter per line on a narrow screen. */
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: var(--type-xs);
-  color: var(--text-default);
-  font-family: var(--font-mono);
-  letter-spacing: var(--tracking-mono);
-}
 
 .chat-state {
   font-family: var(--font-mono);
@@ -1899,17 +1898,15 @@ button.list-row:hover .list-row-title {
   gap: var(--space-2);
 }
 
-.chat-usage {
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--text-faintest);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
 
 .chat-overflow { position: relative; display: flex; }
 
 .chat-overflow-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--text-faintest);
@@ -1917,7 +1914,7 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-sm);
   line-height: 1;
   cursor: pointer;
-  padding: var(--space-1) var(--space-2);
+  padding: 0;
   border-radius: var(--radius-sm);
 }
 .chat-overflow-btn:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
@@ -2081,7 +2078,7 @@ button.list-row:hover .list-row-title {
   border-radius: var(--radius-lg);
   padding: var(--space-2) var(--space-3);
   font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
+  font-size: var(--type-serif-md);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -2090,38 +2087,60 @@ button.list-row:hover .list-row-title {
   align-self: stretch;
   color: var(--text-default);
   font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
-  line-height: 1.6;
+  font-size: var(--type-serif-md);
+  line-height: 1.68;
   overflow-wrap: anywhere;
 }
+/* Two messages in a row from the same worker are two messages, not one long one.
+   A short mark the width of a few characters hangs above the second, marking the break
+   without ruling the column. Full already has the turn's work between them, so this
+   belongs to Focus, where that work is not drawn. */
+[data-conversation-lens="focus"] .chat-a + .chat-a {
+  position: relative;
+  margin-block-start: var(--space-4);
+}
+[data-conversation-lens="focus"] .chat-a + .chat-a::before {
+  content: "";
+  position: absolute;
+  inset-block-start: calc(var(--space-3) * -1);
+  inset-inline-start: 0;
+  inline-size: var(--space-6);
+  border-block-start: var(--border-hairline) solid var(--text-faintest);
+  opacity: 0.55;
+}
+
 /* programmatic prompts = visible system context, never hidden or mistaken for user prose */
 .chat-system {
   align-self: stretch;
   border-inline-start: var(--border-hairline) solid var(--text-faint);
   color: var(--text-faint);
   font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
+  font-size: var(--type-serif-md);
   line-height: 1.6;
   padding-inline-start: var(--space-3);
   overflow-wrap: anywhere;
 }
 
 /* composer = one recessed field; the container IS the input */
+/* The well is not a box. It is the lower band of one card: what separates it from the
+ * conversation above is colour — the recessed plane the app already uses for a field —
+ * and one hairline seam. It draws no second rectangle, in any host, so the card has one
+ * outline and the eye has one shape to read. */
 .chat-box {
   position: relative;   /* anchors the "/" command popover above it */
   flex: none;
   background: var(--surface-recessed);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-lg);
+  border: 0;
+  border-top: var(--border-hairline) solid var(--border-color);
+  border-radius: 0;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
   padding: var(--space-2) var(--space-2) var(--space-1) var(--space-3);
-  transition: border-color var(--motion-base) var(--motion-ease);
 }
+/* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
-  border-color: var(--accent-bright);
   box-shadow:
     inset 0 1px 2px rgba(0, 0, 0, 0.35),
-    0 0 0 2px color-mix(in srgb, var(--accent-bright) 18%, transparent);
+    inset 0 0 0 2px color-mix(in srgb, var(--accent-bright) 30%, transparent);
 }
 
 /* The task-progress popover shares the raised-popover shadow; the property
@@ -2179,7 +2198,7 @@ button.list-row:hover .list-row-title {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.chat-box:focus-within { border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent); }
+
 .chat-image-previews {
   display: flex;
   gap: var(--space-2);
@@ -2278,9 +2297,11 @@ button.list-row:hover .list-row-title {
   line-height: 1.2;
 }
 .chat-slash:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
+/* A target a finger can find: the conversation's own control size, not the app's
+ * smallest icon. The glyph inside grows with it. */
 .chat-image {
-  width: var(--space-5);
-  height: var(--space-5);
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   background: none;
@@ -2293,8 +2314,13 @@ button.list-row:hover .list-row-title {
 .chat-image:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
 .chat-image.on { color: var(--accent-bright); background: var(--surface-recessed); }
 .chat-image:disabled { opacity: 0.5; cursor: default; }
-.chat-image svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+.chat-image svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.35; }
 .chat-image-input { display: none; }
+/* The model chip and the delivery chip are pills, not icons, so they set their height
+ * from their text and came out short of the others. Raise them to the same target here
+ * rather than in the picker itself: the same picker draws the Ceiling control on a page
+ * this Ticket does not touch. */
+.chat-foot .listbox-picker-trigger { min-height: 32px; }
 .chat-submit {
   margin-left: auto;
   display: flex;
@@ -2303,7 +2329,7 @@ button.list-row:hover .list-row-title {
   min-width: 0;
 }
 .chat-send {
-  width: var(--space-5); height: var(--space-5);
+  width: 32px; height: 32px;
   border: none;
   border-radius: var(--radius-md);
   background: var(--surface-2);
@@ -4186,32 +4212,49 @@ select {
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
 }
 
+/* Focus is shown on the card, because the card is the thing being used. Lighting the
+ * well instead drew a second rectangle inside the first and told the reader the field
+ * was the object, when the field is one band of it. The ring is drawn outside the
+ * border, so nothing inside moves when it arrives. */
+[data-conversation-pane][data-conversation-state="rest"]:focus-within,
+[data-conversation-pane][data-conversation-state="peeked"]:focus-within {
+  border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent);
+  box-shadow:
+    0 -8px 24px rgba(0, 0, 0, 0.45),
+    0 0 0 3px color-mix(in srgb, var(--accent-bright) 9%, transparent);
+}
+
+/* Where there is no card to light, the well carries the focus itself: at full height,
+ * because the card's outline is the page, and in a host that gives the conversation the
+ * space it has rather than a card — the Chief of Staff is that one. Focus has to be
+ * visible everywhere, and the textarea draws no outline of its own. */
+[data-conversation-pane][data-conversation-state="opened"]:focus-within .chat-box,
+[data-conversation-pane]:not([data-conversation-state]):focus-within .chat-box {
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-bright) 40%, transparent);
+}
+
+/* A file being dragged onto the well outranks the fact that it has focus: the drop is
+ * what is about to happen. Same shape, the colour the app means "this is a target" by. */
+[data-conversation-pane] .chat-box.drag,
+[data-conversation-pane][data-conversation-state="opened"]:focus-within .chat-box.drag,
+[data-conversation-pane]:not([data-conversation-state]):focus-within .chat-box.drag {
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 2px color-mix(in srgb, var(--accent-bright) 30%, transparent);
+}
+
 /* Everything inside the card is held off its edges. */
 .conversation-layer [data-conversation-pane] {
   padding-inline: var(--space-4);
 }
 
-/* The well is cut into the card rather than floating in it: it runs the card's full width,
- * meets its bottom corners, and its top edge is the one line across the whole card. It is
- * the one thing that reaches past the card's inset, so it pulls itself back out by it and
- * keeps its own padding for the text inside. */
+/* The band reaches past the card's inset, so it pulls itself back out by it and keeps its
+ * own padding for the text inside. */
 .conversation-layer .chat-box {
-  /* All four edges are always there and only their colour changes, so focus moves nothing.
-   * Drawing them on arrival would grow the well by a pixel on three sides and shift the
-   * text under the cursor at the moment the cursor lands in it. Three of them are invisible
-   * until then; the fourth is the line across the card. */
-  border-width: var(--border-hairline);
-  border-color: transparent;
-  border-top-color: var(--border-color);
-  border-radius: 0;
   margin: 0 calc(var(--space-4) * -1);
   padding-inline: var(--space-4);
-}
-
-/* Focused, the well shows its whole shape rather than the one edge it normally draws, so
- * what is lit is the area being typed into and not a line above it. */
-.conversation-layer .chat-box:focus-within {
-  border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent);
 }
 
 .conversation-layer [data-conversation-pane]:not([data-conversation-state="opened"]) .chat-box {
@@ -4255,19 +4298,12 @@ select {
   }
 }
 
-/* The chat header rows learn to share at a phone width: the workspace path yields to an
- * ellipsis instead of crushing the worker's name into a one-letter-per-line column. These
- * are the shared chat parts, used on screens with no pane around them, so the window is
- * the right ruler here. */
+/* The head has nothing left in it that can be squeezed: the worker's name and the
+ * workspace path both moved out of it, and what remains is a fixed set of controls. */
 @media (max-width: 720px) {
   .chat-head-right {
     min-width: 0;
     flex: 0 1 auto;
-  }
-
-  .chat-usage {
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 }
 
@@ -5591,22 +5627,12 @@ details:not([open]) > summary > .sprint-workspace-chevron {
  * the Ticket screen above) and takes its narrow-pane insets from its own pane, because
  * .sprint-item-page names itself a `conversation-host` container.
  *
- * Two things this card has never done that the Ticket's does. Both are one declaration
- * each, and both are here rather than in the shared family because the shared family is
- * what the Ticket, the Atlas panel and the next host all draw:
- *   1. its pane keeps the standard spacing between head, transcript and well instead of
- *      closing the seam to nothing, so the well sits a step below the parts above it;
- *   2. its well does not light its other three edges when the composer takes focus — only
- *      the one line across the card stays drawn.
- * Delete either rule and this card matches the Ticket's exactly. */
-.sprint-item-page .conversation-layer [data-conversation-pane] {
-  gap: var(--space-2);
-}
-
-.sprint-item-page .conversation-layer .chat-box:focus-within {
-  border-color: transparent;
-  border-top-color: var(--border-color);
-}
+ * This card once did two things the Ticket's did not: it kept a step of space between
+ * head, transcript and well, and it refused to light the well's other three edges on
+ * focus.
+ * Both of them are gone: the card is drawn one way, in every host that shows it. Its
+ * pane closes the seam to nothing like the Ticket's, and focus is shown on the card
+ * rather than on the well, so there was nothing left for either rule to say. */
 
 @container sprint-item-pane (max-width: 720px) {
   .sprint-workspace-title {

@@ -36,7 +36,7 @@ express, so each type declares exactly what it stands above and reaches nothing 
 - A `planning-midday-check` Ticket writes one afternoon field, and can move work on and
   off today.
 - A `planning-sprint` Ticket shapes a Sprint, its Sprint Item commitments, and the brief of
-  any Sprint Item — its title, body, priority, deadline and project.
+  any Sprint Item — its title, body, priority and project.
 
 A declaration that names fields reaches those fields and nothing else. It does not reach
 an operation on the whole object, because that names no field: sprint planning writes an

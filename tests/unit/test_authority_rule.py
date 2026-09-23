@@ -143,19 +143,11 @@ def test_nobody_can_be_a_target_that_is_not_a_live_principal() -> None:
     assert stands_above(OWNER_PRINCIPAL, missing, _NO_FACTS) is True
 
 
-def test_an_other_kind_sprint_item_is_nobody(db: Connection) -> None:
-    item_id = _item(db, "Normal outcome")
-    # An "other" bucket holds no supervisor identity at all; a trigger enforces the pair.
-    db.execute(
-        "UPDATE sprint_items SET kind='other', supervisor_agent_key=NULL, "
-        "supervisor_backend=NULL, supervisor_model=NULL, supervisor_reasoning_effort=NULL "
-        "WHERE id=?",
-        (item_id,),
-    )
-    db.commit()
+def test_every_sprint_item_is_its_own_principal(db: Connection) -> None:
+    item_id = _item(db, "Outcome")
     claimed = Principal(PrincipalKind.sprint_item, item_id)
 
-    assert is_above_or_self(db, claimed, targets.outcome(item_id)) is False
+    assert is_above_or_self(db, claimed, targets.outcome(item_id)) is True
     assert is_above_or_self(db, OWNER_PRINCIPAL, targets.outcome(item_id)) is True
 
 

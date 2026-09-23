@@ -122,7 +122,6 @@ _ITEM_FIELDS = {
     "title": "title",
     "body": "body",
     "priority": "priority",
-    "deadline": "deadline",
     "project": "project",
     "project-id": "project_id",
 }
@@ -335,8 +334,6 @@ def _sprint_item_record(
         "project_id",
         "project",
         "priority",
-        "deadline",
-        "kind",
     )
     header = {key: data[key] for key in header_keys if key in data}
     # The Sprint Item's agent is part of the Sprint Item record. It used to be a read of its
@@ -2187,7 +2184,6 @@ def sprint_item() -> None:
 @click.option(
     "--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label."
 )
-@click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @json_option
 def sprint_item_create(
     title: str,
@@ -2195,7 +2191,6 @@ def sprint_item_create(
     project_id: str | None,
     body_file: str | None,
     priority: str | None,
-    deadline: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {
@@ -2207,8 +2202,6 @@ def sprint_item_create(
     )
     if priority is not None:
         body["priority"] = priority
-    if deadline is not None:
-        body["deadline"] = deadline
     data = http.send("POST", "/api/items", as_json=as_json, json_body=body)
     http.emit(data, as_json, f"{data['id']}")
 

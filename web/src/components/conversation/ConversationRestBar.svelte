@@ -14,8 +14,7 @@
   import {
     elapsedSecondsSince,
     formatDuration,
-    millisecondsUntilNextSecond,
-    workingSentence
+    millisecondsUntilNextSecond
   } from "../../lib/conversation/transcript";
   import type { RestLine } from "../../lib/conversation/restLine";
   import TaskProgress from "./TaskProgress.svelte";
@@ -50,15 +49,49 @@
 
 <div class="c2-rest" class:is-waiting={line?.waiting ?? false} data-conversation-rest-bar>
   {#if line}
-    {#if line.waiting}
-      <span class="c2-rest-mark" data-conversation-rest-waiting>
-        <span class="c2-rest-dot" aria-hidden="true"></span>
-        <span class="chat-state chat-state--attn">waiting for you</span>
-      </span>
-    {:else if line.taskProgress}
+    <!-- Four independent axes, four shapes, never words. A turn can be running while a
+         reply nobody has read is still above it, so these are drawn together. -->
+    {#if line.marks.running || line.marks.unreadReply || line.marks.needsYou || line.marks.failed}
+    <span class="c2-marks" data-conversation-rest-marks>
+      {#if line.marks.running}
+        <span
+          class="c2-mark c2-mark--running"
+          data-conversation-mark="running"
+          role="img"
+          aria-label="working"
+        ></span>
+      {/if}
+      {#if line.marks.unreadReply}
+        <span
+          class="c2-mark c2-mark--reply"
+          data-conversation-mark="reply"
+          role="img"
+          aria-label="a reply you have not read"
+        ></span>
+      {/if}
+      {#if line.marks.needsYou}
+        <span
+          class="c2-rest-dot c2-mark"
+          data-conversation-mark="needs-you"
+          data-conversation-rest-waiting
+          role="img"
+          aria-label="needs you"
+        ></span>
+      {/if}
+      {#if line.marks.failed}
+        <span
+          class="c2-mark c2-mark--failed"
+          data-conversation-mark="failed"
+          role="img"
+          aria-label="the turn failed"
+        ></span>
+      {/if}
+    </span>
+    {/if}
+    {#if line.taskProgress}
       <TaskProgress progress={line.taskProgress} variant="rest" />
     {:else if workingSince !== null}
-      <span class="c2-rest-working">{workingSentence(elapsedSeconds)}</span>
+      <span class="c2-rest-working">{formatDuration(elapsedSeconds ?? 0)}</span>
       <span class="c2-rest-seam" aria-hidden="true">·</span>
     {/if}
     {#if line.who}
@@ -95,16 +128,51 @@
        again because a status nobody reads is not doing its job. */
     color: var(--text-default);
     font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    /* The conversation's own scale: the line a reader is expected to read at rest is a
+       step up from the app's smallest label. */
+    font-size: var(--type-sm);
     line-height: 1.5;
     min-block-size: calc(1.5em + var(--space-3) + var(--space-3));
     letter-spacing: var(--tracking-mono);
   }
-  .c2-rest-mark {
+  /* The marks sit together at the head of the line and keep their own order, so a
+     conversation that gains one does not move the words beside it. */
+  .c2-marks {
     flex: none;
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
+  }
+  .c2-mark { flex: none; display: block; }
+  /* Working: the turn head's own spinner, at the size of the line. */
+  .c2-mark--running {
+    width: 11px;
+    height: 11px;
+    border-radius: var(--radius-pill);
+    border: 1.5px solid rgba(230, 210, 175, 0.18);
+    border-top-color: var(--text-muted);
+    animation: c2-mark-spin 900ms linear infinite;
+  }
+  @keyframes c2-mark-spin { to { transform: rotate(360deg); } }
+  /* A reply nobody has read: the accent the app already means "there is something here"
+     by, pointed at the conversation. */
+  .c2-mark--reply {
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 5px 0 5px 7px;
+    border-color: transparent transparent transparent var(--accent-bright);
+  }
+  /* A turn that failed, in the app's own error colour and its own shape. */
+  .c2-mark--failed {
+    width: 9px;
+    height: 9px;
+    border-radius: var(--radius-sm);
+    background: var(--accent-error);
+    transform: rotate(45deg);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .c2-mark--running { animation: none; }
   }
   /* The brightest mark in the palette, and the app already means one thing by it: an ask
      only this person can answer. It is the same mark a Worker's row carries. */

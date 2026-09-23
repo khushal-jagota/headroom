@@ -918,7 +918,6 @@ def _stranded_child(
     item_id: str,
     *,
     conversation_id: str = "conv-dead-worker",
-    worker_step_claim_changed_at: int = 1,
     worker_type: str = "coding",
 ) -> str:
     """A child Ticket exactly as a dead Worker leaves one: at `agent`, holding nothing.
@@ -956,8 +955,8 @@ def _stranded_child(
         )
         conn.execute(
             "UPDATE tickets SET conversation_id = ?, worker_step_claim = 'out', "
-            "worker_step_claim_changed_at = ? WHERE id = ?",
-            (conversation_id, worker_step_claim_changed_at, ticket["id"]),
+            "worker_step_claim_revision = worker_step_claim_revision + 1 WHERE id = ?",
+            (conversation_id, ticket["id"]),
         )
         conn.commit()
     return str(ticket["id"])
@@ -970,12 +969,7 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _create_item(client)
-        ticket_id = _stranded_child(
-            client,
-            db_path,
-            str(item["id"]),
-            worker_step_claim_changed_at=int(time.time()) - 1,
-        )
+        ticket_id = _stranded_child(client, db_path, str(item["id"]))
         configuration = {
             "employee_backend": "claude",
             "employee_launch_model": "claude-model",
