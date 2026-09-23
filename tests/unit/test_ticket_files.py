@@ -416,3 +416,33 @@ def test_sound_and_video_keep_the_framework_answer_at_any_size(tmp_path: Path) -
         assert answer.headers["cache-control"] == "private, no-cache"
         assert answer.headers["accept-ranges"] == "bytes"
     assert video_again.status_code == 200
+
+
+def test_a_non_media_file_still_serves_a_plain_range(tmp_path: Path) -> None:
+    """Asking for a piece of a text artifact still gets a piece of it.
+
+    Reuse and ranges each keep their own tag, and the two are never compared. A plain
+    range is answered by the framework exactly as before. Only a *conditional* range —
+    one carrying the byte-derived tag the whole-file answer gave out — declines, because
+    the framework judges ``If-Range`` against its own stat-derived tag and cannot
+    recognise the other. Declining means the whole current file, which is the safe
+    answer and the one the specification asks for.
+    """
+    app, db_path = _make_app(tmp_path)
+    body = b"the artifact, at some length" * 64
+    _ticket_file(db_path, body, name="report.txt")
+    url = "/files/tickets/t_reuse01/report.txt"
+
+    with TestClient(app) as client:
+        whole = client.get(url)
+        plain_range = client.get(url, headers={"Range": "bytes=4-13"})
+        conditional_range = client.get(
+            url, headers={"Range": "bytes=4-13", "If-Range": whole.headers["etag"]}
+        )
+
+    assert plain_range.status_code == 206
+    assert plain_range.content == body[4:14]
+    assert plain_range.headers["content-range"] == f"bytes 4-13/{len(body)}"
+    # The conditional one is handed the whole current file instead of a piece.
+    assert conditional_range.status_code == 200
+    assert conditional_range.content == body
