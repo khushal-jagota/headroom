@@ -21,6 +21,7 @@
 </script>
 
 <UnifiedModelPicker
+  chevron="drawn"
   view={view.picker}
   bind:snapshots
   models={view.pickerSource.models}
@@ -51,7 +52,7 @@
       title="Stop the turn"
       aria-label="Stop the turn"
       onclick={intents.stop}
-    >■</button>
+    ><svg viewBox="0 0 24 24" aria-hidden="true" class="chat-send-fill"><rect x="6" y="6" width="12" height="12" rx="2" /></svg></button>
   {/if}
   {#if beforeSubmit}{@render beforeSubmit()}{/if}
   {#if view.submit.active || view.submit.sending}
@@ -66,6 +67,6 @@
       title={view.submit.title}
       aria-label={view.submit.ariaLabel}
       onclick={intents.send}
-    >↑</button>
+    ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg></button>
   {/if}
 </div>

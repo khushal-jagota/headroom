@@ -21,6 +21,7 @@
     label,
     listLabel = label,
     kind = "compact",
+    chevron = "typed",
     below = false,
     align = "left",
     attributes = {},
@@ -45,6 +46,10 @@
     label: string;
     listLabel?: string;
     kind?: "rail" | "compact";
+    /** How the trigger's chevron is drawn. A typed caret is sized by the font rather
+     *  than by its box, so it reads small beside stroked icons. The conversation's
+     *  composer asks for the drawn one; every other caller keeps what it had. */
+    chevron?: "typed" | "drawn";
     below?: boolean;
     align?: "left" | "right";
     attributes?: Record<string, string | undefined>;
@@ -279,7 +284,13 @@
     {...triggerAttributes}
   >
     {@render triggerContent(open)}
-    <span class="listbox-picker-chevron" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
+    {#if chevron === "drawn"}
+      <svg class="listbox-picker-chevron-drawn" viewBox="0 0 24 24" aria-hidden="true">
+        {#if open}<path d="M6 15l6-6 6 6" />{:else}<path d="M6 9l6 6 6-6" />{/if}
+      </svg>
+    {:else}
+      <span class="listbox-picker-chevron" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
+    {/if}
   </button>
 
   {#if open}
@@ -349,6 +360,16 @@
   .listbox-picker-trigger.is-open { background: var(--surface-2); border-color: var(--border-color); color: var(--text-strong); }
   .listbox-picker-trigger:disabled { cursor: default; opacity: .5; }
   .listbox-picker-chevron { color: var(--text-faintest); flex: none; }
+  .listbox-picker-chevron-drawn {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
   .listbox-picker-panel {
     position: absolute; z-index: 40; bottom: calc(100% + var(--space-1)); left: 0;
     background: var(--surface-2); border: var(--border-hairline) solid var(--border-color);

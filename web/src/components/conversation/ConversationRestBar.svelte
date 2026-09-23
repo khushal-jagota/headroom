@@ -114,23 +114,24 @@
      which is why that edge is squared off and no rule is drawn here. */
   .c2-rest {
     display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
+    align-items: center;
+    gap: var(--space-3);
     min-width: 0;
     max-width: 100%;
     /* Inside the card, above the line. It draws nothing of its own: the card carries the
        surface and the outline, and the line beneath is the well's own top edge. */
     padding: var(--space-3) 0;
-    /* Every step on this line is two brighter than it would be on the card. The text scale
-       is set against the near-black base, and this surface is lighter than that, so the
-       bottom of the scale reads at 3.3 to one here — under the floor the scale exists to
-       keep. Muted is the first step that clears it, and the line sits a step above that
-       again because a status nobody reads is not doing its job. */
-    color: var(--text-default);
+    /* Quiet by default. What the line is for is the exception it carries — the words
+       themselves stay bright below; the name, the clock and the seam around them do not
+       compete with the message. Faint is 7.3 to one on the card's plane, well clear of the
+       readability floor. */
+    color: var(--text-faint);
     font-family: var(--font-mono);
-    /* The conversation's own scale: the line a reader is expected to read at rest is a
-       step up from the app's smallest label. */
-    font-size: var(--type-sm);
+    /* The app's smallest step. The design put this line one step up, and built that way it
+       read as a heading over the conversation rather than a status under it. The owner asked
+       for it smaller after seeing it, and that is the size on the screen now: an intentional
+       refinement of the artifact, not a misreading of it. */
+    font-size: var(--type-xs);
     line-height: 1.5;
     min-block-size: calc(1.5em + var(--space-3) + var(--space-3));
     letter-spacing: var(--tracking-mono);
@@ -144,7 +145,9 @@
     gap: var(--space-2);
   }
   .c2-mark { flex: none; display: block; }
-  /* Working: the turn head's own spinner, at the size of the line. */
+  /* Working: the turn head's own spinner, at the size of the line. The design draws these
+     against a 13px line; this line is a step below that on the owner's direction, so the
+     marks keep the size they are drawn at rather than growing past the words. */
   .c2-mark--running {
     width: 11px;
     height: 11px;
@@ -182,13 +185,16 @@
     height: var(--space-2);
     border-radius: var(--radius-pill);
     background: var(--accent-needs-me);
+    /* The halo the design gives it. The one mark that means "only you can answer this"
+       carries more weight than its own nine pixels. */
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-needs-me) 10%, transparent);
   }
   .c2-rest-working {
     flex: none;
     font-variant-numeric: tabular-nums;
   }
   .c2-rest-seam { flex: none; color: var(--text-faintest); }
-  .c2-rest-who { flex: none; color: var(--text-default); }
+  .c2-rest-who { flex: none; }
   .c2-rest-who::after { content: "·"; padding-inline-start: var(--space-1); }
   /* One line whatever is in it: what will not fit is cut here rather than wrapping the
      bar into two rows and moving the composer down the page. */
@@ -202,7 +208,6 @@
   }
   .c2-rest-aside {
     flex: none;
-    color: var(--text-default);
     font-variant-numeric: tabular-nums;
   }
   /* Being waited on is not a state to read past: what is being asked comes up to the
