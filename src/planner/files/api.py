@@ -121,10 +121,12 @@ async def _reusable(
     Both routes reach here only after deciding that this reader may have this file and
     that the file is there, so a 304 is an answer that passed both.
 
-    Every answer carries the policy, whatever shape it takes: ``private`` because these
+    Every answer this function returns carries the policy: ``private`` because these
     files are answered per reader and a shared cache must never hand one reader's
     artifact to another, and ``no-cache`` because a stored copy is checked before every
-    use.
+    use. Two answers do not come from here — a malformed range and an unsatisfiable one,
+    which the framework builds fresh and returns in place of this response. Neither
+    status may be stored without being asked for, so neither needs telling.
 
     Reuse itself is offered only where the tag can be made to describe the exact bytes
     that travel. Three answers are left to ``FileResponse``, and none of them is ever
@@ -132,8 +134,10 @@ async def _reusable(
 
     * a request asking for a byte range — the range arithmetic comes from the stat taken
       as the body is sent, and a tag from any other read could disagree with it;
-    * sound and video — they are seeked, so they keep the framework's range handling,
-      and they were never what was being read twice;
+    * sound and video — they are seeked, so they keep the framework's range handling.
+      They give up being answered 304 on a whole-file read to keep it, which costs
+      nothing measurable: a browser fetches them with ranges, and since they no longer
+      load before somebody asks for them, that fetch happens once;
     * anything larger than the bound — read once would not be bounded memory, so reuse
       is declined rather than approximated.
     """

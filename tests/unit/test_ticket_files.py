@@ -359,6 +359,11 @@ def test_the_tag_always_describes_the_bytes_that_were_sent(
     assert answer.headers["etag"] == served, "the tag must describe the bytes that travelled"
     assert answer.content == b"A" * 64
 
+    # Without this the test passes whether or not the patch ever took: serving A and
+    # tagging A is also what happens when nothing mutates, so the mutation needs a
+    # witness of its own.
+    assert target.read_bytes() == b"B" * 64, "the rewrite must actually have landed"
+
     # The artifact goes back to what it was when the reader took its copy. The reader's
     # copy really is current now, so confirming it is correct.
     monkeypatch.undo()

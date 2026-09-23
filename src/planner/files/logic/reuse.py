@@ -16,9 +16,12 @@ artifact written back to its earlier bytes is told its copy is current when it i
 So the representation is read once, and the tag is taken from that same read. The bytes
 the tag describes are the bytes that travel, always.
 
-**Bounded by construction.** The read stops one byte past the bound, so a large artifact
-never costs more than the bound in memory and simply is not eligible — the route falls
-back to streaming it, where the framework's own validator and range handling apply.
+**Bounded per answer, and the aggregate is worth knowing.** The read stops one byte past
+the bound, so one answer never costs more than the bound whatever the file's size claims,
+and a larger artifact is simply not eligible — the route falls back to streaming it, where
+the framework's own validator and range handling apply. Several answers at once each cost
+their own, up to the thread limiter's width. The bound is set with that in mind rather
+than to cover every file.
 """
 
 from __future__ import annotations
@@ -28,11 +31,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# 4 MiB. Measured against the live managed tree: it holds every kind of file a preview
-# reads whole — Markdown, HTML, text and pictures — for all but 24 of its 5,432
-# non-media files. Media is excluded before this is ever reached, because media is played
-# with byte ranges rather than read whole.
-REUSE_MEMORY_BOUND_BYTES = 4 * 1024 * 1024
+# 2 MiB. Measured against the live managed tree: of the 3,611 files a preview reads whole
+# — Markdown, HTML, text and pictures — it covers all but 24. Doubling it would cover 17
+# more of them and double both the memory an answer holds and the size of the single
+# block the response compressor then has to work through. Media is excluded before this
+# is ever reached, because media is played with byte ranges rather than read whole.
+REUSE_MEMORY_BOUND_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -56,8 +60,11 @@ def read_representation_within_bound(path: Path) -> Representation | None:
     Call this off the event loop: it reads from disk.
     """
     with path.open("rb") as handle:
-        body = handle.read(REUSE_MEMORY_BOUND_BYTES + 1)
+        # Taken before the read, so the date can only describe the file as it was at or
+        # before the bytes below. Nothing decides anything from it, but a date that
+        # claims to be newer than what it is attached to is simply wrong.
         written_at = os.fstat(handle.fileno()).st_mtime
+        body = handle.read(REUSE_MEMORY_BOUND_BYTES + 1)
     if len(body) > REUSE_MEMORY_BOUND_BYTES:
         return None
     return Representation(
