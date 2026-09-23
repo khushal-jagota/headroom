@@ -90,7 +90,7 @@ def test_matrix(server: ServerHandle, context_factory: Callable[[], BrowserConte
     phase.settle()
     phase.take("cold open")
 
-    page.locator("[data-conversation-lens-toggle]").click()
+    page.locator('[data-conversation-lens-choice="full"]').click()
     phase.settle()
     phase.take("press Full")
 
