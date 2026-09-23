@@ -36,7 +36,6 @@
 
   let {
     conversationId,
-    label,
     backendKey = null,
     conversationExists = false,
     workspaceFolder = null,
@@ -83,7 +82,6 @@
     /** Which conversation is on the screen. A message's files are fetched under it, so a
      *  piece can only ever reach a file kept for the conversation it belongs to. */
     conversationId: string;
-    label: string;
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
      *  is not one existing, so only whoever has read the record can say. */

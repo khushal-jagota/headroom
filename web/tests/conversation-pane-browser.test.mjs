@@ -402,7 +402,6 @@ try {
         bind:conversationState
         bind:lens
         conversationId="browser-fixture"
-        label="Worker"
         conversationExists
         {rows}
         {visibleRows}

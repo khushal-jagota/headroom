@@ -867,7 +867,6 @@
 
 <ConversationPane
   conversationId={openedId ?? ""}
-  {label}
   {backendKey}
   conversationExists={started}
   bind:backends

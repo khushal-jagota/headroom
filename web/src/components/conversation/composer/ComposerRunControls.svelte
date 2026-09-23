@@ -15,7 +15,7 @@
     view: ComposerRunControlsView;
     intents: ComposerRunControlIntents;
     snapshots: readonly import("../../../lib/conversation/wire").BackendSnapshot[];
-    /** What goes at the head of the right-hand group, before the sending controls. */
+    /** The microphone, drawn between stopping the work and sending a message. */
     beforeSubmit?: import("svelte").Snippet;
   } = $props();
 </script>
