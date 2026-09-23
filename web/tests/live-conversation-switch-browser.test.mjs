@@ -195,7 +195,15 @@ with sync_playwright() as playwright:
     page.goto(sys.argv[1], wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
     full_choice = page.locator('[data-conversation-lens-choice="full"]')
+    focus_choice_first = page.locator('[data-conversation-lens-choice="focus"]')
+    assert focus_choice_first.get_attribute("aria-pressed") == "true"
     full_choice.click()
+    assert full_choice.get_attribute("aria-pressed") == "true"
+    assert focus_choice_first.get_attribute("aria-pressed") == "false"
+    # The pair is one control: the keyboard still moves it back and forth.
+    page.keyboard.press("f")
+    assert focus_choice_first.get_attribute("aria-pressed") == "true"
+    page.keyboard.press("f")
     assert full_choice.get_attribute("aria-pressed") == "true"
 
     page.evaluate("window.__switchConversation('conversation-b')")

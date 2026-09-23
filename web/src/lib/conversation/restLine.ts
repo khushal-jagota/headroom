@@ -107,13 +107,17 @@ export function restLineMarksFrom(
 ): RestLineMarks {
   let unreadReply = false;
   let failed = false;
-  let endingFound = false;
+  // A failure is the last thing that happened to a turn, not the last failure there
+  // ever was. The record settles that the same way: look back to whichever comes first,
+  // a turn that ended or a message that started one, and only the ending can fail. A
+  // message sent after a failure is the person moving on, and the mark goes with them.
+  let turnBoundaryFound = false;
   for (let at = rows.length - 1; at >= 0; at -= 1) {
     const row = rows[at];
     if (row === undefined) continue;
-    if (!endingFound && row.kind === "turn_ended") {
-      failed = row.ending === "failed";
-      endingFound = true;
+    if (!turnBoundaryFound && (row.kind === "turn_ended" || row.kind === "prompt")) {
+      failed = row.kind === "turn_ended" && row.ending === "failed";
+      turnBoundaryFound = true;
     }
     if (
       !unreadReply
@@ -123,7 +127,7 @@ export function restLineMarksFrom(
     ) {
       unreadReply = true;
     }
-    if (unreadReply && endingFound) break;
+    if (unreadReply && turnBoundaryFound) break;
   }
   return { running: turnRunning, unreadReply, needsYou, failed };
 }

@@ -465,28 +465,36 @@
     if (told !== sentMessages) void holdOnTo(told);
   }
 
-  /** A read of the view that is already on its way, so callers can join it.
+  /** Reads of the view, in a queue of one, so a burst of them is one request.
    *
    * Opening a conversation reads the view, and then the tail immediately says it is
-   * connected and hands over its held prompts. Each of those asks for the view again.
-   * They are asking the same question at the same moment, so they are answered by one
-   * request instead of three. Anything that arrives later still gets its own read. */
+   * connected and hands over its held prompts. Each of those asks for the view again,
+   * about the same conversation at the same moment. A caller that arrives while a read
+   * is in flight waits behind it rather than starting its own — but it does start its
+   * own once that one lands, because it knows something the read in flight did not, and
+   * an answer fetched before its fact existed is not an answer to it.
+   */
   let viewBeingRead: { conversationId: string; done: Promise<void> } | null = null;
 
-  async function refreshView(requestedId: string | null = openedId): Promise<void> {
-    if (requestedId === null || openedId !== requestedId) return;
-    if (viewBeingRead?.conversationId === requestedId) return viewBeingRead.done;
-    const reading = (async () => {
+  function refreshView(requestedId: string | null = openedId): Promise<void> {
+    if (requestedId === null || openedId !== requestedId) return Promise.resolve();
+    const inFlight = viewBeingRead;
+    const read = async (): Promise<void> => {
+      if (openedId !== requestedId) return;
       try {
         const refreshed = await readConversation(requestedId);
         if (openedId === requestedId) view = refreshed;
       } catch {
         // The rows are the record; a snapshot that did not come back changes nothing.
-      } finally {
-        if (viewBeingRead?.conversationId === requestedId) viewBeingRead = null;
       }
-    })();
-    viewBeingRead = { conversationId: requestedId, done: reading };
+    };
+    const reading =
+      inFlight?.conversationId === requestedId ? inFlight.done.then(read) : read();
+    const entry = { conversationId: requestedId, done: reading };
+    viewBeingRead = entry;
+    void reading.finally(() => {
+      if (viewBeingRead === entry) viewBeingRead = null;
+    });
     return reading;
   }
 

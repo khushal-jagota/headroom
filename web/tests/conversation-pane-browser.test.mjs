@@ -213,6 +213,25 @@ try {
     ];
     visibleRows = rows;
   };
+  (window as any).__showRunningAndNeedsYou = () => {
+    ownerReadThroughSequence = 3_000;
+    running = true;
+    rows = [
+      {
+        key: "mark-ask",
+        kind: "permission_ask",
+        sequence: 3_020,
+        createdAt: 4_020,
+        askId: "ask-mark",
+        title: "may I run this",
+        detail: null,
+        state: "live",
+        deadReason: null,
+        chosenOptionId: null
+      }
+    ];
+    visibleRows = rows;
+  };
   (window as any).__showOrdinaryOutputOnly = () => {
     ownerReadThroughSequence = 3_000;
     running = false;
@@ -934,11 +953,22 @@ with sync_playwright() as playwright:
     assert page.locator("[data-conversation-rest-line]").inner_text() != ""
     assert page.get_by_text("waiting for you", exact=True).count() == 0
 
+    # Two axes at once, which is the whole reason they are four marks and not one state.
+    page.evaluate("window.__showRunningAndNeedsYou()")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-mark]').length === 2"
+    )
+    assert marks.evaluate_all("els => els.map(e => e.dataset.conversationMark)") == [
+        "running",
+        "needs-you",
+    ]
+
     # Ordinary output past the read position is not a reply anybody is owed.
     page.evaluate("window.__showOrdinaryOutputOnly()")
     page.wait_for_function(
         "() => document.querySelectorAll('[data-conversation-mark]').length === 0"
     )
+    assert page.locator("[data-conversation-rest-marks]").count() == 0
 
     # A completed owner turn uses the hidden ending for structure. The collapsed Focus
     # line shows the reply without a live working timer.

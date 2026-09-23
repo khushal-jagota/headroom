@@ -238,6 +238,23 @@
     return newest.messageId;
   }
 
+  /** A different conversation is a different conversation, and you arrive at its end.
+   *
+   * The viewport is not rebuilt when the pane is handed another one, so without this it
+   * would keep the last one's held lines — which belong to a thread that is no longer
+   * there — and leave the new conversation wherever the old one happened to be. */
+  let conversationOnScreen: string | null = null;
+  $effect.pre(() => {
+    const wanted = conversationId;
+    untrack(() => {
+      if (conversationOnScreen === wanted) return;
+      conversationOnScreen = wanted;
+      settledOnOpening = false;
+      viewHeldAcrossTheMove = null;
+      following = true;
+    });
+  });
+
   // Keep this first: rows and optimistic messages settle before size or layer-state work.
   $effect.pre(() => {
     rows;

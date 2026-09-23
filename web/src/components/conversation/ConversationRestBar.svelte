@@ -51,6 +51,7 @@
   {#if line}
     <!-- Four independent axes, four shapes, never words. A turn can be running while a
          reply nobody has read is still above it, so these are drawn together. -->
+    {#if line.marks.running || line.marks.unreadReply || line.marks.needsYou || line.marks.failed}
     <span class="c2-marks" data-conversation-rest-marks>
       {#if line.marks.running}
         <span
@@ -86,6 +87,7 @@
         ></span>
       {/if}
     </span>
+    {/if}
     {#if line.taskProgress}
       <TaskProgress progress={line.taskProgress} variant="rest" />
     {:else if workingSince !== null}
@@ -141,7 +143,6 @@
     align-items: center;
     gap: var(--space-2);
   }
-  .c2-marks:empty { display: none; }
   .c2-mark { flex: none; display: block; }
   /* Working: the turn head's own spinner, at the size of the line. */
   .c2-mark--running {
@@ -171,7 +172,7 @@
     transform: rotate(45deg);
   }
   @media (prefers-reduced-motion: reduce) {
-    .c2-mark--running { animation-duration: 0.01ms; }
+    .c2-mark--running { animation: none; }
   }
   /* The brightest mark in the palette, and the app already means one thing by it: an ask
      only this person can answer. It is the same mark a Worker's row carries. */

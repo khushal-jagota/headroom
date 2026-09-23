@@ -454,13 +454,15 @@
     container-type: inline-size;
     container-name: conversation-pane;
   }
-  /* A narrow pane gives its width to the words, not to two sets of edges. */
+  /* A narrow pane gives its width to the words, not to two sets of edges. This is what
+     the app already does for a narrow window, said about the pane instead — so a side
+     panel on a wide screen, and a host that names no container, get it too. It must not
+     add a gutter back: the widths here are the narrow ones, never the wide ones. */
   @container conversation-pane (max-width: 480px) {
     :global([data-conversation-pane] .chat-thread) {
-      padding-inline: var(--space-3);
+      padding-inline: 0;
     }
     :global([data-conversation-pane] .chat-u) { max-width: 86%; }
-    :global([data-conversation-pane] .chat-head) { padding-inline-start: var(--space-3); }
   }
   /* Inside the conversation card the well and rest line are two halves of one card. */
   :global(.conversation-layer [data-conversation-pane]) { gap: 0; }

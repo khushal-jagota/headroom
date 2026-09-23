@@ -255,6 +255,12 @@
    * aside for a key something else has already answered. Both listen on the window, and
    * the pane is the older listener, so this one has to be in the capture phase to get
    * there first. */
+  // The foot this menu lives in is replaced whole by a question or a permission ask.
+  // A menu that is not on the screen must not still be holding the Escape key.
+  $effect(() => {
+    if (userInput !== null || takenOver || inputDisabled) addMenuOpen = false;
+  });
+
   $effect(() => {
     if (!addMenuOpen) return;
     const shutTheMenu = (event: KeyboardEvent): void => {
@@ -547,6 +553,9 @@
         attachmentIntakesInFlight -= 1;
         if (imageInput) imageInput.value = "";
         if (fileInput) fileInput.value = "";
+        // A camera hands back the same filename every time, so an unreset input is a
+        // second capture that changes nothing and never fires.
+        if (cameraInput) cameraInput.value = "";
       }
     }
   }
@@ -1017,8 +1026,8 @@
               data-conversation-add
               aria-haspopup="menu"
               aria-expanded={addMenuOpen}
-              aria-label="Add a picture, a file, or a command"
-              title="Add a picture, a file, or a command"
+              aria-label="Add a picture, a file, a photo, or a command"
+              title="Add a picture, a file, a photo, or a command"
               disabled={inputDisabled}
               onclick={() => (addMenuOpen = !addMenuOpen)}
             >
@@ -1032,6 +1041,7 @@
                   type="button"
                   class="chat-add-item"
                   role="menuitem"
+                  disabled={inputDisabled}
                   data-conversation-image
                   data-conversation-image-count={pendingImages.length || undefined}
                   onclick={() => { addMenuOpen = false; imageInput?.click(); }}
@@ -1046,6 +1056,7 @@
                   type="button"
                   class="chat-add-item"
                   role="menuitem"
+                  disabled={inputDisabled}
                   data-conversation-file
                   data-conversation-file-count={pendingFiles.length || undefined}
                   onclick={() => { addMenuOpen = false; fileInput?.click(); }}
@@ -1060,6 +1071,7 @@
                   type="button"
                   class="chat-add-item"
                   role="menuitem"
+                  disabled={inputDisabled}
                   data-conversation-camera
                   onclick={() => { addMenuOpen = false; cameraInput?.click(); }}
                 >
@@ -1074,6 +1086,7 @@
                   type="button"
                   class="chat-add-item"
                   role="menuitem"
+                  disabled={inputDisabled}
                   data-conversation-slash
                   onmousedown={(event) => event.preventDefault()}
                   onclick={() => { addMenuOpen = false; void startWritingACommand(); }}

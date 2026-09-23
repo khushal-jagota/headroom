@@ -40,6 +40,13 @@ export function threadGeometry(
   thread: HTMLDivElement,
   reservedSpaceElement: HTMLDivElement | null
 ): ThreadGeometry {
+  /** Where the thread must be for this element to sit at the top, clear of the fade.
+   *  A message you have just sent and a request still waiting on you want the same
+   *  thing, so they ask for it the same way. */
+  function elementAtTheTopScrollTop(element: Element): number {
+    return Math.max(0, topWithin(element) - SENT_MESSAGE_TOP_GAP_PIXELS);
+  }
+
   function topWithin(element: Element): number {
     return (
       element.getBoundingClientRect().top
@@ -156,13 +163,9 @@ export function threadGeometry(
       );
     },
 
-    elementAtTheTopScrollTop(element: Element): number {
-      return Math.max(0, topWithin(element) - SENT_MESSAGE_TOP_GAP_PIXELS);
-    },
+    elementAtTheTopScrollTop,
 
-    sentMessageScrollTop(message: Element): number {
-      return Math.max(0, topWithin(message) - SENT_MESSAGE_TOP_GAP_PIXELS);
-    },
+    sentMessageScrollTop: elementAtTheTopScrollTop,
 
     holdView(): HeldView {
       const lines: HeldView["lines"] = [];
