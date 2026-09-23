@@ -384,6 +384,7 @@
     if (openedId !== id) return;
     view = snapshot;
     connectionTrouble = false;
+    let theOpenAlreadyReadTheView = true;
     let localStream: ConversationStream;
     localStream = createConversationStream(
       id,
@@ -415,9 +416,15 @@
       },
       // Every connect asks the system about itself again, after the rows are in. This is
       // the after-a-restart path: the rows still leave a turn open, and only the system
-      // can say nothing is running behind it any more.
+      // can say nothing is running behind it any more. The first connect of an open is
+      // the exception: the view it would ask for was read a moment ago, by the open.
       () => {
-        if (openedId === id && stream === localStream) void refreshView(id);
+        if (openedId !== id || stream !== localStream) return;
+        if (theOpenAlreadyReadTheView) {
+          theOpenAlreadyReadTheView = false;
+          return;
+        }
+        void refreshView(id);
       },
       () => {
         if (openedId === id && stream === localStream) void refreshView(id);
@@ -458,14 +465,37 @@
     if (told !== sentMessages) void holdOnTo(told);
   }
 
-  async function refreshView(requestedId: string | null = openedId): Promise<void> {
-    if (requestedId === null || openedId !== requestedId) return;
-    try {
-      const refreshed = await readConversation(requestedId);
-      if (openedId === requestedId) view = refreshed;
-    } catch {
-      // The rows are the record; a snapshot that did not come back changes nothing here.
-    }
+  /** Reads of the view, in a queue of one, so a burst of them is one request.
+   *
+   * Opening a conversation reads the view, and then the tail immediately says it is
+   * connected and hands over its held prompts. Each of those asks for the view again,
+   * about the same conversation at the same moment. A caller that arrives while a read
+   * is in flight waits behind it rather than starting its own — but it does start its
+   * own once that one lands, because it knows something the read in flight did not, and
+   * an answer fetched before its fact existed is not an answer to it.
+   */
+  let viewBeingRead: { conversationId: string; done: Promise<void> } | null = null;
+
+  function refreshView(requestedId: string | null = openedId): Promise<void> {
+    if (requestedId === null || openedId !== requestedId) return Promise.resolve();
+    const inFlight = viewBeingRead;
+    const read = async (): Promise<void> => {
+      if (openedId !== requestedId) return;
+      try {
+        const refreshed = await readConversation(requestedId);
+        if (openedId === requestedId) view = refreshed;
+      } catch {
+        // The rows are the record; a snapshot that did not come back changes nothing.
+      }
+    };
+    const reading =
+      inFlight?.conversationId === requestedId ? inFlight.done.then(read) : read();
+    const entry = { conversationId: requestedId, done: reading };
+    viewBeingRead = entry;
+    void reading.finally(() => {
+      if (viewBeingRead === entry) viewBeingRead = null;
+    });
+    return reading;
   }
 
   function sentenceFor(error: unknown): string {
@@ -837,7 +867,6 @@
 
 <ConversationPane
   conversationId={openedId ?? ""}
-  {label}
   {backendKey}
   conversationExists={started}
   bind:backends
@@ -864,6 +893,7 @@
   {errorNote}
   {connectionTrouble}
   {readOnly}
+  ownerReadThroughSequence={view?.owner_read_through_sequence ?? 0}
   bind:lens
   composerPlaceholder={composerPlaceholder
     ?? (started ? `Message ${label}...` : "Send the first message to start it...")}

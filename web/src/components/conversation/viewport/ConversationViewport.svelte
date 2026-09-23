@@ -191,6 +191,33 @@
     return true;
   }
 
+  /** The row a request that needs this person is on, when one is waiting.
+   *
+   * Opening on it is the one exception to landing at the end: a request nobody has
+   * answered is the reason the conversation was opened, and it is not always the last
+   * thing in the thread. The newest of them wins, because that is the one still asked. */
+  function requestWaitingOnThePerson(thread: HTMLDivElement): HTMLElement | null {
+    const waiting = thread.querySelectorAll<HTMLElement>(
+      '[data-conversation-ask-state="live"], [data-conversation-user-input-state="live"]'
+    );
+    return waiting.length === 0 ? null : (waiting[waiting.length - 1] ?? null);
+  }
+
+  /** What an open lands on: the end of the conversation, or the request still asked. */
+  function landTheOpen(thread: HTMLDivElement): void {
+    const geometry = threadGeometry(thread, reservedSpaceElement);
+    const end = Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels));
+    const request = requestWaitingOnThePerson(thread);
+    if (request === null) {
+      following = true;
+      thread.scrollTop = end;
+      return;
+    }
+    thread.scrollTop = Math.min(end, geometry.elementAtTheTopScrollTop(request));
+    // Landing on a request that is already at the end is still being at the end.
+    following = geometry.newestLineIsInSight(newestLineBottomPixels);
+  }
+
   /** Restore from the first held line that survived, if there is one. */
   function keepTheReaderWhereTheyWere(
     thread: HTMLDivElement,
@@ -210,6 +237,23 @@
     if (newest === undefined || settledMessageIds.has(newest.messageId)) return null;
     return newest.messageId;
   }
+
+  /** A different conversation is a different conversation, and you arrive at its end.
+   *
+   * The viewport is not rebuilt when the pane is handed another one, so without this it
+   * would keep the last one's held lines — which belong to a thread that is no longer
+   * there — and leave the new conversation wherever the old one happened to be. */
+  let conversationOnScreen: string | null = null;
+  $effect.pre(() => {
+    const wanted = conversationId;
+    untrack(() => {
+      if (conversationOnScreen === wanted) return;
+      conversationOnScreen = wanted;
+      settledOnOpening = false;
+      viewHeldAcrossTheMove = null;
+      following = true;
+    });
+  });
 
   // Keep this first: rows and optimistic messages settle before size or layer-state work.
   $effect.pre(() => {
@@ -246,10 +290,10 @@
       // Every other ending here moves the scroll and nothing else.
       let theContentMovedToo = false;
       if (!settledOnOpening) {
-        // Opening a conversation puts you at the end of it, wherever that is.
+        // Opening a conversation puts you at the end of it, wherever that is — unless
+        // something in it is still waiting on you, which is what you came for.
         settledOnOpening = true;
-        following = true;
-        keepTheNewestLineInSight(currentThread);
+        landTheOpen(currentThread);
       } else if (justSent !== null) {
         if (await settleTheSentMessage(justSent)) settledMessageIds.add(justSent);
         theContentMovedToo = true;
@@ -280,19 +324,23 @@
     settleTheViewAfterAChangeOfShape(thread, null);
   }
 
-  /** A changed viewport gets the same opening, restoration, and following policy. */
+  /** A changed viewport gets the same opening, restoration, and following policy.
+   *
+   * `opening` is the move out of rest. It is not a change of height like the others: the
+   * conversation was not on the screen at all, so there is no place to keep. Opening puts
+   * the reader at the end of the conversation, which is where they asked to be. */
   function settleTheViewAfterAChangeOfShape(
     thread: HTMLDivElement,
-    held: HeldView | null
+    held: HeldView | null,
+    opening = false
   ): void {
     newestLineBottomPixels = threadGeometry(
       thread,
       reservedSpaceElement
     ).read(reservedSpacePixels).newestLineBottomPixels;
-    if (!settledOnOpening) {
+    if (!settledOnOpening || opening) {
       settledOnOpening = true;
-      following = true;
-      keepTheNewestLineInSight(thread);
+      landTheOpen(thread);
     } else {
       if (held !== null && !keepTheReaderWhereTheyWere(thread, held)) following = true;
       if (following) keepTheNewestLineInSight(thread);
@@ -330,6 +378,9 @@
       const held = viewHeldAcrossTheMove;
       if (wanted === "rest") return;
       viewHeldAcrossTheMove = null;
+      // Coming out of rest is an open, not a change of height: land at the end rather
+      // than put the reader back where they were before they closed it.
+      const opening = previous === "rest";
       const request = ++scrollRenderRequest;
       void tick().then(async () => {
         const currentThread = threadElement;
@@ -339,7 +390,7 @@
         await tick();
         if (request !== scrollRenderRequest || threadElement === null) return;
         if (!threadGeometry(threadElement, reservedSpaceElement).hasShape()) return;
-        settleTheViewAfterAChangeOfShape(threadElement, held);
+        settleTheViewAfterAChangeOfShape(threadElement, opening ? null : held, opening);
       });
     });
   });
