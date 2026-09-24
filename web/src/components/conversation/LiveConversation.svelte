@@ -82,6 +82,7 @@
     type ConversationView,
     type DeliveredMessage,
     type OwnerSendBody,
+    type PastConversation,
     type PromptDeliveryMode,
     type SentMessagePiece,
     type UserInputAnswers
@@ -100,7 +101,9 @@
     emptyState,
     sendMessage,
     onNewConversation,
-    readOnly = false
+    readOnly = false,
+    pastConversations = [],
+    selectedPastConversationId = $bindable(null)
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     conversationId?: string | null;
@@ -134,6 +137,12 @@
     onNewConversation?: () => Promise<void>;
     /** One display boundary for historical transcripts. The pane removes every action. */
     readOnly?: boolean;
+    /** The owner's earlier conversations, handed straight to the pane. The caller says
+     *  which ones are past, because only it knows which conversation is the current one. */
+    pastConversations?: readonly PastConversation[];
+    /** Which earlier conversation the owner picked, or null for the current one. The
+     *  caller opens what this names by passing it back as ``conversationId``. */
+    selectedPastConversationId?: string | null;
   } = $props();
 
   let view = $state<ConversationView | null>(null);
@@ -893,6 +902,9 @@
   {errorNote}
   {connectionTrouble}
   {readOnly}
+  {pastConversations}
+  pastConversationsLabel={`${label} conversation`}
+  bind:selectedPastConversationId
   ownerReadThroughSequence={view?.owner_read_through_sequence ?? 0}
   bind:lens
   composerPlaceholder={composerPlaceholder

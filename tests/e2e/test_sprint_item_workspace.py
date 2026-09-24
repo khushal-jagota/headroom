@@ -485,14 +485,26 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     preview.wait_for(state="detached", timeout=WAIT_MS)
     assert proof_chip.evaluate("element => document.activeElement === element") is True
 
+    # The picker lives in the card's own options menu, which is in the head. No row of
+    # chrome sits above the card, so opening the card is what reaches the picker.
+    assert page.locator("[data-ticket-conversation-history]").count() == 0
+    page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+    options = page.get_by_role("button", name="Conversation options")
+    options.click()
     history = page.get_by_label("Sprint Item conversation")
     history.select_option(past_id)
-    page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
     assert page.get_by_text("Past supervisor marker", exact=True).count() == 0
     page.locator('[data-conversation-lens-choice="full"]').click()
     page.get_by_text("Past supervisor marker", exact=True).wait_for(timeout=WAIT_MS)
     assert page.locator('[data-conversation-read-only-boundary="true"]').count() == 1
-    history.select_option("__current__")
+    assert page.locator("[data-conversation-new-arm]").count() == 0
+    options.click()
+    # One Tab from the options button reaches the picker, so the way back is on the
+    # keyboard as well as under the pointer.
+    options.press("Tab")
+    picker = page.locator("[data-conversation-history] select")
+    assert picker.evaluate("element => document.activeElement === element") is True
+    picker.select_option("__current__")
     assert (
         page.locator('[data-conversation-lens-choice="full"]').get_attribute("aria-pressed")
         == "true"

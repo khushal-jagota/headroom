@@ -201,6 +201,17 @@ export type ConversationView = {
   composer_catalog: ComposerCatalogEntry[];
 };
 
+/** One earlier conversation of the same owner, as the record lists it.
+ *
+ * A screen that keeps more than one conversation for the same thing hands these to the
+ * pane, which offers them beside its own actions. Only the id and when it started are
+ * needed to name one and to open it, so that is all this carries: the pane never learns
+ * whose conversations these are. */
+export type PastConversation = {
+  conversation_id: string;
+  created_at: number;
+};
+
 type Row<Kind extends string, Payload> = {
   conversation_id: string;
   sequence: number;

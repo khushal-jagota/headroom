@@ -28,7 +28,6 @@
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
   import StageMark from "./StageMark.svelte";
-  import TicketConversationHistory from "./TicketConversationHistory.svelte";
   import TicketPriorityControl from "./TicketPriorityControl.svelte";
   import ArtifactStrip from "./ArtifactStrip.svelte";
   import ArtifactPreview from "./ArtifactPreview.svelte";
@@ -68,6 +67,13 @@
   let conversationId = $state<string | null>(null);
   let selectedPastConversationId = $state<string | null>(null);
   let selectedConversationId = $derived(selectedPastConversationId ?? conversationId);
+  /** Every conversation this Item kept except the one it is on. Only this screen can say
+   *  which that is, so the filtering is here rather than in the conversation. */
+  let pastConversations = $derived(
+    (workspace.data?.conversation_history ?? []).filter(
+      (entry) => entry.conversation_id !== conversationId
+    )
+  );
   let conversationState = $state<ConversationState>("rest");
   let backends = $state<readonly BackendSnapshot[]>([]);
 
@@ -307,19 +313,13 @@
   </div>
   <div class="conversation-layer" onclickcapture={dismissConversation}>
     <div class="conversation-column">
-      {#if workspace.data}
-        <TicketConversationHistory
-          history={workspace.data.conversation_history}
-          activeConversationId={conversationId}
-          label="Sprint Item conversation"
-          bind:selectedPastConversationId
-        />
-      {/if}
       <LiveConversation
         bind:conversationState
         conversationId={selectedConversationId}
         persistenceKey={`owner:sprint-item:${itemId}`}
         readOnly={selectedPastConversationId !== null}
+        {pastConversations}
+        bind:selectedPastConversationId
         label="Sprint Item"
         composerPlaceholder="Message this Sprint Item…"
         bind:backends
