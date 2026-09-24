@@ -120,7 +120,10 @@
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
     border-block-end: var(--border-hairline) solid var(--border-color);
-    background: var(--surface-ink);
+    /* The recessed plane the card already uses for the well below it. The cool ink plane
+       was invisible while the card itself was drawn in ink; on the card's own warm surface
+       it read as a foreign rectangle. */
+    background: var(--surface-recessed);
     color: var(--accent-text);
     border-start-start-radius: var(--radius-lg);
     border-start-end-radius: var(--radius-lg);

@@ -31,6 +31,7 @@
 </script>
 
 <ListboxPicker
+  chevron="drawn"
   items={choices}
   selectedValue={value}
   {disabled}

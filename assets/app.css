@@ -1855,7 +1855,15 @@ button.list-row:hover .list-row-title {
 /* Message history + input. No dividers: the thread fades into a whisper header and
  * a recessed composer. One user pill; the worker is bubble-less prose. */
 
+/* The conversation's own measures, set once on the card and read by every rule below it.
+ * They exist because the card's controls have to agree with each other: one glyph size for
+ * every drawn icon in the head and the foot, one target for the boxes around them, and one
+ * inset for the card's inner edge. Changing how big the icons read is one line here rather
+ * than eight rules apart. */
 .chat-panel {
+  --conversation-glyph: 22px;
+  --conversation-target: 32px;
+  --conversation-card-inset: var(--space-4);
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -1871,7 +1879,13 @@ button.list-row:hover .list-row-title {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-1) var(--space-1);
+  /* Inline padding follows the transcript's rule: inside a card the card holds the inset,
+     and a host that draws no card gets it here. */
+  padding: var(--space-2) var(--space-3);
+  /* The design rules the head off from the transcript. It is the card's own seam, the pair
+     to the one above the well, and it is only ever drawn where the head is: at rest the
+     head is not on the screen at all. */
+  border-block-end: var(--border-hairline) solid var(--border-color);
 }
 
 .chat-conn-dot {
@@ -1895,29 +1909,44 @@ button.list-row:hover .list-row-title {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 
 .chat-overflow { position: relative; display: flex; }
 
 .chat-overflow-btn {
-  width: 32px;
-  height: 32px;
+  width: var(--conversation-target);
+  height: var(--conversation-target);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: none;
   border: none;
   color: var(--text-faintest);
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
   line-height: 1;
   cursor: pointer;
   padding: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  transition:
+    color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
 }
-.chat-overflow-btn:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
+/* One icon size for every control on the card, head and foot alike. A control whose glyph
+ * is a character draws whatever share of its em the font chooses, which is why these read
+ * as specks beside the drawn ones. */
+.chat-overflow-btn svg {
+  width: var(--conversation-glyph);
+  height: var(--conversation-glyph);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* The three dots are dots, not strokes. */
+.chat-overflow-btn .chat-overflow-dots circle { fill: currentColor; stroke: none; }
+.chat-overflow-btn:hover { color: var(--text-strong); background-image: var(--interaction-hover); }
 
 .chat-overflow-menu {
   position: absolute;
@@ -1955,31 +1984,6 @@ button.list-row:hover .list-row-title {
 [data-conversation-pane][data-conversation-state="opened"] .chat-head {
   height: 44px;
   padding: 0;
-  gap: var(--space-2);
-}
-
-[data-conversation-pane][data-conversation-state="opened"] .chat-head-right {
-  margin-right: calc(var(--space-2) * -1);
-  gap: var(--space-1);
-}
-
-[data-conversation-pane][data-conversation-state="opened"] .chat-overflow-btn {
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 17px;
-  border-radius: var(--radius-md);
-  transition:
-    color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
-}
-
-[data-conversation-pane][data-conversation-state="opened"] .chat-overflow-btn:focus-visible {
-  outline: var(--border-hairline) solid var(--accent-bright);
-  outline-offset: 2px;
 }
 
 [data-conversation-pane][data-conversation-state="opened"] .chat-overflow-menu {
@@ -2019,15 +2023,13 @@ button.list-row:hover .list-row-title {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  padding: var(--space-3) var(--space-1) var(--space-4);
+  /* The transcript lines up with the well below it. Inside a card the card holds the
+     inset for both of them; in a host that draws no card — the Chief of Staff — the well
+     carries its own, so the transcript matches it rather than sitting a few pixels
+     further out. */
+  padding: var(--space-5) var(--space-3) var(--space-4);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
           mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
-}
-
-@media (max-width: 720px) {
-  .chat-thread {
-    padding-inline: 0;
-  }
 }
 
 .chat-thread > *,
@@ -2072,11 +2074,11 @@ button.list-row:hover .list-row-title {
 /* user = the only bubble */
 .chat-u {
   align-self: flex-end;
-  max-width: 82%;
+  max-width: 78%;
   background: var(--surface-2);
   color: var(--text-strong);
   border-radius: var(--radius-lg);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
   font-family: var(--font-serif);
   font-size: var(--type-serif-md);
   line-height: 1.6;
@@ -2134,7 +2136,7 @@ button.list-row:hover .list-row-title {
   border-top: var(--border-hairline) solid var(--border-color);
   border-radius: 0;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-  padding: var(--space-2) var(--space-2) var(--space-1) var(--space-3);
+  padding: var(--space-3) var(--space-3);
 }
 /* Something is being dragged onto it: a ring rather than an edge, so nothing moves. */
 .chat-box.drag {
@@ -2265,11 +2267,14 @@ button.list-row:hover .list-row-title {
   resize: none;
   color: var(--text-strong);
   font: inherit;
-  font-size: var(--type-input);
-  line-height: 1.5;
+  /* The design writes into this box at the app's reading step, not its label step. The
+     larger of the two is taken so a touch keyboard still gets the 16px that stops the
+     page zooming when the box takes focus. */
+  font-size: max(var(--type-md), var(--type-input));
+  line-height: 1.55;
   outline: none;
-  min-height: 40px;
-  max-height: 112px;
+  min-height: 44px;
+  max-height: 140px;
   display: block;
 }
 .chat-ta::placeholder { color: var(--text-faintest); }
@@ -2282,7 +2287,8 @@ button.list-row:hover .list-row-title {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  margin-top: var(--space-1);
+  gap: var(--space-1);
+  margin-top: var(--space-2);
 }
 .chat-foot > [data-conversation-model-picker] { flex: 1 1 0; width: 0; }
 .chat-slash {
@@ -2300,8 +2306,8 @@ button.list-row:hover .list-row-title {
 /* A target a finger can find: the conversation's own control size, not the app's
  * smallest icon. The glyph inside grows with it. */
 .chat-image {
-  width: 32px;
-  height: 32px;
+  width: var(--conversation-target);
+  height: var(--conversation-target);
   display: grid;
   place-items: center;
   background: none;
@@ -2309,18 +2315,39 @@ button.list-row:hover .list-row-title {
   color: var(--text-faintest);
   cursor: pointer;
   padding: var(--space-1);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
-.chat-image:hover { color: var(--text-muted); background-image: var(--interaction-hover); }
+.chat-image:hover { color: var(--text-strong); background-image: var(--interaction-hover); }
 .chat-image.on { color: var(--accent-bright); background: var(--surface-recessed); }
 .chat-image:disabled { opacity: 0.5; cursor: default; }
-.chat-image svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.35; }
+.chat-image svg {
+  width: var(--conversation-glyph);
+  height: var(--conversation-glyph);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .chat-image-input { display: none; }
 /* The model chip and the delivery chip are pills, not icons, so they set their height
  * from their text and came out short of the others. Raise them to the same target here
  * rather than in the picker itself: the same picker draws the Ceiling control on a page
  * this Ticket does not touch. */
-.chat-foot .listbox-picker-trigger { min-height: 32px; }
+/* The run chips, as the design draws them: the card's own step, the interface face rather
+ * than the machine one, and quiet until they are pointed at. Written against the pane so it
+ * outranks the picker's own scoped rule, and kept to the composer foot because the same
+ * picker draws the Ceiling control on a screen this Ticket does not touch. */
+[data-conversation-pane] .chat-foot .listbox-picker-trigger {
+  min-height: var(--conversation-target);
+  font-family: var(--font-ui);
+  font-size: var(--type-sm);
+  color: var(--text-faint);
+  padding-inline: var(--space-3);
+}
+[data-conversation-pane] .chat-foot .listbox-picker-trigger:hover {
+  color: var(--text-strong);
+}
 .chat-submit {
   margin-left: auto;
   display: flex;
@@ -2329,24 +2356,42 @@ button.list-row:hover .list-row-title {
   min-width: 0;
 }
 .chat-send {
-  width: 32px; height: 32px;
+  width: var(--conversation-target); height: var(--conversation-target);
   border: none;
   border-radius: var(--radius-md);
   background: var(--surface-2);
   color: var(--text-faintest);
   cursor: pointer;
-  font-size: var(--type-md);
   line-height: 1;
   display: grid;
   place-items: center;
   transition: background var(--motion-base) var(--motion-ease), color var(--motion-base) var(--motion-ease);
+}
+.chat-send svg {
+  width: var(--conversation-glyph);
+  height: var(--conversation-glyph);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .chat-send.on { background: var(--accent-bright); color: var(--surface-ink); }
 .chat-send.stop {
   background: transparent;
   border: var(--border-hairline) solid var(--accent-error);
   color: var(--accent-error);
-  font-size: var(--type-xs);
+}
+/* Stopping is a solid, not an outline: the one mark on this card that is filled, so it
+ * cannot be mistaken for the arrow beside it. It takes the same box as every other glyph,
+ * and its square fills half of that box — so it paints a little under the stroked icons
+ * beside it, which is what a filled shape needs to weigh the same. Sizing the box instead
+ * of the square is what left this one painting seven pixels inside a 32px control. */
+.chat-send .chat-send-fill {
+  width: var(--conversation-glyph);
+  height: var(--conversation-glyph);
+  fill: currentColor;
+  stroke: none;
 }
 .chat-send:disabled { opacity: 0.5; cursor: default; }
 
@@ -2362,7 +2407,9 @@ button.list-row:hover .list-row-title {
   justify-content: center;
   gap: var(--space-2);
   width: 100%;
-  min-height: 40px;
+  /* The same resting height the textarea has, so the well never jumps when a voice face
+     takes the main area. */
+  min-height: 44px;
   background: none;
   border: none;
   cursor: pointer;
@@ -2379,6 +2426,31 @@ button.list-row:hover .list-row-title {
   gap: var(--space-2);
   min-height: 40px;
   font-size: var(--type-md);
+}
+/* Inside the conversation the voice faces belong to the card, so they take its measures
+ * with every other control. The Review screen draws the same faces and keeps its own. */
+[data-conversation-pane] .chat-voice-mid { min-height: 44px; }
+[data-conversation-pane] .chat-voice-idle svg {
+  width: var(--conversation-glyph);
+  height: var(--conversation-glyph);
+  stroke-width: 1.35;
+}
+[data-conversation-pane] .chat-voice-cancel,
+[data-conversation-pane] .chat-voice-stop {
+  width: var(--conversation-target);
+  height: var(--conversation-target);
+}
+[data-conversation-pane] .chat-voice-retry { height: var(--conversation-target); }
+[data-conversation-pane] .chat-voice-cancel svg {
+  width: var(--conversation-glyph);
+  height: var(--conversation-glyph);
+  stroke-width: 1.35;
+}
+/* The voice stop is the same filled square as the composer's, drawn as an element rather
+   than a glyph, so it is sized to paint the same. */
+[data-conversation-pane] .chat-voice-square {
+  width: calc(var(--conversation-glyph) / 2);
+  height: calc(var(--conversation-glyph) / 2);
 }
 .chat-voice-time {
   font-family: var(--font-mono);
@@ -4205,8 +4277,11 @@ select {
 [data-conversation-pane][data-conversation-state="rest"],
 [data-conversation-pane][data-conversation-state="peeked"] {
   /* The card's own surface, and the status bar is what you see of it: the well covers the
-   * rest, so this colour is the bar at rest and the bar's head once it is opened up. */
-  background: var(--surface-ink);
+   * rest, so this colour is the bar at rest and the bar's head once it is opened up. It is
+   * the page's own plane, not the ink one: the design separates the card from the page with
+   * a hairline and the recessed well beneath it, not with a second colour. Drawing it in ink
+   * put a cool rectangle on a warm page, which is the colour difference the owner reported. */
+  background: var(--surface-1);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-lg);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
@@ -4245,16 +4320,29 @@ select {
     inset 0 0 0 2px color-mix(in srgb, var(--accent-bright) 30%, transparent);
 }
 
-/* Everything inside the card is held off its edges. */
+/* Everything inside the card is held off its edges, by the card's own inset. The head and
+ * the transcript add none of their own here: the card is already holding them off the edge. */
 .conversation-layer [data-conversation-pane] {
-  padding-inline: var(--space-4);
+  padding-inline: var(--conversation-card-inset);
+}
+
+.conversation-layer .chat-thread,
+.conversation-layer .chat-head {
+  padding-inline: 0;
+}
+
+/* The controls reach into the card's inset, so they finish where the design finishes them:
+ * a step in from the card's edge rather than a whole inset in. A host that draws no card
+ * has no inset to reach into, and keeps its controls on the same edge as everything else. */
+.conversation-layer .chat-head-right {
+  margin-right: calc(var(--space-2) * -1);
 }
 
 /* The band reaches past the card's inset, so it pulls itself back out by it and keeps its
  * own padding for the text inside. */
 .conversation-layer .chat-box {
-  margin: 0 calc(var(--space-4) * -1);
-  padding-inline: var(--space-4);
+  margin: 0 calc(var(--conversation-card-inset) * -1);
+  padding-inline: var(--conversation-card-inset);
 }
 
 .conversation-layer [data-conversation-pane]:not([data-conversation-state="opened"]) .chat-box {
@@ -4289,12 +4377,16 @@ select {
   }
 
   .conversation-layer [data-conversation-pane] {
-    padding-inline: var(--surface-pad);
+    --conversation-card-inset: var(--surface-pad);
   }
+}
 
-  .conversation-layer .chat-box {
-    margin-inline: calc(var(--surface-pad) * -1);
-    padding-inline: var(--surface-pad);
+/* Narrower still, and the card gives the words the width its edges were holding. This is
+ * the card's own inset and nothing else: the column and the page gutter are untouched, so
+ * the page is exactly as wide as it was. */
+@container conversation-host (max-width: 480px) {
+  .conversation-layer [data-conversation-pane] {
+    --conversation-card-inset: var(--space-3);
   }
 }
 
@@ -4310,9 +4402,9 @@ select {
 /* Opened stops being a card: the whole of the page's height, this column's width, no
  * outline and no corners. The line above the well can stay — it belongs to the well. */
 [data-conversation-pane][data-conversation-state="opened"] {
-  /* The surface stays the ink blue it wears at rest and peeked; opening it changes its
-   * shape, not its colour. */
-  background: var(--surface-ink);
+  /* The surface stays what it wears at rest and peeked; opening it changes its shape, not
+   * its colour. */
+  background: var(--surface-1);
 }
 
 /* Header and body stand in the page's one column, set once further down. The header has no

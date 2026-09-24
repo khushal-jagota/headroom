@@ -152,7 +152,7 @@
 </section>
 
 <style>
-  .question-panel { display: grid; gap: var(--space-3); padding: var(--space-3); width: 100%; box-sizing: border-box; background: var(--surface-ink); color: var(--accent-text); border-radius: var(--radius-lg); }
+  .question-panel { display: grid; gap: var(--space-3); padding: var(--space-3); width: 100%; box-sizing: border-box; background: var(--surface-recessed); color: var(--accent-text); border-radius: var(--radius-lg); }
   header { display: grid; gap: var(--space-1); }
   .progress { display: flex; justify-content: space-between; gap: var(--space-2); color: var(--accent-bright); font-family: var(--font-mono); font-size: var(--type-xs); }
   h3 { margin: 0; font: inherit; font-weight: 650; line-height: 1.35; }

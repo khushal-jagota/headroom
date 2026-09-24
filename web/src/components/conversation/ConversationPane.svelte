@@ -186,12 +186,16 @@
       : null
   );
 
-  /** The one control through the states, and what it means where it is standing. */
+  /** The one control through the states, and what it means where it is standing.
+   *
+   * Drawn, not typed. A character is sized by the font's own idea of how much of its em to
+   * fill, which left a 32px control carrying about twelve pixels of ink — the "absolutely
+   * tiny" the owner reported. A stroked path fills the box it is given. */
   let stateControl = $derived(
     conversationState === "peeked"
-      ? { opensIt: true, glyph: "⤢", label: "Open the conversation full height" }
+      ? { opensIt: true, label: "Open the conversation full height" }
       : conversationState === "opened"
-        ? { opensIt: false, glyph: "⤡", label: "Put the conversation back to a card" }
+        ? { opensIt: false, label: "Put the conversation back to a card" }
         : null
   );
 
@@ -317,7 +321,15 @@
           aria-label={stateControl.label}
           title={stateControl.label}
           onclick={moveThroughTheStates}
-        >{stateControl.glyph}</button>
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            {#if stateControl.opensIt}
+              <path d="M9 4H4v5M15 20h5v-5" />
+            {:else}
+              <path d="M4 9h5V4M20 15h-5v5" />
+            {/if}
+          </svg>
+        </button>
       {/if}
       {#if !readOnly}
         <div class="chat-overflow" bind:this={menuElement}>
@@ -329,7 +341,13 @@
             aria-expanded={menuOpen}
             aria-label="Conversation options"
             onclick={() => (menuOpen ? closeMenu() : (menuOpen = true))}
-          >⋯</button>
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="chat-overflow-dots">
+              <circle cx="5" cy="12" r="1.5" />
+              <circle cx="12" cy="12" r="1.5" />
+              <circle cx="19" cy="12" r="1.5" />
+            </svg>
+          </button>
           {#if menuOpen}
             <div class="chat-overflow-menu">
               <div class="chat-overflow-actions" role="menu">
@@ -443,9 +461,6 @@
      panel on a wide screen, and a host that names no container, get it too. It must not
      add a gutter back: the widths here are the narrow ones, never the wide ones. */
   @container conversation-pane (max-width: 480px) {
-    :global([data-conversation-pane] .chat-thread) {
-      padding-inline: 0;
-    }
     :global([data-conversation-pane] .chat-u) { max-width: 86%; }
   }
   /* Inside the conversation card the well and rest line are two halves of one card. */
@@ -466,7 +481,7 @@
     background: transparent;
     color: var(--text-faint);
     /* A target a finger can find, at the size the rest of the head uses. */
-    min-height: 32px;
+    min-height: var(--conversation-target);
     padding: 6px var(--space-3);
     font: inherit;
     font-size: var(--type-sm);

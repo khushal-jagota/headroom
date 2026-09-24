@@ -30,6 +30,7 @@
     keepOpenWhenDisabled = false,
     showUsage = false,
     below = false,
+    chevron = "typed",
     label = "Model",
     attributes = {},
     afterChoose,
@@ -43,6 +44,9 @@
     disabled?: boolean;
     /** Keep an open backend catalogue visible while a persisted selection saves. */
     keepOpenWhenDisabled?: boolean;
+    /** Which chevron the trigger draws. The composer asks for the drawn one so its rail
+     *  matches the icons beside it; the setup screens keep the typed caret they had. */
+    chevron?: "typed" | "drawn";
     /** Usage belongs only beside the run choice in the conversation composer. */
     showUsage?: boolean;
     below?: boolean;
@@ -180,6 +184,7 @@
   label={`${label}: ${view.backendName} ${view.face}`.trim()}
   listLabel={showing === "models" ? "Models" : "Reasoning efforts"}
   kind="rail"
+  {chevron}
   {below}
   attributes={{ "data-conversation-model-picker": "", ...attributes }}
   panelBusy={pickerBusy}
