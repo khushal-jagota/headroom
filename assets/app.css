@@ -1990,6 +1990,40 @@ button.list-row:hover .list-row-title {
   min-width: 200px;
 }
 
+/* The earlier conversations, as one control in the menu. It sits under the actions and
+ * above the workspace path, and it is the only part a read-only pane keeps. */
+.chat-overflow-history {
+  display: block;
+  /* An entry is named by when it started and by its id, which is wider than any menu
+     should be. The cap is what holds the menu to its own width; the control fills it. */
+  max-width: 240px;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+
+/* The seam belongs between two sections. A read-only pane keeps only this one. */
+.chat-overflow-history:not(:first-child) {
+  margin-top: var(--space-1);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.chat-overflow-history select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--type-sm);
+  text-overflow: ellipsis;
+}
+
+.chat-overflow-history select:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
 /* The workspace path is a fact in the menu, not an action. A path wraps because either
  * truncated end can contain the part that identifies the workspace. */
 .chat-overflow-path {

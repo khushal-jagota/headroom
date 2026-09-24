@@ -489,6 +489,13 @@ hand-rolling the same shapes per screen. Each does one job:
   Its delivery control defaults to Steer and also offers Queue and Send now. A held row
   names why Panels queued a steer fallback.
 
+  The pane's options menu, under the `⋯` control in its head, holds New conversation and,
+  for a screen that keeps earlier conversations, the picker that opens one. Nothing is
+  drawn above the card for either. A screen with no earlier conversation shows no picker,
+  and the Ticket page is that screen. While an earlier conversation is on screen the pane
+  is read only: the actions go, the picker stays, and it is the way back to the current
+  conversation.
+
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and
   one line above it saying what happened last — whoever produced it, so your own message
