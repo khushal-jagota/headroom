@@ -237,6 +237,34 @@ describe("the shared Item and Ticket presentation", () => {
     expect(direct.items.map((item) => item.id)).toEqual([selected.id]);
   });
 
+  it("keeps priority, age, and ID order when a full child snapshot changes completion", () => {
+    const done = ticket("done", { stage: "done" });
+    const unfinished = ticket("off-day", { assigned: true });
+    const cards = [
+      { ...boardCard(ticket("newer"), "si_newer"), sprint_item_priority: "P1" as const },
+      { ...boardCard(done), sprint_item_priority: "P1" as const },
+      { ...boardCard(ticket("urgent"), "si_urgent"), sprint_item_priority: "P0" as const },
+      { ...boardCard(ticket("same-age"), "si_after"), sprint_item_priority: "P1" as const }
+    ];
+    const summaries = cards.map((card) => ({
+      id: card.sprint_item_id!,
+      created_at: card.sprint_item_id === "si_newer" ? 2 : 1,
+      conversation_id: null,
+      ticket_rollup: quiet,
+      ...quiet
+    }));
+    const before = buildWorkspaceRail(cards, summaries);
+    const selected = workspace([done, unfinished]);
+    const after = buildWorkspaceRail(cards, summaries, selected);
+    const expected = ["si_urgent", "si_after", "si_mirror", "si_newer"];
+    expect(before.items.map((item) => item.id)).toEqual(expected);
+    expect(after.items.map((item) => item.id)).toEqual(expected);
+    expect(before.items.find((item) => item.id === "si_mirror")?.rested).toBe(true);
+    expect(after.items.find((item) => item.id === "si_mirror")?.rested).toBe(false);
+    expect(after.items.find((item) => item.id === "si_mirror")?.groups[0].cards[0].id)
+      .toBe("off-day");
+  });
+
   it("publishes the exact approved group order", () => {
     expect(WORK_ITEM_TICKET_GROUPS.map((group) => group.key)).toEqual([
       "awaiting_approval",
