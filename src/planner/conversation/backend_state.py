@@ -15,6 +15,7 @@ from planner.conversation.backend_usage import (
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendSnapshot
 from planner.core.db import connect
+from planner.core.errors import ErrorCode, PlannerError
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +139,20 @@ def model_is_enabled(
         (str(backend_key), model_id),
     ).fetchone()
     return row is None or bool(row["enabled"])
+
+
+def require_enabled_model(
+    conn: sqlite3.Connection,
+    backend_key: ConversationBackendKey,
+    model_id: str,
+) -> None:
+    """Refuse a new choice without changing historical selections."""
+    if not model_is_enabled(conn, backend_key, model_id):
+        raise PlannerError(
+            ErrorCode.validation,
+            f'Model "{model_id}" is disabled. Choose an enabled model.',
+            {"employee_backend": str(backend_key), "employee_launch_model": model_id},
+        )
 
 
 def write_model_enablement(

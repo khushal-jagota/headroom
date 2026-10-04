@@ -15,6 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
 
+from planner.conversation.backend_state import write_model_enablement
+from planner.conversation.contracts import require_conversation_backend_key
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -217,3 +219,28 @@ def test_a_worker_may_not_declare_a_worker_type(client: tuple[TestClient, Path])
         manifest["worker_type"]
         for manifest in test_client.get("/api/worker-types").json()["worker_types"]
     ]
+
+
+@pytest.mark.parametrize("worker", ["coding", "chief-of-staff"])
+def test_launch_default_save_refuses_disabled_model_without_partial_write(
+    client: tuple[TestClient, Path], worker: str
+) -> None:
+    test_client, db_path = client
+    settings_path = f"/api/workers/{worker}" + ("/settings" if worker == "chief-of-staff" else "")
+    before = test_client.get(settings_path).json()
+    settings = before if worker == "chief-of-staff" else before["settings"]
+    defaults = settings["launch_defaults"]
+    model = defaults["employee_launch_model"]
+    with connect(str(db_path)) as conn:
+        write_model_enablement(
+            conn, require_conversation_backend_key(defaults["employee_backend"]), model, False
+        )
+    response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=defaults)
+    assert response.status_code == 400, response.text
+    assert model in response.json()["error"]["message"]
+    assert "Choose an enabled model" in response.json()["error"]["message"]
+    assert test_client.get(settings_path).json() == before
+    alternative = dict(defaults, employee_launch_model="enabled-alternative")
+    response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=alternative)
+    assert response.status_code == 200, response.text
+    assert response.json()["launch_defaults"] == alternative

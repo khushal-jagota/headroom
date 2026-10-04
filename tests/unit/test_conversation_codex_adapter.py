@@ -72,6 +72,29 @@ def test_a_manager_wake_crosses_the_codex_adapter_with_its_sender_label(
     _run(exercise)
 
 
+def test_a_codex_process_exit_names_the_process_and_running_turn(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "die", "stderr": "private stderr detail\n", "code": 7}
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("run"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            assert scripted.sink.error_summaries == [
+                "the codex process ended while the turn was running"
+            ]
+            assert "private stderr detail" not in str(scripted.sink.error_summaries)
+
+    _run(exercise)
+
+
 def test_a_catalog_command_steered_into_a_running_turn_never_becomes_prose(
     tmp_path: Path,
 ) -> None:

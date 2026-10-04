@@ -21,7 +21,7 @@ PRE_COLLAPSE_HEAD_REVISION = db_module.PRE_COLLAPSE_HEAD_REVISION
 REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger the baseline builds.
-CURRENT_SCHEMA_OBJECT_COUNT = 56
+CURRENT_SCHEMA_OBJECT_COUNT = 58
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -502,6 +502,7 @@ def _database_at_previous_head(
     tree = _migration_tree(tmp_path, monkeypatch)
     for revision in sorted(shipped.glob("*.py")):
         if revision.name in {
+            "address_manager_wakes_to_principals.py",
             "baseline_2026_09_schema.py",
             "remove_redundant_ticket_and_item_storage.py",
         }:
@@ -511,6 +512,77 @@ def _database_at_previous_head(
     create_schema(conn)
     assert _revision(conn) == "wake_sprint_item_managers"
     return conn, shipped / "remove_redundant_ticket_and_item_storage.py"
+
+
+def _database_before_principal_wakes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[sqlite3.Connection, Path]:
+    """Build the schema immediately before notices gained principal targets."""
+    shipped = db_module.MIGRATIONS_DIRECTORY / "versions"
+    tree = _migration_tree(tmp_path, monkeypatch)
+    for migration in sorted(shipped.glob("*.py")):
+        if migration.name in {
+            "address_manager_wakes_to_principals.py",
+            "baseline_2026_09_schema.py",
+        }:
+            continue
+        shutil.copy(migration, tree / "versions" / migration.name)
+    conn = connect(str(tmp_path / "before-principal-wakes.db"))
+    create_schema(conn)
+    assert _revision(conn) == "remove_redundant_ticket_item_storage"
+    return conn, shipped / "address_manager_wakes_to_principals.py"
+
+
+def test_principal_wake_migration_preserves_sources_batches_members_and_statuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn, revision = _database_before_principal_wakes(tmp_path, monkeypatch)
+    tree = db_module.MIGRATIONS_DIRECTORY
+    conn.execute(
+        "INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','Project',1,1)"
+    )
+    conn.execute(
+        "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
+        "supervisor_reasoning_effort,created_at,updated_at) "
+        "VALUES ('si','Item','p','codex','model','medium',1,1)"
+    )
+    conn.execute(
+        "INSERT INTO manager_wakes(id,sprint_item_id,ticket_id,source_kind,source_revision,"
+        "summary,created_at,closed_at) VALUES (11,'si',NULL,'proposal',1,'proposal',2,NULL)"
+    )
+    for batch_id, status in ((21, "accepted"), (22, "uncertain"), (23, "delivered")):
+        conn.execute(
+            "INSERT INTO manager_wake_batches(id,sprint_item_id,sender_message_id,message,"
+            "status,conversation_id,process_token,created_at,updated_at) "
+            "VALUES (?,'si',?,?,?,'conv','old-process',3,4)",
+            (batch_id, f"message-{batch_id}", "review", status),
+        )
+        conn.execute(
+            "INSERT INTO manager_wake_batch_members(batch_id,wake_id) VALUES (?,11)",
+            (batch_id,),
+        )
+    conn.commit()
+
+    shutil.copy(revision, tree / "versions" / revision.name)
+    create_schema(conn)
+
+    assert _revision(conn) == "address_manager_wakes_to_principals"
+    wake = conn.execute(
+        "SELECT target_kind,target_id,source_conversation_id FROM manager_wakes WHERE id=11"
+    ).fetchone()
+    assert tuple(wake) == ("sprint_item", "si", None)
+    batches = conn.execute(
+        "SELECT id,status,target_kind,target_id FROM manager_wake_batches ORDER BY id"
+    ).fetchall()
+    assert [tuple(row) for row in batches] == [
+        (21, "accepted", "sprint_item", "si"),
+        (22, "uncertain", "sprint_item", "si"),
+        (23, "delivered", "sprint_item", "si"),
+    ]
+    members = conn.execute(
+        "SELECT batch_id,wake_id FROM manager_wake_batch_members ORDER BY batch_id"
+    ).fetchall()
+    assert [tuple(row) for row in members] == [(21, 11), (22, 11), (23, 11)]
 
 
 def test_storage_migration_preserves_effective_projects_supervisors_and_legacy_items(

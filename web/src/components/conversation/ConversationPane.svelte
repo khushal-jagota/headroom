@@ -27,6 +27,7 @@
     BackendModel,
     BackendSnapshot,
     ConversationBackendKey,
+    PastConversation,
     PermissionAskOption,
     PromptDeliveryMode,
     SentMessagePiece,
@@ -64,6 +65,9 @@
     composerDisabled = false,
     showRunPicker = true,
     readOnly = false,
+    pastConversations = [],
+    pastConversationsLabel = "Conversation",
+    selectedPastConversationId = $bindable(null),
     ownerReadThroughSequence = 0,
     lens = $bindable("focus"),
     conversationState = $bindable(null),
@@ -130,6 +134,14 @@
     /** A historical transcript is visible through this single boundary. No mutation
      *  control is rendered inside it. */
     readOnly?: boolean;
+    /** The owner's earlier conversations, for the options menu to offer beside its own
+     *  actions. Empty for an owner that keeps one, and then no picker is drawn. */
+    pastConversations?: readonly PastConversation[];
+    /** What the picker is called to a screen reader, in the owner's own words. */
+    pastConversationsLabel?: string;
+    /** Which earlier conversation the owner is reading, or null for the current one.
+     *  The owner opens what this names; nothing here reads it back. */
+    selectedPastConversationId?: string | null;
     /** How far through the record this person has read, from the conversation view. */
     ownerReadThroughSequence?: number;
     /** Which projection of this conversation record is visible. */
@@ -260,6 +272,22 @@
     onNewConversation?.();
     closeMenu();
   }
+
+  /** The picker's value for the conversation the owner is on now, which has no id here. */
+  const CURRENT_CONVERSATION = "__current__";
+
+  function pastConversationName(entry: PastConversation): string {
+    const started = new Date(entry.created_at * 1000);
+    const when = Number.isNaN(started.valueOf())
+      ? "Unknown date"
+      : started.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+    return `${when} · ${entry.conversation_id}`;
+  }
+
+  function openConversation(event: Event): void {
+    const picked = (event.currentTarget as HTMLSelectElement).value;
+    selectedPastConversationId = picked === CURRENT_CONVERSATION ? null : picked;
+  }
 </script>
 
 <svelte:window
@@ -331,7 +359,7 @@
           </svg>
         </button>
       {/if}
-      {#if !readOnly}
+      {#if !readOnly || pastConversations.length > 0}
         <div class="chat-overflow" bind:this={menuElement}>
           <button
             type="button"
@@ -350,25 +378,49 @@
           </button>
           {#if menuOpen}
             <div class="chat-overflow-menu">
-              <div class="chat-overflow-actions" role="menu">
-                {#if confirmArmed}
-                  <button
-                    type="button"
-                    class="chat-overflow-item chat-overflow-item--confirm"
-                    role="menuitem"
-                    data-conversation-new-confirm
-                    onclick={confirmNewConversation}
-                  >Confirm — this kills the old one</button>
-                {:else}
-                  <button
-                    type="button"
-                    class="chat-overflow-item"
-                    role="menuitem"
-                    data-conversation-new-arm
-                    onclick={() => (confirmArmed = true)}
-                  >New conversation</button>
-                {/if}
-              </div>
+              {#if !readOnly}
+                <div class="chat-overflow-actions" role="menu">
+                  {#if confirmArmed}
+                    <button
+                      type="button"
+                      class="chat-overflow-item chat-overflow-item--confirm"
+                      role="menuitem"
+                      data-conversation-new-confirm
+                      onclick={confirmNewConversation}
+                    >Confirm — this kills the old one</button>
+                  {:else}
+                    <button
+                      type="button"
+                      class="chat-overflow-item"
+                      role="menuitem"
+                      data-conversation-new-arm
+                      onclick={() => (confirmArmed = true)}
+                    >New conversation</button>
+                  {/if}
+                </div>
+              {/if}
+              <!-- The earlier conversations sit under the actions rather than in a row
+                   above the card: the card is already named by the screen it is on. A
+                   read-only pane keeps this section and loses the one above it, so the
+                   way back to the current conversation is where it was left. -->
+              {#if pastConversations.length > 0}
+                <label class="chat-overflow-history" data-conversation-history>
+                  <select
+                    aria-label={pastConversationsLabel}
+                    value={selectedPastConversationId ?? CURRENT_CONVERSATION}
+                    onchange={openConversation}
+                  >
+                    <option value={CURRENT_CONVERSATION}>
+                      {selectedPastConversationId === null && !conversationExists
+                        ? "Current · new conversation"
+                        : "Current conversation"}
+                    </option>
+                    {#each pastConversations as entry (entry.conversation_id)}
+                      <option value={entry.conversation_id}>{pastConversationName(entry)}</option>
+                    {/each}
+                  </select>
+                </label>
+              {/if}
               {#if workspaceFolder}
                 <div class="chat-overflow-path" data-conversation-workspace>{workspaceFolder}</div>
               {/if}

@@ -71,15 +71,22 @@ _Code paths:_ `src/planner/runtime/worker_step_readiness.py`,
 `src/planner/core/change_signal.py`, and the claim and release writers in
 `src/planner/tickets/data.py`.
 
-## Sprint Item manager wakes
+## Durable manager notices
 
 Proposals routed to a Sprint Item manager and explicit worker-error transitions create
-durable wakes in the same transaction as their source event. Proposal routing remains a
-separate deterministic decision before wake creation. It contains no TypeSafe call.
+durable notices in the same transaction as their source event. Proposal routing remains a
+separate deterministic decision before notice creation. It contains no TypeSafe call.
+
+A failed turn on a Ticket's current conversation creates a notice for the current ceiling
+holder in the same transaction as the ending row. The notice stores the holder principal.
+Chief, Sprint Item, and Ticket holders receive it through their canonical conversation
+door. Owner-held failures use the ordinary attention flag and push policy instead. A reset
+therefore moves delivery to the recipient's new conversation, while a deleted recipient
+closes the undeliverable notice. Failures in old or unattached conversations create none.
 
 The manager wake loop shares the background-loop machine lock. A commit wakes it, and a
 periodic poll recovers missed signals and restart state. The loop groups open wakes for one
-manager into an immutable batch. It sends that batch through the normal supervisor
+recipient into an immutable batch. It sends that batch through the recipient's normal
 conversation boundary in queue mode.
 
 A queued batch remains open while it waits behind active work. The exact durable prompt

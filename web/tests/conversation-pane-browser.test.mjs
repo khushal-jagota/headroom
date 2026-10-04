@@ -1060,7 +1060,7 @@ with sync_playwright() as playwright:
     # backend killed, named with the reason it gave, and a turn whose ending the record
     # will never contain.
     page.evaluate("window.__showTurnEndings()")
-    page.get_by_text("turn failed · backend exited", exact=True).wait_for()
+    page.get_by_text("backend exited", exact=True).wait_for()
     page.get_by_text("turn stopped without an ending", exact=True).wait_for()
 
     # The composer catalog menu opens from the keyboard, under a pointer left wherever it

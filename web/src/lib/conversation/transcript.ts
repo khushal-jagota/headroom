@@ -212,7 +212,7 @@ export function turnEndingSentence(
   errorSummary: string | null
 ): string {
   const base = TURN_ENDING_SENTENCES[ending] ?? "turn ended";
-  return errorSummary ? `${base} · ${errorSummary}` : base;
+  return ending === "failed" && errorSummary ? errorSummary : base;
 }
 
 export type TranscriptReading = {

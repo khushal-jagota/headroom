@@ -1,4 +1,4 @@
-"""Canonical storage operations for Sprint Item manager wakes and delivery batches."""
+"""Canonical storage operations for durable manager notices and delivery batches."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Iterable
 from uuid import uuid4
 
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal
 from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus, WakeSourceKind
 
@@ -19,13 +20,26 @@ def create_wake(
     source_revision: int,
     summary: str,
     now: int,
+    target: Principal | None = None,
+    source_conversation_id: str | None = None,
 ) -> bool:
     """Insert one wake for one persisted source identity. The caller owns the transaction."""
+    resolved_target = target or Principal(PrincipalKind.sprint_item, sprint_item_id)
     inserted = conn.execute(
         "INSERT OR IGNORE INTO manager_wakes("
-        "sprint_item_id,ticket_id,source_kind,source_revision,summary,created_at) "
-        "VALUES (?,?,?,?,?,?)",
-        (sprint_item_id, ticket_id, source_kind.value, source_revision, summary, now),
+        "sprint_item_id,ticket_id,source_kind,source_revision,summary,created_at,"
+        "target_kind,target_id,source_conversation_id) VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            sprint_item_id,
+            ticket_id,
+            source_kind.value,
+            source_revision,
+            summary,
+            now,
+            resolved_target.kind.value,
+            resolved_target.id,
+            source_conversation_id,
+        ),
     )
     return inserted.rowcount == 1
 
@@ -73,10 +87,37 @@ def create_worker_error_wake(
     )
 
 
+def create_turn_failure_wake(
+    conn: sqlite3.Connection,
+    *,
+    target: Principal,
+    ticket_id: str,
+    ticket_title: str,
+    conversation_id: str,
+    event_sequence: int,
+    error_summary: str,
+    now: int,
+) -> bool:
+    """Create the notice identified by the failed turn's durable event."""
+    return create_wake(
+        conn,
+        sprint_item_id=target.id if target.kind is PrincipalKind.sprint_item else "",
+        ticket_id=ticket_id,
+        source_kind=WakeSourceKind.turn_failure,
+        source_revision=event_sequence,
+        source_conversation_id=conversation_id,
+        target=target,
+        summary=f"Ticket `{ticket_id}` ({ticket_title}) failed: {error_summary}",
+        now=now,
+    )
+
+
 def _batch_from_row(row: sqlite3.Row) -> WakeBatch:
+    target = Principal(PrincipalKind(str(row["target_kind"])), str(row["target_id"]))
     return WakeBatch(
         id=int(row["id"]),
-        sprint_item_id=str(row["sprint_item_id"]),
+        sprint_item_id=(target.id if target.kind is PrincipalKind.sprint_item else ""),
+        target=target,
         sender_message_id=str(row["sender_message_id"]),
         message=str(row["message"]),
         status=WakeBatchStatus(str(row["status"])),
@@ -149,7 +190,7 @@ def _compose_message(rows: Iterable[sqlite3.Row]) -> str:
     summaries = [str(row["summary"]) for row in rows]
     lines = "\n".join(f"- {summary}" for summary in summaries)
     return (
-        "Review these new events for your Sprint Item:\n\n"
+        "Review these new events that need your attention:\n\n"
         f"{lines}\n\n"
         "Read the canonical Ticket state before you act. These events can share one turn."
     )
@@ -162,7 +203,7 @@ def claim_next_batch(
     conn.execute("BEGIN IMMEDIATE")
     try:
         target = conn.execute(
-            "SELECT w.sprint_item_id FROM manager_wakes w "
+            "SELECT w.target_kind,w.target_id FROM manager_wakes w "
             "WHERE w.closed_at IS NULL AND NOT EXISTS ("
             "SELECT 1 FROM manager_wake_batch_members m "
             "JOIN manager_wake_batches b ON b.id=m.batch_id "
@@ -178,9 +219,12 @@ def claim_next_batch(
         if target is None:
             conn.execute("COMMIT")
             return None
-        sprint_item_id = str(target["sprint_item_id"])
+        target_kind = str(target["target_kind"])
+        target_id = str(target["target_id"])
+        sprint_item_id = target_id if target_kind == "sprint_item" else ""
         rows = conn.execute(
-            "SELECT w.id,w.summary FROM manager_wakes w WHERE w.sprint_item_id=? "
+            "SELECT w.id,w.summary FROM manager_wakes w "
+            "WHERE w.target_kind=? AND w.target_id=? "
             "AND w.closed_at IS NULL AND NOT EXISTS ("
             "SELECT 1 FROM manager_wake_batch_members m "
             "JOIN manager_wake_batches b ON b.id=m.batch_id "
@@ -191,13 +235,13 @@ def claim_next_batch(
             "WHERE recent_m.wake_id=w.id AND recent_b.status IN ('refused','discarded') "
             "AND recent_b.updated_at > ?) "
             "ORDER BY w.created_at,w.id",
-            (sprint_item_id, now - 5),
+            (target_kind, target_id, now - 5),
         ).fetchall()
         sender_message_id = f"supervisor_delivery_wake_{uuid4().hex}"
         inserted = conn.execute(
             "INSERT INTO manager_wake_batches("
-            "sprint_item_id,sender_message_id,message,status,process_token,created_at,updated_at) "
-            "VALUES (?,?,?,'pending',?,?,?)",
+            "sprint_item_id,sender_message_id,message,status,process_token,created_at,updated_at,"
+            "target_kind,target_id) VALUES (?,?,?,'pending',?,?,?,?,?)",
             (
                 sprint_item_id,
                 sender_message_id,
@@ -205,6 +249,8 @@ def claim_next_batch(
                 process_token,
                 now,
                 now,
+                target_kind,
+                target_id,
             ),
         )
         if inserted.lastrowid is None:
@@ -291,6 +337,20 @@ def close_delivered_batch(conn: sqlite3.Connection, batch_id: int, *, now: int) 
         conn.execute(
             "UPDATE manager_wake_batches SET status='delivered',updated_at=? WHERE id=? "
             "AND status IN ('offering','dispatching','accepted','uncertain')",
+            (now, batch_id),
+        )
+        conn.execute(
+            "UPDATE manager_wakes SET closed_at=? WHERE closed_at IS NULL AND id IN ("
+            "SELECT wake_id FROM manager_wake_batch_members WHERE batch_id=?)",
+            (now, batch_id),
+        )
+
+
+def close_undeliverable_batch(conn: sqlite3.Connection, batch_id: int, *, now: int) -> None:
+    """Close notices whose snapshotted recipient no longer exists."""
+    with conn:
+        conn.execute(
+            "UPDATE manager_wake_batches SET status='discarded',updated_at=? WHERE id=?",
             (now, batch_id),
         )
         conn.execute(

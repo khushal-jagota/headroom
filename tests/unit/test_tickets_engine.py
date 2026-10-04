@@ -15,6 +15,8 @@ from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, tic
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 from tests.support.ticket_progress import advance_ticket
 
+from planner.conversation.backend_state import write_model_enablement
+from planner.conversation.contracts import ConversationBackendKey
 from planner.core import ticket_blocks
 from planner.core.contracts import Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -282,6 +284,91 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
     assert raised.value.code is ErrorCode.validation
     assert unnamed.value.code is ErrorCode.validation
     assert tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before
+
+
+@pytest.mark.parametrize("operation", ["validate", "create"])
+@pytest.mark.parametrize("choice", ["inherited", "same_backend", "model_only", "explicit"])
+def test_disabled_resolved_ticket_model_is_rejected_without_writes(
+    tmp_db: Connection,
+    fake_clock: TestClock,
+    probe_runtime: None,
+    operation: str,
+    choice: str,
+) -> None:
+    write_model_enablement(tmp_db, ConversationBackendKey.hermes, "probe-model", False)
+    write_model_enablement(tmp_db, ConversationBackendKey.claude, "disabled-model", False)
+    choices: dict[str, tuple[str | None, str | None]] = {
+        "inherited": (None, None),
+        "same_backend": ("hermes", None),
+        "model_only": (None, "probe-model"),
+        "explicit": ("claude", "disabled-model"),
+    }
+    backend, model = choices[choice]
+    before = tuple(tmp_db.iterdump())
+    with pytest.raises(PlannerError, match="disabled.*Choose an enabled model") as raised:
+        if operation == "validate":
+            data.validate_ticket_creation_context(
+                tmp_db,
+                title="Disabled future Ticket",
+                title_max_chars=TITLE_MAX_CHARS,
+                worker_type="probe",
+                employee_backend=backend,
+                employee_launch_model=model,
+            )
+        else:
+            actions.create_ticket(
+                tmp_db,
+                title="Disabled Ticket",
+                principal=OWNER_PRINCIPAL,
+                now=fake_clock.now_unix(),
+                title_max_chars=TITLE_MAX_CHARS,
+                worker_type="probe",
+                planning_now=fake_clock.now(),
+                employee_backend=backend,
+                employee_launch_model=model,
+            )
+    assert raised.value.code is ErrorCode.validation
+    assert tuple(tmp_db.iterdump()) == before
+
+
+@pytest.mark.parametrize("backend", ["hermes", "claude"])
+def test_enabled_ticket_override_survives_disabled_default_and_preserves_history(
+    tmp_db: Connection,
+    fake_clock: TestClock,
+    probe_runtime: None,
+    backend: str,
+) -> None:
+    historical = actions.create_ticket(
+        tmp_db,
+        title="Historical default",
+        principal=OWNER_PRINCIPAL,
+        now=fake_clock.now_unix(),
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="probe",
+    )
+    historical_row = _ticket_row(tmp_db, historical.id)
+    write_model_enablement(tmp_db, ConversationBackendKey.hermes, "probe-model", False)
+    data.validate_ticket_creation_context(
+        tmp_db,
+        title="Enabled override",
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="probe",
+        employee_backend=backend,
+        employee_launch_model="enabled-model",
+    )
+    created = actions.create_ticket(
+        tmp_db,
+        title="Enabled override",
+        principal=OWNER_PRINCIPAL,
+        now=fake_clock.now_unix(),
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="probe",
+        employee_backend=backend,
+        employee_launch_model="enabled-model",
+    )
+    assert (created.employee_backend, created.employee_launch_model) == (backend, "enabled-model")
+    assert _ticket_row(tmp_db, historical.id) == historical_row
+    assert data.read_ticket(tmp_db, historical.id).employee_launch_model == "probe-model"
 
 
 def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(

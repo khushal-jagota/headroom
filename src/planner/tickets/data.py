@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Protocol
 
+from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority, ticket_blocks
 from planner.core.contracts import (
@@ -285,7 +286,7 @@ def validate_ticket_creation_context(
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         runtime_definitions.worker_type_registry, worker_type
     )
-    employee_configuration.launch_configuration_for_a_new_ticket(
+    launch_configuration = employee_configuration.launch_configuration_for_a_new_ticket(
         default_backend=launch_defaults.employee_backend,
         default_model=launch_defaults.employee_launch_model,
         default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
@@ -293,6 +294,12 @@ def validate_ticket_creation_context(
             employee_backend if employee_backend is not None else launch_defaults.employee_backend
         ),
         employee_launch_model=employee_launch_model,
+    )
+    assert launch_configuration.employee_launch_model is not None
+    require_enabled_model(
+        conn,
+        require_conversation_backend_key(launch_configuration.employee_backend),
+        launch_configuration.employee_launch_model,
     )
     if sprint_item_id is not None:
         item = conn.execute(
@@ -886,7 +893,13 @@ def create_ticket(
     # A creator can open a Ticket for somebody else to hold without holding anything
     # first. Unstated, the creator holds it, which is the ordinary case.
     ceiling_holder = principal if stated_holder is None else stated_holder
+    assert launch_configuration.employee_launch_model is not None
     with _txn(conn):
+        require_enabled_model(
+            conn,
+            require_conversation_backend_key(launch_configuration.employee_backend),
+            launch_configuration.employee_launch_model,
+        )
         _validate_ceiling_holder(conn, ceiling_holder, ticket_id=ticket_id)
         # The one rule, asked here where the write happens, exactly as edit_ticket asks
         # it. Making a Ticket acts on nothing that exists, so nothing refuses that. The

@@ -44,10 +44,18 @@ A browser with no saved lens choice opens through the Focus lens. Focus shows th
 owner's prompts, explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
-Failed turns, stopped turns, and missing explicit replies remain visible as compact
-system rows. Complete turn boundaries still
+Failed turns show the adapter's concise failure summary. A historical failed row with no
+summary says `turn failed`. Stopped turns and missing explicit replies remain visible as
+compact system rows. Complete turn boundaries still
 settle the Focus thread and rest line when runtime rows are hidden. A turn with a hidden
 opening prompt has no Focus turn head.
+
+Each backend turns its structured failure evidence into that summary before it crosses the
+conversation boundary. An HTTP 401 says that authentication was rejected. Panels does not
+infer that a credential expired. Provider detail is collapsed to one bounded line and
+common credential values are redacted. Standard error remains in operator logs only. The
+core supplies an honest unknown-reason fallback if an adapter supplies no usable detail.
+
 Full shows the complete runtime notebook, every held prompt, all live agent text, and
 every tool call without a Focus fold. The header toggle and the unmodified `f` key switch
 the lens without replacing the conversation. Editable controls keep the key. The browser
@@ -246,6 +254,14 @@ ending row, Panels records one `explicit_reply_missing` system marker for each o
 principals who did not receive an accepted Send Message. Repeated prompts from one
 principal produce one marker; legacy and automatic runtime prompts have no principal and
 produce none. The markers and ending are one ordered transaction.
+
+When a failed turn belongs to a Ticket's current conversation, that transaction also
+snapshots the Ticket's current ceiling holder. The existing owner attention flag handles
+an owner-held ceiling. A Chief, Sprint Item, or Ticket holder receives one durable Panels
+notice through that principal's canonical conversation door. The failed event's
+conversation and sequence identify the notice, so replay cannot duplicate it. Historical,
+unattached, Chief, and Sprint Item conversation failures create no Ticket notice. A turn
+started by a failure notice cannot create another failure notice.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
@@ -597,7 +613,16 @@ Panels also keeps one on or off choice for each backend model. A model is on unt
 person turns it off on the Backends page. An off model remains in the full backend
 catalogue, but no model picker offers it. Existing saved selections remain historical
 facts and can still appear as the current value until a person chooses another model.
-New Ticket, Chief, and Worker default saves refuse an off model.
+New Tickets refuse an off model after the explicit choice and Worker defaults resolve.
+This includes manual, agent, external-work, and scheduled creation. Schedule validation
+checks the choice, and each occurrence checks it again because a saved default can change.
+A refused occurrence records failure without a Ticket.
+
+New Chief conversations and Workers without a historical Ticket model also check their
+resolved choice after overrides. An enabled override works even if the default is off.
+Chief and Worker default saves refuse an off model. Each refusal names the model and
+requires an enabled choice. Panels never silently substitutes another model.
+Existing Ticket choices and existing conversations remain intact.
 
 ## The composer catalog
 

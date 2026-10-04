@@ -56,6 +56,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
     UserInputAnswerWriteFailed,
 )
+from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
     ComposerCatalogEntry,
@@ -225,6 +226,7 @@ class _RunningTurn:
     )
     prompt_senders: dict[Principal, None] = field(default_factory=dict)
     explicit_reply_recipients: set[Principal] = field(default_factory=set)
+    automatic_notice: bool = False
     ended: bool = False
     # Set when the core is part-way through ending this turn itself — an interrupt, or a
     # send-now killing the incumbent. The cancel goes out with the lock let go, and the
@@ -2106,6 +2108,13 @@ class SqliteProcessConversationSystem:
                         )
                         if principal is not None
                     },
+                    automatic_notice=await self._store.all_sender_messages_are_manager_notices(
+                        state.record.conversation_id,
+                        (
+                            sender_message_id,
+                            *(message.sender_message_id for message in also_delivered),
+                        )
+                    ),
                 )
                 self._set_phase(state, _ConversationPhase.running)
                 return True
@@ -2338,13 +2347,19 @@ class SqliteProcessConversationSystem:
                 ),
             )
             if (
-                reply_requested
-                and outcome.composed_content_delivered
-                and sender is not None
+                outcome.composed_content_delivered
                 and state.running_turn is not None
                 and state.running_turn.token == turn_token
             ):
-                state.running_turn.prompt_senders.setdefault(sender, None)
+                state.running_turn.automatic_notice = (
+                    state.running_turn.automatic_notice
+                    and await self._store.all_sender_messages_are_manager_notices(
+                        state.record.conversation_id,
+                        (sender_message_id,)
+                    )
+                )
+                if reply_requested and sender is not None:
+                    state.running_turn.prompt_senders.setdefault(sender, None)
             return PromptDeliveryInjected()
         if isinstance(outcome, BackendSteerRefused):
             await self._append_event(
@@ -2385,15 +2400,21 @@ class SqliteProcessConversationSystem:
             ),
         )
         if (
-            reply_requested
-            and outcome.composed_content_delivered
-            and sender is not None
+            outcome.composed_content_delivered
             and state.running_turn is not None
             and state.running_turn.token == turn_token
         ):
             # The backend may have accepted the text. Treating it as part of this turn
             # avoids a false silence marker and matches the delivery's non-retry fate.
-            state.running_turn.prompt_senders.setdefault(sender, None)
+            state.running_turn.automatic_notice = (
+                state.running_turn.automatic_notice
+                and await self._store.all_sender_messages_are_manager_notices(
+                    state.record.conversation_id,
+                    (sender_message_id,)
+                )
+            )
+            if reply_requested and sender is not None:
+                state.running_turn.prompt_senders.setdefault(sender, None)
         return PromptDeliveryUncertain()
 
     # --- turns --------------------------------------------------------------------------
@@ -2493,7 +2514,11 @@ class SqliteProcessConversationSystem:
         )
         ending_payload = TurnEndedEventPayload(
             ending=ending,
-            error_summary=error_summary,
+            error_summary=(
+                normalized_failure_summary(error_summary)
+                if ending is ConversationTurnEnding.failed
+                else None
+            ),
             automatic_compaction_result=automatic_compaction_result,
         )
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -2510,6 +2535,9 @@ class SqliteProcessConversationSystem:
             agent_activity=not running.automatic_compaction,
             automatic_compaction_confirmed=running.compaction_confirmed,
             automatic_compaction_result=automatic_compaction_result,
+            create_failure_notice=(
+                ending is ConversationTurnEnding.failed and not running.automatic_notice
+            ),
         )
         self._take_in_written_rows(state, written)
         ended = written[-1]

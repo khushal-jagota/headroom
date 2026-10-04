@@ -45,6 +45,7 @@ from planner.conversation.backends.contracts import (
 from planner.conversation.backends.hermes_acp import (
     AcpChildLaunch,
     HermesAcpBackendChild,
+    _hermes_failure_summary,
     hermes_acp_child_launch,
 )
 from planner.conversation.contracts import (
@@ -184,6 +185,16 @@ def test_the_role_text_rides_the_first_prompt_and_no_other(tmp_path: Path) -> No
             ]
 
     _run(exercise)
+
+
+def test_hermes_exception_text_is_normalized_before_it_reaches_the_core(
+) -> None:
+    failure = RuntimeError(
+        'provider failed\nAuthorization: "Bearer secret value tail"'
+    )
+    assert _hermes_failure_summary(failure) == (
+        "provider failed Authorization: [redacted]"
+    )
 
 
 # --- correlated steering ---------------------------------------------------------------
