@@ -240,6 +240,7 @@ export type ConversationEvent =
       StoredMessageContent & {
         sender_label: string;
         mode: PromptDeliveryMode;
+        reconciles_sequence?: number;
       } & SenderMintedPromptFields
         & AddressedMessageFields
     >

@@ -304,8 +304,13 @@ def capture_ticket_attention(
     )
     conversation = conversation_result
     if conversation is None:
-        conversation = conversation_attention(conn, row["conversation_id"]).get(
-            str(row["conversation_id"]), NOTHING_WAITING
+        conversation_id = row["conversation_id"]
+        conversation = (
+            NOTHING_WAITING
+            if conversation_id is None
+            else conversation_attention(conn, conversation_id).get(
+                str(conversation_id), NOTHING_WAITING
+            )
         )
     holder = json.loads(str(row["ceiling_holder"]))
     owner_holds = holder.get("kind") == "owner"

@@ -33,6 +33,14 @@ class NotificationLoop:
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
 
+    def reconcile_imported_state(self) -> None:
+        """Seed missed edges before the background writers and prompt sends start."""
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            data.reconcile_attention(conn)
+        finally:
+            conn.close()
+
     def poll_once(self) -> int:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:

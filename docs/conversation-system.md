@@ -285,6 +285,36 @@ supervisor. It therefore is not an employee conversation door and does not parti
 principal addressing. No shipped screen uses it: Ticket, Chief, and Sprint Item composers
 all use the addressed Send Message operation.
 
+The conversation owns each backend exchange until its receipt settles. If its caller
+cancels, the exchange continues once. Normal sends, steering, queue promotion, and queued
+batches use that ownership. Repeating the same sender message ID waits for the existing
+outcome instead of another provider write. Accepted work keeps its reservation and sender
+obligations while its receipt waits for storage. Receipt failure does not stop the child.
+The event pump waits for prompt receipts before it records backend results. A steering
+barrier also protects the target turn's ending and reply attribution.
+
+ConversationStore retries only SQLite BUSY errors from completed, rolled-back storage
+attempts. Each attempt uses the configured busy wait. A short asynchronous pause precedes
+the next storage attempt. A cancelled caller does not start another thread beside an
+unfinished attempt. The same policy covers receipts, explicit replies, events, endings,
+and provider cursors. It never repeats a provider call. Other storage errors retain the
+exact pending operation and accepted ownership. Operator inspection through
+`recording_failures` exposes the actual error. `resume_recording` resumes persistence
+explicitly after repair. This in-memory seam does not survive process loss.
+
+Prompt/model/attention/skill receipts remain one atomic transaction. Ancillary notice
+classification occurs before dispatch. After commit, local state uses the returned rows.
+A live-tail publication error does not invalidate the receipt or append it again.
+
+Historical uncertainty remains in the notebook. Reviewed, message-specific provider
+evidence can settle it through a later prompt receipt without another provider write.
+The latest explicit sequence determines a sender message ID's current fate. A receipt's
+optional `reconciles_sequence` points to the exact earlier uncertain row, including
+messages without a sender-minted ID. The transcript hides only that superseded warning.
+It does not infer delivery from repeated text, another session cursor, or later work.
+Unknown outcomes retain the existing recovery action. A recovered Worker clears its
+error through canonical proposal progress.
+
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front
 of its own words, so an agent handed one run of text can still tell who said what.

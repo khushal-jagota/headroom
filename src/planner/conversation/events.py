@@ -204,6 +204,10 @@ class PromptEventPayload:
     Neither replaces the row's ``created_at``: that is whole seconds and it is when the row
     was written, which is a different thing said by a different clock. A sender that minted
     neither is stored exactly as it always was.
+
+    ``reconciles_sequence`` identifies the earlier uncertainty row when reviewed provider
+    evidence settles a historical receipt. It does not claim turn completion or request
+    another provider write, and it is not a sender-input option.
     """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt
@@ -215,6 +219,8 @@ class PromptEventPayload:
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
     recipient: Principal | None = None
+    # Reviewed receipt settlement can identify an earlier unminted uncertainty row.
+    reconciles_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,8 +233,9 @@ class PromptDeliveryRefusedEventPayload:
     outcome without another backend write.
 
     ``sender_message_id`` is the id the sender minted for this message. A sent message
-    becomes one durable outcome row — delivered, refused, uncertain, or discarded — and
-    a sender has to recognise its own message in whichever row it becomes.
+    receives a durable outcome — delivered, refused, uncertain, or discarded. A later
+    evidence-based receipt can settle uncertainty without another backend write. The
+    latest sequence gives the sender its current fate.
     """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_delivery_refused
@@ -247,8 +254,9 @@ class PromptDeliveryRefusedEventPayload:
 class PromptDeliveryUncertainEventPayload:
     """A prompt whose admission stayed unknown after possible transmission.
 
-    This is a terminal delivery record. Panels does not retry it, and a sender-id replay
-    reads this row instead of transmitting the same guidance again.
+    Panels does not retransmit it. A sender-id replay reads the latest explicit outcome.
+    Reviewed provider evidence can append a later receipt that settles this row, while
+    the original uncertainty remains in the append-only history.
     """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_delivery_uncertain
@@ -591,6 +599,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
+                **_entry_if_minted("reconciles_sequence", payload.reconciles_sequence),
                 **_principal_entries(payload.sender, payload.recipient),
             }
         case PromptDeliveryRefusedEventPayload():
@@ -745,6 +754,7 @@ def _payload_from_json_object(
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"
                 ),
+                reconciles_sequence=_optional_whole_number(stored, "reconciles_sequence"),
                 sender=_optional_principal(stored, "sender"),
                 recipient=_optional_principal(stored, "recipient"),
             )

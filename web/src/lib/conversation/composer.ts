@@ -15,6 +15,7 @@
  */
 
 import type {
+  ConversationEvent,
   OwnerSendBody,
   PermissionAskOption,
   PromptDeliveryFate,
@@ -23,6 +24,7 @@ import type {
 import type { ConversationBackendKey } from "./wire";
 import type { OutgoingMessage } from "./outgoing";
 import { refusalSentence } from "./transcript";
+import { latestMessageOutcomes } from "./messageOutcome";
 
 // --- what an ask offers ------------------------------------------------------------------
 
@@ -345,5 +347,20 @@ export function fateSentence(fate: PromptDeliveryFate): string | null {
       return `not delivered · ${refusalSentence(fate.refusal_reason)}`;
     case "uncertain":
       return "delivery uncertain · do not resend";
+  }
+}
+
+/** Project the composer from this message's record, preserving an unanswered response. */
+export function recordedMessageFateSentence(
+  events: readonly ConversationEvent[], messageId: string | null, fallback: string | null
+): string | null {
+  const outcome = messageId === null ? undefined : latestMessageOutcomes(events).get(messageId);
+  switch (outcome?.kind) {
+    case "prompt":
+    case "prompt_discarded": return null;
+    case "prompt_delivery_refused":
+      return `not delivered · ${refusalSentence(outcome.payload.refusal_reason)}`;
+    case "prompt_delivery_uncertain": return "delivery uncertain · do not resend";
+    default: return fallback;
   }
 }

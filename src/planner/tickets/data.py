@@ -671,6 +671,7 @@ def write_ticket_conversation_start(
                 "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
                 (conversation_id, ticket_id),
             )
+            capture_ticket_attention(conn, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -693,6 +694,7 @@ def remove_ticket_conversation_start(
             "DELETE FROM ticket_conversations WHERE ticket_id = ? AND conversation_id = ?",
             (ticket_id, conversation_id),
         )
+        capture_ticket_attention(conn, ticket_id, now)
 
 
 def write_ticket_last_chosen_configuration(
@@ -752,6 +754,8 @@ def clear_ticket_conversation_link(
             "WHERE id = ? AND conversation_id = ?",
             (now, ticket_id, expected_conversation_id),
         )
+        if updated.rowcount == 1:
+            capture_ticket_attention(conn, ticket_id, now)
         return updated.rowcount == 1
 
 
@@ -1009,6 +1013,7 @@ def create_ticket(
             days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
             ticket_blocks.add_ticket_block(conn, blocker_ticket_id, ticket_id, now)
+        capture_ticket_attention(conn, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1506,6 +1511,11 @@ def delete_ticket(
                 ticket_blocks.touch_blocked_ticket(conn, str(row["blocked_ticket_id"]), now)
 
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        for table in ("notification_attention_edges", "notification_attention_state"):
+            conn.execute(
+                f"DELETE FROM {table} WHERE subject_kind='ticket' AND subject_id=?",
+                (ticket_id,),
+            )
         return TicketDeletion(
             ticket_id=ticket_id,
             title=ticket.title,
