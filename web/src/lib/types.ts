@@ -187,6 +187,7 @@ export type PendingTicketProposal = {
   body: string;
   proposed_by: string;
   created_at: number;
+  revision: number;
 };
 
 

@@ -99,13 +99,20 @@ def derive_ticket_facts(stored: StoredTicketFacts) -> TicketFacts:
 def agent_state(
     ticket_status: TicketStatus,
     *,
+    stage: str,
     turn_is_running: bool,
     last_turn_failed: bool,
 ) -> AgentState:
-    """What the employee on this Ticket is doing, once the live conversation is known."""
+    """Current activity, with a completed Ticket's failed turn kept as history.
+
+    A live turn outranks errors. An explicit failed claim stays an error at any Stage.
+    Only the fallback to conversation history stops once the Ticket is done.
+    """
     if turn_is_running:
         return AgentState.working
-    if ticket_status is TicketStatus.errored or last_turn_failed:
+    if ticket_status is TicketStatus.errored:
+        return AgentState.errored
+    if last_turn_failed and stage != "done":
         return AgentState.errored
     return AgentState.idle
 

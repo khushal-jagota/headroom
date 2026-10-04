@@ -116,6 +116,7 @@ def _ticket_attention(
     )
     agent_state = derivation.agent_state(
         facts.ticket_status,
+        stage=str(row["stage"]),
         turn_is_running=running,
         last_turn_failed=last_turn_failed,
     )
