@@ -15,7 +15,14 @@ nothing, so it raised no edge and reached nobody, and an ask announced itself as
 message. A flag that
 turns from false to true is an edge, and an edge is the only thing that can become a
 notification. The writer records the flag and the edge in its own transaction, so several
-commits stay distinct even when one wake-up covers them.
+commits stay distinct even when one wake-up covers them. Ticket creation captures its
+initial flags before commit. Blocker, proposal, assignment, conversation link, and read
+changes capture their flags in the same transaction.
+
+The delivery poll consumes those saved edges. It does not scan conversation history.
+A Ticket without a conversation has no conversation attention. The process that owns
+the polling lock reconciles imported state once before it starts the loops. Repeated
+startup reconciliation creates no duplicate edges. A startup failure releases the lock.
 
 One policy function is the only door from an edge to a notification. It reads the saved
 choice for that type and either suppresses the edge or creates the privacy-safe title,

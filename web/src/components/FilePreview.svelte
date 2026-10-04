@@ -9,6 +9,7 @@
     resolvePreview
   } from "../lib/filePreview";
   import MarkdownBlock from "./MarkdownBlock.svelte";
+  import { readManagedFile } from "../lib/managedFileRead";
 
   let {
     target,
@@ -51,12 +52,12 @@
     error = "";
     if (!shouldFetchText) return;
     const controller = new AbortController();
-    fetch(current.href, { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`file fetch failed: ${response.status}`);
-        return response.text();
-      })
+    readManagedFile(current.href, controller.signal)
       .then((body) => {
+        // The read is shared, so it finishes even for a preview that has gone. Each
+        // one applies its own transform to the same immutable text, and a preview that
+        // left says nothing.
+        if (controller.signal.aborted) return;
         text = current.kind === "html"
           ? prepareManagedHtmlPreviewDocument(body, current.href)
           : (current.kind === "text" || current.kind === "markdown")
@@ -88,8 +89,11 @@
   <a class="file-preview-link" {href} rel="noopener noreferrer">Open {resolved.label}</a>
 {/snippet}
 
-{#snippet mobilePreviewLink(href: string | undefined)}
-  <a class="file-preview-link file-preview-mobile-link" {href} rel="noopener noreferrer">
+<!-- The file's own name, for the previews that cannot say it themselves: any preview on
+     a narrow screen, where the file is not drawn at all, and every media preview, which
+     draws a player with nothing in it until somebody presses play. -->
+{#snippet nameLink(href: string | undefined)}
+  <a class="file-preview-link file-preview-name-link" {href} rel="noopener noreferrer">
     Open {resolved.label}
   </a>
 {/snippet}
@@ -100,7 +104,7 @@
   data-file-preview-kind={resolved.kind}
 >
   {#if mode === "embedded" && resolved.kind !== "download" && resolved.target.kind !== "external-link" && resolved.previewHref}
-    {@render mobilePreviewLink(resolved.previewHref)}
+    {@render nameLink(resolved.previewHref)}
   {/if}
   {#if showsMedia && resolved.kind === "image"}
     <img
@@ -116,7 +120,7 @@
       class="file-preview-video"
       src={resolved.href}
       controls
-      preload="metadata"
+      preload="none"
       onerror={onMediaError}
     ></video>
   {:else if showsMedia && resolved.kind === "audio"}
@@ -124,7 +128,7 @@
       class="file-preview-audio"
       src={resolved.href}
       controls
-      preload="metadata"
+      preload="none"
       onerror={onMediaError}
     ></audio>
   {:else if error}

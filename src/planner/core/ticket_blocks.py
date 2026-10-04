@@ -25,6 +25,10 @@ def touch_blocked_ticket(conn: sqlite3.Connection, blocked_ticket_id: str, now: 
         "UPDATE tickets SET updated_at = ? WHERE id = ?",
         (now, blocked_ticket_id),
     )
+    # The blocker row and its attention share the caller transaction.
+    from planner.notifications.attention import capture_ticket_attention
+
+    capture_ticket_attention(conn, blocked_ticket_id, now)
 
 
 def _ticket_is_active(conn: sqlite3.Connection, ticket_id: str) -> bool:

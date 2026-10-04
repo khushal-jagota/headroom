@@ -16,7 +16,10 @@ import yaml
 from planner.core.errors import ErrorCode, PlannerError
 from planner.environments.app import AppValidationError, validate_app_sha
 
-HOST: Final = "127.0.0.1"                    # §2: the bind is fixed, not tunable
+# ConversationStore retries only rolled-back SQLite writer contention.
+CONVERSATION_WRITE_LOCK_RETRY_SECONDS: Final = 0.05
+
+HOST: Final = "127.0.0.1"  # §2: the bind is fixed, not tunable
 DEFAULT_CONFIG_PATH: Final = "config.yaml"
 
 _TRUE: Final = frozenset({"1", "true", "yes", "on"})
@@ -131,9 +134,7 @@ def _positive_int_value(
     """An interval or size that only means something above zero, refused below it."""
     value = _int_value(file_cfg, env, key, env_var, default)
     if value <= 0:
-        raise PlannerError(
-            ErrorCode.validation, f"{key} must be greater than zero: {value}"
-        )
+        raise PlannerError(ErrorCode.validation, f"{key} must be greater than zero: {value}")
     return value
 
 

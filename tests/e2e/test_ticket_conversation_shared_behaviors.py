@@ -221,7 +221,7 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
     page.wait_for_selector("[data-conversation-rest-bar]", timeout=WAIT_MS)
     _open_conversation_layer(page)
     page.wait_for_selector("[data-user-input-panel]", timeout=WAIT_MS)
-    page.locator("[data-conversation-lens-toggle]").click()
+    page.locator('[data-conversation-lens-choice="full"]').click()
     screenshot = tmp_path / "agent-questions.png"
     page.screenshot(path=str(screenshot))
     assert screenshot.stat().st_size > 0

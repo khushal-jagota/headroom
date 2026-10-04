@@ -103,13 +103,17 @@ def test_ticket_history_shows_only_the_active_writable_conversation(
     page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
     page.locator('[data-conversation-state="peeked"]').wait_for(timeout=WAIT_MS)
     assert page.get_by_text("Current reply marker", exact=True).count() == 0
-    page.locator("[data-conversation-lens-toggle]").click()
+    page.locator('[data-conversation-lens-choice="full"]').click()
     page.locator('[data-conversation-row="agent_message"]').get_by_text(
         "Current reply marker", exact=True
     ).wait_for(timeout=WAIT_MS)
     assert page.get_by_text("Past reply marker", exact=True).count() == 0
     assert page.locator('[data-conversation-read-only-boundary="true"]').count() == 0
     page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
+    # Send appears for a composer with something in it, so put something in it.
+    assert page.locator("[data-conversation-send]").count() == 0
+    page.locator("[data-conversation-input]").fill("a draft")
     page.locator("[data-conversation-send]").wait_for(timeout=WAIT_MS)
+    page.locator("[data-conversation-input]").fill("")
     page.locator("[data-conversation-picker-model]").wait_for(timeout=WAIT_MS)
     page.get_by_role("button", name="Conversation options").wait_for(timeout=WAIT_MS)

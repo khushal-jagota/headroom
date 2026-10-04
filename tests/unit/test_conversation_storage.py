@@ -33,7 +33,7 @@ from planner.conversation.storage import (
     ConversationStore,
 )
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
-from planner.core.db import connect, create_schema
+from planner.core.db import ChangeSignallingConnection, connect, create_schema
 from planner.notifications.attention import (
     ConversationAttentionSnapshot,
     conversation_attention_snapshot,
@@ -387,3 +387,204 @@ def test_a_row_written_before_messages_could_hold_anything_else_still_reads() ->
     assert conversation_event_payload_from_canonical_json(
         ConversationEventKind.agent_message, '{"text":"the answer"}'
     ) == AgentMessageEventPayload(content=(MessageText(text="the answer"),))
+
+
+def test_storage_write_retries_real_sqlite_busy_after_rollback(tmp_path: Path) -> None:
+    """A lock longer than one busy wait saves every required kind of write once."""
+    from planner.conversation.events import (
+        ConversationTurnEnding,
+        MessageToOwnerEventPayload,
+        ToolCallStartedEventPayload,
+        TurnEndedEventPayload,
+    )
+
+    async def exercise() -> None:
+        db_path = tmp_path / "locked.db"
+        setup = connect(str(db_path))
+        create_schema(setup)
+        setup.close()
+        store = ConversationStore(str(db_path), busy_timeout_ms=10)
+        await store.create_conversation(_resolved())
+        writer = connect(str(db_path))
+        writer.execute("BEGIN IMMEDIATE")
+        writes = [
+            asyncio.create_task(
+                store.append_delivered_prompt("c", prompt=A_PROMPT, model_change=None)
+            ),
+            asyncio.create_task(
+                store.append_event(
+                    "c",
+                    ToolCallStartedEventPayload(
+                        tool_call_id="call", title="notice", tool_kind="test", detail=None
+                    ),
+                )
+            ),
+            asyncio.create_task(store.update_vendor_session_cursor("c", "retained-session")),
+            asyncio.create_task(
+                store.append_message_to_owner(
+                    "c",
+                    MessageToOwnerEventPayload(
+                        content=text_message_content("explicit reply"),
+                        sender_label="Worker",
+                        sender=Principal(PrincipalKind.ticket, "worker"),
+                        recipient=OWNER_PRINCIPAL,
+                    ),
+                )
+            ),
+            asyncio.create_task(
+                store.append_turn_ending(
+                    "c",
+                    (TurnEndedEventPayload(ending=ConversationTurnEnding.completed),),
+                    agent_activity=True,
+                    automatic_compaction_confirmed=False,
+                    automatic_compaction_result=None,
+                )
+            ),
+        ]
+        await asyncio.sleep(0.12)
+        assert all(not task.done() for task in writes)
+        writer.execute("ROLLBACK")
+        writer.close()
+        await asyncio.gather(*writes)
+        record = await store.read_conversation("c")
+        assert record is not None and record.vendor_session_cursor == "retained-session"
+        events = await store.read_events_after("c", 0)
+        assert len(events) == 4
+        assert [event.sequence for event in events] == [1, 2, 3, 4]
+
+    asyncio.run(asyncio.wait_for(exercise(), 3))
+
+
+def test_cancelled_storage_await_retains_one_thread_until_it_commits(
+    store: ConversationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        entered = threading.Event()
+        release = threading.Event()
+        calls = 0
+        original = store._append_event_sync
+
+        def blocked(*args):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            entered.set()
+            assert release.wait(2)
+            return original(*args)
+
+        monkeypatch.setattr(store, "_append_event_sync", blocked)
+        caller = asyncio.create_task(store.append_event("c", A_PROMPT))
+        assert await asyncio.to_thread(entered.wait, 2)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        assert len(store._write_operations) == 1
+        release.set()
+        await asyncio.gather(*tuple(store._write_operations))
+        assert calls == 1
+        assert len(await store.read_events_after("c", 0)) == 1
+
+    asyncio.run(asyncio.wait_for(exercise(), 3))
+
+
+def test_operational_error_without_busy_code_is_not_retried(
+    store: ConversationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def failed(*args):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "_update_vendor_session_cursor_sync", failed)
+    with pytest.raises(sqlite3.OperationalError):
+        asyncio.run(store.update_vendor_session_cursor("c", "session"))
+    assert calls == 1
+
+
+def test_commit_publication_failure_does_not_repeat_prompt(
+    store: ConversationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = ChangeSignallingConnection.execute
+    failures = 0
+
+    def commit_then_fail(
+        conn: ChangeSignallingConnection,
+        sql: str,
+        parameters: object = (),
+    ) -> sqlite3.Cursor:
+        nonlocal failures
+        wrote = conn._open_transaction_wrote()
+        result = original(conn, sql, parameters)
+        if sql == "COMMIT" and wrote:
+            failures += 1
+            raise RuntimeError("publication failed after commit")
+        return result
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        monkeypatch.setattr(ChangeSignallingConnection, "execute", commit_then_fail)
+        written = await store.append_delivered_prompt("c", prompt=A_PROMPT, model_change=None)
+        assert failures == 1
+        assert len(written) == 1
+        assert await store.read_events_after("c", 0) == written
+
+    asyncio.run(exercise())
+
+
+def test_latest_explicit_outcome_supersedes_historical_uncertainty(
+    store: ConversationStore,
+) -> None:
+    from dataclasses import replace
+
+    from planner.conversation.events import PromptDeliveryUncertainEventPayload
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.append_event(
+            "c",
+            PromptDeliveryUncertainEventPayload(
+                content=A_PROMPT.content,
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+                sender_message_id="stable-id",
+            ),
+        )
+        prompt = replace(A_PROMPT, sender_message_id="stable-id")
+        written = await store.append_delivered_prompt("c", prompt=prompt, model_change=None)
+        assert await store.sender_message_outcome("c", "stable-id") == written[0]
+        assert len(await store.read_events_after("c", 0)) == 2
+
+    asyncio.run(exercise())
+
+
+def test_sqlite_commit_failure_with_automatic_rollback_is_not_reported_as_saved(
+    store: ConversationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = ChangeSignallingConnection.execute
+
+    def fail_commit(
+        conn: ChangeSignallingConnection,
+        sql: str,
+        parameters: object = (),
+    ) -> sqlite3.Cursor:
+        if sql == "COMMIT" and conn._open_transaction_wrote():
+            original(conn, "ROLLBACK")
+            raise sqlite3.OperationalError("disk I/O error")
+        return original(conn, sql, parameters)
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        monkeypatch.setattr(ChangeSignallingConnection, "execute", fail_commit)
+        with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+            await store.append_delivered_prompt("c", prompt=A_PROMPT, model_change=None)
+        assert await store.read_events_after("c", 0) == ()
+
+    asyncio.run(exercise())

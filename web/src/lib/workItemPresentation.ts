@@ -157,5 +157,6 @@ export const WORK_ITEM_ATTENTION_GROUP_KEYS: readonly WorkItemTicketGroupKey[] =
   "awaiting_approval",
   "awaiting_answer",
   "assigned",
-  "awaiting_reply"
+  "awaiting_reply",
+  "errored"
 ] as const;

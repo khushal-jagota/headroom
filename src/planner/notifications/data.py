@@ -265,8 +265,7 @@ def _prune_missing_subjects(conn: sqlite3.Connection) -> None:
         )
 
 
-def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
-    _prune_missing_subjects(conn)
+def _reconcile_attention(conn: sqlite3.Connection) -> None:
     conversations = attention_data.conversation_attention(conn)
     desired: dict[tuple[str, str, str], tuple[bool, Principal, str, int]] = {}
     ticket_rows = conn.execute(
@@ -350,6 +349,22 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
         conn,
         {key: (active, occurred_at) for key, (active, _, _, occurred_at) in desired.items()},
     )
+
+
+def reconcile_attention(conn: sqlite3.Connection) -> None:
+    """Seed attention for imported state once, before runtime writers start.
+
+    Runtime writers already capture their edges in their own transaction. Repeating
+    the historical scan in the delivery loop held the database write lock while
+    reading every conversation, blocking unrelated prompts and agent events.
+    """
+    with _txn(conn):
+        _prune_missing_subjects(conn)
+        _reconcile_attention(conn)
+
+
+def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
+    _prune_missing_subjects(conn)
     preferences = resolved_preferences(conn)
     subscriptions = active_subscription_ids(conn)
     decided = 0
@@ -364,10 +379,20 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
             str(row["subject_id"]),
             str(row["notification_type"]),
         )
-        current = desired.get(subject_key)
-        if current is None:
+        subject = _principal_from_stored_subject(subject_key[0], subject_key[1])
+        if subject_key[0] == "ticket":
+            label_row = conn.execute(
+                "SELECT title FROM tickets WHERE id=?", (subject_key[1],)
+            ).fetchone()
+        elif subject_key[0] == "sprint_item":
+            label_row = conn.execute(
+                "SELECT title FROM sprint_items WHERE id=?", (subject_key[1],)
+            ).fetchone()
+        else:
+            label_row = (_agent_label(subject_key[1]),)
+        if label_row is None:
             continue
-        _, subject, label, _ = current
+        label = str(label_row[0])
         key = EdgeKey(*subject_key, int(row["generation"]))
         edge = AttentionEdge(
             key=key,

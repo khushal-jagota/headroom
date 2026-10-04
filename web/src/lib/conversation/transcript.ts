@@ -25,6 +25,7 @@ import type {
 } from "./wire";
 import { messageContentOf } from "./wire";
 import type { ConversationFeed } from "./feed";
+import { isMessageOutcome, latestMessageOutcomes } from "./messageOutcome";
 
 export type PermissionAskState = "live" | "answered" | "dead";
 export type UserInputState = "live" | "answered" | "failed" | "dead";
@@ -80,6 +81,9 @@ export type TranscriptRow =
       sequence: number;
       createdAt: number;
       content: readonly MessagePiece[];
+      /** The record calls this one a message to the owner rather than ordinary output.
+       *  It is the only kind of row that counts as a reply somebody is owed. */
+      toOwner: boolean;
     }
   | {
       key: string;
@@ -209,7 +213,7 @@ export function turnEndingSentence(
   errorSummary: string | null
 ): string {
   const base = TURN_ENDING_SENTENCES[ending] ?? "turn ended";
-  return errorSummary ? `${base} · ${errorSummary}` : base;
+  return ending === "failed" && errorSummary ? errorSummary : base;
 }
 
 export type TranscriptReading = {
@@ -278,7 +282,16 @@ export function transcriptRows(
   // whatever was left in flight is not arriving, and it is not drawn.
   const turnIsGone = reading.turnStoppedWithoutAnEnding === true;
 
+  const latestOutcomes = latestMessageOutcomes(feed.events);
+  const reconciledSequences = new Set(feed.events.flatMap((event) =>
+    event.kind === "prompt" && event.payload.reconciles_sequence !== undefined
+      && event.payload.reconciles_sequence < event.sequence
+      ? [event.payload.reconciles_sequence] : []
+  ));
   for (const event of feed.events) {
+    if (event.kind === "prompt_delivery_uncertain" && reconciledSequences.has(event.sequence)) continue;
+    if (isMessageOutcome(event) && event.payload.sender_message_id !== undefined
+      && latestOutcomes.get(event.payload.sender_message_id)?.sequence !== event.sequence) continue;
     const sequence = event.sequence;
     const createdAt = event.created_at;
     switch (event.kind) {
@@ -333,7 +346,8 @@ export function transcriptRows(
           kind: "agent_message",
           sequence,
           createdAt,
-          content: messageContentOf(event.payload)
+          content: messageContentOf(event.payload),
+          toOwner: event.kind === "message_to_owner"
         });
         break;
       case "explicit_reply_missing":

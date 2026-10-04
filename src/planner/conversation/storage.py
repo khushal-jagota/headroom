@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
@@ -49,8 +51,10 @@ from planner.conversation.events import (
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
 )
-from planner.core.contracts import PrincipalKind
+from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
+from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
     ConversationAttentionSnapshot,
     advance_conversation_attention,
@@ -179,10 +183,84 @@ class ConversationStore:
         self._db_path = db_path
         self._integer_now = integer_now
         self._busy_timeout_ms = busy_timeout_ms
+        self._write_operations: set[asyncio.Task[object]] = set()
+        self._recording_failures: dict[asyncio.Task[Any], tuple[str, Exception, asyncio.Event]] = {}
+
+    def recording_failures(self, conversation_id: str) -> tuple[Exception, ...]:
+        """Actual recording errors retained for explicit persistence reconciliation."""
+        return tuple(
+            error
+            for target, error, _ in self._recording_failures.values()
+            if target == conversation_id
+        )
+
+    def resume_recording(self, conversation_id: str) -> int:
+        """Resume failed storage calls, without repeating a backend exchange."""
+        pending = [
+            resumed
+            for target, _, resumed in self._recording_failures.values()
+            if target == conversation_id
+        ]
+        for resumed in pending:
+            resumed.set()
+        return len(pending)
+
+    async def settle_recording[T](
+        self, conversation_id: str, operation: Callable[[], Coroutine[Any, Any, T]]
+    ) -> T:
+        """A non-lock failure pauses this operation until explicit reconciliation.
+
+        SQLite contention is handled by _write, at the transaction boundary. All other
+        errors are exposed here and retained with the exact storage call. The caller
+        keeps its accepted turn and ordered event until this operation actually succeeds.
+        """
+        task = asyncio.current_task()
+        assert task is not None
+        while True:
+            try:
+                return await operation()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                resumed = asyncio.Event()
+                self._recording_failures[task] = (conversation_id, error, resumed)
+                logging.getLogger("planner.conversation").error(
+                    "conversation %s recording paused: %r",
+                    conversation_id,
+                    error,
+                    exc_info=True,
+                )
+                try:
+                    await resumed.wait()
+                finally:
+                    self._recording_failures.pop(task, None)
+
+    async def _write[T](self, operation: Callable[..., T], *args: object) -> T:
+        """Retain one SQLite operation through caller cancellation and lock contention.
+
+        A synchronous attempt closes its connection (and rolls back any transaction)
+        before it raises. Only SQLite's BUSY family proves transient writer contention.
+        Each next attempt starts after the previous thread finishes, never beside it.
+        """
+
+        async def finish() -> T:
+            while True:
+                try:
+                    return await asyncio.to_thread(operation, *args)
+                except sqlite3.OperationalError as error:
+                    code = getattr(error, "sqlite_errorcode", None)
+                    if code is None or code & 0xFF != sqlite3.SQLITE_BUSY:
+                        raise
+                    await asyncio.sleep(CONVERSATION_WRITE_LOCK_RETRY_SECONDS)
+
+        task = asyncio.create_task(finish())
+        self._write_operations.add(task)
+        task.add_done_callback(self._write_operations.discard)
+        return await asyncio.shield(task)
 
     async def create_conversation(self, resolved: ResolvedConversationStart) -> ConversationRecord:
         """Write a conversation's row. Raises ``ConversationAlreadyStarted`` for a repeat."""
-        return await asyncio.to_thread(self._create_conversation_sync, resolved)
+        return await self._write(self._create_conversation_sync, resolved)
 
     async def read_conversation(self, conversation_id: str) -> ConversationRecord | None:
         return await asyncio.to_thread(self._read_conversation_sync, conversation_id)
@@ -197,7 +275,7 @@ class ConversationStore:
         owner_read_through_sequence: int | None = None,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
-        return await asyncio.to_thread(
+        return await self._write(
             self._append_event_sync,
             conversation_id,
             payload,
@@ -210,18 +288,44 @@ class ConversationStore:
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
     ) -> int:
         """Durably mark Panels wake messages before a held delivery can reach a backend."""
-        wake_ids = tuple(
-            sender_message_id
-            for sender_message_id in sender_message_ids
-            if sender_message_id.startswith("supervisor_delivery_wake_")
-        )
+        wake_ids = tuple(dict.fromkeys(sender_message_ids))
         if not wake_ids:
             return 0
-        return await asyncio.to_thread(
+        return await self._write(
             self._mark_held_sender_messages_leaving_queue_sync,
             conversation_id,
             wake_ids,
         )
+
+    async def all_sender_messages_are_manager_notices(
+        self, conversation_id: str, sender_message_ids: tuple[str | None, ...]
+    ) -> bool:
+        """Confirm that every delivered message names a durable internal notice batch."""
+        if not sender_message_ids or any(value is None for value in sender_message_ids):
+            return False
+        unique_ids = tuple(
+            dict.fromkeys(value for value in sender_message_ids if value is not None)
+        )
+        return await asyncio.to_thread(
+            self._all_sender_messages_are_manager_notices_sync,
+            conversation_id,
+            unique_ids,
+        )
+
+    def _all_sender_messages_are_manager_notices_sync(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> bool:
+        placeholders = ",".join("?" for _ in sender_message_ids)
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                f"SELECT count(*) FROM manager_wake_batches "
+                f"WHERE conversation_id=? AND sender_message_id IN ({placeholders})",
+                (conversation_id, *sender_message_ids),
+            ).fetchone()
+        finally:
+            conn.close()
+        return row is not None and int(row[0]) == len(sender_message_ids)
 
     def _mark_held_sender_messages_leaving_queue_sync(
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
@@ -255,22 +359,24 @@ class ConversationStore:
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
+        create_failure_notice: bool = False,
     ) -> tuple[StoredConversationEvent, ...]:
         """Atomically append silence markers followed by their turn ending."""
-        return await asyncio.to_thread(
+        return await self._write(
             self._append_turn_ending_sync,
             conversation_id,
             payloads,
             agent_activity,
             automatic_compaction_confirmed,
             automatic_compaction_result,
+            create_failure_notice,
         )
 
     async def advance_owner_read_through_sequence(
         self, conversation_id: str, through_sequence: int
     ) -> ConversationRecord | None:
         """Move the owner's position forward, bounded by the current record."""
-        return await asyncio.to_thread(
+        return await self._write(
             self._advance_owner_read_through_sequence_sync,
             conversation_id,
             through_sequence,
@@ -314,7 +420,7 @@ class ConversationStore:
         later delivery from crediting rows that arrived after the owner left.
         Returns the rows in the order they were written.
         """
-        return await asyncio.to_thread(
+        return await self._write(
             self._append_delivered_prompt_sync,
             conversation_id,
             prompt,
@@ -406,7 +512,7 @@ class ConversationStore:
     async def update_vendor_session_cursor(
         self, conversation_id: str, vendor_session_cursor: str
     ) -> None:
-        await asyncio.to_thread(
+        await self._write(
             self._update_vendor_session_cursor_sync, conversation_id, vendor_session_cursor
         )
 
@@ -418,9 +524,7 @@ class ConversationStore:
         A backend reports the catalog it has now, not what moved in it. The prior catalog
         is out of date rather than partly right, so this does not merge entries.
         """
-        await asyncio.to_thread(
-            self._replace_composer_catalog_sync, conversation_id, composer_catalog
-        )
+        await self._write(self._replace_composer_catalog_sync, conversation_id, composer_catalog)
 
     # --- inside the worker thread ---
 
@@ -536,18 +640,20 @@ class ConversationStore:
                         occurred_at,
                         result,
                     )
+                row = conn.execute(
+                    "SELECT * FROM conversations WHERE conversation_id = ?",
+                    (conversation_id,),
+                ).fetchone()
+                record = None if row is None else _conversation_record(row)
             except BaseException:
-                conn.execute("ROLLBACK")
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
                 raise
             else:
-                conn.execute("COMMIT")
-            row = conn.execute(
-                "SELECT * FROM conversations WHERE conversation_id = ?",
-                (conversation_id,),
-            ).fetchone()
+                _commit_appended_rows(conn, (), always_announce=True)
         finally:
             conn.close()
-        return None if row is None else _conversation_record(row)
+        return record
 
     def _append_event_sync(
         self,
@@ -688,12 +794,23 @@ class ConversationStore:
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
+        create_failure_notice: bool,
     ) -> tuple[StoredConversationEvent, ...]:
         conn = self._connect()
         try:
             snapshot = self._begin_validated_attention_write(conn, conversation_id)
             written = self._insert_rows(conn, conversation_id, payloads)
             ended = written[-1]
+            if create_failure_notice:
+                ending_payload = ended.payload
+                error_summary = getattr(ending_payload, "error_summary", None)
+                self._create_ticket_failure_notice(
+                    conn,
+                    conversation_id=conversation_id,
+                    event_sequence=ended.sequence,
+                    error_summary=str(error_summary),
+                    now=ended.created_at,
+                )
             if agent_activity:
                 conn.execute(
                     "UPDATE conversations SET latest_agent_activity_at = ?, "
@@ -731,6 +848,37 @@ class ConversationStore:
         finally:
             conn.close()
         return written
+
+    @staticmethod
+    def _create_ticket_failure_notice(
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        event_sequence: int,
+        error_summary: str,
+        now: int,
+    ) -> None:
+        """Snapshot the responsible employee for one currently linked Ticket."""
+        row = conn.execute(
+            "SELECT id,title,ceiling_holder FROM tickets WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            return
+        stored_holder = json.loads(str(row["ceiling_holder"]))
+        holder = Principal(PrincipalKind(str(stored_holder["kind"])), str(stored_holder["id"]))
+        if holder.kind is PrincipalKind.owner:
+            return
+        manager_wakes_data.create_turn_failure_wake(
+            conn,
+            target=holder,
+            ticket_id=str(row["id"]),
+            ticket_title=str(row["title"]),
+            conversation_id=conversation_id,
+            event_sequence=event_sequence,
+            error_summary=error_summary,
+            now=now,
+        )
 
     def _insert_rows(
         self,
@@ -856,7 +1004,7 @@ class ConversationStore:
                 "WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? "
                 "AND kind IN "
                 "('prompt','prompt_delivery_refused','prompt_delivery_uncertain',"
-                "'prompt_discarded','message_to_owner') LIMIT 1",
+                "'prompt_discarded','message_to_owner') ORDER BY sequence DESC LIMIT 1",
                 (conversation_id, sender_message_id),
             ).fetchone()
         finally:
@@ -1016,7 +1164,10 @@ class ConversationStore:
 
 
 def _commit_appended_rows(
-    conn: sqlite3.Connection, payloads: tuple[ConversationEventPayload, ...]
+    conn: sqlite3.Connection,
+    payloads: tuple[ConversationEventPayload, ...],
+    *,
+    always_announce: bool = False,
 ) -> None:
     """Close an append, announcing it only if a screen outside the conversation reads it.
 
@@ -1025,12 +1176,25 @@ def _commit_appended_rows(
     the conversation shows commit quietly; the conversation still gets them, because it
     is handed each row as it is written.
     """
-    if conversation_event_kinds_need_the_change_signal(
-        conversation_event_payload_kind(payload) for payload in payloads
-    ):
-        conn.execute("COMMIT")
-        return
-    commit_without_change_signal(conn)
+    try:
+        if always_announce or conversation_event_kinds_need_the_change_signal(
+            conversation_event_payload_kind(payload) for payload in payloads
+        ):
+            conn.execute("COMMIT")
+        else:
+            commit_without_change_signal(conn)
+    except sqlite3.Error:
+        # SQLite can roll a transaction back itself when COMMIT fails. A closed
+        # transaction alone never proves that a database error followed a commit.
+        raise
+    except Exception:
+        if conn.in_transaction:
+            raise
+        # A publisher can fail after SQLite commits. The rows are already durable.
+        # Return their result and never enter another append attempt.
+        logging.getLogger("planner.conversation").exception(
+            "conversation commit succeeded but its change publication failed"
+        )
 
 
 def ensure_started_conversation_record(

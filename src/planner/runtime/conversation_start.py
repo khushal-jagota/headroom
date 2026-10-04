@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Final
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
+from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
     ConversationBackendKey,
@@ -134,7 +135,7 @@ def worker_resolve(
     if registry is None:
         registry = configured_worker_type_registry()
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(registry, ticket.worker_type)
-    return resolve_worker_conversation_start(
+    values = resolve_worker_conversation_start(
         ticket_id=ticket.id,
         worker_type_launch_defaults=ConversationStartConfiguration(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),
@@ -153,6 +154,9 @@ def worker_resolve(
         overrides=overrides,
         workspace_folder=_worker_workspace_folder(conn, ticket, workspace_folder),
     )
+    if ticket.employee_launch_model is None or overrides.model is not None:
+        require_enabled_model(conn, values.backend_key, values.model)
+    return values
 
 
 def _worker_workspace_folder(
@@ -179,7 +183,7 @@ def agent_resolve(
     if registry is None:
         registry = configured_worker_type_registry()
     launch_defaults = read_chief_settings(conn).launch_defaults
-    return resolve_agent_conversation_start(
+    values = resolve_agent_conversation_start(
         chief_launch_defaults=ConversationStartConfiguration(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),
             model=launch_defaults.employee_launch_model,
@@ -190,6 +194,8 @@ def agent_resolve(
             _default_workspace_folder() if workspace_folder is None else workspace_folder
         ),
     )
+    require_enabled_model(conn, values.backend_key, values.model)
+    return values
 
 
 def sprint_item_supervisor_resolve(

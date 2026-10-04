@@ -25,7 +25,7 @@
     type ConversationFeed,
     type ConversationStream
   } from "../../lib/conversation/feed";
-  import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
+  import { fateSentence, recordedMessageFateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import {
     conversationFeedForLens,
@@ -82,6 +82,7 @@
     type ConversationView,
     type DeliveredMessage,
     type OwnerSendBody,
+    type PastConversation,
     type PromptDeliveryMode,
     type SentMessagePiece,
     type UserInputAnswers
@@ -100,7 +101,9 @@
     emptyState,
     sendMessage,
     onNewConversation,
-    readOnly = false
+    readOnly = false,
+    pastConversations = [],
+    selectedPastConversationId = $bindable(null)
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     conversationId?: string | null;
@@ -134,6 +137,12 @@
     onNewConversation?: () => Promise<void>;
     /** One display boundary for historical transcripts. The pane removes every action. */
     readOnly?: boolean;
+    /** The owner's earlier conversations, handed straight to the pane. The caller says
+     *  which ones are past, because only it knows which conversation is the current one. */
+    pastConversations?: readonly PastConversation[];
+    /** Which earlier conversation the owner picked, or null for the current one. The
+     *  caller opens what this names by passing it back as ``conversationId``. */
+    selectedPastConversationId?: string | null;
   } = $props();
 
   let view = $state<ConversationView | null>(null);
@@ -149,6 +158,8 @@
   let connectionTrouble = $state(false);
   let fateNote = $state<string | null>(null);
   let fateNoteIsTerminal = $state(false);
+  let fateNoteMessageId = $state<string | null>(null);
+  let visibleFateNote = $derived(recordedMessageFateSentence(feed.events, fateNoteMessageId, fateNote));
   let errorNote = $state<string | null>(null);
   let askNote = $state<string | null>(null);
   let busy = $state(false);
@@ -279,8 +290,7 @@
   ));
 
   // A queued or accepted-steer note describes traffic that a turn ending settles. A
-  // refusal or uncertainty outlives endings: it is cleared by the next send, not by a
-  // turn that never conclusively admitted it.
+  // refusal or uncertainty survives unrelated endings. Its own later receipt settles it.
   $effect(() => {
     if (!running && fateNote !== null && !fateNoteIsTerminal) fateNote = null;
   });
@@ -384,6 +394,7 @@
     if (openedId !== id) return;
     view = snapshot;
     connectionTrouble = false;
+    let theOpenAlreadyReadTheView = true;
     let localStream: ConversationStream;
     localStream = createConversationStream(
       id,
@@ -415,9 +426,15 @@
       },
       // Every connect asks the system about itself again, after the rows are in. This is
       // the after-a-restart path: the rows still leave a turn open, and only the system
-      // can say nothing is running behind it any more.
+      // can say nothing is running behind it any more. The first connect of an open is
+      // the exception: the view it would ask for was read a moment ago, by the open.
       () => {
-        if (openedId === id && stream === localStream) void refreshView(id);
+        if (openedId !== id || stream !== localStream) return;
+        if (theOpenAlreadyReadTheView) {
+          theOpenAlreadyReadTheView = false;
+          return;
+        }
+        void refreshView(id);
       },
       () => {
         if (openedId === id && stream === localStream) void refreshView(id);
@@ -458,14 +475,37 @@
     if (told !== sentMessages) void holdOnTo(told);
   }
 
-  async function refreshView(requestedId: string | null = openedId): Promise<void> {
-    if (requestedId === null || openedId !== requestedId) return;
-    try {
-      const refreshed = await readConversation(requestedId);
-      if (openedId === requestedId) view = refreshed;
-    } catch {
-      // The rows are the record; a snapshot that did not come back changes nothing here.
-    }
+  /** Reads of the view, in a queue of one, so a burst of them is one request.
+   *
+   * Opening a conversation reads the view, and then the tail immediately says it is
+   * connected and hands over its held prompts. Each of those asks for the view again,
+   * about the same conversation at the same moment. A caller that arrives while a read
+   * is in flight waits behind it rather than starting its own — but it does start its
+   * own once that one lands, because it knows something the read in flight did not, and
+   * an answer fetched before its fact existed is not an answer to it.
+   */
+  let viewBeingRead: { conversationId: string; done: Promise<void> } | null = null;
+
+  function refreshView(requestedId: string | null = openedId): Promise<void> {
+    if (requestedId === null || openedId !== requestedId) return Promise.resolve();
+    const inFlight = viewBeingRead;
+    const read = async (): Promise<void> => {
+      if (openedId !== requestedId) return;
+      try {
+        const refreshed = await readConversation(requestedId);
+        if (openedId === requestedId) view = refreshed;
+      } catch {
+        // The rows are the record; a snapshot that did not come back changes nothing.
+      }
+    };
+    const reading =
+      inFlight?.conversationId === requestedId ? inFlight.done.then(read) : read();
+    const entry = { conversationId: requestedId, done: reading };
+    viewBeingRead = entry;
+    void reading.finally(() => {
+      if (viewBeingRead === entry) viewBeingRead = null;
+    });
+    return reading;
   }
 
   function sentenceFor(error: unknown): string {
@@ -557,6 +597,7 @@
       const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
       fateNote = terminalFate ? fateSentence(fate) : null;
       fateNoteIsTerminal = terminalFate;
+      fateNoteMessageId = terminalFate ? message.messageId : null;
       if (terminalFate) {
         await stopDrawing(message.messageId);
         await refreshView();
@@ -699,10 +740,14 @@
     if (readOnly || openedId === null) return;
     errorNote = null;
     try {
+      const promotedMessageId = view?.held_prompts.find(
+        (held) => held.held_prompt_id === heldPromptId
+      )?.sender_message_id ?? null;
       const result = await promoteHeldPrompt(openedId, heldPromptId, mode);
       if (result.promoted && (result.fate === "refused" || result.fate === "uncertain")) {
         fateNote = fateSentence(result);
         fateNoteIsTerminal = true;
+        fateNoteMessageId = promotedMessageId;
       }
       await refreshView();
     } catch (error) {
@@ -837,7 +882,6 @@
 
 <ConversationPane
   conversationId={openedId ?? ""}
-  {label}
   {backendKey}
   conversationExists={started}
   bind:backends
@@ -860,10 +904,14 @@
   startsOnModel={startValues?.model ?? null}
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   bind:conversationState
-  {fateNote}
+  fateNote={visibleFateNote}
   {errorNote}
   {connectionTrouble}
   {readOnly}
+  {pastConversations}
+  pastConversationsLabel={`${label} conversation`}
+  bind:selectedPastConversationId
+  ownerReadThroughSequence={view?.owner_read_through_sequence ?? 0}
   bind:lens
   composerPlaceholder={composerPlaceholder
     ?? (started ? `Message ${label}...` : "Send the first message to start it...")}

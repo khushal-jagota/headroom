@@ -1,13 +1,17 @@
 /**
- * A missing artifact's image fails to load in a real browser, which is the one thing
- * a component or server-render test cannot produce: a genuine `error` event fired by
- * the browser's own image loader. This builds a small host around the production
- * FilePreview, points it at an image URL the static server does not have, and checks
- * that the failure line replaces the broken image instead of leaving nothing visible.
+ * Two things only a real browser can show, around the production FilePreview.
+ *
+ * One: a missing artifact's image fails with a genuine `error` event from the browser's
+ * own image loader, and the failure line replaces the broken image rather than leaving
+ * nothing visible.
+ *
+ * Two: three previews naming one file make one request. The sharing is a race between
+ * three components mounting in the same frame, which is the thing a stubbed fetch in a
+ * unit test cannot put under real timing.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -30,11 +34,21 @@ try {
     hostPath,
     String.raw`<script lang="ts">
   import FilePreview from "../src/components/FilePreview.svelte";
+
+  const sharedNote = { kind: "ticket-file", ticketId: "t_probe01", path: "note.md" } as const;
 </script>
 
-<FilePreview
-  target={{ kind: "external-link", href: "./missing-artifact.png", label: "Missing" }}
-/>
+<div data-probe="missing">
+  <FilePreview
+    target={{ kind: "external-link", href: "./missing-artifact.png", label: "Missing" }}
+  />
+</div>
+
+<div data-probe="shared">
+  <FilePreview target={sharedNote} />
+  <FilePreview target={sharedNote} />
+  <FilePreview target={sharedNote} />
+</div>
 `,
     "utf8"
   );
@@ -64,6 +78,15 @@ try {
     }
   });
 
+  // The three shared previews resolve to this address. It is written after the build,
+  // because the build empties the directory it writes into.
+  await mkdir(join(temporaryDirectory, "files", "tickets", "t_probe01"), { recursive: true });
+  await writeFile(
+    join(temporaryDirectory, "files", "tickets", "t_probe01", "note.md"),
+    "# The shared note\n\nRead once, drawn three times.\n",
+    "utf8"
+  );
+
   const port = await availablePort();
   serverProcess = spawn(
     join(repositoryRoot, ".venv", "bin", "python"),
@@ -85,16 +108,28 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     page = browser.new_page(viewport={"width": 600, "height": 400})
     page.set_default_timeout(5_000)
+
+    reads = []
+    page.on("request", lambda request: reads.append(request.url)
+            if "/files/tickets/t_probe01/note.md" in request.url else None)
     page.goto(sys.argv[1], wait_until="domcontentloaded")
 
-    preview = page.locator("[data-file-preview]")
-    preview.wait_for()
+    page.locator("[data-file-preview]").first.wait_for()
     page.wait_for_function("""() => {
-      const line = document.querySelector('[data-file-preview] .quiet-line');
+      const line = document.querySelector('[data-probe="missing"] .quiet-line');
       return line !== null && line.textContent.trim().length > 0;
     }""")
-    assert page.locator("[data-file-preview] .quiet-line").inner_text() == "file fetch failed"
-    assert page.locator("[data-file-preview] img").count() == 0
+    assert page.locator('[data-probe="missing"] .quiet-line').inner_text() == "file fetch failed"
+    assert page.locator('[data-probe="missing"] img').count() == 0
+
+    # All three draw the note.
+    page.wait_for_function("""() => {
+      const bodies = document.querySelectorAll('[data-probe="shared"] .file-preview-document-body');
+      return bodies.length === 3
+        && [...bodies].every((body) => body.textContent.includes("The shared note"));
+    }""")
+    page.wait_for_timeout(500)
+    assert len(reads) == 1, f"three previews of one file made {len(reads)} requests: {reads}"
 
     browser.close()
 

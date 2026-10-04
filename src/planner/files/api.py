@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import mimetypes
 import re
+from email.utils import formatdate
+from pathlib import Path
 from typing import Any
 
+import anyio.to_thread
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse
+from starlette.datastructures import Headers
+from starlette.responses import Response
+from starlette.staticfiles import NotModifiedResponse
 
 from planner.core import authority
 from planner.core.authctx import request_context
@@ -17,6 +23,11 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.files import sprint_item_files
 from planner.files.logic.paths import resolve_sprint_item_file, resolve_ticket_file
+from planner.files.logic.reuse import (
+    holds_the_current_copy,
+    is_played_with_ranges,
+    read_representation_within_bound,
+)
 from planner.tickets.api import body_str
 
 router = APIRouter()
@@ -52,7 +63,7 @@ _INLINE_MEDIA_TYPES = _INLINE_IMAGE_TYPES | frozenset(
 
 
 @router.get("/files/tickets/{ticket_id}/{file_path:path}")
-async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> FileResponse:
+async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> Response:
     _reject_raw_encoded_unsafe_path(request)
     try:
         ticket_file = resolve_ticket_file(request.app.state.config.db_path, ticket_id, file_path)
@@ -70,13 +81,13 @@ async def get_ticket_file(request: Request, ticket_id: str, file_path: str) -> F
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    return response
+    return await _reusable(request, response, ticket_file.absolute_path, media_type)
 
 
 @router.get("/files/sprint-items/{sprint_item_id}/{file_path:path}")
 async def get_sprint_item_file(
     request: Request, sprint_item_id: str, file_path: str
-) -> FileResponse:
+) -> Response:
     _reject_raw_encoded_unsafe_path(request, "Sprint Item file not found")
     with connect(request.app.state.config.db_path) as conn:
         require_above_or_self(
@@ -99,7 +110,63 @@ async def get_sprint_item_file(
         content_disposition_type=disposition,
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
-    return response
+    return await _reusable(request, response, managed_file.absolute_path, media_type)
+
+
+async def _reusable(
+    request: Request, response: FileResponse, path: Path, media_type: str
+) -> Response:
+    """Let a browser reuse the copy it holds, and never let it hold a stale one.
+
+    Both routes reach here only after deciding that this reader may have this file and
+    that the file is there, so a 304 is an answer that passed both.
+
+    Every answer this function returns carries the policy: ``private`` because these
+    files are answered per reader and a shared cache must never hand one reader's
+    artifact to another, and ``no-cache`` because a stored copy is checked before every
+    use. Two answers do not come from here — a malformed range and an unsatisfiable one,
+    which the framework builds fresh and returns in place of this response. Neither
+    status may be stored without being asked for, so neither needs telling.
+
+    Reuse itself is offered only where the tag can be made to describe the exact bytes
+    that travel. Three answers are left to ``FileResponse``, and none of them is ever
+    told its copy is unchanged:
+
+    * a request asking for a byte range — the range arithmetic comes from the stat taken
+      as the body is sent, and a tag from any other read could disagree with it;
+    * sound and video — they are seeked, so they keep the framework's range handling.
+      They give up being answered 304 on a whole-file read to keep it, which costs
+      nothing measurable: a browser fetches them with ranges, and since they no longer
+      load before somebody asks for them, that fetch happens once;
+    * anything larger than the bound — read once would not be bounded memory, so reuse
+      is declined rather than approximated.
+    """
+    response.headers["Cache-Control"] = "private, no-cache"
+    if "range" in request.headers or is_played_with_ranges(media_type):
+        return response
+    # Reads from disk, so it goes to a thread rather than the event loop.
+    representation = await anyio.to_thread.run_sync(read_representation_within_bound, path)
+    if representation is None:
+        return response
+    if holds_the_current_copy(request.headers.get("if-none-match"), representation.etag):
+        response.headers["ETag"] = representation.etag
+        return NotModifiedResponse(Headers(raw=response.raw_headers))
+    # The bytes that were read are the bytes that are sent, so the tag cannot describe
+    # anything else — whatever happens to the file from here.
+    kept = Response(
+        content=representation.body,
+        media_type=media_type,
+        headers={
+            "ETag": representation.etag,
+            "Cache-Control": "private, no-cache",
+            "Content-Disposition": response.headers["content-disposition"],
+            "Last-Modified": formatdate(representation.last_modified_epoch, usegmt=True),
+            "X-Content-Type-Options": "nosniff",
+            # Honest: a request that asks for a range is served one, by the branch above.
+            "Accept-Ranges": "bytes",
+        },
+    )
+    return kept
 
 
 @router.put("/files/sprint-items/{sprint_item_id}/{file_path:path}")

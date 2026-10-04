@@ -44,10 +44,18 @@ A browser with no saved lens choice opens through the Focus lens. Focus shows th
 owner's prompts, explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
-Failed turns, stopped turns, and missing explicit replies remain visible as compact
-system rows. Complete turn boundaries still
+Failed turns show the adapter's concise failure summary. A historical failed row with no
+summary says `turn failed`. Stopped turns and missing explicit replies remain visible as
+compact system rows. Complete turn boundaries still
 settle the Focus thread and rest line when runtime rows are hidden. A turn with a hidden
 opening prompt has no Focus turn head.
+
+Each backend turns its structured failure evidence into that summary before it crosses the
+conversation boundary. An HTTP 401 says that authentication was rejected. Panels does not
+infer that a credential expired. Provider detail is collapsed to one bounded line and
+common credential values are redacted. Standard error remains in operator logs only. The
+core supplies an honest unknown-reason fallback if an adapter supplies no usable detail.
+
 Full shows the complete runtime notebook, every held prompt, all live agent text, and
 every tool call without a Focus fold. The header toggle and the unmodified `f` key switch
 the lens without replacing the conversation. Editable controls keep the key. The browser
@@ -247,6 +255,14 @@ principals who did not receive an accepted Send Message. Repeated prompts from o
 principal produce one marker; legacy and automatic runtime prompts have no principal and
 produce none. The markers and ending are one ordered transaction.
 
+When a failed turn belongs to a Ticket's current conversation, that transaction also
+snapshots the Ticket's current ceiling holder. The existing owner attention flag handles
+an owner-held ceiling. A Chief, Sprint Item, or Ticket holder receives one durable Panels
+notice through that principal's canonical conversation door. The failed event's
+conversation and sequence identify the notice, so replay cannot duplicate it. Historical,
+unattached, Chief, and Sprint Item conversation failures create no Ticket notice. A turn
+started by a failure notice cannot create another failure notice.
+
 The composer accepts pictures and supported files from its pickers, the clipboard, or
 a drop. Attachments wait beside the draft and can be removed one at a time. They can
 travel with words or form the whole message. There is no separate upload conversation
@@ -268,6 +284,36 @@ rejects every conversation associated with a Ticket, the Chief, or a Sprint Item
 supervisor. It therefore is not an employee conversation door and does not participate in
 principal addressing. No shipped screen uses it: Ticket, Chief, and Sprint Item composers
 all use the addressed Send Message operation.
+
+The conversation owns each backend exchange until its receipt settles. If its caller
+cancels, the exchange continues once. Normal sends, steering, queue promotion, and queued
+batches use that ownership. Repeating the same sender message ID waits for the existing
+outcome instead of another provider write. Accepted work keeps its reservation and sender
+obligations while its receipt waits for storage. Receipt failure does not stop the child.
+The event pump waits for prompt receipts before it records backend results. A steering
+barrier also protects the target turn's ending and reply attribution.
+
+ConversationStore retries only SQLite BUSY errors from completed, rolled-back storage
+attempts. Each attempt uses the configured busy wait. A short asynchronous pause precedes
+the next storage attempt. A cancelled caller does not start another thread beside an
+unfinished attempt. The same policy covers receipts, explicit replies, events, endings,
+and provider cursors. It never repeats a provider call. Other storage errors retain the
+exact pending operation and accepted ownership. Operator inspection through
+`recording_failures` exposes the actual error. `resume_recording` resumes persistence
+explicitly after repair. This in-memory seam does not survive process loss.
+
+Prompt/model/attention/skill receipts remain one atomic transaction. Ancillary notice
+classification occurs before dispatch. After commit, local state uses the returned rows.
+A live-tail publication error does not invalidate the receipt or append it again.
+
+Historical uncertainty remains in the notebook. Reviewed, message-specific provider
+evidence can settle it through a later prompt receipt without another provider write.
+The latest explicit sequence determines a sender message ID's current fate. A receipt's
+optional `reconciles_sequence` points to the exact earlier uncertain row, including
+messages without a sender-minted ID. The transcript hides only that superseded warning.
+It does not infer delivery from repeated text, another session cursor, or later work.
+Unknown outcomes retain the existing recovery action. A recovered Worker clears its
+error through canonical proposal progress.
 
 When the agent frees, everything waiting goes to it as one prompt rather than one
 turn each. The messages keep their order and each keeps its sender's name in front
@@ -597,7 +643,16 @@ Panels also keeps one on or off choice for each backend model. A model is on unt
 person turns it off on the Backends page. An off model remains in the full backend
 catalogue, but no model picker offers it. Existing saved selections remain historical
 facts and can still appear as the current value until a person chooses another model.
-New Ticket, Chief, and Worker default saves refuse an off model.
+New Tickets refuse an off model after the explicit choice and Worker defaults resolve.
+This includes manual, agent, external-work, and scheduled creation. Schedule validation
+checks the choice, and each occurrence checks it again because a saved default can change.
+A refused occurrence records failure without a Ticket.
+
+New Chief conversations and Workers without a historical Ticket model also check their
+resolved choice after overrides. An enabled override works even if the default is off.
+Chief and Worker default saves refuse an off model. Each refusal names the model and
+requires an enabled choice. Panels never silently substitutes another model.
+Existing Ticket choices and existing conversations remain intact.
 
 ## The composer catalog
 

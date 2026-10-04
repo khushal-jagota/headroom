@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Protocol
 
+from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority, ticket_blocks
 from planner.core.contracts import (
@@ -285,7 +286,7 @@ def validate_ticket_creation_context(
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         runtime_definitions.worker_type_registry, worker_type
     )
-    employee_configuration.launch_configuration_for_a_new_ticket(
+    launch_configuration = employee_configuration.launch_configuration_for_a_new_ticket(
         default_backend=launch_defaults.employee_backend,
         default_model=launch_defaults.employee_launch_model,
         default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
@@ -293,6 +294,12 @@ def validate_ticket_creation_context(
             employee_backend if employee_backend is not None else launch_defaults.employee_backend
         ),
         employee_launch_model=employee_launch_model,
+    )
+    assert launch_configuration.employee_launch_model is not None
+    require_enabled_model(
+        conn,
+        require_conversation_backend_key(launch_configuration.employee_backend),
+        launch_configuration.employee_launch_model,
     )
     if sprint_item_id is not None:
         item = conn.execute(
@@ -665,6 +672,7 @@ def write_ticket_conversation_start(
                 "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
                 (conversation_id, ticket_id),
             )
+            capture_ticket_attention(conn, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -687,6 +695,7 @@ def remove_ticket_conversation_start(
             "DELETE FROM ticket_conversations WHERE ticket_id = ? AND conversation_id = ?",
             (ticket_id, conversation_id),
         )
+        capture_ticket_attention(conn, ticket_id, now)
 
 
 def write_ticket_last_chosen_configuration(
@@ -746,6 +755,8 @@ def clear_ticket_conversation_link(
             "WHERE id = ? AND conversation_id = ?",
             (now, ticket_id, expected_conversation_id),
         )
+        if updated.rowcount == 1:
+            capture_ticket_attention(conn, ticket_id, now)
         return updated.rowcount == 1
 
 
@@ -887,7 +898,13 @@ def create_ticket(
     # A creator can open a Ticket for somebody else to hold without holding anything
     # first. Unstated, the creator holds it, which is the ordinary case.
     ceiling_holder = principal if stated_holder is None else stated_holder
+    assert launch_configuration.employee_launch_model is not None
     with _txn(conn):
+        require_enabled_model(
+            conn,
+            require_conversation_backend_key(launch_configuration.employee_backend),
+            launch_configuration.employee_launch_model,
+        )
         _validate_ceiling_holder(conn, ceiling_holder, ticket_id=ticket_id)
         # The one rule, asked here where the write happens, exactly as edit_ticket asks
         # it. Making a Ticket acts on nothing that exists, so nothing refuses that. The
@@ -997,6 +1014,7 @@ def create_ticket(
             days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
             ticket_blocks.add_ticket_block(conn, blocker_ticket_id, ticket_id, now)
+        capture_ticket_attention(conn, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1494,6 +1512,11 @@ def delete_ticket(
                 ticket_blocks.touch_blocked_ticket(conn, str(row["blocked_ticket_id"]), now)
 
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        for table in ("notification_attention_edges", "notification_attention_state"):
+            conn.execute(
+                f"DELETE FROM {table} WHERE subject_kind='ticket' AND subject_id=?",
+                (ticket_id,),
+            )
         return TicketDeletion(
             ticket_id=ticket_id,
             title=ticket.title,

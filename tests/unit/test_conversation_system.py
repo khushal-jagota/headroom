@@ -11,6 +11,7 @@ report of what it did.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
@@ -583,6 +584,58 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     asyncio.run(asyncio.wait_for(exercise(), 20.0))
 
 
+def _link_test_ticket_to_conversation(
+    db_path: Path, conversation_id: str, *, ticket_id: str = "t_failed"
+) -> None:
+    conn = connect(str(db_path))
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,priority,"
+                "ceiling,conversation_id,field_values,created_at,updated_at,ceiling_holder) "
+                "VALUES (?,?,?,'codex','needs_implementation','P2','needs_implementation',"
+                "?,'{}',1,1,?)",
+                (
+                    ticket_id,
+                    "Failed Ticket",
+                    "coding",
+                    conversation_id,
+                    json.dumps({"kind": "chief", "id": "chief"}),
+                ),
+            )
+    finally:
+        conn.close()
+
+
+def _store_manager_notice_batch(
+    db_path: Path, sender_message_id: str, *, conversation_id: str = "c"
+) -> None:
+    conn = connect(str(db_path))
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO manager_wake_batches("
+                "sprint_item_id,sender_message_id,message,status,conversation_id,"
+                "created_at,updated_at,target_kind,target_id) "
+                "VALUES (NULL,?,?,'offering',?,1,1,'chief','chief')",
+                (sender_message_id, "review failure", conversation_id),
+            )
+    finally:
+        conn.close()
+
+
+def _turn_failure_notice_count(db_path: Path) -> int:
+    conn = connect(str(db_path))
+    try:
+        return int(
+            conn.execute(
+                "SELECT count(*) FROM manager_wakes WHERE source_kind='turn_failure'"
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+
+
 async def _start(
     harness: _Harness,
     conversation_id: str = "c",
@@ -842,6 +895,82 @@ def test_accepted_steer_adds_its_sender_to_the_active_turn(
 # --- a failing turn gets one error-log line ----------------------------------------------
 
 
+def test_a_mixed_notice_and_user_turn_still_notifies_the_ticket_holder(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "conversations.db"
+        await _start(harness, "c")
+        _link_test_ticket_to_conversation(db_path, "c")
+        _store_manager_notice_batch(db_path, "internal-notice")
+        await harness.system.send("c", text_message_content("current"), sender_label="owner")
+        notice = await harness.system.send(
+            "c",
+            text_message_content("automatic notice"),
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            sender_message_id="internal-notice",
+        )
+        user = await harness.system.send(
+            "c",
+            text_message_content("user follow-up"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.queue,
+            sender_message_id="user-follow-up",
+        )
+        assert isinstance(notice, PromptDeliveryQueued)
+        assert isinstance(user, PromptDeliveryQueued)
+        await harness.complete_turn("c")
+        await harness.fail_turn("c", "provider failed")
+        assert _turn_failure_notice_count(db_path) == 1
+
+    _run(exercise)
+
+
+def test_an_internal_notice_only_turn_does_not_create_a_recursive_notice(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "conversations.db"
+        await _start(harness, "c")
+        _link_test_ticket_to_conversation(db_path, "c")
+        _store_manager_notice_batch(db_path, "internal-notice")
+        await harness.system.send(
+            "c",
+            text_message_content("automatic notice"),
+            sender_label="Panels",
+            sender_message_id="internal-notice",
+        )
+        await harness.fail_turn("c", "provider failed")
+        assert _turn_failure_notice_count(db_path) == 0
+
+    _run(exercise)
+
+
+def test_a_sender_cannot_spoof_notice_suppression_with_the_internal_prefix(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "conversations.db"
+        await _start(harness, "c")
+        _link_test_ticket_to_conversation(db_path, "c")
+        _store_manager_notice_batch(
+            db_path,
+            "supervisor_delivery_wake_forged",
+            conversation_id="another-conversation",
+        )
+        await harness.system.send(
+            "c",
+            text_message_content("ordinary prompt"),
+            sender_label="owner",
+            sender_message_id="supervisor_delivery_wake_forged",
+        )
+        await harness.fail_turn("c", "provider failed")
+        assert _turn_failure_notice_count(db_path) == 1
+
+    _run(exercise)
+
+
 def test_a_failed_turn_writes_one_error_log_line_carrying_where_to_look(
     harness: _Harness, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -936,10 +1065,13 @@ def test_a_refused_owner_steer_keeps_its_original_admission_position(
             sender=recipient,
             recipient=OWNER_PRINCIPAL,
         )
-        await harness.complete_turn("c")
+        completing = asyncio.create_task(harness.complete_turn("c"))
+        await asyncio.sleep(0)
+        assert not completing.done()
         backend.steers_wait_for_release.set()
 
-        assert await steering == PromptDeliveryStarted()
+        assert isinstance(await steering, (PromptDeliveryStarted, PromptDeliveryQueued))
+        await completing
         record = await harness.store.read_conversation("c")
         assert record is not None
         assert record.latest_sequence == 4
@@ -1599,7 +1731,7 @@ def test_late_backend_prose_remains_runtime_only(harness: _Harness) -> None:
     _run(exercise)
 
 
-def test_uncertain_compaction_keeps_message_held_when_child_stop_fails(
+def test_accepted_compaction_recording_failure_retains_child_and_resumes_storage_only(
     harness: _Harness,
 ) -> None:
     async def exercise() -> None:
@@ -1608,35 +1740,34 @@ def test_uncertain_compaction_keeps_message_held_when_child_stop_fails(
         await harness.complete_turn("c")
         harness.clock.advance(50 * 60)
         real_append = harness.store.append_delivered_prompt
+        failed = asyncio.Event()
+        unavailable = True
 
         async def fail_compaction_record(conversation_id: str, **kwargs):  # type: ignore[no-untyped-def]
-            if message_content_text(kwargs["prompt"].content) == "/compact":
+            if unavailable and message_content_text(kwargs["prompt"].content) == "/compact":
+                failed.set()
                 raise sqlite3.OperationalError("record unavailable")
             return await real_append(conversation_id, **kwargs)
 
         harness.store.append_delivered_prompt = fail_compaction_record  # type: ignore[method-assign]
+        sending = asyncio.create_task(
+            harness.system.send("c", text_message_content("must stay held"), sender_label="owner")
+        )
+        await failed.wait()
+        await asyncio.sleep(0)
         backend = harness.backend("c")
-        backend.stop_raises_something_unnamed = True
-        await harness.system.send("c", text_message_content("must stay held"), sender_label="owner")
-
         assert backend.written_texts() == ("first", "/compact")
         assert backend.live_children == 1
-        waiting = await harness.system.held_prompts("c")
-        assert [message_content_text(item.content) for item in waiting] == ["must stay held"]
-        direct = await harness.system.send(
-            "c",
-            text_message_content("direct send-now"),
-            sender_label="owner",
-            mode=PromptDeliveryMode.send_now,
-        )
-        assert direct == PromptDeliveryQueued(queue_position=2)
-        promoted = await harness.system.promote_held_prompt(
-            "c", waiting[0].held_prompt_id, HeldPromptPromotionMode.send_now
-        )
-        assert promoted == PromptDeliveryQueued(queue_position=1)
-        assert backend.written_texts() == ("first", "/compact")
         assert backend.cancellations == 0
-        backend.stop_raises_something_unnamed = False
+        assert not sending.done()
+        assert len(harness.store.recording_failures("c")) == 1
+        assert harness.system._conversations["c"].reserved_turn is not None
+        unavailable = False
+        assert harness.store.resume_recording("c") == 1
+        assert isinstance(await sending, PromptDeliveryQueued)
+        await harness.complete_turn("c")
+        assert backend.written_texts() == ("first", "/compact", "must stay held")
+        assert harness.store.recording_failures("c") == ()
 
     _run(exercise)
 
@@ -1927,56 +2058,50 @@ def test_a_backend_reporting_its_own_ending_during_a_cancel_does_not_record_a_se
 # --- a turn that ended and could not be written down -----------------------------------------
 
 
-def test_a_failed_turn_whose_ending_cannot_be_written_still_says_so_in_the_log(
-    harness: _Harness, caplog: pytest.LogCaptureFixture
+def test_failed_turn_recording_error_retains_event_until_explicit_storage_resume(
+    harness: _Harness,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The record and the log are the two ways anyone finds out. Losing the row must not
-    cost the line as well, or a turn ends and leaves no trace anywhere."""
-
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("work"), sender_label="owner")
-
         real_append = harness.store.append_turn_ending
+        failed = asyncio.Event()
+        calls = 0
+        available = False
 
-        async def append_that_cannot_write_an_ending(  # type: ignore[no-untyped-def]
-            conversation_id: str, payloads, **kwargs
-        ):
-            if any(isinstance(payload, TurnEndedEventPayload) for payload in payloads):
-                raise sqlite3.OperationalError("database is locked")
-            return await real_append(conversation_id, payloads, **kwargs)
+        async def unavailable(conversation_id: str, payloads, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            if available:
+                return await real_append(conversation_id, payloads, **kwargs)
+            calls += 1
+            failed.set()
+            raise sqlite3.OperationalError("disk unavailable")
 
-        harness.store.append_turn_ending = append_that_cannot_write_an_ending  # type: ignore[method-assign]
-
-        with caplog.at_level(logging.ERROR, logger="planner.conversation"):
-            await harness.fail_turn(
-                "c",
-                error_summary="the model refused",
-                standard_error_tail="stderr tail",
-            )
-
-        lines = [
-            record.getMessage()
-            for record in caplog.records
-            if record.name == "planner.conversation"
-        ]
-        # One line for the ending that could not be recorded, and the failed turn's own
-        # line all the same — saying there is no row to go and look at.
-        assert len(lines) == 2
-        assert "conversation turn ending could not be recorded" in lines[0]
-        assert "ending=failed" in lines[0]
-        assert "conversation turn failed" in lines[1]
-        assert "sequence=None" in lines[1]
-        assert "the model refused" in lines[1]
-
+        harness.store.append_turn_ending = unavailable  # type: ignore[method-assign]
+        completing = asyncio.create_task(harness.fail_turn("c", error_summary="the model refused"))
+        await failed.wait()
+        await asyncio.sleep(0)
+        assert not completing.done()
+        assert calls == 1
         assert await harness.recorded_endings("c") == ()
-        # The turn is over even though its ending is not written down.
+        state = harness.system._conversations["c"]
+        assert state.running_turn is not None and not state.running_turn.ended
+        waiting_for_record = asyncio.create_task(state.backend_event_queue.join())
+        await asyncio.sleep(0)
+        assert not waiting_for_record.done()
+        waiting_for_record.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting_for_record
+        assert "disk unavailable" in str(harness.store.recording_failures("c")[0])
+        available = True
+        assert harness.store.resume_recording("c") == 1
+        await completing
+        assert await harness.recorded_endings("c") == (ConversationTurnEnding.failed,)
         assert await harness.system.is_running("c") is False
+        assert any("recording paused" in record.getMessage() for record in caplog.records)
 
     _run(exercise)
-
-
-# --- taking one waiting message back -------------------------------------------------------
 
 
 def test_one_waiting_message_can_be_taken_back_and_the_rest_still_run(
@@ -2280,5 +2405,663 @@ def test_a_promoted_command_goes_back_to_the_line_instead_of_being_thrown_away(
         assert [message.queue_reason for message in held] == [
             PromptQueueReason.command_needs_its_own_turn
         ]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("delivery", ["normal", "steer", "queued", "promoted"])
+def test_real_writer_lock_preserves_each_delivery_and_ordered_completion(
+    harness: _Harness,
+    delivery: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _: True)
+        harness.store._busy_timeout_ms = 10
+        await _start(harness, "c")
+        backend = harness.backend("c")
+        if delivery != "normal":
+            await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
+        original = harness.store._append_event_sync
+        attempts = 0
+
+        def count_attempts(*args):  # type: ignore[no-untyped-def]
+            nonlocal attempts
+            attempts += 1
+            return original(*args)
+
+        monkeypatch.setattr(harness.store, "_append_event_sync", count_attempts)
+        # For queue drains, the previous ending commits before the held receipt fails.
+        if delivery in ("queued", "promoted"):
+            await harness.system.send(
+                "c",
+                text_message_content("locked message"),
+                sender_label="owner",
+                sender_message_id="locked-id",
+            )
+        writer = connect(harness.store._db_path)
+        writer.execute("BEGIN IMMEDIATE")
+        sending: asyncio.Task[object]
+        if delivery == "queued":
+            sending = asyncio.create_task(harness.complete_turn("c"))
+        elif delivery == "promoted":
+            held = await harness.system.held_prompts("c")
+            sending = asyncio.create_task(
+                harness.system.promote_held_prompt(
+                    "c",
+                    held[0].held_prompt_id,
+                    HeldPromptPromotionMode.steer,
+                )
+            )
+        else:
+            sending = asyncio.create_task(
+                harness.system.send(
+                    "c",
+                    text_message_content("locked message"),
+                    sender_label="owner",
+                    sender_message_id="locked-id",
+                    mode=PromptDeliveryMode.steer
+                    if delivery == "steer"
+                    else PromptDeliveryMode.queue,
+                )
+            )
+        await asyncio.sleep(0.12)
+        assert not sending.done()
+        writer.execute("ROLLBACK")
+        writer.close()
+        await sending
+        await harness.system.wait_until_quiescent()
+        await harness.complete_turn("c")
+        assert backend.written_texts().count("locked message") == 1
+        events = await harness.store.read_events_after("c", 0)
+        prompts = [
+            event
+            for event in events
+            if isinstance(event.payload, PromptEventPayload)
+            and event.payload.sender_message_id == "locked-id"
+        ]
+        assert len(prompts) == 1
+        endings = [event for event in events if isinstance(event.payload, TurnEndedEventPayload)]
+        assert endings[-1].sequence > prompts[0].sequence
+        if delivery in ("steer", "promoted"):
+            assert attempts > 1
+
+    _run(exercise)
+
+
+def test_caller_cancellation_after_acceptance_preserves_receipt_and_duplicate_identity(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original = harness.store.append_delivered_prompt
+        receipt_calls = 0
+
+        async def blocked(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal receipt_calls
+            receipt_calls += 1
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        harness.store.append_delivered_prompt = blocked  # type: ignore[method-assign]
+        sender = Principal(PrincipalKind.sprint_item, "sender")
+        recipient = Principal(PrincipalKind.ticket, "worker")
+        first = asyncio.create_task(
+            harness.system.send_with_receipt(
+                "c",
+                text_message_content("one accepted message"),
+                sender_label="Supervisor",
+                sender_message_id="same-id",
+                sender=sender,
+                recipient=recipient,
+            )
+        )
+        await entered.wait()
+        assert (
+            harness.backend("c")
+            .written_texts()[0]
+            .startswith("[Authenticated Panels reply requirement]")
+        )
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        duplicate = asyncio.create_task(
+            harness.system.send_with_receipt(
+                "c",
+                text_message_content("one accepted message"),
+                sender_label="Supervisor",
+                sender_message_id="same-id",
+                sender=sender,
+                recipient=recipient,
+            )
+        )
+        await asyncio.sleep(0)
+        assert not duplicate.done()
+        assert receipt_calls == 1
+        assert harness.backend("c").live_children == 1
+        release.set()
+        receipt = await duplicate
+        assert isinstance(receipt.fate, PromptDeliveryStarted)
+        assert receipt.newly_accepted is False
+        assert len(harness.backend("c").writes) == 1
+        await harness.complete_turn("c")
+        events = await harness.store.read_events_after("c", 0)
+        assert sum(isinstance(event.payload, PromptEventPayload) for event in events) == 1
+        assert any(isinstance(event.payload, ExplicitReplyMissingEventPayload) for event in events)
+
+    _run(exercise)
+
+
+def test_active_steer_receipt_barrier_preserves_sender_obligation_before_completion(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="system")
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original = harness.store.append_event
+
+        async def blocked(conversation_id, payload, **kwargs):  # type: ignore[no-untyped-def]
+            if isinstance(payload, PromptEventPayload) and payload.mode is PromptDeliveryMode.steer:
+                entered.set()
+                await release.wait()
+            return await original(conversation_id, payload, **kwargs)
+
+        harness.store.append_event = blocked  # type: ignore[method-assign]
+        sender = Principal(PrincipalKind.sprint_item, "supervisor")
+        steering = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content("joined instruction"),
+                sender_label="Supervisor",
+                mode=PromptDeliveryMode.steer,
+                sender=sender,
+                recipient=Principal(PrincipalKind.ticket, "worker"),
+                sender_message_id="steer-id",
+            )
+        )
+        await entered.wait()
+        completing = asyncio.create_task(harness.complete_turn("c"))
+        await asyncio.sleep(0)
+        assert not completing.done()
+        steering.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await steering
+        release.set()
+        await completing
+        events = await harness.store.read_events_after("c", 0)
+        assert [type(event.payload) for event in events] == [
+            PromptEventPayload,
+            PromptEventPayload,
+            ExplicitReplyMissingEventPayload,
+            TurnEndedEventPayload,
+        ]
+        assert len(harness.backend("c").writes) == 2
+
+    _run(exercise)
+
+
+def test_failure_after_receipt_commit_finishes_turn_without_duplicate_append(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+
+        def failed_publication(event):  # type: ignore[no-untyped-def]
+            raise RuntimeError("tail publication unavailable")
+
+        monkeypatch.setattr(harness.live_tail, "publish_event", failed_publication)
+        assert (
+            await harness.system.send(
+                "c",
+                text_message_content("committed"),
+                sender_label="owner",
+                sender_message_id="id",
+            )
+            == PromptDeliveryStarted()
+        )
+        assert (
+            await harness.system.send(
+                "c",
+                text_message_content("committed"),
+                sender_label="owner",
+                sender_message_id="id",
+            )
+            == PromptDeliveryStarted()
+        )
+        assert len(harness.backend("c").writes) == 1
+        assert len(await harness.store.read_events_after("c", 0)) == 1
+        assert await harness.system.is_running("c") is True
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("cancel_at", ["backend", "sqlite"])
+def test_cancelled_exchange_or_sqlite_call_finishes_one_owned_settlement(
+    harness: _Harness,
+    cancel_at: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        backend = harness.backend("c")
+        sqlite_entered = threading.Event()
+        sqlite_release = threading.Event()
+        calls = 0
+        if cancel_at == "backend":
+            backend.write_has_begun = asyncio.Event()
+            backend.writes_wait_for_release = asyncio.Event()
+        else:
+            original = harness.store._append_delivered_prompt_sync
+
+            def blocked(*args):  # type: ignore[no-untyped-def]
+                nonlocal calls
+                calls += 1
+                sqlite_entered.set()
+                assert sqlite_release.wait(3)
+                return original(*args)
+
+            monkeypatch.setattr(harness.store, "_append_delivered_prompt_sync", blocked)
+        sending = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content("keep ownership"),
+                sender_label="owner",
+                sender_message_id="cancel-id",
+            )
+        )
+        if cancel_at == "backend":
+            assert backend.write_has_begun is not None
+            await backend.write_has_begun.wait()
+        else:
+            assert await asyncio.to_thread(sqlite_entered.wait, 3)
+        sending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await sending
+        duplicate = asyncio.create_task(
+            harness.system.send_with_receipt(
+                "c",
+                text_message_content("keep ownership"),
+                sender_label="owner",
+                sender_message_id="cancel-id",
+            )
+        )
+        await asyncio.sleep(0)
+        assert not duplicate.done()
+        assert len(harness.system._conversations["c"].settlement_tasks) >= 1
+        if cancel_at == "backend":
+            assert backend.writes_wait_for_release is not None
+            backend.writes_wait_for_release.set()
+        else:
+            sqlite_release.set()
+        receipt = await duplicate
+        assert isinstance(receipt.fate, PromptDeliveryStarted)
+        assert receipt.newly_accepted is False
+        assert len(backend.writes) == 1
+        assert len(await harness.store.read_events_after("c", 0)) == 1
+        if cancel_at == "sqlite":
+            assert calls == 1
+
+    _run(exercise)
+
+
+def test_non_lock_failure_preserves_accepted_identity_until_storage_resume(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        original = harness.store.append_delivered_prompt
+        entered = asyncio.Event()
+        available = False
+        attempts = 0
+
+        async def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal attempts
+            attempts += 1
+            if not available:
+                entered.set()
+                raise OSError("record volume unavailable")
+            return await original(*args, **kwargs)
+
+        harness.store.append_delivered_prompt = unavailable  # type: ignore[method-assign]
+        sending = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content("accepted"),
+                sender_label="owner",
+                sender_message_id="id",
+            )
+        )
+        await entered.wait()
+        duplicate = asyncio.create_task(
+            harness.system.send_with_receipt(
+                "c",
+                text_message_content("accepted"),
+                sender_label="owner",
+                sender_message_id="id",
+            )
+        )
+        await asyncio.sleep(0.02)
+        assert not sending.done() and not duplicate.done()
+        assert attempts == 1
+        assert len(harness.backend("c").writes) == 1
+        assert harness.backend("c").live_children == 1
+        assert await harness.store.read_events_after("c", 0) == ()
+        state = harness.system._conversations["c"]
+        assert state.reserved_turn is not None
+        assert "record volume unavailable" in str(harness.store.recording_failures("c")[0])
+        available = True
+        assert harness.store.resume_recording("c") == 1
+        assert await sending == PromptDeliveryStarted()
+        receipt = await duplicate
+        assert receipt.newly_accepted is False
+        assert attempts == 2
+        assert len(harness.backend("c").writes) == 1
+        assert harness.store.recording_failures("c") == ()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("delivery", ["queued", "promoted"])
+def test_preflight_metadata_error_retains_held_guidance_for_explicit_resume(
+    harness: _Harness,
+    delivery: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
+        await harness.system.send(
+            "c",
+            text_message_content("preserved human instruction"),
+            sender_label="owner",
+            sender_message_id="held-metadata-id",
+        )
+        original = harness.store.all_sender_messages_are_manager_notices
+        failed = asyncio.Event()
+        available = False
+        calls = 0
+
+        async def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal calls
+            calls += 1
+            if not available:
+                failed.set()
+                raise OSError("metadata read unavailable")
+            return await original(*args, **kwargs)
+
+        harness.store.all_sender_messages_are_manager_notices = unavailable  # type: ignore[method-assign]
+        progressing: asyncio.Task[object]
+        if delivery == "queued":
+            progressing = asyncio.create_task(harness.complete_turn("c"))
+        else:
+            held = await harness.system.held_prompts("c")
+            progressing = asyncio.create_task(
+                harness.system.promote_held_prompt(
+                    "c",
+                    held[0].held_prompt_id,
+                    HeldPromptPromotionMode.steer,
+                )
+            )
+        await failed.wait()
+        await asyncio.sleep(0.02)
+        assert calls == 1
+        assert not progressing.done()
+        assert harness.backend("c").written_texts() == ("incumbent",)
+        assert "metadata read unavailable" in str(harness.store.recording_failures("c")[0])
+        available = True
+        assert harness.store.resume_recording("c") == 1
+        await progressing
+        assert harness.backend("c").written_texts().count("preserved human instruction") == 1
+        events = await harness.store.read_events_after("c", 0)
+        assert not any(isinstance(event.payload, PromptDiscardedEventPayload) for event in events)
+        outcome = await harness.store.sender_message_outcome("c", "held-metadata-id")
+        assert outcome is not None and isinstance(outcome.payload, PromptEventPayload)
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("promoted", [False, True])
+def test_unexpected_adapter_steer_fault_releases_its_event_barrier(
+    harness: _Harness,
+    promoted: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
+        child = harness.system._conversations["c"].child
+        assert child is not None
+
+        async def failed(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("unexpected adapter fault")
+
+        monkeypatch.setattr(child, "steer", failed)
+        with pytest.raises(RuntimeError, match="unexpected adapter fault"):
+            if promoted:
+                await harness.system.send(
+                    "c",
+                    text_message_content("steer"),
+                    sender_label="owner",
+                    sender_message_id="fault-id",
+                )
+                held = await harness.system.held_prompts("c")
+                await harness.system.promote_held_prompt(
+                    "c",
+                    held[0].held_prompt_id,
+                    HeldPromptPromotionMode.steer,
+                )
+            else:
+                await harness.system.send(
+                    "c",
+                    text_message_content("steer"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
+                    sender_message_id="fault-id",
+                )
+        assert not harness.system._conversations["c"].steer_settlements
+        assert not harness.system._conversations["c"].sender_messages_being_delivered
+        receipt = await harness.system.send_with_receipt(
+            "c",
+            text_message_content("steer"),
+            sender_label="owner",
+            sender_message_id="fault-id",
+            mode=PromptDeliveryMode.steer,
+        )
+        assert isinstance(receipt.fate, PromptDeliveryUncertain)
+        assert receipt.newly_accepted is False
+        await harness.complete_turn("c")
+        assert await harness.recorded_endings("c") == (ConversationTurnEnding.completed,)
+        assert len(harness.backend("c").writes) == 1
+
+    _run(exercise)
+
+
+def test_accepted_queued_prompt_keeps_receipt_and_completion_behind_real_writer_lock(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        harness.store._busy_timeout_ms = 10
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
+        await harness.system.send(
+            "c",
+            text_message_content("accepted held guidance"),
+            sender_label="owner",
+            sender_message_id="held-id",
+        )
+        state = harness.system._conversations["c"]
+        child = state.child
+        assert child is not None
+        original = child.write_prompt
+        release_task: asyncio.Task[None] | None = None
+        backend = harness.backend("c")
+
+        async def accept_then_lock(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal release_task
+            accepted = await original(*args, **kwargs)
+            writer = connect(harness.store._db_path)
+            writer.execute("BEGIN IMMEDIATE")
+            token = backend.live_turn_token
+            assert token is not None and backend.sink is not None
+            await backend.sink.turn_ended(
+                token,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+            backend.live_turn_token = None
+
+            async def release_independently() -> None:
+                await asyncio.sleep(0.12)
+                assert state.reserved_turn is not None
+                assert backend.live_children == 1
+                assert backend.cancellations == 0
+                # Completion is still waiting for its accepted receipt.
+                assert len(await harness.recorded_endings("c")) == 1
+                writer.execute("ROLLBACK")
+                writer.close()
+
+            release_task = asyncio.create_task(release_independently())
+            return accepted
+
+        monkeypatch.setattr(child, "write_prompt", accept_then_lock)
+        await harness.complete_turn("c")
+        assert release_task is not None
+        await release_task
+        events = await harness.store.read_events_after("c", 0)
+        assert [type(event.payload) for event in events] == [
+            PromptEventPayload,
+            TurnEndedEventPayload,
+            PromptEventPayload,
+            TurnEndedEventPayload,
+        ]
+        assert backend.written_texts() == ("incumbent", "accepted held guidance")
+        assert await harness.system.is_running("c") is False
+
+    _run(exercise)
+
+
+def test_stale_outcome_read_cannot_readmit_a_completed_sender_identity(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        original = harness.store.sender_message_outcome
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        queries = 0
+
+        async def delayed_snapshot(*args):  # type: ignore[no-untyped-def]
+            nonlocal queries
+            queries += 1
+            outcome = await original(*args)
+            if queries == 1:
+                entered.set()
+                await release.wait()
+            return outcome
+
+        harness.store.sender_message_outcome = delayed_snapshot  # type: ignore[method-assign]
+        stale = asyncio.create_task(
+            harness.system.send_with_receipt(
+                "c",
+                text_message_content("same instruction"),
+                sender_label="owner",
+                sender_message_id="race-id",
+            )
+        )
+        await entered.wait()
+        first = await harness.system.send_with_receipt(
+            "c",
+            text_message_content("same instruction"),
+            sender_label="owner",
+            sender_message_id="race-id",
+        )
+        assert first.newly_accepted is True
+        release.set()
+        assert (await stale).newly_accepted is False
+        assert len(harness.backend("c").writes) == 1
+        assert len(await harness.store.read_events_after("c", 0)) == 1
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize("control", ["interrupt", "send_now"])
+def test_turn_replacement_waits_for_accepted_steer_receipt_and_sender_obligation(
+    harness: _Harness,
+    control: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(conversation_system, "backend_supports_steer", lambda _: True)
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("incumbent"), sender_label="system")
+        child = harness.system._conversations["c"].child
+        assert child is not None
+        original = child.steer
+        accepted = asyncio.Event()
+        release = asyncio.Event()
+
+        async def accepted_without_ack(*args, **kwargs):  # type: ignore[no-untyped-def]
+            outcome = await original(*args, **kwargs)
+            accepted.set()
+            await release.wait()
+            return outcome
+
+        monkeypatch.setattr(child, "steer", accepted_without_ack)
+        sender = Principal(PrincipalKind.sprint_item, "supervisor")
+        steering = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content("joined guidance"),
+                sender_label="Supervisor",
+                sender_message_id="steer-before-control",
+                mode=PromptDeliveryMode.steer,
+                sender=sender,
+                recipient=Principal(PrincipalKind.ticket, "worker"),
+            )
+        )
+        await accepted.wait()
+        controlling: asyncio.Task[object]
+        if control == "interrupt":
+            controlling = asyncio.create_task(harness.system.interrupt("c"))
+        else:
+            controlling = asyncio.create_task(
+                harness.system.send(
+                    "c",
+                    text_message_content("replacement"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.send_now,
+                )
+            )
+        await asyncio.sleep(0.02)
+        assert not controlling.done()
+        assert harness.backend("c").cancellations == 0
+        release.set()
+        assert isinstance(await steering, PromptDeliveryInjected)
+        await controlling
+        events = await harness.store.read_events_after("c", 0)
+        types = [type(event.payload) for event in events]
+        assert types[:4] == [
+            PromptEventPayload,
+            PromptEventPayload,
+            ExplicitReplyMissingEventPayload,
+            TurnEndedEventPayload,
+        ]
+        debt = events[2].payload
+        assert isinstance(debt, ExplicitReplyMissingEventPayload)
+        assert debt.prompt_sender == sender
+        assert harness.backend("c").cancellations == 1
+        assert len(harness.backend("c").writes) == (2 if control == "interrupt" else 3)
 
     _run(exercise)

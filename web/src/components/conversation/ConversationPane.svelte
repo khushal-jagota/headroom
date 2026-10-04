@@ -27,6 +27,7 @@
     BackendModel,
     BackendSnapshot,
     ConversationBackendKey,
+    PastConversation,
     PermissionAskOption,
     PromptDeliveryMode,
     SentMessagePiece,
@@ -36,7 +37,6 @@
 
   let {
     conversationId,
-    label,
     backendKey = null,
     conversationExists = false,
     workspaceFolder = null,
@@ -65,6 +65,10 @@
     composerDisabled = false,
     showRunPicker = true,
     readOnly = false,
+    pastConversations = [],
+    pastConversationsLabel = "Conversation",
+    selectedPastConversationId = $bindable(null),
+    ownerReadThroughSequence = 0,
     lens = $bindable("focus"),
     conversationState = $bindable(null),
     emptyState,
@@ -82,7 +86,6 @@
     /** Which conversation is on the screen. A message's files are fetched under it, so a
      *  piece can only ever reach a file kept for the conversation it belongs to. */
     conversationId: string;
-    label: string;
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
      *  is not one existing, so only whoever has read the record can say. */
@@ -131,6 +134,16 @@
     /** A historical transcript is visible through this single boundary. No mutation
      *  control is rendered inside it. */
     readOnly?: boolean;
+    /** The owner's earlier conversations, for the options menu to offer beside its own
+     *  actions. Empty for an owner that keeps one, and then no picker is drawn. */
+    pastConversations?: readonly PastConversation[];
+    /** What the picker is called to a screen reader, in the owner's own words. */
+    pastConversationsLabel?: string;
+    /** Which earlier conversation the owner is reading, or null for the current one.
+     *  The owner opens what this names; nothing here reads it back. */
+    selectedPastConversationId?: string | null;
+    /** How far through the record this person has read, from the conversation view. */
+    ownerReadThroughSequence?: number;
     /** Which projection of this conversation record is visible. */
     lens?: ConversationLens;
     /** How far open the conversation is, or null for a page that is not making a layer of
@@ -170,16 +183,6 @@
     return null;
   });
 
-  // A layered card still identifies the employee. Full height uses the plain worker type
-  // that its route supplies, while a non-layer conversation uses its label unchanged.
-  let headerLabel = $derived(
-    conversationState === "rest" || conversationState === "peeked"
-      ? /worker$/i.test(label)
-        ? label
-        : `${label} worker`
-      : label
-  );
-
   // Only at rest is there a bar to put it in. Peeked and opened have the turn head.
   let rowsForLens = $derived(visibleRows ?? rows);
   let taskProgress = $derived(taskProgressFrom(rowsForLens));
@@ -189,17 +192,22 @@
           rows,
           ownSenderLabel ?? "",
           { ...taskProgress, turnRunning: running },
-          { visibleRows: rowsForLens, lens }
+          { visibleRows: rowsForLens, lens },
+          ownerReadThroughSequence
         )
       : null
   );
 
-  /** The one control through the states, and what it means where it is standing. */
+  /** The one control through the states, and what it means where it is standing.
+   *
+   * Drawn, not typed. A character is sized by the font's own idea of how much of its em to
+   * fill, which left a 32px control carrying about twelve pixels of ink — the "absolutely
+   * tiny" the owner reported. A stroked path fills the box it is given. */
   let stateControl = $derived(
     conversationState === "peeked"
-      ? { opensIt: true, glyph: "⤢", label: "Open the conversation full height" }
+      ? { opensIt: true, label: "Open the conversation full height" }
       : conversationState === "opened"
-        ? { opensIt: false, glyph: "⤡", label: "Put the conversation back to a card" }
+        ? { opensIt: false, label: "Put the conversation back to a card" }
         : null
   );
 
@@ -251,15 +259,34 @@
     else if (conversationState === "peeked") conversationState = "rest";
   }
 
-  /** The control was pressed: forward from peeked, back from opened. */
+  /** The control was pressed: the card's height, and nothing else.
+   *
+   * It is one control with two meanings, and both are about how tall the conversation
+   * is. Putting it away entirely is what Escape and a press on the page behind it do. */
   function moveThroughTheStates(): void {
     if (conversationState === "peeked") conversationState = "opened";
-    else if (conversationState === "opened") conversationState = "rest";
+    else if (conversationState === "opened") conversationState = "peeked";
   }
 
   function confirmNewConversation(): void {
     onNewConversation?.();
     closeMenu();
+  }
+
+  /** The picker's value for the conversation the owner is on now, which has no id here. */
+  const CURRENT_CONVERSATION = "__current__";
+
+  function pastConversationName(entry: PastConversation): string {
+    const started = new Date(entry.created_at * 1000);
+    const when = Number.isNaN(started.valueOf())
+      ? "Unknown date"
+      : started.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+    return `${when} · ${entry.conversation_id}`;
+  }
+
+  function openConversation(event: Event): void {
+    const picked = (event.currentTarget as HTMLSelectElement).value;
+    selectedPastConversationId = picked === CURRENT_CONVERSATION ? null : picked;
   }
 </script>
 
@@ -274,31 +301,44 @@
   data-conversation-read-only={readOnly ? "true" : undefined}
   data-conversation-read-only-boundary={readOnly ? "true" : undefined}
   data-conversation-state={conversationState}
+  data-conversation-lens={lens}
   bind:this={paneElement}
 >
   <div class="chat-head">
     {#if connectionTrouble}
       <span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>
     {/if}
-    <span class="chat-lbl">{headerLabel}</span>
     {#if headerException && conversationState !== "opened"}
       <span class={`chat-state ${headerException.accent ? "chat-state--attn" : ""}`}>
         {headerException.text}
       </span>
     {/if}
-    <div class="chat-head-right">
+    <!-- Two named choices rather than one control whose label is the state it is in:
+         which lens you are in and which you can move to are both on the screen. -->
+    <div
+      class="chat-lens"
+      role="group"
+      aria-label="How much of the conversation to show (F)"
+      data-conversation-lens-group
+    >
       <button
         type="button"
-        class="chat-lens-toggle"
-        data-conversation-lens-toggle
-        data-conversation-lens={lens}
-        aria-label={`Show ${lens === "focus" ? "Full" : "Focus"} conversation (F)`}
-        title={`Show ${lens === "focus" ? "Full" : "Focus"} conversation (F)`}
-        onclick={() => (lens = lens === "focus" ? "full" : "focus")}
-      >{lens === "focus" ? "Focus" : "Full"}</button>
-      {#if workspaceFolder && conversationState !== "opened"}
-        <span class="chat-usage" data-conversation-workspace>{workspaceFolder}</span>
-      {/if}
+        class="chat-lens-choice"
+        data-conversation-lens-choice="focus"
+        aria-pressed={lens === "focus"}
+        title="The exchange only (F)"
+        onclick={() => (lens = "focus")}
+      >Focus</button>
+      <button
+        type="button"
+        class="chat-lens-choice"
+        data-conversation-lens-choice="full"
+        aria-pressed={lens === "full"}
+        title="The exchange and the work (F)"
+        onclick={() => (lens = "full")}
+      >Full</button>
+    </div>
+    <div class="chat-head-right">
       <!-- One state control survives as its meaning changes, preserving keyboard focus. -->
       {#if stateControl !== null}
         <button
@@ -309,9 +349,17 @@
           aria-label={stateControl.label}
           title={stateControl.label}
           onclick={moveThroughTheStates}
-        >{stateControl.glyph}</button>
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            {#if stateControl.opensIt}
+              <path d="M9 4H4v5M15 20h5v-5" />
+            {:else}
+              <path d="M4 9h5V4M20 15h-5v5" />
+            {/if}
+          </svg>
+        </button>
       {/if}
-      {#if !readOnly}
+      {#if !readOnly || pastConversations.length > 0}
         <div class="chat-overflow" bind:this={menuElement}>
           <button
             type="button"
@@ -321,29 +369,59 @@
             aria-expanded={menuOpen}
             aria-label="Conversation options"
             onclick={() => (menuOpen ? closeMenu() : (menuOpen = true))}
-          >⋯</button>
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="chat-overflow-dots">
+              <circle cx="5" cy="12" r="1.5" />
+              <circle cx="12" cy="12" r="1.5" />
+              <circle cx="19" cy="12" r="1.5" />
+            </svg>
+          </button>
           {#if menuOpen}
             <div class="chat-overflow-menu">
-              <div class="chat-overflow-actions" role="menu">
-                {#if confirmArmed}
-                  <button
-                    type="button"
-                    class="chat-overflow-item chat-overflow-item--confirm"
-                    role="menuitem"
-                    data-conversation-new-confirm
-                    onclick={confirmNewConversation}
-                  >Confirm — this kills the old one</button>
-                {:else}
-                  <button
-                    type="button"
-                    class="chat-overflow-item"
-                    role="menuitem"
-                    data-conversation-new-arm
-                    onclick={() => (confirmArmed = true)}
-                  >New conversation</button>
-                {/if}
-              </div>
-              {#if conversationState === "opened" && workspaceFolder}
+              {#if !readOnly}
+                <div class="chat-overflow-actions" role="menu">
+                  {#if confirmArmed}
+                    <button
+                      type="button"
+                      class="chat-overflow-item chat-overflow-item--confirm"
+                      role="menuitem"
+                      data-conversation-new-confirm
+                      onclick={confirmNewConversation}
+                    >Confirm — this kills the old one</button>
+                  {:else}
+                    <button
+                      type="button"
+                      class="chat-overflow-item"
+                      role="menuitem"
+                      data-conversation-new-arm
+                      onclick={() => (confirmArmed = true)}
+                    >New conversation</button>
+                  {/if}
+                </div>
+              {/if}
+              <!-- The earlier conversations sit under the actions rather than in a row
+                   above the card: the card is already named by the screen it is on. A
+                   read-only pane keeps this section and loses the one above it, so the
+                   way back to the current conversation is where it was left. -->
+              {#if pastConversations.length > 0}
+                <label class="chat-overflow-history" data-conversation-history>
+                  <select
+                    aria-label={pastConversationsLabel}
+                    value={selectedPastConversationId ?? CURRENT_CONVERSATION}
+                    onchange={openConversation}
+                  >
+                    <option value={CURRENT_CONVERSATION}>
+                      {selectedPastConversationId === null && !conversationExists
+                        ? "Current · new conversation"
+                        : "Current conversation"}
+                    </option>
+                    {#each pastConversations as entry (entry.conversation_id)}
+                      <option value={entry.conversation_id}>{pastConversationName(entry)}</option>
+                    {/each}
+                  </select>
+                </label>
+              {/if}
+              {#if workspaceFolder}
                 <div class="chat-overflow-path" data-conversation-workspace>{workspaceFolder}</div>
               {/if}
             </div>
@@ -422,7 +500,21 @@
 </div>
 
 <style>
-  :global([data-conversation-pane]) { gap: var(--space-2); }
+  /* The component measures itself, not the window. The same pane is narrow in a side
+     panel on a wide screen, and a host that names no container of its own — the Chief
+     conversation is one — still gets the adaptation. */
+  :global([data-conversation-pane]) {
+    gap: var(--space-2);
+    container-type: inline-size;
+    container-name: conversation-pane;
+  }
+  /* A narrow pane gives its width to the words, not to two sets of edges. This is what
+     the app already does for a narrow window, said about the pane instead — so a side
+     panel on a wide screen, and a host that names no container, get it too. It must not
+     add a gutter back: the widths here are the narrow ones, never the wide ones. */
+  @container conversation-pane (max-width: 480px) {
+    :global([data-conversation-pane] .chat-u) { max-width: 86%; }
+  }
   /* Inside the conversation card the well and rest line are two halves of one card. */
   :global(.conversation-layer [data-conversation-pane]) { gap: 0; }
   /* Rest keeps the same child viewport mounted, but gives its head and thread no display. */
@@ -430,20 +522,30 @@
   :global([data-conversation-pane][data-conversation-state="rest"] .chat-thread-shell) {
     display: none;
   }
-  .chat-lens-toggle {
-    border: var(--border-hairline) solid var(--border-color);
+  .chat-lens {
+    display: inline-flex;
+    gap: var(--space-1);
+    margin-inline-start: var(--space-2);
+  }
+  .chat-lens-choice {
+    border: var(--border-hairline) solid transparent;
     border-radius: var(--radius-pill);
     background: transparent;
-    color: var(--text-muted);
-    padding: 2px var(--space-2);
+    color: var(--text-faint);
+    /* A target a finger can find, at the size the rest of the head uses. */
+    min-height: var(--conversation-target);
+    padding: 6px var(--space-3);
     font: inherit;
-    font-size: var(--type-xs);
+    font-size: var(--type-sm);
     cursor: pointer;
+    transition:
+      color var(--motion-fast, 90ms) ease,
+      background var(--motion-fast, 90ms) ease;
   }
-  .chat-lens-toggle:hover,
-  .chat-lens-toggle:focus-visible {
-    border-color: var(--accent-bright);
-    color: var(--text-default);
+  .chat-lens-choice:hover { color: var(--text-strong); }
+  .chat-lens-choice[aria-pressed="true"] {
+    background: var(--surface-2);
+    color: var(--text-strong);
   }
   .conversation-read-only {
     flex: none;
