@@ -39,12 +39,22 @@ def test_quoted_json_credentials_with_spaces_do_not_leak_value_tails() -> None:
 def test_compound_credential_names_are_redacted() -> None:
     detail = (
         'access_token="one value", refresh_token="two value", '
-        'client_secret="three value", OPENAI_API_KEY="four value"'
+        'client_secret="three value", OPENAI_API_KEY="four value", '
+        'db_password="five value", client_password="six value", '
+        'proxy_authorization: "Bearer seven value"'
     )
     summary = normalized_failure_summary(detail)
-    for secret in ("one value", "two value", "three value", "four value"):
+    for secret in (
+        "one value",
+        "two value",
+        "three value",
+        "four value",
+        "five value",
+        "six value",
+        "seven value",
+    ):
         assert secret not in summary
-    assert summary.count("[redacted]") == 4
+    assert summary.count("[redacted]") == 7
 
 
 def test_codex_structured_unauthorized_error_names_rejection_not_expiry() -> None:

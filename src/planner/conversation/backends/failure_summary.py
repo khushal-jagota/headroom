@@ -11,7 +11,9 @@ _SECRET_ASSIGNMENT = re.compile(
     (?P<prefix>
         ["']?\b(?:
             authorization|password|api[ -]key
-            |(?:[a-z0-9]+[_-])*(?:api[_-]?key|secret|token)(?:[_-][a-z0-9]+)*
+            |(?:[a-z0-9]+[_-])*(?:
+                api[_-]?key|authorization|password|secret|token
+            )(?:[_-][a-z0-9]+)*
         )\b["']?\s*[:=]\s*
     )
     (?:
