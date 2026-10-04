@@ -170,6 +170,7 @@ def test_probe_proposal_parks_on_registry_selected_field(
         assert parked.status_code == 200, parked.json()
         assert parked.json()["pending_proposal"]["body"] == "alpha body"
         assert parked.json()["pending_proposal"]["field"] == "alpha"
+        assert parked.json()["pending_proposal"]["revision"] == 2
 
 
 def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> None:

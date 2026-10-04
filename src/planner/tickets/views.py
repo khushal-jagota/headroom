@@ -106,9 +106,14 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "ticket_status": ticket.ticket_status.value,
         "conversation_id": ticket.conversation_id,
         "field_values": dict(ticket.field_values),
-        "pending_proposal": asdict(ticket.pending_proposal)
-        if ticket.pending_proposal is not None
-        else None,
+        "pending_proposal": (
+            {
+                **asdict(ticket.pending_proposal),
+                "revision": ticket.pending_proposal_revision,
+            }
+            if ticket.pending_proposal is not None
+            else None
+        ),
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
     }

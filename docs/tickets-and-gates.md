@@ -304,6 +304,12 @@ refuses an approval that omits either. Approving is a ceiling-setting moment lik
 other, so the approve row carries the same control the Ticket page does, and the approver
 can hand the Ticket onward rather than only keeping it.
 
+The approve row starts with the immediate next valid Stage and the owner already selected.
+The label, enabled Approve action, and submitted values all read that same state. The owner
+can approve that displayed scope without opening the picker. The click remains the approval.
+A new proposal or changed approval context restores this default. An unrelated data refresh
+does not erase a proposal edit or an explicit scope choice.
+
 The Ticket details disclosure shows the same permission as a readable leash:
 "Until [a stage] · then [who]", where who reads `me`, `Chief`, or the Ticket's Sprint Item
 by its name. The stage name is the Worker type's own label, so a renamed stage reads
