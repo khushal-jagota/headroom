@@ -82,8 +82,11 @@ A Ticket can use `errored` as a durable marker that its Worker failed. The conve
 record keeps the failed turn and its detail. Operator logs keep the same failure for
 diagnosis. The Ticket does not store a second copy of the error text.
 
-A read or owner reply does not clear the error. Derived agent state also retains the
-latest failed turn until a later start succeeds or an explicit restart resets it.
+A read or owner reply does not clear the error. For unfinished Tickets, derived agent
+state retains the latest failed turn until a later start succeeds or an explicit restart
+resets it. A completed Ticket keeps that turn as history, without a current error in its
+agent state or its Item summary. Unread replies still request attention. A live turn still
+shows as working, and an explicit failed Worker claim still shows as errored at any Stage.
 During the attention-state upgrade, Panels acknowledges failures older than 24 hours.
 Newer failures and all later failures keep the normal persistent error behavior.
 

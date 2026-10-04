@@ -53,8 +53,11 @@ One screen per part of the system:
   to do. Yours is a stage the ticket's worker type gives to the user rather than to a
   worker. A ticket appears in only its first applicable group. Owner approval, an owner
   answer, assignment, and an unread reply take precedence in that order. Errored follows
-  those groups. Broken means the ticket is errored, or its last turn ended failed. Empty
-  groups are not drawn.
+  those groups. Errored means the Ticket has a failed Worker claim, or an unfinished
+  Ticket has a latest failed turn. A completed Ticket keeps its old failure in conversation
+  history without a current error in its row or its Item summary. Unread replies and live
+  activity still show, and a Supervisor's own failure stays independent. Empty groups are
+  not drawn.
   Every ticket outside these groups follows in the existing status order, so no ticket
   becomes unreachable.
 

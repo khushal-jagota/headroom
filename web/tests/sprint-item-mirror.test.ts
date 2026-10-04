@@ -16,7 +16,7 @@ import {
 } from "../src/lib/workItemPresentation";
 import { buildWorkspaceRail } from "../src/lib/workspaceRail";
 import { dayVisualTicket } from "../src/lib/dayPresentation";
-import { feedbackTicketStageState } from "../src/lib/feedback";
+import { feedbackTicketStageState, feedbackTicketStateLabel } from "../src/lib/feedback";
 import type { DayTicket } from "../src/lib/types";
 
 function ticket(
@@ -121,6 +121,49 @@ describe("the shared Item and Ticket presentation", () => {
     [{ stage: "done" }, "done"]
   ] as const)("classifies %o as %s", (values, expected) => {
     expect(workItemTicketGroupKey(ticket("state", values))).toBe(expected);
+  });
+
+  it("uses projected completion and failure facts in the Item, rail, Day, and Feedback", () => {
+    const completed = ticket("completed-history", { stage: "done", agent_state: "idle" });
+    const unfinished = ticket("unfinished-failure", { agent_state: "errored" });
+    const rows = [completed, unfinished];
+    const groups = workItemTicketGroups(rows);
+    expect(groups.map((group) => [group.label, group.tickets.map((row) => row.id)]))
+      .toEqual([["Errored", [unfinished.id]], ["Done", [completed.id]]]);
+    expect(workItemTicketGroups(rows.map((row) => boardCard(row)))
+      .map((group) => [group.label, group.tickets.map((row) => row.id)]))
+      .toEqual([["Errored", [unfinished.id]], ["Done", [completed.id]]]);
+    const rail = buildWorkspaceRail([], [], workspace(rows));
+    expect(rail.items[0].groups.map((group) => [group.label, group.cards.map((row) => row.id)]))
+      .toEqual([["Errored", [unfinished.id]]]);
+    expect(dayVisualTicket(completed as unknown as DayTicket).group).toBe("done");
+
+    expect(feedbackTicketStateLabel(completed)).toBe("Done");
+    expect(feedbackTicketStateLabel(unfinished)).toBe("Errored");
+    expect(workItemActivityMark(completed)).toBeNull();
+  });
+
+  it.each([
+    [{ awaiting_approval: true }, "awaiting_approval", "owner-approval"],
+    [{ awaiting_answer: true }, "awaiting_answer", "owner-answer"],
+    [{ assigned: true }, "assigned", null],
+    [{ awaiting_reply: true }, "awaiting_reply", "reply"]
+  ] as const)("keeps %o above completed history and explicit failure", (values, group, mark) => {
+    for (const agent_state of ["idle", "errored"] as const) {
+      const row = ticket("completed-attention", { stage: "done", agent_state, ...values });
+      expect(workItemTicketGroupKey(row)).toBe(group);
+      expect(workItemActivityMark(row)).toBe(mark);
+    }
+  });
+
+  it("preserves live completed activity and explicit completed errors", () => {
+    const live = ticket("completed-live", { stage: "done", agent_state: "working" });
+    const failed = ticket("completed-claim", {
+      stage: "done", ticket_status: "errored", agent_state: "errored"
+    });
+    expect(workItemTicketGroupKey(live)).toBe("agent");
+    expect(workItemActivityMark(live)).toBe("working");
+    expect(workItemTicketGroupKey(failed)).toBe("errored");
   });
 
   it("uses the approved group order for overlaps", () => {
