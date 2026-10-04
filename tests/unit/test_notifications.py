@@ -448,3 +448,211 @@ def test_an_answered_ask_clears_the_flag_without_another_notification(
         )
     ] == [("awaiting_answer", False)]
     conn.close()
+
+
+def test_initial_attention_is_transactional_without_a_global_conversation_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = connect(str(tmp_path / "creation.db"))
+    create_schema(conn)
+
+    def no_scan(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("Ticket without a conversation requested a history scan")
+
+    monkeypatch.setattr(attention, "conversation_attention", no_scan)
+    conn.execute("BEGIN IMMEDIATE")
+    ticket = _ticket(conn, 1)
+    assert (
+        conn.execute(
+            "SELECT notification_type FROM notification_attention_edges WHERE subject_id=?",
+            (ticket.id,),
+        ).fetchone()[0]
+        == "awaiting_approval"
+    )
+    conn.rollback()
+    assert conn.execute("SELECT 1 FROM tickets").fetchone() is None
+    assert conn.execute("SELECT 1 FROM notification_attention_edges").fetchone() is None
+    conn.close()
+
+
+def test_runtime_poll_consumes_edges_and_startup_reconciliation_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = connect(str(tmp_path / "imported.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    conn.execute("DELETE FROM notification_attention_edges")
+    conn.execute("DELETE FROM notification_attention_state")
+    conn.commit()
+    notifications_data.reconcile_attention(conn)
+    notifications_data.reconcile_attention(conn)
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM notification_attention_edges WHERE subject_id=?", (ticket.id,)
+        ).fetchone()[0]
+        == 1
+    )
+
+    def no_scan(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("Runtime poll scanned conversation history")
+
+    monkeypatch.setattr(attention, "conversation_attention", no_scan)
+    assert notifications_data.queue_deliveries(conn, 2) == 1
+    assert notifications_data.queue_deliveries(conn, 3) == 0
+    conn.close()
+
+
+def test_blocker_changes_capture_attention_in_the_same_transaction(tmp_path: Path) -> None:
+    from planner.core import ticket_blocks
+
+    conn = connect(str(tmp_path / "blockers.db"))
+    create_schema(conn)
+    blocker, blocked = _ticket(conn, 1), _ticket(conn, 1)
+    ticket_blocks.add_ticket_block(conn, blocker.id, blocked.id, 2)
+    row = conn.execute(
+        "SELECT active,generation FROM notification_attention_state "
+        "WHERE subject_id=? AND notification_type='awaiting_approval'",
+        (blocked.id,),
+    ).fetchone()
+    assert tuple(row) == (1, 1)
+    conn.execute("BEGIN IMMEDIATE")
+    ticket_blocks.remove_ticket_block(conn, blocker.id, blocked.id, 3)
+    row = conn.execute(
+        "SELECT active,generation FROM notification_attention_state "
+        "WHERE subject_id=? AND notification_type='awaiting_approval'",
+        (blocked.id,),
+    ).fetchone()
+    assert tuple(row) == (1, 1)
+    conn.rollback()
+    row = conn.execute(
+        "SELECT active,generation FROM notification_attention_state "
+        "WHERE subject_id=? AND notification_type='awaiting_approval'",
+        (blocked.id,),
+    ).fetchone()
+    assert tuple(row) == (1, 1)
+    conn.close()
+
+
+def test_attention_startup_failure_releases_the_polling_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    from typing import cast
+
+    from planner.conversation.contracts import ConversationSystem
+    from planner.core import loops
+
+    cfg = load_config(
+        path=None,
+        env={
+            "PLAN_DB_PATH": str(tmp_path / "startup.db"),
+            "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "startup.lock"),
+        },
+    )
+
+    def fail(_self: NotificationLoop) -> None:
+        raise RuntimeError("import reconciliation failed")
+
+    monkeypatch.setattr(NotificationLoop, "reconcile_imported_state", fail)
+
+    async def start() -> None:
+        running = loops.start_background_loops(
+            cfg,
+            MutableClock(parse_fake_now("2026-09-20T05:00:00+01:00")),
+            conversation_system=cast(ConversationSystem, object()),
+            asyncio_loop=asyncio.get_running_loop(),
+        )
+        # A second process proves release. The lock helper caches ownership locally.
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import fcntl,sys; f=open(sys.argv[1], 'a'); "
+                "fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)",
+                cfg.dispatcher_lock_path,
+            ],
+            check=True,
+        )
+        await running.stop()
+
+    asyncio.run(start())
+
+
+def test_conversation_binding_and_unbinding_capture_existing_attention(tmp_path: Path) -> None:
+    conn = connect(str(tmp_path / "binding.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    _conversation_on_a_ticket(conn, ticket.id)
+    conn.execute("UPDATE tickets SET conversation_id=NULL WHERE id=?", (ticket.id,))
+    _conversation_event(conn, 1, "message_to_owner", "{}")
+    conn.commit()
+    tickets_data.write_ticket_conversation_start(
+        conn,
+        ticket.id,
+        conversation_id="c_split",
+        backend="codex",
+        model="test-model",
+        reasoning_effort=None,
+        now=2,
+    )
+    assert _edges(conn, ticket.id) == [("awaiting_reply", 1)]
+    assert tickets_data.clear_ticket_conversation_link(
+        conn,
+        ticket.id,
+        expected_conversation_id="c_split",
+        now=3,
+    )
+    row = conn.execute(
+        "SELECT active FROM notification_attention_state "
+        "WHERE subject_id=? AND notification_type='awaiting_reply'",
+        (ticket.id,),
+    ).fetchone()
+    assert row[0] == 0
+    tickets_data.delete_ticket(conn, ticket.id, principal=OWNER_PRINCIPAL, now=4)
+    for table in ("notification_attention_state", "notification_attention_edges"):
+        assert conn.execute(
+            f"SELECT 1 FROM {table} WHERE subject_id=?", (ticket.id,)
+        ).fetchone() is None
+    conn.close()
+
+
+def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path) -> None:
+    db_path = tmp_path / "failed-delivery.db"
+    with connect(str(db_path)) as conn:
+        create_schema(conn)
+        notifications_data.get_or_create_web_push_identity(conn, 1)
+        _subscribe(conn)
+        ticket = _ticket(conn, 1)
+
+    class FailedAdapter:
+        def send(
+            self,
+            subscription: PushSubscription,
+            intent: NotificationIntent,
+            identity: WebPushIdentity,
+            *,
+            subject: str,
+        ) -> WebPushResult:
+            return WebPushResult(delivered=False, error="temporary push failure")
+
+    loop = NotificationLoop(
+        str(db_path),
+        MutableClock(parse_fake_now("2026-09-20T05:00:00+01:00")),
+        canonical_origin="https://panels.example",
+        adapter=FailedAdapter(),
+    )
+    assert loop.poll_once() == 1
+    assert loop.poll_once() == 0
+    with connect(str(db_path)) as conn:
+        row = conn.execute(
+            "SELECT status,attempts,last_error FROM notification_deliveries WHERE subject_id=?",
+            (ticket.id,),
+        ).fetchone()
+        assert tuple(row) == ("retry", 1, "temporary push failure")
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM notification_attention_edges WHERE subject_id=?",
+                (ticket.id,),
+            ).fetchone()[0]
+            == 1
+        )

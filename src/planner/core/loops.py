@@ -153,6 +153,7 @@ def start_background_loops(
                 asyncio_loop=asyncio_loop,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
+            candidate_notification_loop.reconcile_imported_state()
             candidate_schedule_loop.start(config.tick_seconds)
             candidate_loop.start(config.tick_seconds)
             candidate_notification_loop.start(config.tick_seconds)

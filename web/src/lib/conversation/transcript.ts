@@ -25,6 +25,7 @@ import type {
 } from "./wire";
 import { messageContentOf } from "./wire";
 import type { ConversationFeed } from "./feed";
+import { isMessageOutcome, latestMessageOutcomes } from "./messageOutcome";
 
 export type PermissionAskState = "live" | "answered" | "dead";
 export type UserInputState = "live" | "answered" | "failed" | "dead";
@@ -281,7 +282,16 @@ export function transcriptRows(
   // whatever was left in flight is not arriving, and it is not drawn.
   const turnIsGone = reading.turnStoppedWithoutAnEnding === true;
 
+  const latestOutcomes = latestMessageOutcomes(feed.events);
+  const reconciledSequences = new Set(feed.events.flatMap((event) =>
+    event.kind === "prompt" && event.payload.reconciles_sequence !== undefined
+      && event.payload.reconciles_sequence < event.sequence
+      ? [event.payload.reconciles_sequence] : []
+  ));
   for (const event of feed.events) {
+    if (event.kind === "prompt_delivery_uncertain" && reconciledSequences.has(event.sequence)) continue;
+    if (isMessageOutcome(event) && event.payload.sender_message_id !== undefined
+      && latestOutcomes.get(event.payload.sender_message_id)?.sequence !== event.sequence) continue;
     const sequence = event.sequence;
     const createdAt = event.created_at;
     switch (event.kind) {

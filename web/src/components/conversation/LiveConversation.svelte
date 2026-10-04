@@ -25,7 +25,7 @@
     type ConversationFeed,
     type ConversationStream
   } from "../../lib/conversation/feed";
-  import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
+  import { fateSentence, recordedMessageFateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import {
     conversationFeedForLens,
@@ -158,6 +158,8 @@
   let connectionTrouble = $state(false);
   let fateNote = $state<string | null>(null);
   let fateNoteIsTerminal = $state(false);
+  let fateNoteMessageId = $state<string | null>(null);
+  let visibleFateNote = $derived(recordedMessageFateSentence(feed.events, fateNoteMessageId, fateNote));
   let errorNote = $state<string | null>(null);
   let askNote = $state<string | null>(null);
   let busy = $state(false);
@@ -288,8 +290,7 @@
   ));
 
   // A queued or accepted-steer note describes traffic that a turn ending settles. A
-  // refusal or uncertainty outlives endings: it is cleared by the next send, not by a
-  // turn that never conclusively admitted it.
+  // refusal or uncertainty survives unrelated endings. Its own later receipt settles it.
   $effect(() => {
     if (!running && fateNote !== null && !fateNoteIsTerminal) fateNote = null;
   });
@@ -596,6 +597,7 @@
       const terminalFate = fate.fate === "refused" || fate.fate === "uncertain";
       fateNote = terminalFate ? fateSentence(fate) : null;
       fateNoteIsTerminal = terminalFate;
+      fateNoteMessageId = terminalFate ? message.messageId : null;
       if (terminalFate) {
         await stopDrawing(message.messageId);
         await refreshView();
@@ -738,10 +740,14 @@
     if (readOnly || openedId === null) return;
     errorNote = null;
     try {
+      const promotedMessageId = view?.held_prompts.find(
+        (held) => held.held_prompt_id === heldPromptId
+      )?.sender_message_id ?? null;
       const result = await promoteHeldPrompt(openedId, heldPromptId, mode);
       if (result.promoted && (result.fate === "refused" || result.fate === "uncertain")) {
         fateNote = fateSentence(result);
         fateNoteIsTerminal = true;
+        fateNoteMessageId = promotedMessageId;
       }
       await refreshView();
     } catch (error) {
@@ -898,7 +904,7 @@
   startsOnModel={startValues?.model ?? null}
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   bind:conversationState
-  {fateNote}
+  fateNote={visibleFateNote}
   {errorNote}
   {connectionTrouble}
   {readOnly}

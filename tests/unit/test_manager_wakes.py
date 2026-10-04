@@ -160,18 +160,20 @@ def test_failed_turn_notice_source_identity_is_idempotent(
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     target = Principal(PrincipalKind.sprint_item, item_id)
-    arguments = {
-        "target": target,
-        "ticket_id": ticket_id,
-        "ticket_title": "Managed ticket",
-        "conversation_id": "conv-source",
-        "event_sequence": 12,
-        "error_summary": "provider unavailable",
-        "now": 50,
-    }
+    def create_notice() -> bool:
+        return wake_data.create_turn_failure_wake(
+            tmp_db,
+            target=target,
+            ticket_id=ticket_id,
+            ticket_title="Managed ticket",
+            conversation_id="conv-source",
+            event_sequence=12,
+            error_summary="provider unavailable",
+            now=50,
+        )
 
-    assert wake_data.create_turn_failure_wake(tmp_db, **arguments)
-    assert not wake_data.create_turn_failure_wake(tmp_db, **arguments)
+    assert create_notice()
+    assert not create_notice()
     assert len(_wake_rows(tmp_db)) == 1
 
 

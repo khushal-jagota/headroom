@@ -34,14 +34,10 @@ from planner.conversation.storage import ConversationStore
 
 
 @pytest.fixture(autouse=True)
-def existing_floor_workspace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def existing_floor_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setattr(
-        conversation_start_resolution, "FLOOR_DEFAULT_WORKSPACE_FOLDER", workspace
-    )
+    monkeypatch.setattr(conversation_start_resolution, "FLOOR_DEFAULT_WORKSPACE_FOLDER", workspace)
 
 
 class TestConversationSystemConformance(ConversationContractConformanceSuite):
@@ -184,11 +180,12 @@ def test_busy_manager_holds_a_wake_without_interrupt_then_delivers_it() -> None:
     asyncio.run(exercise())
 
 
-def test_marker_failure_leaves_the_wake_held_and_the_retry_delivers_it(
+def test_marker_failure_preserves_the_wake_until_explicit_storage_resume(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = ConversationStore.mark_held_sender_messages_leaving_queue
     calls = 0
+    failed = asyncio.Event()
 
     async def fail_once(
         store: ConversationStore,
@@ -198,6 +195,7 @@ def test_marker_failure_leaves_the_wake_held_and_the_retry_delivers_it(
         nonlocal calls
         calls += 1
         if calls == 1:
+            failed.set()
             raise OSError("marker unavailable")
         return await original(store, conversation_id, sender_message_ids)
 
@@ -225,7 +223,11 @@ def test_marker_failure_leaves_the_wake_held_and_the_retry_delivers_it(
                 sender_message_id="supervisor_delivery_wake_retry",
             ) == PromptDeliveryQueued(queue_position=1)
 
-            await subject.complete_running_turn("marker-retry")
+            completing = asyncio.create_task(subject.complete_running_turn("marker-retry"))
+            await failed.wait()
+            assert not completing.done()
+            assert subject._store.resume_recording("marker-retry") == 1
+            await completing
 
             writes = await subject.backend_writes("marker-retry")
             assert len(writes) == 2
@@ -246,17 +248,23 @@ def test_a_private_steer_lost_with_its_connection_is_uncertain_and_stoppable() -
                     backend_key=ConversationBackendKey.hermes,
                 )
             )
-            assert await subject.system.send(
-                "c", text_message_content("incumbent"), sender_label="owner"
-            ) == PromptDeliveryStarted()
+            assert (
+                await subject.system.send(
+                    "c", text_message_content("incumbent"), sender_label="owner"
+                )
+                == PromptDeliveryStarted()
+            )
             await subject.arm_backend_connection_loss("c")
 
-            assert await subject.system.send(
-                "c",
-                text_message_content("uncertain steer"),
-                sender_label="owner",
-                mode=PromptDeliveryMode.steer,
-            ) == PromptDeliveryUncertain()
+            assert (
+                await subject.system.send(
+                    "c",
+                    text_message_content("uncertain steer"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
+                )
+                == PromptDeliveryUncertain()
+            )
             account = await subject.agent_account("c")
             assert account["steer_attempts"] == []
             assert account["steer_writes"] == []
