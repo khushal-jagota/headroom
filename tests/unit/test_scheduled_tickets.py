@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
@@ -9,6 +10,8 @@ from sqlite3 import Connection
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 
+from planner.conversation.backend_state import write_model_enablement
+from planner.conversation.contracts import ConversationBackendKey
 from planner.core.clock import TestClock as MutableClock
 from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
@@ -26,6 +29,7 @@ from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketStatus
+from planner.worker_types.configuration import configured_worker_type_registry
 
 
 def _now(value: str) -> datetime:
@@ -330,6 +334,85 @@ def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
     failure = data.list_occurrences(tmp_db, failed_schedule_id)[0]
     assert failure.outcome is OccurrenceOutcome.failed
     assert "blocking_ticket_id must be an existing ticket" in (failure.error or "")
+    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_schedule_rejects_disabled_model_without_partial_save(
+    tmp_db: Connection,
+    explicit: bool,
+) -> None:
+    profile = configured_worker_type_registry().require("coding").worker_profile
+    backend = ConversationBackendKey(profile.default_backend)
+    write_model_enablement(tmp_db, backend, profile.default_model, False)
+    template = _template()
+    if explicit:
+        template = replace(
+            template,
+            employee_backend=str(backend),
+            employee_launch_model=profile.default_model,
+        )
+    before = tuple(tmp_db.iterdump())
+    with pytest.raises(PlannerError, match="disabled.*Choose an enabled model") as raised:
+        _schedule(tmp_db, template=template)
+    assert raised.value.code is ErrorCode.validation
+    assert tuple(tmp_db.iterdump()) == before
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_schedule_model_disabled_after_save_fails_once_without_ticket(
+    tmp_db: Connection,
+    explicit: bool,
+) -> None:
+    profile = configured_worker_type_registry().require("coding").worker_profile
+    backend = ConversationBackendKey(profile.default_backend)
+    template = _template(title="Disabled occurrence")
+    if explicit:
+        template = replace(
+            template,
+            employee_backend=str(backend),
+            employee_launch_model=profile.default_model,
+        )
+    failed_schedule_id = _schedule(tmp_db, template=template)
+    saved_schedule = data.read_schedule(tmp_db, failed_schedule_id)
+    write_model_enablement(tmp_db, backend, profile.default_model, False)
+    enabled_schedule_id = _schedule(
+        tmp_db,
+        template=replace(
+            _template(title="Enabled override occurrence", worker_type="exploration"),
+            employee_backend=str(backend),
+            employee_launch_model="enabled-override-model",
+        ),
+    )
+    now = _now("2026-07-28T14:30:00")
+    results = actions.run_current_slot(
+        tmp_db,
+        planning_now=now,
+        now=int(now.timestamp()),
+        boundary_hour=5,
+    )
+    assert sorted(item.outcome.value for item in results) == ["created", "failed"]
+    failure = data.list_occurrences(tmp_db, failed_schedule_id)[0]
+    assert failure.outcome is OccurrenceOutcome.failed
+    assert failure.ticket_id is None
+    assert "disabled" in (failure.error or "")
+    assert "Choose an enabled model" in (failure.error or "")
+    assert data.read_schedule(tmp_db, failed_schedule_id) == saved_schedule
+    created = data.list_occurrences(tmp_db, enabled_schedule_id)[0]
+    assert created.ticket_id is not None
+    assert (
+        tickets_data.read_ticket(tmp_db, created.ticket_id).employee_launch_model
+        == "enabled-override-model"
+    )
+    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
+    assert tmp_db.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 1
+    assert actions.run_current_slot(
+        tmp_db,
+        planning_now=now,
+        now=int(now.timestamp()),
+        boundary_hour=5,
+    ) == results
+    assert len(data.list_occurrences(tmp_db, failed_schedule_id)) == 1
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
 
 

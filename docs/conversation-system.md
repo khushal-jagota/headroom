@@ -613,7 +613,16 @@ Panels also keeps one on or off choice for each backend model. A model is on unt
 person turns it off on the Backends page. An off model remains in the full backend
 catalogue, but no model picker offers it. Existing saved selections remain historical
 facts and can still appear as the current value until a person chooses another model.
-New Ticket, Chief, and Worker default saves refuse an off model.
+New Tickets refuse an off model after the explicit choice and Worker defaults resolve.
+This includes manual, agent, external-work, and scheduled creation. Schedule validation
+checks the choice, and each occurrence checks it again because a saved default can change.
+A refused occurrence records failure without a Ticket.
+
+New Chief conversations and Workers without a historical Ticket model also check their
+resolved choice after overrides. An enabled override works even if the default is off.
+Chief and Worker default saves refuse an off model. Each refusal names the model and
+requires an enabled choice. Panels never silently substitutes another model.
+Existing Ticket choices and existing conversations remain intact.
 
 ## The composer catalog
 

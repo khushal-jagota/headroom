@@ -9,7 +9,7 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends
 
-from planner.conversation.backend_state import model_is_enabled
+from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
 from planner.conversation.storage import ConversationStore
 from planner.core.authctx import RequestContext, request_context
@@ -115,12 +115,7 @@ def _reject_disabled_launch_model(conn: sqlite3.Connection, raw: dict[str, Any])
     if not isinstance(backend, str) or not isinstance(model, str):
         return
     backend_key = require_conversation_backend_key(backend)
-    if not model_is_enabled(conn, backend_key, model):
-        raise PlannerError(
-            ErrorCode.validation,
-            "employee launch model is disabled",
-            {"employee_backend": backend, "employee_launch_model": model},
-        )
+    require_enabled_model(conn, backend_key, model)
 
 
 async def add_agent_conversation_signals(
