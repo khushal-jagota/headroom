@@ -1,14 +1,17 @@
-"""Stored shapes for durable Sprint Item manager wakes."""
+"""Stored shapes for durable notices to responsible Panels principals."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
 
+from planner.core.contracts import Principal
+
 
 class WakeSourceKind(StrEnum):
     proposal = "proposal"
     worker_error = "worker_error"
+    turn_failure = "turn_failure"
 
 
 class WakeBatchStatus(StrEnum):
@@ -26,6 +29,7 @@ class WakeBatchStatus(StrEnum):
 class WakeBatch:
     id: int
     sprint_item_id: str
+    target: Principal
     sender_message_id: str
     message: str
     status: WakeBatchStatus

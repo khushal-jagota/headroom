@@ -116,6 +116,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
     UserInputAnswerWriteFailed,
 )
+from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
@@ -2034,13 +2035,16 @@ def _tool_result_detail(content: str | list[dict[str, Any]] | None) -> str | Non
 
 def _result_error_summary(message: ResultMessage) -> str:
     """What to say about a turn that failed, in the words the CLI used for it."""
+    if message.api_error_status == 401:
+        return normalized_failure_summary(None, http_status=401)
     if message.errors:
-        return "; ".join(str(error) for error in message.errors)
+        return normalized_failure_summary(
+            "; ".join(str(error) for error in message.errors),
+            http_status=message.api_error_status,
+        )
     if message.result:
-        return message.result
-    if message.api_error_status is not None:
-        return f"{message.subtype} (HTTP {message.api_error_status})"
-    return message.subtype
+        return normalized_failure_summary(message.result, http_status=message.api_error_status)
+    return normalized_failure_summary(message.subtype, http_status=message.api_error_status)
 
 
 def _raw_uuid_set(value: Any) -> frozenset[str]:

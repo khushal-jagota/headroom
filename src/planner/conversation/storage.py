@@ -49,8 +49,9 @@ from planner.conversation.events import (
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
 )
-from planner.core.contracts import PrincipalKind
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
+from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import (
     ConversationAttentionSnapshot,
     advance_conversation_attention,
@@ -213,7 +214,9 @@ class ConversationStore:
         wake_ids = tuple(
             sender_message_id
             for sender_message_id in sender_message_ids
-            if sender_message_id.startswith("supervisor_delivery_wake_")
+            if sender_message_id.startswith(
+                ("supervisor_delivery_wake_", "panels_delivery_notice_")
+            )
         )
         if not wake_ids:
             return 0
@@ -255,6 +258,7 @@ class ConversationStore:
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
+        create_failure_notice: bool = False,
     ) -> tuple[StoredConversationEvent, ...]:
         """Atomically append silence markers followed by their turn ending."""
         return await asyncio.to_thread(
@@ -264,6 +268,7 @@ class ConversationStore:
             agent_activity,
             automatic_compaction_confirmed,
             automatic_compaction_result,
+            create_failure_notice,
         )
 
     async def advance_owner_read_through_sequence(
@@ -688,12 +693,23 @@ class ConversationStore:
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
+        create_failure_notice: bool,
     ) -> tuple[StoredConversationEvent, ...]:
         conn = self._connect()
         try:
             snapshot = self._begin_validated_attention_write(conn, conversation_id)
             written = self._insert_rows(conn, conversation_id, payloads)
             ended = written[-1]
+            if create_failure_notice:
+                ending_payload = ended.payload
+                error_summary = getattr(ending_payload, "error_summary", None)
+                self._create_ticket_failure_notice(
+                    conn,
+                    conversation_id=conversation_id,
+                    event_sequence=ended.sequence,
+                    error_summary=str(error_summary),
+                    now=ended.created_at,
+                )
             if agent_activity:
                 conn.execute(
                     "UPDATE conversations SET latest_agent_activity_at = ?, "
@@ -731,6 +747,39 @@ class ConversationStore:
         finally:
             conn.close()
         return written
+
+    @staticmethod
+    def _create_ticket_failure_notice(
+        conn: sqlite3.Connection,
+        *,
+        conversation_id: str,
+        event_sequence: int,
+        error_summary: str,
+        now: int,
+    ) -> None:
+        """Snapshot the responsible employee for one currently linked Ticket."""
+        row = conn.execute(
+            "SELECT id,title,ceiling_holder FROM tickets WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            return
+        stored_holder = json.loads(str(row["ceiling_holder"]))
+        holder = Principal(
+            PrincipalKind(str(stored_holder["kind"])), str(stored_holder["id"])
+        )
+        if holder.kind is PrincipalKind.owner:
+            return
+        manager_wakes_data.create_turn_failure_wake(
+            conn,
+            target=holder,
+            ticket_id=str(row["id"]),
+            ticket_title=str(row["title"]),
+            conversation_id=conversation_id,
+            event_sequence=event_sequence,
+            error_summary=error_summary,
+            now=now,
+        )
 
     def _insert_rows(
         self,

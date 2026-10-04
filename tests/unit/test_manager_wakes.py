@@ -18,7 +18,11 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryStarted,
 )
-from planner.conversation.events import PromptEventPayload
+from planner.conversation.events import (
+    ConversationTurnEnding,
+    PromptEventPayload,
+    TurnEndedEventPayload,
+)
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
@@ -63,6 +67,171 @@ def _item_and_ticket(conn: Connection, clock: FakeClock) -> tuple[str, str]:
 
 def _wake_rows(conn: Connection) -> list[dict[str, object]]:
     return [dict(row) for row in conn.execute("SELECT * FROM manager_wakes ORDER BY id")]
+
+
+def _current_ticket_conversation(conn: Connection, ticket_id: str, conversation_id: str) -> None:
+    conn.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
+        "created_at) VALUES (?,'codex','model','/tmp','full',1)",
+        (conversation_id,),
+    )
+    conn.execute(
+        "UPDATE tickets SET conversation_id=? WHERE id=?", (conversation_id, ticket_id)
+    )
+
+
+def _append_failed_turn(store: ConversationStore, conversation_id: str) -> None:
+    asyncio.run(
+        store.append_turn_ending(
+            conversation_id,
+            (TurnEndedEventPayload(ConversationTurnEnding.failed, "provider unavailable"),),
+            agent_activity=True,
+            automatic_compaction_confirmed=False,
+            automatic_compaction_result=None,
+            create_failure_notice=True,
+        )
+    )
+
+
+@pytest.mark.parametrize("holder_kind", ["chief", "sprint_item", "ticket"])
+def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
+    tmp_db: Connection, fake_clock: FakeClock, holder_kind: str
+) -> None:
+    item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    holder_id = item_id
+    if holder_kind == "chief":
+        holder_id = "chief"
+    elif holder_kind == "ticket":
+        holder_id = tickets_data.create_ticket(
+            tmp_db,
+            title="Reviewing ticket",
+            principal=OWNER_PRINCIPAL,
+            now=2,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="coding",
+            kickoff_note="Start",
+            stated_ceiling="needs_success_condition",
+        ).id
+    tmp_db.execute(
+        "UPDATE tickets SET ceiling_holder=? WHERE id=?",
+        (json.dumps({"kind": holder_kind, "id": holder_id}), ticket_id),
+    )
+    _current_ticket_conversation(tmp_db, ticket_id, "conv-failed")
+    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+
+    _append_failed_turn(ConversationStore(path, integer_now=lambda: 50), "conv-failed")
+
+    row = _wake_rows(tmp_db)[0]
+    assert (row["target_kind"], row["target_id"]) == (holder_kind, holder_id)
+    assert (row["source_conversation_id"], row["source_revision"]) == ("conv-failed", 1)
+    assert "provider unavailable" in str(row["summary"])
+
+
+def test_owner_held_and_unattached_failures_create_no_agent_notice(
+    tmp_db: Connection,
+) -> None:
+    ticket = tickets_data.create_ticket(
+        tmp_db,
+        title="Owner-held ticket",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Start",
+        stated_ceiling="needs_success_condition",
+    )
+    _current_ticket_conversation(tmp_db, ticket.id, "conv-owner")
+    tmp_db.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
+        "created_at) VALUES ('conv-unattached','codex','model','/tmp','full',1)"
+    )
+    path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    store = ConversationStore(path, integer_now=lambda: 50)
+
+    _append_failed_turn(store, "conv-owner")
+    _append_failed_turn(store, "conv-unattached")
+
+    assert _wake_rows(tmp_db) == []
+
+
+def test_failed_turn_notice_source_identity_is_idempotent(
+    tmp_db: Connection, fake_clock: FakeClock
+) -> None:
+    item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
+    target = Principal(PrincipalKind.sprint_item, item_id)
+    arguments = {
+        "target": target,
+        "ticket_id": ticket_id,
+        "ticket_title": "Managed ticket",
+        "conversation_id": "conv-source",
+        "event_sequence": 12,
+        "error_summary": "provider unavailable",
+        "now": 50,
+    }
+
+    assert wake_data.create_turn_failure_wake(tmp_db, **arguments)
+    assert not wake_data.create_turn_failure_wake(tmp_db, **arguments)
+    assert len(_wake_rows(tmp_db)) == 1
+
+
+@pytest.mark.parametrize("target_kind,target_id", [("chief", "chief"), ("ticket", None)])
+def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
+    tmp_db: Connection,
+    target_kind: str,
+    target_id: str | None,
+) -> None:
+    source_id = tickets_data.create_ticket(
+        tmp_db,
+        title="Failed ticket",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Start",
+        stated_ceiling="needs_success_condition",
+    ).id
+    if target_kind == "ticket":
+        target_id = tickets_data.create_ticket(
+            tmp_db,
+            title="Responsible ticket",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="coding",
+            kickoff_note="Start",
+            stated_ceiling="needs_success_condition",
+        ).id
+    assert target_id is not None
+    target = Principal(PrincipalKind(target_kind), target_id)
+    wake_data.create_turn_failure_wake(
+        tmp_db,
+        target=target,
+        ticket_id=source_id,
+        ticket_title="Failed ticket",
+        conversation_id="conv-source",
+        event_sequence=4,
+        error_summary="provider unavailable",
+        now=2,
+    )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=3)
+    assert batch is not None
+    database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+    system = _DurableStartedConversationSystem(database_path)
+
+    assert asyncio.run(
+        deliver_batch(
+            batch,
+            connect_database=lambda: connect(str(database_path)),
+            conversation_system=system,  # type: ignore[arg-type]
+            process_token="process",
+            now=lambda: 50,
+        )
+    )
+    assert system.started is not None
+    prompts = tmp_db.execute(
+        "SELECT payload FROM conversation_events WHERE kind='prompt'"
+    ).fetchall()
+    assert any("provider unavailable" in str(row["payload"]) for row in prompts)
 
 
 class _DurableStartedConversationSystem:

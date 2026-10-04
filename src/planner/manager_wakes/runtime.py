@@ -1,4 +1,4 @@
-"""Single-owner reconciliation and delivery loop for Sprint Item manager wakes."""
+"""Single-owner reconciliation and delivery loop for durable manager notices."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ import concurrent.futures
 import logging
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from time import monotonic
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
+from planner.core.contracts import PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.manager_wakes import data
@@ -26,9 +28,16 @@ from planner.manager_wakes.contracts import WakeBatch, WakeBatchStatus
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
+from planner.tickets import data as tickets_data
+from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 
 _LOG = logging.getLogger(__name__)
 WAKE_SENDER_LABEL = "Panels"
+
+
+@asynccontextmanager
+async def _no_lifecycle_lock() -> AsyncIterator[None]:
+    yield
 
 
 def reconcile_batch_outcomes(conn: sqlite3.Connection, *, now: int) -> int:
@@ -85,27 +94,47 @@ async def deliver_batch(
     process_token: str,
     now: Callable[[], int],
 ) -> bool:
-    """Deliver one immutable batch through the ordinary supervisor conversation door."""
+    """Deliver one immutable batch through its principal's ordinary conversation door."""
     conn = connect_database()
     intended_conversation_id: str | None = None
     try:
-        async with sprints_service.supervisor_lifecycle_lock(batch.sprint_item_id):
+        target = batch.target
+        lifecycle = (
+            sprints_service.supervisor_lifecycle_lock(target.id)
+            if target.kind is PrincipalKind.sprint_item
+            else _no_lifecycle_lock()
+        )
+        async with lifecycle:
             try:
-                item = sprints_data.read_item(conn, batch.sprint_item_id).item
+                if target.kind is PrincipalKind.sprint_item:
+                    item = sprints_data.read_item(conn, target.id).item
+                    agent_key = item.supervisor_agent_key
+                    resolved = conversation_start.sprint_item_supervisor_resolve(item)
+                    required_sprint_item_id = target.id
+                elif target.kind is PrincipalKind.chief:
+                    agent_key = CHIEF_SETTINGS_KEY
+                    resolved = conversation_start.agent_resolve(conn)
+                    required_sprint_item_id = None
+                else:
+                    ticket = tickets_data.read_ticket(conn, target.id)
+                    agent_key = None
+                    resolved = conversation_start.worker_resolve(conn, ticket)
+                    required_sprint_item_id = None
             except PlannerError as error:
                 if error.code is ErrorCode.not_found:
+                    data.close_undeliverable_batch(conn, batch.id, now=now())
                     return False
                 raise
-            async with conversation_start.conversation_link_lock(
-                f"agent:{item.supervisor_agent_key}"
-            ):
-                current = conversation_start.read_agent_conversation(
-                    conn, item.supervisor_agent_key
+
+            link_key = f"ticket:{target.id}" if agent_key is None else f"agent:{agent_key}"
+            async with conversation_start.conversation_link_lock(link_key):
+                current = (
+                    ticket.conversation_id
+                    if agent_key is None
+                    else conversation_start.read_agent_conversation(conn, agent_key)
                 )
                 if current is not None and await conversation_system.is_running(current):
-                    data.release_pending_batch(
-                        conn, batch.id, process_token=process_token
-                    )
+                    data.release_pending_batch(conn, batch.id, process_token=process_token)
                     return False
                 created = conversation_start.new_conversation_id()
                 intended_conversation_id = current or created
@@ -117,20 +146,35 @@ async def deliver_batch(
                     now=now(),
                 )
                 try:
-                    delivered = await conversation_start.send_to_agent_conversation(
-                        conversation_system,
-                        conn,
-                        item.supervisor_agent_key,
-                        text_message_content(batch.message),
-                        conversation_start.sprint_item_supervisor_resolve(item),
-                        conversation_id=current,
-                        created_conversation_id=created,
-                        sender_label=WAKE_SENDER_LABEL,
-                        mode=PromptDeliveryMode.queue,
-                        sender_message_id=batch.sender_message_id,
-                        reply_requested=False,
-                        required_sprint_item_id=batch.sprint_item_id,
-                    )
+                    if agent_key is None:
+                        delivered = await conversation_start.send_to_ticket_conversation(
+                            conversation_system,
+                            conn,
+                            target.id,
+                            text_message_content(batch.message),
+                            conversation_id=current,
+                            created_conversation_id=created,
+                            sender_label=WAKE_SENDER_LABEL,
+                            mode=PromptDeliveryMode.queue,
+                            sender_message_id=batch.sender_message_id,
+                            reply_requested=False,
+                            now=now(),
+                        )
+                    else:
+                        delivered = await conversation_start.send_to_agent_conversation(
+                            conversation_system,
+                            conn,
+                            agent_key,
+                            text_message_content(batch.message),
+                            resolved,
+                            conversation_id=current,
+                            created_conversation_id=created,
+                            sender_label=WAKE_SENDER_LABEL,
+                            mode=PromptDeliveryMode.queue,
+                            sender_message_id=batch.sender_message_id,
+                            reply_requested=False,
+                            required_sprint_item_id=required_sprint_item_id,
+                        )
                 except BaseException:
                     data.record_batch_uncertain(
                         conn,
@@ -167,15 +211,15 @@ async def deliver_batch(
                     process_token=process_token,
                     now=now(),
                 )
-                # Started writes the prompt before it returns. Queued stays open here.
                 reconcile_batch_outcomes(conn, now=now())
                 return True
+
     finally:
         conn.close()
 
 
 class ManagerWakeLoop:
-    """Poll durable wakes and schedule one delivery task per Sprint Item."""
+    """Poll durable wakes and schedule one delivery task per target principal."""
 
     def __init__(
         self,
@@ -213,16 +257,16 @@ class ManagerWakeLoop:
                 conn, process_token=self._process_token, now=now
             )
             batches = list(data.pending_batches(conn))
-            attempted_items = {batch.sprint_item_id for batch in batches}
+            attempted_targets = {batch.target for batch in batches}
             while True:
                 batch = data.claim_next_batch(
                     conn, process_token=self._process_token, now=now
                 )
                 if batch is None:
                     break
-                if batch.sprint_item_id in attempted_items:
+                if batch.target in attempted_targets:
                     break
-                attempted_items.add(batch.sprint_item_id)
+                attempted_targets.add(batch.target)
                 batches.append(batch)
         finally:
             conn.close()

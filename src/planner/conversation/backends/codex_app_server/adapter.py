@@ -75,6 +75,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
     UserInputAnswerWriteFailed,
 )
+from planner.conversation.backends.failure_summary import normalized_failure_summary
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ComposerCatalogEntryKind,
@@ -1299,7 +1300,11 @@ class CodexAppServerBackendChild:
             return
         error_summary: str | None = None
         if ending is ConversationTurnEnding.failed:
-            error_summary = _error_summary(notification.turn.error) or turn.last_error_summary
+            error_summary = (
+                _error_summary(notification.turn.error)
+                if notification.turn.error is not None
+                else normalized_failure_summary(turn.last_error_summary)
+            )
         await self._end_turn(turn, ending, error_summary)
 
     async def _on_agent_message_delta(
@@ -1738,12 +1743,27 @@ def _user_input_answer(answers: tuple[UserInputAnswer, ...]) -> dict[str, Any]:
     )
 
 
-def _error_summary(error: bindings.TurnError | None) -> str | None:
+def _error_summary(error: bindings.TurnError | None) -> str:
     if error is None:
-        return None
+        return normalized_failure_summary(None)
+    info = error.codexErrorInfo
+    if info == "unauthorized":
+        return normalized_failure_summary(error.message, http_status=401)
+    http_status: int | None = None
+    for info_field in (
+        "httpConnectionFailed",
+        "responseStreamConnectionFailed",
+        "responseStreamDisconnected",
+        "responseTooManyFailedAttempts",
+    ):
+        variant = getattr(info, info_field, None)
+        if variant is not None:
+            http_status = variant.httpStatusCode
+            break
+    detail = error.message
     if error.additionalDetails:
-        return f"{error.message}: {error.additionalDetails}"
-    return error.message
+        detail = f"{detail}: {error.additionalDetails}"
+    return normalized_failure_summary(detail, http_status=http_status)
 
 
 def _shortened(text: str, limit: int) -> str:

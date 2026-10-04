@@ -21,7 +21,7 @@ PRE_COLLAPSE_HEAD_REVISION = db_module.PRE_COLLAPSE_HEAD_REVISION
 REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger the baseline builds.
-CURRENT_SCHEMA_OBJECT_COUNT = 56
+CURRENT_SCHEMA_OBJECT_COUNT = 58
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -502,6 +502,7 @@ def _database_at_previous_head(
     tree = _migration_tree(tmp_path, monkeypatch)
     for revision in sorted(shipped.glob("*.py")):
         if revision.name in {
+            "address_manager_wakes_to_principals.py",
             "baseline_2026_09_schema.py",
             "remove_redundant_ticket_and_item_storage.py",
         }:
