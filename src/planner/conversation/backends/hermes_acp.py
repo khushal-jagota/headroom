@@ -1096,7 +1096,7 @@ class HermesAcpBackendChild:
             raise
         except Exception as failure:
             ending = ConversationTurnEnding.failed
-            error_summary = normalized_failure_summary(failure)
+            error_summary = _hermes_failure_summary(failure)
         else:
             if str(response.stop_reason) == _CANCELLED_STOP_REASON:
                 ending = ConversationTurnEnding.interrupted
@@ -1408,6 +1408,11 @@ class HermesAcpBackendChild:
         if not self._standard_error:
             return None
         return "".join(self._standard_error)[-STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS:]
+
+
+def _hermes_failure_summary(failure: BaseException) -> str:
+    """Normalize the exception text that is Hermes' only failure evidence."""
+    return normalized_failure_summary(failure)
 
 
 class _AcpClientBridge:

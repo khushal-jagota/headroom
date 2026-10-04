@@ -2108,12 +2108,9 @@ class SqliteProcessConversationSystem:
                         )
                         if principal is not None
                     },
-                    automatic_notice=any(
-                        value is not None
-                        and value.startswith(
-                            ("supervisor_delivery_wake_", "panels_delivery_notice_")
-                        )
-                        for value in (
+                    automatic_notice=await self._store.all_sender_messages_are_manager_notices(
+                        state.record.conversation_id,
+                        (
                             sender_message_id,
                             *(message.sender_message_id for message in also_delivered),
                         )
@@ -2350,13 +2347,19 @@ class SqliteProcessConversationSystem:
                 ),
             )
             if (
-                reply_requested
-                and outcome.composed_content_delivered
-                and sender is not None
+                outcome.composed_content_delivered
                 and state.running_turn is not None
                 and state.running_turn.token == turn_token
             ):
-                state.running_turn.prompt_senders.setdefault(sender, None)
+                state.running_turn.automatic_notice = (
+                    state.running_turn.automatic_notice
+                    and await self._store.all_sender_messages_are_manager_notices(
+                        state.record.conversation_id,
+                        (sender_message_id,)
+                    )
+                )
+                if reply_requested and sender is not None:
+                    state.running_turn.prompt_senders.setdefault(sender, None)
             return PromptDeliveryInjected()
         if isinstance(outcome, BackendSteerRefused):
             await self._append_event(
@@ -2397,15 +2400,21 @@ class SqliteProcessConversationSystem:
             ),
         )
         if (
-            reply_requested
-            and outcome.composed_content_delivered
-            and sender is not None
+            outcome.composed_content_delivered
             and state.running_turn is not None
             and state.running_turn.token == turn_token
         ):
             # The backend may have accepted the text. Treating it as part of this turn
             # avoids a false silence marker and matches the delivery's non-retry fate.
-            state.running_turn.prompt_senders.setdefault(sender, None)
+            state.running_turn.automatic_notice = (
+                state.running_turn.automatic_notice
+                and await self._store.all_sender_messages_are_manager_notices(
+                    state.record.conversation_id,
+                    (sender_message_id,)
+                )
+            )
+            if reply_requested and sender is not None:
+                state.running_turn.prompt_senders.setdefault(sender, None)
         return PromptDeliveryUncertain()
 
     # --- turns --------------------------------------------------------------------------

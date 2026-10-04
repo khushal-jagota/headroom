@@ -128,11 +128,16 @@ async def deliver_batch(
 
             link_key = f"ticket:{target.id}" if agent_key is None else f"agent:{agent_key}"
             async with conversation_start.conversation_link_lock(link_key):
-                current = (
-                    ticket.conversation_id
-                    if agent_key is None
-                    else conversation_start.read_agent_conversation(conn, agent_key)
-                )
+                if agent_key is None:
+                    try:
+                        current = tickets_data.read_ticket(conn, target.id).conversation_id
+                    except PlannerError as error:
+                        if error.code is ErrorCode.not_found:
+                            data.close_undeliverable_batch(conn, batch.id, now=now())
+                            return False
+                        raise
+                else:
+                    current = conversation_start.read_agent_conversation(conn, agent_key)
                 if current is not None and await conversation_system.is_running(current):
                     data.release_pending_batch(conn, batch.id, process_token=process_token)
                     return False

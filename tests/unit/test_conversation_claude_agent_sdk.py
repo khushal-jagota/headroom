@@ -19,7 +19,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from claude_agent_sdk import TextBlock
+from claude_agent_sdk import ResultMessage, TextBlock
 from tests.support.conversation_claude_agent_sdk_bench import (
     ANOTHER_SESSION_ID,
     CLAUDE_MODEL,
@@ -37,6 +37,7 @@ from tests.support.conversation_claude_agent_sdk_bench import (
     real_claude_only,
 )
 
+from planner.conversation.backends.claude_agent_sdk import _result_error_summary
 from planner.conversation.backends.contracts import (
     BackendSteerAccepted,
     NeedsRebind,
@@ -101,6 +102,29 @@ def test_a_manager_wake_crosses_the_claude_adapter_with_its_sender_label(
         await child.stop()
 
     _run(exercise)
+
+
+def _failed_result(**changes: object) -> ResultMessage:
+    values: dict[str, object] = {
+        "subtype": "error_during_execution",
+        "duration_ms": 1,
+        "duration_api_ms": 1,
+        "is_error": True,
+        "num_turns": 1,
+        "session_id": SESSION_ID,
+    }
+    values.update(changes)
+    return ResultMessage(**values)  # type: ignore[arg-type]
+
+
+def test_claude_401_result_reports_authentication_rejection_without_guessing() -> None:
+    result = _failed_result(api_error_status=401, result="credential may be expired")
+    assert _result_error_summary(result) == "authentication was rejected (HTTP 401)"
+
+
+def test_claude_result_without_failure_detail_uses_the_honest_fallback() -> None:
+    result = _failed_result(subtype="")
+    assert _result_error_summary(result) == "the turn failed for an unknown reason"
 
 
 # --- the claude on this machine ------------------------------------------------------------------

@@ -40,6 +40,7 @@ from planner.manager_wakes.runtime import (
     deliver_batch,
     reconcile_batch_outcomes,
 )
+from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints.contracts import SprintItemSupervisorLaunchConfiguration
 from planner.tickets import data as tickets_data
@@ -232,6 +233,203 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
         "SELECT payload FROM conversation_events WHERE kind='prompt'"
     ).fetchall()
     assert any("provider unavailable" in str(row["payload"]) for row in prompts)
+
+
+def test_deleted_ticket_recipient_closes_its_undeliverable_notice(
+    tmp_db: Connection,
+) -> None:
+    source = tickets_data.create_ticket(
+        tmp_db,
+        title="Failed ticket",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Start",
+        stated_ceiling="needs_success_condition",
+    )
+    target = tickets_data.create_ticket(
+        tmp_db,
+        title="Deleted recipient",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Start",
+        stated_ceiling="needs_success_condition",
+    )
+    wake_data.create_turn_failure_wake(
+        tmp_db,
+        target=Principal(PrincipalKind.ticket, target.id),
+        ticket_id=source.id,
+        ticket_title=source.title,
+        conversation_id="conv-source",
+        event_sequence=1,
+        error_summary="failed",
+        now=2,
+    )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=3)
+    assert batch is not None
+    tmp_db.execute("DELETE FROM tickets WHERE id=?", (target.id,))
+    database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+
+    delivered = asyncio.run(
+        deliver_batch(
+            batch,
+            connect_database=lambda: connect(str(database_path)),
+            conversation_system=_DurableStartedConversationSystem(database_path),  # type: ignore[arg-type]
+            process_token="process",
+            now=lambda: 50,
+        )
+    )
+
+    assert delivered is False
+    assert tmp_db.execute(
+        "SELECT status FROM manager_wake_batches WHERE id=?", (batch.id,)
+    ).fetchone()[0] == "discarded"
+    assert _wake_rows(tmp_db)[0]["closed_at"] == 50
+
+
+def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
+    tmp_db: Connection,
+) -> None:
+    source = tickets_data.create_ticket(
+        tmp_db,
+        title="Failed ticket",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Start",
+        stated_ceiling="needs_success_condition",
+    )
+    target = tickets_data.create_ticket(
+        tmp_db,
+        title="Reset recipient",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Start",
+        stated_ceiling="needs_success_condition",
+    )
+    _current_ticket_conversation(tmp_db, target.id, "conv-before-reset")
+    wake_data.create_turn_failure_wake(
+        tmp_db,
+        target=Principal(PrincipalKind.ticket, target.id),
+        ticket_id=source.id,
+        ticket_title=source.title,
+        conversation_id="conv-source",
+        event_sequence=1,
+        error_summary="failed",
+        now=2,
+    )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="process", now=3)
+    assert batch is not None
+    database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+    system = _DurableStartedConversationSystem(database_path)
+
+    async def exercise() -> None:
+        lock = conversation_start.conversation_link_lock(f"ticket:{target.id}")
+        async with lock:
+            delivery = asyncio.create_task(
+                deliver_batch(
+                    batch,
+                    connect_database=lambda: connect(str(database_path)),
+                    conversation_system=system,  # type: ignore[arg-type]
+                    process_token="process",
+                    now=lambda: 50,
+                )
+            )
+            await asyncio.sleep(0)
+            tmp_db.execute(
+                "UPDATE tickets SET conversation_id=NULL WHERE id=?", (target.id,)
+            )
+        assert await delivery
+
+    asyncio.run(exercise())
+    current = tmp_db.execute(
+        "SELECT conversation_id FROM tickets WHERE id=?", (target.id,)
+    ).fetchone()[0]
+    assert current is not None and current != "conv-before-reset"
+
+
+def test_busy_ticket_target_releases_batch_and_restart_recovery_is_target_agnostic(
+    tmp_db: Connection,
+) -> None:
+    source = tickets_data.create_ticket(
+        tmp_db,
+        title="Failed ticket",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Start",
+        stated_ceiling="needs_success_condition",
+    )
+    target = tickets_data.create_ticket(
+        tmp_db,
+        title="Busy recipient",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="coding",
+        kickoff_note="Start",
+        stated_ceiling="needs_success_condition",
+    )
+    _current_ticket_conversation(tmp_db, target.id, "conv-busy-ticket")
+    wake_data.create_turn_failure_wake(
+        tmp_db,
+        target=Principal(PrincipalKind.ticket, target.id),
+        ticket_id=source.id,
+        ticket_title=source.title,
+        conversation_id="conv-source",
+        event_sequence=1,
+        error_summary="failed",
+        now=2,
+    )
+    batch = wake_data.claim_next_batch(tmp_db, process_token="old-process", now=3)
+    assert batch is not None
+    database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+
+    assert not asyncio.run(
+        deliver_batch(
+            batch,
+            connect_database=lambda: connect(str(database_path)),
+            conversation_system=_ActiveConversationSystem(database_path),  # type: ignore[arg-type]
+            process_token="old-process",
+            now=lambda: 4,
+        )
+    )
+    assert tmp_db.execute(
+        "SELECT count(*) FROM manager_wake_batches WHERE id=?", (batch.id,)
+    ).fetchone()[0] == 0
+
+    recovered = wake_data.claim_next_batch(tmp_db, process_token="old-process", now=5)
+    assert recovered is not None
+    wake_data.record_batch_offering(
+        tmp_db,
+        recovered.id,
+        conversation_id="conv-attempt",
+        process_token="old-process",
+        now=6,
+    )
+    wake_data.record_batch_accepted(
+        tmp_db,
+        recovered.id,
+        conversation_id="conv-attempt",
+        process_token="old-process",
+        now=6,
+    )
+    assert wake_data.recover_accepted_batches_from_other_processes(
+        tmp_db, process_token="new-process", now=7
+    ) == 1
+    row = tmp_db.execute(
+        "SELECT status,conversation_id,process_token,target_kind,target_id "
+        "FROM manager_wake_batches WHERE id=?",
+        (recovered.id,),
+    ).fetchone()
+    assert tuple(row) == ("pending", None, None, "ticket", target.id)
 
 
 class _DurableStartedConversationSystem:

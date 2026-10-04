@@ -18,6 +18,35 @@ def test_multiline_provider_detail_is_one_bounded_redacted_line() -> None:
     assert len(summary) <= 240
 
 
+def test_known_http_status_without_detail_remains_specific() -> None:
+    assert normalized_failure_summary(None, http_status=503) == (
+        "the provider request failed (HTTP 503)"
+    )
+
+
+def test_quoted_json_credentials_with_spaces_do_not_leak_value_tails() -> None:
+    detail = (
+        'request failed: {"api_key": "secret value with tail", '
+        '"authorization": "Bearer another secret tail", "cause": "denied"}'
+    )
+    summary = normalized_failure_summary(detail)
+    assert "secret value" not in summary
+    assert "another secret" not in summary
+    assert "with tail" not in summary
+    assert '"cause": "denied"' in summary
+
+
+def test_compound_credential_names_are_redacted() -> None:
+    detail = (
+        'access_token="one value", refresh_token="two value", '
+        'client_secret="three value", OPENAI_API_KEY="four value"'
+    )
+    summary = normalized_failure_summary(detail)
+    for secret in ("one value", "two value", "three value", "four value"):
+        assert secret not in summary
+    assert summary.count("[redacted]") == 4
+
+
 def test_codex_structured_unauthorized_error_names_rejection_not_expiry() -> None:
     summary = _error_summary(
         bindings.TurnError(

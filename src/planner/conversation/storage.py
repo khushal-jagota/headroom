@@ -211,13 +211,7 @@ class ConversationStore:
         self, conversation_id: str, sender_message_ids: tuple[str, ...]
     ) -> int:
         """Durably mark Panels wake messages before a held delivery can reach a backend."""
-        wake_ids = tuple(
-            sender_message_id
-            for sender_message_id in sender_message_ids
-            if sender_message_id.startswith(
-                ("supervisor_delivery_wake_", "panels_delivery_notice_")
-            )
-        )
+        wake_ids = tuple(dict.fromkeys(sender_message_ids))
         if not wake_ids:
             return 0
         return await asyncio.to_thread(
@@ -225,6 +219,36 @@ class ConversationStore:
             conversation_id,
             wake_ids,
         )
+
+    async def all_sender_messages_are_manager_notices(
+        self, conversation_id: str, sender_message_ids: tuple[str | None, ...]
+    ) -> bool:
+        """Confirm that every delivered message names a durable internal notice batch."""
+        if not sender_message_ids or any(value is None for value in sender_message_ids):
+            return False
+        unique_ids = tuple(
+            dict.fromkeys(value for value in sender_message_ids if value is not None)
+        )
+        return await asyncio.to_thread(
+            self._all_sender_messages_are_manager_notices_sync,
+            conversation_id,
+            unique_ids,
+        )
+
+    def _all_sender_messages_are_manager_notices_sync(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> bool:
+        placeholders = ",".join("?" for _ in sender_message_ids)
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                f"SELECT count(*) FROM manager_wake_batches "
+                f"WHERE conversation_id=? AND sender_message_id IN ({placeholders})",
+                (conversation_id, *sender_message_ids),
+            ).fetchone()
+        finally:
+            conn.close()
+        return row is not None and int(row[0]) == len(sender_message_ids)
 
     def _mark_held_sender_messages_leaving_queue_sync(
         self, conversation_id: str, sender_message_ids: tuple[str, ...]

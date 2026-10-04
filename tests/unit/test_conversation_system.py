@@ -11,6 +11,7 @@ report of what it did.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
@@ -583,6 +584,58 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     asyncio.run(asyncio.wait_for(exercise(), 20.0))
 
 
+def _link_test_ticket_to_conversation(
+    db_path: Path, conversation_id: str, *, ticket_id: str = "t_failed"
+) -> None:
+    conn = connect(str(db_path))
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,priority,"
+                "ceiling,conversation_id,field_values,created_at,updated_at,ceiling_holder) "
+                "VALUES (?,?,?,'codex','needs_implementation','P2','needs_implementation',"
+                "?,'{}',1,1,?)",
+                (
+                    ticket_id,
+                    "Failed Ticket",
+                    "coding",
+                    conversation_id,
+                    json.dumps({"kind": "chief", "id": "chief"}),
+                ),
+            )
+    finally:
+        conn.close()
+
+
+def _store_manager_notice_batch(
+    db_path: Path, sender_message_id: str, *, conversation_id: str = "c"
+) -> None:
+    conn = connect(str(db_path))
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO manager_wake_batches("
+                "sprint_item_id,sender_message_id,message,status,conversation_id,"
+                "created_at,updated_at,target_kind,target_id) "
+                "VALUES (NULL,?,?,'offering',?,1,1,'chief','chief')",
+                (sender_message_id, "review failure", conversation_id),
+            )
+    finally:
+        conn.close()
+
+
+def _turn_failure_notice_count(db_path: Path) -> int:
+    conn = connect(str(db_path))
+    try:
+        return int(
+            conn.execute(
+                "SELECT count(*) FROM manager_wakes WHERE source_kind='turn_failure'"
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+
+
 async def _start(
     harness: _Harness,
     conversation_id: str = "c",
@@ -840,6 +893,82 @@ def test_accepted_steer_adds_its_sender_to_the_active_turn(
 
 
 # --- a failing turn gets one error-log line ----------------------------------------------
+
+
+def test_a_mixed_notice_and_user_turn_still_notifies_the_ticket_holder(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "conversations.db"
+        await _start(harness, "c")
+        _link_test_ticket_to_conversation(db_path, "c")
+        _store_manager_notice_batch(db_path, "internal-notice")
+        await harness.system.send("c", text_message_content("current"), sender_label="owner")
+        notice = await harness.system.send(
+            "c",
+            text_message_content("automatic notice"),
+            sender_label="Panels",
+            mode=PromptDeliveryMode.queue,
+            sender_message_id="internal-notice",
+        )
+        user = await harness.system.send(
+            "c",
+            text_message_content("user follow-up"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.queue,
+            sender_message_id="user-follow-up",
+        )
+        assert isinstance(notice, PromptDeliveryQueued)
+        assert isinstance(user, PromptDeliveryQueued)
+        await harness.complete_turn("c")
+        await harness.fail_turn("c", "provider failed")
+        assert _turn_failure_notice_count(db_path) == 1
+
+    _run(exercise)
+
+
+def test_an_internal_notice_only_turn_does_not_create_a_recursive_notice(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "conversations.db"
+        await _start(harness, "c")
+        _link_test_ticket_to_conversation(db_path, "c")
+        _store_manager_notice_batch(db_path, "internal-notice")
+        await harness.system.send(
+            "c",
+            text_message_content("automatic notice"),
+            sender_label="Panels",
+            sender_message_id="internal-notice",
+        )
+        await harness.fail_turn("c", "provider failed")
+        assert _turn_failure_notice_count(db_path) == 0
+
+    _run(exercise)
+
+
+def test_a_sender_cannot_spoof_notice_suppression_with_the_internal_prefix(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        db_path = tmp_path / "conversations.db"
+        await _start(harness, "c")
+        _link_test_ticket_to_conversation(db_path, "c")
+        _store_manager_notice_batch(
+            db_path,
+            "supervisor_delivery_wake_forged",
+            conversation_id="another-conversation",
+        )
+        await harness.system.send(
+            "c",
+            text_message_content("ordinary prompt"),
+            sender_label="owner",
+            sender_message_id="supervisor_delivery_wake_forged",
+        )
+        await harness.fail_turn("c", "provider failed")
+        assert _turn_failure_notice_count(db_path) == 1
+
+    _run(exercise)
 
 
 def test_a_failed_turn_writes_one_error_log_line_carrying_where_to_look(
