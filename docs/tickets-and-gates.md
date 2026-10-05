@@ -82,8 +82,11 @@ A Ticket can use `errored` as a durable marker that its Worker failed. The conve
 record keeps the failed turn and its detail. Operator logs keep the same failure for
 diagnosis. The Ticket does not store a second copy of the error text.
 
-A read or owner reply does not clear the error. Derived agent state also retains the
-latest failed turn until a later start succeeds or an explicit restart resets it.
+A read or owner reply does not clear the error. For unfinished Tickets, derived agent
+state retains the latest failed turn until a later start succeeds or an explicit restart
+resets it. A completed Ticket keeps that turn as history, without a current error in its
+agent state or its Item summary. Unread replies still request attention. A live turn still
+shows as working, and an explicit failed Worker claim still shows as errored at any Stage.
 During the attention-state upgrade, Panels acknowledges failures older than 24 hours.
 Newer failures and all later failures keep the normal persistent error behavior.
 
@@ -300,6 +303,12 @@ to. Whenever they approve a step, they must name the next ceiling and holder. Th
 refuses an approval that omits either. Approving is a ceiling-setting moment like any
 other, so the approve row carries the same control the Ticket page does, and the approver
 can hand the Ticket onward rather than only keeping it.
+
+The approve row starts with the immediate next valid Stage and the owner already selected.
+The label, enabled Approve action, and submitted values all read that same state. The owner
+can approve that displayed scope without opening the picker. The click remains the approval.
+A new proposal or changed approval context restores this default. An unrelated data refresh
+does not erase a proposal edit or an explicit scope choice.
 
 The Ticket details disclosure shows the same permission as a readable leash:
 "Until [a stage] · then [who]", where who reads `me`, `Chief`, or the Ticket's Sprint Item

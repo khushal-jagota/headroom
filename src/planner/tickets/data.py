@@ -373,6 +373,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         pending_proposal=fields_codec.proposal_from_json(row["pending_proposal"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        pending_proposal_revision=int(row["pending_proposal_revision"]),
         worker_type=worker_type,
         employee_backend=str(row["employee_backend"]),
         employee_launch_model=(

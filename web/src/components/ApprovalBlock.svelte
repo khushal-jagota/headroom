@@ -6,7 +6,7 @@
   import InlineEdit from "./InlineEdit.svelte";
   import CeilingPicker from "./CeilingPicker.svelte";
   import { OWNER_HOLDER } from "../lib/ceilingHolder";
-  import { fieldLabelFor, type Lifecycle } from "../lib/lifecycle";
+  import { fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import type { Principal } from "../lib/types";
 
   let {
@@ -14,6 +14,8 @@
     whatLabel = "",
     proposalBody = "",
     proposedBy = "",
+    proposalCreatedAt = null,
+    proposalRevision = null,
     note = "",
     newStage = null,
     lifecycle = null,
@@ -29,6 +31,8 @@
     whatLabel?: string;
     proposalBody?: string | null;
     proposedBy?: string;
+    proposalCreatedAt?: number | null;
+    proposalRevision?: number | null;
     note?: string | null;
     newStage?: string | null;
     lifecycle?: Lifecycle | null;
@@ -42,7 +46,7 @@
   } = $props();
 
   let draft = $state("");
-  let lastProposalBody = $state<string | null>(null);
+  let lastApprovalKey = $state<string | null>(null);
   let ceiling = $state<string | null>(null);
   // Approving is a ceiling-setting moment, so it offers the same choices as any other.
   // This used to send `owner` no matter what the screen showed, which meant a proposal
@@ -54,9 +58,24 @@
   let reviewLayout = $derived(layout === "review");
   let hasNote = $derived(Boolean(onNoteSave) || Boolean((note || "").trim()));
   let contentTitle = $derived(whatLabel || fieldLabelFor(lifecycle, field));
+  let preferredCeiling = $derived(preferredScopeCeilingFor(lifecycle, newStage));
+  // Query refetches rebuild the lifecycle object. The reset boundary uses only the
+  // proposal's stored identity and the primitive values that change valid approval
+  // scope, so an unrelated refresh cannot erase an edit or an explicit picker choice.
+  let approvalContextKey = $derived(
+    lifecycle && newStage && preferredCeiling
+      ? [
+          lifecycle.workerType,
+          newStage,
+          lifecycle.stageOrder.join(","),
+          lifecycle.ceilingRange.join(","),
+          sprintItem?.id || ""
+        ].join("|")
+      : null
+  );
 
   let actionDisabled = $derived(
-    disabled || inFlight || resolved || ceiling === null
+    disabled || inFlight || resolved || approvalContextKey === null || ceiling === null
   );
 
   // The edit stays here until it is approved. A proposal has two outcomes, approve or
@@ -72,7 +91,10 @@
   }
 
   async function approve(): Promise<void> {
+    if (actionDisabled) return;
     const ceilingForApproval = ceiling;
+    const holderForApproval = holder;
+    if (!approvalContextKey || !ceilingForApproval) return;
     inFlight = true;
     error = null;
     try {
@@ -80,9 +102,8 @@
       if (draft !== (proposalBody || "")) {
         payload.edited_body = draft;
       }
-      if (!ceilingForApproval) return;
       payload.next_ceiling = ceilingForApproval;
-      payload.next_holder = holder;
+      payload.next_holder = holderForApproval;
       await onApprove?.(payload);
       resolved = true;
     } catch (err) {
@@ -93,13 +114,15 @@
   }
 
   $effect(() => {
-    const incoming = proposalBody || "";
-    if (incoming !== lastProposalBody) {
-      lastProposalBody = incoming;
-      draft = incoming;
-      ceiling = null;
+    if (proposalCreatedAt === null || !approvalContextKey || !preferredCeiling) return;
+    const nextApprovalKey = `${field}:${proposalCreatedAt}:${proposalRevision ?? ""}:${approvalContextKey}`;
+    if (nextApprovalKey !== lastApprovalKey) {
+      lastApprovalKey = nextApprovalKey;
+      draft = proposalBody || "";
+      ceiling = preferredCeiling;
       holder = OWNER_HOLDER;
       resolved = false;
+      error = null;
     }
   });
 </script>
@@ -143,23 +166,7 @@
           {#if proposedBy}<span class="approval-what-by">proposed by {proposedBy}</span>{/if}
         </div>
         <div class="approval-draft">
-          <InlineEdit
-            value={draft}
-            markdown
-            multiline
-            placeholder={`${contentTitle || "Proposal"}...`}
-            dataEdit
-            onCancel={resetDraft}
-            onSave={saveDraft}
-          />
-        </div>
-        {#if contextRow}
-          <div class="approval-context-row" data-approval-context-row>{@render contextRow()}</div>
-        {/if}
-        {@render actionGroup(false)}
-      {:else}
-        <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
-          <div class="approval-draft">
+          {#key lastApprovalKey}
             <InlineEdit
               value={draft}
               markdown
@@ -169,6 +176,26 @@
               onCancel={resetDraft}
               onSave={saveDraft}
             />
+          {/key}
+        </div>
+        {#if contextRow}
+          <div class="approval-context-row" data-approval-context-row>{@render contextRow()}</div>
+        {/if}
+        {@render actionGroup(false)}
+      {:else}
+        <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
+          <div class="approval-draft">
+            {#key lastApprovalKey}
+              <InlineEdit
+                value={draft}
+                markdown
+                multiline
+                placeholder={`${contentTitle || "Proposal"}...`}
+                dataEdit
+                onCancel={resetDraft}
+                onSave={saveDraft}
+              />
+            {/key}
           </div>
         </Disclosure>
         {#if contextRow}

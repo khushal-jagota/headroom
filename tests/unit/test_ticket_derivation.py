@@ -80,3 +80,35 @@ def _db(tmp_path: Path) -> sqlite3.Connection:
     conn = connect(str(tmp_path / "derivation.db"))
     create_schema(conn)
     return conn
+
+
+@pytest.mark.parametrize("stage", ["done", "needs_implementation"])
+@pytest.mark.parametrize(
+    ("status", "running", "failed", "expected"),
+    [
+        (TicketStatus.empty, False, False, "idle"),
+        (TicketStatus.empty, False, True, None),
+        (TicketStatus.empty, True, True, "working"),
+        (TicketStatus.errored, False, False, "errored"),
+        (TicketStatus.errored, False, True, "errored"),
+        (TicketStatus.errored, True, True, "working"),
+    ],
+)
+def test_agent_state_separates_historical_failure_from_current_claim(
+    stage: str,
+    status: TicketStatus,
+    running: bool,
+    failed: bool,
+    expected: str | None,
+) -> None:
+    if expected is None:
+        expected = "idle" if stage == "done" else "errored"
+    assert (
+        derivation.agent_state(
+            status,
+            stage=stage,
+            turn_is_running=running,
+            last_turn_failed=failed,
+        ).value
+        == expected
+    )

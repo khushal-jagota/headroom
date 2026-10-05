@@ -53,8 +53,11 @@ One screen per part of the system:
   to do. Yours is a stage the ticket's worker type gives to the user rather than to a
   worker. A ticket appears in only its first applicable group. Owner approval, an owner
   answer, assignment, and an unread reply take precedence in that order. Errored follows
-  those groups. Broken means the ticket is errored, or its last turn ended failed. Empty
-  groups are not drawn.
+  those groups. Errored means the Ticket has a failed Worker claim, or an unfinished
+  Ticket has a latest failed turn. A completed Ticket keeps its old failure in conversation
+  history without a current error in its row or its Item summary. Unread replies and live
+  activity still show, and a Supervisor's own failure stays independent. Empty groups are
+  not drawn.
   Every ticket outside these groups follows in the existing status order, so no ticket
   becomes unreachable.
 
@@ -460,7 +463,10 @@ hand-rolling the same shapes per screen. Each does one job:
 - **StageMark** — the single stage dot showing a field's progress.
 - **ApprovalBlock** — the approval surface: an editable proposal draft, the ceiling
   picker, the holder control, and the approve/accept action. Approving names the next
-  ceiling and its holder together; naming no holder keeps it with the approver.
+  ceiling and its holder together. Its displayed immediate-next Stage and owner are the
+  actual bound values, so Approve can submit them without a picker interaction. A new
+  proposal or changed lifecycle context resets them. An unrelated refresh preserves an
+  edit or explicit scope choice.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the priority control on a Brief, the approval control, and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same

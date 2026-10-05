@@ -78,19 +78,23 @@
 
 {#snippet stageBody()}
   {#if isGating && hasProposal}
-    <ApprovalBlock
-      layout="review"
-      field={name}
-      whatLabel={fieldLabel}
-      proposalBody={pendingProposal?.body || ""}
-      proposedBy={pendingProposal?.proposed_by || ""}
-      newStage={nextStage}
-      {lifecycle}
-      {sprintItem}
-      {contextRow}
-      disabled={approvalDisabled}
-      onApprove={onAccept}
-    />
+    {#key `${pendingProposal?.field}:${pendingProposal?.created_at}:${pendingProposal?.revision ?? ""}`}
+      <ApprovalBlock
+        layout="review"
+        field={name}
+        whatLabel={fieldLabel}
+        proposalBody={pendingProposal?.body || ""}
+        proposedBy={pendingProposal?.proposed_by || ""}
+        proposalCreatedAt={pendingProposal?.created_at ?? null}
+        proposalRevision={pendingProposal?.revision ?? null}
+        newStage={nextStage}
+        {lifecycle}
+        {sprintItem}
+        {contextRow}
+        disabled={approvalDisabled}
+        onApprove={onAccept}
+      />
+    {/key}
   {:else}
     {#if canCompleteGate && editableValue && onCompleteGate}
       <div class="ticket-field-value">

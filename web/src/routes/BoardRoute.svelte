@@ -107,21 +107,10 @@
       : null
   );
 
-  // Awake beats rested: a done Item that needs the user, is mid-turn, or holds a
-  // reply this browser has not seen yet stays with the live Items.
+  // Attention keeps a completed Item's title awake without changing its position.
   function itemIsAwake(item: WorkspaceRailItem): boolean {
     return item.mark !== null;
   }
-
-  // A stable partition, not a re-sort: live-or-awake Items keep rail.items's
-  // priority-then-age order, then rested-and-quiet Items follow in that same order.
-  function partitionByRest(items: readonly WorkspaceRailItem[]): WorkspaceRailItem[] {
-    const live = items.filter((item) => !item.rested || itemIsAwake(item));
-    const rested = items.filter((item) => item.rested && !itemIsAwake(item));
-    return [...live, ...rested];
-  }
-
-  let orderedItems = $derived(partitionByRest(rail.items));
 </script>
 
 {#snippet ticketRow(card: WorkItemTicketFacts, withPriority: boolean, insideItemId: string | null)}
@@ -293,7 +282,7 @@
           {#if opening.view === "tickets"}
             {@render ticketGroups(rail.groups, true, null)}
           {:else}
-            {#each orderedItems as item (item.id)}
+            {#each rail.items as item (item.id)}
               {@render sprintItem(item)}
             {/each}
           {/if}

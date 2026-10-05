@@ -294,40 +294,35 @@ with sync_playwright() as p:
     # over it, because an edited proposal is approved as the edit or it is nothing.
     expect(page.locator('[data-approval-block][data-field="success_condition"]')).to_contain_text('A result')
     assert page.locator('[data-accept]').count() == 1
-    # Approving sets the next ceiling, so it offers the same two choices the leash does.
-    # The holder used to be hard-coded to the user here, so a proposal approved in the
-    # browser could only ever stay in Khushal's own queue.
+    # Approving starts from the immediate next Stage and the owner. The visible value is
+    # the value that will be sent, so the owner does not need to reselect it.
     approve_row=page.locator('[data-approval-block][data-field="success_condition"] .approval-control-group')
     assert approve_row.locator('[data-scope-ceiling]').count() == 1
+    assert approve_row.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Done · then me'
+    assert not page.locator('[data-approval-block][data-field="success_condition"] [data-accept]').is_disabled()
+    # A half-finished change is still a draft. Escape restores the bound default.
     approve_row.locator('[data-scope-ceiling]').click()
     expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
-    # The reviewer can be answered first. Approving still needs a stage, so the panel
-    # asks for the half that is missing rather than taking a default.
-    approve_row.locator('[data-ceiling-part="holder"]').click()
-    approve_row.locator('[data-ceiling-picker-choice="chief"]').click()
-    expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
-    assert page.locator('[data-approval-block][data-field="success_condition"] [data-accept]').is_disabled()
-    # Dismissed by a click elsewhere, that reviewer was never chosen: the control keeps
-    # nothing, and reopening offers the Ticket's own reviewer again.
-    page.locator('[data-approval-block][data-field="success_condition"] [data-content-section="proposal"]').click()
+    approve_row.locator('[data-ceiling-picker-choice="none"]').click()
+    expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    approve_row.get_by_role('listbox').press('Escape')
     expect(approve_row.get_by_role('listbox')).to_have_count(0)
-    assert approve_row.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Choose ceiling · then me'
-    assert page.locator('[data-approval-block][data-field="success_condition"] [data-accept]').is_disabled()
+    assert approve_row.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Done · then me'
+    # Changing only the reviewer keeps the default ceiling and commits the holder.
     approve_row.locator('[data-scope-ceiling]').click()
     approve_row.locator('[data-ceiling-part="holder"]').click()
     assert approve_row.locator('[role="option"][aria-selected="true"]').get_attribute('data-ceiling-picker-choice') == 'owner'
-    approve_row.locator('[data-ceiling-part="ceiling"]').click()
-    approve_row.locator('[data-ceiling-picker-choice="done"]').click()
-    expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     assert [option.get_attribute('data-ceiling-picker-choice') for option in approve_row.locator('[role="option"]').all()] == [
         'owner', 'chief', 'outcome_kept'
     ]
     approve_row.locator('[data-ceiling-picker-choice="chief"]').click()
+    assert approve_row.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Done · then Chief'
     page.locator('[data-approval-block][data-field="success_condition"] [data-accept]').click()
     for _ in range(100):
         if approvals: break
         page.wait_for_timeout(50)
     assert len(approvals) == 1
+    assert approvals[0]['next_ceiling'] == 'done'
     assert approvals[0]['next_holder'] == {'kind': 'chief', 'id': 'chief'}
     # Declared ownership is Config's to show and nobody's to edit: the Stage table is
     # display-only, so who owns a Stage cannot be changed from the screen that reads it.
