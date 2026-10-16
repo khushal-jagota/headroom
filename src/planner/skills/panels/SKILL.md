@@ -53,6 +53,11 @@ elsewhere are not a requirement. Before the turn ends, run each exact
 satisfy this requirement. If delivery fails,
 report the failure before the turn ends.
 
+Khushal reads only what an agent sends with `panels send-message`. A turn's own prose, a
+final response, and a status summary are runtime output that no one else reads. An unsent
+question is an unasked question. Never report that you raised, asked, or discussed a point
+that exists only in your own output.
+
 ## Ticket-owned artifacts
 
 A ticket can own durable work products such as HTML, images, Markdown documents, and other files. For this live Panels instance, write them to `/home/vps/Deployments/Panels/current/data/files/tickets/<ticket-id>/<relative-path>` and link them in ticket Markdown as `/files/tickets/<ticket-id>/<relative-path>`, for example `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Never write ticket artifacts under a source checkout's `data/...`, a ticket worktree's `data/...`, or another path inferred from the current directory. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
