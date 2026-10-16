@@ -203,11 +203,12 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             ticket["title"]
         )
         assert right.locator(".sprint-workspace-title-mark").count() == 0
-        # Request visible child rows without assuming a group's initial disclosure state.
+        # Unfinished groups arrive open. The two approval holders remain distinct.
         for key in ("awaiting_approval", "status_awaiting_approval"):
             group = right.locator(f'[data-workspace-group="{key}"]')
-            if not group.evaluate("element => element.open"):
-                group.locator(":scope > summary").click(timeout=WAIT_MS)
+            expect(group).to_have_attribute("open", "")
+            expect(group.locator("[data-group-count]")).to_have_text("1")
+            expect(group.locator("[data-group-count]")).to_be_visible()
         expect(right.get_by_text(tickets[1]["title"], exact=True)).to_be_visible(timeout=WAIT_MS)
         page.screenshot(path=str(EVIDENCE / "approvals-child-message.png"), full_page=True)
 
