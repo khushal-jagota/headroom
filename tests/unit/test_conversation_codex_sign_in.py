@@ -455,6 +455,85 @@ def test_a_success_delivered_while_a_cancel_is_settling_is_not_lost(tmp_path: Pa
         _run(exercise)
 
 
+def test_a_success_delivered_while_the_consumer_waits_for_the_lock_is_not_lost(
+    tmp_path: Path,
+) -> None:
+    """The second ordering, and the narrowest one.
+
+    The child reports success and only then answers the cancel, so the completion is
+    delivered while ``cancel`` is still holding the service lock waiting for that answer.
+    The consumer is woken and blocks on the lock. Settling then cancels that consumer.
+
+    An earlier version took the event off a queue before waiting for the lock, so the
+    consumer held the only copy in a local variable and cancelling it destroyed the
+    evidence: the drain found an empty queue and reported ``ended``. Nothing is removed
+    outside the lock now, so the event is still there to be taken in.
+    """
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    script = {
+        "complete_before_cancel_answer": {"success": True},
+        "cancel_delay_seconds": 0.5,
+    }
+    with _codex_home(home), _scripted_sign_in(tmp_path, script) as resolve_argv:
+        service = _service(resolve_argv)
+
+        async def exercise() -> None:
+            started = await service.start()
+            # The browser step landed. The credential is really on disk.
+            _write_login(home, last_refresh="after")
+            settled = await service.cancel(started.session_id)
+            assert settled.state is SignInState.confirmed
+            assert settled.account_label == "owner@example.invalid"
+
+        _run(exercise)
+
+
+def test_a_failure_delivered_while_the_consumer_waits_for_the_lock_still_ends_it(
+    tmp_path: Path,
+) -> None:
+    """The same ordering with no credential behind it must not become a success."""
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    script = {
+        "complete_before_cancel_answer": {"success": False, "error": "user declined"},
+        "cancel_delay_seconds": 0.5,
+    }
+    with _codex_home(home), _scripted_sign_in(tmp_path, script) as resolve_argv:
+        service = _service(resolve_argv)
+
+        async def exercise() -> None:
+            started = await service.start()
+            settled = await service.cancel(started.session_id)
+            assert settled.state is SignInState.ended
+            assert settled.detail is not None
+            assert "user declined" in settled.detail
+
+        _run(exercise)
+
+
+def test_a_foreign_success_delivered_in_that_same_window_is_dropped(
+    tmp_path: Path,
+) -> None:
+    """Closing the window did not weaken correlation inside it."""
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    script = {
+        "complete_before_cancel_answer": {"success": True, "login_id": "some-other-login"},
+        "cancel_delay_seconds": 0.5,
+    }
+    with _codex_home(home), _scripted_sign_in(tmp_path, script) as resolve_argv:
+        service = _service(resolve_argv)
+
+        async def exercise() -> None:
+            started = await service.start()
+            _write_login(home, last_refresh="after")
+            settled = await service.cancel(started.session_id)
+            assert settled.state is SignInState.ended
+
+        _run(exercise)
+
+
 def test_a_success_delivered_while_the_server_shuts_down_is_not_lost(tmp_path: Path) -> None:
     """Shutdown settles rather than abandons, for the same reason cancel does."""
     home = tmp_path / "home"

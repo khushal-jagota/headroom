@@ -163,16 +163,23 @@ class _Session:
     account_label: str | None = None
     verification_url: str | None = None
     user_code: str | None = None
-    # Everything the child says, queued the instant it arrives and acted on later.
+    # Everything the child has said and nobody has acted on yet.
     #
-    # This queue is the fix for a deadlock, and the reason is worth keeping: the reader
-    # that routes an answer to ``account/login/start`` is the same reader that delivers a
-    # completion. If delivering a completion had to wait for the service lock, and the
-    # lock were held by the start that is waiting for that reader to route its answer,
-    # neither would ever move. So the wire's end only ever enqueues, and a consumer task
-    # takes the lock afterwards. A completion that overtakes its own start response waits
-    # here until there is a login id to correlate it against.
-    inbox: asyncio.Queue[_FromTheChild] = field(default_factory=asyncio.Queue)
+    # This exists for a deadlock, and it is a list rather than a queue for a second bug.
+    #
+    # The deadlock: the reader that routes the answer to ``account/login/start`` is the
+    # same reader that delivers a completion. If delivering one had to wait for the
+    # service lock, and the lock were held by the start waiting for that reader to route
+    # its answer, neither would ever move. So the wire's end only appends and sets
+    # ``arrived``, and a consumer takes the lock afterwards.
+    #
+    # Why not a queue: taking from a queue removes the item, and the consumer then has to
+    # wait for the lock while holding it in a local variable. A settle that cancels the
+    # consumer in that window destroys the only copy — which lost a success that landed in
+    # the same instant as a cancel. Nothing is ever removed outside the lock here, so
+    # every delivered event survives the consumer being cancelled at any point.
+    delivered: list[_FromTheChild] = field(default_factory=list)
+    arrived: asyncio.Event = field(default_factory=asyncio.Event)
     completion: login_bindings.AccountLoginCompletedNotification | None = None
     child_ended: bool = False
     # Set by the reaper before it settles. The wording used to infer this by comparing a
@@ -380,17 +387,18 @@ class CodexSignInService:
             session = self._session
             if session is None or session.sequence != sequence:
                 return
-            said = await session.inbox.get()
+            await session.arrived.wait()
             async with self._lock:
                 current = self._current(sequence)
                 if current is None:
                     # The session this belonged to has been replaced. Old news gets
                     # nothing back, so it cannot clear or rewrite what replaced it.
                     return
-                if said.child_ended:
-                    await self._take_the_child_ending(current)
-                elif said.completion is not None:
-                    await self._take_a_completion(current, said.completion)
+                for said in self._take_what_is_delivered(current):
+                    if said.child_ended:
+                        await self._take_the_child_ending(current)
+                    elif said.completion is not None:
+                        await self._take_a_completion(current, said.completion)
                 if current.state.is_terminal:
                     return
 
@@ -474,23 +482,37 @@ class CodexSignInService:
         session.account_label = reading.account_label
         return session.view()
 
-    def _take_in_what_was_already_delivered(self, session: _Session) -> None:
-        """Drain the inbox, keeping what this session owns.
+    @staticmethod
+    def _take_what_is_delivered(session: _Session) -> list[_FromTheChild]:
+        """Everything said since the last look, removed under the lock and only there.
 
-        The consumer is gone by now, so this is the last chance anything queued has to be
-        read. Correlation is unchanged: a completion carrying another session's login id is
+        Both readers of a session's events go through here — the consumer and the settle —
+        so there is exactly one moment an event stops being recoverable, and it is a
+        moment the lock is held. That is what makes cancelling the consumer safe at any
+        point.
+        """
+        taken = list(session.delivered)
+        session.delivered.clear()
+        session.arrived.clear()
+        return taken
+
+    def _take_in_what_was_already_delivered(self, session: _Session) -> None:
+        """Take in what the child said that nobody has acted on yet.
+
+        The consumer is stopped by now, so this is the last chance anything delivered has
+        to be read — including an event the consumer had already been woken for. Nothing
+        was removed outside the lock, so there is nothing for its cancellation to have
+        destroyed.
+
+        Correlation is unchanged: a completion carrying another session's login id is
         dropped here exactly as the consumer would have dropped it.
 
-        A reported success outranks a reported failure among what is drained. Two
+        A reported success outranks a reported failure among what is taken in. Two
         completions for one login id means the child said both, and a success is the one
         that implies a credential may have been written — so it is the one that must not be
         the dropped one.
         """
-        while True:
-            try:
-                said = session.inbox.get_nowait()
-            except asyncio.QueueEmpty:
-                return
+        for said in self._take_what_is_delivered(session):
             if said.child_ended:
                 session.child_ended = True
                 continue
@@ -499,7 +521,7 @@ class CodexSignInService:
                 continue
             if completion.loginId is not None and completion.loginId != session.login_id:
                 LOGGER.warning(
-                    "codex sign-in: dropped a queued %s for a login id this session "
+                    "codex sign-in: dropped a delivered %s for a login id this session "
                     "does not own",
                     COMPLETED_NOTIFICATION,
                 )
@@ -634,8 +656,13 @@ class _SignInMessages(CodexServerMessageHandler):
         self._enqueue(_FromTheChild(child_ended=True))
 
     def _enqueue(self, said: _FromTheChild) -> None:
-        """Hand it over without waiting for anything. The reader must never block."""
+        """Hand it over without waiting for anything. The reader must never block.
+
+        An append and a flag, both synchronous. Nothing here takes the service lock, and
+        nothing here can be cancelled midway in a way that loses the event.
+        """
         session = self._session
         if session is None:  # pragma: no cover - bound before the child is started
             return
-        session.inbox.put_nowait(said)
+        session.delivered.append(said)
+        session.arrived.set()

@@ -73,6 +73,15 @@ class SignInDouble:
             await self._start_a_login(request_id)
             return
         if method == "account/login/cancel":
+            # Reporting success *before* answering the cancel is the ordering that
+            # matters: the service is holding its lock waiting for this answer, so the
+            # completion lands in the window where its consumer cannot act on it.
+            before = self._script.get("complete_before_cancel_answer")
+            if before:
+                await self._send_completion(before)
+            delay = self._script.get("cancel_delay_seconds")
+            if delay:
+                await asyncio.sleep(float(delay))
             await self._answer(request_id, {"status": self._cancel_status})
             if self._script.get("complete_after_cancel"):
                 await self._send_completion(self._script["complete_after_cancel"])

@@ -3,6 +3,7 @@
   import UsageRings from "../components/conversation/UsageRings.svelte";
   import { backendIdentityNote, type BackendIdentityNote } from "../lib/conversation/backendIdentity";
   import {
+    BACKENDS_PAGE_SURROUNDINGS,
     backendCanBeSignedIn,
     signInCaveat,
     signInIsPending,
@@ -276,7 +277,7 @@
                   data-backend-sign-in-cancel={snapshot.backend_key}
                 >Cancel sign-in</button>
               {:else}
-                {@const caveat = signInCaveat(snapshot)}
+                {@const caveat = signInCaveat(snapshot, BACKENDS_PAGE_SURROUNDINGS)}
                 {#if caveat}
                   <p class="sign-in-caveat" data-backend-sign-in-caveat>{caveat}</p>
                 {/if}

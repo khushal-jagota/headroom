@@ -313,3 +313,121 @@ describe("starting and cancelling", () => {
     expect(bench.starts).toBe(1);
   });
 });
+
+describe("leaving while work is in flight", () => {
+  it("drops a deferred entry reading, announcing nothing and arming nothing", async () => {
+    // The defect: leave cleared the one armed timer, but an entry read already in flight
+    // came back afterwards, announced, and armed a fresh watcher.
+    const bench = new Bench();
+    const slow = deferred<{ sign_in: BackendSignIn | null }>();
+    bench.readings = [slow];
+
+    const entering = bench.session.enter("codex");
+    bench.session.leave();
+    const announcementsAtLeave = bench.states.length;
+
+    slow.settle({ sign_in: signIn() });
+    await entering;
+
+    expect(bench.states.length).toBe(announcementsAtLeave);
+    expect(bench.armedTimers()).toBe(0);
+    expect(bench.session.current().signIn).toBeNull();
+  });
+
+  it("drops a deferred poll, and asks nothing further", async () => {
+    const bench = new Bench();
+    const slow = deferred<{ sign_in: BackendSignIn | null }>();
+    bench.readings = [{ sign_in: signIn() }, slow];
+
+    await bench.session.enter("codex");
+    const live = bench.timers.filter((timer) => !timer.cleared);
+    live[0].cleared = true;
+    live[0].run();
+    await Promise.resolve();
+
+    bench.session.leave();
+    const announcementsAtLeave = bench.states.length;
+    const readsAtLeave = bench.reads;
+
+    slow.settle({ sign_in: signIn() });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(bench.states.length).toBe(announcementsAtLeave);
+    expect(bench.armedTimers()).toBe(0);
+    expect(bench.reads).toBe(readsAtLeave);
+  });
+
+  it("drops a deferred start, so a departed page never begins watching", async () => {
+    const bench = new Bench();
+    const slow = deferred<{ sign_in: BackendSignIn }>();
+    bench.readings = [{ sign_in: null }];
+    // A start whose answer arrives after the page is gone.
+    let settleStart!: (value: { sign_in: BackendSignIn }) => void;
+    bench.startAnswer = { sign_in: signIn() };
+    const ports = bench.session as unknown as { ports: SignInPorts };
+    ports.ports = {
+      ...ports.ports,
+      start: async () => {
+        bench.starts += 1;
+        return slow.promise;
+      }
+    };
+    settleStart = slow.settle;
+
+    const starting = bench.session.start("codex");
+    bench.session.leave();
+    const announcementsAtLeave = bench.states.length;
+
+    settleStart({ sign_in: signIn() });
+    await starting;
+
+    expect(bench.states.length).toBe(announcementsAtLeave);
+    expect(bench.armedTimers()).toBe(0);
+  });
+
+  it("drops a deferred cancel, and reloads no cards for a page that has gone", async () => {
+    const bench = new Bench();
+    bench.readings = [{ sign_in: signIn() }];
+    const slow = deferred<{ sign_in: BackendSignIn }>();
+    const ports = bench.session as unknown as { ports: SignInPorts };
+    ports.ports = {
+      ...ports.ports,
+      cancel: async () => {
+        bench.cancels += 1;
+        return slow.promise;
+      }
+    };
+
+    await bench.session.enter("codex");
+    const cancelling = bench.session.cancel("codex");
+    bench.session.leave();
+    const announcementsAtLeave = bench.states.length;
+
+    slow.settle({ sign_in: signIn({ state: "ended" }) });
+    await cancelling;
+
+    expect(bench.states.length).toBe(announcementsAtLeave);
+    expect(bench.cardReloads).toBe(0);
+    expect(bench.armedTimers()).toBe(0);
+  });
+
+  it("reconnects normally when the page is entered again", async () => {
+    const bench = new Bench();
+    const slow = deferred<{ sign_in: BackendSignIn | null }>();
+    bench.readings = [slow, { sign_in: signIn({ user_code: "BACK-AGAIN" }) }];
+
+    const entering = bench.session.enter("codex");
+    bench.session.leave();
+    slow.settle({ sign_in: signIn() });
+    await entering;
+    expect(bench.session.current().signIn).toBeNull();
+
+    // Entering again is a live page once more, and it finds the pending sign-in.
+    await bench.session.enter("codex");
+
+    expect(bench.session.current().signIn?.user_code).toBe("BACK-AGAIN");
+    expect(bench.armedTimers()).toBe(1);
+  });
+});

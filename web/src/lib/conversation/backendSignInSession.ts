@@ -12,13 +12,17 @@
  * the page shows the same URL and code and resumes watching it. If the server has none,
  * the page shows nothing, because nothing is what there is.
  *
- * **Leaving stops watching, and nothing else.** Closing the screen must never cancel a
- * sign-in: the whole point of a device code is finishing it somewhere else. So `leave`
- * clears timers and touches no server state.
+ * **Leaving stops everything the page is doing, and nothing the server is doing.** Closing
+ * the screen must never cancel a sign-in: the whole point of a device code is finishing it
+ * somewhere else. So `leave` clears timers and touches no server state — but clearing the
+ * one armed timer is not enough on its own, because a read already in flight will come
+ * back and arm another. `leave` marks the page inactive, and every asynchronous
+ * continuation checks that before it announces anything or schedules anything. Entering
+ * again makes it active again and reconnects normally.
  *
- * **A stale read can never overwrite a fresh result.** Reads are in flight while a person
- * presses things. Every read remembers which generation of this page's state it began
- * under, and a read whose generation has moved on is dropped. Without that, a slow poll
+ * **A stale continuation can never overwrite a fresh result.** Reads are in flight while a
+ * person presses things. Every one remembers which generation of this page's state it
+ * began under, and one whose generation has moved on is dropped. Without that, a slow poll
  * answering after a cancel puts the cancelled sign-in back on screen.
  */
 
@@ -78,8 +82,10 @@ export class BackendSignInSession {
   private readonly announce: (state: SignInPageState) => void;
   private state: SignInPageState = AT_REST;
   private timer: unknown = null;
-  /** Bumped by anything that establishes a newer truth than a read in flight. */
+  /** Bumped by anything that establishes a newer truth than a continuation in flight. */
   private generation = 0;
+  /** False until the page enters, and again the moment it leaves. */
+  private active = false;
 
   constructor(ports: SignInPorts, announce: (state: SignInPageState) => void) {
     this.ports = ports;
@@ -92,6 +98,8 @@ export class BackendSignInSession {
 
   /** Page entry and reconnect: find the sign-in already in force, and watch it. */
   async enter(backendKey: ConversationBackendKey): Promise<void> {
+    this.active = true;
+    this.generation += 1;
     const began = this.generation;
     let answer: { sign_in: BackendSignIn | null };
     try {
@@ -100,22 +108,28 @@ export class BackendSignInSession {
       // A reading that did not arrive is not news. The page shows what it had.
       return;
     }
-    if (began !== this.generation) return;
+    if (!this.isCurrent(began)) return;
     this.put({ signIn: answer.sign_in });
     if (signInIsPending(answer.sign_in)) this.watch(backendKey);
   }
 
   async start(backendKey: ConversationBackendKey): Promise<void> {
     if (this.state.busy) return;
+    // A press is proof the page is live, so an action makes it active the way entering
+    // does. Depending on `enter` having run first would make these silently do nothing.
+    this.active = true;
     this.generation += 1;
     this.stopWatching();
     this.put({ busy: true, error: null });
+    const began = this.generation;
     try {
       const answer = await this.ports.start(backendKey);
+      if (!this.isCurrent(began)) return;
       this.generation += 1;
       this.put({ signIn: answer.sign_in, busy: false });
       if (signInIsPending(answer.sign_in)) this.watch(backendKey);
     } catch (problem) {
+      if (!this.isCurrent(began)) return;
       this.generation += 1;
       this.put({ busy: false, error: sentenceFor(problem) });
     }
@@ -124,30 +138,48 @@ export class BackendSignInSession {
   async cancel(backendKey: ConversationBackendKey): Promise<void> {
     const pending = this.state.signIn;
     if (pending === null || this.state.busy) return;
+    this.active = true;
     this.generation += 1;
     this.stopWatching();
     this.put({ busy: true, error: null });
+    const began = this.generation;
     try {
       const answer = await this.ports.cancel(backendKey, pending.session_id);
+      if (!this.isCurrent(began)) return;
       this.generation += 1;
       this.put({ signIn: answer.sign_in, busy: false });
     } catch (problem) {
+      if (!this.isCurrent(began)) return;
       // A refused cancel means this session is not the one in force, so what the server
       // has is the answer rather than what this page was holding.
       this.generation += 1;
       this.put({ busy: false, error: sentenceFor(problem) });
       await this.enter(backendKey);
     }
+    if (!this.active) return;
     await this.ports.reloadCards();
   }
 
-  /** The screen is gone. Stop asking, and leave the server's sign-in alone. */
+  /** The screen is gone. Stop everything this page is doing, and only this page's.
+   *
+   * Marking the page inactive is the part that matters. Clearing the armed timer alone
+   * would leave a read already in flight free to come back and arm another, so a departed
+   * page would keep polling for as long as the process lived.
+   */
   leave(): void {
+    this.active = false;
+    this.generation += 1;
     this.stopWatching();
+  }
+
+  /** Whether a continuation that began at this generation may still act. */
+  private isCurrent(began: number): boolean {
+    return this.active && began === this.generation;
   }
 
   private watch(backendKey: ConversationBackendKey): void {
     this.stopWatching();
+    if (!this.active) return;
     if (!signInIsPending(this.state.signIn)) return;
     const began = this.generation;
     this.timer = this.ports.setTimer(() => {
@@ -156,17 +188,17 @@ export class BackendSignInSession {
   }
 
   private async tick(backendKey: ConversationBackendKey, began: number): Promise<void> {
-    if (began !== this.generation) return;
+    if (!this.isCurrent(began)) return;
     const watched = this.state.signIn;
     let answer: { sign_in: BackendSignIn | null };
     try {
       answer = await this.ports.read(backendKey);
     } catch {
       // Keep watching rather than inventing an outcome from a failed read.
-      if (began === this.generation) this.watch(backendKey);
+      if (this.isCurrent(began)) this.watch(backendKey);
       return;
     }
-    if (began !== this.generation) return;
+    if (!this.isCurrent(began)) return;
     if (answer.sign_in === null) {
       // The server has no sign-in where this page was watching one. That is a restart.
       this.put({ signIn: watched === null ? null : endedAfterItVanished(watched) });

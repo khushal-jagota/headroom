@@ -670,18 +670,25 @@ flight, is told before the sign-in starts that it writes a new credential and th
 running turn may have to be retried. An account that already cannot authenticate, with
 nothing running against it, has nothing to lose and gets no caveat.
 
-The turns-in-flight half of that rule is implemented but not yet fed by this page. Whether
-a turn is running is answered per conversation, and nothing lists a backend's
-conversations, so the Backends page passes "nothing running" today. The caveat therefore
-appears for a usable account and not yet for a dead account with a live turn. Closing that
-gap means a way to ask whether any conversation on a backend is running.
+Whether a turn is running is answered per conversation, and nothing lists a backend's
+conversations, so the Backends page cannot tell. It says so rather than guessing: running
+turns are **unknown** there, not absent. With the account known unusable and running turns
+unknown, the caveat becomes conditional — it says that *if* a turn is running it may have
+to be retried, and never claims one does. The caveat is suppressed only when the account is
+known unusable **and** nothing is known to be running, which is both halves known rather
+than one half unexamined.
 
 **Opening the page finds what is already there.** Nothing about a sign-in is persisted, so
 a page that has just opened or reconnected asks whether one is running and shows the same
-URL and code if so. Leaving the page stops the asking and nothing else — closing a screen
-never cancels a sign-in, because the point of a device code is finishing it elsewhere. If
-the server no longer has a sign-in the page was watching, the page says it ended rather
-than keeping a code nobody will honour on screen.
+URL and code if so. If the server no longer has a sign-in the page was watching, the page
+says it ended rather than keeping a code nobody will honour on screen.
+
+**Leaving stops everything the page is doing and nothing the server is doing.** Closing a
+screen never cancels a sign-in, because the point of a device code is finishing it
+elsewhere. Clearing the one armed timer is not enough on its own: a read already in flight
+would come back and arm another. So leaving marks the page inactive, and every outstanding
+read, poll, start and cancel checks that before it shows anything or schedules anything.
+Entering again makes the page live and reconnects normally.
 
 **Nothing is inferred.** A cancel answering `canceled`, a cancel answering `notFound`, a
 deadline passing and the child exiting all say what Panels did. None of them is evidence
