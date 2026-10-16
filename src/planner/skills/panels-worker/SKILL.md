@@ -79,6 +79,7 @@ Proposal and help text arrive on stdin. Structured edits and creation read one J
 
 ### Cross-cutting disciplines
 
+- **Record an asked-in-absence note.** If a Ticket Stage proceeds without Khushal's direct judgment, add this note to the settled field. State where Khushal's judgment was needed and what assumption replaced it. State that the assumption applies only to the current Ticket and establishes no general rule.
 - **Treat deployed apps as immutable.** Repository work must happen in a Git checkout
   under the assigned workspace, normally in an isolated worktree. Never edit or run
   tests from `~/Deployments/Panels/current/app` or another deployed app artifact. If
