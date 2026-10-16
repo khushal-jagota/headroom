@@ -90,6 +90,7 @@ export type ListPageFacts = {
 };
 
 export type TicketSummary = WorkAttention & {
+  is_backlogged?: boolean;
   orchestrator?: Principal;
   id: string;
   title: string;
@@ -303,6 +304,8 @@ export type TicketConversationHistoryEntry = {
 };
 
 export type TicketDetail = {
+  is_backlogged?: boolean;
+  record_sha256?: string;
   artifacts?: SprintItemArtifact[];
   orchestrator?: Principal;
   id: string;

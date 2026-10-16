@@ -521,6 +521,8 @@ async def read_tickets(
     exclude_stage: Annotated[list[str] | None, Query()] = None,
     ticket_status: Annotated[list[str] | None, Query()] = None,
     exclude_ticket_status: Annotated[list[str] | None, Query()] = None,
+    is_backlogged: bool | None = None,
+    worker_type: Annotated[list[str] | None, Query()] = None,
     include_terminal: bool = False,
     search: str | None = None,
     project: str | None = None,
@@ -538,6 +540,8 @@ async def read_tickets(
         "exclude_stage": exclude_stage,
         "ticket_status": ticket_status,
         "exclude_ticket_status": exclude_ticket_status,
+        "is_backlogged": is_backlogged,
+        "worker_type": worker_type,
         "include_terminal": include_terminal or None,
         "search": search,
         "project": project,
@@ -567,6 +571,8 @@ async def read_tickets(
         reject_parameters(
             "detail=full",
             {
+                "is_backlogged": is_backlogged,
+                "worker_type": worker_type,
                 "exclude_stage": exclude_stage,
                 "ticket_status": ticket_status,
                 "exclude_ticket_status": exclude_ticket_status,
@@ -625,6 +631,8 @@ async def read_tickets(
             excluded_stages=tuple(exclude_stage or ()),
             ticket_statuses=statuses,
             excluded_ticket_statuses=excluded_statuses,
+            is_backlogged=is_backlogged,
+            worker_types=tuple(worker_type or ()),
             include_terminal=include_terminal,
             search=search,
         ),
@@ -1409,3 +1417,73 @@ async def board(
 @router.get("/review")
 async def review(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
     return tickets_views.review_view(conn)
+
+
+def _record_precondition(body: dict[str, Any]) -> str | None:
+    value = body.get("expected_record_sha256")
+    if value is not None and (not isinstance(value, str) or len(value) != 64):
+        raise PlannerError(ErrorCode.validation, "expected_record_sha256 must be a SHA256 string")
+    return value
+
+
+@router.post("/tickets/{ticket_id}/backlog")
+async def backlog_ticket(
+    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    tickets_data.set_ticket_backlog(
+        conn,
+        ticket_id,
+        is_backlogged=True,
+        principal=ctx.principal,
+        now=clk.now_unix(),
+        expected_record_sha256=_record_precondition(body),
+    )
+    return _ticket_detail(conn, ticket_id, clk.now_unix())
+
+
+@router.post("/tickets/{ticket_id}/resume")
+async def resume_ticket(
+    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    tickets_data.set_ticket_backlog(
+        conn,
+        ticket_id,
+        is_backlogged=False,
+        principal=ctx.principal,
+        now=clk.now_unix(),
+        expected_record_sha256=_record_precondition(body),
+    )
+    return _ticket_detail(conn, ticket_id, clk.now_unix())
+
+
+@router.post("/tickets/{ticket_id}/retire")
+async def retire_ticket(
+    ticket_id: str,
+    body: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
+    reason = body.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise PlannerError(ErrorCode.validation, "retirement requires a reason")
+    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        if ticket.stage != "cancelled" and ticket.conversation_id is not None:
+            if await conversations.is_running(
+                ticket.conversation_id
+            ) or await conversations.held_prompts(ticket.conversation_id):
+                raise PlannerError(
+                    ErrorCode.already_running, "the Ticket conversation still owns traffic"
+                )
+        tickets_data.retire_ticket(
+            conn,
+            ticket_id,
+            reason=reason,
+            principal=ctx.principal,
+            now=clk.now_unix(),
+            expected_record_sha256=_record_precondition(body),
+        )
+        return _ticket_detail(conn, ticket_id, clk.now_unix())

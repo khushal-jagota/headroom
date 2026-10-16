@@ -49,10 +49,10 @@ export const queries = {
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
-  backlogTicketSummaries: (offset: number, limit = 30, projectId = "") =>
+  backlogTicketSummaries: (offset: number, limit = 30, projectId = "", isBacklogged: boolean | null = null, workerType = "", retired = false) =>
     jsonQuery<TicketSummariesResponse>(
-      ["tickets", "backlog", { limit, offset, projectId }],
-      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}`
+      ["tickets", "backlog", { limit, offset, projectId, isBacklogged, workerType, retired }],
+      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${isBacklogged === null ? "" : `&is_backlogged=${isBacklogged}`}${workerType ? `&worker_type=${encodeURIComponent(workerType)}` : ""}${retired ? "&include_terminal=true&stage=cancelled" : ""}`
     ),
   outcomeSummaries: (offset: number, limit = 30, projectId = "", search = "") =>
     jsonQuery<SprintItemSummariesResponse>(

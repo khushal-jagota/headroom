@@ -94,6 +94,7 @@ class BoardCardSource(TypedDict):
     gating_field: str | None
     gating_field_label: str | None
     is_done: bool
+    is_backlogged: bool
     blocked: bool
     conversation_id: str | None
     waiting_to_closeout: bool
@@ -139,6 +140,8 @@ class TicketListFilters:
     excluded_ticket_statuses: tuple[TicketStatus, ...] = ()
     include_terminal: bool = False
     search: str | None = None
+    is_backlogged: bool | None = None
+    worker_types: tuple[str, ...] = ()
 
 
 TicketFieldValues = Mapping[str, str]
@@ -289,6 +292,7 @@ class Ticket:  # §3.3 — column names match exactly
     updated_at: int
     # Monotonic proposal identity. Proposal timestamps have whole-second precision, so
     # readers use this when they must distinguish a replacement filed in the same second.
+    is_backlogged: bool = field(default=False, kw_only=True)
     pending_proposal_revision: int = field(default=0, kw_only=True)
 
 

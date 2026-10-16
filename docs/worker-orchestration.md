@@ -24,6 +24,7 @@ ordinary Tickets, oldest first           is the worker busy? → leave it alone
 The loop considers all ordinary Tickets. A Ticket is ready when
 all of these hold right now:
 
+0. It is not explicitly backlogged. This check runs again inside claim admission.
 1. Its Stage is not terminal and has a next blank to fill.
 2. It reads as `empty`. That one answer keeps blocked work, parked approvals, active
    claims, and errors out of the runnable set. A parked proposal is not asked about

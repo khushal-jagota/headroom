@@ -8,6 +8,7 @@ seconds) and the title limit as an argument."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Callable, Iterator
@@ -324,6 +325,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     stage = str(row["stage"])
     worker_type_definition.validate_ticket_position(stage, str(row["ceiling"]))
     return Ticket(
+        is_backlogged=bool(row["is_backlogged"]),
         id=row["id"],
         title=row["title"],
         stage=stage,
@@ -862,9 +864,12 @@ def _proposal_wake_target(
     if route.kind is proposal_routing.ProposalRouteKind.chief:
         return CHIEF_PRINCIPAL
     if route.kind is proposal_routing.ProposalRouteKind.item_manager and route.sprint_item_id:
-        if conn.execute(
-            "SELECT 1 FROM sprint_items WHERE id=?", (route.sprint_item_id,)
-        ).fetchone() is not None:
+        if (
+            conn.execute(
+                "SELECT 1 FROM sprint_items WHERE id=?", (route.sprint_item_id,)
+            ).fetchone()
+            is not None
+        ):
             return Principal(PrincipalKind.sprint_item, route.sprint_item_id)
     return None
 
@@ -1935,5 +1940,122 @@ def unclassify_ticket(
             moved_from_sprint_item_id=ticket.sprint_item_id,
             moved_to_sprint_item_id=None,
             now=now,
+        )
+        return _load_ticket_for_write(conn, ticket_id)
+
+
+def ticket_record_sha256(conn: sqlite3.Connection, ticket_id: str) -> str:
+    """Fingerprint the complete stored record, including same-second changes."""
+    row = conn.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
+    return hashlib.sha256(
+        json.dumps(dict(row), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+
+
+def _require_record_sha256(
+    conn: sqlite3.Connection, ticket_id: str, expected_record_sha256: str | None
+) -> None:
+    if (
+        expected_record_sha256 is not None
+        and ticket_record_sha256(conn, ticket_id) != expected_record_sha256
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "the Ticket changed; read it again before this action"
+        )
+
+
+def set_ticket_backlog(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    is_backlogged: bool,
+    principal: Principal,
+    now: int,
+    expected_record_sha256: str | None = None,
+) -> Ticket:
+    """Defer automatic steps without taking ownership from any delivered turn."""
+    with _txn(conn):
+        authority.require_above(conn, principal, authority.ticket(ticket_id))
+        ticket, definition = _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
+        _require_record_sha256(conn, ticket_id, expected_record_sha256)
+        if definition.is_terminal(ticket.stage):
+            raise PlannerError(ErrorCode.validation, "terminal Tickets cannot change backlog state")
+        if ticket.is_backlogged != is_backlogged:
+            conn.execute(
+                "UPDATE tickets SET is_backlogged=?, updated_at=? WHERE id=?",
+                (int(is_backlogged), now, ticket_id),
+            )
+        return _load_ticket_for_write(conn, ticket_id)
+
+
+def retire_ticket(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    reason: str,
+    principal: Principal,
+    now: int,
+    expected_record_sha256: str | None = None,
+) -> Ticket:
+    """Retire work atomically after its runtime owner refuses any live delivery."""
+    from planner.tickets.logic.retirement import retirement_values
+
+    with _txn(conn):
+        authority.require_above(conn, principal, authority.ticket(ticket_id))
+        ticket, definition = _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
+        if ticket.stage == "cancelled":
+            return ticket
+        _require_record_sha256(conn, ticket_id, expected_record_sha256)
+        if definition.is_terminal(ticket.stage):
+            raise PlannerError(ErrorCode.validation, "completed Tickets cannot be retired")
+        if ticket.worker_step_claim is not WorkerStepClaim.none:
+            raise PlannerError(
+                ErrorCode.validation, "the worker-step claim needs verified runtime reconciliation"
+            )
+        active_delivery = conn.execute(
+            "SELECT 1 FROM manager_wake_batches b WHERE b.status IN "
+            "('pending','offering','dispatching','accepted','uncertain') AND "
+            "((b.target_kind='ticket' AND b.target_id=?) OR EXISTS "
+            "(SELECT 1 FROM manager_wake_batch_members m JOIN manager_wakes w ON w.id=m.wake_id "
+            "WHERE m.batch_id=b.id AND w.ticket_id=?)) LIMIT 1",
+            (ticket_id, ticket_id),
+        ).fetchone()
+        if active_delivery:
+            raise PlannerError(
+                ErrorCode.validation, "the Ticket still has unresolved delivery ownership"
+            )
+        original = dict(conn.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
+        feedback = conn.execute(
+            "SELECT * FROM ticket_revision_feedback WHERE ticket_id=?", (ticket_id,)
+        ).fetchone()
+        values = retirement_values(
+            original,
+            reason=reason,
+            principal=principal,
+            now=now,
+            revision_feedback=dict(feedback) if feedback is not None else None,
+        )
+        conn.execute(
+            "UPDATE tickets SET stage='cancelled',pending_proposal=NULL,"
+            "pending_proposal_revision=pending_proposal_revision+1,field_values=?,"
+            "updated_at=? WHERE id=?",
+            (fields_codec.values_to_json(values), now, ticket_id),
+        )
+        revision_feedback.discard(conn, ticket_id)
+        conn.execute(
+            "UPDATE manager_wakes SET closed_at=? WHERE ticket_id=? AND closed_at IS NULL",
+            (now, ticket_id),
+        )
+        conn.execute(
+            "UPDATE notification_attention_state SET active=0 WHERE subject_kind='ticket' "
+            "AND subject_id=? AND notification_type IN ('awaiting_approval','assigned','errored')",
+            (ticket_id,),
+        )
+        conn.execute(
+            "UPDATE notification_attention_edges SET decided=1 WHERE subject_kind='ticket' "
+            "AND subject_id=? AND notification_type IN ('awaiting_approval','assigned','errored')",
+            (ticket_id,),
         )
         return _load_ticket_for_write(conn, ticket_id)

@@ -17,8 +17,13 @@ remain independent of the assignment discriminator.
 
 The owner controls an ordinary orchestrator's settled state. Chief can never settle.
 Settlement changes presentation, not Worker eligibility, approval discovery, message
-delivery, or history. Existing orchestrators start active. Child completion does not
-settle a parent. No initial settled cohort is inferred during migration.
+delivery, or history. The reviewed cutover starts exactly two existing ordinary
+orchestrators active: Rethink how Panels works for us and Make Panels run work across
+the Mac and the VPS. All other existing ordinary orchestrators start settled.
+The migration checks both canonical identities and titles before any settlement write.
+It changes no child execution or assignment. A fresh installation has no initial cohort,
+and later orchestrator creation keeps the ordinary active default. Child completion
+does not settle a parent.
 
 Settled supervisor and Worker conversations remain in Messages when unread. Each dot
 belongs to its own conversation row. A closed fold exposes a distinct conversation

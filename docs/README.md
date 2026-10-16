@@ -7,6 +7,8 @@ remain the stored Workers. Ideas hold possibilities in the background.
 
 The owner can settle any ordinary orchestrator. Chief never settles. Settlement changes
 presentation and does not gate Worker continuation or hide approvals and messages.
+Explicit Ticket backlog separately prevents automatic Worker progression. Resume restores
+ordinary checks. Retirement preserves history and ends a Ticket without success.
 Sprint and Day records remain historical reads. Their live planning machinery is retired.
 
 This is the entry point. Read it to find which system owns a question, then read

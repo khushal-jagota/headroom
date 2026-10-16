@@ -10,6 +10,7 @@ from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
     BRIEF_FIELD_ID,
+    CANCELLED_STAGE_ID,
     CONSEQUENCES_FIELD_ID,
     NEEDS_BRIEF_STAGE_ID,
     RETIRED_PLANNING_WORKER_TYPES,
@@ -92,6 +93,11 @@ def validate_definition(
         )
 
     for stage in definition.stages:
+        if stage.id == CANCELLED_STAGE_ID:
+            raise fail(
+                "cancelled is a system terminal outside the linear order",
+                {"worker_type": worker_type, "stage": stage.id},
+            )
         if stage.id == "dropped":
             raise fail(
                 "dropped is not a stage",

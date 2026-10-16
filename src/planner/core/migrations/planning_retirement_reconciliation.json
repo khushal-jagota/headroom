@@ -1,0 +1,294 @@
+{
+  "reviewed_evidence_sha256": "bd1f8b4cd402e3d524e35a4ccac952e03afe4f502316c9a26a5074d6f13a7dc7",
+  "reviewed_evidence": "/files/tickets/t_8g8n40qk/artifacts/planning-reconciliation.json",
+  "authority": "Explicit supervisor acceptance recorded in Ticket implementation guidance after review of exact eligible set and provenance. Implementation/rehearsal only, no live authorization.",
+  "frozen_cohort_sha256": "8fb732afaddf652287ab3e01bd232cd353475a0b480d9bbe2d24605e3236621b",
+  "eligible_ids": [
+    "t_tnmp9e7r"
+  ],
+  "previously_deleted_ids": [
+    "t_d1prmbs8",
+    "t_36z2qdt3",
+    "t_c3htctyw",
+    "t_pwheynf1",
+    "t_t3ryy360",
+    "t_w7zc6p96",
+    "t_zwgmkvuy",
+    "t_0befryd2",
+    "t_harnmhrx",
+    "t_pehztr0f",
+    "t_dqh9azcr",
+    "t_uuybnrv6",
+    "t_txfxv9np",
+    "t_9t25rj6k",
+    "t_pxyfkee1",
+    "t_cstwgkbq",
+    "t_er0jat18",
+    "t_j2vqrkvk",
+    "t_gxvmyt7y",
+    "t_056190ks",
+    "t_q9sf5e3t",
+    "t_akh6f6wc",
+    "t_63wpnguh",
+    "t_djskxxu6",
+    "t_fagkz6gs",
+    "t_kjxs06sp",
+    "t_7m05hyu0",
+    "t_jb0rjnwv",
+    "t_x87srr94",
+    "t_k1bz75j4",
+    "t_qf11p86m",
+    "t_w1c8jen3",
+    "t_dt7fkcq8",
+    "t_9gp5hgzk",
+    "t_xt3p8ggq",
+    "t_3s6mbx6r",
+    "t_7s8esp73",
+    "t_rdubgph9",
+    "t_4tvn7cqa",
+    "t_dvj22wf5",
+    "t_h2v2dfwp",
+    "t_zmpga1pz",
+    "t_xjnz37t1"
+  ],
+  "completed_preserved": [
+    {
+      "ticket_id": "t_2ycb9w4v",
+      "title": "Check the day at 14:30",
+      "worker_type": "planning-midday-check",
+      "record_sha256": "310e598557d4fea108b16ae53ba9fc3323e90a8942f52ce7800b2d70fcbda290"
+    },
+    {
+      "ticket_id": "t_3g1mqtpy",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "57a6101794d25d6f4483df25768a3bd2e744a1d367ff6955d3182ae79648bb5a"
+    },
+    {
+      "ticket_id": "t_452vytqb",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "679e5830d3e0f87605957028af8c9d833b39a4ad01e502fbc4d0477e5ce48798"
+    },
+    {
+      "ticket_id": "t_4e6gp6k1",
+      "title": "Review current sprint and plan the next",
+      "worker_type": "planning-sprint",
+      "record_sha256": "6185ae4d1bbf3141357fd8f1031b940583daff5882d3c5917542e5dbefc63a6d"
+    },
+    {
+      "ticket_id": "t_4fzq7zvf",
+      "title": "Review current sprint and plan the next",
+      "worker_type": "planning-sprint",
+      "record_sha256": "6eb1b5ae5f27aede5213497e5fdbf5664d2c38cf736cc99eb1abf32f801fe30f"
+    },
+    {
+      "ticket_id": "t_4uka2q1b",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "82b49ba4939e561d167aafd6f96328fa8792e8a38910abcd25c280fe229fe227"
+    },
+    {
+      "ticket_id": "t_4uyr6hxf",
+      "title": "Check the day at 20:30",
+      "worker_type": "planning-midday-check",
+      "record_sha256": "63961190c30ced2dbf94732ff698fde99de1d633900eaed243665005b6a8398f"
+    },
+    {
+      "ticket_id": "t_55vjecyw",
+      "title": "Review current sprint and plan the next",
+      "worker_type": "planning-sprint",
+      "record_sha256": "ecd3e4d58da366edb078a1a39b73798eb46a2b342e98e1c56c7ffb625c94c5ea"
+    },
+    {
+      "ticket_id": "t_611achf0",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "700692d8240d83a432993b393595c87ef1a27f8a6256c77bb401ec8063a40b9f"
+    },
+    {
+      "ticket_id": "t_73vzzt9v",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "ad9b3e7f591a50916d720e2a771fb5c866b95747146e4387e98fa6c4a51654bd"
+    },
+    {
+      "ticket_id": "t_7qzvm00g",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "8287be895d9d5a1b87a4e46556b3c4ce509e11f242206de99149ee36d3e67764"
+    },
+    {
+      "ticket_id": "t_8vr3er0s",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "fd035627182daeb38344d9007598325054793319d6159987cea6aa34e8a66edf"
+    },
+    {
+      "ticket_id": "t_8w3bm7r1",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "ad7416fb56b2a6577607a444271096bba2eedc650696d6c4f8aaf2a3ac37be97"
+    },
+    {
+      "ticket_id": "t_9gjte5hd",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "506e2f93f55237791a93dde4f6be4b950995dec611009e1f8842a965345b1452"
+    },
+    {
+      "ticket_id": "t_ae2vsv2g",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "1968ca2ce87e6bb7af7e69df02780fd653a5bae658fa05e6c6c42a0058e9c4c3"
+    },
+    {
+      "ticket_id": "t_bmwxbesy",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "8b23eb5c18549ae4a96dec8c3b884cc22a447b02616c81a17b63770449a0aaf5"
+    },
+    {
+      "ticket_id": "t_cj5gngkx",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "29e5829d50470a0b48e6e9e3fdff0915be2ec4efe23e03aaaba028070101705f"
+    },
+    {
+      "ticket_id": "t_d5ptdh38",
+      "title": "Midday check",
+      "worker_type": "planning-midday-check",
+      "record_sha256": "7e3959f4a76bfdcb48d012c7b3be9e8132a569c2288d10aa469001e10d6aebfc"
+    },
+    {
+      "ticket_id": "t_d6v7gygm",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "6f3ad5395ae15cbe65a9947e965455ac3294790797463968d3be30ed4e4cba1c"
+    },
+    {
+      "ticket_id": "t_dzk08nvc",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "2780e3e08a7fc977f4de63f3200fa91f4d3bb34c59d355692401c07e82266aaa"
+    },
+    {
+      "ticket_id": "t_e5x5dh89",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "7d8829fdb37e35699df20adcc6340c5d56ade55611487258b061d8fc1a805227"
+    },
+    {
+      "ticket_id": "t_ea2e9wx6",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "a338ad58f591b42e4549f9fb121c10b604cea4deedbf21ad2590ed27a8778ac1"
+    },
+    {
+      "ticket_id": "t_gbu727j0",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "271aeae0d70544af9a26e4d1a2cb0e9294c8e9eaabea8d7c09bd114e34768ac1"
+    },
+    {
+      "ticket_id": "t_gg4fuvpd",
+      "title": "Midday check",
+      "worker_type": "planning-midday-check",
+      "record_sha256": "6eb0a5c8251d2f7e741f12cec61117e12c37841ccd4dcd810f623b1d725d7325"
+    },
+    {
+      "ticket_id": "t_kg33y2m2",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "4992900f43ab6f830797ec798fe90d4da36ac4b2e47ab9562e8349375d0d37cb"
+    },
+    {
+      "ticket_id": "t_m6rk96pu",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "aa41d2986ae59556e8f3a49f2d5971029a1ed6b53fb2307fad27b9e173872b35"
+    },
+    {
+      "ticket_id": "t_p3zapqw9",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "b5beececa9672b1e2b593259e2330cc4376bcc9e337751af5c7c5f0aaa6ceceb"
+    },
+    {
+      "ticket_id": "t_qd7m9c9k",
+      "title": "Check the day at 14:30",
+      "worker_type": "planning-midday-check",
+      "record_sha256": "7da93c181ffe50460356841c6b7675d162916fa9699de1d7adf861916c0a40bc"
+    },
+    {
+      "ticket_id": "t_thb03bd0",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "22d87080f72e0cc8e073d61525c83a5d12b74020d2291416f2dcd1cc20353194"
+    },
+    {
+      "ticket_id": "t_uj554kys",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "28bea1df609e0aa1d3065eb6ec7812c2d924c7ee7d675ffdf5ad80b1c3535d46"
+    },
+    {
+      "ticket_id": "t_x0f0hcgc",
+      "title": "Check the day at 14:30",
+      "worker_type": "planning-midday-check",
+      "record_sha256": "f81cc349cd6428364e9bae1095de378f42679a5a438af84a48a037ad8c648b4a"
+    },
+    {
+      "ticket_id": "t_x2su2q8t",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "3e71ae19b8f5a1f32178e5812f55e7fb8172a1b757c15e567b55b130758345ae"
+    },
+    {
+      "ticket_id": "t_x3ng29gn",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "8f39d6006e5cbff88ee5af9c397da2f1b916e09306449e2a2447e85eec03ec7b"
+    },
+    {
+      "ticket_id": "t_x9m0g44f",
+      "title": "Review current sprint and plan the next",
+      "worker_type": "planning-sprint",
+      "record_sha256": "14f4bddf60d19bfd91e61a88567deb6f90b73b400bc82827cd45193b7638e4d5"
+    },
+    {
+      "ticket_id": "t_xe2z8hx9",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "5522c53c61ef39c0ca440bc725f45e68fd96f583e956fdc6533e4aa5d542a531"
+    },
+    {
+      "ticket_id": "t_y45kw3hq",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "de5b5479c2ee2eb974f1d0db5c4dbcbc47aadc58c1f469589b7f9f2133737200"
+    },
+    {
+      "ticket_id": "t_yjcz2fp9",
+      "title": "Plan the day",
+      "worker_type": "planning-day",
+      "record_sha256": "1a42e8e63e9a59511a3f925969ce995ca178299de3b0f746a09f683f82378664"
+    }
+  ],
+  "provenance": {
+    "chief_conversation_id": "conv_cc6c6d922cbb46cd983b00f77118f3af",
+    "owner_event_sequences": [
+      965,
+      976
+    ],
+    "today_deletion_receipt_sequence": 975,
+    "backlog_delete_command_sequence": 995,
+    "backlog_delete_result_sequence": 996,
+    "readback_sequence": 998
+  },
+  "limitations": [
+    "Chief first-deletion confirmation is preserved, but its actual delete tool event is absent.",
+    "History establishes 42 backlog deletions as a supported command with aggregate success. Each exact member is reconstructed from matching nightly backup, query predicate and complete current absence.",
+    "This report is read-only evidence. It authorizes no live action."
+  ]
+}

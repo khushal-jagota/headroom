@@ -21,7 +21,9 @@
   let { projectId = "" }: { projectId?: string } = $props();
 
   let ticketOffset = $state(0);
-  const tickets = createQuery(() => queries.backlogTicketSummaries(ticketOffset, PAGE_SIZE, projectId));
+  let backlogFilter = $state("active");
+  let workerTypeFilter = $state("");
+  const tickets = createQuery(() => queries.backlogTicketSummaries(ticketOffset, PAGE_SIZE, projectId, backlogFilter === "backlogged" ? true : backlogFilter === "not_backlogged" ? false : null, workerTypeFilter, backlogFilter === "retired"));
   const projects = createQuery(() => queries.projects());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
 
@@ -155,6 +157,20 @@
         </div>
       </Disclosure>
 
+      <div class="foot" data-ticket-filters>
+        <select class="in" aria-label="Ticket state" value={backlogFilter} onchange={(event) => { backlogFilter = event.currentTarget.value; ticketOffset = 0; }}>
+          <option value="active">Active tickets</option>
+          <option value="backlogged">Backlogged tickets</option>
+          <option value="not_backlogged">Tickets outside backlog</option>
+          <option value="retired">Retired tickets</option>
+        </select>
+        <select class="in" aria-label="Filter worker type" value={workerTypeFilter} onchange={(event) => { workerTypeFilter = event.currentTarget.value; ticketOffset = 0; }}>
+          <option value="">All worker types</option>
+          {#each workerTypes.data?.worker_types ?? [] as entry (entry.worker_type)}
+            <option value={entry.worker_type}>{entry.label}</option>
+          {/each}
+        </select>
+      </div>
       <section class="groups" data-backlog-tickets>
         <ResourceState error={tickets.error} loading={tickets.isFetching} hasData={Boolean(tickets.data)} loadingText="Loading tickets...">
           {#if !(tickets.data?.tickets || []).length}
@@ -175,6 +191,8 @@
                     >
                       {#snippet trailing()}
                         <span class="chips">
+                          {#if ticket.is_backlogged}<span data-backlogged-label>Backlogged</span>{/if}
+                          {#if ticket.stage === "cancelled"}<span data-retired-label>Retired without success</span>{/if}
                           {#if ticket.project}<Chip variant="project" value={ticket.project} />{/if}
                         </span>
                       {/snippet}

@@ -30,6 +30,7 @@
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import TicketLifecycleControls from "../components/TicketLifecycleControls.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
   import ArtifactsBand from "../components/ArtifactsBand.svelte";
@@ -393,6 +394,7 @@
               />
             </ClampedText>
           </div>
+          {#if lc}<TicketLifecycleControls ticket={detail} terminal={Boolean(manifest.data?.worker_types.find((entry) => entry.worker_type === detail.worker_type)?.stages.find((entry) => entry.id === detail.stage)?.is_terminal)} />{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
               <span class="ticket-blocker-heading">Blocked by</span>
@@ -426,9 +428,7 @@
             {@const history = workerPageHistory(lc, detail)}
             {@const completedFields = history.completed}
             {@const occurredFields = history.fields}
-            {#if detail.stage === "cancelled"}
-              <section class="worker-live-card" data-worker-live-card><h2>Cancelled</h2><p>Obsolete planning work retired without success.</p></section>
-            {:else if currentField}
+            {#if detail.stage !== "cancelled" && currentField}
               <section class="worker-live-card" data-worker-live-card>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
@@ -533,7 +533,6 @@
   .ticket-head :global([data-recap] .ed) { font:inherit; }
   .worker-live-card { margin-top:var(--space-6); padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
   .worker-live-card h2 { margin:var(--space-2) 0 0; letter-spacing:-.006em; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
-  .worker-live-card p { font-size:15px; }
   .worker-ceiling-line { margin-top:var(--space-3); }
   .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:15px; line-height:1.3; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-sm); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }

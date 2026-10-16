@@ -48,9 +48,36 @@ step), then
 proposed), then **Consequences** (only the applicable merge, deploy, follow-up, and
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
-what moves the ticket one stage forward. **done** is the only ending a Ticket has.
+what moves the ticket one stage forward. **done** records successful completion.
+Retirement records a separate non-success ending, `cancelled`, outside the Stage ladder
+and ceiling choices.
 Stages advance through approval or direct completion of a current user-owned gate;
 there is no arbitrary Stage jump.
+
+## Backlog, resume, and retirement
+
+Explicit backlog prevents the next automatic Worker step. It preserves the current
+Stage, proposal, approval holder, assignment, history, conversations, and artifacts.
+Messages and approvals remain available. Backlog does not cancel a delivered turn or
+remove a live blocker. Parent settlement is independent.
+
+Resume clears only backlog state. The ordinary readiness and approval rules still
+apply. A ceiling controls whether a result parks for approval. It does not prevent
+the Worker from preparing that result.
+
+The Ticket page provides Backlog ticket, Resume ticket, and Retire ticket controls.
+Retirement requires a reason and ends the Ticket without a success claim. The original
+record, proposal, approval holder, revision feedback, actor, and time remain in retirement
+provenance. The Steps section retains historical proposal evidence. Retirement removes
+the live approval obligation and follows the existing terminal blocker rules.
+
+Retirement refuses unresolved claims, live or held conversation work, and unresolved
+manager delivery ownership. It does not silently reset or interrupt that work. A repeated
+successful retirement returns the original result. It creates no second transition.
+
+The supported actions share one writer per transition. An optional stored-record hash
+precondition refuses stale requests inside the write transaction. The browser sends that
+precondition automatically. Agents can use it for reviewed manifest application.
 
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can

@@ -160,7 +160,7 @@ def test_cancelled_is_terminal_without_progression_or_historical_error(tmp_db: C
         ).value
         == "idle"
     )
-    assert not configured_worker_type_registry().require("coding").is_known_stage("cancelled")
+    assert configured_worker_type_registry().require("coding").is_terminal("cancelled")
 
 
 def test_changed_proposal_body_aborts_even_when_proposal_still_exists() -> None:
@@ -207,3 +207,114 @@ def test_notice_history_retained_and_queued_delivery_not_discarded(active_batch:
             ).scalar()
             assert isinstance(value, str)
             assert json.loads(json.loads(value)["retirement"])["closed_manager_wake_ids"] == [1]
+
+
+def _reviewed_source(monkeypatch: pytest.MonkeyPatch) -> sa.Connection:
+    conn = _database()
+    eligible = retirement.RECONCILIATION["eligible_ids"][0]
+    conn.exec_driver_sql(
+        "DELETE FROM tickets WHERE worker_type IN ('planning-day','planning-sprint') "
+        "AND stage!='done' AND id!=?",
+        (eligible,),
+    )
+    completed = conn.exec_driver_sql("SELECT * FROM tickets WHERE id='completed'").mappings().one()
+    reviewed = json.loads(json.dumps(retirement.RECONCILIATION))
+    reviewed["completed_preserved"] = [
+        {"ticket_id": "completed", "record_sha256": retirement._row_hash(completed)}
+    ]
+    monkeypatch.setattr(retirement, "RECONCILIATION", reviewed)
+    return conn
+
+
+def test_reviewed_reconciliation_retires_only_exact_survivor(monkeypatch):
+    with _reviewed_source(monkeypatch) as conn:
+        before = conn.exec_driver_sql("SELECT * FROM tickets WHERE id='completed'").one()
+        retirement.retire_planning_workers(conn)
+        assert conn.exec_driver_sql("SELECT id FROM tickets WHERE stage='cancelled'").all() == [
+            ("t_tnmp9e7r",)
+        ]
+        assert conn.exec_driver_sql("SELECT * FROM tickets WHERE id='completed'").one() == before
+        values = json.loads(
+            conn.exec_driver_sql(
+                "SELECT field_values FROM tickets WHERE id='t_tnmp9e7r'"
+            ).scalar_one()
+        )
+        assert json.loads(values["retirement"])["reviewed_reconciliation_sha256"] == (
+            "bd1f8b4cd402e3d524e35a4ccac952e03afe4f502316c9a26a5074d6f13a7dc7"
+        )
+
+
+@pytest.mark.parametrize(
+    "drift", ["excluded", "eligible", "extra", "completed", "missing", "missing_eligible"]
+)
+def test_reviewed_reconciliation_refuses_source_drift(monkeypatch, drift):
+    with _reviewed_source(monkeypatch) as conn:
+        if drift == "excluded":
+            conn.exec_driver_sql(
+                "INSERT INTO tickets SELECT 't_d1prmbs8',worker_type,stage,conversation_id,"
+                "worker_step_claim,worker_step_claim_revision,pending_proposal,"
+                "pending_proposal_revision,field_values FROM tickets WHERE id='t_tnmp9e7r'"
+            )
+        elif drift == "extra":
+            conn.exec_driver_sql(
+                "UPDATE tickets SET worker_type='planning-day',stage='needs_review' "
+                "WHERE id='ordinary'"
+            )
+        elif drift == "completed":
+            conn.exec_driver_sql(
+                "UPDATE tickets SET conversation_id='changed' WHERE id='completed'"
+            )
+        elif drift == "missing":
+            conn.exec_driver_sql("DELETE FROM tickets WHERE id='completed'")
+        elif drift == "missing_eligible":
+            conn.exec_driver_sql("DELETE FROM tickets WHERE id='t_tnmp9e7r'")
+        else:
+            conn.exec_driver_sql("UPDATE tickets SET field_values='{}' WHERE id='t_tnmp9e7r'")
+        with pytest.raises(RuntimeError):
+            retirement.retire_planning_workers(conn)
+        assert (
+            conn.exec_driver_sql(
+                "SELECT count(*) FROM tickets WHERE stage='cancelled'"
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_reviewed_survivor_refuses_direct_delivery_ownership(monkeypatch):
+    with _reviewed_source(monkeypatch) as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE manager_wakes(id INTEGER,ticket_id TEXT,closed_at INTEGER)"
+        )
+        conn.exec_driver_sql(
+            "CREATE TABLE manager_wake_batches(id INTEGER,status TEXT,"
+            "target_kind TEXT,target_id TEXT)"
+        )
+        conn.exec_driver_sql(
+            "CREATE TABLE manager_wake_batch_members(batch_id INTEGER,wake_id INTEGER)"
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO manager_wake_batches VALUES(1,'accepted','ticket','t_tnmp9e7r')"
+        )
+        with pytest.raises(RuntimeError, match="delivery ownership"):
+            retirement.retire_planning_workers(conn)
+        assert (
+            conn.exec_driver_sql("SELECT stage FROM tickets WHERE id='t_tnmp9e7r'").scalar_one()
+            == "needs_brief"
+        )
+
+
+def test_total_planning_loss_with_ordinary_work_refuses_cutover() -> None:
+    with _database() as conn:
+        conn.exec_driver_sql("DELETE FROM tickets WHERE worker_type LIKE 'planning-%'")
+        before = conn.exec_driver_sql("SELECT * FROM tickets").all()
+        assert len(before) == 1
+        with pytest.raises(RuntimeError, match="cohort changed"):
+            retirement.retire_planning_workers(conn)
+        assert conn.exec_driver_sql("SELECT * FROM tickets").all() == before
+
+
+def test_genuine_empty_ticket_table_allows_fresh_install() -> None:
+    with _database() as conn:
+        conn.exec_driver_sql("DELETE FROM tickets")
+        retirement.retire_planning_workers(conn)
+        assert conn.exec_driver_sql("SELECT count(*) FROM tickets").scalar_one() == 0

@@ -281,6 +281,8 @@ def _ticket_record(
         "employee_launch_reasoning_effort",
         "stage",
         "ticket_status",
+        "is_backlogged",
+        "record_sha256",
         "priority",
         "deadline",
         "project_id",
@@ -293,6 +295,8 @@ def _ticket_record(
     parts = {
         field["id"]: part(data["field_values"].get(field["id"])) for field in manifest["fields"]
     }
+    if "retirement" in data["field_values"]:
+        parts["retirement"] = part(data["field_values"]["retirement"])
     parts["proposal"] = part(data.get("pending_proposal"))
     parts["recap"] = part(data.get("recap", ""))
     parts["guidance"] = part(data.get("guidance", ""))
@@ -419,6 +423,7 @@ def _format_ticket_summaries(tickets: list[dict[str, Any]]) -> str:
         lambda ticket: (
             f"{ticket['id']} {ticket['stage']} {ticket['ticket_status']} "
             f"{ticket['priority']} {ticket['title']}"
+            + (" | backlogged" if ticket.get("is_backlogged") else "")
             + (f" | {ticket['project']}" if ticket["project"] else "")
             + (f"\n  {ticket['recap_preview']}" if ticket["recap_preview"] else "")
         ),
@@ -1301,6 +1306,65 @@ def ticket_show(ticket_id: str | None, part_names: str | None, as_json: bool) ->
     _emit_record(header, parts, part_names, as_json)
 
 
+@ticket.command("backlog")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option(
+    "--expected-record-sha256", default=None, help="Refuse if this stored record changed."
+)
+@json_option
+def ticket_backlog(
+    ticket_id: str | None, expected_record_sha256: str | None, as_json: bool
+) -> None:
+    """Defer automatic worker steps while preserving the Ticket's work."""
+    tid = resolve_ticket_id(ticket_id, as_json)
+    data = http.send(
+        "POST",
+        f"/api/tickets/{tid}/backlog",
+        as_json=as_json,
+        json_body=_drop_none({"expected_record_sha256": expected_record_sha256}),
+    )
+    http.emit(data, as_json, "Ticket backlogged.")
+
+
+@ticket.command("resume")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option(
+    "--expected-record-sha256", default=None, help="Refuse if this stored record changed."
+)
+@json_option
+def ticket_resume(ticket_id: str | None, expected_record_sha256: str | None, as_json: bool) -> None:
+    """Resume automatic steps under the Ticket's existing gates."""
+    tid = resolve_ticket_id(ticket_id, as_json)
+    data = http.send(
+        "POST",
+        f"/api/tickets/{tid}/resume",
+        as_json=as_json,
+        json_body=_drop_none({"expected_record_sha256": expected_record_sha256}),
+    )
+    http.emit(data, as_json, "Ticket resumed.")
+
+
+@ticket.command("retire")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option("--reason", required=True, help="Why this Ticket ends without success.")
+@click.option(
+    "--expected-record-sha256", default=None, help="Refuse if this stored record changed."
+)
+@json_option
+def ticket_retire(
+    ticket_id: str | None, reason: str, expected_record_sha256: str | None, as_json: bool
+) -> None:
+    """Retire a Ticket without declaring completion."""
+    tid = resolve_ticket_id(ticket_id, as_json)
+    data = http.send(
+        "POST",
+        f"/api/tickets/{tid}/retire",
+        as_json=as_json,
+        json_body=_drop_none({"reason": reason, "expected_record_sha256": expected_record_sha256}),
+    )
+    http.emit(data, as_json, "Ticket retired.")
+
+
 @ticket.command("delete")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option(
@@ -1330,6 +1394,13 @@ def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) 
 
 
 @ticket.command("list")
+@click.option(
+    "--backlogged/--not-backlogged",
+    "is_backlogged",
+    default=None,
+    help="Filter explicit Ticket deferral.",
+)
+@click.option("--worker-type", multiple=True, help="Filter Worker type. Repeat for more.")
 @click.option("--stage", multiple=True, help="Include this Stage. Repeat for more.")
 @click.option("--exclude-stage", multiple=True, help="Exclude this Stage. Repeat for more.")
 @click.option(
@@ -1355,6 +1426,8 @@ def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) 
 @bounded_options
 @json_option
 def ticket_list(
+    is_backlogged: bool | None,
+    worker_type: tuple[str, ...],
     stage: tuple[str, ...],
     exclude_stage: tuple[str, ...],
     ticket_status: tuple[str, ...],
@@ -1370,6 +1443,8 @@ def ticket_list(
 ) -> None:
     params = _drop_none(
         {
+            "is_backlogged": is_backlogged,
+            "worker_type": list(worker_type) or None,
             "stage": list(stage) or None,
             "exclude_stage": list(exclude_stage) or None,
             "ticket_status": list(ticket_status) or None,

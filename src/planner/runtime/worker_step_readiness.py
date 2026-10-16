@@ -81,6 +81,8 @@ def worker_step_blocker(
     first such caller. The first refusal wins, so the order below is the order of the
     checks, not a ranking.
     """
+    if ticket.is_backlogged:
+        return "the Ticket is backlogged"
     if worker_type_definition.is_terminal(ticket.stage):
         return f"the Stage {ticket.stage} is terminal"
     ownership_mode = machine.stage_ownership_mode(

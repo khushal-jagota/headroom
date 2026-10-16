@@ -12,6 +12,9 @@ from planner.worker_types.contracts import RETIRED_PLANNING_WORKER_TYPES
 
 MIGRATION_ID = "retire_planning_workers"
 COHORT = json.loads(Path(__file__).with_name("planning_retirement_cohort.json").read_text())
+RECONCILIATION = json.loads(
+    Path(__file__).with_name("planning_retirement_reconciliation.json").read_text()
+)
 
 
 def _row_hash(row: Any) -> str:
@@ -35,8 +38,38 @@ def retire_planning_workers(conn: Any) -> None:
         "SELECT id FROM tickets WHERE id IN (" + ",".join("?" for _ in expected) + ")",
         tuple(expected),
     ).all()
-    if (rows or present) and {row["id"] for row in rows} != set(expected):
-        raise RuntimeError("obsolete planning cohort changed; review exact cohort before migration")
+    # Only an empty Ticket table is a fresh install. Losing the whole reviewed
+    # planning population in an existing workspace is still an unreconciled cutover.
+    existing_work = conn.exec_driver_sql("SELECT 1 FROM tickets LIMIT 1").first()
+    if existing_work and {row["id"] for row in rows} != set(expected):
+        # The sole reviewed alternate source state excludes exactly 43 records
+        # already deleted at the owner's direction. Never infer a generic subset.
+        eligible = set(RECONCILIATION["eligible_ids"])
+        excluded = set(RECONCILIATION["previously_deleted_ids"])
+        if (
+            eligible | excluded != set(expected)
+            or eligible & excluded
+            or {row["id"] for row in rows} != eligible
+            or {row[0] for row in present} != eligible
+        ):
+            raise RuntimeError(
+                "obsolete planning cohort changed; review exact cohort before migration"
+            )
+        completed = (
+            conn.exec_driver_sql(
+                "SELECT * FROM tickets WHERE worker_type IN (?,?,?) AND stage='done' ORDER BY id",
+                tuple(sorted(RETIRED_PLANNING_WORKER_TYPES)),
+            )
+            .mappings()
+            .all()
+        )
+        completed_hashes = {row["id"]: _row_hash(row) for row in completed}
+        reviewed_hashes = {
+            row["ticket_id"]: row["record_sha256"] for row in RECONCILIATION["completed_preserved"]
+        }
+        if completed_hashes != reviewed_hashes:
+            raise RuntimeError("completed planning records changed; review reconciliation")
+        expected = {ticket_id: expected[ticket_id] for ticket_id in eligible}
     tables = {
         row[0] for row in conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
     }
@@ -49,6 +82,16 @@ def retire_planning_workers(conn: Any) -> None:
             "AND b.status IN ('pending','offering','dispatching','accepted','uncertain')",
             tuple(expected),
         ).all()
+        batch_columns = {
+            row[1] for row in conn.exec_driver_sql("PRAGMA table_info(manager_wake_batches)")
+        }
+        if {"target_kind", "target_id"} <= batch_columns:
+            active_batch += conn.exec_driver_sql(
+                "SELECT id FROM manager_wake_batches WHERE target_kind='ticket' "
+                "AND target_id IN (" + ",".join("?" for _ in expected) + ") "
+                "AND status IN ('pending','offering','dispatching','accepted','uncertain')",
+                tuple(expected),
+            ).all()
         if active_batch:
             raise RuntimeError(
                 "retired planning notice still has delivery ownership; reconcile normally"
@@ -102,6 +145,9 @@ def retire_planning_workers(conn: Any) -> None:
         values["retirement"] = json.dumps(
             {
                 "migration": MIGRATION_ID,
+                "reviewed_reconciliation_sha256": (
+                    RECONCILIATION["reviewed_evidence_sha256"] if len(expected) == 1 else None
+                ),
                 "retired_at": retired_at,
                 "reason": "Obsolete Sprint/Today planning work retired without success.",
                 "original_record_sha256": original["original_record_sha256"],

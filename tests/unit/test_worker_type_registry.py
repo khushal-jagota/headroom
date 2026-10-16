@@ -54,6 +54,13 @@ def test_registry_validation_order_and_messages() -> None:
         {"worker_type": "coding", "field": "success_condition"},
     )
     assert_error(
+        replace(
+            base, stages=(base.stages[0], replace(base.stages[1], id="cancelled"), *base.stages[2:])
+        ),
+        "cancelled is a system terminal outside the linear order",
+        {"worker_type": "coding", "stage": "cancelled"},
+    )
+    assert_error(
         replace(base, stages=(replace(base.stages[0], id="start"), *base.stages[1:])),
         "brief stage and field must be paired first",
         {"worker_type": "coding"},
@@ -165,5 +172,3 @@ def test_registry_validation_order_and_messages() -> None:
         "default_model must be a non-empty string",
         {"worker_type": "coding", "default_model": "   "},
     )
-
-

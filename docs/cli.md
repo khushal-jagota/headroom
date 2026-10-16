@@ -42,6 +42,22 @@ List commands return bounded summaries. `ticket list`, `sprint list`, `sprint it
 and `project list` use pages of 30 by default. Every result reports omissions and the
 next offset. Ticket list no longer filters live work by Day or Sprint.
 
+Ticket lists accept `--backlogged`, `--not-backlogged`, and repeated `--worker-type`
+filters. Retired records require `--include-terminal`. Direct record reads remain
+available regardless of those list filters.
+
+```sh
+panels ticket backlog t_example
+panels ticket resume t_example
+panels ticket retire t_example --reason "The original obligation is obsolete."
+panels ticket list --backlogged --worker-type coding --limit 30
+```
+
+Each action accepts `--expected-record-sha256` from the full Ticket read. A stale hash
+refuses the action without a write. Read retirement provenance with
+`panels ticket show t_example retirement --json`. Resume does not grant an approval or
+clear a blocker. These commands use existing caller authority.
+
 ## Structured Ticket writes
 
 `ticket create` reads one JSON object and sends it unchanged to the existing Ticket

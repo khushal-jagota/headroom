@@ -62,6 +62,7 @@ def blocker_summary_json(summary: BlockerSummary) -> JsonDict:
 def ticket_json(ticket: Ticket, now: int) -> JsonDict:
     """§3.3 ticket serializer."""
     return {
+        "is_backlogged": ticket.is_backlogged,
         "id": ticket.id,
         "title": ticket.title,
         "worker_type": ticket.worker_type,
@@ -199,6 +200,7 @@ def _recap_preview(recap: str) -> str:
 
 def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
     return {
+        "is_backlogged": bool(row["is_backlogged"]),
         "id": str(row["id"]),
         "title": str(row["title"]),
         "worker_type": str(row["worker_type"]),
@@ -269,6 +271,7 @@ def list_ticket_summaries(
     searchable_guidance = "tickets.guidance" if filters.search else "NULL"
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
+        "tickets.is_backlogged, "
         "tickets.worker_step_claim, tickets.priority, tickets.recap, "
         "tickets.pending_proposal, "
         + searchable_guidance
@@ -304,6 +307,13 @@ def list_ticket_summaries(
         )
         status = facts.ticket_status
         definition = registry.require(str(row["worker_type"]))
+        if (
+            filters.is_backlogged is not None
+            and bool(row["is_backlogged"]) != filters.is_backlogged
+        ):
+            continue
+        if filters.worker_types and str(row["worker_type"]) not in filters.worker_types:
+            continue
         if not filters.include_terminal and definition.is_terminal(stage):
             continue
         if filters.stages and stage not in filters.stages:
@@ -361,6 +371,7 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
 def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> JsonDict:
     ticket_id = ticket.id
     detail = ticket_json(ticket, now)
+    detail["record_sha256"] = tickets_data.ticket_record_sha256(conn, ticket_id)
     day_rows = conn.execute(
         "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC",
         (ticket_id,),
@@ -481,6 +492,7 @@ def board_view(
     named_placeholders = ",".join("?" for _ in named_ticket_ids)
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
+        "tickets.is_backlogged, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "tickets.orchestrator_kind, "
         "sprint_items.project_id AS parent_project_id, "
@@ -561,6 +573,7 @@ def board_view(
             "stage_label": worker_type_definition.stage_definition(stage).label,
             "gating_field": gating_field_id,
             "gating_field_label": gating_field_label,
+            "is_backlogged": bool(row["is_backlogged"]),
             "is_done": stage == worker_type_definition.completed_stage(),
             "blocked": facts.blocked,
             "conversation_id": (

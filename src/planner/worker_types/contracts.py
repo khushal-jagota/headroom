@@ -76,7 +76,7 @@ class WorkerTypeDefinition:
             ) from exc
 
     def stage_definition(self, stage: str) -> StageDefinition:
-        if stage == CANCELLED_STAGE_ID and self.worker_type in RETIRED_PLANNING_WORKER_TYPES:
+        if stage == CANCELLED_STAGE_ID:
             return StageDefinition(CANCELLED_STAGE_ID, "Cancelled", None, True, None)
         for stage_definition in self.stages:
             if stage_definition.id == stage:
@@ -88,9 +88,7 @@ class WorkerTypeDefinition:
         )
 
     def is_known_stage(self, stage: str) -> bool:
-        return stage in self.stage_ids() or (
-            stage == CANCELLED_STAGE_ID and self.worker_type in RETIRED_PLANNING_WORKER_TYPES
-        )
+        return stage in self.stage_ids() or (stage == CANCELLED_STAGE_ID)
 
     def is_terminal(self, stage: str) -> bool:
         return self.stage_definition(stage).is_terminal
@@ -172,6 +170,7 @@ class WorkerTypeDefinition:
                 "ceiling outside the type's range",
                 {"worker_type": self.worker_type, "ceiling": ceiling},
             )
+
 
 class WorkerTypeManifestStage(TypedDict):
     id: str
