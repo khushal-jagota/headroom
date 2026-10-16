@@ -1021,23 +1021,6 @@ def skill_check(as_json: bool) -> None:
     )
 
 
-@skill_group.command("drift")
-@json_option
-def skill_drift_command(as_json: bool) -> None:
-    """Report every skill row that no longer matches its packaged seed."""
-    data = http.send("GET", "/api/skills/drift", as_json=as_json)
-    drift = data["drift"]
-    if not drift:
-        http.emit(data, as_json, "every skill row matches the seed it started from")
-        return
-    http.emit(
-        data,
-        as_json,
-        "\n".join(f"{item['skill_name']}: {item['state']}" for item in drift)
-        + f"\n\n{len(data['skill_names'])} skills differ from the packaged seed",
-    )
-
-
 @main.group("project")
 def project_group() -> None:
     """List, inspect, create, and update projects."""

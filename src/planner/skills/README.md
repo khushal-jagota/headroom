@@ -11,5 +11,3 @@ Chief. Every skill write is owner-only.
 
 Add a file here when a new Worker type ships, so a fresh install starts with its specialist
 skill. `tests/unit/test_canonical_skill_sources.py` checks that.
-
-`panels skill drift` reports which rows no longer match these files.

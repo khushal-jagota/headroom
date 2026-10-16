@@ -18,7 +18,6 @@ from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime import conversation_start
-from planner.skill_drift import skill_drift
 from planner.skill_staleness import stale_references
 from planner.tickets.api import (
     Clk,
@@ -215,19 +214,6 @@ async def get_stale_skill_references(conn: DbConn) -> JsonDict:
     return {
         "stale_references": [reference.as_dict() for reference in references],
         "skill_names": sorted({reference.skill_name for reference in references}),
-    }
-
-
-@router.get("/skills/drift")
-async def get_skill_drift(conn: DbConn) -> JsonDict:
-    """Every skill whose stored row and packaged seed do not agree.
-
-    Declared before ``/skills/{skill_name}`` for the same reason ``/skills/stale`` is.
-    """
-    drift = skill_drift(conn)
-    return {
-        "drift": [item.as_dict() for item in drift],
-        "skill_names": sorted({item.skill_name for item in drift}),
     }
 
 
