@@ -283,7 +283,8 @@ provider or transport failure in its existing feedback line.
   A confirmed conversation read also refreshes mounted queries immediately when its
   accepted position covers a previously unread owner message. Overlapping read replies
   refresh each covered interval once. Tool-only reads keep normal stream coalescing.
-  This refresh asks the server for current facts. It does not clear reply-required state.
+  This refresh asks the server for current actual-work and owner-message/read facts.
+  It does not invent reply-required metadata or edit sidebar marks locally.
 
   There is no client-side copy of canonical state and no whole-screen reload — the
   server remains the source of truth, and the browser holds only the answers it has

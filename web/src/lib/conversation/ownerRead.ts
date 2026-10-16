@@ -78,7 +78,7 @@ export function watchOwnerReadAttention(
 
 /** A confirmed read merits an immediate canonical refresh only when it covers an
  * owner message not covered by the prior read/refresh. Use raw rows, not a lens.
- * This says nothing about whether a message still awaits the owner's reply.
+ * The backend keeps actual work and explicit owner-message/read facts authoritative.
  */
 export function ownerReadCoversNewMessage(
   events: readonly ConversationEvent[],
