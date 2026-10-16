@@ -972,6 +972,24 @@ class CodexLoginStanding:
     def generation(self) -> CodexLoginGeneration | None:
         return self.stored.generation
 
+    @property
+    def everything_a_card_reads(self) -> tuple[object, ...]:
+        """Every part of this standing a card's wording depends on.
+
+        Expiry is in here and not only the generation, because a token expiring is the one
+        change that moves a card from signed-in to unconfirmed while the file itself sits
+        still. A kept card that watched only the generation would go on saying signed in
+        for as long as the process lived, which is a smaller version of the fault this
+        whole ticket is about.
+        """
+        return (
+            self.generation,
+            self.rejected,
+            self.stored.present,
+            self.stored.readable,
+            self.stored.access_token_has_expired(now=datetime.now(UTC)),
+        )
+
 
 def read_codex_login_standing(
     remembered_rejection: RememberedCodexLoginRejection | None,
@@ -1269,6 +1287,14 @@ class BackendSnapshotService:
                 discover_update_advisory=refresh,
                 codex_login=codex_login,
             )
+            if stale and not refresh and probed.update_advisory is None:
+                # This probe happened because the login moved, not because anybody asked
+                # for update discovery, so it carries no advisory. Dropping the one the
+                # kept card had would make the Update button vanish for a reason that has
+                # nothing to do with updates.
+                kept_advisory = self._snapshots.get(backend_key)
+                if kept_advisory is not None and kept_advisory.update_advisory is not None:
+                    probed = replace(probed, update_advisory=kept_advisory.update_advisory)
             self._snapshots[backend_key] = probed
             if backend_key is ConversationBackendKey.codex:
                 self._codex_login_at_probe = codex_login
@@ -1286,7 +1312,7 @@ class BackendSnapshotService:
         if at_probe is None:
             return False
         now = read_codex_login_standing(self._remembered_codex_login_rejection)
-        return (now.generation, now.rejected) != (at_probe.generation, at_probe.rejected)
+        return now.everything_a_card_reads != at_probe.everything_a_card_reads
 
     async def update_backend(self, backend_key: ConversationBackendKey) -> BackendUpdateResult:
         """Run the update this backend's install implies, then look again.

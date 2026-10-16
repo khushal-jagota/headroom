@@ -242,15 +242,16 @@ class CodexAppServerClient:
             return None
         return b"".join(self._standard_error).decode("utf-8", errors="replace")
 
-    def standard_error_mark(self) -> int:
-        """How much this child has said on standard error so far.
+    def standard_error_bytes_so_far(self) -> int:
+        """How many bytes this child has written on standard error in its whole life.
 
-        A turn takes this when it starts, so that what it later reads back is its own.
+        A turn keeps this when it ends, so the next turn can read back what was said
+        after it and nothing earlier.
         """
         return self._standard_error_bytes_ever
 
-    def standard_error_since(self, mark: int) -> str | None:
-        """What the child said on standard error after ``mark``, as far as the ring kept it.
+    def standard_error_since(self, byte_count: int) -> str | None:
+        """What the child said after that many bytes, as far as the ring kept it.
 
         The ring is one buffer for the life of the process, so the whole of it is the
         child's history and not this turn's. A failure is diagnosed from this slice
@@ -258,7 +259,7 @@ class CodexAppServerClient:
         a turn just failed. When the ring has already dropped everything the turn wrote,
         the honest answer is that the turn said nothing.
         """
-        arrived_since = self._standard_error_bytes_ever - mark
+        arrived_since = self._standard_error_bytes_ever - byte_count
         if arrived_since <= 0 or not self._standard_error:
             return None
         kept = b"".join(self._standard_error)
@@ -543,7 +544,7 @@ def refuse_a_duplicated_codex_login(environment: Mapping[str, str]) -> None:
     would stop work that is not doing anything wrong.
     """
     home = codex_home(environment)
-    real_home = codex_home({})
+    real_home = codex_home(os.environ)
     try:
         if home.resolve() == real_home.resolve():
             return

@@ -304,9 +304,11 @@ class _TurnInFlight:
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
     parked_user_inputs: dict[str, _ParkedUserInput] = field(default_factory=dict)
     last_error_summary: str | None = None
-    # Where this child's standard error had got to when the turn started, so a failure is
-    # diagnosed from what this turn wrote and not from the whole of the child's history.
-    standard_error_mark: int = 0
+    # Where this child's standard error had got to when the previous turn ended, so a
+    # failure is diagnosed from what the child said around this turn rather than from the
+    # whole of its history. The first turn of a child therefore covers the handshake,
+    # whose own refusal is exactly what the first turn is about to fail on.
+    standard_error_from_byte: int = 0
     # The saved login this turn ran on, read when it started. A rejection or a success is
     # only ever recorded against this, and only when the login has not changed underneath.
     login_generation_at_start: CodexLoginGeneration | None = None
@@ -344,6 +346,7 @@ class CodexAppServerBackendChild:
         self._model: str | None = resolved_start.model
         self._reasoning_effort: str | None = resolved_start.reasoning_effort
         self._turn: _TurnInFlight | None = None
+        self._standard_error_the_next_turn_starts_from = 0
         self._asks_raised = 0
         self._catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
         self._catalog_refresh_requested = False
@@ -414,7 +417,7 @@ class CodexAppServerBackendChild:
         turn = _TurnInFlight(
             token=turn_token,
             started=asyncio.get_running_loop().create_future(),
-            standard_error_mark=self._client.standard_error_mark(),
+            standard_error_from_byte=self._standard_error_the_next_turn_starts_from,
             login_generation_at_start=self._login_generation(),
         )
         self._turn = turn
@@ -1196,12 +1199,13 @@ class CodexAppServerBackendChild:
         if self._turn is not turn:
             return
         self._turn = None
+        self._standard_error_the_next_turn_starts_from = self._client.standard_error_bytes_so_far()
         await self._complete_agent_messages(turn)
         await self._settle_parked_asks(turn)
         if ending is ConversationTurnEnding.failed:
             error_summary = self._read_the_login_in(turn, error_summary)
-        else:
-            self._login_worked_for(turn)
+        elif ending is ConversationTurnEnding.completed:
+            self._login_completed_a_turn(turn)
         await self._sink.turn_ended(
             turn.token,
             ending=ending,
@@ -1227,7 +1231,9 @@ class CodexAppServerBackendChild:
         """
         reading = read_a_failed_turn(
             error_summary=error_summary,
-            standard_error_this_turn=self._client.standard_error_since(turn.standard_error_mark),
+            standard_error_this_turn=self._client.standard_error_since(
+                turn.standard_error_from_byte
+            ),
         )
         if reading is CodexAuthReading.login_is_rejected:
             generation = turn.login_generation_at_start
@@ -1235,8 +1241,14 @@ class CodexAppServerBackendChild:
                 self._remembered_login_rejection.remember(generation)
         return error_summary_for(reading, error_summary)
 
-    def _login_worked_for(self, turn: _TurnInFlight) -> None:
-        """A turn that did not fail clears a refusal recorded against its own credential."""
+    def _login_completed_a_turn(self, turn: _TurnInFlight) -> None:
+        """A turn that finished clears a refusal recorded against its own credential.
+
+        Only a turn that finished. An interrupted turn proves nothing about the login —
+        somebody pressed stop, which a dead login is perfectly capable of being present
+        for — and clearing on it would throw away the one piece of evidence here that was
+        actually tested.
+        """
         generation = turn.login_generation_at_start
         if generation is not None and generation == self._login_generation():
             self._remembered_login_rejection.forget(generation)

@@ -602,29 +602,44 @@ the saved login file and says a login is there. It never asks the server. So it 
 healthy account for twelve days while every codex turn failed, because the saved login's
 rotating refresh token had already been spent and no refresh could work.
 
-The codex card therefore says one of four things, and only the first two come from the
-CLI alone:
+The codex card therefore reads the saved login as well as asking the CLI, and says one
+of these:
 
-- **Signed in.** The saved login is there and its access token has not expired.
+- **Signed in.** The CLI reports a login, the saved file can be read, and its access
+  token has not expired.
 - **Not signed in.** There is no saved login. The card names `codex login`.
 - **Cannot be confirmed.** The saved login is there and its access token has expired, or
   the file cannot be read. An expired token is ordinary — codex refreshes on demand — so
   this is not a fault and the card offers no action. It says that nothing has tested the
   login, because confirming it would mean spending a refresh.
-- **Rejected.** A codex turn failed and said explicitly that the saved login was refused.
-  That is the only evidence here that was actually tested, so it outranks the file. It is
-  remembered against the account and refresh stamp the turn ran on, and it stops applying
-  as soon as the saved login reports a different one — a new sign-in, or any successful
-  refresh. The memory lives in the running process, so a restart falls back to "cannot be
-  confirmed" rather than to a claim.
+- **Rejected.** A codex turn failed and codex's own login machinery said the saved login
+  was refused. That is the only evidence here that was actually tested, so it outranks the
+  file. It is remembered against the account and refresh stamp the turn ran on, and it
+  stops applying as soon as the saved login reports a different one — a new sign-in, or
+  any successful refresh. A turn that was cancelled clears nothing: pressing stop says
+  nothing about the login. The memory lives in the running process, so a restart falls
+  back to "cannot be confirmed" rather than to a claim.
+- **Nothing at all.** The CLI answered with no text to read and there was no saved login
+  to fall back on. The card stays quiet rather than inventing a state.
+
+A kept card follows its login. Cards are kept because probing costs subprocesses, so the
+saved login is re-read on every reading of the card: a sign-in, a refresh, a rejection, or
+an access token simply reaching its expiry all re-probe the card without anyone pressing
+Refresh.
 
 A failed codex turn is read the same way before its line is written. An explicit refusal
 replaces codex's own text, which names whichever subsystem met the refusal first, with a
 line saying the login was rejected and must be replaced. A bare `401` keeps codex's words
 and adds only that the sign-in may be worth checking. Every other failure is left exactly
-as codex put it. The reading uses only what that turn wrote on standard error, not the
-child's whole history, so a refusal from an hour ago cannot explain an unrelated failure
-now.
+as codex put it.
+
+Two things keep that reading narrow. A turn is graded on what the child said since the
+previous turn ended, not on the whole of its standard error, so a refusal from an hour ago
+cannot explain an unrelated failure now — and a refusal announced during the handshake,
+before any turn existed, still belongs to the turn that fails on it. And a refusal only
+counts when codex's own login machinery wrote it: standard error carries everything the
+child and its tools write, and plenty of tools say "not logged in" about accounts that
+have nothing to do with codex.
 
 ### One home for the codex login
 
@@ -639,8 +654,11 @@ the real home. A scratch home with its own login, or with none, is fine. The com
 the credential itself rather than the whole file, because a copy with edited account
 fields still rotates the same token. An unreadable login cannot be shown to be a copy, so
 it is allowed and logged. The guarantee covers the codex children Panels launches — the
-app-server child, the usage read, and the model catalogue read — and a check in the test
-suite holds repository code to the same rule.
+app-server child, the usage read, and the model catalogue read. A check in the test suite
+looks for the shape of the mistake in repository code — a module that both names a login
+file and copies files — which is how the two opt-in real-provider suites that were still
+copying the login were found. It is a scan for a known shape, not a proof that no copy can
+be written.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged

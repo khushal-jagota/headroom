@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import UsageRings from "../components/conversation/UsageRings.svelte";
-  import { backendIdentityNote } from "../lib/conversation/backendIdentity";
+  import { backendIdentityNote, type BackendIdentityNote } from "../lib/conversation/backendIdentity";
   import {
     loadBackendPageSnapshots,
     refreshBackendSnapshots
@@ -128,6 +128,13 @@
     return snapshot.identity?.status === "unauthenticated";
   }
 
+  /** The card's one identity line, as nothing or as itself: a list of at most one, so
+   *  the markup reads it once. */
+  function identityNotes(snapshot: BackendSnapshot): BackendIdentityNote[] {
+    const note = backendIdentityNote(snapshot);
+    return note ? [note] : [];
+  }
+
   function hasModelUsage(snapshot: BackendSnapshot, modelId: string): boolean {
     return snapshot.cached_usage?.windows.some((window) => window.model_id === modelId) ?? false;
   }
@@ -171,15 +178,14 @@
             >
               <span class="chevron" aria-hidden="true">{open ? "⌄" : "›"}</span>
               <span class="backend-name">{snapshot.backend_key}</span>
-              {#if backendIdentityNote(snapshot)}
-                {@const note = backendIdentityNote(snapshot)}
+              {#each identityNotes(snapshot) as note (note.text)}
                 <span class="identity-note" data-backend-identity-note>
-                  {note?.text}
-                  {#if note?.loginCommand}
+                  {note.text}
+                  {#if note.loginCommand}
                     · <b>{note.loginCommand}</b>
                   {/if}
                 </span>
-              {/if}
+              {/each}
             </button>
             <span class="version-cell">
               {#if snapshot.update_advisory?.update_available && snapshot.update_advisory.update_command}

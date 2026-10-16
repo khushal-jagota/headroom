@@ -37,7 +37,12 @@ LOGIN_FILE_NAME: Final = "auth.json"
 
 
 def codex_home(environment: Any = None) -> Path:
-    """The home codex reads its login from, as codex itself resolves it."""
+    """The home codex reads its login from, given the environment it will run in.
+
+    ``CODEX_HOME`` comes from the environment handed in. ``HOME`` does not: it is this
+    process's, because a codex child inherits this process's home and nothing in Panels
+    overrides it. A caller that did override it would need this to read it too.
+    """
     source = os.environ if environment is None else environment
     named = source.get("CODEX_HOME")
     return Path(named) if named else Path.home() / ".codex"

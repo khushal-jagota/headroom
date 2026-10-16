@@ -18,7 +18,15 @@ reported as a refusal and nothing more, and everything else keeps codex's own wo
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
+
+# Codex's own login machinery, which is the only thing on this wire whose word about the
+# login counts. A turn's standard error carries everything the child writes, including
+# output from tools the agent ran, and plenty of command-line tools say "not logged in"
+# about accounts that have nothing to do with codex. A phrase is read as codex's verdict
+# only on a line codex's auth manager wrote.
+_CODEX_AUTH_SPEAKER = re.compile(r"codex_login::auth|\bauth:")
 
 # Codex said the saved login itself is finished: nothing but a new sign-in will fix it.
 _LOGIN_IS_REJECTED_PHRASES = (
@@ -30,12 +38,10 @@ _LOGIN_IS_REJECTED_PHRASES = (
 )
 
 # The request was refused for authorization, without anything naming the saved login.
-_AUTHORIZATION_WAS_REFUSED_PHRASES = (
-    "unauthorized",
-    "401",
-    "403",
-    "forbidden",
-    "authentication failed",
+# The status codes are matched as whole words: a duration of 1403ms and a timestamp
+# ending 401Z are not refusals, and they are what unanchored digits would have found.
+_AUTHORIZATION_WAS_REFUSED = re.compile(
+    r"unauthorized|forbidden|authentication failed|\b401\b|\b403\b"
 )
 
 
@@ -62,13 +68,26 @@ LOGIN_IS_REJECTED_SUMMARY = (
 def read_a_failed_turn(
     *, error_summary: str | None, standard_error_this_turn: str | None
 ) -> CodexAuthReading:
-    """Grade one failed turn. Both inputs belong to that turn and no other."""
-    said = " ".join(part.lower() for part in (error_summary, standard_error_this_turn) if part)
-    if not said:
-        return CodexAuthReading.says_nothing_about_the_login
-    if any(phrase in said for phrase in _LOGIN_IS_REJECTED_PHRASES):
+    """Grade one failed turn. Both inputs belong to that turn and no other.
+
+    Codex's error text is codex speaking about its own turn, so it is read whole. Standard
+    error is not: it is whatever the child and its tools wrote, so only the lines codex's
+    login machinery wrote can establish that the saved login was refused.
+    """
+    codex_said = (error_summary or "").lower()
+    about_the_login = "\n".join(
+        (
+            codex_said,
+            *(
+                line.lower()
+                for line in (standard_error_this_turn or "").splitlines()
+                if _CODEX_AUTH_SPEAKER.search(line)
+            ),
+        )
+    )
+    if any(phrase in about_the_login for phrase in _LOGIN_IS_REJECTED_PHRASES):
         return CodexAuthReading.login_is_rejected
-    if any(phrase in said for phrase in _AUTHORIZATION_WAS_REFUSED_PHRASES):
+    if _AUTHORIZATION_WAS_REFUSED.search(codex_said):
         return CodexAuthReading.authorization_was_refused
     return CodexAuthReading.says_nothing_about_the_login
 

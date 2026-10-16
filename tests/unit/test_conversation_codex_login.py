@@ -274,6 +274,36 @@ def test_an_explicit_refusal_is_read_as_a_rejected_login() -> None:
     )
 
 
+def test_a_tools_own_logged_out_message_is_not_codex_saying_it_is_logged_out() -> None:
+    """Standard error is the whole child, not codex's verdict.
+
+    A worker runs `gh auth status`, or anything else with its own account, and the words
+    land in the same stream. Read loosely, that forges a codex sign-out: the person is
+    told to replace a working login, and the card remembers the refusal against it. The
+    phrase only counts on a line codex's own login machinery wrote.
+    """
+    reading = read_a_failed_turn(
+        error_summary="the model stopped responding",
+        standard_error_this_turn=(
+            "running `gh auth status`\nerror: not logged in to github.com\n"
+        ),
+    )
+
+    assert reading is CodexAuthReading.says_nothing_about_the_login
+
+
+def test_digits_inside_a_duration_or_a_timestamp_are_not_a_refusal() -> None:
+    """401 and 403 are status codes, not substrings to go hunting for."""
+    reading = read_a_failed_turn(
+        error_summary="tool `pytest` exited 1",
+        standard_error_this_turn=(
+            "2026-10-16T03:14:01.401Z INFO codex_core: turn finished in 1403ms\n"
+        ),
+    )
+
+    assert reading is CodexAuthReading.says_nothing_about_the_login
+
+
 def test_a_bare_refusal_keeps_the_backends_words_and_claims_nothing() -> None:
     reading = read_a_failed_turn(
         error_summary="workspace routing discovery unauthorized (401)",
@@ -485,9 +515,68 @@ def test_an_older_authentication_line_cannot_explain_a_later_unrelated_failure(
 ) -> None:
     """The ring buffer is the child's history, not this turn's.
 
-    The child writes its refusal once, early. A turn minutes later fails for its own
-    reason, and the whole buffer still holds that line. Reading the buffer would report a
-    dead login to somebody whose login is fine.
+    One turn fails on the refusal, which is right. A later turn fails for its own reason,
+    and the whole buffer still holds that refusal line. Reading the buffer would report a
+    dead login to somebody whose next failure had nothing to do with it.
+    """
+    home = tmp_path / "codex-home"
+    _write_login(home)
+    remembered = RememberedCodexLoginRejection()
+    script = {
+        "turns": [
+            {
+                "actions": [
+                    {"do": "say_on_stderr", "text": REFRESH_REJECTED_ON_STDERR},
+                    {
+                        "do": "complete",
+                        "status": "failed",
+                        "error": {"message": "workspace routing discovery unauthorized (401)"},
+                    },
+                ]
+            },
+            {
+                "actions": [
+                    {
+                        "do": "complete",
+                        "status": "failed",
+                        "error": {"message": "the model stream disconnected"},
+                    }
+                ]
+            },
+        ]
+    }
+
+    async def exercise() -> None:
+        async with _scripted_child(
+            tmp_path,
+            script=script,
+            remembered_login_rejection=remembered,
+            codex_home=home,
+        ) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("run"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, text_message_content("run again"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.error_summaries == [
+                LOGIN_IS_REJECTED_SUMMARY,
+                "the model stream disconnected",
+            ]
+
+    _run(exercise)
+
+
+def test_a_refusal_during_the_handshake_belongs_to_the_turn_that_follows_it(
+    tmp_path: Path,
+) -> None:
+    """A login dead enough to break the handshake must not go ungraded.
+
+    Codex shakes hands, lists models and binds a thread before any turn exists, and a
+    refused refresh is announced there. A window that began when the turn began would
+    miss it and report a bare 401 instead, so a turn's window begins where the previous
+    one ended — and for a child's first turn, that is the child's own beginning.
     """
     home = tmp_path / "codex-home"
     _write_login(home)
@@ -500,7 +589,7 @@ def test_an_older_authentication_line_cannot_explain_a_later_unrelated_failure(
                     {
                         "do": "complete",
                         "status": "failed",
-                        "error": {"message": "the model stream disconnected"},
+                        "error": {"message": "workspace routing discovery unauthorized (401)"},
                     }
                 ]
             }
@@ -518,11 +607,11 @@ def test_an_older_authentication_line_cannot_explain_a_later_unrelated_failure(
             await scripted.write_prompt(1, text_message_content("run"))
             await scripted.sink.wait_for_the_turn_to_end()
 
-            assert scripted.sink.error_summaries == ["the model stream disconnected"]
+            assert scripted.sink.error_summaries == [LOGIN_IS_REJECTED_SUMMARY]
 
     _run(exercise)
 
-    assert not remembered.applies_to(
+    assert remembered.applies_to(
         CodexLoginGeneration(account_id=ACCOUNT_ID, last_refresh=REFRESH_STAMP)
     )
 
@@ -638,3 +727,59 @@ def test_an_unconfirmed_card_does_not_also_claim_the_account_is_unreadable(
 
     assert card.diagnoses[0] == card.identity.detail
     assert not any("could not read who" in said for said in card.diagnoses)
+
+
+def test_an_interrupted_turn_does_not_clear_a_rejection(tmp_path: Path) -> None:
+    """Somebody pressed stop. That says nothing about the login.
+
+    A dead login is perfectly capable of being present while a person cancels a turn, so
+    treating a cancel as a success would throw away the one piece of evidence here that
+    was actually tested — and put the card back to claiming a login nothing has checked.
+    """
+    home = tmp_path / "codex-home"
+    _write_login(home)
+    was_rejected = CodexLoginGeneration(account_id=ACCOUNT_ID, last_refresh=REFRESH_STAMP)
+    remembered = RememberedCodexLoginRejection()
+    remembered.remember(was_rejected)
+    script = {
+        "turns": [
+            {"actions": [{"do": "await_interrupt"}, {"do": "complete", "status": "interrupted"}]}
+        ]
+    }
+
+    async def exercise() -> None:
+        async with _scripted_child(
+            tmp_path,
+            script=script,
+            remembered_login_rejection=remembered,
+            codex_home=home,
+        ) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("run"))
+            await scripted.child.cancel_running_turn()
+            await scripted.sink.wait_for_the_turn_to_end()
+
+    _run(exercise)
+
+    assert remembered.applies_to(was_rejected)
+
+
+def test_a_card_stops_claiming_a_login_once_its_token_expires(tmp_path: Path) -> None:
+    """A kept card must follow the one change that happens without the file changing.
+
+    Cards are kept because probing costs subprocesses. A token expiring moves a card from
+    signed-in to unconfirmed while the login file sits perfectly still, so a card that
+    watched only the credential generation would go on saying signed in for as long as the
+    process lived. That is the twelve-day fault in miniature.
+    """
+    home = tmp_path / "codex-home"
+    _write_login(home, expires_at=datetime.now(UTC) + timedelta(seconds=30))
+    before = read_stored_codex_login(home)
+    _write_login(home, expires_at=datetime.now(UTC) - timedelta(seconds=30))
+    after = read_stored_codex_login(home)
+
+    assert before.generation == after.generation
+    assert (
+        CodexLoginStanding(stored=before, rejected=False).everything_a_card_reads
+        != CodexLoginStanding(stored=after, rejected=False).everything_a_card_reads
+    )
