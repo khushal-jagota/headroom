@@ -14,6 +14,7 @@
     onclick,
     icon,
     label,
+    detail,
     trailing
   }: {
     on?: boolean;
@@ -24,6 +25,7 @@
     onclick: () => void;
     icon?: Snippet;
     label: string;
+    detail?: string;
     trailing?: Snippet;
   } = $props();
 </script>
@@ -42,7 +44,10 @@
   {...attributes}
 >
   {#if icon}{@render icon()}{/if}
-  <span class="picker-rail-row-label">{label}</span>
+  <span class="picker-rail-row-copy">
+    <span class="picker-rail-row-label">{label}</span>
+    {#if detail}<span class="picker-rail-row-detail">{detail}</span>{/if}
+  </span>
   {#if trailing}{@render trailing()}{/if}
 </button>
 
@@ -52,7 +57,9 @@
     border: 0; color: var(--text-faint); cursor: pointer; font-family: var(--font-mono);
     font-size: var(--type-xs); padding: var(--space-2) var(--space-3); text-align: left; white-space: nowrap;
   }
-  .picker-rail-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .picker-rail-row-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+  .picker-rail-row-label, .picker-rail-row-detail { overflow: hidden; text-overflow: ellipsis; }
+  .picker-rail-row-detail { max-width: 110px; color: var(--text-faint); }
   .picker-rail-row:hover { background-image: var(--interaction-hover); color: var(--text-muted); }
   .picker-rail-row.held { color: var(--text-strong); }
   .picker-rail-row.on { background: var(--surface-recessed); color: var(--text-strong); }

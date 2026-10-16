@@ -125,11 +125,10 @@ with sync_playwright() as p:
     # move it to Khushal's.
     parked_leash=page.locator('[data-leash]')
     assert parked_leash.count() == 1
-    assert 'then Chief' in parked_leash.locator('[data-leash-face]').inner_text()
-    assert 'Until' not in parked_leash.locator('[data-leash-face]').inner_text()
-    parked_leash.locator(':scope > summary').click()
+    assert parked_leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'then Chief'
     assert parked_leash.locator('[data-scope-ceiling]').count() == 1
     parked_leash.locator('[data-scope-ceiling]').click()
+    assert parked_leash.locator('[data-ceiling-picker-panel]').count() == 1
     # The panel opens on the reviewer, and says why the other half cannot be touched.
     expect(parked_leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     assert parked_leash.locator('[data-ceiling-picker-locked]').count() == 1
@@ -149,14 +148,16 @@ with sync_playwright() as p:
     page.locator('[data-ticket-id="t_open"]').wait_for()
     leash=page.locator('[data-leash]')
     # No proposal parked, so the whole ceiling is here: the stage and the holder.
-    assert 'Until Success' in leash.locator('[data-leash-face]').inner_text()
-    assert 'then me' in leash.locator('[data-leash-face]').inner_text()
-    leash.locator(':scope > summary').click()
+    assert 'Until Success' in leash.locator('[data-scope-ceiling]').inner_text()
+    assert 'then me' in leash.locator('[data-scope-ceiling]').inner_text()
     assert leash.locator('select').count() == 0
     assert leash.locator('[data-scope-ceiling]').count() == 1
     assert leash.locator('[data-scope-holder]').count() == 0
     leash.locator('[data-scope-ceiling]').click()
+    assert leash.locator('[data-ceiling-picker-panel]').count() == 1
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    assert leash.locator('[data-ceiling-part="ceiling"] .picker-rail-row-detail').inner_text() == 'Success'
+    assert leash.locator('[data-ceiling-part="holder"] .picker-rail-row-detail').inner_text() == 'me'
     # A stage chosen and then abandoned is a draft. Escape discards it: nothing is sent,
     # the shut trigger still reads the saved ceiling, and the list ticks it again.
     leash.get_by_role('listbox').press('End')
@@ -170,8 +171,7 @@ with sync_playwright() as p:
     leash.locator('[data-scope-ceiling]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
     assert leash.locator('[role="option"][aria-selected="true"]').get_attribute('data-ceiling-picker-choice') == 'needs_success_condition'
-    # The rail names both halves and reaches either one directly. What each is set to is
-    # on the trigger above the panel.
+    # The rail names both halves and shows their current choices as either list opens.
     assert 'Until Success' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
     assert 'then me' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
     leash.locator('[data-ceiling-part="holder"]').click()
@@ -192,7 +192,6 @@ with sync_playwright() as p:
 
     # A reviewer changed on its own writes the reviewer alone. The ceiling is not sent,
     # so a Ticket cannot have its ceiling moved by a reader who only changed the queue.
-    leash.locator(':scope > summary').click()
     leash.locator('[data-scope-ceiling]').click()
     leash.locator('[data-ceiling-part="holder"]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
@@ -205,7 +204,6 @@ with sync_playwright() as p:
 
     # A reviewer chosen and then abandoned is discarded too, and letters typed at one
     # half never join letters typed at the other.
-    leash.locator(':scope > summary').click()
     leash.locator('[data-scope-ceiling]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
     leash.get_by_role('listbox').press('d')
@@ -217,6 +215,9 @@ with sync_playwright() as p:
     page.wait_for_timeout(200)
     assert len(ceiling_writes) == 3, ceiling_writes
     assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Success · then me'
+    leash.locator('[data-scope-ceiling]').click()
+    page.locator('.ticket-title-row').click()
+    expect(leash.get_by_role('listbox')).to_have_count(0)
     assert page.locator('[data-copy], [data-ticket-takeover-toggle]').count() == 0
     assert placement_writes == []
     assert 'Copy' not in page.locator('.ticket-operating').inner_text()
@@ -227,11 +228,14 @@ with sync_playwright() as p:
         assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
         identity_box=page.locator('[data-ticket-identity]').bounding_box()
         title_box=page.locator('.ticket-title-row').bounding_box()
-        menu_box=page.locator('.ticket-leash-menu').bounding_box()
+        leash.locator('[data-scope-ceiling]').click()
+        menu_box=leash.locator('[data-ceiling-picker-panel]').bounding_box()
         assert identity_box and title_box and menu_box
         assert identity_box['y'] + identity_box['height'] <= title_box['y'] + 1
         assert menu_box['x'] >= -1
         assert menu_box['x'] + menu_box['width'] <= width + 1
+        assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
+        leash.get_by_role('listbox').press('Escape')
     assert_ticket_layout(1280)
     assert_ticket_layout(390)
     page.set_viewport_size({'width': 1280, 'height': 900})
@@ -272,8 +276,7 @@ with sync_playwright() as p:
     # first moment a proposal can sit in the wrong place, so the holder half is here too.
     kickoff_leash=page.locator('[data-leash]')
     assert kickoff_leash.count() == 1
-    assert kickoff_leash.locator('[data-leash-face]').inner_text().strip() == 'then Chief'
-    kickoff_leash.locator(':scope > summary').click()
+    assert kickoff_leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'then Chief'
     assert kickoff_leash.locator('[data-scope-ceiling]').count() == 1
     kickoff_leash.locator('[data-scope-ceiling]').click()
     assert kickoff_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()

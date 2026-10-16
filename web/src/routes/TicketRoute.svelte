@@ -10,10 +10,8 @@
     fieldLabelFor,
     fieldStageVisualStateFor,
     gatingFieldFor,
-    lifecycleFor,
-    stageLabelFor
+    lifecycleFor
   } from "../lib/lifecycle";
-  import { holderOptionsFor, holderValue } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -89,19 +87,10 @@
       : null
   );
 
-  function holderLabel(detail: TicketDetail): string {
-    const value = holderValue(detail.ceiling_holder);
-    const match = holderOptionsFor(ticketSprintItem, detail.ceiling_holder).find(
-      (option) => option.value === value
-    );
-    return match?.label || value;
-  }
-
   const emptyTicketFieldText = "Not written yet.";
 
   let headerError = $state<unknown>(null);
   let conversationBackends = $state<readonly BackendSnapshot[]>([]);
-  let leashMenu = $state<HTMLDetailsElement | null>(null);
 
   /** How far open this page's conversation is.
    *
@@ -258,15 +247,10 @@
     return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
   }
 
-  function closeLeash(): void {
-    if (leashMenu) leashMenu.open = false;
-  }
-
   async function updateScope(body: Record<string, unknown>): Promise<void> {
     headerError = null;
     try {
       await saveScope(body);
-      closeLeash();
     } catch (err) {
       headerError = err;
     }
@@ -428,37 +412,22 @@
                  parks its Kickoff in their queue, so the holder half belongs here too.
                  The picker reports which halves the reader set, and only those are written. -->
             {#if detail.stage !== "done" && (detail.stage !== "needs_brief" || detail.pending_proposal !== null)}
-              <details class="ticket-leash" bind:this={leashMenu} data-leash>
-                <summary
-                  class="ticket-leash-face"
-                  data-leash-face
-                >
-                  {#if detail.pending_proposal === null}
-                    Until
-                    <span class="ticket-leash-value" data-leash-ceiling>{stageLabelFor(lc, detail.ceiling)}</span>
-                    <span class="ticket-leash-word" aria-hidden="true">·</span>
-                  {/if}
-                  then
-                  <span class="ticket-leash-value" data-leash-holder>{holderLabel(detail)}</span>
-                  <span class="disclosure-chev" aria-hidden="true"></span>
-                </summary>
-                <div class="ticket-leash-menu" role="menu">
-                  <CeilingPicker
-                    newStage={detail.stage}
-                    lifecycle={lc}
-                    ceiling={detail.ceiling}
-                    holder={detail.ceiling_holder}
-                    sprintItem={ticketSprintItem}
-                    stageLocked={detail.pending_proposal !== null}
-                    below
-                    onComplete={(change) => void updateScope(
-                      change.ceiling === undefined
-                        ? { ceiling_holder: change.holder }
-                        : { ceiling: change.ceiling, ceiling_holder: change.holder }
-                    )}
-                  />
-                </div>
-              </details>
+              <div class="ticket-leash" data-leash>
+                <CeilingPicker
+                  newStage={detail.stage}
+                  lifecycle={lc}
+                  ceiling={detail.ceiling}
+                  holder={detail.ceiling_holder}
+                  sprintItem={ticketSprintItem}
+                  stageLocked={detail.pending_proposal !== null}
+                  below
+                  onComplete={(change) => void updateScope(
+                    change.ceiling === undefined
+                      ? { ceiling_holder: change.holder }
+                      : { ceiling: change.ceiling, ceiling_holder: change.holder }
+                  )}
+                />
+              </div>
             {/if}
           </div>
           {#if detail.blocker_summary?.blocked_by.length}

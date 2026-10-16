@@ -63,6 +63,11 @@
   // The trigger reports the saved ceiling, never a draft.
   let ceilingName = $derived(ceilingOptions.find((option) => option.value === ceiling)?.name ?? null);
   let holderName = $derived(holders.find((option) => option.value === holderValue(holder))?.name ?? "Choose holder");
+  let draftCeilingName = $derived(ceilingOptions.find((option) => option.value === draftCeiling)?.name ?? "Choose ceiling");
+  let draftHolderName = $derived(holders.find((option) => option.value === draftHolderValue)?.name ?? "Choose holder");
+  let triggerLabel = $derived(stageLocked
+    ? `then ${holderName}`
+    : `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`);
 
   function preferredCeiling(): string | null {
     return ceiling ?? preferredScopeCeilingFor(lifecycle, newStage) ?? "none";
@@ -119,7 +124,7 @@
 <ListboxPicker
   items={rows}
   {selectedValue}
-  label={`Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`}
+  label={triggerLabel}
   listLabel={showing === "ceiling" ? "Ceiling stage" : "Who holds the ceiling"}
   kind="rail"
   {below}
@@ -136,17 +141,18 @@
   })}
 >
   {#snippet triggerContent()}
-    <span>Until {ceilingName ?? "Choose ceiling"} · then {holderName}</span>
+    <span>{triggerLabel}</span>
   {/snippet}
   {#snippet beforeList()}
     <PickerRail label="Parts of the ceiling" attributes={{ "data-ceiling-rail": "" }}>
-      <!-- The rail names the halves. What each one is set to is in the trigger right
-           above the panel, and on the ticked row in the list. -->
+      <!-- Each rail row keeps its current choice visible while the other half's list
+           is open. The active half is also ticked in the list. -->
       <PickerRailRow
         on={showing === "ceiling"}
         dim={stageLocked}
         disabled={stageLocked}
         label="How far"
+        detail={draftCeilingName}
         attributes={{
           "data-ceiling-part": "ceiling",
           "aria-pressed": showing === "ceiling" ? "true" : "false",
@@ -157,6 +163,7 @@
       <PickerRailRow
         on={showing === "holder"}
         label="Who reviews"
+        detail={draftHolderName}
         attributes={{
           "data-ceiling-part": "holder",
           "aria-pressed": showing === "holder" ? "true" : "false"

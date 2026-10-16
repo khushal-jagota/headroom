@@ -310,11 +310,12 @@ can approve that displayed scope without opening the picker. The click remains t
 A new proposal or changed approval context restores this default. An unrelated data refresh
 does not erase a proposal edit or an explicit scope choice.
 
-The Ticket details disclosure shows the same permission as a readable leash:
+The Ticket ceiling control shows the same permission as a readable leash:
 "Until [a stage] · then [who]", where who reads `me`, `Chief`, or the Ticket's Sprint Item
 by its name. The stage name is the Worker type's own label, so a renamed stage reads
-correctly with no code change. While a proposal is parked the disclosure drops its stage
-select and keeps the holder one, which is the split refusal made visible. A Ticket can hold
+correctly with no code change. Clicking that line opens the stage and reviewer choices
+directly. While a proposal is parked the control shows only the holder in its closed line;
+the open panel greys out the stage and leaves the holder free. A Ticket can hold
 another Ticket's ceiling and tooling can set that; it is not offered on screen.
 
 The worker runs to the new ceiling and parks there for the named holder. At the Brief, an
@@ -324,7 +325,7 @@ are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
 already covered. One shared source of the allowed stages feeds both the Ticket leash
 and the approval screen, so the two cannot disagree.
-While a proposal is pending, the leash drops its ceiling select and keeps its holder one.
+While a proposal is pending, the leash disables its ceiling choices and keeps its holder ones.
 The ceiling cannot change without silently changing what was proposed, and the proposal can
 still be re-addressed.
 

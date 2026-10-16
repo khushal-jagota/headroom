@@ -170,8 +170,8 @@ One screen per part of the system:
 - **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
   priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
   Item appears only when the Ticket has one. Project and Sprint Item are static facts.
-  The eyebrow states no Sprint and has no placement controls. The Ticket details
-  disclosure is the leash: one control holding both halves of the ceiling. A parked
+  The eyebrow states no Sprint and has no placement controls. The Ticket's ceiling line
+  opens both halves of the ceiling directly, with no second trigger. A parked
   proposal shows the ceiling half greyed and unselectable, with the reason under the
   list, and leaves the holder half free. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
@@ -534,7 +534,8 @@ hand-rolling the same shapes per screen. Each does one job:
 - **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
   may go, and who reviews it — sit in a rail on the left, so either can be edited on its
   own. A half-finished choice stays in the open panel: dismissing it writes nothing and
-  leaves nothing behind, and only a completed pair reaches the Ticket.
+  leaves nothing behind, and only a completed pair reaches the Ticket. The same picker
+  keeps its own trigger in both the Ticket header and the approval row.
 - **PickerRail**, **PickerRailRow** — the left rail a picker panel uses to name the parts
   of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.
