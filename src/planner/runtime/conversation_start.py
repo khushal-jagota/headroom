@@ -411,6 +411,11 @@ async def send_to_ticket_conversation(
     own values.
     """
     ticket = tickets_data.read_ticket(conn, ticket_id)
+    # This locale refusal is a local instance of the general delivery/readiness problem.
+    # A message must always be deliverable and must never start a step that the readiness
+    # machinery would refuse: deliver and hold, do not start. This guard only protects
+    # local execution. The general runtime fix must decide whether it subsumes this
+    # refusal so that separate admission mechanisms do not disagree.
     if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
         raise PlannerError(
             ErrorCode.validation,
