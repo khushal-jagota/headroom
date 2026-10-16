@@ -12,6 +12,7 @@
    */
   import { createQuery } from "@tanstack/svelte-query";
   import ErrorLine from "./ErrorLine.svelte";
+  import OrchestratorChildren from "./OrchestratorChildren.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
@@ -87,3 +88,8 @@
     onNewConversation={newConversation}
   />
 {/if}
+
+<div class="chief-workers"><OrchestratorChildren principal={{ kind: "chief", id: "chief" }} /></div>
+<style>
+  .chief-workers { padding:var(--space-5); }
+</style>

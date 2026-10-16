@@ -160,11 +160,12 @@ One screen per part of the system:
   below the Workers. Chief keeps its existing conversation screen and cannot settle.
 - **Historical Sprint** — retained dated links and documents remain readable. These
   screens do not supply planning or change Worker continuation. See `sprints.md`.
-- **Workers** — the retained `#/backlog` address lists ordinary Workers as bounded
-  summaries with their Project context and priority order. Project eyebrow links use
-  this same list with the existing server project filter. All Workers clears that
-  filter. Its form creates a Worker with explicit Chief assignment. Rows open the
-  canonical Workspace screen.
+- **Chief children** — the existing Chief workspace provides a scoped, bounded child
+  section with active, backlogged, completed, and retired views. It reuses the child
+  groups and rows. Ordinary orchestrators retain their own scoped children and filters.
+  The standalone Workers page is removed. Former `#/backlog` addresses redirect to
+  Workspace. Project facts remain text. The browser New Ticket form and global
+  project/type list are removed; API and CLI creation remain available.
 - **Ideas** — remembered possibilities with an optional note and Project. See
   `backlog-and-ideas.md`.
 - **Feedback** — open notes and handled history. Open notes link to their source page.
@@ -174,54 +175,27 @@ One screen per part of the system:
   `#/workspace/chief-of-staff`. On narrow screens, the same address opens the focused
   conversation. The former `#/chief`, `#/agents`, and
   `#/agents/chief-of-staff` addresses redirect into Workspace.
-- **Config** — the management surface at `#/config`. It contains Chief of Staff,
-  the Sprint Item supervisor skill, the shared Worker skill, and every configured
-  Worker type. Chief settings open at `#/config/chief-of-staff`, Sprint Item supervisor
-  skill at `#/config/sprint-item-supervisor`, Worker skill at `#/config/worker-skill`,
-  and a Worker at
-  `#/config/workers/<worker-type>`. Those detail screens provide the applicable
-  launch defaults, a read-only Stage ownership table, and skill editors. Worker and skill
-  identities and lifecycle structure stay read-only. Each editable value saves
-  independently; a failed save keeps the attempted value and a useful error so it can
-  be corrected or retried. The former `#/agents/worker-skill` and
-  `#/agents/workers/<worker-type>` paths, plus legacy `#/workers` paths, redirect to
-  Config.
-- **Notifications** — the personal notification settings at `#/notifications`.
-  “What counts” renders the Ticket and Chief of Staff groups from the server's
-  notification catalogue. Tickets have four switches. The Chief and Sprint Item
-  supervisors each have two. Each
-  subject-and-type switch saves and reports errors independently. “This device” asks
-  for browser permission only after the user
-  presses Enable, registers the browser's Web Push subscription, and can remove it
-  again. On iPhone or iPad, Panels explains that the site must first be added to the
-  Home Screen.
-- **Scheduled tasks** — the internal schedule editor at `#/scheduled-tasks`. It lists
-  schedules, creates and edits them, and enables or disables future occurrences. It
-  does not start Workers or delete schedules. See `scheduled-tickets.md`.
+- **Settings** — one small route shell at `#/settings` contains Config, Scheduled
+  tasks, and Notifications. It reuses their existing feature components.
+  `#/settings/config` retains Config details for Chief, supervisor skills, shared Worker
+  skill, and Worker settings. `#/settings/scheduled-tasks` retains schedule management.
+  `#/settings/notifications` retains notification preferences and device enrollment.
+  Existing feature routes and legacy Config detail aliases redirect to their exact
+  sections. Section/detail route keys prevent stale Config instances.
+
+  Schedule creation, edits, disable behavior, and retired-type restrictions remain.
+  Notification preferences and browser permission behavior remain. Settings does not
+  change feature authority or introduce another configuration framework.
 
 The workspace keeps its resize handle within its own visual layer. Open shell menus
 cover that handle and receive pointer actions above it. The handle keeps its pointer
 and keyboard controls when unobscured.
 
-The shell has three primary destinations in order: Home, Review, and Workspace. More
-groups Sprint, Backlog, Ideas, and Feedback under Planning. Config and Backends use
-the Workspace rail footer when it is visible. More retains those destinations on other
-screens and compact selected panes, where the rail is hidden. It also groups
-Notifications and Scheduled tasks under System. On desktop, the three destinations
-and More live in the top bar. On mobile, the same four controls form a fixed,
-full-width bottom bar and More opens a bottom sheet. A slim mobile top bar
-shows the current screen and the same quiet connection and worker-presence cluster used
-at desktop. The cluster is a live status label, not a control. It normally says
-**Connected** or **Reconnecting**. During a deployment
-it can instead say **Preparing**, **Restarting**, **Back up**, or **Problem**. These
-words combine the server's durable deployment account with whether the browser's
-change stream is connected; the stream itself still reports only its own connection.
-A planned phase expires locally at the time the server supplied, even if no new event
-arrives. A deployment problem remains visible through a dropped connection.
-Worker presence is the adjacent spinner and "N working" readout from the global
-running-worker count. Review's count is the only navigation accent; active destinations
-use strong text. The shell uses the dynamic viewport and never scrolls the navigation
-horizontally.
+The shell retains Review and Workspace navigation. The Workspace footer supplies Settings,
+Ideas, Feedback, and Usage/Backends icons. Each has an accessible name, tooltip, and keyboard
+focus. Feedback retains its count. More supplies fallback destinations when the footer is
+absent, including compact selected panes. A visible footer suppresses duplicate More links.
+Settings replaces separate Config, Scheduled tasks, and Notifications entries.
 
 The Feedback control is the last item in the status strip on every page. It opens a
 desktop popover or a phone sheet and saves a text note with optional page context. A

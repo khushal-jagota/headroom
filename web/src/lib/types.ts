@@ -202,6 +202,9 @@ export type Principal = {
   id: string;
 };
 
+export type OrchestratorPrincipal = Principal & { kind: "chief" | "sprint_item" };
+export type OrchestratorChildFilter = "active" | "backlogged" | "done" | "retired";
+
 export type BlockedByTicket = {
   ticket_id: string;
   title: string;
@@ -414,6 +417,7 @@ export type CarryOutcomeResult = {
 };
 
 export type SprintItemWorkspaceTicket = WorkAttention & {
+  is_backlogged: boolean;
   conversation_id?: string | null;
   id: string;
   title: string;
