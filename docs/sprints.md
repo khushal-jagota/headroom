@@ -26,9 +26,10 @@ and later orchestrator creation keeps the ordinary active default. Child complet
 does not settle a parent.
 
 Settled supervisor and Worker conversations remain in Messages when unread. Each dot
-belongs to its own conversation row. A closed fold exposes a distinct conversation
-count in text. Normal read acknowledgments clear dots and counts. Later messages
-restore discovery without reopening the orchestrator.
+belongs to its own conversation row. Message folds expose distinct conversation counts
+in text. The Settled footer shows only its ordinary orchestrator count. Normal read
+acknowledgments clear unread dots and message counts. Later messages restore discovery
+without reopening the orchestrator.
 
 Use `panels orchestrator create/list/show/set`, `workspace`, and `artifact` for ordinary
 orchestrators. Existing `panels sprint item` paths remain aliases. Use

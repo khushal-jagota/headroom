@@ -353,10 +353,10 @@
             </a>
             <div class="shell-more-divider"></div>
             <div class="shell-more-group">System</div>
-            <a class:active={currentNav("config")} href="#/config" onclick={closeMore}>
+            <a class:active={currentNav("config")} class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"} href="#/config" onclick={closeMore}>
               <span>Config</span>
             </a>
-            <a class:active={currentNav("backends")} href="#/backends" onclick={closeMore}>
+            <a class:active={currentNav("backends")} class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"} href="#/backends" onclick={closeMore}>
               <span>Backends</span>
             </a>
              <a class:active={currentNav("notifications")} href="#/notifications" onclick={closeMore}>
@@ -444,3 +444,11 @@
     {/key}
   {/if}
 </div>
+
+<style>
+  /* Keep system destinations reachable when a selected compact pane hides the rail. */
+  .shell-more-menu a.rail-utility-fallback { display:none; }
+  @media (max-width:960px) {
+    .shell-more-menu a.rail-utility-fallback--pane { display:flex; }
+  }
+</style>

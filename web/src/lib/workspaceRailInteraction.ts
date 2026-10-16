@@ -2,6 +2,8 @@
 export const RAIL_MIN_WIDTH = 232;
 export const RAIL_MAX_WIDTH = 520;
 export const RAIL_DEFAULT_WIDTH = "clamp(17rem, 22vw, 20rem)";
+// The expanded Settled section includes its header in this share of usable rail height.
+export const RAIL_SETTLED_MAX_HEIGHT_SHARE = 0.5;
 export const RAIL_WIDTH_STORAGE_KEY = "panels.workspace.rail-width";
 export const RAIL_HOVER_ENTER_MS = 200;
 export const RAIL_HOVER_EXIT_MS = 90;

@@ -4,12 +4,12 @@
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
   import { buildWorkspaceRail, type WorkspaceRailItem, type WorkspaceTicketGroup } from "../lib/workspaceRail";
-  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
+  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
   import { whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import type { WorkspaceMessageConversation } from "../lib/types";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
-  import { workspaceChildMessageConversations, workspaceMessageConversations, workspaceSettledUnreadCount } from "../lib/workspaceMessageDiscovery";
+  import { workspaceChildMessageConversations, workspaceMessageConversations } from "../lib/workspaceMessageDiscovery";
   import StageMark from "../components/StageMark.svelte";
   import WorkspaceMessages from "../components/WorkspaceMessages.svelte";
   import ChiefConversation from "../components/ChiefConversation.svelte";
@@ -27,7 +27,6 @@
   let allCards = $derived((board.data?.columns ?? []).flatMap((column) => column.cards));
   let rail = $derived(buildWorkspaceRail(allCards, board.data?.sprint_items ?? []));
   let messages = $derived(workspaceMessageConversations(allCards, board.data?.sprint_items ?? [], workers.data?.chief_of_staff));
-  let settledUnreadCount = $derived(workspaceSettledUnreadCount(messages, board.data?.sprint_items ?? []));
   let itemPane = $derived(opening.markedItemId !== null);
   let railElement = $state<HTMLElement | null>(null);
   let shellElement = $state<HTMLDivElement | null>(null);
@@ -117,26 +116,36 @@
   <ResourceState error={board.error} loading={board.isFetching} hasData={Boolean(board.data)} loadingText="Loading workspace...">
     <div class="board-workspace-wrap">
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
-        <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" onscroll={() => hover.leave()}>
-          <WorkspaceRailCard id="chief" title={workers.data?.chief_of_staff.label ?? "Chief of Staff"} chief ownUnread={workers.data?.chief_of_staff.awaiting_reply ?? false} selected={opening.chiefMarked} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target) => hover.enter({target,title:workers.data?.chief_of_staff.label ?? "Chief of Staff",kicker:"Chief of Staff",groups:rail.chiefHoverGroups})} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
-          {#each rail.items as item (item.id)}
-            <WorkspaceRailCard id={item.id} title={item.title} project={item.project} ownUnread={item.mark === "reply"} selected={opening.markedItemId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target) => hoverItem(target,item)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
-          {/each}
-          <div class="settled">
-            <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => settledOpen = !settledOpen}><span>Settled</span><span class="rule"></span><span class="count" data-settled-count>{rail.settledItems.length}{settledUnreadCount ? ` · ${settledUnreadCount} unread` : ""}</span></button>
-            {#if settledOpen}
-              {#each rail.settledItems as item (item.id)}
-                <div class="settled-item" data-settled-item={item.id}>
-                <div class="settled-row">
-                  <button class="settled-title" type="button" onclick={() => selectItem(item.id)}><span>{item.title}</span>{#if item.mark === "reply"}<StageMark state="current-awaiting-approval" aria-label="Unread reply" data-workspace-mark="reply" />{/if}</button>
-                  <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
+        <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
+          <div class="rail-work">
+            <div class="active-work-scroll" data-active-work-scroll onscroll={() => hover.leave()}>
+            <WorkspaceRailCard id="chief" title={workers.data?.chief_of_staff.label ?? "Chief of Staff"} chief ownUnread={workers.data?.chief_of_staff.awaiting_reply ?? false} selected={opening.chiefMarked} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target) => hover.enter({target,title:workers.data?.chief_of_staff.label ?? "Chief of Staff",kicker:"Chief of Staff",groups:rail.chiefHoverGroups})} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
+            {#each rail.items as item (item.id)}
+              <WorkspaceRailCard id={item.id} title={item.title} project={item.project} ownUnread={item.mark === "reply"} selected={opening.markedItemId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target) => hoverItem(target,item)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
+            {/each}
+            {#if settleError}<p role="alert">{settleError}</p>{/if}
+            </div>
+            <div class="settled" class:settled--open={settledOpen}>
+              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => settledOpen = !settledOpen}><span>Settled <span class="count" data-settled-count>({rail.settledItems.length})</span></span><span class="rule"></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+              {#if settledOpen}
+                <div class="settled-body" data-settled-scroll onscroll={() => hover.leave()}>
+                {#each rail.settledItems as item (item.id)}
+                  <div class="settled-item" data-settled-item={item.id}>
+                  <div class="settled-row">
+                    <button class="settled-title" type="button" onclick={() => selectItem(item.id)}><span>{item.title}</span>{#if item.mark === "reply"}<StageMark state="current-awaiting-approval" aria-label="Unread reply" data-workspace-mark="reply" />{/if}</button>
+                    <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
+                  </div>
+                  <WorkspaceMessages conversations={workspaceChildMessageConversations(messages, item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
+                  </div>
+                {/each}
                 </div>
-                <WorkspaceMessages conversations={workspaceChildMessageConversations(messages, item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
-                </div>
-              {/each}
-            {/if}
+              {/if}
+            </div>
           </div>
-          {#if settleError}<p role="alert">{settleError}</p>{/if}
+          <nav class="rail-utilities" aria-label="Workspace utilities">
+            <a href="#/backends" aria-label="Usage and Backends" title="Usage and Backends"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></a>
+            <a href="#/config" aria-label="Config" title="Config"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m8 3-.5 2-1.4.8-2-.5-2 3.4L3.5 10l.1 1.6-1.4 1.4 2 3.4 2-.5 1.4.8.5 2h4l.5-2 1.4-.8 2 .5 2-3.4-1.4-1.4.1-1.6 1.4-1.3-2-3.4-2 .5-1.4-.8-.5-2Z" transform="translate(0 -1)" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2" /></svg></a>
+          </nav>
         </section>
         <!-- A focusable separator implements the WAI-ARIA window splitter keyboard pattern. -->
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -186,15 +195,25 @@
 
 <WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverTitle} kicker={hoverKicker} worker={hoverWorker} groups={hoverGroups} cards={allCards} rail={railElement} />
 <style>
-  .approved-rail-shell { position:relative; grid-template-columns:var(--rail-width) minmax(0,1fr); }
-  .approved-rail { font-size:var(--type-sm); line-height:normal; padding:var(--space-3); scrollbar-gutter:stable; scrollbar-width:thin; }
+  .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
+  .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); }
+  .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
+  .active-work-scroll { flex:1; min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; }
+  .settled-body { min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
   .rail-grip::after { content:""; position:absolute; inset:0 4px; background:transparent; transition:background var(--motion-fast) var(--motion-ease); }
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { background:var(--accent-bright); }
   .resizing { user-select:none; cursor:col-resize; }
-  .settled { margin-top:var(--space-5); }
-  .settled-head { display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) 0; border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
+  .settled { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); }
+  .settled-head { flex:none; display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) 0; border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
   .settled-head:hover { color:var(--text-strong); }
+  .settled-chevron { width:16px; height:16px; flex:none; }
+  .settled--open .settled-chevron { transform:rotate(180deg); }
+  .rail-utilities { display:flex; flex:none; align-items:center; gap:var(--space-1); padding-top:var(--space-2); border-top:var(--border-hairline) solid var(--border-color); }
+  .rail-utilities a { display:flex; align-items:center; justify-content:center; width:32px; height:32px; color:var(--text-faintest); border-radius:var(--radius-sm); }
+  .rail-utilities a:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
+  .rail-utilities svg { width:18px; height:18px; }
+  .rail-utilities a:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
   .rule { flex:1; height:var(--border-hairline); background:var(--border-color); }
   .count { flex:none; font-size:var(--type-xs); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
   .settled-item + .settled-item { margin-top:var(--space-3); }
@@ -206,5 +225,11 @@
   .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
   button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
-  @media(max-width:960px) { .approved-rail-shell { grid-template-columns:1fr; } .rail-grip { display:none; } }
+  @media(max-width:960px) {
+    .approved-rail-shell { grid-template-columns:1fr; }
+    .rail-grip { display:none; }
+    .board-workspace-shell--chief .approved-rail,
+    .board-workspace-shell--item .approved-rail,
+    .board-workspace-shell--ticket .approved-rail { display:none; }
+  }
 </style>

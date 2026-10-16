@@ -57,10 +57,22 @@ One screen per part of the system:
   pixels with a pointer or arrow keys. Double click resets it. The preference persists
   in the browser. The existing narrow layout stacks the rail and hides this splitter.
 
-  Settled orchestrators live in a fold below the active stack. Their own rows can show
+  Settled stays at the bottom of the rail, above fixed Config and Usage/Backends
+  controls. These controls open the existing Config and Backends screens. Its label shows the ordinary orchestrator count. The expanded fold grows
+  upward within half the space above those controls. Its header stays visible while
+  active work and settled rows scroll separately. Both lists remain usable in short
+  viewports. The height share is a layout value, without a preference or settings UI.
+
+  Unfinished groups on the orchestrator page start open. Done and Cancelled start closed.
+  Manual choices survive ordinary data refreshes in that page, including a group that
+  disappears and returns. They do not persist across visits. These rounded group headers
+  show ordinary Worker counts without unread suffixes. The unread facts and row dots
+  remain independent.
+
+  Settled orchestrators keep their own rows below the fold header. Their own rows can show
   their own unread supervisor message dot. A child message never marks its parent.
-  Closed folds expose distinct unread-conversation counts as text and retain an expand
-  control. The Messages group ignores settlement. Each unread Worker, supervisor, or
+  Other closed message folds expose distinct unread-conversation counts as text and
+  retain an expand control. The Messages group ignores settlement. Each unread Worker, supervisor, or
   Chief conversation has its own linked row and dot. Workers retain quiet parent
   context. These rows reuse durable unread facts and normal read acknowledgments.
   Reading a conversation refreshes its dots and counts. Later messages make it
@@ -187,9 +199,15 @@ One screen per part of the system:
   schedules, creates and edits them, and enables or disables future occurrences. It
   does not start Workers or delete schedules. See `scheduled-tickets.md`.
 
+The workspace keeps its resize handle within its own visual layer. Open shell menus
+cover that handle and receive pointer actions above it. The handle keeps its pointer
+and keyboard controls when unobscured.
+
 The shell has three primary destinations in order: Home, Review, and Workspace. More
-groups Sprint, Backlog, Ideas, and Feedback under Planning. It groups Config, Backends,
-Notifications, and Scheduled tasks under System. On desktop, the three destinations
+groups Sprint, Backlog, Ideas, and Feedback under Planning. Config and Backends use
+the Workspace rail footer when it is visible. More retains those destinations on other
+screens and compact selected panes, where the rail is hidden. It also groups
+Notifications and Scheduled tasks under System. On desktop, the three destinations
 and More live in the top bar. On mobile, the same four controls form a fixed,
 full-width bottom bar and More opens a bottom sheet. A slim mobile top bar
 shows the current screen and the same quiet connection and worker-presence cluster used
