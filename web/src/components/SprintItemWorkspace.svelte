@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount } from "svelte";
+  import { workspaceUnreadConversationCount } from "../lib/workspaceMessageDiscovery";
   import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
@@ -193,7 +194,7 @@
     >
       <summary>
         <span class="sprint-workspace-status-label">{group.label}</span>
-        <span class="sprint-workspace-count">{group.tickets.length}</span>
+        <span class="sprint-workspace-count" data-group-unread-count>{group.tickets.length}{workspaceUnreadConversationCount(group.tickets) ? ` · ${workspaceUnreadConversationCount(group.tickets)} unread` : ""}</span>
         <span class="sprint-workspace-chevron" aria-hidden="true"></span>
       </summary>
       <div class="sprint-workspace-status-body">
@@ -298,7 +299,7 @@
             <summary>
               <span class="sprint-workspace-section-label">Other Tickets</span>
               <span class="sprint-workspace-count">
-                {remainingGroups.reduce((sum, group) => sum + group.tickets.length, 0)}
+                {remainingGroups.reduce((sum, group) => sum + group.tickets.length, 0)}{workspaceUnreadConversationCount(remainingGroups.flatMap((group) => group.tickets)) ? ` · ${workspaceUnreadConversationCount(remainingGroups.flatMap((group) => group.tickets))} unread` : ""}
               </span>
               <span class="sprint-workspace-chevron" aria-hidden="true"></span>
             </summary>

@@ -4,7 +4,7 @@ Settle/Reopen can hide outstanding work or replace the open Worker if the HTTP w
 board projection, SSE invalidation and route selection disagree. Frontend mocks and
 backend tests cannot prove those boundaries together. Helper tests own grouping rules;
 this small browser proof owns the connected behavior and keyboard/pointer access.
-No conversation sends occur: deterministic recorded events provide unread evidence.
+No backend prompts occur: deterministic durable messages provide unread evidence.
 """
 
 from __future__ import annotations
@@ -374,3 +374,266 @@ def test_rail_resize_and_hover_are_accessible_without_losing_selection(
     expect(row).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     page.screenshot(path=str(EVIDENCE / "rail-narrow-820.png"), full_page=True)
+
+
+def _send_owner_message(server: ServerHandle, sender: Principal, message: str) -> None:
+    """Use the normal authenticated message route, backed by the durable test adapter."""
+    headers = {
+        PrincipalKind.ticket: {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": sender.id},
+        PrincipalKind.sprint_item: {
+            "X-Plan-Actor": "sprint_item_supervisor",
+            "X-Plan-Sprint-Item-ID": sender.id,
+        },
+        PrincipalKind.chief: {"X-Plan-Actor": "chief"},
+    }[sender.kind]
+    response = httpx.post(
+        server.base + "/api/messages/send",
+        headers=headers,
+        json={
+            "target": {"kind": "owner", "id": "owner"},
+            "message": message,
+        },
+        timeout=10,
+    )
+    assert response.is_success, response.text
+    assert response.json()["fate"] == "recorded"
+
+
+def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
+    rail_server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    api: ApiHelper,
+) -> None:
+    """A folded settled conversation must stay findable across canonical read updates.
+
+    This risk spans durable message/read state, real board projections, change-stream
+    invalidation and rendered fold counts/routes. No mocked frontend query or backend-only
+    assertion proves the connected owner experience. Counts name conversations, not rows
+    in the event transcript. Existing terminal-Worker grouping precedence stays intact.
+    """
+    server = rail_server
+    project = api.direct_post(server, "/api/projects", {"name": "Settled proof", "priority": "P1"})
+    parents = [
+        api.direct_post(
+            server, "/api/items", {"title": title, "priority": "P1", "project_id": project["id"]}
+        )
+        for title in ("Settled with own message", "Quiet settled parent")
+    ]
+    children = [
+        api.direct_post(
+            server,
+            "/api/tickets",
+            {
+                "title": title,
+                "worker_type": "coding",
+                "kickoff_note": "Historical brief.",
+                "orchestrator": {"kind": "sprint_item", "id": parent["id"]},
+            },
+        )
+        for title, parent in zip(
+            ("Completed child with two messages", "Child of quiet parent"), parents, strict=True
+        )
+    ]
+    for name in ("settled-child-one", "settled-child-two", "settled-supervisor", "settled-chief"):
+        _conversation(server, name)
+    with sqlite3.connect(server.db_path) as conn:
+        for child, name in zip(children, ("settled-child-one", "settled-child-two"), strict=True):
+            conn.execute("UPDATE tickets SET conversation_id=? WHERE id=?", (name, child["id"]))
+            conn.execute(
+                "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
+                (name, child["id"]),
+            )
+        # A historical terminal Worker is still an exact message destination. This is
+        # isolated fixture state, never a claim that the owner's actual work completed.
+        conn.execute(
+            "UPDATE tickets SET stage='done',pending_proposal=NULL WHERE id=?", (children[0]["id"],)
+        )
+        conn.execute(
+            "UPDATE agents SET conversation_id=? WHERE agent_key=?",
+            ("settled-supervisor", parents[0]["supervisor"]["agent_key"]),
+        )
+        conn.execute(
+            "INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?) "
+            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id",
+            ("settled-chief",),
+        )
+    for parent in parents:
+        api.direct_patch(server, f"/api/items/{parent['id']}/settled", {"settled": True})
+    for sender, text in (
+        (Principal(PrincipalKind.ticket, children[0]["id"]), "First message in same conversation"),
+        (Principal(PrincipalKind.ticket, children[0]["id"]), "Second message in same conversation"),
+        (
+            Principal(PrincipalKind.ticket, children[1]["id"]),
+            "Child message without parent message",
+        ),
+        (Principal(PrincipalKind.sprint_item, parents[0]["id"]), "Own supervisor message"),
+        (CHIEF_PRINCIPAL, "Own Chief message"),
+    ):
+        _send_owner_message(server, sender, text)
+
+    page = open_page(context_factory(), server, "#/workspace", '[data-screen="workspace"]')
+    page.set_default_timeout(WAIT_MS)
+    page.set_viewport_size({"width": 1440, "height": 1100})
+    settlement_writes: list[str] = []
+    page.on(
+        "request",
+        lambda request: (
+            settlement_writes.append(request.url)
+            if request.method == "PATCH" and request.url.endswith("/settled")
+            else None
+        ),
+    )
+    left = page.locator(".board-workspace-left")
+    messages = left.locator("[data-workspace-messages]")
+    summary = messages.locator(":scope > summary")
+    if messages.evaluate("el => el.open"):
+        summary.click()
+    expect(summary.locator("[data-messages-count]")).to_contain_text("4", timeout=WAIT_MS)
+    expect(summary.get_by_role("img")).to_have_count(0)
+    settled_head = left.get_by_role("button", name="Settled", exact=False)
+    expect(settled_head).to_have_attribute("aria-expanded", "false")
+    expect(left.locator("[data-settled-count]")).to_contain_text("3 unread")
+    expect(settled_head.get_by_role("img")).to_have_count(0)
+    expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible()
+    settled_head.click()
+    first_parent = left.locator(f'[data-settled-item="{parents[0]["id"]}"]')
+    quiet_parent = left.locator(f'[data-settled-item="{parents[1]["id"]}"]')
+    expect(first_parent.locator(".settled-title .stage-mark")).to_be_visible()
+    expect(quiet_parent.locator(".settled-title .stage-mark")).to_have_count(0)
+    left.locator("[data-settled-message-access]").click()
+    expect(messages).to_have_attribute("open", "")
+    expect(summary).to_be_focused()
+    rows = {
+        name: messages.locator(f'[data-message-conversation="{name}"]')
+        for name in (
+            "settled-child-one",
+            "settled-child-two",
+            "settled-supervisor",
+            "settled-chief",
+        )
+    }
+    for row in rows.values():
+        expect(row).to_be_visible()
+        expect(row.get_by_role("img", name="Unread reply")).to_have_count(1)
+    expect(rows["settled-child-two"].locator(".message-context")).to_contain_text(
+        parents[1]["title"]
+    )
+    expect(rows["settled-child-two"].locator(".message-context")).to_contain_text("settled")
+    expect(rows["settled-child-one"]).to_have_attribute(
+        "href", f"#/workspace/item/{parents[0]['id']}/{children[0]['id']}"
+    )
+    expect(rows["settled-supervisor"]).to_have_attribute(
+        "href", f"#/workspace/item/{parents[0]['id']}"
+    )
+    expect(rows["settled-chief"]).to_have_attribute("href", "#/workspace/chief-of-staff")
+    rows["settled-child-one"].click()
+    expect(
+        page.locator(f'[data-screen="ticket"][data-ticket-id="{children[0]["id"]}"]')
+    ).to_be_visible()
+    rows["settled-supervisor"].click()
+    pane = page.locator(f'[data-sprint-item-workspace="{parents[0]["id"]}"]')
+    expect(pane).to_be_visible()
+    remaining = pane.locator('[data-workspace-section="remaining"]')
+    expect(remaining.locator(":scope > summary")).to_contain_text("1 unread")
+    if not remaining.evaluate("el => el.open"):
+        remaining.locator(":scope > summary").click()
+    page_group = pane.locator('[data-workspace-group="awaiting_reply"]')
+    if page_group.evaluate("el => el.open"):
+        page_group.locator(":scope > summary").click()
+    expect(page_group.locator("[data-group-unread-count]")).to_contain_text("1 unread")
+    artifacts = EVIDENCE.parent / "settled-messages"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(artifacts / "settled-and-messages-1440.png"), full_page=True)
+
+    # A read advances the durable position and the same SSE invalidation refreshes all
+    # visible counts/dots. No reload or manual refetch masks an invalidation failure.
+    api.direct_post(
+        server,
+        "/api/conversation/conversations/settled-supervisor/owner-read",
+        {"through_sequence": 1},
+    )
+    expect(rows["settled-supervisor"]).to_have_count(0, timeout=WAIT_MS)
+    expect(first_parent.locator(".settled-title .stage-mark")).to_have_count(0)
+    expect(left.locator("[data-settled-count]")).to_contain_text("2 unread")
+    expect(summary.locator("[data-messages-count]")).to_contain_text("3")
+    expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible()
+    api.direct_post(
+        server,
+        "/api/conversation/conversations/settled-child-one/owner-read",
+        {"through_sequence": 2},
+    )
+    expect(rows["settled-child-one"]).to_have_count(0, timeout=WAIT_MS)
+    expect(left.locator("[data-settled-count]")).to_contain_text("1 unread")
+    expect(summary.locator("[data-messages-count]")).to_contain_text("2")
+    expect(page_group).to_have_count(0)
+    # Existing precedence moves a terminal Worker from Messages back into Done.
+    done = pane.locator('[data-workspace-group="done"]')
+    expect(done).to_be_attached(timeout=WAIT_MS)
+    if not done.evaluate("el => el.open"):
+        done.locator(":scope > summary").click()
+    expect(done.locator(f'[data-sprint-ticket-id="{children[0]["id"]}"]')).to_be_visible()
+    expect(done.locator("[data-group-unread-count]")).to_have_text("1")
+    api.direct_post(
+        server,
+        "/api/conversation/conversations/settled-child-two/owner-read",
+        {"through_sequence": 1},
+    )
+    expect(rows["settled-child-two"]).to_have_count(0, timeout=WAIT_MS)
+    expect(left.locator("[data-settled-count]")).not_to_contain_text("unread")
+    expect(summary.locator("[data-messages-count]")).to_contain_text("1")
+    api.direct_post(
+        server, "/api/conversation/conversations/settled-chief/owner-read", {"through_sequence": 1}
+    )
+    expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0, timeout=WAIT_MS)
+    expect(summary.locator("[data-messages-count]")).to_contain_text("0")
+    summary.click()
+    _send_owner_message(
+        server,
+        Principal(PrincipalKind.ticket, children[0]["id"]),
+        "A later message in the same settled conversation",
+    )
+    expect(summary.locator("[data-messages-count]")).to_contain_text("1", timeout=WAIT_MS)
+    expect(left.locator("[data-settled-count]")).to_contain_text("1 unread")
+    expect(quiet_parent.locator(".settled-title .stage-mark")).to_have_count(0)
+    expect(first_parent.locator(".settled-title .stage-mark")).to_have_count(0)
+    summary.click()
+    expect(rows["settled-child-one"]).to_be_visible()
+    expect(page_group.locator("[data-group-unread-count]")).to_contain_text("1 unread")
+    page.screenshot(path=str(artifacts / "later-message-without-reopen.png"), full_page=True)
+    chief_child = api.direct_post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Unread child assigned explicitly to Chief",
+            "worker_type": "coding",
+            "kickoff_note": "Review this brief.",
+            "orchestrator": {"kind": "chief", "id": "chief"},
+        },
+    )
+    _conversation(server, "settled-chief-child")
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET conversation_id=? WHERE id=?",
+            ("settled-chief-child", chief_child["id"]),
+        )
+        conn.execute(
+            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
+            ("settled-chief-child", chief_child["id"]),
+        )
+    _send_owner_message(
+        server, Principal(PrincipalKind.ticket, chief_child["id"]), "Chief child direct message"
+    )
+    chief_child_row = messages.locator('[data-message-conversation="settled-chief-child"]')
+    expect(chief_child_row).to_be_visible(timeout=WAIT_MS)
+    expect(chief_child_row).to_have_attribute("href", f"#/workspace/{chief_child['id']}")
+    expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
+    chief_child_row.click()
+    expect(
+        page.locator(f'[data-screen="ticket"][data-ticket-id="{chief_child["id"]}"]')
+    ).to_be_visible()
+    assert page.evaluate("location.hash") == f"#/workspace/{chief_child['id']}"
+    assert settlement_writes == []
+    with sqlite3.connect(server.db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM sprint_items WHERE settled=1").fetchone()[0] == 2
+    shutil.copyfile(server.log_path, artifacts / "isolated-server.log")

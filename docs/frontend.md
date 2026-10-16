@@ -20,10 +20,8 @@ anything had changed.
 
 One screen per part of the system:
 
-- **Home** — the daily hub. It combines focus, what makes the day land, brief take,
-  and watchout with message dots for conversations needing a reply. Action tiles lead to work that needs
-  Khushal, needs review, is working, is assigned, or is done. Day fields are written by
-  the planning Workers, not edited on this page.
+- **Historical Days** — dated Day links remain readable. The primary navigation no longer
+  supplies a Today planning screen. A bare former Home address opens Chief.
 - **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
   walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
   Proposal items add their labelled recap, ask, approval, and send-back controls.
@@ -36,94 +34,44 @@ One screen per part of the system:
   clearing the proposal and returning the Ticket to its resting control status. Ticket
   guidance stays independent. A reply in the Ticket conversation leaves the proposal in
   Review until a decision.
-- **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
-  follows the same 5am planning-day boundary as the Day screen. One thing joins today:
-  a ticket holding a message the owner has not read appears whatever day it is on,
-  because he has not seen the message and a day he did not put it on is not his answer
-  to it. The **Tickets** view retains that roster. The **Sprint Items** view uses the
-  Items represented by that roster and shows their complete child attention groups.
-  The Chief of Staff row leads, and under it a selector chooses between these views.
+- **Workspace** — an adjustable rail of orchestrator cards beside the selected conversation
+  or Worker. Chief leads, keeps its portrait, and never settles. Ordinary orchestrators
+  have Project and Settle above the title. Only the owner settles or reopens one.
+  Existing orchestrators start active. Settlement does not change Worker eligibility.
 
-  The Tickets view starts with four owner-attention groups in this order: Needs your
-  approval, Needs your answer, Yours, and Messages. Each name says whose the work is.
-  Needs your approval is a proposal the owner himself holds; a proposal parked on a
-  supervisor or another ticket is a different fact, named Awaiting an agent's approval,
-  and it is never one of the four. Needs your answer is a worker stopped on a permission
-  request or a question, which is why it sits above a stage that is merely the owner's
-  to do. Yours is a stage the ticket's worker type gives to the user rather than to a
-  worker. A ticket appears in only its first applicable group. Owner approval, an owner
-  answer, assignment, and an unread reply take precedence in that order. Errored follows
-  those groups. Errored means the Ticket has a failed Worker claim, or an unfinished
-  Ticket has a latest failed turn. A completed Ticket keeps its old failure in conversation
-  history without a current error in its row or its Item summary. Unread replies and live
-  activity still show, and a Supervisor's own failure stays independent. Empty groups are
-  not drawn.
-  Every ticket outside these groups follows in the existing status order, so no ticket
-  becomes unreachable.
+  Each active card shows the existing attention groups: Needs your approval, Needs your
+  answer, Yours, Messages, then Errored. The shared rule gives each Worker its first
+  applicable group. Holder-aware approval and the existing priority/creation ordering
+  remain. Priority is not displayed in the rail. Quiet children remain in the
+  orchestrator workspace and hover details. Empty orchestrators remain visible.
 
-  Blocked and Done arrive shut. Every other group arrives open. A shut group is still
-  its own group, with its own name and count, and
-  the reader opens it — nothing hides behind a "+n more", and no status is missing from
-  the rail. Rows inside a group are ordered by activity, newest first.
+  A card opens its orchestrator. A row opens its Worker. The address preserves selection
+  across reload and Back. Opening a detail pane never replaces rail classification.
+  Hover lights the card edge and title. Worker rows retain the existing hover wash.
+  Single-line Worker titles clip before a reserved mark column. Hover or keyboard focus
+  supplies the full title and manifest stages. Orchestrator hover supplies its children
+  grouped by the existing rule, excluding Done. One panel swaps between targets without
+  a second delay. It stays inside the viewport and does not capture the pointer.
 
-  The Tickets view is every ticket on today. Each owner-attention group and each
-  remaining status group has its own box. Rows inside each group retain activity order,
-  newest first.
+  The rail defaults to `clamp(17rem, 22vw, 20rem)`. Its edge resizes from 232 to 520
+  pixels with a pointer or arrow keys. Double click resets it. The preference persists
+  in the browser. The existing narrow layout stacks the rail and hides this splitter.
 
-  The Sprint Items view keeps the board's Item membership. Each Item uses its complete
-  Ticket set, including off-Today and Backlog Tickets, for its non-empty Needs your
-  approval, Needs your answer, Yours, Messages, and Errored groups. Quiet
-  child Tickets remain available in the Item workspace. Those on Today or with unread
-  messages also appear in the Tickets view. An Item
-  shows those groups, and their rows, whether or not it is the Item the reader has
-  opened. The rail therefore says what needs the reader before anything is clicked, and
-  an Item with no attention groups shows its title and any direct message dot. Clicking anywhere in
-  the box selects the Item and opens its workspace beside the rail. That is all a click on
-  an Item ever does: no click shuts an Item. A reader inside one of its tickets clicks
-  the Item to come back to it. The groups sit inside the Item without boxes of their own.
-  Folding one of those groups, or opening a ticket, leaves the Item selected. Items are
-  ordered by priority and then by age, so an Item holds its place while its tickets move
-  under it.
+  Settled orchestrators live in a fold below the active stack. Their own rows can show
+  their own unread supervisor message dot. A child message never marks its parent.
+  Closed folds expose distinct unread-conversation counts as text and retain an expand
+  control. The Messages group ignores settlement. Each unread Worker, supervisor, or
+  Chief conversation has its own linked row and dot. Workers retain quiet parent
+  context. These rows reuse durable unread facts and normal read acknowledgments.
+  Reading a conversation refreshes its dots and counts. Later messages make it
+  discoverable again without reopening an orchestrator. Counts describe conversations,
+  not individual messages or repeated appearances of the same conversation.
 
-  Hovering a row or an Item box changes its background and nothing else. Selection is a
-  background too — the same language the rest of the app uses for a selected thing — and
-  it moves the other way: hover lifts a row off the rail, selection sinks it into one, so
-  the two never read as more and less of the same state. A selected Item is a lifted
-  surface and nothing more; its edge is the same hairline it always had. A selected
-  ticket takes the larger step of the two, so a selected row inside a selected Item is
-  still the strongest thing in the rail. Nothing but colour changes, so selecting
-  anything moves nothing on the screen.
-
-  What is open in the rail is the address, and nothing else. The Workspace keeps no
-  memory of what you looked at before, so the same address always draws the same rail: on
-  a click, on a reload, on Back, and while a change lands underneath it. Going to the
-  Chief of Staff, or opening a ticket from the Tickets view, leaves no Item open.
-  Selection in the rail is exclusive: what the workspace beside it is showing is the one
-  thing that looks selected, and nothing else does. A ticket opened from inside an Item
-  leaves that Item open around it — the address names the Item as well as the ticket —
-  and selection moves to the ticket. An open Item carries no selection of its own.
-
-  Every Worker dot means that exact conversation needs the owner's attention to a
-  direct message. This applies to Chief of Staff, Item supervisors, and Ticket Workers
-  throughout Workspace, Home, Sprint, and Feedback. Approval, questions, assignment,
-  running work, errors, and child Ticket attention never create a dot. Pending requests
-  remain in the conversation rest line as text. Its running spinner and failed diamond
-  remain turn status shapes. With no direct
-  message there is no dot, including no empty or hollow mark. Work facts still determine
-  groups, status text, and Home action counts. Field progress and connection indicators
-  have their own meanings.
-
-  The rail always reads each Item's complete Ticket set, title, priority, and completion
-  from the board response. Opening an Item loads its detail pane without replacing any
-  rail facts. A delayed detail response, Back, reload, or switching Items cannot change
-  rail classification. The detail pane uses the same grouping rule across its Today and
-  Other Tickets sections. A direct-linked Item absent from the board opens its pane
-  without adding itself to the rail. A Ticket without a Sprint Item remains in the
-  Tickets view. Shared Ticket rows carry their priority tile in the Tickets view and
-  drop it inside a Sprint Item, where the Item is the thing being read.
-
-  The Chief of Staff row starts with its bundled portrait. The portrait is an agent
-  identity on this row only; ticket rows and Worker types do not use it.
+  Every Worker dot means an unread owner message in that exact conversation. Approval,
+  pending questions, assignment, running state, errors, and child activity never create
+  a dot. Conversation spinners and failure diamonds retain their separate meanings.
+  Fold summaries use text counts, never aggregate dots. Status group membership and
+  ordering remain unchanged, including precedence for unread completed Workers.
 
   The Chief of Staff keeps its separate conversation mark. A browser with no saved lens
   choice opens in Focus. Focus shows the owner's prompts, explicit messages to the owner,

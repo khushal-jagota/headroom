@@ -9,6 +9,7 @@ export type WorkItemTicketFacts = WorkAttention & {
   priority: Priority;
   stage: string;
   worker_type?: string;
+  conversation_id?: string | null;
   ticket_status: string;
   waiting_to_closeout?: boolean;
   gating_field?: string | null;

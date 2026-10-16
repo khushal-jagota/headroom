@@ -20,6 +20,11 @@ Settlement changes presentation, not Worker eligibility, approval discovery, mes
 delivery, or history. Existing orchestrators start active. Child completion does not
 settle a parent. No initial settled cohort is inferred during migration.
 
+Settled supervisor and Worker conversations remain in Messages when unread. Each dot
+belongs to its own conversation row. A closed fold exposes a distinct conversation
+count in text. Normal read acknowledgments clear dots and counts. Later messages
+restore discovery without reopening the orchestrator.
+
 Use `panels orchestrator create/list/show/set`, `workspace`, and `artifact` for ordinary
 orchestrators. Existing `panels sprint item` paths remain aliases. Use
 `panels ticket assign <ticket> --chief` or `--orchestrator <item>` for explicit assignment.

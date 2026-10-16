@@ -384,6 +384,7 @@ export type CarryOutcomeResult = {
 };
 
 export type SprintItemWorkspaceTicket = WorkAttention & {
+  conversation_id?: string | null;
   id: string;
   title: string;
   stage: string;
@@ -546,4 +547,15 @@ export type NotificationSubjectSettings = {
 export type NotificationSettingsResponse = {
   subjects: NotificationSubjectSettings[];
   vapid_public_key: string;
+};
+
+// One row names one durable unread conversation, independent of settlement.
+export type WorkspaceMessageConversation = {
+  kind: "chief" | "sprint_item" | "ticket";
+  id: string;
+  title: string;
+  conversationId: string;
+  parentId: string | null;
+  parentTitle: string | null;
+  settled: boolean;
 };

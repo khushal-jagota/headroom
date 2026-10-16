@@ -132,6 +132,7 @@ def item_tickets(
                 "stage": stage,
                 "priority": str(r["priority"]),
                 "activity_at": int(r["updated_at"]),
+                "conversation_id": r["conversation_id"],
                 "has_pending_proposal": r["pending_proposal"] is not None,
                 # Who a parked proposal is addressed to. The shared attention projection
                 # answers `awaiting_approval` for Khushal and `awaiting_agent_approval`
