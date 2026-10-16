@@ -91,6 +91,10 @@ REQUEST_TIMEOUT_SECONDS = 60.0
 # How long a child gets to end politely before it is killed.
 CHILD_SHUTDOWN_GRACE_SECONDS = 2.0
 
+# Standard output and error are separate pipes. A failed-turn notification can reach its
+# reader before an earlier stderr write reaches the other reader.
+STANDARD_ERROR_SETTLE_SECONDS = 0.02
+
 
 class CodexAppServerError(Exception):
     """Something on the codex wire could not be done. Always say which."""
@@ -278,6 +282,12 @@ class CodexAppServerClient:
         kept = b"".join(self._standard_error)
         slice_of_it = kept[-arrived_since:] if arrived_since < len(kept) else kept
         return slice_of_it.decode("utf-8", errors="replace") or None
+
+    async def settle_standard_error(self) -> None:
+        """Give stderr already written beside a failed-turn notification time to drain."""
+        reader = self._standard_error_reader
+        if reader is not None and not reader.done():
+            await asyncio.sleep(STANDARD_ERROR_SETTLE_SECONDS)
 
     # --- talking ------------------------------------------------------------------------
 
@@ -509,6 +519,10 @@ class CodexAppServerClient:
     async def _watch_for_the_child_ending(self, process: asyncio.subprocess.Process) -> None:
         """Wait for the process to go, then stop everything that is waiting on its wire."""
         await process.wait()
+        # The pipes reach EOF separately. Finish draining stderr before the adapter
+        # classifies the turn that ended with the child.
+        if self._standard_error_reader is not None:
+            await self._standard_error_reader
         self._wire_broken = True
         self._fail_everything_pending("the codex process ended")
         await self._handler.on_child_ended()
