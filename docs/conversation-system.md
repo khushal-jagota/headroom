@@ -951,16 +951,22 @@ where a steer is proved to cross into a live turn.
 
 That fourth exercise asks for more before it will start. It refuses a dirty tree, so
 `git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs two credential
-directories, because it gives hermes and claude a private home rather than borrowing
-yours:
+into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs these source directories
+for the isolated test homes:
 
-- `PANELS_REAL_HERMES_HOME_TEMPLATE` — a copy of `~/.hermes`.
+- `PANELS_REAL_HERMES_HOME_TEMPLATE` — the canonical Hermes home itself, normally
+  `~/.hermes`. Do not make a copy. The harness copies `config.yaml` and `.env`
+  into an isolated home and symlinks `auth.json` back to this source. This requires
+  the canonical home: a symlink into a copied home still separates rotating auth
+  from the real login.
 - `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — a directory holding `.credentials.json` and
   `settings.json`.
 
-You build those two yourself. Nothing in the repository makes them for you, and a stale
-copy fails as a login problem rather than as a missing file.
+If you followed the old instructions, switch the variable to your canonical Hermes
+home and remove the obsolete copied home.
+
+Prepare the Claude source directory yourself. Nothing in the repository creates it,
+and a stale credential copy fails as a login problem rather than as a missing file.
 
 Codex is the exception, and deliberately. It keeps one account in one file and refreshes
 that file in whichever home it is pointed at, so a private copy takes the new token with
