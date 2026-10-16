@@ -283,6 +283,13 @@ Worker types declare, the Stage ladders they spell out, and the retired skill na
 lists every stored skill naming something absent. It reports; it never rewrites a row.
 `GET /api/skills/stale` serves the same list.
 
+The other silence is the seed itself: a row and the packaged file it started from part
+company and nothing says so either. `panels skill drift` is what says so. It reads each
+packaged seed against its row and reports a row that differs, a row the package does not
+ship, and a seed no row holds. A difference is not a fault — an owner edit is what the
+product is for — so this reports as well, and rewrites nothing. `GET /api/skills/drift`
+serves the same list.
+
 A Stage is named two ways, and the check reads them differently on purpose. Its id,
 `needs_something`, is unmistakable anywhere. Its label is an ordinary phrase: `approach` is
 an English word and `kickoff` names the live `--kickoff-note` option, so searching prose for
@@ -369,6 +376,7 @@ new Stage. A valid terminal Stage is the fallback when no further advance exists
 `No further` remains a choice for one approval.
 
 _Code paths:_ `src/planner/managed_skills.py` holds the skill rows and writes the copies,
+`src/planner/skill_staleness.py` and `src/planner/skill_drift.py` hold the two reports,
 `src/planner/worker_settings/` composes what the Config page reads and edits, and
 `src/planner/tickets/data.py`, `src/planner/environments/hermes_home.py`, and
 `web/src/routes/ConfigRoute.svelte` are unchanged by where the answers come from.
