@@ -66,6 +66,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "id": ticket.id,
         "title": ticket.title,
         "worker_type": ticket.worker_type,
+        "locale": ticket.locale.value,
         "employee_backend": ticket.employee_backend,
         "employee_launch_model": ticket.employee_launch_model,
         "employee_launch_reasoning_effort": ticket.employee_launch_reasoning_effort,

@@ -257,6 +257,7 @@ def read_worker_settings(
         worker_type=worker_type,
         specialist_skill=read_skill(conn, definition.worker_profile.specialist_skill),
         launch_defaults=_launch_defaults(definition.worker_profile),
+        requires_macos=read_worker_requires_macos(conn, worker_type),
         candidate_specialist_skill=None,
     )
 
@@ -273,6 +274,7 @@ def read_worker_management_index(
                 worker_type=worker_type,
                 label=definition.label,
                 specialist_skill_name=definition.worker_profile.specialist_skill,
+                requires_macos=read_worker_requires_macos(conn, worker_type),
                 launch_defaults=_launch_defaults(definition.worker_profile),
             )
         )
@@ -328,6 +330,7 @@ def update_worker_launch_defaults(
         worker_type=worker_type,
         specialist_skill=read_skill(conn, definition.worker_profile.specialist_skill),
         launch_defaults=launch_defaults,
+        requires_macos=read_worker_requires_macos(conn, worker_type),
         candidate_specialist_skill=None,
     )
 
@@ -446,3 +449,30 @@ def save_chief_skill(
         write_skill_source(conn, CHIEF_SKILL_NAME, rendered, now=now)
     _publish_skill(conn, database_parent, CHIEF_SKILL_NAME, rendered)
     return read_chief_settings(conn)
+
+
+def read_worker_requires_macos(conn: sqlite3.Connection, worker_type: str) -> bool:
+    row = conn.execute(
+        "SELECT requires_macos FROM worker_types WHERE worker_type=?", (worker_type,)
+    ).fetchone()
+    # In-memory registries used before a Worker is registered have no managed override.
+    return bool(row["requires_macos"]) if row is not None else False
+
+
+def update_worker_requirements(
+    conn: sqlite3.Connection,
+    registry: WorkerTypeRegistry,
+    worker_type: str,
+    *,
+    requires_macos: bool,
+    now: int,
+) -> ManagedWorkerSettings:
+    registry.require(worker_type)
+    if type(requires_macos) is not bool:
+        raise PlannerError(ErrorCode.validation, "requires_macos must be a boolean", {})
+    with _one_writer(conn):
+        conn.execute(
+            "UPDATE worker_types SET requires_macos=?,updated_at=? WHERE worker_type=?",
+            (int(requires_macos), now, worker_type),
+        )
+    return read_worker_settings(conn, registry, worker_type)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from planner.tickets import derivation
+from planner.tickets import derivation, locale_configuration
 from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import CONSEQUENCES_FIELD_ID, WorkerTypeDefinition
@@ -83,6 +83,11 @@ def worker_step_blocker(
     """
     if ticket.is_backlogged:
         return "the Ticket is backlogged"
+    if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
+        return (
+            f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
+            f"this {locale_configuration.CURRENT_EXECUTION_LOCALE.value} machine"
+        )
     if worker_type_definition.is_terminal(ticket.stage):
         return f"the Stage {ticket.stage} is terminal"
     ownership_mode = machine.stage_ownership_mode(

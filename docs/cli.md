@@ -163,3 +163,12 @@ invent another route.
 On the production host, `~/.local/bin/panels` follows the current deployed application.
 The launcher preserves the runtime identity and uses the interpreter from that exact
 deployment.
+
+Ticket creation accepts `locale` in its JSON object or `--locale vps|macos` beside
+`--input-json`. Use one input source for the locale. An idle Ticket moves with
+`panels ticket move <ticket> --locale vps|macos`.
+
+Projects accept `--requires-macos` at creation and
+`panels project set <project> requires-macos --value true|false` for later edits.
+These requirements affect future locale resolution. See
+[Ticket locale rules](tickets-and-gates.md#execution-locale).

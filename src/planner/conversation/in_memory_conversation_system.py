@@ -13,7 +13,7 @@ treated as one.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -219,6 +219,14 @@ class InMemoryConversationSystem:
         self._conversations: dict[str, _ConversationState] = {}
 
     # --- the contract ---
+
+    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
+        state = self._conversations.get(conversation_id)
+        if state is not None and (state.running_turn is not None or state.held_prompts):
+            return False
+        # All mutations in this deterministic implementation are synchronous.
+        operation()
+        return True
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         resolved = resolve_conversation_start_request(request)

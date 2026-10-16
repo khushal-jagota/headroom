@@ -69,6 +69,7 @@ def _skills_home_json(home: SkillsHome) -> JsonDict:
 def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
     payload: JsonDict = {
         "worker_type": settings.worker_type,
+        "requires_macos": settings.requires_macos,
         "specialist_skill": _skill_json(settings.specialist_skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
@@ -80,6 +81,7 @@ def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
 def _summary_json(summary: WorkerManagementSummary) -> JsonDict:
     return {
         "worker_type": summary.worker_type,
+        "requires_macos": summary.requires_macos,
         "label": summary.label,
         "specialist_skill_name": summary.specialist_skill_name,
         "launch_defaults": _launch_defaults_json(summary.launch_defaults),
@@ -416,3 +418,20 @@ async def post_worker_type(
     # A type that was just declared has to be one this process can run, at once.
     load_worker_runtime_definitions(conn)
     return cast(JsonDict, json.loads(store.definition_to_json(definition)))
+
+
+@router.patch("/workers/{worker_type}/requirements")
+async def patch_worker_requirements(
+    worker_type: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    require_above(conn, ctx.principal, owner_only("worker settings"))
+    if set(raw) != {"requires_macos"} or type(raw["requires_macos"]) is not bool:
+        raise PlannerError(ErrorCode.validation, "requirements need one requires_macos boolean", {})
+    settings = service.update_worker_requirements(
+        conn,
+        configured_worker_runtime_definitions().worker_type_registry,
+        worker_type,
+        requires_macos=raw["requires_macos"],
+        now=clk.now_unix(),
+    )
+    return _settings_json(settings)
