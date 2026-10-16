@@ -108,7 +108,8 @@
   .ghost { background:transparent; color:var(--text-faint); padding:8px 12px; }
   .ghost:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .worker-ceiling-line { margin-top:var(--space-3); }
-  .worker-ceiling-line :global([data-scope-ceiling]) { font-size:15px; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); }
+  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:15px; line-height:1.3; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-sm); background:transparent; box-shadow:none; text-align:left; }
+  .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
   .return-unavailable { color:var(--text-faintest); font-size:13px; margin:var(--space-2) 0 0; }
   .return-note { margin-top:var(--space-4); }
   label { display:block; font-size:11px; color:var(--text-faintest); }

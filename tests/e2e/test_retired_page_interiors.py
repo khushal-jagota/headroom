@@ -40,8 +40,13 @@ def _measure(page: Page, selector: str) -> JsonObject:
     measured: JsonObject = page.locator(selector).evaluate("""element => {
       const title = element.querySelector('[data-feedback-page-title]');
       const recap = element.querySelector('[data-recap], [data-sprint-item-brief]');
+      const scope = element.querySelector('.worker-ceiling-line [data-scope-ceiling]');
+      const scopeStyle = scope && getComputedStyle(scope);
       return {width: innerWidth, title: getComputedStyle(title).fontSize,
         recap: getComputedStyle(recap).fontSize,
+        scope: scopeStyle && {font: scopeStyle.fontFamily, size: scopeStyle.fontSize,
+          border: scopeStyle.borderTopWidth, background: scopeStyle.backgroundColor,
+          shadow: scopeStyle.boxShadow, radius: scopeStyle.borderRadius},
         overflow: document.documentElement.scrollWidth > innerWidth};
     }""")
     return measured
@@ -147,11 +152,16 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
     for width in (1440, 1024, 820, 560):
         page.set_viewport_size({"width": width, "height": 1100})
         pending_type.append(
-            worker.evaluate("""element => ({
-          width: innerWidth,
+            worker.evaluate("""element => {
+          const scope = getComputedStyle(element.querySelector('[data-pending-ceiling] button'));
+          return {width: innerWidth,
           body: getComputedStyle(element.querySelector('.proposal-prose p')).fontSize,
-          label: getComputedStyle(element.querySelector('[data-stage-fold-open]')).fontSize
-        })""")
+          label: getComputedStyle(element.querySelector('[data-stage-fold-open]')).fontSize,
+          scopeFont: scope.fontFamily,
+          scopeBorder: scope.borderTopWidth,
+          scopeBackground: scope.backgroundColor,
+          scopeShadow: scope.boxShadow};
+        }""")
         )
         page.screenshot(path=str(EVIDENCE / f"worker-pending-{width}.png"), full_page=True)
     page.set_viewport_size({"width": 1440, "height": 1100})
@@ -259,6 +269,22 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
     assert all(row["body"] == "15px" and row["label"] == "13px" for row in pending_type), (
         pending_type
     )
+    assert all(
+        "system-ui" in row["scopeFont"]
+        and row["scopeBorder"] == "0px"
+        and row["scopeBackground"] == "rgba(0, 0, 0, 0)"
+        and row["scopeShadow"] == "none"
+        for row in pending_type
+    ), pending_type
+    assert all(
+        "system-ui" in row["scope"]["font"]
+        and row["scope"]["size"] == "15px"
+        and row["scope"]["border"] == "0px"
+        and row["scope"]["background"] == "rgba(0, 0, 0, 0)"
+        and row["scope"]["shadow"] == "none"
+        for row in measurements
+        if row["surface"] == "worker"
+    ), measurements
     assert errors == [], errors
     assert console_errors == [], console_errors
     assert all(
@@ -370,9 +396,9 @@ def test_waiting_ceiling_previews_reroute_raise_and_rejects_stale_revision(
     panel = page.locator("[data-ceiling-picker-panel]:visible")
     panel.locator('[data-ceiling-part="holder"]').click()
     page.keyboard.press("o")
-    expect(panel.locator('[data-ceiling-effect]')).to_contain_text("Sends this")
-    expect(panel.locator('[data-ceiling-effect]')).to_contain_text("Orchestrator")
-    expect(panel.locator('[data-ceiling-effect]')).to_contain_text("Nothing is approved")
+    expect(panel.locator("[data-ceiling-effect]")).to_contain_text("Sends this")
+    expect(panel.locator("[data-ceiling-effect]")).to_contain_text("Orchestrator")
+    expect(panel.locator("[data-ceiling-effect]")).to_contain_text("Nothing is approved")
     before_commit = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     assert before_commit["ceiling_holder"] == {"kind": "owner", "id": "owner"}
     assert before_commit["pending_proposal"]["revision"] == revision

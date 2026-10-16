@@ -534,7 +534,8 @@
   .worker-live-card h2 { margin:0; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
   .worker-live-card p { font-size:15px; }
   .worker-ceiling-line { margin-top:var(--space-3); }
-  .worker-ceiling-line :global([data-scope-ceiling]) { font-size:15px; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); }
+  .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:15px; line-height:1.3; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-sm); background:transparent; box-shadow:none; text-align:left; }
+  .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
   .worker-bands { margin-top:var(--space-7); padding-bottom:var(--space-7); }
   .worker-steps { border-top:1px solid var(--border-color); }
   .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:13px; font-weight:600; color:var(--text-faint); cursor:pointer; list-style:none; }
