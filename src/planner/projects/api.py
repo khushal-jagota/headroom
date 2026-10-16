@@ -30,6 +30,8 @@ def _marshal_create_project(raw: JsonDict) -> CreateProjectBody:
         summary=body_str(raw, "summary"),
         priority=parse_enum(Priority, body_str(raw, "priority"), "priority"),
     )
+    if "requires_macos" in raw:
+        body["requires_macos"] = _requires_macos(raw["requires_macos"])
     if "folder_path" in raw:
         body["folder_path"] = _nullable_folder_path(raw["folder_path"])
     return body
@@ -43,11 +45,19 @@ def _marshal_update_project(raw: JsonDict) -> UpdateProjectBody:
         body["summary"] = body_str(raw, "summary")
     if "priority" in raw:
         body["priority"] = parse_enum(Priority, body_str(raw, "priority"), "priority")
+    if "requires_macos" in raw:
+        body["requires_macos"] = _requires_macos(raw["requires_macos"])
     if "folder_path" in raw:
         body["folder_path"] = _nullable_folder_path(raw["folder_path"])
     if not body:
         raise PlannerError(ErrorCode.validation, "no project fields to update", {})
     return body
+
+
+def _requires_macos(raw: Any) -> bool:
+    if type(raw) is not bool:
+        raise PlannerError(ErrorCode.validation, "requires_macos must be a boolean", {})
+    return bool(raw)
 
 
 def _nullable_folder_path(raw: Any) -> str | None:
@@ -75,9 +85,7 @@ async def read_projects(
     if level is ReadDetail.full:
         reject_parameters("detail=full", {"limit": limit, "offset": offset})
         return {
-            "projects": [
-                projects_data.project_json(p) for p in projects_data.list_projects(conn)
-            ]
+            "projects": [projects_data.project_json(p) for p in projects_data.list_projects(conn)]
         }
     page = projects_data.list_project_summaries(
         conn,
@@ -90,9 +98,7 @@ async def read_projects(
 
 
 @router.post("/projects")
-async def create_project(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
+async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("projects"))
     body = _marshal_create_project(raw)
     project = projects_data.create_project(
@@ -100,6 +106,7 @@ async def create_project(
         name=body["name"],
         summary=body["summary"],
         priority=body["priority"],
+        requires_macos=body.get("requires_macos", False),
         folder_path=body.get("folder_path"),
         now=clk.now_unix(),
     )
@@ -121,6 +128,7 @@ async def update_project(
         name=body.get("name"),
         summary=body.get("summary"),
         priority=body.get("priority"),
+        requires_macos=body.get("requires_macos"),
         now=clk.now_unix(),
         **folder_path,
     )

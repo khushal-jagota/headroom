@@ -36,8 +36,10 @@ from planner.cli.record_projection import (
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.message_delivery.contracts import MessageDeliveryMode
+from planner.tickets.contracts import TicketLocale
 from planner.worker_types.contracts import BRIEF_FIELD_ID
 
+_LOCALES = [locale.value for locale in TicketLocale]
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
 _ACTOR_ENV = "PLAN_ACTOR"
@@ -128,6 +130,7 @@ _ITEM_FIELDS = {
 }
 
 _PROJECT_FIELDS = {
+    "requires-macos": "requires_macos",
     "folder-path": "folder_path",
     "name": "name",
     "priority": "priority",
@@ -135,6 +138,7 @@ _PROJECT_FIELDS = {
 }
 
 _SCHEDULE_FIELDS = {
+    "locale": "locale",
     "enabled": "enabled",
     "cadence": "cadence",
     "time": "local_time",
@@ -277,6 +281,7 @@ def _ticket_record(
         "title",
         "worker_type",
         "worker",
+        "locale",
         "employee_backend",
         "employee_launch_model",
         "employee_launch_reasoning_effort",
@@ -355,7 +360,11 @@ def _project_record(
     data: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, RecordPart]]:
     return (
-        {key: data[key] for key in ("id", "name", "priority", "folder_path")},
+        {
+            key: data[key]
+            for key in ("id", "name", "priority", "folder_path", "requires_macos")
+            if key in data
+        },
         {"summary": part(data["summary"])},
     )
 
@@ -702,6 +711,7 @@ def schedule_group() -> None:
 @click.option("--project", default=None, help="Project name.")
 @click.option("--project-id", default=None, help="Project id.")
 @click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
+@click.option("--locale", type=click.Choice(_LOCALES), default=None)
 @click.option("--employee-backend", default=None, help="Registered employee backend override.")
 @click.option("--employee-launch-model", default=None, help="Model for an overriding backend.")
 @click.option(
@@ -717,6 +727,7 @@ def schedule_create(
     title: str,
     worker_type: str,
     local_time: str,
+    locale: str | None,
     cadence: str,
     enabled: bool,
     priority: str | None,
@@ -740,6 +751,8 @@ def schedule_create(
         "cadence": cadence.replace("-", "_"),
         "enabled": enabled,
     }
+    if locale is not None:
+        body["locale"] = locale
     if kickoff_note_file is not None:
         body["kickoff_note"] = _read_source(kickoff_note_file, as_json)
     elif kickoff_note is not None:
@@ -838,6 +851,7 @@ def schedule_set(
             "kickoff-note",
             "priority",
             "enabled",
+            "locale",
             "placement",
         }
         and new_value is None
@@ -848,6 +862,10 @@ def schedule_set(
         if lowered not in {"true", "false"}:
             http.fail_validation("enabled must be true or false", as_json)
         body_value: object = lowered == "true"
+    elif field == "locale":
+        if new_value not in _LOCALES:
+            http.fail_validation("locale must be vps or macos", as_json)
+        body_value = new_value
     elif field == "cadence":
         if new_value not in _SCHEDULE_CADENCES:
             http.fail_validation(
@@ -1022,15 +1040,19 @@ def project_show(project_id: str, part_names: str | None, as_json: bool) -> None
 )
 @click.option("--summary", default=None, help="Optional project summary text.")
 @click.option("--folder-path", default=None, help="Optional absolute Project folder path.")
+@click.option("--requires-macos/--no-requires-macos", default=None)
 @json_option
 def project_create(
     name: str,
     priority: str,
     summary: str | None,
     folder_path: str | None,
+    requires_macos: bool | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"name": name, "priority": priority}
+    if requires_macos is not None:
+        body["requires_macos"] = requires_macos
     if summary is not None:
         body["summary"] = summary
     if folder_path is not None:
@@ -1065,6 +1087,17 @@ def project_set(
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
+    if field == "requires-macos":
+        if new_value not in {"true", "false"}:
+            http.fail_validation("requires-macos must be true or false", as_json)
+        data = http.send(
+            "PATCH",
+            f"/api/projects/{project_id}",
+            as_json=as_json,
+            json_body={api_field: new_value == "true"},
+        )
+        http.emit(data, as_json, f"{data['id']} {field} set")
+        return
     data = http.send(
         "PATCH",
         f"/api/projects/{project_id}",
@@ -1157,6 +1190,7 @@ def ticket() -> None:
     default=None,
     hidden=True,
 )
+@click.option("--locale", type=click.Choice(_LOCALES), default=None)
 @click.option("--employee-backend", default=None, hidden=True)
 @click.option(
     "--employee-launch-model",
@@ -1187,6 +1221,7 @@ def ticket() -> None:
 @json_option
 def ticket_create(
     input_json: str | None,
+    locale: str | None,
     title: str | None,
     worker_type: str | None,
     employee_backend: str | None,
@@ -1232,6 +1267,10 @@ def ticket_create(
                 as_json,
             )
         structured_body = _read_json_object(input_json, as_json, "Ticket create input")
+        if locale is not None:
+            if "locale" in structured_body:
+                http.fail_validation("locale accepts one input source", as_json)
+            structured_body["locale"] = locale
         data = http.send("POST", "/api/tickets", as_json=as_json, json_body=structured_body)
         http.emit(data, as_json, f"{data['id']} {data['stage']}")
         return
@@ -1242,6 +1281,8 @@ def ticket_create(
             as_json,
         )
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
+    if locale is not None:
+        body["locale"] = locale
     if ceiling is not None:
         body["ceiling"] = ceiling
     if holder is not None:
@@ -1842,6 +1883,21 @@ def ticket_history(
         "has_more": page["has_more"],
     }
     http.emit(data, as_json, f"{tid} {len(data['events'])} history events")
+
+
+@ticket.command("move")
+@click.argument("ticket_id")
+@click.option("--locale", type=click.Choice(_LOCALES), required=True)
+@json_option
+def ticket_move(ticket_id: str, locale: str, as_json: bool) -> None:
+    """Move an idle Ticket to another execution machine."""
+    data = http.send(
+        "POST",
+        f"/api/tickets/{ticket_id}/move",
+        as_json=as_json,
+        json_body={"locale": locale},
+    )
+    http.emit(data, as_json, f"{ticket_id} locale set to {locale}")
 
 
 @ticket.command("restart-worker")

@@ -294,54 +294,57 @@ async def tell_a_worker_it_lost_its_memory(
     The notice answers its own boundary, because it is sent under a worker-step sender
     message id. A second pass over the same boundary therefore finds it answered.
     """
-    conn = connect_database()
-    try:
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        conversation_id = ticket.conversation_id
-        if conversation_id is None:
-            return False
-        if not worker_memory.conversation_holds_an_unanswered_memory_loss(conn, conversation_id):
-            # Something answered the boundary between the scan and here. That is the
-            # normal end of a race, not a failure.
-            return False
-        if worker_memory.an_answer_is_already_waiting(
-            await conversation_system.held_prompts(conversation_id)
-        ):
-            # A notice sent while the worker was busy is still queued, and a queued
-            # message writes no row to find. Every poll would send another one.
-            return False
+    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+        conn = connect_database()
         try:
-            delivered = await conversation_start.send_to_ticket_conversation(
-                conversation_system,
-                conn,
-                ticket_id,
-                text_message_content(mid_step_memory_loss_prompt(ticket)),
-                conversation_id=conversation_id,
-                sender_label=LOOP_SENDER_LABEL,
-                mode=PromptDeliveryMode.queue,
-                sender_message_id=worker_memory.new_memory_notice_message_id(),
-                reply_requested=False,
-                worker_type_registry=worker_type_registry,
-                now=now(),
-            )
-        except Exception:
-            _log.exception(
-                "memory-loss notice could not be sent (ticket=%s conversation=%s)",
-                ticket_id,
-                conversation_id,
-            )
-            return False
-        if isinstance(delivered.fate, PromptDeliveryRefused):
-            _log.error(
-                "memory-loss notice was refused (ticket=%s conversation=%s reason=%s)",
-                ticket_id,
-                conversation_id,
-                delivered.fate.refusal_reason.value,
-            )
-            return False
-        return True
-    finally:
-        conn.close()
+            ticket = tickets_data.read_ticket(conn, ticket_id)
+            conversation_id = ticket.conversation_id
+            if conversation_id is None:
+                return False
+            if not worker_memory.conversation_holds_an_unanswered_memory_loss(
+                conn, conversation_id
+            ):
+                # Something answered the boundary between the scan and here. That is the
+                # normal end of a race, not a failure.
+                return False
+            if worker_memory.an_answer_is_already_waiting(
+                await conversation_system.held_prompts(conversation_id)
+            ):
+                # A notice sent while the worker was busy is still queued, and a queued
+                # message writes no row to find. Every poll would send another one.
+                return False
+            try:
+                delivered = await conversation_start.send_to_ticket_conversation(
+                    conversation_system,
+                    conn,
+                    ticket_id,
+                    text_message_content(mid_step_memory_loss_prompt(ticket)),
+                    conversation_id=conversation_id,
+                    sender_label=LOOP_SENDER_LABEL,
+                    mode=PromptDeliveryMode.queue,
+                    sender_message_id=worker_memory.new_memory_notice_message_id(),
+                    reply_requested=False,
+                    worker_type_registry=worker_type_registry,
+                    now=now(),
+                )
+            except Exception:
+                _log.exception(
+                    "memory-loss notice could not be sent (ticket=%s conversation=%s)",
+                    ticket_id,
+                    conversation_id,
+                )
+                return False
+            if isinstance(delivered.fate, PromptDeliveryRefused):
+                _log.error(
+                    "memory-loss notice was refused (ticket=%s conversation=%s reason=%s)",
+                    ticket_id,
+                    conversation_id,
+                    delivered.fate.refusal_reason.value,
+                )
+                return False
+            return True
+        finally:
+            conn.close()
 
 
 class WorkerStepReadinessLoop:

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from planner.core.contracts import Priority
+from planner.tickets.contracts import TicketLocale
 
 
 class ScheduleCadence(StrEnum):
@@ -43,6 +44,7 @@ class ScheduledTicketTemplate:
     # fixed Sprint of a legacy direct/Other schedule migrated into this contract.
     sprint_id: str | None = None
     orchestrator_kind: str = field(default="chief", kw_only=True)
+    locale: TicketLocale | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)

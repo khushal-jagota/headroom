@@ -22,6 +22,36 @@ single-door rule.
    field                                               package)           report)
 ```
 
+## Execution locale
+
+Each Ticket stores the machine where its Worker can run: `vps` or `macos`.
+Creation uses an explicit locale first. Without one, a Mac requirement on the effective
+Project or Worker type selects `macos`. Otherwise it selects `vps`. An orchestrator's
+Project counts when the Ticket inherits that Project. Later Project or Worker edits do
+not move existing Tickets.
+
+Creation checks the chosen backend against the configured locale compatibility set.
+A refusal names the locale, backend, and reason before any Ticket exists. Machine
+reachability does not affect creation. The Mac compatibility set starts empty until
+the Mac backend investigation establishes support. Mac creation therefore refuses until
+that configuration allows its backend. The VPS refuses to start a Ticket for another
+locale, including through manual start commands. This guard keeps Mac work safe until
+the Mac executor exists.
+
+Use `panels ticket move <ticket> --locale vps|macos` to change an idle Ticket's locale.
+The move refuses if a Worker step, active turn, or accepted message still needs the
+current machine. It changes only the locale and preserves the conversation and history.
+A move does not copy repository files. Code work on the destination requires a fresh
+checkout at the required revision. Uncommitted work does not travel. Commit it before a move.
+
+The owner can set a Worker type requirement through
+`PATCH /api/workers/{worker_type}/requirements` with `{"requires_macos": true}` or `false`.
+Project creation and edits accept the same requirement. These settings affect future
+creation and do not change stored Ticket or schedule locales.
+
+_Code paths:_ `src/planner/tickets/`, `src/planner/runtime/`,
+`src/planner/tickets/locale_configuration.py` for backend compatibility.
+
 ## The Stages (the coding Worker type)
 
 Every Worker type starts with a **Brief** and ends at **done**; the
