@@ -59,7 +59,6 @@ def test_creation_uses_explicit_then_either_requirement_then_vps(
     expected = explicit or ("macos" if project_requirement or worker_requirement else "vps")
     assert ticket.locale.value == expected
     assert views.ticket_json(ticket, 1)["locale"] == expected
-    assert f"locale: {expected}" in views.copy_text(tmp_db, ticket.id)
     assert data.read_ticket(tmp_db, ticket.id).locale.value == expected
     # A requirement is a creation default, never a constraint on later records.
     projects.update_project(tmp_db, project.id, requires_macos=not project_requirement, now=2)

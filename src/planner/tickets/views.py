@@ -443,7 +443,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{ticket.title}\n"
         f"stage: {str(ticket.stage)}\n"
         f"priority: {ticket.priority.value}\n"
-        f"locale: {ticket.locale.value}\n"
         f"employee_backend: {ticket.employee_backend}\n"
         "owner: "
         f"{ownership.value if ownership is not None else '(none)'}\n"
