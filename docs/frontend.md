@@ -280,6 +280,10 @@ provider or transport failure in its existing feedback line.
   one round of refetching. A refetch that comes back the same leaves the page alone,
   so a busy stream does not make the screen flicker. A successful write from the
   browser does the same thing itself, without waiting for the stream to say so.
+  A confirmed conversation read also refreshes mounted queries immediately when its
+  accepted position covers a previously unread owner message. Overlapping read replies
+  refresh each covered interval once. Tool-only reads keep normal stream coalescing.
+  This refresh asks the server for current facts. It does not clear reply-required state.
 
   There is no client-side copy of canonical state and no whole-screen reload — the
   server remains the source of truth, and the browser holds only the answers it has
