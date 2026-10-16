@@ -885,6 +885,21 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.worker-owner-select {
+  width: 100%;
+  max-width: calc(var(--space-7) * 3);
+  min-width: 0;
+  background: var(--surface-recessed);
+  color: var(--text-strong);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+.worker-owner-select[data-saving="true"] {
+  color: var(--text-faint);
+}
+
 .worker-readonly-owner {
   color: var(--text-faintest);
   font-size: var(--type-sm);
@@ -996,6 +1011,10 @@ textarea {
   .worker-stage-table th:first-child,
   .worker-stage-table td:first-child {
     width: 58%;
+  }
+
+  .worker-owner-select {
+    max-width: 100%;
   }
 
 }

@@ -324,12 +324,16 @@ with sync_playwright() as p:
     assert len(approvals) == 1
     assert approvals[0]['next_ceiling'] == 'done'
     assert approvals[0]['next_holder'] == {'kind': 'chief', 'id': 'chief'}
-    # Declared ownership is Config's to show and nobody's to edit: the Stage table is
-    # display-only, so who owns a Stage cannot be changed from the screen that reads it.
+    # Declared ownership is Config's to change. Every non-terminal Stage carries one
+    # owner control, and the Stage table carries nothing else that edits.
     page.evaluate('window.__showConfig()')
     stage_table=page.locator('[data-worker-stage-table]')
     stage_table.locator('[data-worker-stage-row]').first.wait_for()
-    assert stage_table.locator('select, input, [contenteditable]').count() == 0
+    editable_rows = stage_table.locator('[data-worker-stage-row][data-terminal="false"]').count()
+    assert editable_rows > 0
+    assert stage_table.locator('[data-stage-owner-select]').count() == editable_rows
+    assert stage_table.locator('select').count() == editable_rows
+    assert stage_table.locator('input, [contenteditable]').count() == 0
     browser.close()
 `;
   const child = spawn(join(root, '..', '.venv', 'bin', 'python'), ['-c', script, `http://127.0.0.1:${address.port}/.test-scratch/${stem}.html`], { stdio: 'inherit' });
