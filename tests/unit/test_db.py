@@ -147,11 +147,15 @@ def _insert_ticket(
 
 def test_database_at_the_pre_collapse_head_is_adopted_with_its_rows_intact(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The live database, after the build before this one carried it to that head."""
     conn = _build_database_at_the_pre_collapse_head(tmp_path / "at-the-old-head.db")
     _insert_ticket(conn, "t_carried", "Carried over", ticket_status="agent")
     objects_before = _schema_objects(conn)
+    # This historical fixture proves adoption through the last pre-cutover revision.
+    # It does not claim to represent the reviewed planning-retirement source.
+    _migration_tree_through(tmp_path, monkeypatch, "a_refused_codex_login_outlives_a_restart")
 
     create_schema(conn)
 
@@ -171,6 +175,34 @@ def test_database_at_the_pre_collapse_head_is_adopted_with_its_rows_intact(
     # Adoption clears the marker, so this database and a database built from nothing by
     # this build are the same database.
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+    conn.close()
+
+
+def test_current_cutover_refuses_ordinary_only_historical_fixture_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Historical adoption coverage does not bypass the current reviewed-source guard."""
+    conn = connect(str(tmp_path / "ordinary-only-pre-cutover.db"))
+    with monkeypatch.context() as historical:
+        _migration_tree_through(
+            tmp_path,
+            historical,
+            "a_refused_codex_login_outlives_a_restart",
+        )
+        create_schema(conn)
+    _insert_ticket(conn, "t_ordinary", "Ordinary synthetic historical work")
+    conn.commit()
+    original = dict(conn.execute("SELECT * FROM tickets WHERE id='t_ordinary'").fetchone())
+    schema_before = _schema_objects(conn)
+    revision_before = _revision(conn)
+
+    with pytest.raises(RuntimeError, match="cohort changed"):
+        create_schema(conn)
+
+    assert _revision(conn) == revision_before == "a_refused_codex_login_outlives_a_restart"
+    assert _schema_objects(conn) == schema_before
+    assert dict(conn.execute("SELECT * FROM tickets WHERE id='t_ordinary'").fetchone()) == original
     conn.close()
 
 
@@ -202,6 +234,7 @@ def test_database_at_a_revision_from_the_collapsed_chain_is_refused(tmp_path: Pa
 
 def test_manager_wake_migration_backfills_current_unresolved_sources(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn = _build_database_at_the_pre_collapse_head(tmp_path / "wake-backfill.db")
     conn.execute("DELETE FROM alembic_version")
@@ -236,7 +269,10 @@ def test_manager_wake_migration_backfills_current_unresolved_sources(
         ('{"kind":"owner","id":"owner"}',),
     )
 
+    # Exercise this revision's backfill against its own historical schema only.
+    _migration_tree_through(tmp_path, monkeypatch, "wake_sprint_item_managers")
     create_schema(conn)
+    assert _revision(conn) == _head_revision() == "wake_sprint_item_managers"
 
     rows = conn.execute(
         "SELECT ticket_id,source_kind,source_revision FROM manager_wakes ORDER BY ticket_id"
@@ -454,6 +490,20 @@ def _migration_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         tree / "versions" / "baseline_2026_09_schema.py",
     )
     monkeypatch.setattr(db_module, "MIGRATIONS_DIRECTORY", tree)
+    return tree
+
+
+def _migration_tree_through(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    head: str,
+) -> Path:
+    """Use the real ancestor chain for a test of a particular historical revision."""
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    tree = _migration_tree(tmp_path, monkeypatch)
+    for revision in ScriptDirectory(str(shipped)).walk_revisions(base="base", head=head):
+        shutil.copy(revision.path, tree / "versions" / Path(revision.path).name)
+    assert _head_revision() == head
     return tree
 
 
