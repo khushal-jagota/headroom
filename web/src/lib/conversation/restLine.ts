@@ -51,19 +51,12 @@ export type RestLine = {
   marks: RestLineMarks;
 };
 
-/** The four things the line says without words.
- *
- * They are four independent axes, not one status: a turn can be running while a reply
- * nobody has read is still above it, and a failed turn does not stop something else
- * waiting on an answer. Each one is its own mark or it is nothing.
- */
+/** Independent message attention and turn status shapes. Pending requests use text. */
 export type RestLineMarks = {
   /** A turn is running now. */
   running: boolean;
   /** The worker addressed the owner and the owner has not got that far yet. */
   unreadReply: boolean;
-  /** A permission or a question is waiting on this person. */
-  needsYou: boolean;
   /** The last turn to end, ended failed. */
   failed: boolean;
 };
@@ -93,7 +86,7 @@ const YOU = "you";
  */
 export const REST_LINE_MAXIMUM_CHARACTERS = 120;
 
-/** The four marks, read from the complete record rather than from what a lens draws.
+/** The message attention and turn status marks, read from the complete record rather than from what a lens draws.
  *
  * A reply the owner has not read is the record's own idea of one — a message addressed
  * to them, past the position they have read through — and not simply anything with a
@@ -102,8 +95,7 @@ export const REST_LINE_MAXIMUM_CHARACTERS = 120;
 export function restLineMarksFrom(
   rows: readonly TranscriptRow[],
   ownerReadThroughSequence: number,
-  turnRunning: boolean,
-  needsYou: boolean
+  turnRunning: boolean
 ): RestLineMarks {
   let unreadReply = false;
   let failed = false;
@@ -129,7 +121,7 @@ export function restLineMarksFrom(
     }
     if (unreadReply && turnBoundaryFound) break;
   }
-  return { running: turnRunning, unreadReply, needsYou, failed };
+  return { running: turnRunning, unreadReply, failed };
 }
 
 /** What the line says, or nothing at all when nothing has happened yet. */
@@ -147,8 +139,7 @@ export function restLineFrom(
     marks: restLineMarksFrom(
       rows,
       ownerReadThroughSequence,
-      progress.turnRunning,
-      line.waiting
+      progress.turnRunning
     )
   };
 }

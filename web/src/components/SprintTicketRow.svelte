@@ -22,7 +22,7 @@
     // Sprint Item the tile is repeated noise.
     priority: Priority | null;
     title: string;
-    state: FieldStageVisualState;
+    state: FieldStageVisualState | null;
     ariaLabel: string;
     href?: string | null;
     active?: boolean;
@@ -38,12 +38,14 @@
 {#snippet content()}
   {#if priority}<PriorityTile {priority} />{/if}
   <span class="ticket-row-title">{title}</span>
-  <StageMark
-    {state}
-    class={stageMarkClass}
-    aria-label={ariaLabel}
-    {...stageMarkAttributes}
-  />
+  {#if state}
+    <StageMark
+      {state}
+      class={stageMarkClass}
+      aria-label={ariaLabel}
+      {...stageMarkAttributes}
+    />
+  {/if}
 {/snippet}
 
 {#if href === null}

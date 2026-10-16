@@ -110,7 +110,9 @@
       data-sprint-ticket-id={ticket.id}
       data-ticket-state={condition.mark}
     >
-      <StageMark state={condition.mark} aria-label={condition.word} />
+      {#if condition.mark}
+        <StageMark state={condition.mark} aria-label="Unread reply" />
+      {/if}
       <span class="list-row-title">{ticket.title}</span>
       <span class="sprint-ticket-state">
         <span class="sprint-ticket-priority">{ticket.priority}</span>{#if ticket.stage !== "done"} · {condition.word}{/if}

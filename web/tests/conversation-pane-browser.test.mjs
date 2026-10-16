@@ -946,7 +946,7 @@ with sync_playwright() as playwright:
     state(page, "rest")
 
     # The line at rest says what it always said, and says the rest of it without words:
-    # four independent axes, four marks, drawn together rather than one winning.
+    # independent message attention and turn-status shapes, drawn together.
     page.evaluate("window.__showEveryMark()")
     marks = page.locator("[data-conversation-rest-marks] [data-conversation-mark]")
     page.wait_for_function(
@@ -1020,15 +1020,13 @@ with sync_playwright() as playwright:
         page.keyboard.press("Escape")
         page.wait_for_timeout(50)
 
-    # Two axes at once, which is the whole reason they are four marks and not one state.
+    # A pending ask stays in the text and creates no conversation attention dot.
     page.evaluate("window.__showRunningAndNeedsYou()")
     page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation-mark]').length === 2"
+        "() => document.querySelectorAll('[data-conversation-mark]').length === 1"
     )
-    assert marks.evaluate_all("els => els.map(e => e.dataset.conversationMark)") == [
-        "running",
-        "needs-you",
-    ]
+    assert marks.evaluate_all("els => els.map(e => e.dataset.conversationMark)") == ["running"]
+    assert page.locator("[data-conversation-rest-line]").inner_text() != ""
 
     # Ordinary output past the read position is not a reply anybody is owed.
     page.evaluate("window.__showOrdinaryOutputOnly()")

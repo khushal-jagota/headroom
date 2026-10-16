@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal, Required, TypedDict
 
-from planner.core.contracts import Principal, Priority
+from planner.core.contracts import JsonDict, Principal, Priority
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
 # `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
@@ -107,15 +107,18 @@ class BoardCard(BoardCardSource, WorkAttention):
 
 
 class BoardSprintItemSource(TypedDict):
-    """A Sprint Item's identity before live work attention is attached.
+    """A represented Sprint Item and its complete children before live attention.
 
-    The shared attention projection adds the Item's own supervisor state and one rollup
-    over its child Tickets after this database read.
+    The shared attention projection adds each child's facts, the Item's own supervisor
+    state, and a separate child rollup after this database read.
     """
 
     id: str
+    title: str
+    priority: str
     created_at: int
     conversation_id: str | None
+    tickets: list[JsonDict]
 
 
 class BoardSprintItem(BoardSprintItemSource, WorkAttention):

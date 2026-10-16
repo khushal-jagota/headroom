@@ -73,12 +73,17 @@ groups. Other Tickets starts collapsed. Ticket rows omit Sprint names and mark o
 unsprinted work as Backlog. The Ticket page does not show Sprint or Backlog placement.
 Commitment links and a Ticket's stored schedule can differ: they state different facts.
 
-The open Item and its Workspace rail card use one Item snapshot. One presentation rule
-derives each Ticket group, label, activity order, count, and mark. A white dot means that
-the owner owes approval or an answer. A blue dot means that an unread reply waits. A
-spinner means that an agent works now. The mark is empty otherwise. Ownership groups and
-activity marks are independent. The rail stays compact, while Today and Other Tickets
-show the full set.
+The Workspace board carries each represented Item's complete Ticket set, title, and
+priority. The rail uses that set before and after selection. One presentation rule derives
+each Ticket group, label, activity order, and count in the rail and Item workspace.
+Today and Other Tickets split the workspace by Day placement without changing those groups.
+The standalone Tickets view retains its Today and unread-message roster.
+
+A Worker dot means that an unread addressed message waits in that exact conversation.
+This rule applies to the Chief, Item supervisors, and Ticket Workers. Child messages,
+approvals, questions, and running state do not create a parent dot. Approval groups and
+other explicit status information remain separate. An Item title dot answers only for
+the Item supervisor's own conversation. Read positions remain specific to each conversation.
 
 Sprint Item and Ticket Projects remain coherent. Classifying a Ticket clears its redundant
 Project storage and preserves its Sprint. Removing its Sprint Item copies the prior effective
@@ -163,8 +168,9 @@ ceiling, status, or Day membership.
 
 Nothing a supervisor does reaches the user on its own. Backend prose is runtime output;
 only an explicit Send Message reaches another principal. The Item row in the Workspace
-uses the shared activity mark across its supervisor and child Tickets. Reading an Item
-clears its unread supervisor reply through the normal conversation read position. A
+shows a dot only for an unread addressed message in its supervisor conversation.
+Child Ticket messages stay on their own rows. Reading the supervisor conversation
+clears its unread message through the normal conversation read position. A
 system marker in the transcript says when a turn ended without an explicit reply.
 
 The workspace reads one coherent Item snapshot with child Ticket Day membership,

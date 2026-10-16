@@ -1360,13 +1360,14 @@ async def add_conversation_row_signals(
 ) -> JsonDict:
     """Attach the shared owner-attention and agent-state projection to board rows."""
     cards = [card for column in board["columns"] for card in column["cards"]]
+    children = [ticket for item in board["sprint_items"] for ticket in item["tickets"]]
     await add_work_attention(
         # This helper predates the shared projection. Keep its public name until the Day
         # route moves with the other callers, but give it the one canonical behavior.
         conn,
         conversation_system,
         conversation_record,
-        tickets=cards,
+        tickets=(*cards, *children),
         sprint_items=board["sprint_items"],
     )
     return board

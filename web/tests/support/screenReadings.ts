@@ -202,7 +202,7 @@ export function feedbackLabel(facts: TicketFacts): string {
   });
 }
 
-export function feedbackMark(facts: TicketFacts): FieldStageVisualState {
+export function feedbackMark(facts: TicketFacts): FieldStageVisualState | null {
   return feedbackTicketStageState({
     id: "t_reading",
     title: "One Ticket",

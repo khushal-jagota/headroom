@@ -74,15 +74,17 @@
               </p>
             {/if}
 
-            <div class="dots" data-day-dots aria-label="Today's ticket progress">
+            <div class="dots" data-day-dots aria-label="Unread Ticket messages">
               {#each dotTickets as visual (visual.ticket.id)}
-                <StageMark
-                  state={visual.state}
-                  data-day-ticket-dot
-                  data-ticket-id={visual.ticket.id}
-                  data-stage-state={visual.state}
-                  aria-label={visual.ariaLabel}
-                />
+                {#if visual.state}
+                  <StageMark
+                    state={visual.state}
+                    data-day-ticket-dot
+                    data-ticket-id={visual.ticket.id}
+                    data-stage-state={visual.state}
+                    aria-label={`${visual.ticket.title}: ${visual.ariaLabel}`}
+                  />
+                {/if}
               {/each}
             </div>
 
@@ -97,7 +99,7 @@
                     class="act"
                     class:act--you={tile.key === "needs-me"}
                     href={tile.href}
-                    data-day-action={tile.key}
+                      data-day-action={tile.key}
                   >
                     <span class="n" data-day-action-count>{tile.count}</span>
                     <span class="k">{tile.label}</span>

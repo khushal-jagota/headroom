@@ -2,14 +2,12 @@ import type {
   BoardCard,
   BoardSprintItem,
   Priority,
-  SprintItemWorkspace,
   WorkAttention
 } from "./types";
 import {
   WORK_ITEM_ATTENTION_GROUP_KEYS,
   workItemActivityMark,
   workItemActivityMarkPresentation,
-  workItemRollupActivityMark,
   workItemTicketGroupKey,
   workItemTicketGroups,
   type WorkItemActivityMark,
@@ -49,9 +47,9 @@ export const workspaceTicketRowMark = workItemActivityMark;
 export const workspaceRowMarkPresentation = workItemActivityMarkPresentation;
 
 export function workspaceSprintItemRowMark(
-  item: WorkAttention & { ticket_rollup: WorkAttention }
+  item: WorkAttention
 ): WorkspaceRowMark {
-  return workItemRollupActivityMark(item, item.ticket_rollup);
+  return workItemActivityMark(item);
 }
 
 function priorityRank(priority: Priority): number {
@@ -86,40 +84,19 @@ export function workspaceAttentionGroups(
 
 export function buildWorkspaceRail(
   cards: readonly BoardCard[],
-  sprintItems: readonly BoardSprintItem[] = [],
-  selectedWorkspace: SprintItemWorkspace | undefined = undefined
+  sprintItems: readonly BoardSprintItem[] = []
 ): WorkspaceRail {
-  const itemCards = new Map<string, WorkItemTicketFacts[]>();
-  const summaries = new Map<string, BoardSprintItem | SprintItemWorkspace>(
-    sprintItems.map((item) => [item.id, item])
-  );
-
-  for (const card of cards) {
-    if (!card.sprint_item_id) continue;
-    const grouped = itemCards.get(card.sprint_item_id) ?? [];
-    grouped.push(card);
-    itemCards.set(card.sprint_item_id, grouped);
-  }
-
-  if (selectedWorkspace) {
-    itemCards.set(selectedWorkspace.id, selectedWorkspace.tickets);
-    summaries.set(selectedWorkspace.id, selectedWorkspace);
-  }
-
-  const items = [...itemCards.entries()].map(([id, groupedCards]) => {
-    const first = cards.find((card) => card.sprint_item_id === id);
-    const summary = summaries.get(id);
-    const selected = selectedWorkspace?.id === id ? selectedWorkspace : undefined;
-    return {
-      id,
-      title: selected?.title ?? first?.sprint_item_title ?? "Untitled Sprint Item",
-      priority: selected?.priority ?? first?.sprint_item_priority ?? "P3",
-      createdAt: summary?.created_at ?? 0,
-      mark: summary ? workspaceSprintItemRowMark(summary) : null,
-      groups: workspaceAttentionGroups(groupedCards),
-      rested: groupedCards.every((groupedCard) => groupedCard.stage === "done")
-    } satisfies WorkspaceRailItem;
-  });
+  // The board owns rail membership; each listed Item supplies its complete Ticket set.
+  // Selecting an Item only opens its pane and never changes this projection.
+  const items = sprintItems.map((item) => ({
+    id: item.id,
+    title: item.title,
+    priority: item.priority,
+    createdAt: item.created_at,
+    mark: workspaceSprintItemRowMark(item),
+    groups: workspaceAttentionGroups(item.tickets),
+    rested: item.tickets.every((ticket) => ticket.stage === "done")
+  } satisfies WorkspaceRailItem));
 
   items.sort(
     (left, right) =>

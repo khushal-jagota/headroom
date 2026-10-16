@@ -164,6 +164,9 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         summary = {
             "id": item["id"],
             "created_at": 10,
+            "title": "Mirror Item",
+            "priority": "P1",
+            "tickets": [workspace_ticket()],
             "conversation_id": None,
             "ticket_rollup": attention(),
             **quiet,
@@ -196,15 +199,12 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
 
     for row in (left_ticket, right_ticket):
         row.wait_for(timeout=WAIT_MS)
-        assert row.get_attribute("data-workspace-mark") == "working"
+        assert row.get_attribute("data-workspace-mark") == "none"
     assert left_item.locator('[data-bucket-key="assigned"]').count() == 1
     assert right_item.locator('[data-workspace-group="assigned"]').count() == 1
-    assert left_item.locator(".board-workspace-item-head [data-workspace-mark]").get_attribute(
-        "data-workspace-mark"
-    ) == "working"
-    assert right_item.locator(".sprint-workspace-title-mark").get_attribute(
-        "data-workspace-mark"
-    ) == "working"
+    # Child work never supplies a dot on the supervisor conversation.
+    assert left_item.locator(".board-workspace-item-head .stage-mark").count() == 0
+    assert right_item.locator(".sprint-workspace-title-mark").count() == 0
 
     before = int(page.evaluate("() => window.__plannerDebug.flushes"))
     mutable.update(awaiting_answer=True, awaiting_reply=True, agent_state="working")
@@ -218,15 +218,13 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         row.wait_for(timeout=WAIT_MS)
         expect(row).to_have_attribute(
             "data-workspace-mark",
-            "owner-answer",
+            "reply",
             timeout=WAIT_MS,
         )
-    assert left_item.locator(".board-workspace-item-head [data-workspace-mark]").get_attribute(
-        "data-workspace-mark"
-    ) == "owner-answer"
-    assert right_item.locator(".sprint-workspace-title-mark").get_attribute(
-        "data-workspace-mark"
-    ) == "owner-answer"
+    assert left_item.locator(".board-workspace-item-head .stage-mark").count() == 0
+    assert right_item.locator(".sprint-workspace-title-mark").count() == 0
+    assert left_item.locator('[data-bucket-key="awaiting_answer"]').count() == 1
+    assert right_item.locator('[data-workspace-group="awaiting_answer"]').count() == 1
 
     before = int(page.evaluate("() => window.__plannerDebug.flushes"))
     mutable.update(awaiting_answer=False, agent_state="idle")
@@ -421,8 +419,8 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     backlog_title.wait_for(timeout=WAIT_MS)
     backlog_placement.wait_for(state="attached", timeout=WAIT_MS)
     assert backlog_placement.text_content() == "Backlog"
-    # The group says that the agent owns the work. The empty mark says no turn runs now.
-    assert backlog_row.get_attribute("data-ticket-state") == "upcoming"
+    # The group carries ownership; a Ticket without a direct message carries no dot.
+    assert backlog_row.locator(".stage-mark").count() == 0
     assert backlog_row.get_attribute("href") == (
         f"#/workspace/item/{item['id']}/{backlog_ticket['id']}"
     )
@@ -440,15 +438,16 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     )
     assert desktop_geometry["titleWidth"] > 200, desktop_geometry
     assert abs(desktop_geometry["titleTop"] - desktop_geometry["placementTop"]) < 2
-    # Remaining Tickets starts collapsed, and its rows carry the shared row grammar:
-    # the condition is the stage mark's label, not a separate word, and the word is the
-    # heading the row sits under, lowercased.
+    # Remaining Tickets starts collapsed. The group carries the approval condition;
+    # approval alone supplies no direct-message dot.
     remaining = page.locator('[data-workspace-section="remaining"]')
     assert remaining.get_attribute("open") is None
     remaining.locator("> summary").click()
     off_today = page.locator(f'[data-sprint-ticket-id="{review_ticket["id"]}"]')
-    assert off_today.get_attribute("data-ticket-state") == "needs-me"
-    off_today.get_by_label("Needs your approval").wait_for(timeout=WAIT_MS)
+    assert off_today.locator(".stage-mark").count() == 0
+    assert off_today.locator("xpath=ancestor::details[1]").get_attribute(
+        "data-workspace-group"
+    ) == "awaiting_approval"
     artifacts = page.locator("[data-artifact-strip]")
     artifacts.wait_for(timeout=WAIT_MS)
     # Eleven files, nine things to open: the site is its index, and the stylesheet beside

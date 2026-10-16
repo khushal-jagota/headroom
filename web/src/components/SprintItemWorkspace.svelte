@@ -13,8 +13,7 @@
   } from "../lib/sprintItemWorkspace";
   import {
     workItemActivityMark,
-    workItemActivityMarkPresentation,
-    workItemRollupActivityMark
+    workItemActivityMarkPresentation
   } from "../lib/workItemPresentation";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {
@@ -196,7 +195,9 @@
             data-ticket-state={presentation.state}
             data-workspace-mark={mark ?? "none"}
           >
-            <StageMark state={presentation.state} aria-label={presentation.ariaLabel} />
+            {#if presentation.state}
+              <StageMark state={presentation.state} aria-label={presentation.ariaLabel} />
+            {/if}
             <span class="ticket-row-title">{ticket.title}</span>
             {#if workspaceTicketIsBacklog(ticket)}
               <span class="ticket-row-backlog" data-ticket-backlog>Backlog</span>
@@ -229,7 +230,7 @@
     >
       {#if workspace.data}
         {@const item = workspace.data}
-        {@const itemMark = workItemRollupActivityMark(item, item.ticket_rollup)}
+        {@const itemMark = workItemActivityMark(item)}
         {@const itemMarkPresentation = workItemActivityMarkPresentation(itemMark)}
         <div class="sprint-item-column">
           {#if backHref !== null}
@@ -251,13 +252,15 @@
                 placeholder="(untitled Outcome)"
                 onSave={(value) => saveItem("title", value)}
               />
-              <StageMark
-                state={itemMarkPresentation.state}
-                class="sprint-workspace-title-mark"
-                data-workspace-mark={itemMark ?? "none"}
-                aria-hidden={itemMark === null ? "true" : undefined}
-                aria-label={itemMarkPresentation.ariaLabel}
-              />
+              {#if itemMarkPresentation.state}
+                <StageMark
+                  state={itemMarkPresentation.state}
+                  class="sprint-workspace-title-mark"
+                  data-workspace-mark={itemMark ?? "none"}
+                  aria-hidden={itemMark === null ? "true" : undefined}
+                  aria-label={itemMarkPresentation.ariaLabel}
+                />
+              {/if}
             </h1>
             <ClampedText
               class="sprint-workspace-brief"

@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
@@ -13,10 +14,14 @@ from planner.conversation.storage import ConversationStore
 from planner.core.clock import RealClock
 from planner.core.contracts import JsonDict
 from planner.core.db import connect, create_schema
+from planner.days.data import add_day_ticket
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
+from planner.tickets.api import add_conversation_row_signals
 from planner.tickets.contracts import TITLE_MAX_CHARS
+from planner.tickets.views import board_view
 from planner.work_attention import add_work_attention
+from planner.worker_settings.api import add_agent_conversation_signals
 
 
 class _ConversationFacts:
@@ -62,8 +67,7 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
         ),
     )
     conn.execute(
-        "UPDATE tickets SET conversation_id = 'c_attention', "
-        "pending_proposal = '{}' WHERE id = ?",
+        "UPDATE tickets SET conversation_id = 'c_attention', pending_proposal = '{}' WHERE id = ?",
         (ticket.id,),
     )
     row: JsonDict = {"id": ticket.id}
@@ -155,6 +159,157 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
     conn.close()
 
 
+def test_board_item_carries_all_children_without_expanding_day_columns(tmp_path: Path) -> None:
+    db_path = tmp_path / "complete_board.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    item = sprints_data.create_item(
+        conn, title="Complete approval queue", project_id="project_vylo", clock=RealClock()
+    )
+    rows = [
+        tickets_data.create_ticket(
+            conn,
+            worker_type=worker_type,
+            title=title,
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            sprint_item_id=item.id,
+        )
+        for title, worker_type in (
+            ("On Today", "coding"),
+            ("Off Today owner approval", "coding"),
+            ("Off Today feedback", "exploration"),
+            ("Off Today agent approval", "coding"),
+        )
+    ]
+    add_day_ticket(conn, "2026-10-16", rows[0].id, 1)
+    for index in (1, 3):
+        conn.execute("UPDATE tickets SET pending_proposal = '{}' WHERE id = ?", (rows[index].id,))
+    conn.execute("UPDATE tickets SET stage = 'needs_answer' WHERE id = ?", (rows[2].id,))
+    conn.execute(
+        "UPDATE tickets SET ceiling_holder = ? WHERE id = ?",
+        (json.dumps({"kind": "chief", "id": "chief"}), rows[3].id),
+    )
+    conn.execute("UPDATE sprint_items SET priority = 'P0' WHERE id = ?", (item.id,))
+    conn.execute(
+        "INSERT INTO conversations "
+        "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+        "VALUES ('c_off_today_child', 'codex', '/tmp/workspace', 'full', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO conversation_events "
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_off_today_child', 1, 'message_to_owner', '{}', 1)"
+    )
+    conn.execute(
+        "UPDATE tickets SET conversation_id = 'c_off_today_child' WHERE id = ?", (rows[1].id,)
+    )
+    conn.commit()
+    board = board_view(conn, day_id="2026-10-16")
+    record = ConversationStore(str(db_path))
+    # Board cards and duplicate nested child rows share one conversation projection.
+    with patch.object(record, "attention_facts", wraps=record.attention_facts) as attention:
+        asyncio.run(
+            add_conversation_row_signals(
+                conn, board, cast(ConversationSystem, _ConversationFacts()), record
+            )
+        )
+    attention.assert_awaited_once_with({"c_off_today_child"})
+    assert [card["id"] for column in board["columns"] for card in column["cards"]] == [rows[0].id]
+    [item_row] = board["sprint_items"]
+    assert item_row["title"] == "Complete approval queue"
+    assert item_row["priority"] == "P0"
+    children = {row["id"]: row for row in item_row["tickets"]}
+    assert set(children) == {row.id for row in rows}
+    owner_approval = children[rows[1].id]
+    assert owner_approval["awaiting_approval"] is True
+    assert owner_approval["awaiting_reply"] is True
+    assert owner_approval["awaiting_agent_approval"] is False
+    assert owner_approval["gating_field"] == "brief"
+    assert owner_approval["ceiling_holder"] == {"kind": "owner", "id": "owner"}
+    assert owner_approval["worker_type"] == "coding"
+    assert owner_approval["day_ids"] == []
+    assert owner_approval["blocked"] is False
+    assert owner_approval["sprint_item_id"] == item.id
+    assert children[rows[0].id]["day_ids"] == ["2026-10-16"]
+    feedback = children[rows[2].id]
+    assert feedback["assigned"] is True
+    assert feedback["awaiting_approval"] is False
+    assert feedback["has_pending_proposal"] is False
+    assert children[rows[3].id]["awaiting_approval"] is False
+    assert children[rows[3].id]["awaiting_agent_approval"] is True
+    assert item_row["ticket_rollup"]["awaiting_approval"] is True
+    assert item_row["ticket_rollup"]["assigned"] is True
+    assert item_row["ticket_rollup"]["awaiting_reply"] is True
+    assert item_row["awaiting_reply"] is False
+    assert all(not children[row.id]["awaiting_reply"] for row in (rows[0], rows[2], rows[3]))
+    conn.close()
+
+
+@pytest.mark.parametrize("waiting_ask", [False, True])
+def test_chief_message_attention_uses_exact_conversation_and_owner_read_mark(
+    tmp_path: Path, waiting_ask: bool
+) -> None:
+    db_path = tmp_path / "chief_messages.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    for conversation_id in ("c_chief", "c_child"):
+        conn.execute(
+            "INSERT INTO conversations "
+            "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+            "VALUES (?, 'codex', '/tmp/workspace', 'full', 1, 1)",
+            (conversation_id,),
+        )
+    conn.execute(
+        "INSERT INTO agents(agent_key, conversation_id) VALUES ('chief_of_staff', 'c_chief') "
+        "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id"
+    )
+    conn.executemany(
+        "INSERT INTO conversation_events "
+        "(conversation_id, sequence, kind, payload, created_at) VALUES (?, 1, ?, ?, 1)",
+        [
+            ("c_chief", "turn_ended", json.dumps({"ending": "completed"})),
+            ("c_child", "message_to_owner", "{}"),
+        ],
+    )
+    conn.commit()
+    record = ConversationStore(str(db_path))
+    system = cast(
+        ConversationSystem,
+        _ConversationWaitingOnAnAnswer() if waiting_ask else _ConversationFacts(running=True),
+    )
+
+    def chief() -> JsonDict:
+        return asyncio.run(
+            add_agent_conversation_signals(
+                [{"employee_id": "chief_of_staff"}], conn, system, record
+            )
+        )[0]
+
+    quiet = chief()
+    assert quiet["conversation_id"] == "c_chief"
+    assert quiet["awaiting_reply"] is False
+    assert quiet["agent_working"] is True
+    assert quiet["needs_me"] is waiting_ask
+    assert quiet["latest_turn_ended_sequence"] == 1
+    conn.execute(
+        "INSERT INTO conversation_events "
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_chief', 2, 'message_to_owner', '{}', 2)"
+    )
+    conn.execute("UPDATE conversations SET latest_sequence = 2 WHERE conversation_id = 'c_chief'")
+    conn.commit()
+    assert chief()["awaiting_reply"] is True
+    asyncio.run(record.advance_owner_read_through_sequence("c_chief", 2))
+    read = chief()
+    assert read["awaiting_reply"] is False
+    assert read["owner_read_through_sequence"] == 2
+    # The child's unread message is still durable, but never marks the Chief.
+    assert asyncio.run(record.attention_facts({"c_child"}))["c_child"].unread_message_to_owner
+    conn.close()
+
+
 def test_only_a_user_owned_stage_is_the_owners_work(tmp_path: Path) -> None:
     """The Brief does not make a Ticket the owner's. The Stage's ownership does."""
     db_path = tmp_path / "assignment.db"
@@ -228,9 +383,7 @@ def test_a_waiting_ask_is_not_reported_as_a_message(tmp_path: Path) -> None:
         "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
         "VALUES ('c_answer', 'codex', '/tmp/workspace', 'full', 0, 1)"
     )
-    conn.execute(
-        "UPDATE tickets SET conversation_id = 'c_answer' WHERE id = ?", (ticket.id,)
-    )
+    conn.execute("UPDATE tickets SET conversation_id = 'c_answer' WHERE id = ?", (ticket.id,))
     row: JsonDict = {"id": ticket.id}
 
     asyncio.run(

@@ -220,7 +220,8 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
     for ticket in tickets[:3]:
         row = page.locator(f'[data-bucket-key="done"] [data-ticket-id="{ticket["id"]}"]')
         expect(row).to_be_visible(timeout=WAIT_MS)
-        expect(row.locator('[data-agent-state="idle"]')).to_have_count(1, timeout=WAIT_MS)
+        # Idle work has no message dot; the API assertions above retain its state proof.
+        expect(row.locator(".stage-mark")).to_have_count(0, timeout=WAIT_MS)
     page.screenshot(path=str(evidence / "completed-errors-tickets.png"), full_page=True)
     for index, item in enumerate(items):
         item_page = open_page(
