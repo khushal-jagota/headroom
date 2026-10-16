@@ -89,4 +89,3 @@ A good **Consequences** is a short, verified report: what was saved, what `panel
 - **Everything earns its place** — a Stage, field, or ownership decision exists only if you can say why. A padded lifecycle is worse than a tight one.
 - **Name things for what they are** — the new worker's names are read by people who didn't design it.
 - **Keep proposals decision-level** — each field is something a human approves, not a spec to excavate.
-- **Explain your judgment in chat** after each proposal — the direction, the alternatives ruled out, the calls made.
