@@ -31,6 +31,7 @@ from planner.conversation.backends.codex_app_server.adapter import (
 from planner.conversation.backends.codex_app_server.client import (
     CodexAppServerClient,
     CodexAppServerError,
+    CodexLoginIsDuplicated,
     CodexRequestRejected,
     child_environment,
 )
@@ -238,6 +239,14 @@ class CodexUsageAdapter:
                     if unauthenticated
                     else "Codex could not refresh its usage. Try again."
                 ),
+            )
+        except CodexLoginIsDuplicated as duplicated:
+            # A misconfiguration, not a backend fault, so it says which one rather than
+            # inviting a retry that will fail the same way.
+            return BackendUsageResult(
+                backend_key=ConversationBackendKey.codex,
+                outcome=BackendUsageOutcome.failed,
+                detail=str(duplicated),
             )
         except (CodexAppServerError, ValidationError):
             return BackendUsageResult(

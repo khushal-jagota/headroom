@@ -19,6 +19,9 @@ from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.api import build_conversation_runtime
 from planner.conversation.api import router as conversation_router
+from planner.conversation.backends.codex_app_server.login import (
+    RememberedCodexLoginRejection,
+)
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
@@ -153,6 +156,9 @@ def create_app(
         # the three real agents on this machine, and spawns none of them until a
         # conversation has something to send. Everything that starts or steers a worker
         # goes through it, so it has to exist before the readiness loop starts.
+        # One account, one login, so one memory of what a turn found out about it. The
+        # conversations that run codex write it and the backends card reads it.
+        remembered_codex_login_rejection = RememberedCodexLoginRejection()
         conversation = build_conversation_runtime(
             db_path=config.db_path,
             db_busy_timeout_ms=config.db_busy_timeout_ms,
@@ -163,7 +169,9 @@ def create_app(
                 # conversation, so a conversation resumed after a restart reaches the
                 # server that resumed it.
                 panels_server_url=f"http://{HOST}:{config.port}",
+                remembered_codex_login_rejection=remembered_codex_login_rejection,
             ),
+            remembered_codex_login_rejection=remembered_codex_login_rejection,
         )
         app.state.conversation = conversation
         # A test that drives workers wants a conversation system it can hold still, so it

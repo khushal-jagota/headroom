@@ -39,6 +39,10 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ValidationError
 
 from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server.login import (
+    codex_home,
+    logins_hold_the_same_credential,
+)
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 
@@ -117,6 +121,10 @@ class CodexRequestRejected(CodexAppServerError):
         self.data = data
 
 
+class CodexLoginIsDuplicated(CodexAppServerError):
+    """A codex child was about to run on a copy of the live login, and will not."""
+
+
 class CodexServerMessageHandler(Protocol):
     """What the adapter does with what the child says.
 
@@ -147,6 +155,10 @@ class CodexAppServerClient:
         self._child_watcher: asyncio.Task[None] | None = None
         self._standard_error: deque[bytes] = deque()
         self._standard_error_bytes = 0
+        # Every byte this child has ever written on standard error, counted. The ring holds
+        # only the tail, so a turn cannot ask for "my own stderr" by position in the ring —
+        # it takes this count when it starts and asks for what arrived after it.
+        self._standard_error_bytes_ever = 0
         self._wire_broken = False
 
     # --- the process --------------------------------------------------------------------
@@ -225,6 +237,29 @@ class CodexAppServerClient:
         if not self._standard_error:
             return None
         return b"".join(self._standard_error).decode("utf-8", errors="replace")
+
+    def standard_error_mark(self) -> int:
+        """How much this child has said on standard error so far.
+
+        A turn takes this when it starts, so that what it later reads back is its own.
+        """
+        return self._standard_error_bytes_ever
+
+    def standard_error_since(self, mark: int) -> str | None:
+        """What the child said on standard error after ``mark``, as far as the ring kept it.
+
+        The ring is one buffer for the life of the process, so the whole of it is the
+        child's history and not this turn's. A failure is diagnosed from this slice
+        instead: an authentication line from an hour ago cannot then be read as the reason
+        a turn just failed. When the ring has already dropped everything the turn wrote,
+        the honest answer is that the turn said nothing.
+        """
+        arrived_since = self._standard_error_bytes_ever - mark
+        if arrived_since <= 0 or not self._standard_error:
+            return None
+        kept = b"".join(self._standard_error)
+        slice_of_it = kept[-arrived_since:] if arrived_since < len(kept) else kept
+        return slice_of_it.decode("utf-8", errors="replace") or None
 
     # --- talking ------------------------------------------------------------------------
 
@@ -446,6 +481,7 @@ class CodexAppServerClient:
                 return
             self._standard_error.append(chunk)
             self._standard_error_bytes += len(chunk)
+            self._standard_error_bytes_ever += len(chunk)
             while (
                 self._standard_error_bytes > STANDARD_ERROR_RING_BUFFER_BYTES
                 and len(self._standard_error) > 1
@@ -477,8 +513,50 @@ def child_environment(
     SDK gives hermes one. Its account lives under the real ``HOME`` and it reads a long tail
     of its own variables, so taking the environment away would be taking away the login.
     ``CODEX_HOME`` is deliberately untouched: Panels runs one codex account.
+
+    This is the one door every codex child Panels launches goes through — the app-server
+    child, the usage probe, and the model catalogue probe — so it is where a duplicated
+    login is refused. Raises ``CodexLoginIsDuplicated``.
     """
     environment = dict(os.environ)
     environment.update(dict(overrides))
     environment.update(dict(identity))
+    refuse_a_duplicated_codex_login(environment)
     return environment
+
+
+def refuse_a_duplicated_codex_login(environment: Mapping[str, str]) -> None:
+    """Stop a codex child that would run on a copy of the live login.
+
+    One account, one rotating refresh token, one file: that is the arrangement codex gives
+    and Panels keeps. A second home holding the same credential breaks it in a way nothing
+    notices — codex refreshes wherever it is pointed, writes the new token there, and the
+    file everything else reads is left holding one the server has already spent.
+
+    A scratch home of its own is fine and tests need one. What is refused is a scratch home
+    holding the live credential. An unreadable login cannot be shown to be a copy, so it is
+    allowed and said out loud instead: refusing every unparseable file under a test's home
+    would stop work that is not doing anything wrong.
+    """
+    home = codex_home(environment)
+    real_home = codex_home({})
+    try:
+        if home.resolve() == real_home.resolve():
+            return
+    except OSError:
+        return
+    shared = logins_hold_the_same_credential(home, real_home)
+    if shared is None:
+        LOGGER.warning(
+            "cannot tell whether the codex login under CODEX_HOME=%s copies the one in %s, "
+            "so the child is allowed to start",
+            home,
+            real_home,
+        )
+        return
+    if shared:
+        raise CodexLoginIsDuplicated(
+            f"CODEX_HOME={home} holds the same codex credential as {real_home}. "
+            "Two homes sharing one rotating refresh token lose the rotation, so this "
+            "child will not start. Give that home its own login, or use the real home."
+        )

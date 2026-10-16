@@ -30,6 +30,9 @@ from planner.conversation.backends.codex_app_server.adapter import (
     CodexChildLaunch,
     codex_app_server_child_launch,
 )
+from planner.conversation.backends.codex_app_server.login import (
+    RememberedCodexLoginRejection,
+)
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.backends.hermes_acp import (
     AcpChildLaunch,
@@ -99,14 +102,22 @@ def production_backend_child_factories(
     *,
     panels_server_url: str,
     executable_path: ExecutablePathResolver = shutil.which,
+    remembered_codex_login_rejection: RememberedCodexLoginRejection | None = None,
 ) -> Mapping[ConversationBackendKey, BackendChildFactory]:
-    """One child factory per backend, pointed at this machine's copy of each agent."""
+    """One child factory per backend, pointed at this machine's copy of each agent.
+
+    ``remembered_codex_login_rejection`` is shared with whatever reads the codex card,
+    because a rejection one conversation discovered is a fact about the one login every
+    conversation uses.
+    """
     launches = production_backend_launches(
         panels_server_url=panels_server_url, executable_path=executable_path
     )
     return {
         ConversationBackendKey.hermes: HermesAcpBackendChildFactory(launches.hermes),
-        ConversationBackendKey.codex: CodexAppServerBackendChildFactory(launches.codex),
+        ConversationBackendKey.codex: CodexAppServerBackendChildFactory(
+            launches.codex, remembered_login_rejection=remembered_codex_login_rejection
+        ),
         ConversationBackendKey.claude: ClaudeAgentSdkBackendChildFactory(launches.claude),
     }
 

@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import re
 from collections.abc import Sequence
 from contextlib import suppress
@@ -51,6 +52,11 @@ from pydantic import BaseModel, ValidationError
 
 from planner import __version__
 from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server.auth_failure import (
+    CodexAuthReading,
+    error_summary_for,
+    read_a_failed_turn,
+)
 from planner.conversation.backends.codex_app_server.client import (
     CodexAppServerClient,
     CodexAppServerError,
@@ -58,6 +64,12 @@ from planner.conversation.backends.codex_app_server.client import (
     CodexRequestRejected,
     CodexWireFailed,
     child_environment,
+)
+from planner.conversation.backends.codex_app_server.login import (
+    CodexLoginGeneration,
+    RememberedCodexLoginRejection,
+    codex_home,
+    read_stored_codex_login,
 )
 from planner.conversation.backends.contracts import (
     BackendEventSink,
@@ -292,6 +304,12 @@ class _TurnInFlight:
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
     parked_user_inputs: dict[str, _ParkedUserInput] = field(default_factory=dict)
     last_error_summary: str | None = None
+    # Where this child's standard error had got to when the turn started, so a failure is
+    # diagnosed from what this turn wrote and not from the whole of the child's history.
+    standard_error_mark: int = 0
+    # The saved login this turn ran on, read when it started. A rejection or a success is
+    # only ever recorded against this, and only when the login has not changed underneath.
+    login_generation_at_start: CodexLoginGeneration | None = None
     # Set once codex's own account of this turn ending has arrived and been worked through.
     # It is what a cancel waits on, so the turn after it is not written into the middle of
     # codex still stopping this one.
@@ -308,11 +326,16 @@ class CodexAppServerBackendChild:
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
+        remembered_login_rejection: RememberedCodexLoginRejection,
     ) -> None:
         self._launch = launch
         self._resolved_start = resolved_start
         self._sink = event_sink
         self._message_files = message_files
+        self._remembered_login_rejection = remembered_login_rejection
+        # The home this child's codex will read its login from, which is the real one
+        # unless this launch overrides it.
+        self._codex_home = codex_home({**os.environ, **dict(launch.environment_overrides)})
         self._client = CodexAppServerClient(
             handler=_CodexServerMessages(self), description=resolved_start.conversation_id
         )
@@ -388,7 +411,12 @@ class CodexAppServerBackendChild:
         reasoning_effort = (
             self._reasoning_effort if reasoning_effort_change is None else reasoning_effort_change
         )
-        turn = _TurnInFlight(token=turn_token, started=asyncio.get_running_loop().create_future())
+        turn = _TurnInFlight(
+            token=turn_token,
+            started=asyncio.get_running_loop().create_future(),
+            standard_error_mark=self._client.standard_error_mark(),
+            login_generation_at_start=self._login_generation(),
+        )
         self._turn = turn
         try:
             invocation = (
@@ -1170,6 +1198,10 @@ class CodexAppServerBackendChild:
         self._turn = None
         await self._complete_agent_messages(turn)
         await self._settle_parked_asks(turn)
+        if ending is ConversationTurnEnding.failed:
+            error_summary = self._read_the_login_in(turn, error_summary)
+        else:
+            self._login_worked_for(turn)
         await self._sink.turn_ended(
             turn.token,
             ending=ending,
@@ -1183,6 +1215,34 @@ class CodexAppServerBackendChild:
         # Last, so that a cancel waiting here returns to a child with nothing of this turn
         # left to do: its asks are settled and everything it said has been reported.
         turn.ended.set()
+
+    def _read_the_login_in(self, turn: _TurnInFlight, error_summary: str | None) -> str | None:
+        """Say what a failed turn establishes about the login, and remember a refusal.
+
+        The remembering is the narrow part. A refusal is only ever recorded against the
+        credential the turn actually ran on, and only when that credential is still the one
+        in the file: a sign-in or a refresh landing mid-turn means the refusal is about
+        something that no longer applies, and recording it would make the next reader
+        distrust a login nothing has tested.
+        """
+        reading = read_a_failed_turn(
+            error_summary=error_summary,
+            standard_error_this_turn=self._client.standard_error_since(turn.standard_error_mark),
+        )
+        if reading is CodexAuthReading.login_is_rejected:
+            generation = turn.login_generation_at_start
+            if generation is not None and generation == self._login_generation():
+                self._remembered_login_rejection.remember(generation)
+        return error_summary_for(reading, error_summary)
+
+    def _login_worked_for(self, turn: _TurnInFlight) -> None:
+        """A turn that did not fail clears a refusal recorded against its own credential."""
+        generation = turn.login_generation_at_start
+        if generation is not None and generation == self._login_generation():
+            self._remembered_login_rejection.forget(generation)
+
+    def _login_generation(self) -> CodexLoginGeneration | None:
+        return read_stored_codex_login(self._codex_home).generation
 
     async def _complete_agent_messages(self, turn: _TurnInFlight) -> None:
         """Finish anything the agent was part way through saying when the turn stopped."""
@@ -1533,8 +1593,18 @@ class _CodexServerMessages:
 class CodexAppServerBackendChildFactory:
     """Makes the codex child for one conversation. Making it does not spawn it."""
 
-    def __init__(self, launch: CodexChildLaunch) -> None:
+    def __init__(
+        self,
+        launch: CodexChildLaunch,
+        *,
+        remembered_login_rejection: RememberedCodexLoginRejection | None = None,
+    ) -> None:
         self._launch = launch
+        # Every codex child in this process shares one of these, because they share one
+        # login. A factory made without one keeps its own, which is what a test wants.
+        self._remembered_login_rejection = (
+            remembered_login_rejection or RememberedCodexLoginRejection()
+        )
 
     def __call__(
         self,
@@ -1548,6 +1618,7 @@ class CodexAppServerBackendChildFactory:
             resolved_start=resolved_start,
             event_sink=event_sink,
             message_files=message_files,
+            remembered_login_rejection=self._remembered_login_rejection,
         )
 
 

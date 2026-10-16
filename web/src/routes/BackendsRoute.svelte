@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import UsageRings from "../components/conversation/UsageRings.svelte";
+  import { backendIdentityNote } from "../lib/conversation/backendIdentity";
   import {
     loadBackendPageSnapshots,
     refreshBackendSnapshots
@@ -170,11 +171,12 @@
             >
               <span class="chevron" aria-hidden="true">{open ? "⌄" : "›"}</span>
               <span class="backend-name">{snapshot.backend_key}</span>
-              {#if isSignedOut(snapshot)}
-                <span class="identity-note">
-                  not signed in
-                  {#if snapshot.identity?.login_command}
-                    · <b>{snapshot.identity.login_command}</b>
+              {#if backendIdentityNote(snapshot)}
+                {@const note = backendIdentityNote(snapshot)}
+                <span class="identity-note" data-backend-identity-note>
+                  {note?.text}
+                  {#if note?.loginCommand}
+                    · <b>{note.loginCommand}</b>
                   {/if}
                 </span>
               {/if}

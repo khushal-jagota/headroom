@@ -40,6 +40,9 @@ from planner.conversation.backend_usage import (
     BackendUsageWindow,
     production_backend_usage_service,
 )
+from planner.conversation.backends.codex_app_server.login import (
+    RememberedCodexLoginRejection,
+)
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -154,6 +157,7 @@ def build_conversation_runtime(
     db_busy_timeout_ms: int,
     sse_heartbeat_ms: int,
     backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory],
+    remembered_codex_login_rejection: RememberedCodexLoginRejection | None = None,
 ) -> ConversationRuntime:
     """Compose the conversation system, its record, the files it keeps, and the tail."""
     store = ConversationStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
@@ -168,7 +172,9 @@ def build_conversation_runtime(
             live_tail=live_tail,
         ),
         live_tail=live_tail,
-        backend_snapshots=BackendSnapshotService(),
+        backend_snapshots=BackendSnapshotService(
+            remembered_codex_login_rejection=remembered_codex_login_rejection
+        ),
         backend_usage=production_backend_usage_service(),
         message_files=message_files,
         database_path=db_path,

@@ -595,6 +595,53 @@ The update command comes from how the CLI was installed. Panels checks the card 
 afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
 in the terminal, and the card names the command.
 
+### What a card can say about the codex login
+
+`codex login status` answers a narrower question than it looks like it answers. It reads
+the saved login file and says a login is there. It never asks the server. So it reported a
+healthy account for twelve days while every codex turn failed, because the saved login's
+rotating refresh token had already been spent and no refresh could work.
+
+The codex card therefore says one of four things, and only the first two come from the
+CLI alone:
+
+- **Signed in.** The saved login is there and its access token has not expired.
+- **Not signed in.** There is no saved login. The card names `codex login`.
+- **Cannot be confirmed.** The saved login is there and its access token has expired, or
+  the file cannot be read. An expired token is ordinary — codex refreshes on demand — so
+  this is not a fault and the card offers no action. It says that nothing has tested the
+  login, because confirming it would mean spending a refresh.
+- **Rejected.** A codex turn failed and said explicitly that the saved login was refused.
+  That is the only evidence here that was actually tested, so it outranks the file. It is
+  remembered against the account and refresh stamp the turn ran on, and it stops applying
+  as soon as the saved login reports a different one — a new sign-in, or any successful
+  refresh. The memory lives in the running process, so a restart falls back to "cannot be
+  confirmed" rather than to a claim.
+
+A failed codex turn is read the same way before its line is written. An explicit refusal
+replaces codex's own text, which names whichever subsystem met the refusal first, with a
+line saying the login was rejected and must be replaced. A bare `401` keeps codex's words
+and adds only that the sign-in may be worth checking. Every other failure is left exactly
+as codex put it. The reading uses only what that turn wrote on standard error, not the
+child's whole history, so a refusal from an hour ago cannot explain an unrelated failure
+now.
+
+### One home for the codex login
+
+Panels runs one codex account, so the login is one file holding one rotating refresh
+token. Codex refreshes that token in whichever home it is pointed at and writes the new
+one there. A second home holding a copy of the file is therefore a credential with two
+owners: the copy takes the rotation, the original keeps a token the server has already
+spent, and everything using the original fails.
+
+So Panels refuses to start a codex child whose `CODEX_HOME` holds the same credential as
+the real home. A scratch home with its own login, or with none, is fine. The comparison is
+the credential itself rather than the whole file, because a copy with edited account
+fields still rotates the same token. An unreadable login cannot be shown to be a copy, so
+it is allowed and logged. The guarantee covers the codex children Panels launches — the
+app-server child, the usage read, and the model catalogue read — and a check in the test
+suite holds repository code to the same rule.
+
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
 Hermes-only inventory door asks `hermes_cli.inventory` for configured providers
@@ -753,16 +800,23 @@ where a steer is proved to cross into a live turn.
 
 That fourth exercise asks for more before it will start. It refuses a dirty tree, so
 `git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs three credential
-directories, because it gives each agent a private home rather than borrowing yours:
+into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs two credential
+directories, because it gives hermes and claude a private home rather than borrowing
+yours:
 
 - `PANELS_REAL_HERMES_HOME_TEMPLATE` — a copy of `~/.hermes`.
-- `PANELS_REAL_CODEX_HOME_TEMPLATE` — a directory holding `auth.json` and `config.toml`.
 - `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — a directory holding `.credentials.json` and
   `settings.json`.
 
-You build those three yourself. Nothing in the repository makes them for you, and a stale
+You build those two yourself. Nothing in the repository makes them for you, and a stale
 copy fails as a login problem rather than as a missing file.
+
+Codex is the exception, and deliberately. It keeps one account in one file and refreshes
+that file in whichever home it is pointed at, so a private copy takes the new token with
+it and leaves the real login holding one the server has already spent. Everything that
+uses codex afterwards then fails, and codex reports it as the subsystem that happened to
+ask first rather than as a login. So this exercise uses the real codex home, and Panels
+refuses to start any codex child whose `CODEX_HOME` holds a copy of that login.
 
 ### A red run is expected today
 

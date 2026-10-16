@@ -468,6 +468,12 @@ class ScriptedAppServer:
                     },
                 )
                 self._turn_completed.set()
+            case "say_on_stderr":
+                # Codex says why a turn is about to fail on its standard error rather than
+                # on the wire. Scripting it inside the turn is what lets a test prove the
+                # adapter reads this turn's own words and not the child's whole history.
+                sys.stderr.write(action["text"])
+                sys.stderr.flush()
             case "stop_reading":
                 self._exit_code = 0
             case "die":
