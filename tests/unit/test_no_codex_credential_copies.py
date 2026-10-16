@@ -32,7 +32,9 @@ It does not protect Hermes or Claude. No general detector is promised here.
 docs/conversation-system.md names the live violation at
 tests/integration/test_conversation_real_provider_steering.py:569 and its contrast
 with the nearby Codex avoidance comment and the safe Hermes permission harness.
-A separate Ticket owns that harness fix; this tripwire has no new exemption.
+Ticket t_yhf49qxd, "Stop the steering harness copying a real agent home", owns
+removal of that violation. Check that Ticket for the fix's status.
+This tripwire has no new exemption.
 
 Other blind spots
 -----------------

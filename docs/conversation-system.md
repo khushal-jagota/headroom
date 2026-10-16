@@ -813,6 +813,8 @@ the invariant.
 **A live violation remains in the steering test.**
 `tests/integration/test_conversation_real_provider_steering.py:569` copies the entire
 externally supplied Hermes home, then points the agent at the copy on line 570.
+Ticket `t_yhf49qxd`, “Stop the steering harness copying a real agent home,” owns
+removal of this violation. Check that Ticket for the fix's status.
 The same helper avoids this hazard for Codex: its comment on lines 573–576 explains
 that a copied home takes the rotation and leaves the real login holding a spent
 token. Twelve lines after the Hermes copy, line 581 names Claude's credential for
@@ -820,7 +822,7 @@ copying on line 584. The permission test already treats the same Hermes credenti
 safely: it copies `config.yaml` and `.env`, but symlinks `auth.json`, with a comment
 that rotating auth remains one shared canonical file. This repository therefore
 both commits and avoids the same hazard; the steering test's Hermes branch lacks
-the explanation in its nearby Codex branch. A separate Ticket owns the harness fix.
+the explanation in its nearby Codex branch.
 This documentation change leaves that violation and the tripwire's allowlist unchanged.
 
 Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
