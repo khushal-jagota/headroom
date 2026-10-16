@@ -399,7 +399,7 @@ def _send_owner_message(server: ServerHandle, sender: Principal, message: str) -
     assert response.json()["fate"] == "recorded"
 
 
-def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
+def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
     rail_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -408,9 +408,9 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     """A folded settled conversation must stay findable across canonical read updates.
 
     This risk spans durable message/read state, real board projections, change-stream
-    invalidation and rendered fold counts/routes. No mocked frontend query or backend-only
-    assertion proves the connected owner experience. Counts name conversations, not rows
-    in the event transcript. Terminal rows retain their local lifecycle group.
+    invalidation and rendered rows/routes. No mocked frontend query or backend-only
+    assertion proves the connected owner experience. Header counts name items. Exact row
+    dots retain unread facts. Terminal rows retain their local lifecycle group.
     """
     server = rail_server
     project = api.direct_post(server, "/api/projects", {"name": "Settled proof", "priority": "P1"})
@@ -489,7 +489,7 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     expect(left.locator(":scope > [data-workspace-messages]")).to_have_count(0)
     settled_head = left.locator(".settled-head")
     expect(settled_head).to_have_attribute("aria-expanded", "false")
-    expect(left.locator("[data-settled-count]")).to_contain_text("3 unread")
+    expect(left.locator("[data-settled-count]")).to_have_text("(2)")
     expect(settled_head.get_by_role("img")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible()
     settled_head.focus()
@@ -534,7 +534,8 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     page_group = pane.locator('[data-workspace-group="done"]')
     expect(page_group).to_be_attached()
     expect(page_group).not_to_have_attribute("open", "")
-    expect(page_group.locator("[data-group-unread-count]")).to_contain_text("1 unread")
+    expect(page_group.locator("[data-group-count]")).to_have_text("1")
+    expect(page_group.locator("[data-group-count]")).to_be_visible()
     page_group.locator(":scope > summary").focus()
     page.keyboard.press("Enter")
     expect(page_group).to_have_attribute("open", "")
@@ -546,15 +547,15 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     artifacts.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(artifacts / "settled-and-messages-1440.png"), full_page=True)
 
-    # A read advances the durable position and the same SSE invalidation refreshes all
-    # visible counts/dots. No reload or manual refetch masks an invalidation failure.
+    # A read advances the durable position and the same SSE invalidation clears only
+    # the exact dot/message row. Ordinary counts stay stable without a reload/refetch.
     api.direct_post(
         server,
         "/api/conversation/conversations/settled-supervisor/owner-read",
         {"through_sequence": 1},
     )
     expect(first_parent.locator(".settled-title .stage-mark")).to_have_count(0)
-    expect(left.locator("[data-settled-count]")).to_contain_text("2 unread")
+    expect(left.locator("[data-settled-count]")).to_have_text("(2)")
     expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible()
     api.direct_post(
         server,
@@ -562,14 +563,15 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
         {"through_sequence": 2},
     )
     expect(rows["settled-child-one"]).to_have_count(0, timeout=WAIT_MS)
-    expect(left.locator("[data-settled-count]")).to_contain_text("1 unread")
-    # Reading clears the exact dot/count without moving the local terminal row.
+    expect(left.locator("[data-settled-count]")).to_have_text("(2)")
+    # Reading clears the exact dot without moving or changing the terminal row count.
     done = pane.locator('[data-workspace-group="done"]')
     expect(done).to_be_attached(timeout=WAIT_MS)
     if not done.evaluate("el => el.open"):
         done.locator(":scope > summary").click()
     expect(done.locator(f'[data-sprint-ticket-id="{children[0]["id"]}"]')).to_be_visible()
-    expect(done.locator("[data-group-unread-count]")).not_to_contain_text("unread")
+    expect(done.locator("[data-group-count]")).to_have_text("1")
+    expect(done.locator("[data-group-count]")).to_be_visible()
     expect(done.locator(".stage-mark")).to_have_count(0)
     api.direct_post(
         server,
@@ -577,7 +579,7 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
         {"through_sequence": 1},
     )
     expect(rows["settled-child-two"]).to_have_count(0, timeout=WAIT_MS)
-    expect(left.locator("[data-settled-count]")).not_to_contain_text("unread")
+    expect(left.locator("[data-settled-count]")).to_have_text("(2)")
     api.direct_post(
         server, "/api/conversation/conversations/settled-chief/owner-read", {"through_sequence": 1}
     )
@@ -588,13 +590,16 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
         Principal(PrincipalKind.ticket, children[0]["id"]),
         "A later message in the same settled conversation",
     )
-    expect(left.locator("[data-settled-count]")).to_contain_text("1 unread")
+    expect(left.locator("[data-settled-count]")).to_have_text("(2)")
     expect(quiet_parent.locator(".settled-title .stage-mark")).to_have_count(0)
     expect(first_parent.locator(".settled-title .stage-mark")).to_have_count(0)
     settled_head.focus()
     page.keyboard.press("Enter")
     expect(rows["settled-child-one"]).to_be_visible()
-    expect(page_group.locator("[data-group-unread-count]")).to_contain_text("1 unread")
+    expect(rows["settled-child-one"].get_by_role("img", name="Unread reply")).to_have_count(1)
+    expect(terminal_row.get_by_role("img", name="Unread reply")).to_have_count(1)
+    expect(page_group.locator("[data-group-count]")).to_have_text("1")
+    expect(page_group.locator("[data-group-count]")).to_be_visible()
     page.screenshot(path=str(artifacts / "later-message-without-reopen.png"), full_page=True)
     chief_child = api.direct_post(
         server,
