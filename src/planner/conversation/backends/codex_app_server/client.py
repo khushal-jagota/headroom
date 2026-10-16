@@ -148,9 +148,22 @@ class CodexServerMessageHandler(Protocol):
 class CodexAppServerClient:
     """One ``codex app-server`` child process and the wire to it."""
 
-    def __init__(self, *, handler: CodexServerMessageHandler, description: str) -> None:
+    def __init__(
+        self,
+        *,
+        handler: CodexServerMessageHandler,
+        description: str,
+        consumed_notifications: Mapping[str, type[BaseModel]] | None = None,
+    ) -> None:
         self._handler = handler
         self._description = description
+        # Which notifications this client decodes. The turn adapter's table is the
+        # default; the sign-in client passes its own, because its models come from a
+        # separately pinned bundle and must not become shapes the turn adapter believes.
+        self._consumed_notifications: Mapping[str, type[BaseModel]] = (
+            CONSUMED_SERVER_NOTIFICATIONS if consumed_notifications is None
+            else consumed_notifications
+        )
         self._process: asyncio.subprocess.Process | None = None
         self._request_ids = itertools.count(1)
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
@@ -433,7 +446,7 @@ class CodexAppServerClient:
         LOGGER.warning("codex %s: a message was none of the three shapes", self._description)
 
     async def _on_notification(self, method: str, params: Any) -> None:
-        model = CONSUMED_SERVER_NOTIFICATIONS.get(method)
+        model = self._consumed_notifications.get(method)
         if model is None:
             LOGGER.debug("codex %s: dropped notification %s", self._description, method)
             return

@@ -607,7 +607,8 @@ of these:
 
 - **Signed in.** The CLI reports a login, the saved file can be read, and its access
   token has not expired.
-- **Not signed in.** There is no saved login. The card names `codex login`.
+- **Not signed in.** There is no saved login. The codex card offers a sign-in Panels can
+  run; every other backend names its own login command instead.
 - **Cannot be confirmed.** The saved login is there and its access token has expired, or
   the file cannot be read. An expired token is ordinary — codex refreshes on demand — so
   this is not a fault and the card offers no action. It says that nothing has tested the
@@ -644,6 +645,64 @@ auth: not logged in" is a true sentence about github that says nothing about cod
 child that dies mid-turn is graded the same way, because a codex that announces a refused
 refresh and then exits is the loudest version of this and used to be the one that went
 unread.
+
+### Signing codex back in from Panels
+
+A dead codex login used to leave one option: open a terminal on the machine Panels runs on
+and type `codex login`. The app server Panels already talks to can start the sign-in
+itself, so the codex card offers it.
+
+Pressing Sign in starts a short-lived `codex app-server` child against the real codex home
+and asks it for a device-code login. It answers at once with a verification URL and a
+one-time code, both shown on the card, so the browser step can be finished on a phone or
+any other machine. There is a Cancel beside them.
+
+**Why the app server and not the command line.** `codex login --device-auth` removes the
+saved login within a second of starting, and ending the process does not bring it back —
+so on that path the account is down from the moment you begin until the browser step
+finishes. The app-server path left the saved login byte-identical across every operation
+that was measured: the start, the whole pending window, and the cancel. That is narrower
+than a promise of no outage. Nothing was measured about the instant a sign-in succeeds, so
+Panels does not claim anything about it.
+
+**What it warns you about, and when.** An account that still works, or one with turns in
+flight, is told before the sign-in starts that it writes a new credential and that a
+running turn may have to be retried. An account that already cannot authenticate has
+nothing to lose and gets no caveat.
+
+**Nothing is inferred.** A cancel answering `canceled`, a cancel answering `notFound`, a
+deadline passing and the child exiting all say what Panels did. None of them is evidence
+about the saved login, because the browser step can land in the same instant as a cancel.
+So every way a sign-in can end does the same three things: settle the child, take in any
+completion that already arrived, then re-read the saved login last.
+
+**Success is a completion and a reading that agrees.** Codex reporting success is not
+enough. The saved login must then be readable and hold a credential generation different
+from the one the sign-in started on, with no remembered rejection against it. When those
+disagree the card says **unconfirmed** — not signed in, and not failed. No rejection is
+ever cleared by hand: a rejection is scoped to its generation and lapses on its own, so
+clearing one would be Panels asserting the thing it just failed to confirm.
+
+**One sign-in at a time, and nothing kept.** There is at most one pending sign-in per
+backend. Pressing Sign in twice hands back the one already running rather than minting a
+second code, because a code you were shown that nobody will honour is worse than no code.
+A disconnected page changes nothing and never cancels. A page holding an old session id is
+refused rather than allowed to cancel whatever is current. A restart drops the pending
+sign-in and says so, because a login id whose child is gone cannot be cancelled or
+completed by anyone — storing it would store a handle to nothing.
+
+**Every wait is Panels' own.** The command line prints that its one-time code expires in
+fifteen minutes. That is a program's words, not a protocol guarantee, and no Panels
+behaviour rests on it. Panels bounds the child's startup, the pending sign-in, the cancel
+and the shutdown, and stops showing the code when its own limit passes. It does not claim
+the code was still valid up to that point.
+
+**The protocol shapes are pinned separately.** The login messages are vendored as their
+own subset, generated against `codex-cli 0.163.0`, with their own pin header. The
+thread-and-turn subset stays pinned where it was. The two are kept apart because
+regenerating everything together would change twenty-two definitions the thread and turn
+core depends on, and the login closure shares none of them — the generator refuses to run
+if the two bundles ever reach the same definition.
 
 ### One home for the codex login
 

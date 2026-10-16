@@ -3,14 +3,24 @@
   import UsageRings from "../components/conversation/UsageRings.svelte";
   import { backendIdentityNote, type BackendIdentityNote } from "../lib/conversation/backendIdentity";
   import {
+    backendCanBeSignedIn,
+    signInCaveat,
+    signInIsPending,
+    signInOutcome
+  } from "../lib/conversation/backendSignIn";
+  import {
     loadBackendPageSnapshots,
     refreshBackendSnapshots
   } from "../lib/conversation/backendRefresh";
   import {
+    cancelBackendSignIn,
     ConversationWireError,
+    readBackendSignIn,
     readBackends,
+    startBackendSignIn,
     setBackendModelEnabled,
     updateBackend,
+    type BackendSignIn,
     type BackendSnapshot,
     type BackendUpdateResult,
     type ConversationBackendKey
@@ -25,6 +35,85 @@
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
   let savingModels = $state<Record<string, boolean>>({});
   let modelErrors = $state<Record<string, string | null>>({});
+  let signIns = $state<Partial<Record<ConversationBackendKey, BackendSignIn>>>({});
+  let signInBusy = $state<Partial<Record<ConversationBackendKey, boolean>>>({});
+  let signInErrors = $state<Partial<Record<ConversationBackendKey, string | null>>>({});
+  // One timer per pending sign-in. Nothing about a sign-in is persisted, so the only way
+  // to learn that one finished while nobody pressed anything is to ask again.
+  let signInWatchers: Partial<Record<ConversationBackendKey, ReturnType<typeof setTimeout>>> = {};
+  const SIGN_IN_POLL_MS = 2000;
+
+  async function startSignIn(backendKey: ConversationBackendKey): Promise<void> {
+    if (signInBusy[backendKey]) return;
+    signInBusy = { ...signInBusy, [backendKey]: true };
+    signInErrors = { ...signInErrors, [backendKey]: null };
+    try {
+      const answer = await startBackendSignIn(backendKey);
+      signIns = { ...signIns, [backendKey]: answer.sign_in };
+      watchSignIn(backendKey);
+    } catch (problem) {
+      signInErrors = { ...signInErrors, [backendKey]: sentenceFor(problem) };
+    } finally {
+      signInBusy = { ...signInBusy, [backendKey]: false };
+    }
+  }
+
+  async function cancelSignIn(backendKey: ConversationBackendKey): Promise<void> {
+    const pending = signIns[backendKey];
+    if (!pending || signInBusy[backendKey]) return;
+    signInBusy = { ...signInBusy, [backendKey]: true };
+    try {
+      const answer = await cancelBackendSignIn(backendKey, pending.session_id);
+      signIns = { ...signIns, [backendKey]: answer.sign_in };
+    } catch (problem) {
+      // A refused cancel means this session is not the one in force any more, so what
+      // the server has is the answer rather than what this page was holding.
+      signInErrors = { ...signInErrors, [backendKey]: sentenceFor(problem) };
+      await readSignIn(backendKey);
+    } finally {
+      stopWatching(backendKey);
+      signInBusy = { ...signInBusy, [backendKey]: false };
+      await loadBackends();
+    }
+  }
+
+  async function readSignIn(backendKey: ConversationBackendKey): Promise<void> {
+    try {
+      const answer = await readBackendSignIn(backendKey);
+      if (answer.sign_in === null) {
+        const { [backendKey]: _gone, ...rest } = signIns;
+        signIns = rest;
+        return;
+      }
+      signIns = { ...signIns, [backendKey]: answer.sign_in };
+    } catch {
+      // A reading that did not arrive is not news about the sign-in. The next tick asks
+      // again, and the page keeps showing what it last knew.
+    }
+  }
+
+  function watchSignIn(backendKey: ConversationBackendKey): void {
+    stopWatching(backendKey);
+    if (!signInIsPending(signIns[backendKey] ?? null)) return;
+    signInWatchers[backendKey] = setTimeout(() => {
+      void (async () => {
+        await readSignIn(backendKey);
+        if (signInIsPending(signIns[backendKey] ?? null)) {
+          watchSignIn(backendKey);
+          return;
+        }
+        // It settled on its own. The card is re-read because a confirmed sign-in changes
+        // what the identity says.
+        await loadBackends();
+      })();
+    }, SIGN_IN_POLL_MS);
+  }
+
+  function stopWatching(backendKey: ConversationBackendKey): void {
+    const timer = signInWatchers[backendKey];
+    if (timer !== undefined) clearTimeout(timer);
+    delete signInWatchers[backendKey];
+  }
 
   function sentenceFor(problem: unknown): string {
     if (problem instanceof ConversationWireError) return problem.message;
@@ -181,7 +270,7 @@
               {#each identityNotes(snapshot) as note (note.text)}
                 <span class="identity-note" data-backend-identity-note>
                   {note.text}
-                  {#if note.loginCommand}
+                  {#if note.loginCommand && !backendCanBeSignedIn(snapshot)}
                     · <b>{note.loginCommand}</b>
                   {/if}
                 </span>
@@ -212,6 +301,51 @@
               {/if}
             </span>
           </div>
+          {#if backendCanBeSignedIn(snapshot)}
+            {@const signIn = signIns[snapshot.backend_key] ?? null}
+            {@const outcome = signInOutcome(signIn)}
+            <div class="sign-in" data-backend-sign-in={snapshot.backend_key}>
+              {#if signInIsPending(signIn) && signIn}
+                <p class="sign-in-step">
+                  1. Open
+                  <a href={signIn.verification_url ?? "#"} target="_blank" rel="noreferrer noopener"
+                    data-backend-sign-in-url>{signIn.verification_url}</a>
+                  and sign in.
+                </p>
+                <p class="sign-in-step">
+                  2. Enter this one-time code:
+                  <b data-backend-sign-in-code>{signIn.user_code}</b>
+                </p>
+                <p class="sign-in-caveat">
+                  Panels stops showing this code after its own time limit. It cannot promise
+                  the code stays valid until then.
+                </p>
+                <button
+                  class="sign-in-action"
+                  disabled={signInBusy[snapshot.backend_key]}
+                  onclick={() => void cancelSignIn(snapshot.backend_key)}
+                  data-backend-sign-in-cancel={snapshot.backend_key}
+                >Cancel sign-in</button>
+              {:else}
+                {@const caveat = signInCaveat(snapshot)}
+                {#if caveat}
+                  <p class="sign-in-caveat" data-backend-sign-in-caveat>{caveat}</p>
+                {/if}
+                <button
+                  class="sign-in-action"
+                  disabled={signInBusy[snapshot.backend_key]}
+                  onclick={() => void startSignIn(snapshot.backend_key)}
+                  data-backend-sign-in-start={snapshot.backend_key}
+                >{signInBusy[snapshot.backend_key] ? "Starting…" : "Sign in"}</button>
+              {/if}
+              {#if outcome}
+                <p class="sign-in-outcome" data-backend-sign-in-outcome>{outcome}</p>
+              {/if}
+              {#if signInErrors[snapshot.backend_key]}
+                <p class="error" role="alert">{signInErrors[snapshot.backend_key]}</p>
+              {/if}
+            </div>
+          {/if}
           {#if open}
             <div class="drawer" data-backend-model-drawer={snapshot.backend_key}>
               {#if snapshot.available_models.length === 0}
@@ -283,6 +417,13 @@
   .chevron { display: inline-block; width: var(--space-3); color: var(--text-faintest); font-size: var(--type-md); }
   .backend-name { color: var(--text-strong); font-family: var(--font-serif); font-size: var(--type-serif-lg); font-weight: 500; text-transform: capitalize; }
   .rowhead:hover .backend-name, .open .backend-name { color: var(--text-strong); }
+  .sign-in { padding: var(--space-3) 0 var(--space-1); display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
+  .sign-in-step { margin: 0; font-size: var(--type-sm); color: var(--text-default); }
+  .sign-in-step b { font-family: var(--font-mono); color: var(--accent-text); letter-spacing: 0.06em; }
+  .sign-in-caveat { margin: 0; font-size: var(--type-xs); color: var(--text-faint); max-width: 56ch; }
+  .sign-in-outcome { margin: 0; font-size: var(--type-xs); color: var(--text-faint); }
+  .sign-in-action { font: inherit; font-size: var(--type-xs); cursor: pointer; background: var(--surface-2); color: var(--text-default); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-3); }
+  .sign-in-action:disabled { cursor: default; color: var(--text-faintest); }
   .identity-note { color: var(--text-faintest); font-size: var(--type-xs); }
   .identity-note b { color: var(--text-faint); font-family: var(--font-mono); font-weight: 500; }
   .version-cell { min-width: 0; white-space: nowrap; }
