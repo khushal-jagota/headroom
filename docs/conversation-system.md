@@ -19,6 +19,38 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Exercising permission requests
+
+Real work always runs with full access. There is no selectable ask posture on a
+Ticket, Worker type, creation input, or owner control.
+
+An opt-in test starts conversations directly through the real conversation HTTP
+routes and overrides the native backend mappings inside that test process only.
+Codex uses untrusted approval, the user reviewer, and workspace write on both the
+thread and turn. Claude uses default permission mode with the existing callback.
+Hermes uses default ACP edit approval with YOLO disabled. The exercise observes
+and asserts the settings sent to each real backend; an allowed action alone does
+not prove that the override worked.
+
+Separate allow and deny cases request a harmless unique file action. Each waits
+with the real backend request open and checks repeatedly that no answer or file
+has appeared, then answers through Panels and checks the actual file outcome.
+The request stays visible in conversation text and reaches the existing
+`awaiting_answer` attention state. It has no conversation or work item attention
+dot: those dots mean an unread reply. The earlier inherited claim that an ask had
+its own white mark was false; visible request and attention state coverage replace
+that check.
+
+Run `tests/integration/test_conversation_real_provider_permissions.py` with
+`PANELS_REAL_PERMISSION_TESTS=1`, an absolute `PANELS_PERMISSION_EVIDENCE_ROOT`,
+and the relevant `PANELS_REAL_HERMES_HOME_TEMPLATE` or
+`PANELS_REAL_CLAUDE_CONFIG_TEMPLATE`. These calls use real accounts and model
+usage. The tests save selected request, wait, answer, native configuration,
+version, source revision and file outcome receipts, including partial receipts
+when a case fails. They keep Codex on its existing credential home. Other homes
+isolate test configuration while sharing any rotating credential file instead of
+copying a login grant. These tests do not claim connection-drop recovery coverage.
+
 ## The notebook
 
 Every conversation owns an append-only run of numbered rows in the database —
