@@ -60,6 +60,9 @@
   });
 </script>
 
+<div class="chief-workspace">
+  <div class="chief-workers"><OrchestratorChildren principal={{ kind: "chief", id: "chief" }} /></div>
+  <div class="chief-conversation">
 {#if currentConversation.error}
   <div class="chief-conversation-resource" data-chief-conversation-error>
     <ErrorLine error={currentConversation.error} />
@@ -89,7 +92,10 @@
   />
 {/if}
 
-<div class="chief-workers"><OrchestratorChildren principal={{ kind: "chief", id: "chief" }} /></div>
+  </div>
+</div>
 <style>
-  .chief-workers { padding:var(--space-5); }
+  .chief-workspace { display:flex; flex-direction:column; width:100%; min-height:0; }
+  .chief-workers { padding:var(--space-5); max-height:45%; overflow:auto; flex:none; }
+  .chief-conversation { display:flex; flex:1; min-height:0; }
 </style>

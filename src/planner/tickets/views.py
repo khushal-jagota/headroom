@@ -201,6 +201,7 @@ def _recap_preview(recap: str) -> str:
 def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
     return {
         "is_backlogged": bool(row["is_backlogged"]),
+        "waiting_to_closeout": facts.waiting_to_closeout,
         "id": str(row["id"]),
         "title": str(row["title"]),
         "worker_type": str(row["worker_type"]),

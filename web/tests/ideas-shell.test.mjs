@@ -209,7 +209,13 @@ mount(Host, { target: document.getElementById("app")! });
 
   const browserScript = String.raw`
 from playwright.sync_api import sync_playwright
-import sys
+import sys, os, pathlib
+
+def screenshot(page, name):
+    directory = os.environ.get("PANELS_UI_PROOF_DIR")
+    if directory:
+        pathlib.Path(directory).mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(pathlib.Path(directory) / (name + ".png")), full_page=True)
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
@@ -227,6 +233,7 @@ with sync_playwright() as playwright:
         page.get_by_role("button", name="More", exact=False).click()
         for label in ["Settings", "Ideas", "Feedback", "Usage and Backends"]:
             assert page.get_by_role("link", name=label, exact=True).count() == 1, (width, selected, label)
+        screenshot(page, "shell-utilities-" + str(width) + ("-selected" if selected else "-rail"))
         page.keyboard.press("Escape")
         assert page.get_by_role("button", name="More", exact=False).evaluate("n => n === document.activeElement")
 
@@ -238,16 +245,24 @@ with sync_playwright() as playwright:
         ("#/workers/type%2Fwith%20space", "#/settings/config/workers/type%2Fwith%20space", "worker", "type/with space")
     ]:
         page.evaluate("hash => window.location.hash = hash", old)
-        page.wait_for_function("hash => window.location.hash === hash", canonical)
+        page.wait_for_function("hash => window.location.hash === hash", arg=canonical)
         page.locator('[data-screen="config"][data-role-kind="' + kind + '"][data-role-id="' + ident + '"]').wait_for()
     for old, canonical, screen in [
         ("#/scheduled-tasks", "#/settings/scheduled-tasks", "scheduled-tasks"),
         ("#/notifications", "#/settings/notifications", "notifications")
     ]:
         page.evaluate("hash => window.location.hash = hash", old)
-        page.wait_for_function("hash => window.location.hash === hash", canonical)
+        page.wait_for_function("hash => window.location.hash === hash", arg=canonical)
         page.locator('[data-screen="' + screen + '"]').wait_for()
         assert page.get_by_role("navigation", name="Settings", exact=True).count() == 1
+        for width in [390, 1280]:
+            page.set_viewport_size({"width": width, "height": 900})
+            screenshot(page, "settings-" + screen + "-" + str(width))
+    page.evaluate("window.location.hash = '#/settings/config'")
+    page.locator('[data-screen="config"][data-role-kind="index"]').wait_for()
+    for width in [390, 1280]:
+        page.set_viewport_size({"width": width, "height": 900})
+        screenshot(page, "settings-config-" + str(width))
     page.evaluate("window.location.hash = '#/settings/config/unknown/detail'")
     page.get_by_text("no such screen", exact=True).wait_for()
     page.set_viewport_size({"width": 1280, "height": 900})

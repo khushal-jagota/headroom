@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { feedbackPageContext } from "../src/lib/feedback";
 import { canonicalShellHash } from "../src/lib/shellRouting";
 
 describe("historical shell addresses", () => {
@@ -13,6 +14,8 @@ describe("historical shell addresses", () => {
     ["#/config/worker-skill", "#/settings/config/worker-skill"],
     ["#/config/sprint-item-supervisor", "#/settings/config/sprint-item-supervisor"],
     ["#/workers", "#/settings/config"],
+    ["#/workers?legacy=true", "#/settings/config?legacy=true"],
+    ["#/notifications?legacy=true", "#/settings/notifications?legacy=true"],
     ["#/workers/coding", "#/settings/config/workers/coding"],
     ["#/agents/workers/coding", "#/settings/config/workers/coding"],
     ["#/agents/worker-skill", "#/settings/config/worker-skill"],
@@ -26,4 +29,10 @@ describe("historical shell addresses", () => {
     expect(canonicalShellHash("#/config/unknown/detail")).toBe("#/settings/config/unknown/detail");
     expect(canonicalShellHash("#/agents/unknown")).toBe("#/agents/unknown");
   });
+});
+
+it("records Settings feedback against its actual section address", () => {
+  for (const [hash, label] of [["#/settings", "Settings · Config"], ["#/settings/config/workers/coding", "Settings · Config"], ["#/settings/scheduled-tasks", "Settings · Scheduled tasks"], ["#/settings/notifications", "Settings · Notifications"]]) {
+    expect(feedbackPageContext(hash)).toEqual({address: hash, label});
+  }
 });

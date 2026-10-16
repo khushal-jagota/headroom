@@ -303,7 +303,7 @@
             <div class="shell-more-grab" aria-hidden="true"></div>
             <div class="shell-more-group">Work</div>
             <a class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"} class:active={currentNav("ideas")} href="#/ideas" onclick={closeMore}>Ideas</a>
-            <a class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"} class:active={currentNav("feedback")} href="#/feedback" onclick={closeMore}>
+            <a class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"} class:active={currentNav("feedback")} href="#/feedback" aria-label="Feedback" onclick={closeMore}>
               <span>Feedback</span>
               {#if (feedbackCount.data?.open_count || 0) > 0}<span class="fb-count">{feedbackCount.data?.open_count}</span>{/if}
             </a>

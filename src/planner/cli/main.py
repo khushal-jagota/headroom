@@ -401,16 +401,6 @@ def sprint_value_for_write(raw: str | None, as_json: bool) -> str | None:
     return raw
 
 
-def sprint_value_for_filter(raw: str | None, as_json: bool) -> str | None:
-    if raw is None:
-        return None
-    if raw == "none":
-        return "null"
-    if raw == "current":
-        return _current_sprint_id(as_json)
-    return raw
-
-
 def _format_tickets(tickets: list[dict[str, Any]]) -> str:
     return _lines(
         tickets,

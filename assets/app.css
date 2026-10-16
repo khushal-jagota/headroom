@@ -5774,7 +5774,9 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 }
 
 [data-screen="ideas"] .screen-header-meta,
-
+[data-screen="feedback"] .screen-header-meta {
+  padding-top: var(--space-1);
+}
 
 [data-screen="ideas"] .screen-header .pill {
   cursor: default;
@@ -5790,21 +5792,28 @@ details:not([open]) > summary > .sprint-workspace-chevron {
    the pile is newest-first, bodies DISCLOSE, title-only ideas are flat. Scoped to
    [data-screen="ideas"]; body renders via the shared markdown block. */
 
-[data-screen="ideas"] .doc {
+[data-screen="ideas"] .doc,
+[data-screen="feedback"] .doc {
   width: 100%;
 }
 
 [data-screen="ideas"] .screen-header,
-[data-screen="ideas"] .col {
+[data-screen="ideas"] .col,
+[data-screen="feedback"] .screen-header,
+[data-screen="feedback"] .col {
   max-width: var(--measure-read);                 /* a tight read+capture measure (matches Day) */
   margin: 0 auto;
 }
 
 [data-screen="ideas"] .screen-header,
-
+[data-screen="feedback"] .screen-header {
+  padding: var(--space-5) var(--space-4) var(--space-4);
+}
 
 [data-screen="ideas"] .col,
-
+[data-screen="feedback"] .col {
+  padding: 0 var(--space-4) var(--space-page-tail);
+}
 
 /* capture — the hero: always open, the Today focus-line treatment */
 [data-screen="ideas"] .capture {
@@ -6296,10 +6305,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   overflow-wrap: anywhere;
 }
 
-
-
-
-
 /* the deadline is a fact, not prose — a small sans field in the foot row */
 
 
@@ -6694,24 +6699,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   text-decoration: none;
   cursor: pointer;
 }
-
-[data-screen="feedback"] .doc {
-  width: 100%;
-}
-
-[data-screen="feedback"] .screen-header,
-[data-screen="feedback"] .col {
-  max-width: var(--measure-read);
-  margin: 0 auto;
-}
-
-
-
-
-
-
-
-
 
 .fb-lede {
   margin: 0 0 var(--space-3);

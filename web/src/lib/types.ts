@@ -90,7 +90,8 @@ export type ListPageFacts = {
 };
 
 export type TicketSummary = WorkAttention & {
-  is_backlogged?: boolean;
+  is_backlogged: boolean;
+  waiting_to_closeout: boolean;
   orchestrator?: Principal;
   id: string;
   title: string;

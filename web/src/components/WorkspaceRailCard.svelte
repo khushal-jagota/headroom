@@ -38,7 +38,8 @@
   :global(.orchestrator-card) + .orchestrator-card { margin-top:var(--space-3); }
   .orchestrator-card:hover, .orchestrator-card:focus-within { border-color:rgb(from var(--border-color) r g b / .26); }
   .orchestrator-card:hover .item-title { color:var(--accent-needs-me); }
-  .selected { border-color:var(--accent-bright); }
+  /* Selection uses the existing surface; pointer exit must not reveal an accent edge. */
+  .selected { background:var(--surface-2); }
   .item-head { display:flex; align-items:flex-start; gap:var(--space-2); margin-top:var(--space-1); width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-title { flex:1; min-width:0; font-size:16px; font-weight:600; line-height:1.35; letter-spacing:-0.002em; color:var(--text-strong); overflow-wrap:anywhere; }
   .chief .item-head { align-items:center; margin-top:0; gap:10px; }

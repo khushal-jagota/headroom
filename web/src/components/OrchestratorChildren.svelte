@@ -99,6 +99,9 @@
   .sprint-workspace-status-body { padding:var(--space-1) 0; }
   .orchestrator-children :global(.stage-mark) { width:7px; height:7px; }
   .orchestrator-children :global(a:focus-visible), .orchestrator-children :global(button:focus-visible), .orchestrator-children :global(summary:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+  .orchestrator-children :global(.ticket-row) { width:100%; margin:0; padding:7px var(--space-3); gap:var(--space-3); border-radius:var(--radius-md); font-size:15px; line-height:1.6; align-items:center; color:var(--text-muted); }
+  .orchestrator-children :global(.ticket-row:hover), .orchestrator-children :global(.ticket-row:focus-visible) { color:var(--text-strong); }
+  .orchestrator-children :global(.ticket-row-title) { flex:1; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
   .child-filter, .child-pages { display:flex; align-items:center; gap:var(--space-3); color:var(--text-faint); font-family:var(--font-ui); font-size:var(--type-sm); }
   .child-filter { margin-bottom:var(--space-3); }
   .child-filter select, .child-pages button { color:var(--text-default); background:var(--surface-2); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-sm); padding:var(--space-1) var(--space-2); font:inherit; }

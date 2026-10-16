@@ -23,6 +23,8 @@ describe("orchestrator child discovery", () => {
       expect(orchestratorPageGroups(filtered).flatMap((group) => group.tickets)).toHaveLength(filtered.length);
     }
     expect(orchestratorPageGroups(filterOrchestratorChildren(rows,"retired"))[0].label).toBe("Cancelled");
+    const consequences = { ...child("closeout", "needs_consequences"), waiting_to_closeout:true };
+    expect(orchestratorPageGroups([consequences])[0].key).toBe("waiting_to_closeout");
     expect(filterOrchestratorChildren([],"active")).toEqual([]);
     expect(rows).toHaveLength(4);
   });
