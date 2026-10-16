@@ -287,18 +287,20 @@ def decide_set_ceiling(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    if ticket.pending_proposal is not None:
+    resolved_ceiling = worker_type_definition.resolve_ceiling(ceiling)
+    if ticket.pending_proposal is not None and worker_type_definition.stage_index(
+        resolved_ceiling
+    ) > max(
+        worker_type_definition.stage_index(ticket.stage),
+        worker_type_definition.stage_index(ticket.ceiling),
+    ):
         raise PlannerError(
             ErrorCode.validation,
-            "the ceiling stage cannot change while a proposal is pending",
+            "a proposal is pending; use explicit accept to raise the ceiling past its stage",
             {"ticket_id": ticket.id},
         )
-    # The holder is not implied by who moved the ceiling. Raising or lowering how far a
-    # Ticket may go must never move it into a different approval queue.
-    return replace(
-        Decision.from_ticket(ticket),
-        ceiling=worker_type_definition.resolve_ceiling(ceiling),
-    )
+    # Scope and reviewer remain independent. A generic edit never approves unseen work.
+    return replace(Decision.from_ticket(ticket), ceiling=resolved_ceiling)
 
 
 def decide_set_ceiling_holder(ticket: Ticket, holder: Principal) -> Decision:
@@ -309,7 +311,7 @@ def decide_set_ceiling_holder(ticket: Ticket, holder: Principal) -> Decision:
     the caller needs what any other write on the Ticket needs: to stand above it.
 
     It is still set on its own, separately from the ceiling stage. A filed proposal
-    freezes how far the Ticket may go; who is asked about it is not frozen, because
+    needs explicit acceptance to raise scope past its stage; the address is not frozen, because
     re-addressing changes nothing about what was proposed.
     """
     return replace(Decision.from_ticket(ticket), ceiling_holder=holder)

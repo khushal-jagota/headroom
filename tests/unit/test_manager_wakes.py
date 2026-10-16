@@ -30,7 +30,7 @@ from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ConversationStore
 from planner.core import change_signal
 from planner.core.clock import TestClock as FakeClock
-from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.manager_wakes import data as wake_data
@@ -1317,3 +1317,80 @@ def test_delivery_uses_the_supervisor_boundary_and_closes_on_its_prompt(
     assert system.started is not None
     assert system.started.backend_key is backend_key
     assert all(row["closed_at"] == 50 for row in _wake_rows(tmp_db))
+
+
+@pytest.mark.parametrize("source", ["kickoff", "file", "readdress"])
+def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
+    tmp_db: Connection, fake_clock: FakeClock, source: str
+) -> None:
+    item_id, existing_id = _item_and_ticket(tmp_db, fake_clock)
+    if source == "kickoff":
+        ticket = tickets_data.create_ticket(
+            tmp_db, title="Chief kickoff review", principal=OWNER_PRINCIPAL,
+            now=10, title_max_chars=TITLE_MAX_CHARS, worker_type="coding",
+            kickoff_note="Chief must see this canonical proposal", sprint_item_id=item_id,
+            stated_holder=CHIEF_PRINCIPAL,
+        )
+        ticket_id = ticket.id
+    else:
+        ticket_id = existing_id
+        tickets_data.edit_ticket(
+            tmp_db, ticket_id,
+            edit={"ceiling_holder": CHIEF_PRINCIPAL if source == "file" else OWNER_PRINCIPAL},
+            title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=10,
+        )
+        ticket = tickets_data.file_current_proposal(
+            tmp_db, ticket_id, body="Chief must see this canonical proposal",
+            principal=Principal(PrincipalKind.ticket, ticket_id), now=11,
+        )
+        if source == "readdress":
+            assert _wake_rows(tmp_db) == []
+            ticket = tickets_data.edit_ticket(
+                tmp_db, ticket_id, edit={"ceiling_holder": CHIEF_PRINCIPAL},
+                title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=12,
+            )
+    assert ticket.ceiling_holder == CHIEF_PRINCIPAL
+    assert ticket.sprint_item_id == item_id
+    assert ticket.pending_proposal is not None
+    initial_stage = ticket.stage
+    expected_revision = 2 if source == "readdress" else 1
+    rows = _wake_rows(tmp_db)
+    assert len(rows) == 1
+    assert (rows[0]["target_kind"], rows[0]["target_id"]) == ("chief", "chief")
+    assert rows[0]["source_revision"] == expected_revision
+    assert rows[0]["source_kind"] == "proposal"
+    tickets_data.edit_ticket(
+        tmp_db, ticket_id, edit={"ceiling_holder": CHIEF_PRINCIPAL},
+        title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=13,
+    )
+    assert len(_wake_rows(tmp_db)) == 1
+    batch = wake_data.claim_next_batch(tmp_db, process_token="chief-proof", now=20)
+    assert batch is not None and batch.target == CHIEF_PRINCIPAL
+    database_path = Path(str(tmp_db.execute("PRAGMA database_list").fetchone()[2]))
+    system = _DurableStartedConversationSystem(database_path)
+    assert asyncio.run(deliver_batch(
+        batch, connect_database=lambda: connect(str(database_path)),
+        conversation_system=system,  # type: ignore[arg-type]
+        process_token="chief-proof", now=lambda: 50,
+    ))
+    chief_conversation = tmp_db.execute(
+        "SELECT conversation_id FROM agents WHERE agent_key='chief_of_staff'"
+    ).fetchone()[0]
+    prompt = tmp_db.execute(
+        "SELECT payload FROM conversation_events WHERE conversation_id=? AND kind='prompt' "
+        "AND json_extract(payload,'$.sender_message_id')=?",
+        (chief_conversation, batch.sender_message_id),
+    ).fetchone()
+    assert prompt is not None and ticket_id in prompt["payload"]
+    assert "filed a proposal" in prompt["payload"]
+    assert all(row["closed_at"] == 50 for row in _wake_rows(tmp_db))
+    unchanged = tickets_data.read_ticket(tmp_db, ticket_id)
+    assert unchanged.stage == initial_stage
+    assert unchanged.pending_proposal == ticket.pending_proposal
+    assert unchanged.sprint_item_id == item_id
+    # A later explicit owner reroute is still an address change, not employee delivery.
+    tickets_data.edit_ticket(
+        tmp_db, ticket_id, edit={"ceiling_holder": OWNER_PRINCIPAL},
+        title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=60,
+    )
+    assert len(_wake_rows(tmp_db)) == 1

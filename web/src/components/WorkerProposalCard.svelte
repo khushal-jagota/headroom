@@ -3,20 +3,21 @@
   import CeilingPicker from "./CeilingPicker.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import ErrorLine from "./ErrorLine.svelte";
-  import { advanceTargetFor, fieldLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
-  import { holderLabelFor, OWNER_HOLDER } from "../lib/ceilingHolder";
+  import { advanceTargetFor, fieldLabelFor, stageLabelFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
+  import { holderLabelFor } from "../lib/ceilingHolder";
   import type { PendingTicketProposal, Principal } from "../lib/types";
 
-  let { proposal, lifecycle, stage, holder, sprintItem, onAccept, onReviewer, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", contextRow }: {
-    proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; holder: Principal;
+  let { proposal, lifecycle, stage, ceiling, holder, sprintItem, onAccept, onScope, onReturn, canReturn = true, returnUnavailableReason = "No existing Worker conversation to send a revision to.", contextRow }: {
+    proposal: PendingTicketProposal; lifecycle: Lifecycle; stage: string; ceiling: string; holder: Principal;
     sprintItem: { id: string; title: string } | null;
     onAccept: (body: Record<string, unknown>) => Promise<unknown>;
-    onReviewer: (holder: Principal) => Promise<void>;
+    onScope: (body: Record<string,unknown>) => Promise<void>;
     onReturn: (message: string) => Promise<unknown>;
     canReturn?: boolean;
     returnUnavailableReason?: string;
     contextRow?: Snippet;
   } = $props();
+  let scopePicker = $state<{openApproval: () => void} | undefined>();
   let draft = $state("");
   let note = $state("");
   let returning = $state(false);
@@ -39,20 +40,20 @@
   function reviewerLabel(value: Principal): string {
     return holderLabelFor(sprintItem, value);
   }
-  async function reviewerChanged(change: { holder: Principal | null }): Promise<void> {
+  async function completeScope(change: { ceiling?: string; holder: Principal | null; approval?: boolean }): Promise<void> {
     if (!change.holder || busy || resolved) return;
-    busy = true; error = null;
-    try { await onReviewer(change.holder); }
-    catch (err) { error = err; }
-    finally { busy = false; }
-  }
-  async function approve(change: { ceiling?: string; holder: Principal | null }): Promise<void> {
-    if (busy || resolved || !nextCeiling) return;
+    // Capture the exact proposal displayed for this gesture before awaiting any write.
+    const revision = proposal.revision;
+    const editedBody = draft;
     busy = true; error = null;
     try {
-      await onAccept({ next_ceiling: change.ceiling ?? nextCeiling, next_holder: change.holder ?? OWNER_HOLDER,
-        ...(draft !== proposal.body ? { edited_body: draft } : {}) });
-      resolved = true;
+      if (change.approval && change.ceiling) {
+        await onAccept({ next_ceiling:change.ceiling, next_holder:change.holder, expected_proposal_revision:revision,
+          ...(editedBody !== proposal.body ? { edited_body:editedBody } : {}) });
+        resolved = true;
+      } else {
+        await onScope({ ...(change.ceiling === undefined ? {} : { ceiling:change.ceiling }), ceiling_holder:change.holder });
+      }
     } catch (err) { error = err; }
     finally { busy = false; }
   }
@@ -67,22 +68,24 @@
 
 <section inert={busy || resolved} class="worker-proposal" data-approval-block data-mode="pending" data-field={proposal.field}>
   <h2>{fieldLabelFor(lifecycle, proposal.field)} <span class="who">— for
-    <span class="reviewer" data-reviewer-control><CeilingPicker newStage={stage} {lifecycle} ceiling={stage} {holder} {sprintItem}
-      stageLocked below triggerLabel={reviewerLabel(holder)} holderLabel={(value) => value ? reviewerLabel(value) : "User"}
-      onComplete={(change) => void reviewerChanged(change)} /></span> to approve</span></h2>
+    <span class="reviewer">{reviewerLabel(holder)}</span> to approve</span></h2>
   <div class="proposal-prose">
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; }} onCancel={() => proposal.body} />
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="actions">
-    <div class="approval-host" data-accept>
-      <CeilingPicker {newStage} {lifecycle} ceiling={nextCeiling} holder={OWNER_HOLDER} {sprintItem} below
-        triggerLabel="Approve" holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void approve(change)} />
-    </div>
+    <button type="button" class="primary" data-accept disabled={busy || resolved || !nextCeiling}
+      onclick={() => scopePicker?.openApproval()}>Approve</button>
     {#if proposal.field !== "brief"}
       <button type="button" class="ghost" data-send-back disabled={!canReturn || busy || resolved}
         onclick={() => { if (canReturn) returning = true; }}>Send it back</button>
     {/if}
+  </div>
+  <div class="worker-ceiling-line" data-reviewer-control data-pending-ceiling>
+    <CeilingPicker newStage={stage} {lifecycle} {ceiling} {holder} {sprintItem} below pendingStage={stage}
+      pendingLabel={fieldLabelFor(lifecycle,proposal.field)} approvalCeiling={nextCeiling} bind:controller={scopePicker}
+      triggerLabel={`Approved until ${stageLabelFor(lifecycle,ceiling)}, then ${reviewerLabel(holder)} reviews`}
+      holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
   </div>
   {#if proposal.field !== "brief" && !canReturn}<p class="return-unavailable" data-return-unavailable>{returnUnavailableReason}</p>{/if}
   {#if proposal.field !== "brief" && canReturn && returning}
@@ -96,10 +99,6 @@
 <style>
   h2 { margin:0; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
   .who { font-weight:400; color:var(--text-faint); }
-  .reviewer { position:relative; display:inline-block; padding:1px 5px; margin:0 -5px; border-radius:var(--radius-sm); }
-  .reviewer:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .reviewer :global([data-scope-ceiling]) { font:inherit; padding:1px 5px; color:inherit; background:transparent; }
-  .reviewer :global(.listbox-picker-chevron) { display:none; }
   .proposal-prose { margin-top:var(--space-4); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:15px; line-height:1.6; }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-3); margin-top:var(--space-5); }
@@ -108,8 +107,8 @@
   .primary { background:var(--accent-bright); color:var(--surface-ink); }
   .ghost { background:transparent; color:var(--text-faint); padding:8px 12px; }
   .ghost:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .approval-host { position:relative; }
-  .approval-host :global([data-scope-ceiling]) { padding:8px 18px; border-radius:var(--radius-pill); background:var(--accent-bright); color:var(--surface-ink); font-size:13px; font-weight:500; }
+  .worker-ceiling-line { margin-top:var(--space-3); }
+  .worker-ceiling-line :global([data-scope-ceiling]) { font-size:15px; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); }
   .return-unavailable { color:var(--text-faintest); font-size:13px; margin:var(--space-2) 0 0; }
   .return-note { margin-top:var(--space-4); }
   label { display:block; font-size:11px; color:var(--text-faintest); }

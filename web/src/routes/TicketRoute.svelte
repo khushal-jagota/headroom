@@ -433,9 +433,9 @@
                 {#if detail.pending_proposal?.field === currentField}
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
                     <WorkerProposalCard proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
-                      holder={detail.ceiling_holder} sprintItem={ticketSprintItem} canReturn={Boolean(detail.conversation_id)}
+                      ceiling={detail.ceiling} holder={detail.ceiling_holder} sprintItem={ticketSprintItem} canReturn={Boolean(detail.conversation_id)}
                       onAccept={(payload) => acceptField(currentField, payload)}
-                      onReviewer={(holder) => updateScope({ ceiling_holder: holder })}
+                      onScope={updateScope}
                       onReturn={(message) => mutateJson(`/api/tickets/${stableId}/reject`, { method:"POST", body:{ message } })}
                       contextRow={currentField === "brief" && kickoffCardShowsContextRow ? kickoffContextRow : undefined} />
                   {/key}

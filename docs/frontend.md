@@ -119,10 +119,12 @@ One screen per part of the system:
   Priority and the Worker-type label do not appear here. Priority keeps its stored
   resolution, order, API/CLI controls, and the existing Review edit path.
 
-  One card holds the current step. A pending proposal names its reviewer. That word
-  opens the existing reviewer-only control. The parked proposal keeps its current
-  ceiling fixed. Approve opens the existing ceiling picker for the next scope. The
-  reviewer choice completes approval with the selected ceiling. Send it back opens
+  One card holds the current step. A pending proposal names its reviewer and keeps
+  one editable ceiling/reviewer picker. Its draft previews the consequence before
+  commit. An explicit raise past the visible pending stage accepts that exact
+  submission through atomic Accept, with the selected onward ceiling and reviewer.
+  Same/lower scope preserves the proposal. Reviewer-only changes reroute it without
+  approval. Approve is a direct entry to the same picker and approval action. Send it back opens
   a note and uses the existing revision action. Pristine Kickoff keeps the existing
   Review exception: edit its proposal before approval instead of sending revision
   guidance to a Worker that does not yet have a conversation. A running step states its approved
@@ -484,10 +486,12 @@ hand-rolling the same shapes per screen. Each does one job:
   of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.
 
-The Worker page reuses the existing ceiling control. A pending proposal opens only
-its reviewer half from the heading. Approval sets the next ceiling through a separate
-Approve trigger. A reviewer changed on its own is written on its own, so a different
-review queue never moves the current ceiling.
+The Worker page uses the same ceiling/reviewer control while running or waiting.
+A pending proposal no longer locks its stage half. The panel explains an approval
+or reroute before commit, and marks approving choices. Approval uses the visible
+proposal revision as an atomic freshness check. A changed or rerouted proposal must
+be read again before approval. Existing CLI accept callers remain compatible.
+User-owned stages still require explicit review, even below the ceiling.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each

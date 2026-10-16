@@ -8,6 +8,7 @@
   import PickerRailRow from "./conversation/PickerRailRow.svelte";
   import { ceilingOptionsFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import { holderOptionsFor, holderValue, holderFromValue, holderLabelFor } from "../lib/ceilingHolder";
+  import { pendingCeilingApproves, pendingCeilingEffect, type PendingCeilingIntent } from "../lib/pendingCeiling";
   import type { Principal } from "../lib/types";
 
   // The whole ceiling in one control: how far the Ticket may go, and who is asked when
@@ -27,9 +28,17 @@
     below = false,
     triggerLabel = null,
     holderLabel = null,
+    pendingStage = null,
+    pendingLabel = null,
+    approvalCeiling = null,
+    controller = $bindable(),
     onComplete
   }: {
     newStage: string | null;
+    pendingStage?: string | null;
+    pendingLabel?: string | null;
+    approvalCeiling?: string | null;
+    controller?: { openApproval: () => void };
     triggerLabel?: string | null;
     holderLabel?: ((holder: Principal | null) => string) | null;
     lifecycle?: Lifecycle | null;
@@ -40,23 +49,32 @@
     /** Open the panel downward, for a host that sits under the page header. */
     below?: boolean;
     /** Only the halves the user set. A reviewer chosen on its own carries no ceiling. */
-    onComplete?: (change: { ceiling?: string; holder: Principal | null }) => void;
+    onComplete?: (change: { ceiling?: string; holder: Principal | null; approval?: boolean }) => void;
   } = $props();
 
   // Everything the reader is part-way through is a draft. Nothing reaches the bound
   // values or `onComplete` until both halves are answered, so a dismissed panel leaves
   // the Ticket exactly as it found it and the closed trigger never shows an unsaved
   // choice.
+  let controlRoot = $state<HTMLDivElement | null>(null);
+  let requestedApproval = false;
+  let intent = $state<PendingCeilingIntent>("scope");
+  controller = { openApproval: () => {
+    picker.close(false);
+    requestedApproval = true;
+    controlRoot?.querySelector<HTMLButtonElement>("[data-scope-ceiling]")?.click();
+  } };
   let showing = $state<"ceiling" | "holder">("ceiling");
   let draftCeiling = $state<string | null>(null);
   let draftHolder = $state<Principal | null>(null);
+  let previewHolder = $state<Principal | null>(null);
   let ceilingTouched = $state(false);
   let holderTouched = $state(false);
   let picker = $state<ListboxPickerController>(null!);
   let ceilingOptions = $derived([
-    { value: "none", name: "No further" },
-    ...ceilingOptionsFor(lifecycle, newStage || lifecycle?.ceilingRange[0] || "needs_success_condition")
-      .map((option) => ({ value: option.value, name: option.label }))
+    ...(!pendingStage ? [{ value:"none", name:"No further" }] : []),
+    ...ceilingOptionsFor(lifecycle, pendingStage ? lifecycle?.stageOrder[0] || pendingStage : newStage || lifecycle?.ceilingRange[0] || "needs_success_condition")
+      .map((option) => ({ value:option.value, name:option.label }))
   ]);
   let holders = $derived(holderOptionsFor(sprintItem, holder).map((option) => ({
     value: option.value, name: `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, label: option.label, detail:option.detail
@@ -68,14 +86,27 @@
   let ceilingName = $derived(ceilingOptions.find((option) => option.value === ceiling)?.name ?? null);
   let holderName = $derived(holderLabel ? holderLabel(holder) : holderLabelFor(sprintItem, holder));
 
+  let commitEffect = $derived(pendingStage ? pendingCeilingEffect(lifecycle,pendingStage,pendingLabel || pendingStage,
+    ceiling,draftCeiling,ceilingTouched,intent,draftHolderValue !== holderValue(holder),
+    holderLabel ? holderLabel(draftHolder ?? holder) : holderLabelFor(sprintItem,draftHolder ?? holder)) : null);
+  let pendingEffect = $derived(pendingStage ? pendingCeilingEffect(lifecycle,pendingStage,pendingLabel || pendingStage,
+    ceiling,draftCeiling,ceilingTouched,intent,holderValue(previewHolder ?? draftHolder ?? holder) !== holderValue(holder),
+    holderLabel ? holderLabel(previewHolder ?? draftHolder ?? holder) : holderLabelFor(sprintItem,previewHolder ?? draftHolder ?? holder)) : null);
+  function optionApproves(value: string): boolean {
+    return pendingStage !== null && pendingCeilingApproves(lifecycle,pendingStage,ceiling,value,true,intent);
+  }
+
   function preferredCeiling(): string | null {
     return ceiling ?? preferredScopeCeilingFor(lifecycle, newStage) ?? "none";
   }
 
   // Drafts start and end with the panel, so a dismissal discards them.
   function reset(): void {
-    draftCeiling = preferredCeiling();
+    intent = requestedApproval ? "approve" : "scope";
+    requestedApproval = false;
+    draftCeiling = intent === "approve" && approvalCeiling ? approvalCeiling : preferredCeiling();
     draftHolder = null;
+    previewHolder = null;
     ceilingTouched = false;
     holderTouched = false;
     showing = stageLocked ? "holder" : "ceiling";
@@ -95,7 +126,9 @@
     const nextHolder = draftHolder ?? holder;
     const nextCeiling = ceilingTouched ? draftCeiling : null;
     if (onComplete) {
-      onComplete({ ...(nextCeiling !== null ? { ceiling: nextCeiling } : {}), holder: nextHolder });
+      const approves = commitEffect?.approves ?? false;
+      onComplete({ ...(nextCeiling !== null ? { ceiling:nextCeiling } : approves && draftCeiling ? { ceiling:draftCeiling } : {}), holder:nextHolder,
+        ...(pendingStage ? { approval:approves } : {}) });
     } else {
       if (nextCeiling !== null) ceiling = nextCeiling;
       holder = nextHolder;
@@ -120,6 +153,7 @@
   }
 </script>
 
+<div bind:this={controlRoot}>
 <ListboxPicker
   items={rows}
   {selectedValue}
@@ -132,10 +166,12 @@
   panelAttributes={{ "data-ceiling-picker-panel": "" }}
   bind:controller={picker}
   onOpen={reset}
-  onClose={reset}
+  onClose={() => { requestedApproval = false; reset(); }}
   onChoose={choose}
+  onActiveChange={(value) => { previewHolder = pendingStage && showing === "holder" && value ? holderFromValue(value,sprintItem) : null; }}
   optionAttributes={(choice) => ({
     "data-ceiling-picker-choice": choice.value,
+    "data-ceiling-approves": showing === "ceiling" && optionApproves(choice.value) ? "true" : undefined,
     "data-scope-holder": showing === "holder" ? choice.value : undefined
   })}
 >
@@ -174,16 +210,21 @@
       {@const option = holders.find((item) => item.value === choice.value)}
       <span>{option?.label ?? choice.name}</span>
       {#if option?.detail}<small class="holder-detail">{option.detail}</small>{/if}
-    {:else}<span>{choice.name}</span>{/if}
+    {:else}<span>{choice.name}</span>{#if optionApproves(choice.value)}<small class="approves-mark">approves</small>{/if}{/if}
   {/snippet}
   {#snippet afterList()}
-    {#if stageLocked}
+    {#if pendingEffect}
+      <div class="ceiling-picker-foot" class:ceiling-picker-foot--accepts={pendingEffect.approves} data-ceiling-effect aria-live="polite">{pendingEffect.text}</div>
+    {:else if stageLocked}
       <div class="ceiling-picker-foot" data-ceiling-picker-locked>A parked proposal holds the stage.</div>
     {/if}
   {/snippet}
 </ListboxPicker>
+</div>
 
 <style>
+  .approves-mark { margin-left:auto; font-size:var(--type-xs); color:var(--accent-text); }
+  .ceiling-picker-foot.ceiling-picker-foot--accepts { background:var(--accent-surface); color:var(--accent-text); }
   .holder-detail { color:var(--text-faintest); font-size:var(--type-xs); overflow-wrap:anywhere; }
   .ceiling-picker-foot {
     grid-column: 1 / -1; border-top: var(--border-hairline) solid var(--border-color);

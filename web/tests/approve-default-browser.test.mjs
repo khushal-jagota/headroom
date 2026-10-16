@@ -200,9 +200,9 @@ with sync_playwright() as p:
 
     coding_block = page.locator('[data-approval-block][data-field="success_condition"]')
     expect(coding_block).to_have_count(1)
-    coding_picker = coding_block.locator('[data-accept] [data-scope-ceiling]')
-    expect(coding_picker).to_have_attribute('aria-label', 'Approve')
-    expect(coding_block.locator('[data-reviewer-control] [data-scope-ceiling]')).to_have_attribute('aria-label', 'User')
+    coding_picker = coding_block.locator('[data-accept]')
+    expect(coding_picker).to_have_text('Approve')
+    expect(coding_block.locator('[data-reviewer-control] [data-scope-ceiling]')).to_have_attribute('aria-label', 'Approved until Success Condition, then User reviews')
 
     # Approve opens the existing scope picker; a dismissed draft never approves.
     coding_picker.click()
@@ -216,7 +216,7 @@ with sync_playwright() as p:
     proposal.fill('Local edit')
     proposal.press('Tab')
     coding_picker.click()
-    coding_block.locator('[data-ceiling-picker-choice="none"]').click()
+    coding_block.locator('[data-ceiling-picker-choice="done"]').click()
     page.evaluate('window.__refresh()')
     expect(coding_block.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     expect(proposal).to_have_text('Local edit')
@@ -255,7 +255,7 @@ with sync_playwright() as p:
     page.evaluate("window.__showTicket('t_consequences')")
     consequences_block = page.locator('[data-approval-block][data-field="consequences"]')
     expect(consequences_block).to_have_count(1)
-    consequences_block.locator('[data-accept] [data-scope-ceiling]').click()
+    consequences_block.locator('[data-accept]').click()
     expect(consequences_block.locator('[role="option"][aria-selected="true"]')).to_have_attribute('data-ceiling-picker-choice', 'done')
     consequences_block.locator('[data-ceiling-part="holder"]').click()
     consequences_block.locator('[data-ceiling-picker-choice="owner"]').click()
@@ -268,7 +268,10 @@ with sync_playwright() as p:
     page.evaluate("window.__showTicket('t_failure')")
     failure_block = page.locator('[data-approval-block][data-field="what_changes"]')
     expect(failure_block).to_have_count(1)
-    failure_button = failure_block.locator('[data-accept] [data-scope-ceiling]')
+    failure_button = failure_block.locator('[data-accept]')
+    failure_proposal = failure_block.locator('[contenteditable]')
+    failure_proposal.fill('Edited retry')
+    failure_proposal.press('Tab')
     failure_button.click()
     failure_block.locator('[data-ceiling-part="holder"]').click()
     failure_block.locator('[data-ceiling-picker-choice="owner"]').evaluate('(button) => { button.click(); button.click(); }')
@@ -293,16 +296,16 @@ with sync_playwright() as p:
 
     assert approvals == [
         {'ticket_id': 't_coding', 'field': 'success_condition', 'body': {
-            'next_ceiling': 'needs_what_changes', 'next_holder': {'kind': 'owner', 'id': 'owner'}
+            'next_ceiling': 'needs_what_changes', 'next_holder': {'kind': 'owner', 'id': 'owner'}, 'expected_proposal_revision': 2
         }},
         {'ticket_id': 't_findings', 'field': 'findings', 'body': {
             'next_ceiling': 'needs_answer', 'next_holder': {'kind': 'owner', 'id': 'owner'}
         }},
         {'ticket_id': 't_consequences', 'field': 'consequences', 'body': {
-            'next_ceiling': 'done', 'next_holder': {'kind': 'owner', 'id': 'owner'}
+            'next_ceiling': 'done', 'next_holder': {'kind': 'owner', 'id': 'owner'}, 'expected_proposal_revision': 1
         }},
         {'ticket_id': 't_failure', 'field': 'what_changes', 'body': {
-            'next_ceiling': 'needs_plan', 'next_holder': {'kind': 'owner', 'id': 'owner'}
+            'next_ceiling': 'needs_plan', 'next_holder': {'kind': 'owner', 'id': 'owner'}, 'expected_proposal_revision': 1, 'edited_body': 'Edited retry'
         }},
     ]
     browser.close()

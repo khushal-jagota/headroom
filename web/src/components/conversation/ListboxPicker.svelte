@@ -33,6 +33,7 @@
     onOpen,
     onClose,
     onChoose,
+    onActiveChange,
     triggerContent,
     beforeList,
     optionContent,
@@ -66,6 +67,8 @@
     /** Every close, dismissal or not. A picker with a draft discards it here. */
     onClose?: () => void;
     onChoose: (value: string) => void;
+    /** Optional explanatory preview only; activation still belongs to onChoose. */
+    onActiveChange?: (value: string | null) => void;
     triggerContent: Snippet<[boolean]>;
     beforeList?: Snippet;
     optionContent: Snippet<[ListboxPickerItem, boolean]>;
@@ -86,6 +89,10 @@
   let pointerReallyMoved = false;
 
   let active = $derived(items.length === 0 ? 0 : Math.min(activeIndex, items.length - 1));
+
+  $effect(() => {
+    onActiveChange?.(open ? items[active]?.value ?? null : null);
+  });
 
   function focusList(): void {
     void tick().then(() => list?.focus());

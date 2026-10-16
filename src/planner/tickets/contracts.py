@@ -212,7 +212,7 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     guidance: str  # replaces the document
     guidance_append: str  # adds to it; naming both in one call is refused
     field_values: Mapping[str, str]  # settled values only, by field id
-    ceiling: str  # how far the Ticket may go; refused while a proposal is parked
+    ceiling: str  # pending same/lower scope is editable; raising past the stage uses accept
     ceiling_holder: Principal  # who is asked; allowed while a proposal is parked
 
 
@@ -221,6 +221,7 @@ class ProposalBody(TypedDict, total=False):  # POST /tickets/{id}/propose
 
 
 class AcceptBody(TypedDict, total=False):  # POST /tickets/{id}/accept/{field}
+    expected_proposal_revision: int | None  # visible proposal identity for approval gestures
     edited_body: str | None  # direct edit applied before resolution
     next_ceiling: str | None  # Stage id or NO_FURTHER; the onward ceiling (§4.4.7)
     next_holder: object  # required full Principal for the next ceiling

@@ -360,7 +360,13 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
 
 
 def _marshal_accept(raw: JsonDict) -> AcceptBody:
+    revision = raw.get("expected_proposal_revision")
+    if revision is not None and (type(revision) is not int or revision <= 0):
+        raise PlannerError(
+            ErrorCode.validation, "expected_proposal_revision must be a positive integer", {}
+        )
     return AcceptBody(
+        expected_proposal_revision=revision,
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
         next_holder=raw.get("next_holder"),
@@ -1068,6 +1074,7 @@ async def accept_field(
         now=now,
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
+        expected_proposal_revision=body["expected_proposal_revision"],
         next_holder=_parse_required_principal(body["next_holder"], "next_holder"),
     )
     return tickets_views.ticket_json(ticket, now)

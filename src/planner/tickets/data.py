@@ -20,6 +20,7 @@ from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority, ticket_blocks
 from planner.core.contracts import (
+    CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
     Principal,
     PrincipalKind,
@@ -855,6 +856,19 @@ def write_employee_configuration(
         return _load_ticket_for_write(conn, ticket_id)
 
 
+def _proposal_wake_target(
+    conn: sqlite3.Connection, route: proposal_routing.ProposalRoute
+) -> Principal | None:
+    if route.kind is proposal_routing.ProposalRouteKind.chief:
+        return CHIEF_PRINCIPAL
+    if route.kind is proposal_routing.ProposalRouteKind.item_manager and route.sprint_item_id:
+        if conn.execute(
+            "SELECT 1 FROM sprint_items WHERE id=?", (route.sprint_item_id,)
+        ).fetchone() is not None:
+            return Principal(PrincipalKind.sprint_item, route.sprint_item_id)
+    return None
+
+
 def create_ticket(
     conn: sqlite3.Connection,
     *,
@@ -1000,19 +1014,14 @@ def create_ticket(
                 now,
             ),
         )
-        if (
-            initial_proposal_route.kind is proposal_routing.ProposalRouteKind.item_manager
-            and initial_proposal_route.sprint_item_id is not None
-            and initial_proposal is not None
-            and conn.execute(
-                "SELECT 1 FROM sprint_items WHERE id=?",
-                (initial_proposal_route.sprint_item_id,),
-            ).fetchone()
-            is not None
-        ):
+        wake_target = _proposal_wake_target(conn, initial_proposal_route)
+        if wake_target is not None and initial_proposal is not None:
             manager_wakes_data.create_proposal_wake(
                 conn,
-                sprint_item_id=initial_proposal_route.sprint_item_id,
+                sprint_item_id=(
+                    wake_target.id if wake_target.kind is PrincipalKind.sprint_item else ""
+                ),
+                target=wake_target,
                 ticket_id=ticket_id,
                 proposal_revision=1,
                 ticket_title=title,
@@ -1271,16 +1280,8 @@ def file_current_proposal(
             worker_type_definition=worker_type_definition,
         )
         updated = _apply_decision(conn, ticket, decision, now, newly_filed_proposal=True)
-        if (
-            route.kind is proposal_routing.ProposalRouteKind.item_manager
-            and route.sprint_item_id is not None
-            and updated.pending_proposal is not None
-            and conn.execute(
-                "SELECT 1 FROM sprint_items WHERE id=?",
-                (route.sprint_item_id,),
-            ).fetchone()
-            is not None
-        ):
+        wake_target = _proposal_wake_target(conn, route)
+        if wake_target is not None and updated.pending_proposal is not None:
             proposal_revision = int(
                 conn.execute(
                     "SELECT pending_proposal_revision FROM tickets WHERE id=?",
@@ -1289,7 +1290,10 @@ def file_current_proposal(
             )
             manager_wakes_data.create_proposal_wake(
                 conn,
-                sprint_item_id=route.sprint_item_id,
+                sprint_item_id=(
+                    wake_target.id if wake_target.kind is PrincipalKind.sprint_item else ""
+                ),
+                target=wake_target,
                 ticket_id=ticket_id,
                 proposal_revision=proposal_revision,
                 ticket_title=ticket.title,
@@ -1311,6 +1315,7 @@ def accept_proposal(
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
     next_holder: Principal,
+    expected_proposal_revision: int | None = None,
 ) -> Ticket:
     """Settle a parked proposal, for a caller standing above the Ticket.
 
@@ -1323,6 +1328,15 @@ def accept_proposal(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
+        if (
+            expected_proposal_revision is not None
+            and ticket.pending_proposal_revision != expected_proposal_revision
+        ):
+            raise PlannerError(
+                ErrorCode.validation,
+                "the visible proposal changed; read it again before accepting",
+                {"ticket_id": ticket_id},
+            )
         decision = resolution.decide_accept(
             ticket,
             field,
@@ -1747,7 +1761,7 @@ def edit_ticket(
             )
 
         # The two halves of a ceiling are set independently, and either may arrive alone.
-        # How far the Ticket may go is frozen under a parked proposal; who is asked is not.
+        # Pending same/lower scope stays editable; raising past its stage uses accept.
         if "ceiling" in edit:
             ceiling_decision = resolution.decide_set_ceiling(
                 ticket,
@@ -1824,19 +1838,14 @@ def edit_ticket(
                 holder=updated.ceiling_holder,
                 worker_type_definition=worker_type_definition,
             )
-            if (
-                route.kind is proposal_routing.ProposalRouteKind.item_manager
-                and route.sprint_item_id is not None
-                and updated.pending_proposal is not None
-                and conn.execute(
-                    "SELECT 1 FROM sprint_items WHERE id=?",
-                    (route.sprint_item_id,),
-                ).fetchone()
-                is not None
-            ):
+            wake_target = _proposal_wake_target(conn, route)
+            if wake_target is not None and updated.pending_proposal is not None:
                 manager_wakes_data.create_proposal_wake(
                     conn,
-                    sprint_item_id=route.sprint_item_id,
+                    sprint_item_id=(
+                        wake_target.id if wake_target.kind is PrincipalKind.sprint_item else ""
+                    ),
+                    target=wake_target,
                     ticket_id=ticket_id,
                     proposal_revision=proposal_revision,
                     ticket_title=updated.title,
