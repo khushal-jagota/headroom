@@ -820,27 +820,6 @@ def test_an_interrupted_turn_does_not_clear_a_rejection(tmp_path: Path) -> None:
     assert remembered.applies_to(was_rejected)
 
 
-def test_a_card_stops_claiming_a_login_once_its_token_expires(tmp_path: Path) -> None:
-    """A kept card must follow the one change that happens without the file changing.
-
-    Cards are kept because probing costs subprocesses. A token expiring moves a card from
-    signed-in to unconfirmed while the login file sits perfectly still, so a card that
-    watched only the credential generation would go on saying signed in for as long as the
-    process lived. That is the twelve-day fault in miniature.
-    """
-    home = tmp_path / "codex-home"
-    _write_login(home, expires_at=datetime.now(UTC) + timedelta(seconds=30))
-    before = read_stored_codex_login(home)
-    _write_login(home, expires_at=datetime.now(UTC) - timedelta(seconds=30))
-    after = read_stored_codex_login(home)
-
-    assert before.generation == after.generation
-    assert (
-        CodexLoginStanding(stored=before, rejected=False).everything_a_card_reads
-        != CodexLoginStanding(stored=after, rejected=False).everything_a_card_reads
-    )
-
-
 def test_an_unchanged_login_goes_stale_when_its_token_expires_under_a_kept_card(
     tmp_path: Path,
 ) -> None:
