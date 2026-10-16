@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildLifecycle } from "../src/lib/lifecycle";
-import { pendingCeilingApproves, pendingCeilingEffect } from "../src/lib/pendingCeiling";
+import { pendingCeilingApproves } from "../src/lib/pendingCeiling";
 const lifecycle = buildLifecycle({ worker_type:"coding", label:"Coding", stages:[
   {id:"brief",label:"Brief",gating_field:"brief",is_terminal:false,ownership_mode:"worker"},
   {id:"plan",label:"Plan",gating_field:"plan",is_terminal:false,ownership_mode:"worker"},
@@ -21,12 +21,5 @@ describe("pending ceiling approval intent", () => {
     ["done","brief",true,"approve",false]
   ] as const)("saved %s selected %s touched %s intent %s approves %s", (saved,selected,touched,intent,expected) => {
     expect(pendingCeilingApproves(lifecycle,"plan",saved,selected,touched,intent)).toBe(expected);
-  });
-  it("previews reviewer-only reroute with no approval under already-higher permission", () => {
-    expect(pendingCeilingEffect(lifecycle,"plan","Plan","done","done",false,"scope",true,"Orchestrator")).toEqual({approves:false,text:"Sends this Plan proposal to Orchestrator. Nothing is approved."});
-  });
-  it("previews changed stage approval and truthful same/lower scope", () => {
-    expect(pendingCeilingEffect(lifecycle,"plan","Plan","plan","implementation",true,"scope",false,"User")).toEqual({approves:true,text:"Approves this Plan proposal and carries on to Implementation."});
-    expect(pendingCeilingEffect(lifecycle,"plan","Plan","done","implementation",true,"scope",false,"User")).toEqual({approves:false,text:"Nothing is approved while the ceiling stays at Implementation."});
   });
 });

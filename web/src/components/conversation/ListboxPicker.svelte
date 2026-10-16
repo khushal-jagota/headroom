@@ -7,6 +7,9 @@
   };
 
   export type ListboxPickerController = {
+    open: () => void;
+    readonly expanded: boolean;
+    readonly controls: string | undefined;
     close: (returnFocus?: boolean) => void;
     focusList: () => void;
     setActiveValue: (value: string | null) => void;
@@ -22,6 +25,7 @@
     listLabel = label,
     kind = "compact",
     chevron = "typed",
+    hideTrigger = false,
     below = false,
     align = "left",
     anchor = null,
@@ -52,6 +56,7 @@
      *  than by its box, so it reads small beside stroked icons. The conversation's
      *  composer asks for the drawn one; every other caller keeps what it had. */
     chevron?: "typed" | "drawn";
+    hideTrigger?: boolean;
     below?: boolean;
     align?: "left" | "right";
     /** Optional second entry point for the same picker; keeps one panel and draft. */
@@ -125,7 +130,7 @@
     forgetTypeahead();
   }
 
-  controller = { close, focusList, setActiveValue };
+  controller = { open: () => void openPanel(), close, focusList, setActiveValue, get expanded() { return open; }, get controls() { return open ? listId : undefined; } };
 
   // Hold focus on the picker until its disabled trigger can receive it again.
   $effect.pre(() => {
@@ -266,6 +271,7 @@
       return;
     }
     if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
       moveToMatch(event.key);
     }
   }
@@ -298,6 +304,7 @@
 </script>
 
 <div class="listbox-picker" bind:this={root} tabindex="-1" {...attributes}>
+  {#if !hideTrigger}
   <button
     type="button"
     class="listbox-picker-trigger"
@@ -321,6 +328,7 @@
       <span class="listbox-picker-chevron" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
     {/if}
   </button>
+  {/if}
 
   {#if open}
     <div

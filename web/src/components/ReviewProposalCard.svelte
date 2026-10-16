@@ -15,14 +15,14 @@
   import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
-  import { fieldStageVisualStateFor, gatingFieldFor, lifecycleFor } from "../lib/lifecycle";
+  import { gatingFieldFor, lifecycleFor } from "../lib/lifecycle";
   import type { TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import Disclosure from "./Disclosure.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
-  import TicketStageSection from "./TicketStageSection.svelte";
+  import WorkerProposalCard from "./WorkerProposalCard.svelte";
   import TicketPriorityControl from "./TicketPriorityControl.svelte";
   import {
     createVoiceCapture,
@@ -314,23 +314,21 @@
       {/if}
       <div class="review-arrive review-arrive--3">
         {#if acceptField}
-          <TicketStageSection
-            variant="review"
-            name={acceptField}
-            value={ticketDetail.field_values[acceptField] ?? ""}
-            pendingProposal={ticketDetail.pending_proposal}
-            lifecycle={lc}
-            ticketStage={ticketDetail.stage}
-            ceiling={ticketDetail.ceiling}
-            sprintItem={reviewSprintItem}
-            stageState={fieldStageVisualStateFor(lc, ticketDetail, acceptField)}
-            approvalDisabled={acceptField === "brief" && priorityBusy}
-            onAccept={(payload) => accept(payload)}
-          />
+          {#if lc && ticketDetail.pending_proposal}
+            {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
+            <WorkerProposalCard proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
+              ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} sprintItem={reviewSprintItem}
+              disabled={revisionBusy || (acceptField === "brief" && priorityBusy)} canReturn={Boolean(ticketDetail.conversation_id)}
+              onAccept={accept}
+              onScope={async (body) => { await mutateJson(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
+              onReturn={async (message) => { await mutateJson(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
+              {revisionEditor} />
+            {/key}
+          {/if}
         {/if}
       </div>
 
-      {#if acceptField !== "brief"}
+      {#snippet revisionEditor()}
         <div class="review-revise review-arrive review-arrive--4" data-review-revision>
           <div class="review-revision-box" data-review-voice={voiceState.phase}>
             {#if voiceState.phase !== "idle"}
@@ -424,7 +422,7 @@
             <ErrorLine error={revisionError} />
           {/if}
         </div>
-      {/if}
+      {/snippet}
     </div>
 
     {@render footer?.()}

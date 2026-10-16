@@ -126,25 +126,23 @@ One screen per part of the system:
   `#/ticket/<ticket-id>` address redirects there, so shared links and stored
   notifications still work. A Ticket opens this way even when it is not on today's
   board, because the Ticket resource answers for it rather than the board card.
-- **Worker** — one document with clickable project and parent links above its title and
+- **Worker** — one document with a clickable Project and human-readable Ticket type above its title and
   recap. The title is 28px, recap 17px, body 15px, labels 13px, and quiet text 11px.
-  Priority and the Worker-type label do not appear here. Priority keeps its stored
+  Priority does not appear here. Priority keeps its stored
   resolution, order, API/CLI controls, and the existing Review edit path.
 
   One card holds the current step. A pending proposal names its reviewer and keeps
-  one editable ceiling/reviewer picker that opens directly with one click. Its draft
-  previews the consequence before commit. An explicit raise past the visible pending stage accepts that exact
+  one editable ceiling/reviewer picker that opens directly with one click. A ceiling choice followed by a reviewer choice completes the gesture. An explicit raise past the visible pending stage accepts that exact
   submission through atomic Accept, with the selected onward ceiling and reviewer.
   Same/lower scope preserves the proposal. Reviewer-only changes reroute it without
   approval. Approve is a direct entry to the same picker and approval action. Send it back opens
   a note and uses the existing revision action. Pristine Kickoff keeps the existing
   Review exception: edit its proposal before approval instead of sending revision
   guidance to a Worker that does not yet have a conversation. A running step states its approved
-  ceiling and reviewer in one sentence that opens the same control. Holder wording
-  uses the shared User / Orchestrator / Chief roles. Principal identities and
-  identifying detail stay intact.
+  ceiling and reviewer in one sentence that opens the same control. Approval headings and picker options use only User / Orchestrator / Chief roles. Principal identities
+  stay intact in requests.
 
-  Steps and Artifacts are closed bands below the live card. Each step opens its own
+  Steps and Artifacts are closed bands below the live card. Steps retain their circular progress marks. Each step opens its own
   text. Future stages, guidance, and a separate historical record do not appear.
   Cancelled planning work retains truthful historical content without actionable
   approval controls. Artifacts remain accessible even when no inline link exists,
@@ -373,8 +371,9 @@ provider or transport failure in its existing feedback line.
   separate source mode and no Edit/Save/Cancel control set. Browser edits may move an
   atomic block within the editable DOM; that move keeps its mounted component alive,
   while actual deletion still unmounts it and cancels pending work.
-  Saving an approval draft on either the Ticket or Review screen replaces the pending
-  proposal text immediately. Approval then uses that stored text without a second edit.
+  Saving an approval draft on either the Ticket or Review screen keeps the edited text
+  with that visible proposal. Approval sends it together with the proposal revision,
+  so it cannot accept an unseen replacement.
 - **Managed Markdown has one DOM owner.** `managedMarkdown.ts` alone renders Markdown,
   mounts and unmounts file previews, turns editable preview links into atomic blocks,
   reads edited Markdown, maintains empty state, and cleans up observers and components.
@@ -404,12 +403,12 @@ hand-rolling the same shapes per screen. Each does one job:
   both Sprint priority positions, and once in each Backlog priority group heading.
   Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
-- **ApprovalBlock** — the approval surface: an editable proposal draft, the ceiling
-  picker, the holder control, and the approve/accept action. Approving names the next
-  ceiling and its holder together. Its displayed immediate-next Stage and owner are the
-  actual bound values, so Approve can submit them without a picker interaction. A new
-  proposal or changed lifecycle context resets them. An unrelated refresh preserves an
-  edit or explicit scope choice.
+- **WorkerProposalCard** — the single approval card on both the Ticket and Review
+  screens: editable proposal, reviewer heading, Approve, and send-back action. Approve
+  opens the existing compact ceiling/reviewer rail directly; there is no adjacent
+  ceiling control. The reviewer heading opens the same picker for reviewer-only
+  routing. A new proposal revision resets the draft; an unrelated refresh preserves it.
+  Review supplies its existing voice revision box through the card.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the priority control on a Brief, the approval control, and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
@@ -473,15 +472,14 @@ hand-rolling the same shapes per screen. Each does one job:
 - **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
   may go, and who reviews it — sit in a rail on the left, so either can be edited on its
   own. A half-finished choice stays in the open panel: dismissing it writes nothing and
-  leaves nothing behind, and only a completed pair reaches the Ticket. The same picker
-  keeps its own trigger in both the current-step card and the approval row.
+  leaves nothing behind, and only a completed pair reaches the Ticket. The running-step card keeps its own trigger. In a pending proposal, Approve and
+  the reviewer heading are the entry points to that same picker.
 - **PickerRail**, **PickerRailRow** — the left rail a picker panel uses to name the parts
   of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.
 
 The Worker page uses the same ceiling/reviewer control while running or waiting.
-A pending proposal no longer locks its stage half. The panel explains an approval
-or reroute before commit, and marks approving choices. Approval uses the visible
+A pending proposal no longer locks its stage half. The compact panel shows only the existing ceiling/reviewer rail and choices. Approval uses the visible
 proposal revision as an atomic freshness check. A changed or rerouted proposal must
 be read again before approval. Existing CLI accept callers remain compatible.
 User-owned stages still require explicit review, even below the ceiling.
