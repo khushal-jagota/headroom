@@ -39,9 +39,7 @@ _CREATE_KEYS = frozenset(
         "deadline",
         "project",
         "project_id",
-        "sprint_id",
-        "placement_mode",
-        "sprint_item_id",
+        "orchestrator",
         "employee_backend",
         "employee_launch_model",
         "blocked_by_ticket_ids",
@@ -86,8 +84,21 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         project_name=body_opt_str(raw, "project"),
     )
     priority_raw = body_opt_str(raw, "priority")
-    sprint_item_id = body_opt_str(raw, "sprint_item_id")
-    placement_mode_raw = body_opt_str(raw, "placement_mode")
+    sprint_item_id = None
+    orchestrator = raw.get("orchestrator")
+    if orchestrator is not None:
+        if not isinstance(orchestrator, dict) or set(orchestrator) != {"kind", "id"}:
+            raise PlannerError(ErrorCode.validation, "invalid orchestrator")
+        kind = orchestrator["kind"]
+        if kind == "chief" and orchestrator["id"] == "chief":
+            sprint_item_id = None
+        elif kind == "sprint_item" and isinstance(orchestrator["id"], str):
+            sprint_item_id = orchestrator["id"]
+        else:
+            raise PlannerError(ErrorCode.validation, "invalid orchestrator")
+    else:
+        kind = "sprint_item" if sprint_item_id is not None else "chief"
+    placement_mode_raw = None
     placement_mode = (
         parse_enum(
             ScheduledTicketPlacementMode,
@@ -95,9 +106,10 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
             "placement_mode",
         )
         if placement_mode_raw is not None
-        else ScheduledTicketPlacementMode.current_sprint
+        else ScheduledTicketPlacementMode.backlog
     )
     return ScheduledTicketTemplate(
+        orchestrator_kind=kind,
         title=body_str(raw, "title"),
         worker_type=worker_type,
         kickoff_note=body_str(raw, "kickoff_note"),
@@ -106,7 +118,7 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         ),
         deadline=body_opt_str(raw, "deadline"),
         project_id=None if project is None else project.id,
-        sprint_id=body_opt_str(raw, "sprint_id"),
+        sprint_id=None,
         placement_mode=placement_mode,
         sprint_item_id=sprint_item_id,
         employee_backend=body_opt_str(raw, "employee_backend"),
@@ -123,7 +135,7 @@ async def create_schedule(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDi
         enabled=_body_bool(raw, "enabled", True),
         cadence=parse_enum(
             ScheduleCadence,
-            body_str(raw, "cadence", ScheduleCadence.every_planning_day.value),
+            body_str(raw, "cadence", ScheduleCadence.daily.value),
             "cadence",
         ),
         local_time=body_str(raw, "local_time"),
@@ -181,5 +193,12 @@ async def patch_schedule(schedule_id: str, raw: dict[str, Any], conn: DbConn, cl
         )
     if "blocked_by_ticket_ids" in raw:
         changes["blocked_by_ticket_ids"] = tuple(body_str_list(raw, "blocked_by_ticket_ids"))
+    if "orchestrator" in raw:
+        # Reuse the same parser without allowing a second assignment vocabulary.
+        assignment = _template_from_create(
+            {**views.schedule_json(data.read_schedule(conn, schedule_id)), **raw}, conn
+        )
+        changes["orchestrator_kind"] = assignment.orchestrator_kind
+        changes["sprint_item_id"] = assignment.sprint_item_id
     schedule = actions.update_schedule(conn, schedule_id, changes, now=clk.now_unix())
     return views.schedule_json(schedule, data.list_occurrences(conn, schedule_id))

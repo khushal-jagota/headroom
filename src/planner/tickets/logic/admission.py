@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Final
 
-from planner.core.contracts import ErrorCode, PlannerError
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
+from planner.worker_types.contracts import RETIRED_PLANNING_WORKER_TYPES, WorkerTypeDefinition
 
 REVISION_GUIDANCE_MAX_CHARACTERS: Final = 10_000
 
@@ -23,6 +23,7 @@ TICKET_FIELDS_ONLY_FROM_ABOVE: Final[frozenset[str]] = frozenset(
         "project_id",
         "sprint_id",
         "sprint_item_id",
+        "orchestrator",
         "field_values",
         "ceiling",
         "ceiling_holder",
@@ -32,6 +33,16 @@ TICKET_FIELDS_ONLY_FROM_ABOVE: Final[frozenset[str]] = frozenset(
 # The one field nobody may set about a thing they only reach through it.
 # authority.refuse_outcome_re_parenting says why.
 TICKET_FIELD_THAT_MOVES_THE_PARENT: Final = "sprint_item_id"
+
+
+def validate_orchestrator(orchestrator: Principal) -> None:
+    if orchestrator.kind not in {PrincipalKind.chief, PrincipalKind.sprint_item}:
+        raise PlannerError(ErrorCode.validation, "orchestrator must name Chief or an orchestrator")
+
+
+def require_creatable_worker_type(worker_type: str) -> None:
+    if worker_type in RETIRED_PLANNING_WORKER_TYPES:
+        raise PlannerError(ErrorCode.validation, "calendar planning Worker types are retired")
 
 
 def check_agent_proposal(

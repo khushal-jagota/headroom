@@ -10,23 +10,23 @@ from typing import TypedDict
 
 
 @dataclass
-class Day:                         # §3.4 — overview = four structured day fields
-    id: str                        # day_YYYY-MM-DD (planning date)
-    focus: str                     # the one-line hero (plain text)
-    brief_take: str                # markdown
-    watchout: str                  # markdown
-    if_today_lands: str            # markdown
-    midday_reconciliation: str     # markdown; mid-day reality, not a replacement plan
+class Day:  # §3.4 — overview = four structured day fields
+    id: str  # day_YYYY-MM-DD (planning date)
+    focus: str  # the one-line hero (plain text)
+    brief_take: str  # markdown
+    watchout: str  # markdown
+    if_today_lands: str  # markdown
+    midday_reconciliation: str  # markdown; mid-day reality, not a replacement plan
     notes: str
     created_at: int
     updated_at: int
 
 
 @dataclass(frozen=True)
-class DayTicket:                   # day_tickets row (§3.4)
+class DayTicket:  # day_tickets row (§3.4)
     day_id: str
     ticket_id: str
-    position: int                  # contiguous from 0
+    position: int  # contiguous from 0
 
 
 # --- request bodies (§9 wire shapes) ---
@@ -35,13 +35,13 @@ class DayTicket:                   # day_tickets row (§3.4)
 # shapes; a null or wrong-typed value raises ErrorCode.validation.
 
 
-class DayPatchBody(TypedDict, total=False):       # PATCH /day/{date} — each field edits alone
-    focus: str | None              # absent/null = leave unchanged
-    brief_take: str | None         # absent/null = leave unchanged
-    watchout: str | None           # absent/null = leave unchanged
-    if_today_lands: str | None     # absent/null = leave unchanged
+class DayPatchBody(TypedDict, total=False):  # PATCH /day/{date} — each field edits alone
+    focus: str | None  # absent/null = leave unchanged
+    brief_take: str | None  # absent/null = leave unchanged
+    watchout: str | None  # absent/null = leave unchanged
+    if_today_lands: str | None  # absent/null = leave unchanged
     midday_reconciliation: str | None
-    notes: str | None              # absent/null = leave unchanged
+    notes: str | None  # absent/null = leave unchanged
 
 
 # Planning-date math (§6.1): implemented in days/logic/dates.py at stage 3.

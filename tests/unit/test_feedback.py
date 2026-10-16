@@ -54,7 +54,7 @@ def _create_ticket(
         "kickoff_note": "Agreed brief.",
     }
     if sprint_item_id is not None:
-        body["sprint_item_id"] = sprint_item_id
+        body["orchestrator"] = {"kind": "sprint_item", "id": sprint_item_id}
     response = client.post("/api/tickets", json=body)
     assert response.status_code == 200, response.text
     return cast(dict[str, Any], response.json())
@@ -94,18 +94,16 @@ def test_capture_list_use_dismiss_reopen_and_ticket_deletion(
     assert handled["handled_groups"][0]["ticket"] == {
         "id": ticket["id"],
         "title": "Improve the workspace",
-            "stage": "needs_brief",
-            "ticket_status": "awaiting_approval",
-            "awaiting_reply": False,
-            "awaiting_answer": False,
-            "awaiting_approval": True,
-            "awaiting_agent_approval": False,
-            "assigned": False,
-            "agent_state": "idle",
-        }
-    assert [note["id"] for note in handled["handled_groups"][0]["notes"]] == [
-        first["id"]
-    ]
+        "stage": "needs_brief",
+        "ticket_status": "awaiting_approval",
+        "awaiting_reply": False,
+        "awaiting_answer": False,
+        "awaiting_approval": True,
+        "awaiting_agent_approval": False,
+        "assigned": False,
+        "agent_state": "idle",
+    }
+    assert [note["id"] for note in handled["handled_groups"][0]["notes"]] == [first["id"]]
     assert handled["handled_groups"][-1]["ticket"] is None
     assert handled["handled_groups"][-1]["notes"][0]["id"] == second["id"]
 
@@ -167,9 +165,7 @@ def test_feedback_write_permissions_follow_direct_worker_and_supervisor_scope(
     second_item = feedback_client.post(
         "/api/items", json={"title": "Second", "project_id": "project_vylo"}
     ).json()
-    own_ticket = _create_ticket(
-        feedback_client, "Own child", sprint_item_id=str(first_item["id"])
-    )
+    own_ticket = _create_ticket(feedback_client, "Own child", sprint_item_id=str(first_item["id"]))
     other_ticket = _create_ticket(
         feedback_client, "Other child", sprint_item_id=str(second_item["id"])
     )
@@ -184,28 +180,41 @@ def test_feedback_write_permissions_follow_direct_worker_and_supervisor_scope(
     }
 
     assert feedback_client.get("/api/feedback", headers=worker_headers).status_code == 200
-    assert feedback_client.post(
-        "/api/feedback", json={"text": "Forbidden"}, headers=worker_headers
-    ).json()["error"]["code"] == "agent_forbidden"
-    assert feedback_client.post(
-        "/api/feedback/use",
-        json={"feedback_ids": [notes[0]["id"]], "ticket_id": own_ticket["id"]},
-        headers=worker_headers,
-    ).status_code == 200
-    assert feedback_client.post(
-        "/api/feedback/use",
-        json={"feedback_ids": [notes[1]["id"]], "ticket_id": other_ticket["id"]},
-        headers=worker_headers,
-    ).json()["error"]["code"] == "agent_forbidden"
-    assert feedback_client.post(
-        "/api/feedback/use",
-        json={"feedback_ids": [notes[2]["id"]], "ticket_id": own_ticket["id"]},
-        headers=supervisor_headers,
-    ).status_code == 200
-    assert feedback_client.post(
-        "/api/feedback/use",
-        json={"feedback_ids": [notes[3]["id"]], "ticket_id": other_ticket["id"]},
-        headers=supervisor_headers,
-    ).json()["error"]["code"] == "agent_forbidden"
-
-
+    assert (
+        feedback_client.post(
+            "/api/feedback", json={"text": "Forbidden"}, headers=worker_headers
+        ).json()["error"]["code"]
+        == "agent_forbidden"
+    )
+    assert (
+        feedback_client.post(
+            "/api/feedback/use",
+            json={"feedback_ids": [notes[0]["id"]], "ticket_id": own_ticket["id"]},
+            headers=worker_headers,
+        ).status_code
+        == 200
+    )
+    assert (
+        feedback_client.post(
+            "/api/feedback/use",
+            json={"feedback_ids": [notes[1]["id"]], "ticket_id": other_ticket["id"]},
+            headers=worker_headers,
+        ).json()["error"]["code"]
+        == "agent_forbidden"
+    )
+    assert (
+        feedback_client.post(
+            "/api/feedback/use",
+            json={"feedback_ids": [notes[2]["id"]], "ticket_id": own_ticket["id"]},
+            headers=supervisor_headers,
+        ).status_code
+        == 200
+    )
+    assert (
+        feedback_client.post(
+            "/api/feedback/use",
+            json={"feedback_ids": [notes[3]["id"]], "ticket_id": other_ticket["id"]},
+            headers=supervisor_headers,
+        ).json()["error"]["code"]
+        == "agent_forbidden"
+    )

@@ -742,6 +742,10 @@
       {
         "id": "consequences",
         "label": "Consequences"
+      },
+      {
+        "id": "retirement",
+        "label": "Retirement"
       }
     ],
     "label": "Planning Day",
@@ -804,6 +808,10 @@
       {
         "id": "consequences",
         "label": "Consequences"
+      },
+      {
+        "id": "retirement",
+        "label": "Retirement"
       }
     ],
     "label": "Planning Midday Check",
@@ -863,6 +871,10 @@
       {
         "id": "consequences",
         "label": "Consequences"
+      },
+      {
+        "id": "retirement",
+        "label": "Retirement"
       }
     ],
     "label": "Planning Sprint",

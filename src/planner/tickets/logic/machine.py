@@ -18,6 +18,8 @@ def field_is_passed(
     worker_type_definition: WorkerTypeDefinition,
 ) -> bool:
     """A field is passed when its gated Stage precedes the current Stage."""
+    if stage == "cancelled" and worker_type_definition.is_terminal(stage):
+        return False
     gated_stage = worker_type_definition.stage_gated_by(field)
     return worker_type_definition.stage_index(stage) > worker_type_definition.stage_index(
         gated_stage
@@ -30,6 +32,8 @@ def at_or_beyond_ceiling(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> bool:
+    if stage == "cancelled" and worker_type_definition.is_terminal(stage):
+        return True
     return worker_type_definition.stage_index(stage) >= worker_type_definition.stage_index(ceiling)
 
 

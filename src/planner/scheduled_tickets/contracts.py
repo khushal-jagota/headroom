@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from planner.core.contracts import Priority
 
 
 class ScheduleCadence(StrEnum):
+    daily = "daily"
     every_planning_day = "every_planning_day"
     current_sprint_day_four = "current_sprint_day_four"
     current_sprint_final_day = "current_sprint_final_day"
@@ -41,6 +42,7 @@ class ScheduledTicketTemplate:
     # Null current_sprint resolves at occurrence time. A non-null value preserves the
     # fixed Sprint of a legacy direct/Other schedule migrated into this contract.
     sprint_id: str | None = None
+    orchestrator_kind: str = field(default="chief", kw_only=True)
 
 
 @dataclass(frozen=True)

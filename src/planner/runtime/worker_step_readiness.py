@@ -71,7 +71,6 @@ def worker_step_blocker(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
-    planning_day_id: str,
     worker_type_definition: WorkerTypeDefinition,
 ) -> str | None:
     """Why Panels may not start this Ticket's next worker step, or nothing when it may.
@@ -82,12 +81,6 @@ def worker_step_blocker(
     first such caller. The first refusal wins, so the order below is the order of the
     checks, not a ranking.
     """
-    membership = conn.execute(
-        "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
-        (planning_day_id, ticket.id),
-    ).fetchone()
-    if membership is None:
-        return "the Ticket is not on today's Day"
     if worker_type_definition.is_terminal(ticket.stage):
         return f"the Stage {ticket.stage} is terminal"
     ownership_mode = machine.stage_ownership_mode(
@@ -119,7 +112,6 @@ def is_ready_for_worker_step(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
-    planning_day_id: str,
     worker_type_definition: WorkerTypeDefinition,
 ) -> bool:
     """Whether Panels may automatically start this Ticket's next worker step now."""
@@ -127,7 +119,6 @@ def is_ready_for_worker_step(
         worker_step_blocker(
             conn,
             ticket,
-            planning_day_id=planning_day_id,
             worker_type_definition=worker_type_definition,
         )
         is None

@@ -25,7 +25,6 @@ from planner.scheduled_tickets.contracts import (
 )
 from planner.scheduled_tickets.logic import cadence_qualifies, validate_local_time
 from planner.scheduled_tickets.runtime import ScheduledTicketLoop
-from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketStatus
@@ -43,7 +42,7 @@ def _template(
     kickoff_note: str = "Gather evidence first.",
     blocked_by: tuple[str, ...] = (),
     project_id: str | None = None,
-    placement_mode: ScheduledTicketPlacementMode = ScheduledTicketPlacementMode.current_sprint,
+    placement_mode: ScheduledTicketPlacementMode = ScheduledTicketPlacementMode.backlog,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
 ) -> ScheduledTicketTemplate:
@@ -56,6 +55,7 @@ def _template(
         project_id=project_id,
         placement_mode=placement_mode,
         sprint_item_id=sprint_item_id,
+        orchestrator_kind="sprint_item" if sprint_item_id is not None else "chief",
         employee_backend=None,
         employee_launch_model=None,
         blocked_by_ticket_ids=blocked_by,
@@ -67,7 +67,7 @@ def _schedule(
     conn: Connection,
     *,
     local_time: str = "14:30",
-    cadence: ScheduleCadence = ScheduleCadence.every_planning_day,
+    cadence: ScheduleCadence = ScheduleCadence.daily,
     template: ScheduledTicketTemplate | None = None,
 ) -> str:
     created = actions.create_schedule(
@@ -81,59 +81,6 @@ def _schedule(
     return created.id
 
 
-def _production_planning_schedules(
-    conn: Connection,
-) -> dict[str, str]:
-    conn.execute(
-        "INSERT OR IGNORE INTO projects "
-        "(id, name, summary, created_at, updated_at) "
-        "VALUES ('project_personal', 'Panels', '', 0, 0)"
-    )
-    definitions = (
-        (
-            "Plan the day",
-            "planning-day",
-            "05:05",
-            ScheduleCadence.every_planning_day,
-        ),
-        (
-            "Check the day at 14:30",
-            "planning-midday-check",
-            "14:30",
-            ScheduleCadence.every_planning_day,
-        ),
-        (
-            "Review current sprint and plan the next",
-            "planning-sprint",
-            "17:00",
-            ScheduleCadence.current_sprint_final_day,
-        ),
-    )
-    return {
-        worker_type: _schedule(
-            conn,
-            local_time=local_time,
-            cadence=cadence,
-            template=_template(
-                title=title,
-                worker_type=worker_type,
-                kickoff_note="",
-                project_id="project_personal",
-                placement_mode=ScheduledTicketPlacementMode.current_sprint,
-            ),
-        )
-        for title, worker_type, local_time, cadence in definitions
-    }
-
-
-def _insert_current_sprint(conn: Connection, *, date_end: str = "2026-07-28") -> None:
-    conn.execute(
-        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
-        "VALUES ('sp_current', 'Current', '2026-07-20', ?, 0, 0)",
-        (date_end,),
-    )
-
-
 def test_exact_time_and_cadence_rules_are_planning_neutral() -> None:
     assert validate_local_time("00:00") == "00:00"
     assert validate_local_time("23:59") == "23:59"
@@ -141,113 +88,16 @@ def test_exact_time_and_cadence_rules_are_planning_neutral() -> None:
         validate_local_time("7:30")
     assert invalid.value.code is ErrorCode.validation
 
-    ranges = (DateRange("sp_current", "2026-07-20", "2026-08-02"),)
-    assert cadence_qualifies(
+    assert cadence_qualifies(ScheduleCadence.daily, planning_day="2026-07-28", sprint_ranges=())
+    for retired in (
         ScheduleCadence.every_planning_day,
-        planning_day="2026-07-28",
-        sprint_ranges=ranges,
-    )
-    assert not cadence_qualifies(
-        ScheduleCadence.current_sprint_final_day,
-        planning_day="2026-07-28",
-        sprint_ranges=ranges,
-    )
-    assert cadence_qualifies(
         ScheduleCadence.current_sprint_day_four,
-        planning_day="2026-07-23",
-        sprint_ranges=ranges,
-    )
-    assert not cadence_qualifies(
-        ScheduleCadence.current_sprint_day_four,
-        planning_day="2026-07-24",
-        sprint_ranges=ranges,
-    )
-    assert cadence_qualifies(
         ScheduleCadence.current_sprint_final_day,
-        planning_day="2026-08-02",
-        sprint_ranges=ranges,
-    )
-
-
-def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill(
-    tmp_db: Connection,
-) -> None:
-    _insert_current_sprint(tmp_db)
-    schedule_ids = _production_planning_schedules(tmp_db)
-    morning = _now("2026-07-28T05:05:00")
-    prelaid_ids: dict[str, str] = {}
-    for worker_type in schedule_ids:
-        ticket = tickets_actions.create_ticket(
-            tmp_db,
-            title=f"Manual {worker_type}",
-            principal=OWNER_PRINCIPAL,
-            now=int(morning.timestamp()) - 60,
-            title_max_chars=TITLE_MAX_CHARS,
-            worker_type=worker_type,
-            project_id="project_personal",
-            planning_now=morning,
-            boundary_hour=5,
-        )
-        prelaid_ids[worker_type] = ticket.id
-
-    for missed_slot in (
-        "2026-07-28T05:06:00",
-        "2026-07-28T14:31:00",
-        "2026-07-28T17:01:00",
     ):
-        missed = _now(missed_slot)
-        assert (
-            actions.run_current_slot(
-                tmp_db,
-                planning_now=missed,
-                now=int(missed.timestamp()),
-                boundary_hour=5,
-            )
-            == []
-        )
-    assert all(
-        data.list_occurrences(tmp_db, schedule_id) == [] for schedule_id in schedule_ids.values()
-    )
-
-    morning_results = actions.run_current_slot(
-        tmp_db,
-        planning_now=morning,
-        now=int(morning.timestamp()),
-        boundary_hour=5,
-    )
-    midday = _now("2026-07-28T14:30:00")
-    midday_results = actions.run_current_slot(
-        tmp_db,
-        planning_now=midday,
-        now=int(midday.timestamp()),
-        boundary_hour=5,
-    )
-    sprint_end = _now("2026-07-28T17:00:00")
-    sprint_results = actions.run_current_slot(
-        tmp_db,
-        planning_now=sprint_end,
-        now=int(sprint_end.timestamp()),
-        boundary_hour=5,
-    )
-    repeated_midday = actions.run_current_slot(
-        tmp_db,
-        planning_now=midday.replace(second=30),
-        now=int(midday.timestamp()) + 30,
-        boundary_hour=5,
-    )
-
-    assert repeated_midday == midday_results
-    results = morning_results + midday_results + sprint_results
-    assert len(results) == 3
-    assert {result.outcome for result in results} == {OccurrenceOutcome.suppressed}
-    for result in results:
-        schedule = data.read_schedule(tmp_db, result.schedule_id)
-        assert result.ticket_id == prelaid_ids[schedule.template.worker_type]
-        assert data.list_occurrences(tmp_db, result.schedule_id) == [result]
-    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 3
+        assert not cadence_qualifies(retired, planning_day="2026-07-28", sprint_ranges=())
 
 
-def test_due_occurrence_creates_and_places_one_ordinary_ticket(
+def test_due_occurrence_creates_one_ordinary_ticket_without_day_placement(
     tmp_db: Connection,
 ) -> None:
     schedule_id = _schedule(tmp_db)
@@ -277,14 +127,11 @@ def test_due_occurrence_creates_and_places_one_ordinary_ticket(
     kickoff_proposal = ticket.pending_proposal
     assert kickoff_proposal is not None
     assert kickoff_proposal.body == "Gather evidence first."
-    assert tmp_db.execute(
-        "SELECT 1 FROM day_tickets WHERE day_id = 'day_2026-07-28' AND ticket_id = ?",
-        (ticket_id,),
-    ).fetchone()
+    assert tmp_db.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 0
     assert len(data.list_occurrences(tmp_db, schedule_id)) == 1
 
 
-def test_pre_five_am_occurrence_targets_the_previous_planning_day(
+def test_pre_five_am_occurrence_uses_local_calendar_date(
     tmp_db: Connection,
 ) -> None:
     _schedule(tmp_db, local_time="04:30")
@@ -297,8 +144,8 @@ def test_pre_five_am_occurrence_targets_the_previous_planning_day(
         boundary_hour=5,
     )
 
-    assert result[0].target_day_id == "day_2026-07-27"
-    assert tmp_db.execute("SELECT 1 FROM day_tickets WHERE day_id = 'day_2026-07-27'").fetchone()
+    assert result[0].target_day_id == "day_2026-07-28"
+    assert tmp_db.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 0
 
 
 def test_failure_is_recorded_once_and_does_not_stop_another_schedule(
@@ -405,13 +252,16 @@ def test_schedule_model_disabled_after_save_fails_once_without_ticket(
         == "enabled-override-model"
     )
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
-    assert tmp_db.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 1
-    assert actions.run_current_slot(
-        tmp_db,
-        planning_now=now,
-        now=int(now.timestamp()),
-        boundary_hour=5,
-    ) == results
+    assert tmp_db.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 0
+    assert (
+        actions.run_current_slot(
+            tmp_db,
+            planning_now=now,
+            now=int(now.timestamp()),
+            boundary_hour=5,
+        )
+        == results
+    )
     assert len(data.list_occurrences(tmp_db, failed_schedule_id)) == 1
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
 
@@ -439,62 +289,3 @@ def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(
         assert check.execute("SELECT count(*) FROM scheduled_ticket_occurrences").fetchone()[0] == 1
     finally:
         check.close()
-
-
-def test_outcome_context_is_independent_of_current_fixed_and_backlog_destinations(
-    tmp_db: Connection,
-) -> None:
-    from planner.sprints.data import create_item
-
-    _insert_current_sprint(tmp_db)
-    now = _now("2026-07-28T12:00:00")
-    clock = MutableClock(now)
-    outcome = create_item(
-        tmp_db, title="Shared context", project_id="project_personal", clock=clock
-    )
-    with pytest.raises(PlannerError, match="does not match"):
-        _schedule(
-            tmp_db,
-            template=_template(project_id="project_vylo", sprint_item_id=outcome.id),
-        )
-    fixed = _schedule(
-        tmp_db,
-        local_time="12:00",
-        template=_template(
-            worker_type="personal", title="Fixed", sprint_id="sp_current", sprint_item_id=outcome.id
-        ),
-    )
-    backlog = _schedule(
-        tmp_db,
-        local_time="12:00",
-        template=_template(
-            title="Backlog",
-            worker_type="personal",
-            placement_mode=ScheduledTicketPlacementMode.backlog,
-            sprint_item_id=outcome.id,
-        ),
-    )
-    rolling = _schedule(
-        tmp_db,
-        local_time="12:00",
-        template=_template(worker_type="personal", title="Rolling", sprint_item_id=outcome.id),
-    )
-    results = actions.run_current_slot(
-        tmp_db, planning_now=now, now=int(now.timestamp()), boundary_hour=5
-    )
-    actual = {r.schedule_id: tickets_data.read_ticket(tmp_db, str(r.ticket_id)) for r in results}
-    assert actual[fixed].sprint_id == "sp_current"
-    assert actual[backlog].sprint_id is None
-    assert actual[rolling].sprint_id == "sp_current"
-    assert {t.sprint_item_id for t in actual.values()} == {outcome.id}
-    actions.update_schedule(tmp_db, fixed, {"title": "Renamed only"}, now=20)
-    assert data.read_schedule(tmp_db, fixed).template.sprint_id == "sp_current"
-    actions.update_schedule(tmp_db, rolling, {"placement_mode": "backlog"}, now=21)
-    assert data.read_schedule(tmp_db, rolling).template.sprint_item_id == outcome.id
-    assert data.read_schedule(tmp_db, rolling).template.sprint_id is None
-    assert (
-        actions.run_current_slot(
-            tmp_db, planning_now=now, now=int(now.timestamp()) + 1, boundary_hour=5
-        )
-        == results
-    )

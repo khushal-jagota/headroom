@@ -100,13 +100,17 @@ def test_two_sprint_outcome_journey_preserves_history_context_and_exact_partitio
     commitments.set_commitment(tmp_db, second.id, outcome.id, committed=False, admit=admit)
     other = views.sprint_tracking_view(tmp_db, second.id, "2026-07-09")
     assert other["outcome_groups"][0]["committed"] is False
-    workspace = views.item_workspace(tmp_db, outcome.id, "day_2026-07-04")
+    workspace = views.item_workspace(tmp_db, outcome.id)
     assert "rollup" not in workspace and "status" not in workspace and "sprint_id" not in workspace
+    assert {t["id"] for t in workspace["tickets"]} == {done.id, chosen.id, left.id}
     assert {t["id"]: (t["sprint_id"], t["sprint_name"]) for t in workspace["tickets"]} == {
         done.id: (first.id, "First"),
         chosen.id: (second.id, "Second"),
         left.id: (first.id, "First"),
     }
+    # Historical Sprint associations remain in storage while the active workspace uses assignments.
+    assert tickets.read_ticket(tmp_db, done.id).sprint_id == first.id
+    assert tickets.read_ticket(tmp_db, chosen.id).sprint_id == second.id
     assert {t["id"]: t["activity_at"] for t in workspace["tickets"]} == {
         done.id: 2,
         chosen.id: 2,
@@ -132,14 +136,8 @@ def test_two_sprint_outcome_journey_preserves_history_context_and_exact_partitio
         now=6,
     )
     assert tickets.read_ticket(tmp_db, chosen.id).sprint_item_id == outcome.id
-    assert (
-        next(
-            t
-            for t in views.item_workspace(tmp_db, outcome.id, "day_2026-07-04")["tickets"]
-            if t["id"] == chosen.id
-        )["sprint_name"]
-        is None
-    )
+    assert tickets.read_ticket(tmp_db, chosen.id).sprint_id is None
+    assert chosen.id in {row["id"] for row in views.item_workspace(tmp_db, outcome.id)["tickets"]}
 
 
 def test_carry_rejects_entire_stale_selection_and_preserves_existing_authority(

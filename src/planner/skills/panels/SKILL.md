@@ -7,15 +7,20 @@ description: Orientation to the Panels system — its pieces, the daily cycle, w
 
 Panels is a **workspace for agents**, where the user's work lives. It includes a planning system.
 
-The planning system has these pieces:
+The workspace has these pieces:
 
-- A **day** is what the user wants to get done on a planning date.
-- A **sprint** is a fixed seven-day period.
-- A **sprint item** is an optional goal or outcome classification inside a sprint, or
-  a backlog item when unscheduled.
-- A **ticket** is one unit of work with direct Project and optional Sprint placement,
-  often done by an agent alongside the user.
-- An **idea** is a loose thought that may or may not become committed work.
+- An **orchestrator** holds shared intent, Workers, artifacts, and a conversation.
+- **Chief** is a special orchestrator and an explicit Worker assignment destination.
+- A **Worker** is one Ticket with one coherent job and a registered lifecycle.
+- An **idea** is a possibility that is not committed work.
+
+Ordinary orchestrators keep their former Sprint Item IDs and supervisor conversations.
+Workers name Chief or an ordinary orchestrator explicitly. Assignment, Project, approval
+holder, and Chief authority are separate facts. The owner can settle ordinary
+orchestrators. Chief can never settle. Settlement does not gate Worker continuation.
+
+Sprint and Day records are historical. Their live write commands and planning schedules
+are retired. Do not recreate them or create replacement recurring reviews.
 
 Tickets have a Worker type that sets their stages and worker. Worker types include
 `coding` (product or repo work), `debugging` (understanding a reported bug, diagnosing
@@ -27,16 +32,13 @@ a new kind of worker), `amend_worker` (changing an existing Worker type in place
 before creating its downstream Tickets), `initiative_review` (reviewing a delivered
 multi-Ticket change as one result and creating agreed follow-up work), `product_design`
 (designing holistic product flows and implementation-ready interactive artifacts),
-`planning-day` (planning the morning's Day with the user), `planning-midday-check`
-(checking execution against the morning intent), and `planning-sprint` (reviewing one
-sprint and planning the next at the boundary). New Worker types are added here as they ship.
+and other registered specialists. The old `planning-day`, `planning-midday-check`, and
+`planning-sprint` definitions remain for historical reads. Do not create or run new work
+through those types.
 
-Each Worker type defines its own ordered lifecycle and one canonical field for each
-non-terminal Stage. For example, coding uses **Brief → Success Condition → What Changes →
-Plan → Implementation → Consequences → Done**, while `planning-day` uses **Previous Day
-Review → Today's Direction → Day Changes → Consequences → Done**, `planning-midday-check` uses **Brief → Agreed
-Intervention → Consequences → Done**, and `planning-sprint` uses **Brief → Review → Next
-Sprint → Consequences → Done**.
+Each Worker type defines its lifecycle and one canonical field for each non-terminal
+Stage. Coding uses **Brief → Success Condition → What Changes → Plan → Implementation →
+Consequences → Done**.
 
 ## Communication
 
@@ -60,22 +62,16 @@ A ticket can own durable work products such as HTML, images, Markdown documents,
 Artifacts complement the ticket record. The Worker type's gated fields, recap, and notes
 remain concise canonical Markdown, with links to richer work when it helps.
 
-## Scheduled planning
+## Continuation and schedules
 
-Panels schedules ordinary planning Tickets and hands each one to its specialist Worker:
+Ordinary Workers follow existing continuation rules without Today membership. Keep
+ceilings, approvals, blockers, stage ownership, current claims, busy checks, and context
+recovery rules. Do not invent another activation gate or retire ordinary unfinished work.
 
-- `planning-day` gathers the morning evidence and plans the Day with the user.
-- `planning-midday-check` checks execution against the morning intent.
-- A personal Checkpoint Ticket prompts reflection at 17:00 on sprint day four.
-- `planning-sprint` reviews the current sprint and plans the next at the boundary.
-
-The three planning Worker types use the Personal Project and direct current-Sprint
-placement, with no Planning Item. Initiative Planning stays with its initiative.
-
-The 05:00 boundary determines which Day and sprint day are current. It does not run a
-separate rollover workflow. The Planning Sprint Ticket stays at 17:00 on the final day.
-Scheduled Tickets do not backfill a missed occurrence. If a run is missed, recover by
-creating the intended Ticket through ordinary `panels ticket create`.
+Useful ordinary daily schedules remain. They use local calendar dates, preserve durable
+occurrence receipts, and do not create Days. Old planning schedules are retired without
+replacement. Historical proposals remain readable but cancelled Workers cannot receive
+actionable approvals.
 
 ## The CLI
 
@@ -85,21 +81,21 @@ Before creating any Ticket, load and follow **`panels-ticket-creation`**. It own
 shared creation model; the role-specific skill that sent you there still owns whether
 creation is authorized and what follow-up its workflow requires.
 
-Ordinary help exposes five object and intent based roots:
+Ordinary help exposes these object and intent roots:
 
 - `panels send-message ...` for existing conversations.
 - `panels project ...` for Projects.
-- `panels day ...` for planning and operating on a day.
+- `panels day show <date>` for a historical Day.
 - `panels ticket ...` for Ticket creation, inspection, edits, proposals, and lifecycle actions.
-- `panels sprint ...` and `panels sprint item ...` for planning and populating sprints.
+- `panels orchestrator ...` for ordinary orchestrators.
+- `panels sprint ...` for historical reads and the stable `sprint item` alias.
 
 The server derives the caller from runtime context and enforces authority at each route.
 Administrative commands remain callable when a specialist skill names one, but they do
 not appear in ordinary root help.
 
 The main list reads are bounded summaries. `ticket list`, `sprint list`, `sprint item
-list`, and `project list` return 30 rows by default. Use `ticket list --day` for Day
-membership. Their text and
+list`, and `project list` return 30 rows by default. Their text and
 JSON output state the omissions and the next offset. Use `--limit` and `--offset` for
 another page. Ticket lists exclude terminal Tickets by default. Use repeatable Stage and
 `ticket_status` filters, exclusions, `--include-terminal`, and `--search` to narrow the
@@ -112,6 +108,3 @@ result before you increase its limit.
   messages to their Worker conversations.
 - **`panels-ticket-creation`** — the shared model for creating a coherent Ticket.
 - **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.
-- **`panels-worker-planning-day`** — gathering evidence and planning the Day.
-- **`panels-worker-planning-midday-check`** — checking the Day at midday.
-- **`panels-worker-planning-sprint`** — reviewing the current sprint and planning the next.

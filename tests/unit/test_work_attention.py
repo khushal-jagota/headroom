@@ -159,7 +159,7 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
     conn.close()
 
 
-def test_board_item_carries_all_children_without_expanding_day_columns(tmp_path: Path) -> None:
+def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path: Path) -> None:
     db_path = tmp_path / "complete_board.db"
     conn = connect(str(db_path))
     create_schema(conn)
@@ -206,7 +206,7 @@ def test_board_item_carries_all_children_without_expanding_day_columns(tmp_path:
         "UPDATE tickets SET conversation_id = 'c_off_today_child' WHERE id = ?", (rows[1].id,)
     )
     conn.commit()
-    board = board_view(conn, day_id="2026-10-16")
+    board = board_view(conn)
     record = ConversationStore(str(db_path))
     # Board cards and duplicate nested child rows share one conversation projection.
     with patch.object(record, "attention_facts", wraps=record.attention_facts) as attention:
@@ -216,7 +216,9 @@ def test_board_item_carries_all_children_without_expanding_day_columns(tmp_path:
             )
         )
     attention.assert_awaited_once_with({"c_off_today_child"})
-    assert [card["id"] for column in board["columns"] for card in column["cards"]] == [rows[0].id]
+    assert {card["id"] for column in board["columns"] for card in column["cards"]} == {
+        row.id for row in rows
+    }
     [item_row] = board["sprint_items"]
     assert item_row["title"] == "Complete approval queue"
     assert item_row["priority"] == "P0"

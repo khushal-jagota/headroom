@@ -87,7 +87,7 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
             "worker_type": "coding",
             "title": "Supervisor review",
             "kickoff_note": "Start here.",
-            "sprint_item_id": item_id,
+            "orchestrator": {"kind": "sprint_item", "id": item_id},
             "ceiling": "needs_success_condition",
         },
         headers=_supervisor_headers(item_id),
@@ -225,7 +225,7 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
                 "worker_type": "coding",
                 "title": "Current child",
                 "kickoff_note": "Start.",
-                "sprint_item_id": item["id"],
+                "orchestrator": {"kind": "sprint_item", "id": item["id"]},
             },
         ).json()
         with connect(str(db_path)) as conn:
@@ -280,7 +280,7 @@ def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path)
                 "worker_type": "coding",
                 "title": "Current child",
                 "kickoff_note": "Start.",
-                "sprint_item_id": own["id"],
+                "orchestrator": {"kind": "sprint_item", "id": own["id"]},
             },
         ).json()
         worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
@@ -465,7 +465,7 @@ def test_rejection_after_the_day_boundary_rearms_one_worker_step(tmp_path: Path)
             )
         }
         assert revision_feedback.snapshot(conn, str(ticket["id"])) is None
-    assert day_ids == {"day_2026-09-21", "day_2026-09-22"}
+    assert day_ids == set()
     assert after.worker_step_claim.value == "out"
     assert after.worker_step_claim_revision == before_claim_revision + 1
 
@@ -560,7 +560,7 @@ def test_restart_rearms_only_the_legacy_idle_revision_shape(tmp_path: Path) -> N
             )
         }
         assert revision_feedback.snapshot(conn, ticket_ids[0]) is None
-    assert recovered_days == {"day_2026-09-21", "day_2026-09-22"}
+    assert recovered_days == {"day_2026-09-21"}
     assert unrelated_days == {"day_2026-09-21"}
 
 
@@ -646,7 +646,7 @@ def test_legacy_recovery_does_not_trust_stale_running_bookkeeping(tmp_path: Path
         assert revision_feedback.snapshot(conn, ready.id) is None
     assert current.conversation_id == conversation_id
     assert current.worker_step_claim.value == "out"
-    assert day_ids == {"day_2026-09-21", "day_2026-09-22"}
+    assert day_ids == {"day_2026-09-21"}
 
 
 def test_legacy_recovery_refuses_a_launch_override_before_mutation(tmp_path: Path) -> None:
@@ -869,7 +869,7 @@ def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the I
             "worker_type": "coding",
             "title": title,
             "kickoff_note": "Do the work.",
-            "sprint_item_id": item_id,
+            "orchestrator": {"kind": "sprint_item", "id": item_id},
         },
     )
     assert created.status_code == 200, created.text
@@ -931,7 +931,7 @@ def _stranded_child(
             "worker_type": worker_type,
             "title": "Stranded child",
             "kickoff_note": "Start here.",
-            "sprint_item_id": item_id,
+            "orchestrator": {"kind": "sprint_item", "id": item_id},
         },
     ).json()
     accepted = client.post(
@@ -1049,7 +1049,7 @@ def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
                 "worker_type": "coding",
                 "title": "Child",
                 "kickoff_note": "Start.",
-                "sprint_item_id": own["id"],
+                "orchestrator": {"kind": "sprint_item", "id": own["id"]},
             },
         ).json()
         itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])}
@@ -1086,7 +1086,7 @@ def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -
                 "worker_type": "coding",
                 "title": "Mine",
                 "kickoff_note": "Start.",
-                "sprint_item_id": own["id"],
+                "orchestrator": {"kind": "sprint_item", "id": own["id"]},
             },
         ).json()
         stranger = client.post(

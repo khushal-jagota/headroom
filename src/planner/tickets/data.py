@@ -72,7 +72,6 @@ class _WorkerStepReadinessCheck(Protocol):
         conn: sqlite3.Connection,
         ticket: Ticket,
         *,
-        planning_day_id: str,
         worker_type_definition: WorkerTypeDefinition,
     ) -> bool: ...
 
@@ -283,6 +282,7 @@ def validate_ticket_creation_context(
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
     runtime_definitions.worker_type_registry.require(worker_type)
+    admission.require_creatable_worker_type(worker_type)
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         runtime_definitions.worker_type_registry, worker_type
     )
@@ -332,6 +332,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         project_name=row["project_name"],
         sprint_id=row["sprint_id"],
         sprint_item_id=row["sprint_item_id"],
+        orchestrator_kind=str(row["orchestrator_kind"]),
         effective_sprint_id=row["sprint_id"],
         resolved_priority_anchors=ResolvedTicketPriorityAnchors(
             sprint_item=(
@@ -867,6 +868,7 @@ def create_ticket(
     priority: Priority | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
+    orchestrator_kind: str | None = None,
     worker_type: str,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -876,6 +878,12 @@ def create_ticket(
     stated_ceiling: str | None = None,
     stated_holder: Principal | None = None,
 ) -> Ticket:
+    admission.require_creatable_worker_type(worker_type)
+    orchestrator_kind = orchestrator_kind or ("sprint_item" if sprint_item_id else "chief")
+    if orchestrator_kind not in {"chief", "sprint_item"} or (
+        (orchestrator_kind == "sprint_item") != (sprint_item_id is not None)
+    ):
+        raise PlannerError(ErrorCode.validation, "orchestrator kind does not match assignment")
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
@@ -963,11 +971,11 @@ def create_ticket(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
-            "project_id, sprint_id, sprint_item_id, "
+            "project_id, sprint_id, sprint_item_id, orchestrator_kind, "
             "recap, ceiling, ceiling_holder, "
             "conversation_id, field_values, pending_proposal, pending_proposal_revision, "
             "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
             "?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -982,6 +990,7 @@ def create_ticket(
                 None if sprint_item_id is not None else project_id,
                 sprint_id,
                 sprint_item_id,
+                orchestrator_kind,
                 ceiling,
                 _principal_to_json(ceiling_holder),
                 values_json,
@@ -1081,7 +1090,6 @@ def claim_ticket_for_worker_step(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    planning_day_id_resolver: Callable[[], str],
     readiness_check: _WorkerStepReadinessCheck,
     now: int,
 ) -> Ticket | None:
@@ -1100,11 +1108,9 @@ def claim_ticket_for_worker_step(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        planning_day_id = planning_day_id_resolver()
         if not readiness_check(
             conn,
             ticket,
-            planning_day_id=planning_day_id,
             worker_type_definition=worker_type_definition,
         ):
             return None
@@ -1174,10 +1180,15 @@ def release_worker_step_claim(
     Reports whether the release actually fired.
     """
     with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.worker_step_claim is not expected_claim:
+        row = conn.execute(
+            "SELECT worker_step_claim, worker_step_claim_revision FROM tickets WHERE id = ?",
+            (ticket_id,),
+        ).fetchone()
+        if row is None:
+            raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
+        if str(row["worker_step_claim"]) != expected_claim.value:
             return False
-        if ticket.worker_step_claim_revision != expected_claim_revision:
+        if int(row["worker_step_claim_revision"]) != expected_claim_revision:
             return False
         _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.none, now)
         return True
@@ -1379,7 +1390,6 @@ def reject_proposal(
     *,
     message: str | None,
     principal: Principal,
-    planning_day_id: str,
     now: int,
     expected_proposal: PendingTicketProposal | None = None,
 ) -> Ticket:
@@ -1419,14 +1429,6 @@ def reject_proposal(
             (ticket_id, ticket.stage),
         )
         _give_back_worker_step_claim(conn, updated, now=now)
-        if (
-            machine.stage_ownership_mode(
-                updated.stage,
-                worker_type_definition=worker_type_definition,
-            )
-            is StageOwnershipMode.worker
-        ):
-            days_data.add_day_ticket(conn, planning_day_id, ticket_id, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1634,7 +1636,7 @@ def edit_ticket(
             authority.require_above(conn, principal, target)
         else:
             authority.require_above_or_self(conn, principal, target)
-        if admission.TICKET_FIELD_THAT_MOVES_THE_PARENT in edit:
+        if admission.TICKET_FIELD_THAT_MOVES_THE_PARENT in edit or "orchestrator" in edit:
             authority.refuse_outcome_re_parenting(principal, ticket_id)
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
@@ -1647,6 +1649,18 @@ def edit_ticket(
         sprint_item_id = (
             edit["sprint_item_id"] if "sprint_item_id" in edit else ticket.sprint_item_id
         )
+        orchestrator_kind = ticket.orchestrator_kind
+        if "orchestrator" in edit:
+            if "sprint_item_id" in edit:
+                raise PlannerError(ErrorCode.validation, "use only orchestrator for assignment")
+            orchestrator = edit["orchestrator"]
+            admission.validate_orchestrator(orchestrator)
+            orchestrator_kind = orchestrator.kind.value
+            sprint_item_id = (
+                orchestrator.id if orchestrator.kind is PrincipalKind.sprint_item else None
+            )
+        elif "sprint_item_id" in edit:
+            orchestrator_kind = "sprint_item" if sprint_item_id is not None else "chief"
         stored_project_row = conn.execute(
             "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
         ).fetchone()
@@ -1671,9 +1685,7 @@ def edit_ticket(
                 )
             stored_project_id = None
         else:
-            effective_project_id = (
-                edit["project_id"] if "project_id" in edit else ticket.project_id
-            )
+            effective_project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
             stored_project_id = effective_project_id
 
         # Validate the intended final Ticket before its first durable effect. Parent
@@ -1695,6 +1707,7 @@ def edit_ticket(
             ("project_id", "project_id", old_stored_project_id, stored_project_id),
             ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
             ("sprint_item_id", "sprint_item_id", ticket.sprint_item_id, sprint_item_id),
+            ("orchestrator_kind", "orchestrator_kind", ticket.orchestrator_kind, orchestrator_kind),
         )
         changes = [change for change in candidates if change[2] != change[3]]
 
@@ -1858,7 +1871,8 @@ def classify_ticket(
         if ticket.sprint_item_id == sprint_item_id:
             return ticket
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = ?, project_id = NULL, updated_at = ? WHERE id = ?",
+            "UPDATE tickets SET sprint_item_id = ?, orchestrator_kind = 'sprint_item', "
+            "project_id = NULL, updated_at = ? WHERE id = ?",
             (sprint_item_id, now, ticket_id),
         )
         _release_a_holder_the_move_left_below(
@@ -1901,7 +1915,8 @@ def unclassify_ticket(
         if ticket.sprint_item_id != sprint_item_id:
             raise PlannerError(ErrorCode.validation, "Ticket has a different Outcome")
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = NULL, project_id = ?, updated_at = ? "
+            "UPDATE tickets SET sprint_item_id = NULL, orchestrator_kind = 'chief', "
+            "project_id = ?, updated_at = ? "
             "WHERE id = ?",
             (str(item["project_id"]), now, ticket_id),
         )

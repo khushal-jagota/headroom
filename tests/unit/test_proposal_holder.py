@@ -194,7 +194,7 @@ def test_review_lists_only_owner_addressed_proposals(tmp_db: Connection) -> None
     days_data.add_day_ticket(tmp_db, day_id, owner_ticket.id, 30)
     days_data.add_day_ticket(tmp_db, day_id, chief_ticket.id, 30)
 
-    review = views.review_view(tmp_db, day_id=day_id)
+    review = views.review_view(tmp_db)
     assert [item["ticket_id"] for item in review["items"]] == [owner_ticket.id]
 
 
@@ -215,7 +215,6 @@ def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and
             message="  Preserve exact spacing.  ",
             ctx=RequestContext(OWNER_PRINCIPAL),
             clock=fake_clock,
-            boundary_hour=5,
         )
     )
 
@@ -227,12 +226,10 @@ def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and
     assert feedback.stage == ticket.stage
     assert feedback.items[0].sender == OWNER_PRINCIPAL
     assert feedback.items[0].message == "  Preserve exact spacing.  "
-    assert [row.ticket_id for row in days_data.list_day_tickets(tmp_db, "day_2026-07-04")] == [
-        ticket.id
-    ]
+    assert days_data.list_day_tickets(tmp_db, "day_2026-07-04") == []
 
 
-def test_rejection_rolls_back_feedback_proposal_day_and_claim_together(
+def test_rejection_rolls_back_feedback_proposal_and_claim_together(
     tmp_db: Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -242,17 +239,16 @@ def test_rejection_rolls_back_feedback_proposal_day_and_claim_together(
         (ticket.id,),
     )
 
-    def fail_day_placement(*_args: object, **_kwargs: object) -> bool:
-        raise RuntimeError("day placement failed")
+    def fail_attention_capture(*_args: object, **_kwargs: object) -> bool:
+        raise RuntimeError("attention capture failed")
 
-    monkeypatch.setattr(days_data, "add_day_ticket", fail_day_placement)
-    with pytest.raises(RuntimeError, match="day placement failed"):
+    monkeypatch.setattr(data, "capture_ticket_attention", fail_attention_capture)
+    with pytest.raises(RuntimeError, match="attention capture failed"):
         data.reject_proposal(
             tmp_db,
             ticket.id,
             message="Keep all rejection writes atomic.",
             principal=OWNER_PRINCIPAL,
-            planning_day_id="day_2026-07-04",
             now=20,
         )
 
@@ -263,7 +259,7 @@ def test_rejection_rolls_back_feedback_proposal_day_and_claim_together(
     assert days_data.list_day_tickets(tmp_db, "day_2026-07-04") == []
 
 
-def test_rejection_resolves_the_day_after_awaited_reply_lookup(
+def test_rejection_does_not_create_a_day_when_reply_lookup_crosses_the_boundary(
     tmp_db: Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -287,17 +283,14 @@ def test_rejection_resolves_the_day_after_awaited_reply_lookup(
             AsyncMock(),
             tmp_db,
             ticket.id,
-            message="Resolve the Day after the reply lookup.",
+            message="No calendar placement after the reply lookup.",
             ctx=RequestContext(OWNER_PRINCIPAL),
             clock=clock,
-            boundary_hour=5,
         )
     )
 
     assert revised.pending_proposal is None
-    assert [row.ticket_id for row in days_data.list_day_tickets(tmp_db, "day_2026-09-22")] == [
-        ticket.id
-    ]
+    assert days_data.list_day_tickets(tmp_db, "day_2026-09-22") == []
     assert days_data.list_day_tickets(tmp_db, "day_2026-09-21") == []
 
 
@@ -311,7 +304,6 @@ def test_revision_feedback_is_discarded_when_the_ticket_leaves_its_stage(
         ticket.id,
         message="Revise only this stage.",
         principal=OWNER_PRINCIPAL,
-        planning_day_id="day_2026-07-04",
         now=20,
     )
     data.file_current_proposal(
@@ -554,7 +546,7 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
     ticket = _park_under(tmp_db, left)
     day_id = "day_2026-09-21"
     days_data.add_day_ticket(tmp_db, day_id, ticket.id, 20)
-    assert views.review_view(tmp_db, day_id=day_id)["items"] == []
+    assert views.review_view(tmp_db)["items"] == []
 
     data.edit_ticket(
         tmp_db,
@@ -569,7 +561,7 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
     assert moved.ceiling_holder == OWNER_PRINCIPAL
     assert moved.pending_proposal == ticket.pending_proposal
     assert "Inbox triage" in moved.guidance and "Sprint hygiene" in moved.guidance
-    review = views.review_view(tmp_db, day_id=day_id)
+    review = views.review_view(tmp_db)
     assert [item["ticket_id"] for item in review["items"]] == [ticket.id]
 
 
@@ -632,7 +624,10 @@ def test_only_a_move_returns_the_ceiling_not_any_other_edit(
     """A Ticket already stranded stays stranded until something moves it."""
     left = _outcome(tmp_db, "Inbox triage", fake_clock)
     ticket = _park_under(tmp_db, left)
-    tmp_db.execute("UPDATE tickets SET sprint_item_id = NULL WHERE id = ?", (ticket.id,))
+    tmp_db.execute(
+        "UPDATE tickets SET sprint_item_id = NULL, orchestrator_kind = 'chief' WHERE id = ?",
+        (ticket.id,),
+    )
 
     data.edit_ticket(
         tmp_db,

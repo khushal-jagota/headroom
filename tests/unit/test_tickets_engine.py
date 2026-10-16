@@ -20,7 +20,6 @@ from planner.conversation.contracts import ConversationBackendKey
 from planner.core import ticket_blocks
 from planner.core.contracts import Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days import data as days_data
 from planner.projects import data as projects_data
 from planner.runtime import worker_step_readiness
 from planner.sprints import data as sprints_data
@@ -48,9 +47,6 @@ def probe_runtime() -> Iterator[None]:
         yield
     finally:
         uninstall_probe_registry()
-
-
-_AUTOMATIC_PLANNING_DAY_ID = "day_2099-01-01"
 
 
 def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticket:
@@ -91,18 +87,9 @@ def _scope(conn: Connection, t: Ticket, ceiling: str, clock: TestClock) -> Ticke
 
 
 def _claim_ready_worker_step(conn: Connection, ticket_id: str, *, now: int) -> Ticket | None:
-    if (
-        conn.execute(
-            "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
-            (_AUTOMATIC_PLANNING_DAY_ID, ticket_id),
-        ).fetchone()
-        is None
-    ):
-        days_data.add_day_ticket(conn, _AUTOMATIC_PLANNING_DAY_ID, ticket_id, now)
     return data.claim_ticket_for_worker_step(
         conn,
         ticket_id,
-        planning_day_id_resolver=lambda: _AUTOMATIC_PLANNING_DAY_ID,
         readiness_check=worker_step_readiness.is_ready_for_worker_step,
         now=now,
     )
@@ -681,13 +668,13 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
     # Recap is never blocked: writable from the first worker stage.
     assert t.stage == "needs_success_condition"
     t = data.edit_ticket(
-            tmp_db,
-            t.id,
-            edit=TicketEdit(recap="first recap"),
-            title_max_chars=200,
-            principal=ticket_principal(t.id),
-            now=now,
-        )
+        tmp_db,
+        t.id,
+        edit=TicketEdit(recap="first recap"),
+        title_max_chars=200,
+        principal=ticket_principal(t.id),
+        now=now,
+    )
     assert t.recap == "first recap"
     assert t.stage == "needs_success_condition"
 
@@ -702,13 +689,13 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
     assert t.stage == "needs_what_changes"
 
     t = data.edit_ticket(
-            tmp_db,
-            t.id,
-            edit=TicketEdit(recap="second recap"),
-            title_max_chars=200,
-            principal=ticket_principal(t.id),
-            now=now,
-        )
+        tmp_db,
+        t.id,
+        edit=TicketEdit(recap="second recap"),
+        title_max_chars=200,
+        principal=ticket_principal(t.id),
+        now=now,
+    )
     assert t.recap == "second recap"
     assert t.stage == "needs_what_changes"
 
@@ -716,13 +703,13 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
     t = advance_ticket(tmp_db, t.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
     assert t.stage == "done"
     t = data.edit_ticket(
-            tmp_db,
-            t.id,
-            edit=TicketEdit(recap="post-done recap"),
-            title_max_chars=200,
-            principal=ticket_principal(t.id),
-            now=now,
-        )
+        tmp_db,
+        t.id,
+        edit=TicketEdit(recap="post-done recap"),
+        title_max_chars=200,
+        principal=ticket_principal(t.id),
+        now=now,
+    )
     assert t.recap == "post-done recap"
 
 
@@ -951,11 +938,11 @@ def test_completing_a_blocker_releases_its_blocks_and_frees_the_target(
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
-def _on_the_automatic_day(conn: Connection, ticket_id: str) -> bool:
+def _has_day_membership(conn: Connection, ticket_id: str) -> bool:
     return (
         conn.execute(
-            "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
-            (_AUTOMATIC_PLANNING_DAY_ID, ticket_id),
+            "SELECT 1 FROM day_tickets WHERE ticket_id = ?",
+            (ticket_id,),
         ).fetchone()
         is not None
     )
@@ -971,8 +958,8 @@ def _created_with_blockers(
 ) -> Ticket:
     """Create a dependent Ticket the way the incident did.
 
-    On the Day, with its blockers, and with a ceiling that accepts the Brief inside the
-    create itself, so the create is the only write the Ticket receives."""
+    With its blockers and a ceiling that accepts the Brief inside the create itself,
+    so creation is the only write the Ticket receives. No Day membership is required."""
     return _create(
         conn,
         cfg,
@@ -980,7 +967,6 @@ def _created_with_blockers(
         title=title,
         settle_kickoff=False,
         stated_ceiling="needs_success_condition",
-        day_id=_AUTOMATIC_PLANNING_DAY_ID,
         blocked_by_ticket_ids=blocker_ids,
     )
 
@@ -996,7 +982,7 @@ def test_a_ticket_created_with_a_live_blocker_never_starts_until_it_clears(
 
     assert created.stage == "needs_success_condition"
     assert created.ticket_status is TicketStatus.blocked
-    assert _on_the_automatic_day(tmp_db, created.id)
+    assert not _has_day_membership(tmp_db, created.id)
     assert _claim_ready_worker_step(tmp_db, created.id, now=now) is None
 
     advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
@@ -1052,7 +1038,6 @@ def test_a_parked_brief_outranks_a_creation_blocker_until_it_is_settled(
         fake_clock,
         title="Parked and blocked",
         settle_kickoff=False,
-        day_id=_AUTOMATIC_PLANNING_DAY_ID,
         blocked_by_ticket_ids=[blocker.id],
     )
 
@@ -1079,7 +1064,7 @@ def test_a_failed_creation_block_rolls_the_whole_create_back(
     fake_clock: TestClock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The Ticket row, its Day row, and its blocks are one transaction. A second reader
+    # The Ticket row and its blocks are one transaction. A second reader
     # must never find the Ticket without the blockers it was created with, so a failure
     # partway through the blocks has to take the Ticket with it.
     first = _create(tmp_db, cfg, fake_clock, title="First blocker")
@@ -1105,12 +1090,7 @@ def test_a_failed_creation_block_rolls_the_whole_create_back(
     assert written == [first.id, second.id]
     assert _ticket_count(tmp_db) == tickets_before
     assert _blocked_tickets(tmp_db, first.id) == []
-    assert (
-        tmp_db.execute(
-            "SELECT COUNT(*) FROM day_tickets WHERE day_id = ?", (_AUTOMATIC_PLANNING_DAY_ID,)
-        ).fetchone()[0]
-        == 0
-    )
+    assert tmp_db.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0] == 0
 
 
 def test_a_blocker_already_done_at_creation_holds_nothing(
@@ -1137,7 +1117,6 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
     # come back to it legitimately, and a late release must not erase that second arrival.
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
-    days_data.add_day_ticket(tmp_db, _AUTOMATIC_PLANNING_DAY_ID, t.id, now)
     claimed = _claim_ready_worker_step(tmp_db, t.id, now=now)
     assert claimed is not None
 
@@ -1176,8 +1155,6 @@ def test_a_create_that_names_no_brief_parks_nothing(
     assert blank.pending_proposal is None
     assert dict(blank.field_values) == {}
 
-    whitespace = _create(
-        tmp_db, cfg, fake_clock, kickoff_note="  \n\t ", settle_kickoff=False
-    )
+    whitespace = _create(tmp_db, cfg, fake_clock, kickoff_note="  \n\t ", settle_kickoff=False)
     assert whitespace.pending_proposal is None
     assert whitespace.ticket_status is TicketStatus.empty

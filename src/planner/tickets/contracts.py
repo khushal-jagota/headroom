@@ -100,6 +100,7 @@ class BoardCardSource(TypedDict):
     sprint_item_id: str | None
     sprint_item_title: str | None
     sprint_item_priority: str | None
+    orchestrator: JsonDict
 
 
 class BoardCard(BoardCardSource, WorkAttention):
@@ -119,6 +120,7 @@ class BoardSprintItemSource(TypedDict):
     created_at: int
     conversation_id: str | None
     tickets: list[JsonDict]
+    settled: bool
 
 
 class BoardSprintItem(BoardSprintItemSource, WorkAttention):
@@ -177,6 +179,7 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
+    orchestrator: object  # explicit chief or sprint_item Principal reference
     blocked_by_ticket_ids: list[str]
     # Scope stated at creation by whoever has the authority to grant it. A creator that
     # states scope creates the Ticket already scoped. Omission keeps the default leash:
@@ -202,6 +205,7 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
+    orchestrator: Principal
     recap: str
     guidance: str  # replaces the document
     guidance_append: str  # adds to it; naming both in one call is refused
@@ -257,7 +261,8 @@ class Ticket:  # §3.3 — column names match exactly
     project_name: str | None
     sprint_id: str | None  # canonical Ticket Sprint placement; NULL is backlog
     sprint_item_id: str | None
-    effective_sprint_id: str | None  # compatibility alias for sprint_id
+    orchestrator_kind: str = field(default="chief", kw_only=True)
+    effective_sprint_id: str | None  # historical Sprint association
     resolved_priority_anchors: ResolvedTicketPriorityAnchors
     recap: str  # writable only past the type's first worker Stage
     guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket

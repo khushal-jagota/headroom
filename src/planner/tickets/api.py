@@ -57,7 +57,6 @@ from planner.core.contracts import (
 )
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
 from planner.list_reads.detail import (
@@ -97,6 +96,7 @@ from planner.tickets.contracts import (
     TicketListFilters,
     TicketStatus,
 )
+from planner.tickets.logic import admission
 from planner.work_attention import add_work_attention
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
@@ -334,6 +334,11 @@ def _marshal_settled_field_values(
 
 
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
+    obsolete = set(raw) & {"sprint_id", "sprint_item_id", "day", "day_id"}
+    if obsolete:
+        raise PlannerError(
+            ErrorCode.validation, "use orchestrator assignment instead of calendar placement"
+        )
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
         title=body_str(raw, "title"),
@@ -342,8 +347,7 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
-        sprint_id=body_opt_str(raw, "sprint_id"),
-        sprint_item_id=body_opt_str(raw, "sprint_item_id"),
+        orchestrator=raw.get("orchestrator"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
         ceiling=body_opt_str(raw, "ceiling"),
         ceiling_holder=raw.get("ceiling_holder"),
@@ -394,6 +398,14 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
         return Principal(kind, principal_id)
     except ValueError as exc:
         raise PlannerError(ErrorCode.validation, str(exc), {field: raw}) from exc
+
+
+def _parse_orchestrator(raw: object) -> Principal:
+    orchestrator = _parse_principal(raw, "orchestrator")
+    if orchestrator is None:
+        raise PlannerError(ErrorCode.validation, "orchestrator must name Chief or an orchestrator")
+    admission.validate_orchestrator(orchestrator)
+    return orchestrator
 
 
 def _parse_stated_holder(raw: object, field: str) -> Principal:
@@ -450,6 +462,11 @@ async def create_ticket(
 ) -> JsonDict:
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
+    orchestrator = (
+        _parse_orchestrator(body["orchestrator"])
+        if "orchestrator" in raw
+        else Principal(PrincipalKind.chief, "chief")
+    )
     priority = (
         parse_enum(Priority, body["priority"], "priority") if body["priority"] is not None else None
     )
@@ -466,18 +483,18 @@ async def create_ticket(
         title_max_chars=TITLE_MAX_CHARS,
         kickoff_note=body["kickoff_note"],
         project_id=project.id if project is not None else None,
-        sprint_id=body["sprint_id"],
         priority=priority,
         deadline=body["deadline"],
-        sprint_item_id=body["sprint_item_id"],
+        sprint_item_id=(
+            orchestrator.id if orchestrator.kind is PrincipalKind.sprint_item else None
+        ),
+        orchestrator_kind=orchestrator.kind.value,
         worker_type=body["worker_type"],
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
         planning_now=clk.now(),
-        boundary_hour=cfg.boundary_hour,
-        sprint_item_id_explicit="sprint_item_id" in raw,
-        sprint_id_explicit="sprint_id" in raw,
+        sprint_item_id_explicit=orchestrator.kind is PrincipalKind.sprint_item,
         project_id_explicit="project" in raw or "project_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
@@ -537,8 +554,8 @@ async def read_tickets(
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
-    # `day` ('today' | ISO) scopes the read to one day's board via the day_tickets join.
-    day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
+    if day is not None or sprint_id is not None:
+        raise PlannerError(ErrorCode.validation, "calendar filters are retired")
 
     if level is ReadDetail.full:
         reject_parameters(
@@ -566,7 +583,6 @@ async def read_tickets(
             project_id=resolved_project.id if resolved_project is not None else None,
             sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
-            day_id=day_id,
         )
         await add_work_attention(conn, conversations, conversation_record, tickets=rows)
         return {"tickets": rows}
@@ -577,6 +593,7 @@ async def read_tickets(
         registry.require(worker_type).completed_stage()
         for worker_type in registry.registered_worker_types()
     }
+    terminal_stages.add("cancelled")
     requested_terminal = sorted(set(included_stages) & terminal_stages)
     if requested_terminal and not include_terminal:
         raise PlannerError(
@@ -608,7 +625,6 @@ async def read_tickets(
         project_id=resolved_project.id if resolved_project is not None else None,
         sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
-        day_id=day_id,
     )
     await add_work_attention(conn, conversations, conversation_record, tickets=page.rows)
     return page.response("tickets")
@@ -876,20 +892,12 @@ async def restart_ticket_worker(
 
         write_configuration = write_the_resolved_configuration
 
-    def resolve_planning_write() -> tuple[str, int]:
-        planning_now = clk.now()
-        return (
-            resolve_day_id("today", planning_now, cfg.boundary_hour),
-            int(planning_now.timestamp()),
-        )
-
-    async def start_worker_step(planning_day_id: str) -> WorkerStepStartResult:
+    async def start_worker_step() -> WorkerStepStartResult:
         return await start_ready_worker_step(
             ticket_id,
             connect_database=lambda: connect(cfg.db_path, cfg.db_busy_timeout_ms),
             conversation_system=conversations,
             worker_type_registry=configured_worker_type_registry(),
-            planning_day_id_resolver=lambda: planning_day_id,
             now=clk.now_unix,
         )
 
@@ -900,7 +908,6 @@ async def restart_ticket_worker(
         ticket_id,
         write_employee_configuration=write_configuration,
         start_worker_step=start_worker_step,
-        resolve_planning_write=resolve_planning_write,
         now=clk.now_unix,
     )
 
@@ -951,8 +958,7 @@ async def patch_ticket(
         "deadline",
         "project",
         "project_id",
-        "sprint_id",
-        "sprint_item_id",
+        "orchestrator",
         "recap",
         "guidance",
         "guidance_append",
@@ -989,10 +995,8 @@ async def patch_ticket(
             conn, project_id=project_id_raw, project_name=project_raw
         )
         edit["project_id"] = project.id if project is not None else None
-    if "sprint_id" in body:
-        edit["sprint_id"] = body_opt_str(body, "sprint_id")
-    if "sprint_item_id" in body:
-        edit["sprint_item_id"] = body_opt_str(body, "sprint_item_id")
+    if "orchestrator" in body:
+        edit["orchestrator"] = _parse_orchestrator(body["orchestrator"])
     if "recap" in body:
         edit["recap"] = body_str(body, "recap")
     if "guidance" in body:
@@ -1089,7 +1093,6 @@ async def reject_ticket_proposal(
         message=body["message"],
         ctx=ctx,
         clock=clk,
-        boundary_hour=cfg.boundary_hour,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1381,15 +1384,12 @@ async def board(
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
-    # A message the owner has not read reaches him whatever Day its Ticket is on. The
-    # record names the conversations; the Ticket rows name whose they are.
+    # Unread messages remain discoverable, including on historical Workers.
     unread = await conversation_record.conversation_ids_holding_unread_owner_message()
     return await add_conversation_row_signals(
         conn,
         tickets_views.board_view(
             conn,
-            day_id=day_id,
             ticket_ids_holding_unread_owner_message=tickets_views.ticket_ids_for_conversations(
                 conn, unread
             ),
@@ -1401,5 +1401,4 @@ async def board(
 
 @router.get("/review")
 async def review(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
-    day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
-    return tickets_views.review_view(conn, day_id=day_id)
+    return tickets_views.review_view(conn)

@@ -57,7 +57,7 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **`panels send-message --owner --message "…"`** — send one addressed chat message to
   the owner through this Ticket's current conversation. Use the same command with exactly
   one of `--chief`, `--ticket <id>`, or `--sprint-item <id>` to message another employee.
-  This is conversation, not a substitute for a canonical Ticket, Day, or Sprint action.
+  This is conversation, not a substitute for a canonical Ticket action.
   Your ordinary turn-end prose is runtime-only; use this command when another principal
   must receive a message.
 

@@ -72,6 +72,10 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "project": ticket.project_name,
         "sprint_id": ticket.sprint_id,
         "sprint_item_id": ticket.sprint_item_id,
+        "orchestrator": {
+            "kind": ticket.orchestrator_kind,
+            "id": ticket.sprint_item_id if ticket.orchestrator_kind == "sprint_item" else "chief",
+        },
         "effective_sprint_id": ticket.effective_sprint_id,
         "resolved_priority_anchors": {
             "sprint_item": (
@@ -205,6 +209,10 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         "sprint_item_id": (
             str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None
         ),
+        "orchestrator": {
+            "kind": str(row["orchestrator_kind"]),
+            "id": (str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else "chief"),
+        },
         "sprint_item": (
             str(row["sprint_item_title"]) if row["sprint_item_title"] is not None else None
         ),
@@ -268,7 +276,7 @@ def list_ticket_summaries(
         + " AS searchable_pending_proposal, "
         "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "
         "ELSE tickets.project_id END AS effective_project_id, "
-        "projects.name AS project_name, tickets.sprint_item_id, "
+        "projects.name AS project_name, tickets.sprint_item_id, tickets.orchestrator_kind, "
         "sprint_items.title AS sprint_item_title, tickets.sprint_id "
         "FROM tickets "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
@@ -447,33 +455,19 @@ def ticket_ids_for_conversations(
 def board_view(
     conn: sqlite3.Connection,
     *,
-    day_id: str,
     ticket_ids_holding_unread_owner_message: Collection[str] = (),
 ) -> JsonDict:
-    """The current planning day's roster of Ticket cards, read straight from the database.
+    """All ordinary Workers, with messages discoverable on historical Workers too.
 
-    Ticket detail remains a separate resource, so narrowing this projection does not
-    constrain direct Ticket routes or an already-open inspector.
-
-    The Day is the roster, with one exception. A Ticket holding a message the owner has
-    not read joins it whatever Day it is on, because he has not seen the message and a
-    Day he did not put it on cannot be his answer to it. Everything else keeps the Day
-    rule, and a named Ticket already on the Day is not returned twice.
-
-    Each card carries its conversation link. The async route uses it to add the shared
-    owner-attention and agent-state projection.
-
-    Beside the columns, ``sprint_items`` carries each represented Sprint Item's complete
-    child roster and its own supervisor conversation. Item classification therefore
-    uses the same work before and after opening the Item workspace.
-    Those Items follow the rows, so a Ticket that joined by its unread message brings
-    its own Item with it.
+    Orchestrator settlement controls presentation, never approval or message discovery.
+    Every represented orchestrator carries its complete children and conversation.
     """
     named_ticket_ids = tuple(dict.fromkeys(ticket_ids_holding_unread_owner_message))
     named_placeholders = ",".join("?" for _ in named_ticket_ids)
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
+        "tickets.orchestrator_kind, "
         "sprint_items.project_id AS parent_project_id, "
         "sprint_items.title AS sprint_item_title, "
         "sprint_items.priority AS sprint_item_priority, "
@@ -486,9 +480,9 @@ def board_view(
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
-        "WHERE tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)"
+        "WHERE tickets.stage != 'cancelled'"
         + (f" OR tickets.id IN ({named_placeholders})" if named_ticket_ids else ""),
-        (day_id, *named_ticket_ids),
+        named_ticket_ids,
     ).fetchall()
     registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
@@ -527,6 +521,12 @@ def board_view(
         )
         card: BoardCardSource = {
             "id": str(row["id"]),
+            "orchestrator": {
+                "kind": str(row["orchestrator_kind"]),
+                "id": (
+                    str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else "chief"
+                ),
+            },
             "title": str(row["title"]),
             "priority": priority,
             "deadline": deadline,
@@ -535,7 +535,10 @@ def board_view(
             "group_project_id": group_project_id,
             "group_project": group_project_name,
             "activity_at": int(row["updated_at"]),
-            "has_pending_proposal": row["pending_proposal"] is not None,
+            "has_pending_proposal": (
+                row["pending_proposal"] is not None
+                and not worker_type_definition.is_terminal(stage)
+            ),
             "ticket_status": facts.ticket_status.value,
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
@@ -607,7 +610,8 @@ def _board_sprint_items(
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        f"SELECT id, title, priority, created_at FROM sprint_items WHERE id IN ({placeholders})",
+        f"SELECT id, title, priority, created_at, settled FROM sprint_items "
+        f"WHERE id IN ({placeholders})",
         item_ids,
     ).fetchall()
     conversations = conversation_start.read_agent_conversations(
@@ -618,6 +622,7 @@ def _board_sprint_items(
             id=str(row["id"]),
             title=str(row["title"]),
             priority=str(row["priority"]),
+            settled=bool(row["settled"]),
             tickets=sprints_views.item_tickets(conn, str(row["id"])),
             created_at=int(row["created_at"]),
             conversation_id=conversations.get(sprints_data.supervisor_agent_key(str(row["id"]))),
@@ -629,12 +634,11 @@ def _board_sprint_items(
 # --- Review --------------------------------------------------------------------
 
 
-def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
+def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
     rows = conn.execute(
         "SELECT id, title, stage, worker_type, worker_step_claim, "
         "pending_proposal, ceiling_holder FROM tickets "
-        "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
-        (day_id,),
+        "WHERE stage != 'cancelled' ORDER BY id",
     ).fetchall()
     registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
@@ -673,13 +677,11 @@ def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
 
 def review_view(
     conn: sqlite3.Connection,
-    *,
-    day_id: str,
 ) -> JsonDict:
     running_workers = conn.execute(
         "SELECT COUNT(*) AS count FROM tickets WHERE worker_step_claim = 'out'"
     ).fetchone()
     return {
-        "items": _review_items(conn, day_id=day_id),
+        "items": _review_items(conn),
         "running_worker_count": int(running_workers["count"] if running_workers is not None else 0),
     }

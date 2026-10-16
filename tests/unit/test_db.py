@@ -2,9 +2,12 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from alembic.script import ScriptDirectory
 
 from planner.core import db as db_module
 from planner.core.db import (
@@ -22,7 +25,7 @@ REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger a current build holds: the baseline plus what the
 # revisions after it add.
-CURRENT_SCHEMA_OBJECT_COUNT = 59
+CURRENT_SCHEMA_OBJECT_COUNT = 63
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -103,60 +106,18 @@ def _build_database_at_the_pre_collapse_head(path: Path) -> sqlite3.Connection:
     marker the pre-Alembic ladder wrote is set too, because the live database still has it.
     """
     conn = connect(str(path))
-    create_schema(conn)
-    # Reconstruct the collapsed head rather than leaving schema from later revisions in
-    # place before we stamp it as old. Post-baseline data-only revisions need no undo.
-    conn.execute("DROP TABLE codex_login_rejection")
-    conn.execute("DROP TABLE manager_wake_batch_members")
-    conn.execute("DROP TABLE manager_wake_batches")
-    conn.execute("DROP TABLE manager_wakes")
-    conn.execute("ALTER TABLE tickets DROP COLUMN pending_proposal_revision")
-    conn.execute(
-        "ALTER TABLE tickets ADD COLUMN worker_step_claim_changed_at "
-        "INTEGER NOT NULL DEFAULT 0"
-    )
-    conn.execute("ALTER TABLE sprint_items ADD COLUMN deadline TEXT")
-    conn.execute(
-        "ALTER TABLE sprint_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'normal' "
-        "CHECK (kind IN ('normal','other'))"
-    )
-    conn.execute("ALTER TABLE sprint_items ADD COLUMN supervisor_agent_key TEXT")
-    conn.execute(
-        "UPDATE sprint_items SET supervisor_agent_key='sprint_item_supervisor_' || id"
-    )
-    conn.execute(
-        "CREATE UNIQUE INDEX idx_sprint_items_supervisor_agent_key "
-        "ON sprint_items(supervisor_agent_key) WHERE supervisor_agent_key IS NOT NULL"
-    )
-    conn.execute(
-        "CREATE TRIGGER sprint_items_supervisor_insert_guard BEFORE INSERT ON sprint_items "
-        "WHEN (NEW.kind='normal' AND NOT ((NEW.supervisor_agent_key IS NULL AND "
-        "NEW.supervisor_backend IS NULL AND NEW.supervisor_model IS NULL AND "
-        "NEW.supervisor_reasoning_effort IS NULL) OR (NEW.supervisor_agent_key IS NOT NULL "
-        "AND NEW.supervisor_backend IS NOT NULL AND NEW.supervisor_model IS NOT NULL))) OR "
-        "(NEW.kind!='normal' AND (NEW.supervisor_agent_key IS NOT NULL OR "
-        "NEW.supervisor_backend IS NOT NULL OR NEW.supervisor_model IS NOT NULL OR "
-        "NEW.supervisor_reasoning_effort IS NOT NULL)) BEGIN SELECT RAISE(ABORT, "
-        "'invalid sprint item supervisor state'); END"
-    )
-    conn.execute(
-        "CREATE TRIGGER sprint_items_supervisor_create AFTER INSERT ON sprint_items "
-        "WHEN NEW.kind='normal' AND NEW.supervisor_agent_key IS NULL BEGIN "
-        "INSERT INTO agents(agent_key,conversation_id) VALUES "
-        "('sprint_item_supervisor_' || NEW.id,NULL); UPDATE sprint_items SET "
-        "supervisor_agent_key='sprint_item_supervisor_' || NEW.id,supervisor_backend='codex',"
-        "supervisor_model='gpt-5.6-sol',supervisor_reasoning_effort='medium' WHERE id=NEW.id; END"
-    )
-    conn.execute(
-        "CREATE TRIGGER sprint_items_supervisor_update_guard BEFORE UPDATE OF kind,"
-        "supervisor_agent_key,supervisor_backend,supervisor_model,supervisor_reasoning_effort "
-        "ON sprint_items WHEN (NEW.kind='normal' AND (NEW.supervisor_agent_key IS NULL OR "
-        "NEW.supervisor_backend IS NULL OR NEW.supervisor_model IS NULL)) OR "
-        "(NEW.kind!='normal' AND (NEW.supervisor_agent_key IS NOT NULL OR "
-        "NEW.supervisor_backend IS NOT NULL OR NEW.supervisor_model IS NOT NULL OR "
-        "NEW.supervisor_reasoning_effort IS NOT NULL)) BEGIN SELECT RAISE(ABORT, "
-        "'invalid sprint item supervisor state'); END"
-    )
+    # Build the actual baseline, rather than reverse current migrations by hand.
+    # This preserves the integrity check against unknown schema objects on adoption.
+    with tempfile.TemporaryDirectory() as temporary:
+        tree = Path(temporary)
+        (tree / "versions").mkdir()
+        shutil.copy(db_module.MIGRATIONS_DIRECTORY / "env.py", tree / "env.py")
+        shutil.copy(
+            db_module.MIGRATIONS_DIRECTORY / "versions" / "baseline_2026_09_schema.py",
+            tree / "versions" / "baseline_2026_09_schema.py",
+        )
+        with patch.object(db_module, "MIGRATIONS_DIRECTORY", tree):
+            create_schema(conn)
     conn.execute("DELETE FROM alembic_version")
     conn.execute("INSERT INTO alembic_version VALUES (?)", (PRE_COLLAPSE_HEAD_REVISION,))
     conn.execute("PRAGMA user_version=37")
@@ -502,15 +463,10 @@ def _database_at_previous_head(
     """Build the exact schema immediately before the storage-removal revision."""
     shipped = db_module.MIGRATIONS_DIRECTORY / "versions"
     tree = _migration_tree(tmp_path, monkeypatch)
-    for revision in sorted(shipped.glob("*.py")):
-        if revision.name in {
-            "a_refused_codex_login_outlives_a_restart.py",
-            "address_manager_wakes_to_principals.py",
-            "baseline_2026_09_schema.py",
-            "remove_redundant_ticket_and_item_storage.py",
-        }:
-            continue
-        shutil.copy(revision, tree / "versions" / revision.name)
+    for revision in ScriptDirectory(str(shipped.parent)).walk_revisions(
+        base="base", head="wake_sprint_item_managers"
+    ):
+        shutil.copy(revision.path, tree / "versions" / Path(revision.path).name)
     conn = connect(str(tmp_path / "previous-head.db"))
     create_schema(conn)
     assert _revision(conn) == "wake_sprint_item_managers"
@@ -523,14 +479,10 @@ def _database_before_principal_wakes(
     """Build the schema immediately before notices gained principal targets."""
     shipped = db_module.MIGRATIONS_DIRECTORY / "versions"
     tree = _migration_tree(tmp_path, monkeypatch)
-    for migration in sorted(shipped.glob("*.py")):
-        if migration.name in {
-            "a_refused_codex_login_outlives_a_restart.py",
-            "address_manager_wakes_to_principals.py",
-            "baseline_2026_09_schema.py",
-        }:
-            continue
-        shutil.copy(migration, tree / "versions" / migration.name)
+    for revision in ScriptDirectory(str(shipped.parent)).walk_revisions(
+        base="base", head="remove_redundant_ticket_item_storage"
+    ):
+        shutil.copy(revision.path, tree / "versions" / Path(revision.path).name)
     conn = connect(str(tmp_path / "before-principal-wakes.db"))
     create_schema(conn)
     assert _revision(conn) == "remove_redundant_ticket_item_storage"
@@ -542,9 +494,7 @@ def test_principal_wake_migration_preserves_sources_batches_members_and_statuses
 ) -> None:
     conn, revision = _database_before_principal_wakes(tmp_path, monkeypatch)
     tree = db_module.MIGRATIONS_DIRECTORY
-    conn.execute(
-        "INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','Project',1,1)"
-    )
+    conn.execute("INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','Project',1,1)")
     conn.execute(
         "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
         "supervisor_reasoning_effort,created_at,updated_at) "
@@ -606,8 +556,7 @@ def test_storage_migration_preserves_effective_projects_supervisors_and_legacy_i
         "INSERT INTO agents(agent_key,conversation_id) VALUES ('custom_supervisor','c_old')"
     )
     conn.execute(
-        "UPDATE sprint_items SET supervisor_agent_key='custom_supervisor' "
-        "WHERE id='si_custom'"
+        "UPDATE sprint_items SET supervisor_agent_key='custom_supervisor' WHERE id='si_custom'"
     )
     conn.execute("DELETE FROM agents WHERE agent_key='sprint_item_supervisor_si_custom'")
     conn.execute(
@@ -631,47 +580,54 @@ def test_storage_migration_preserves_effective_projects_supervisors_and_legacy_i
         "('t_standalone','Standalone','coding','codex','needs_brief','P3','project_vylo',"
         "NULL,'','needs_success_condition','{}','none',0,0,1,1)"
     )
-    conn.execute(
-        "INSERT INTO sprint_outcomes(sprint_id,outcome_id) "
-        "VALUES ('sp_kept','si_legacy')"
-    )
+    conn.execute("INSERT INTO sprint_outcomes(sprint_id,outcome_id) VALUES ('sp_kept','si_legacy')")
 
     shutil.copy(revision, tree / "versions" / revision.name)
     create_schema(conn)
 
     assert _revision(conn) == "remove_redundant_ticket_item_storage"
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert conn.execute(
-        "SELECT conversation_id FROM agents "
-        "WHERE agent_key='sprint_item_supervisor_si_custom'"
-    ).fetchone()[0] == "c_old"
-    assert conn.execute(
-        "SELECT count(*) FROM notification_attention_state "
-        "WHERE subject_id='sprint_item_supervisor_si_custom'"
-    ).fetchone()[0] == 1
+    assert (
+        conn.execute(
+            "SELECT conversation_id FROM agents WHERE agent_key='sprint_item_supervisor_si_custom'"
+        ).fetchone()[0]
+        == "c_old"
+    )
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM notification_attention_state "
+            "WHERE subject_id='sprint_item_supervisor_si_custom'"
+        ).fetchone()[0]
+        == 1
+    )
     legacy = conn.execute(
         "SELECT supervisor_backend,supervisor_model,supervisor_reasoning_effort "
         "FROM sprint_items WHERE id='si_legacy'"
     ).fetchone()
     assert tuple(legacy) == ("codex", "gpt-5.6-sol", "medium")
-    assert conn.execute(
-        "SELECT conversation_id FROM agents "
-        "WHERE agent_key='sprint_item_supervisor_si_legacy'"
-    ).fetchone()[0] is None
-    assert conn.execute(
-        "SELECT project_id FROM tickets WHERE id='t_parented'"
-    ).fetchone()[0] is None
-    assert conn.execute(
-        "SELECT project_id FROM tickets WHERE id='t_standalone'"
-    ).fetchone()[0] == "project_vylo"
-    assert conn.execute(
-        "SELECT count(*) FROM sprint_outcomes "
-        "WHERE sprint_id='sp_kept' AND outcome_id='si_legacy'"
-    ).fetchone()[0] == 1
+    assert (
+        conn.execute(
+            "SELECT conversation_id FROM agents WHERE agent_key='sprint_item_supervisor_si_legacy'"
+        ).fetchone()[0]
+        is None
+    )
+    assert (
+        conn.execute("SELECT project_id FROM tickets WHERE id='t_parented'").fetchone()[0] is None
+    )
+    assert (
+        conn.execute("SELECT project_id FROM tickets WHERE id='t_standalone'").fetchone()[0]
+        == "project_vylo"
+    )
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM sprint_outcomes "
+            "WHERE sprint_id='sp_kept' AND outcome_id='si_legacy'"
+        ).fetchone()[0]
+        == 1
+    )
     assert tuple(
         conn.execute(
-            "SELECT source_kind,source_revision FROM manager_wakes "
-            "WHERE ticket_id='t_parented'"
+            "SELECT source_kind,source_revision FROM manager_wakes WHERE ticket_id='t_parented'"
         ).fetchone()
     ) == ("worker_error", 2)
     assert "worker_step_claim_changed_at" not in {
@@ -691,8 +647,7 @@ def test_storage_migration_refuses_derived_supervisor_collision_transactionally(
     )
     conn.execute("INSERT INTO agents(agent_key,conversation_id) VALUES ('custom_collision',NULL)")
     conn.execute(
-        "UPDATE sprint_items SET supervisor_agent_key='custom_collision' "
-        "WHERE id='si_collision'"
+        "UPDATE sprint_items SET supervisor_agent_key='custom_collision' WHERE id='si_collision'"
     )
     shutil.copy(revision, tree / "versions" / revision.name)
 
@@ -700,9 +655,12 @@ def test_storage_migration_refuses_derived_supervisor_collision_transactionally(
         create_schema(conn)
 
     assert _revision(conn) == "wake_sprint_item_managers"
-    assert conn.execute(
-        "SELECT supervisor_agent_key FROM sprint_items WHERE id='si_collision'"
-    ).fetchone()[0] == "custom_collision"
+    assert (
+        conn.execute(
+            "SELECT supervisor_agent_key FROM sprint_items WHERE id='si_collision'"
+        ).fetchone()[0]
+        == "custom_collision"
+    )
     assert "kind" in {str(row[1]) for row in conn.execute("PRAGMA table_info(sprint_items)")}
     conn.close()
 
@@ -908,9 +866,9 @@ def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
             )
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert (
-        conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%__rebuilt'"
-        ).fetchone()[0]
+        conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%__rebuilt'").fetchone()[
+            0
+        ]
         == 0
     )
     conn.close()

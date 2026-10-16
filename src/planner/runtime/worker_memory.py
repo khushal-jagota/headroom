@@ -62,19 +62,6 @@ def memory_was_lost_unanswered(
     return automatically_compacted_through_sequence > latest_answering_prompt_sequence
 
 
-def ticket_is_on_the_planning_day(
-    conn: sqlite3.Connection, ticket_id: str, *, planning_day_id: str
-) -> bool:
-    """Ask the membership question again, for a Ticket the scan chose a moment ago."""
-    return (
-        conn.execute(
-            "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
-            (planning_day_id, ticket_id),
-        ).fetchone()
-        is not None
-    )
-
-
 def conversation_holds_an_unanswered_memory_loss(
     conn: sqlite3.Connection, conversation_id: str | None
 ) -> bool:
@@ -90,30 +77,19 @@ def conversation_holds_an_unanswered_memory_loss(
         return False
     return memory_was_lost_unanswered(
         automatically_compacted_through_sequence=int(row[0]),
-        latest_answering_prompt_sequence=_latest_answering_prompt_sequence(
-            conn, conversation_id
-        ),
+        latest_answering_prompt_sequence=_latest_answering_prompt_sequence(conn, conversation_id),
     )
 
 
-def ticket_ids_holding_an_unanswered_memory_loss(
-    conn: sqlite3.Connection, *, planning_day_id: str
-) -> tuple[str, ...]:
+def ticket_ids_holding_an_unanswered_memory_loss(conn: sqlite3.Connection) -> tuple[str, ...]:
     """Find the Tickets whose Worker lost its memory part-way through a step.
 
     Only a Ticket whose claim is out has a step in flight. Every other Ticket is answered
     by its next wake, which is the cheaper moment and the one that already exists.
-
-    Day membership is how Panels decides whether a Ticket's work runs at all, and a
-    notice is work: it can restart a Worker. So this asks the same question a wake asks,
-    and a Ticket that is not on the planning day is left alone however old its boundary
-    is.
     """
     rows = conn.execute(
         "SELECT t.id, t.conversation_id FROM tickets t "
-        "JOIN day_tickets dt ON dt.ticket_id = t.id "
-        "WHERE dt.day_id = ? AND t.worker_step_claim = 'out' AND t.conversation_id IS NOT NULL",
-        (planning_day_id,),
+        "WHERE t.worker_step_claim = 'out' AND t.conversation_id IS NOT NULL"
     ).fetchall()
     return tuple(
         str(row[0])
@@ -122,9 +98,7 @@ def ticket_ids_holding_an_unanswered_memory_loss(
     )
 
 
-def _latest_answering_prompt_sequence(
-    conn: sqlite3.Connection, conversation_id: str
-) -> int | None:
+def _latest_answering_prompt_sequence(conn: sqlite3.Connection, conversation_id: str) -> int | None:
     # substr, not LIKE: '_' is a single-character wildcard in LIKE, and the prefix is
     # mostly underscores.
     row = conn.execute(

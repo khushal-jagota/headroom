@@ -31,6 +31,7 @@ export type ManifestField = {
 };
 
 export type WorkerTypeManifest = {
+  creatable?: boolean;
   worker_type: string;
   label: string;
   stages: ManifestStage[];

@@ -90,6 +90,7 @@ export type ListPageFacts = {
 };
 
 export type TicketSummary = WorkAttention & {
+  orchestrator?: Principal;
   id: string;
   title: string;
   worker_type: string;
@@ -111,6 +112,7 @@ export type TicketSummariesResponse = {
 };
 
 export type OutcomeSummary = WorkAttention & {
+  settled?: boolean;
   id: string;
   title: string;
   priority: Priority;
@@ -149,6 +151,7 @@ export type ProjectsResponse = {
 };
 
 export type ScheduleCadence =
+  | "daily"
   | "every_planning_day"
   | "current_sprint_day_four"
   | "current_sprint_final_day";
@@ -156,6 +159,8 @@ export type ScheduleCadence =
 export type SchedulePlacementMode = "current_sprint" | "backlog";
 
 export type ScheduledTask = {
+  orchestrator_kind?: "chief" | "sprint_item";
+  orchestrator?: Principal;
   id: string;
   enabled: boolean;
   cadence: ScheduleCadence;
@@ -272,6 +277,7 @@ export type TicketConversationHistoryEntry = {
 };
 
 export type TicketDetail = {
+  orchestrator?: Principal;
   id: string;
   title: string;
   worker_type: string;

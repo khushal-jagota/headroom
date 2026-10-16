@@ -9,6 +9,9 @@ A cell is ``refuse`` when the answer carries ``agent_forbidden``, and ``allow`` 
 other outcome, including ``not_found`` and ``validation``. Those mean the caller was
 admitted and failed for some other reason, which is not what this file measures.
 
+A retired cell means that the calendar writer entry point is closed before authority.
+The exact retired operation set is asserted separately.
+
 Each cell gets its own copy of the seeded database, so an admitted mutation in one cell can
 never change another cell's answer.
 
@@ -34,6 +37,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.sprints import data as sprint_data
+from planner.worker_types.configuration import configured_worker_type_registry
 
 _SNAPSHOT: Final = Path(__file__).with_name("authority_matrix.snapshot.txt")
 _REWRITE_ENV: Final = "PANELS_REWRITE_AUTHORITY_MATRIX"
@@ -131,7 +136,7 @@ def _seed(db_path: Path) -> Seed:
                     "worker_type": "coding",
                     "title": "Target ticket",
                     "kickoff_note": "Start here.",
-                    "sprint_item_id": item_a["id"],
+                    "orchestrator": {"kind": "sprint_item", "id": item_a["id"]},
                 },
             )
         )
@@ -142,7 +147,7 @@ def _seed(db_path: Path) -> Seed:
                     "worker_type": "coding",
                     "title": "Stranger ticket",
                     "kickoff_note": "Start here.",
-                    "sprint_item_id": item_b["id"],
+                    "orchestrator": {"kind": "sprint_item", "id": item_b["id"]},
                 },
             )
         )
@@ -157,7 +162,7 @@ def _seed(db_path: Path) -> Seed:
             client.post(
                 "/api/tickets",
                 json={
-                    "worker_type": "planning-day",
+                    "worker_type": "coding",
                     "title": "Plan the day",
                     "kickoff_note": "Start here.",
                 },
@@ -167,7 +172,7 @@ def _seed(db_path: Path) -> Seed:
             client.post(
                 "/api/tickets",
                 json={
-                    "worker_type": "planning-sprint",
+                    "worker_type": "coding",
                     "title": "Plan the sprint",
                     "kickoff_note": "Start here.",
                 },
@@ -180,20 +185,32 @@ def _seed(db_path: Path) -> Seed:
                     "worker_type": "personal",
                     "title": "A user-owned gate",
                     "kickoff_note": "Start here.",
-                    "sprint_item_id": item_a["id"],
+                    "orchestrator": {"kind": "sprint_item", "id": item_a["id"]},
                 },
             )
         )
-        sprint = _ok(
-            client.post(
-                "/api/sprints",
-                json={
-                    "name": "Matrix sprint",
-                    "date_start": "2026-09-21",
-                    "date_end": "2026-10-04",
-                },
+        # Historical calendar data is fixture setup, never a live HTTP writer.
+        with connect(str(db_path)) as conn:
+            config = load_config(path=None, env={"PLAN_TEST_MODE": "1"})
+            historical = sprint_data.create_sprint(
+                conn,
+                name="Matrix sprint",
+                date_start="2026-09-21",
+                date_end="2026-10-04",
+                clock=build_clock(config),
             )
-        )
+            sprint = {"id": historical.id}
+            for ticket, worker_type in (
+                (ticket_planning, "planning-day"),
+                (ticket_planning_sprint, "planning-sprint"),
+            ):
+                definition = configured_worker_type_registry().require(worker_type)
+                initial_stage = definition.stage_ids()[0]
+                conn.execute(
+                    "UPDATE tickets SET worker_type=?,stage=?,ceiling=?,field_values='{}',"
+                    "pending_proposal=NULL WHERE id=?",
+                    (worker_type, initial_stage, initial_stage, ticket["id"]),
+                )
     return Seed(
         gating_field=str(ticket_a["stage"]).removeprefix("needs_"),
         item_a=str(item_a["id"]),
@@ -217,6 +234,7 @@ def _ok(response: Any) -> dict[str, Any]:
 # One row per guarded operation. Each body is valid enough to reach the guard: a body that
 # fails marshalling first would make the row measure nothing.
 
+
 def _create(**extra: Any) -> Call:
     """A valid creation body, plus whatever the row is measuring."""
     return Call(
@@ -234,14 +252,21 @@ def _create(**extra: Any) -> Call:
 OPERATIONS: Final[tuple[Operation, ...]] = (
     # --- making a Ticket, and the three things it can arrive with
     ("POST   /tickets (bare)", lambda s: _create()),
-    ("POST   /tickets sprint_item_id", lambda s: _create(sprint_item_id=s.item_a)),
+    (
+        "POST   /tickets orchestrator",
+        lambda s: _create(orchestrator={"kind": "sprint_item", "id": s.item_a}),
+    ),
     (
         "POST   /tickets ceiling",
-        lambda s: _create(sprint_item_id=s.item_a, ceiling="needs_consequences"),
+        lambda s: _create(
+            orchestrator={"kind": "sprint_item", "id": s.item_a}, ceiling="needs_consequences"
+        ),
     ),
     (
         "POST   /tickets ceiling_holder",
-        lambda s: _create(sprint_item_id=s.item_a, ceiling_holder=_OWNER_HOLDER),
+        lambda s: _create(
+            orchestrator={"kind": "sprint_item", "id": s.item_a}, ceiling_holder=_OWNER_HOLDER
+        ),
     ),
     # --- a Ticket, through its ordinary address
     (
@@ -257,8 +282,12 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("PATCH", f"/api/tickets/{s.ticket_a}", {"title": "Renamed"}),
     ),
     (
-        "PATCH  /tickets/{t} sprint_item_id",
-        lambda s: Call("PATCH", f"/api/tickets/{s.ticket_a}", {"sprint_item_id": s.item_b}),
+        "PATCH  /tickets/{t} orchestrator",
+        lambda s: Call(
+            "PATCH",
+            f"/api/tickets/{s.ticket_a}",
+            {"orchestrator": {"kind": "sprint_item", "id": s.item_b}},
+        ),
     ),
     (
         "PATCH  /tickets/{t} project_id",
@@ -279,9 +308,7 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
     ("DELETE /tickets/{t}", lambda s: Call("DELETE", f"/api/tickets/{s.ticket_a}")),
     (
         "POST   /tickets/{t}/propose",
-        lambda s: Call(
-            "POST", f"/api/tickets/{s.ticket_a}/propose", {"body": "Again."}
-        ),
+        lambda s: Call("POST", f"/api/tickets/{s.ticket_a}/propose", {"body": "Again."}),
     ),
     (
         "POST   /tickets/{t}/request-help",
@@ -459,13 +486,34 @@ UNGUARDED_OPERATIONS: Final = frozenset(
 )
 
 
+RETIRED_OPERATIONS: Final = frozenset(
+    {
+        "PUT    /collections/day_tickets",
+        "PUT    /collections/sprint_outcomes",
+        "PATCH  /day/{d} focus",
+        "PATCH  /day/{d} midday_reconciliation",
+        "PATCH  /day/{d} notes",
+        "POST   /sprints",
+        "PATCH  /sprints/{s}",
+    }
+)
+
+
 def _classify(response: Any) -> str:
+    if response.status_code == 405 or (
+        response.status_code == 404
+        and response.request.method in {"PATCH", "DELETE"}
+        and response.request.url.path.startswith("/api/sprints/")
+    ):
+        return "retired"
     try:
         payload = response.json()
     except (ValueError, json.JSONDecodeError):
         return "allow"
     if isinstance(payload, dict):
         error = payload.get("error")
+        if isinstance(error, dict) and error.get("message") == "calendar membership is retired":
+            return "retired"
         if isinstance(error, dict) and error.get("code") == "agent_forbidden":
             return "refuse"
     return "allow"
@@ -506,7 +554,7 @@ def _render(rows: list[tuple[str, dict[str, str]]]) -> str:
             + "  "
             + "  ".join(answers[p].ljust(w) for p, w in zip(PRINCIPALS, columns, strict=True))
         )
-    return "\n".join(lines) + "\n"
+    return "\n".join(line.rstrip() for line in lines) + "\n"
 
 
 def test_the_authority_matrix_has_not_moved(seeded: tuple[Path, Seed], tmp_path: Path) -> None:
@@ -533,6 +581,8 @@ def test_the_authority_matrix_has_not_moved(seeded: tuple[Path, Seed], tmp_path:
         f"measure nothing — check the request reaches the guard: {uniformly_admitted}"
     )
 
+    retired = {name for name, answers in rows if set(answers.values()) == {"retired"}}
+    assert retired == RETIRED_OPERATIONS
     rendered = _render(rows)
     if os.environ.get(_REWRITE_ENV) == "1":
         _SNAPSHOT.write_text(rendered, encoding="utf-8")

@@ -102,11 +102,19 @@ def test_a_claimed_ticket_with_no_row_stands_above_nothing(db: Connection) -> No
     assert not is_above(db, Principal(PrincipalKind.ticket, "t_missing"), targets.plan("day"))
 
 
-def test_a_planning_day_ticket_stands_above_the_morning_fields_only(db: Connection) -> None:
-    ticket_id = _ticket(db, item_id=None, worker_type="planning-day")
+def test_a_historical_planning_day_ticket_has_no_shared_plan_authority(db: Connection) -> None:
+    with pytest.raises(PlannerError, match="retired"):
+        _ticket(db, item_id=None, worker_type="planning-day")
+    ticket_id = _ticket(db, item_id=None)
+    # Historical rows remain readable, but their old shared-plan authority is retired.
+    db.execute(
+        "UPDATE tickets SET worker_type='planning-day',stage='needs_review',"
+        "ceiling='needs_review' WHERE id=?",
+        (ticket_id,),
+    )
     caller = Principal(PrincipalKind.ticket, ticket_id)
 
-    assert is_above(db, caller, targets.plan("day", *DAY_MORNING_FIELDS))
+    assert not is_above(db, caller, targets.plan("day", *DAY_MORNING_FIELDS))
     assert not is_above(db, caller, targets.plan("day", "notes"))
     assert not is_above(db, caller, targets.plan("day", DAY_MIDDAY_FIELD))
     assert not is_above(db, caller, targets.owner_only("projects"))

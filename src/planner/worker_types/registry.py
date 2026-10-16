@@ -12,6 +12,8 @@ from planner.worker_types.contracts import (
     BRIEF_FIELD_ID,
     CONSEQUENCES_FIELD_ID,
     NEEDS_BRIEF_STAGE_ID,
+    RETIRED_PLANNING_WORKER_TYPES,
+    RETIREMENT_FIELD_ID,
     WorkerTypeDefinition,
     WorkerTypeManifest,
     WorkerTypeManifestField,
@@ -159,6 +161,8 @@ def validate_definition(
             )
 
     for field in definition.fields:
+        if field.id == RETIREMENT_FIELD_ID and worker_type in RETIRED_PLANNING_WORKER_TYPES:
+            continue
         if gated_count.get(field.id, 0) == 0:
             raise fail(
                 "declared field is never gated",
@@ -269,6 +273,7 @@ class WorkerTypeRegistry:
             if target is not None:
                 advance[stage] = target
         return {
+            "creatable": definition.worker_type not in RETIRED_PLANNING_WORKER_TYPES,
             "worker_type": definition.worker_type,
             "label": definition.label,
             "stages": stages,

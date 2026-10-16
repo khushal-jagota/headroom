@@ -137,7 +137,6 @@ def start_background_loops(
                 clock,
                 conversation_system=conversation_system,
                 asyncio_loop=asyncio_loop,
-                boundary_hour=config.boundary_hour,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
             candidate_notification_loop = NotificationLoop(

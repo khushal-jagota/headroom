@@ -322,7 +322,8 @@ def capture_ticket_attention(
             stage=str(row["stage"]),
             worker_type=str(row["worker_type"]),
         ),
-        "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
+        "errored": facts.ticket_status is TicketStatus.errored
+        or (conversation.errored and str(row["stage"]) != "cancelled"),
     }
     for notification_type, active in flags.items():
         _record(conn, "ticket", ticket_id, notification_type, active, occurred_at)
