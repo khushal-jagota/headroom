@@ -1,19 +1,32 @@
 import concurrent.futures
+import re
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Final
 
 import pytest
 
 from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.environments.hermes_home import provision_planner_home_skills
-from planner.managed_skills import managed_skills_home
+from planner.managed_skills import (
+    PACKAGED_SKILLS_ROOT,
+    SKILL_FILE_NAME,
+    managed_skills_home,
+)
 from planner.skill_sources import (
     RETIRED_PANELS_SKILL_NAMES,
     provision_native_backend_skills,
 )
+from planner.skill_versions import SHARED_WORKER_SKILL_NAME
 from planner.worker_settings import service
+from planner.worker_settings.service import CHIEF_SKILL_NAME
+from planner.worker_types.shipped import shipped_worker_types
+
+# A skill tells an agent to load another skill by naming it as a literal, the way a
+# worker reads it: `panels-worker-coding`. Prose that merely says Panels is not a name.
+REFERENCED_SKILL_NAME: Final = re.compile(r"`(panels(?:-[a-z0-9]+)+)`")
 
 
 @pytest.fixture
@@ -119,3 +132,30 @@ def test_concurrent_skill_field_edits_preserve_both_fields(
     )
     assert final.description == "parallel"
     assert final.markdown_body.endswith("parallel\n")
+
+
+def test_packaged_tree_seeds_every_skill_a_fresh_install_needs() -> None:
+    """A new database must start with a skill for each thing that asks for one.
+
+    Both expectations are read from the build, not from a list kept beside it: the
+    specialist skill each shipped Worker type names, and every skill a packaged skill
+    tells an agent to load. A list would go stale exactly when a Worker type ships
+    without its skill, which is the case this test exists to catch.
+    """
+    packaged = {
+        directory.name
+        for directory in PACKAGED_SKILLS_ROOT.iterdir()
+        if directory.is_dir() and (directory / SKILL_FILE_NAME).is_file()
+    }
+
+    specialist_skills = {
+        definition["profile"]["specialist_skill"] for definition in shipped_worker_types()
+    }
+    assert specialist_skills <= packaged
+    assert {SHARED_WORKER_SKILL_NAME, CHIEF_SKILL_NAME} <= packaged
+
+    referenced: set[str] = set()
+    for skill_name in packaged:
+        source = (PACKAGED_SKILLS_ROOT / skill_name / SKILL_FILE_NAME).read_text(encoding="utf-8")
+        referenced.update(match.group(1) for match in REFERENCED_SKILL_NAME.finditer(source))
+    assert referenced - RETIRED_PANELS_SKILL_NAMES <= packaged
