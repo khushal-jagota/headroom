@@ -81,6 +81,7 @@
   const listId = $props.id();
   let open = $state(false);
   let anchorOffset = $state<{left:number;top:number} | null>(null);
+  let anchorPositionReady = $state(true);
   let activeIndex = $state(0);
   let root = $state<HTMLDivElement | null>(null);
   let trigger = $state<HTMLButtonElement | null>(null);
@@ -100,7 +101,7 @@
   });
 
   function focusList(): void {
-    void tick().then(() => list?.focus());
+    void tick().then(() => list?.focus(anchor ? {preventScroll:true} : undefined));
   }
 
   function setActiveValue(value: string | null): void {
@@ -167,6 +168,7 @@
   });
 
   $effect(() => {
+    if (anchor && !anchorPositionReady) return;
     active;
     list?.querySelector<HTMLElement>("[data-listbox-picker-active]")?.scrollIntoView({ block: "nearest" });
   });
@@ -178,6 +180,7 @@
     const rootRect = root?.getBoundingClientRect();
     const anchorRect = anchor?.getBoundingClientRect();
     anchorOffset = rootRect && anchorRect ? {left:anchorRect.left-rootRect.left,top:anchorRect.bottom-rootRect.top} : null;
+    anchorPositionReady = anchorOffset === null;
     activeIndex = Math.max(0, items.findIndex((item) => item.value === selectedValue));
     open = true;
     await tick();
@@ -188,8 +191,11 @@
       const rootRect = root.getBoundingClientRect();
       const left = Math.max(0,Math.min(panelRect.left,document.documentElement.clientWidth-panelRect.width));
       anchorOffset = { ...anchorOffset, left:left-rootRect.left };
+      // Publish the bounded position before focus or the active-row scroll effect.
+      await tick();
     }
-    list?.focus();
+    anchorPositionReady = true;
+    list?.focus(anchor ? {preventScroll:true} : undefined);
   }
 
   function choose(value: string): void {
