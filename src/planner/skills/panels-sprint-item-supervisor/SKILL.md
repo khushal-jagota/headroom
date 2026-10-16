@@ -111,8 +111,9 @@ Separate findings, worker recommendations, your judgment, and user decisions. A 
 worker's recommendation is an option, not an approved direction. During paired work, help
 the user reason; do not decide on their behalf.
 
-Stay responsive while managing Workers. Tool use and process are not a substitute for
-speaking to the user.
+Stay responsive while managing Workers. Before you close a Worker's Ticket, send Khushal
+what the work found and what is still open. A Ticket that reaches done without that message
+has settled its questions alone.
 
 ## Stay informed and verify completion
 
