@@ -774,24 +774,58 @@ regenerating everything together would change twenty-two definitions the thread 
 core depends on, and the login closure shares none of them — the generator refuses to run
 if the two bundles ever reach the same definition.
 
-### One home for the codex login
+### One home and one credential per agent
 
-Panels runs one codex account, so the login is one file holding one rotating refresh
-token. Codex refreshes that token in whichever home it is pointed at and writes the new
-one there. A second home holding a copy of the file is therefore a credential with two
-owners: the copy takes the rotation, the original keeps a token the server has already
-spent, and everything using the original fails.
+Each real agent identity has one canonical home and one canonical credential file.
+A rotating refresh token must have one owner: refreshing a copied login in a second
+home can leave the original holding a spent token. Hardlinks are unsafe too: they
+share a file only until a refresh replaces the canonical path by rename.
 
-So Panels refuses to start a codex child whose `CODEX_HOME` holds the same credential as
-the real home. A scratch home with its own login, or with none, is fine. The comparison is
-the credential itself rather than the whole file, because a copy with edited account
-fields still rotates the same token. An unreadable login cannot be shown to be a copy, so
-it is allowed and logged. The guarantee covers the codex children Panels launches — the
-app-server child, the usage read, and the model catalogue read. A check in the test suite
-looks for the shape of the mistake in repository code — a module that both names a login
-file and copies files — which is how the two opt-in real-provider suites that were still
-copying the login were found. It is a scan for a known shape, not a proof that no copy can
-be written.
+Synthetic homes with invented credentials are fine. Tests can also copy configuration
+files while symlinking the credential path to the canonical file. That link follows
+the current credential rather than keeping a second copy. Copying a whole real home
+or a credential first is still unsafe.
+
+**The existing checks cover only part of this rule.** Before launching a Codex child,
+Panels compares its home with the home selected by the server's own environment.
+The same resolved home is allowed. For different homes, a shared refresh token or
+API key causes refusal, even if account metadata differs. An absent or different
+credential is allowed; an unreadable credential is allowed with a warning. The guard
+covers Panels' app-server, usage and model catalogue children, not Hermes, Claude,
+arbitrary shell launches, or copies elsewhere. It also refuses a different Codex home
+whose credential is a symlink to the same login, so Codex tests use the real home.
+
+The repository test inspects Python under `src`, `tests`, `scripts` and `ops`. It
+catches supported copy and hardlink calls when a path names `auth.json` or
+`LOGIN_FILE_NAME`, including import aliases and earlier simple assignments in the
+same scope. Unparseable files fail. It does not trace helper results, attributes,
+containers, assignments across scopes or branches, unpacked arguments, byte transfers,
+or shell copies. It does not recognize Claude's credential filename. Whole-home
+copies naming no credential also pass. A green run proves only that this bounded
+tripwire found no supported pattern.
+
+Matching a copied directory to an agent's later home would still not establish
+whether its credentials are real: external environment inputs decide what a template
+contains. General coverage would require tracing helpers, branches, filesystem
+operations and launch paths. There is no general detector here; review must enforce
+the invariant.
+
+**A live violation remains in the steering test.**
+`tests/integration/test_conversation_real_provider_steering.py:569` copies the entire
+externally supplied Hermes home, then points the agent at the copy on line 570.
+The same helper avoids this hazard for Codex: its comment on lines 573–576 explains
+that a copied home takes the rotation and leaves the real login holding a spent
+token. Twelve lines after the Hermes copy, line 581 names Claude's credential for
+copying on line 584. The permission test already treats the same Hermes credential
+safely: it copies `config.yaml` and `.env`, but symlinks `auth.json`, with a comment
+that rotating auth remains one shared canonical file. This repository therefore
+both commits and avoids the same hazard; the steering test's Hermes branch lacks
+the explanation in its nearby Codex branch. A separate Ticket owns the harness fix.
+This documentation change leaves that violation and the tripwire's allowlist unchanged.
+
+Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
+`tests/unit/test_no_codex_credential_copies.py`,
+`tests/integration/test_conversation_real_provider_permissions.py:295`.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
@@ -951,23 +985,14 @@ where a steer is proved to cross into a live turn.
 
 That fourth exercise asks for more before it will start. It refuses a dirty tree, so
 `git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs two credential
-directories, because it gives hermes and claude a private home rather than borrowing
-yours:
-
-- `PANELS_REAL_HERMES_HOME_TEMPLATE` — a copy of `~/.hermes`.
-- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — a directory holding `.credentials.json` and
-  `settings.json`.
-
-You build those two yourself. Nothing in the repository makes them for you, and a stale
-copy fails as a login problem rather than as a missing file.
-
-Codex is the exception, and deliberately. It keeps one account in one file and refreshes
-that file in whichever home it is pointed at, so a private copy takes the new token with
-it and leaves the real login holding one the server has already spent. Everything that
-uses codex afterwards then fails, and codex reports it as the subsystem that happened to
-ask first rather than as a login. So this exercise uses the real codex home, and Panels
-refuses to start any codex child whose `CODEX_HOME` holds a copy of that login.
+into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also requires
+`PANELS_REAL_HERMES_HOME_TEMPLATE` and `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` to name
+provider home directories. The current harness copies the Hermes directory wholesale
+and copies Claude's `.credentials.json` and `settings.json` into a private directory.
+These copies violate the one-home rule when the inputs hold real credentials; naming
+an input a template does not make it synthetic. See the named live violation above.
+Do not prepare copied real homes to satisfy these inputs. Codex uses its existing
+home, with a comment explaining the rotation hazard the other branches still incur.
 
 ### A red run is expected today
 
@@ -1032,4 +1057,4 @@ steer into a turn that was genuinely running, on a receipt from the provider pro
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-21._
+_Last verified: 2026-10-16._
