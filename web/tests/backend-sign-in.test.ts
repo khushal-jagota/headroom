@@ -1,0 +1,243 @@
+/** What a backend card offers when a login needs replacing, and what it warns about first.
+ *
+ * Two rules are worth holding onto here. A sign-in is only offered where Panels can
+ * actually run one, so every other backend keeps the command-line text rather than a
+ * button that cannot work. And the retry caveat is shown to somebody who has something to
+ * lose — before they start, not after it worked.
+ */
+
+import { describe, expect, it } from "vitest";
+
+import {
+  BACKENDS_PAGE_SURROUNDINGS,
+  backendCanBeSignedIn,
+  signInCaveat,
+  signInIsPending,
+  signInOutcome
+} from "../src/lib/conversation/backendSignIn";
+import type { BackendSignIn, BackendSnapshot } from "../src/lib/conversation/wire";
+
+function snapshot(
+  overrides: Partial<BackendSnapshot> & { identity?: BackendSnapshot["identity"] } = {}
+): BackendSnapshot {
+  return {
+    backend_key: "codex",
+    installed: true,
+    executable_path: "/usr/bin/codex",
+    version: "0.163.0",
+    identity: {
+      status: "unauthenticated",
+      account_label: null,
+      detail: null,
+      login_command: "codex login"
+    },
+    available_models: [],
+    reasoning_effort_options: [],
+    default_model_id: null,
+    default_reasoning_effort: null,
+    update_advisory: null,
+    diagnoses: [],
+    cached_usage: null,
+    ...overrides
+  } as unknown as BackendSnapshot;
+}
+
+function signIn(overrides: Partial<BackendSignIn> = {}): BackendSignIn {
+  return {
+    session_id: "s1",
+    state: "pending",
+    verification_url: "https://auth.openai.com/codex/device",
+    user_code: "ABCD-1234",
+    started_at: "2026-10-16T00:00:00+00:00",
+    deadline_at: "2026-10-16T00:10:00+00:00",
+    detail: null,
+    account_label: null,
+    ...overrides
+  };
+}
+
+describe("backendCanBeSignedIn", () => {
+  it("offers a sign-in for an installed codex with an account", () => {
+    expect(backendCanBeSignedIn(snapshot())).toBe(true);
+  });
+
+  it("offers nothing for claude, which Panels cannot sign in", () => {
+    expect(backendCanBeSignedIn(snapshot({ backend_key: "claude" }))).toBe(false);
+  });
+
+  it("offers nothing for a codex that is not installed", () => {
+    expect(backendCanBeSignedIn(snapshot({ installed: false }))).toBe(false);
+  });
+
+  it("offers nothing for a backend with no account to sign in to", () => {
+    expect(backendCanBeSignedIn(snapshot({ identity: null }))).toBe(false);
+  });
+});
+
+describe("signInCaveat", () => {
+  it("warns a usable account that a sign-in writes a new credential", () => {
+    const caveat = signInCaveat(
+      snapshot({
+        identity: {
+          status: "authenticated",
+          account_label: "owner@example.com",
+          detail: null,
+          login_command: "codex login"
+        }
+      })
+    );
+
+    expect(caveat).toContain("new credential");
+    expect(caveat).toContain("retried");
+  });
+
+  it("warns a login nobody has tested, because it may still work", () => {
+    expect(
+      signInCaveat(
+        snapshot({
+          identity: {
+            status: "unknown",
+            account_label: null,
+            detail: "expired and not refreshed yet",
+            login_command: "codex login"
+          }
+        })
+      )
+    ).not.toBeNull();
+  });
+
+  it("suppresses the caveat only when nothing is running against a dead account", () => {
+    // Both halves have to be known. Known-unusable alone is not enough, because the page
+    // may simply not have looked at running turns.
+    expect(signInCaveat(snapshot(), { turnsInFlight: false })).toBeNull();
+  });
+
+  it("says nothing for a backend that cannot be signed in at all", () => {
+    expect(signInCaveat(snapshot({ backend_key: "claude" }))).toBeNull();
+  });
+});
+
+describe("signInIsPending", () => {
+  it("is true only while a sign-in is still running", () => {
+    expect(signInIsPending(signIn())).toBe(true);
+    expect(signInIsPending(signIn({ state: "ended" }))).toBe(false);
+    expect(signInIsPending(null)).toBe(false);
+  });
+});
+
+describe("signInOutcome", () => {
+  it("says nothing while a sign-in is pending", () => {
+    expect(signInOutcome(signIn())).toBeNull();
+  });
+
+  it("names the account a confirmed sign-in landed on", () => {
+    expect(
+      signInOutcome(
+        signIn({ state: "confirmed", account_label: "owner@example.com", user_code: null })
+      )
+    ).toBe("Signed in as owner@example.com.");
+  });
+
+  it("reports an unconfirmed sign-in as neither signed in nor failed", () => {
+    const outcome = signInOutcome(
+      signIn({
+        state: "unconfirmed",
+        detail: "Codex reported a sign-in, but the saved login still holds the credential it had before."
+      })
+    );
+
+    expect(outcome).toContain("still holds the credential");
+    expect(outcome).not.toContain("Signed in");
+  });
+
+  it("falls back to plain words when an unconfirmed sign-in carries no detail", () => {
+    expect(signInOutcome(signIn({ state: "unconfirmed" }))).toContain("could not confirm");
+  });
+
+  it("reports an ended sign-in with the reason it was given", () => {
+    expect(
+      signInOutcome({
+        ...signIn({ state: "ended" }),
+        detail: "Panels stopped showing the code after its own time limit."
+      })
+    ).toBe("Panels stopped showing the code after its own time limit.");
+  });
+});
+
+describe("signInCaveat and running turns", () => {
+  it("warns an unauthenticated card when a turn is known to be running", () => {
+    const caveat = signInCaveat(snapshot(), { turnsInFlight: true });
+
+    expect(caveat).toContain("A turn already running may have to be retried");
+  });
+
+  it("warns conditionally when running turns cannot be ruled out", () => {
+    // The page genuinely cannot tell. The disclosure is kept, and it does not claim a
+    // turn exists.
+    const caveat = signInCaveat(snapshot(), { turnsInFlight: "unknown" });
+
+    expect(caveat).toContain("If a turn is running, it may have to be retried");
+    expect(caveat).not.toContain("A turn already running");
+  });
+
+  it("says nothing only when the account is known unusable and nothing is running", () => {
+    expect(signInCaveat(snapshot(), { turnsInFlight: false })).toBeNull();
+  });
+
+  it("warns a usable account however much is known about running turns", () => {
+    const usable = snapshot({
+      identity: {
+        status: "authenticated",
+        account_label: "owner@example.com",
+        detail: null,
+        login_command: "codex login"
+      }
+    });
+
+    for (const turnsInFlight of [false, true, "unknown"] as const) {
+      expect(signInCaveat(usable, { turnsInFlight })).toContain(
+        "A turn already running may have to be retried"
+      );
+    }
+  });
+
+  it("offers no caveat for a backend that cannot be signed in, running turn or not", () => {
+    expect(signInCaveat(snapshot({ backend_key: "claude" }), { turnsInFlight: true })).toBeNull();
+    expect(
+      signInCaveat(snapshot({ backend_key: "claude" }), { turnsInFlight: "unknown" })
+    ).toBeNull();
+  });
+});
+
+describe("what the Backends page actually passes", () => {
+  it("passes unknown, so the production path keeps the conditional disclosure", () => {
+    // The page imports this exact value, so this is the production behaviour and not a
+    // parallel arrangement that only the test sees.
+    expect(BACKENDS_PAGE_SURROUNDINGS.turnsInFlight).toBe("unknown");
+  });
+
+  it("shows the conditional caveat for a dead account on the page's own input", () => {
+    expect(signInCaveat(snapshot(), BACKENDS_PAGE_SURROUNDINGS)).toContain(
+      "If a turn is running"
+    );
+  });
+
+  it("shows the plain caveat for a usable account on the page's own input", () => {
+    const usable = snapshot({
+      identity: {
+        status: "authenticated",
+        account_label: "owner@example.com",
+        detail: null,
+        login_command: "codex login"
+      }
+    });
+
+    expect(signInCaveat(usable, BACKENDS_PAGE_SURROUNDINGS)).toContain(
+      "A turn already running"
+    );
+  });
+
+  it("defaults to the page's reading when no surroundings are given", () => {
+    expect(signInCaveat(snapshot())).toBe(signInCaveat(snapshot(), BACKENDS_PAGE_SURROUNDINGS));
+  });
+});

@@ -134,7 +134,7 @@ with sync_playwright() as p:
     expect(parked_leash.locator('[data-ceiling-effect]')).to_have_text('Nothing is approved while the ceiling stays at Success.')
     assert parked_leash.locator('[data-ceiling-picker-locked]').count() == 0
     assert not parked_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
-    expect(parked_leash.locator('[data-ceiling-picker-choice="done"] [class*="approves-mark"]')).to_have_text('approves')
+    expect(parked_leash.locator('[data-ceiling-picker-choice="done"] [class*="approves-mark"]')).to_have_text('· approves')
     parked_leash.locator('[data-ceiling-part="holder"]').click()
     parked_leash.get_by_role('listbox').press('u')
     expect(parked_leash.locator('[data-ceiling-effect]')).to_have_text('Sends this Success proposal to User. Nothing is approved.')
@@ -155,12 +155,16 @@ with sync_playwright() as p:
     assert leash.locator('[data-scope-ceiling]').count() == 1
     assert leash.locator('[data-scope-holder]').count() == 0
     leash.locator('[data-scope-ceiling]').click()
+    assert leash.locator('[data-ceiling-picker-panel]').count() == 1
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    assert leash.locator('[data-ceiling-part="ceiling"] .picker-rail-row-detail').inner_text() == 'Success'
+    assert leash.locator('[data-ceiling-part="holder"] .picker-rail-row-detail').inner_text() == 'User'
     # A stage chosen and then abandoned is a draft. Escape discards it: nothing is sent,
     # the shut trigger still reads the saved ceiling, and the list ticks it again.
     leash.get_by_role('listbox').press('End')
     leash.get_by_role('listbox').press('Enter')
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    expect(leash.locator('[data-ceiling-part="ceiling"] .picker-rail-row-detail')).to_have_text('Done')
     leash.get_by_role('listbox').press('Escape')
     expect(leash.get_by_role('listbox')).to_have_count(0)
     page.wait_for_timeout(200)
@@ -169,8 +173,7 @@ with sync_playwright() as p:
     leash.locator('[data-scope-ceiling]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
     assert leash.locator('[role="option"][aria-selected="true"]').get_attribute('data-ceiling-picker-choice') == 'needs_success_condition'
-    # The rail names both halves and reaches either one directly. What each is set to is
-    # on the trigger above the panel.
+    # Each rail names its part and retains the selected draft as the other list opens.
     assert 'Approved until Success' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
     assert 'then User reviews' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
     leash.locator('[data-ceiling-part="holder"]').click()
@@ -214,6 +217,9 @@ with sync_playwright() as p:
     page.wait_for_timeout(200)
     assert len(ceiling_writes) == 3, ceiling_writes
     assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Approved until Success, then User reviews'
+    leash.locator('[data-scope-ceiling]').click()
+    page.locator('.ticket-title-row').click()
+    expect(leash.get_by_role('listbox')).to_have_count(0)
     assert page.locator('[data-copy], [data-ticket-takeover-toggle]').count() == 0
     assert placement_writes == []
     assert page.locator('.ticket-operating').count() == 0
@@ -223,8 +229,14 @@ with sync_playwright() as p:
         assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
         identity_box=page.locator('[data-ticket-identity]').bounding_box()
         title_box=page.locator('.ticket-title-row').bounding_box()
-        assert identity_box and title_box
+        leash.locator('[data-scope-ceiling]').click()
+        menu_box=leash.locator('[data-ceiling-picker-panel]').bounding_box()
+        assert identity_box and title_box and menu_box
         assert identity_box['y'] + identity_box['height'] <= title_box['y'] + 1
+        assert menu_box['x'] >= -1
+        assert menu_box['x'] + menu_box['width'] <= width + 1
+        assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
+        leash.get_by_role('listbox').press('Escape')
     assert_ticket_layout(1280)
     assert_ticket_layout(390)
     page.set_viewport_size({'width': 1280, 'height': 900})
@@ -319,12 +331,16 @@ with sync_playwright() as p:
     assert len(approvals) == 1
     assert approvals[0]['next_ceiling'] == 'done'
     assert approvals[0]['next_holder'] == {'kind': 'chief', 'id': 'chief'}
-    # Declared ownership is Config's to show and nobody's to edit: the Stage table is
-    # display-only, so who owns a Stage cannot be changed from the screen that reads it.
+    # Declared ownership is Config's to change. Every non-terminal Stage carries one
+    # owner control, and the Stage table carries nothing else that edits.
     page.evaluate('window.__showConfig()')
     stage_table=page.locator('[data-worker-stage-table]')
     stage_table.locator('[data-worker-stage-row]').first.wait_for()
-    assert stage_table.locator('select, input, [contenteditable]').count() == 0
+    editable_rows = stage_table.locator('[data-worker-stage-row][data-terminal="false"]').count()
+    assert editable_rows > 0
+    assert stage_table.locator('[data-stage-owner-select]').count() == editable_rows
+    assert stage_table.locator('select').count() == editable_rows
+    assert stage_table.locator('input, [contenteditable]').count() == 0
     browser.close()
 `;
   const child = spawn(join(root, '..', '.venv', 'bin', 'python'), ['-c', script, `http://127.0.0.1:${address.port}/.test-scratch/${stem}.html`], { stdio: 'inherit' });

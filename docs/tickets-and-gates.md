@@ -311,7 +311,8 @@ running card. Choosing scope first shows the approval or reroute consequence bef
 commit. A new proposal revision restores the draft. Unrelated refreshes retain
 proposal edits and unfinished picker choices.
 
-The ceiling sentence states the saved stage and reviewer. Controls use User,
+The ceiling sentence states the saved stage and reviewer and opens both choices
+directly with one click. Controls use User,
 Orchestrator, or Chief; actual entity names remain in navigation and identifying
 context. The parked stage is editable. An explicit raise beyond both the saved
 ceiling and the pending stage approves through atomic Accept. Same/lower scope

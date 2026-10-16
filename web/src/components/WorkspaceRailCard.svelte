@@ -36,7 +36,7 @@
 <style>
   .orchestrator-card { position:relative; border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); padding:11px var(--space-3) var(--space-3); transition:border-color var(--motion-fast) var(--motion-ease); }
   :global(.orchestrator-card) + .orchestrator-card { margin-top:var(--space-3); }
-  .orchestrator-card:hover, .orchestrator-card:focus-within { border-color:color-mix(in srgb,var(--text-default) 26%,transparent); }
+  .orchestrator-card:hover, .orchestrator-card:focus-within { border-color:rgb(from var(--border-color) r g b / .26); }
   .orchestrator-card:hover .item-title { color:var(--accent-needs-me); }
   .selected { border-color:var(--accent-bright); }
   .item-head { display:flex; align-items:flex-start; gap:var(--space-2); margin-top:var(--space-1); width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
@@ -45,12 +45,11 @@
   .chief .item-title { font-size:18px; }
   .chief-icon { flex:none; width:26px; height:26px; border-radius:var(--radius-sm); object-fit:cover; }
   .bucket { margin-top:var(--space-4); }
-  .bucket-label { font-size:10.5px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); padding-bottom:6px; margin-bottom:var(--space-1); border-bottom:var(--border-hairline) solid var(--border-color); }
-  .bucket :global(.worker-row) { width:calc(100% + var(--space-4)); display:flex; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+  .bucket-label { font-size:10.5px; line-height:normal; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); padding-bottom:6px; margin-bottom:var(--space-1); border-bottom:var(--border-hairline) solid var(--border-color); }
+  .bucket :global(.worker-row) { width:100%; display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
   .bucket :global(.worker-row:hover) { background-image:var(--interaction-hover); color:var(--text-strong); }
   .bucket :global(.worker-row.ticket-row--active) { background:var(--surface-recessed); color:var(--text-strong); }
   button:focus-visible,.bucket :global(.worker-row:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
   .bucket :global(.ticket-row-title) { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .bucket :global(.worker-row .stage-mark) { flex:none; margin-left:0; margin-right:0; }
-  .bucket :global(.worker-row[data-workspace-mark="none"])::after { content:""; flex:0 0 0.7rem; }
+  .bucket :global(.worker-row .stage-mark) { justify-self:end; margin-left:0; margin-right:0; }
 </style>

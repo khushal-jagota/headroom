@@ -214,6 +214,32 @@ export type BlockerSummary = {
 
 export type StageOwnershipMode = "worker" | "user";
 
+// The stored Worker type record, exactly as GET /api/worker-types/{type} returns it
+// and POST /api/worker-types takes it back. The write door replaces the whole record
+// and refuses unknown keys, so an edit reads this, changes one value, and posts it
+// back unchanged otherwise.
+export type WorkerTypeRecordStage = {
+  id: string;
+  label: string;
+  gating_field: string | null;
+  is_terminal: boolean;
+  ownership_mode: StageOwnershipMode | null;
+};
+
+export type WorkerTypeRecord = {
+  worker_type: string;
+  label: string;
+  stages: WorkerTypeRecordStage[];
+  fields: Array<{ id: string; label: string }>;
+  profile: {
+    specialist_skill: string;
+    default_model: string;
+    default_reasoning_effort: string | null;
+    toolset_profile: string;
+    default_backend: string;
+  };
+};
+
 export type ManagedSkill = {
   name: string;
   description: string;

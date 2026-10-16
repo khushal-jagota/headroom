@@ -443,7 +443,7 @@
                   <h2>{detail.blocked || detail.ticket_status === "blocked" ? "Blocked on" : detail.agent_state === "errored" ? "Error working on" : detail.assigned ? "Your step:" : detail.stage === "needs_brief" ? "Waiting for" : detail.agent_state === "working" || detail.ticket_status === "agent" ? "Currently working on" : "Waiting at"} {fieldLabelFor(lc, currentField)}</h2>
                   {#if detail.stage !== "needs_brief"}
                     <div class="worker-ceiling-line" data-leash>
-                      <CeilingPicker newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}
+                      <CeilingPicker document newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}
                         triggerLabel={`Approved until ${detail.ceiling === "none" ? "No further" : stageLabelFor(lc, detail.ceiling)}, then ${pageHolderLabel(detail.ceiling_holder)} reviews`}
                         holderLabel={pageHolderLabel} sprintItem={ticketSprintItem} below onComplete={(change) => void updateScope(change.ceiling === undefined
                           ? { ceiling_holder:change.holder } : { ceiling:change.ceiling, ceiling_holder:change.holder }).catch(() => undefined)} />
@@ -521,8 +521,9 @@
 <style>
   .ticket-head, .ticket-col { width:min(720px, calc(100% - 48px)); padding-inline:0; }
   .ticket-col { padding-top:0; }
+  .ticket-doc { scrollbar-gutter:auto; }
   .ticket-head { padding-top:48px; }
-  .worker-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
+  .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .worker-eyebrow a { color:inherit; text-decoration:none; }
   .worker-eyebrow a:hover { color:var(--text-strong); }
   .ticket-title-row { display:block; margin-top:var(--space-3); }
@@ -531,12 +532,12 @@
   .ticket-head :global([data-recap]) { margin-top:var(--space-3); max-width:66ch; font-family:var(--font-ui); font-size:17px; line-height:1.6; color:var(--text-faint); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
   .worker-live-card { margin-top:var(--space-6); padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
-  .worker-live-card h2 { margin:0; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
+  .worker-live-card h2 { margin:var(--space-2) 0 0; letter-spacing:-.006em; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
   .worker-live-card p { font-size:15px; }
   .worker-ceiling-line { margin-top:var(--space-3); }
   .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:15px; line-height:1.3; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-sm); background:transparent; box-shadow:none; text-align:left; }
   .worker-ceiling-line :global([data-scope-ceiling]:hover) { background-image:var(--interaction-hover); }
-  .worker-bands { margin-top:var(--space-7); padding-bottom:var(--space-7); }
+  .worker-bands { line-height:1.6; margin-top:var(--space-7); padding-bottom:var(--space-7); }
   .worker-steps { border-top:1px solid var(--border-color); }
   .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:13px; font-weight:600; color:var(--text-faint); cursor:pointer; list-style:none; }
   .worker-steps > summary::-webkit-details-marker { display:none; }
@@ -549,5 +550,4 @@
   .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:15px; color:var(--text-faint); }
   .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:15px; letter-spacing:normal; }
   .worker-step-rows :global(.stage-mark) { border-radius:1px; }
-  @media (max-width:560px) { .ticket-head, .ticket-col { width:calc(100% - 32px); } .ticket-head { padding-top:var(--space-5); } .worker-live-card { padding:var(--space-4); } }
 </style>

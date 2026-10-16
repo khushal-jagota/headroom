@@ -1199,6 +1199,8 @@ class CodexAppServerBackendChild:
     ) -> None:
         if self._turn is not turn:
             return
+        if ending is ConversationTurnEnding.failed:
+            await self._client.settle_standard_error()
         self._turn = None
         self._standard_error_the_next_turn_starts_from = self._client.standard_error_bytes_so_far()
         await self._complete_agent_messages(turn)

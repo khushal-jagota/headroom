@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
@@ -7,8 +7,9 @@
   import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
   import { whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
+  import type { WorkspaceMessageConversation } from "../lib/types";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
-  import { workspaceMessageConversations, workspaceSettledUnreadCount } from "../lib/workspaceMessageDiscovery";
+  import { workspaceChildMessageConversations, workspaceMessageConversations, workspaceSettledUnreadCount } from "../lib/workspaceMessageDiscovery";
   import StageMark from "../components/StageMark.svelte";
   import WorkspaceMessages from "../components/WorkspaceMessages.svelte";
   import ChiefConversation from "../components/ChiefConversation.svelte";
@@ -27,12 +28,6 @@
   let rail = $derived(buildWorkspaceRail(allCards, board.data?.sprint_items ?? []));
   let messages = $derived(workspaceMessageConversations(allCards, board.data?.sprint_items ?? [], workers.data?.chief_of_staff));
   let settledUnreadCount = $derived(workspaceSettledUnreadCount(messages, board.data?.sprint_items ?? []));
-  let messagesOpen = $state(true);
-  let messagesHeading = $state<HTMLElement | null>(null);
-  function showMessages(): void {
-    messagesOpen = true;
-    void tick().then(() => { messagesHeading?.scrollIntoView({block:"nearest"}); messagesHeading?.focus({preventScroll:true}); });
-  }
   let itemPane = $derived(opening.markedItemId !== null);
   let railElement = $state<HTMLElement | null>(null);
   let shellElement = $state<HTMLDivElement | null>(null);
@@ -101,7 +96,14 @@
     hover.enter({ target, title:item.title, kicker:item.project ?? "Orchestrator", groups:item.hoverGroups });
   }
   function hoverWorkerRow(target: HTMLElement, worker: WorkItemTicketFacts): void {
-    hover.enter({ target, title:worker.title, kicker:"Worker", worker });
+    if (worker.stage === "cancelled") hover.enter({target, title:worker.title, kicker:"Cancelled Worker"});
+    else hover.enter({ target, title:worker.title, kicker:"Worker", worker });
+  }
+  function hoverMessageRow(target: HTMLElement, message: WorkspaceMessageConversation): void {
+    const worker = allCards.find((card) => card.id === message.id)
+      ?? rail.settledItems.flatMap((item) => item.tickets).find((ticket) => ticket.id === message.id);
+    if (worker) hoverWorkerRow(target, worker);
+    else hover.enter({target, title:message.title, kicker:"Worker"});
   }
   async function settle(item: WorkspaceRailItem, settled: boolean): Promise<void> {
     busyItem = item.id; settleError = ""; hoverVisible = false; hover.leave();
@@ -120,17 +122,18 @@
           {#each rail.items as item (item.id)}
             <WorkspaceRailCard id={item.id} title={item.title} project={item.project} ownUnread={item.mark === "reply"} selected={opening.markedItemId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target) => hoverItem(target,item)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
           {/each}
-          <WorkspaceMessages conversations={messages} bind:open={messagesOpen} bind:heading={messagesHeading} />
           <div class="settled">
             <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => settledOpen = !settledOpen}><span>Settled</span><span class="rule"></span><span class="count" data-settled-count>{rail.settledItems.length}{settledUnreadCount ? ` · ${settledUnreadCount} unread` : ""}</span></button>
             {#if settledOpen}
               {#each rail.settledItems as item (item.id)}
-                <div class="settled-row" data-settled-item={item.id}>
+                <div class="settled-item" data-settled-item={item.id}>
+                <div class="settled-row">
                   <button class="settled-title" type="button" onclick={() => selectItem(item.id)}><span>{item.title}</span>{#if item.mark === "reply"}<StageMark state="current-awaiting-approval" aria-label="Unread reply" data-workspace-mark="reply" />{/if}</button>
                   <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
                 </div>
+                <WorkspaceMessages conversations={workspaceChildMessageConversations(messages, item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
+                </div>
               {/each}
-              {#if settledUnreadCount}<button type="button" class="settled-message-access" data-settled-message-access onclick={showMessages}>{settledUnreadCount} unread in Messages</button>{/if}
             {/if}
           </div>
           {#if settleError}<p role="alert">{settleError}</p>{/if}
@@ -184,7 +187,7 @@
 <WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverTitle} kicker={hoverKicker} worker={hoverWorker} groups={hoverGroups} cards={allCards} rail={railElement} />
 <style>
   .approved-rail-shell { position:relative; grid-template-columns:var(--rail-width) minmax(0,1fr); }
-  .approved-rail { padding:var(--space-3); scrollbar-gutter:stable; scrollbar-width:thin; }
+  .approved-rail { font-size:var(--type-sm); line-height:normal; padding:var(--space-3); scrollbar-gutter:stable; scrollbar-width:thin; }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
   .rail-grip::after { content:""; position:absolute; inset:0 4px; background:transparent; transition:background var(--motion-fast) var(--motion-ease); }
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { background:var(--accent-bright); }
@@ -194,12 +197,12 @@
   .settled-head:hover { color:var(--text-strong); }
   .rule { flex:1; height:var(--border-hairline); background:var(--border-color); }
   .count { flex:none; font-size:var(--type-xs); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
+  .settled-item + .settled-item { margin-top:var(--space-3); }
   .settled-row { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border-radius:var(--radius-sm); }
   .settled-row:hover { background-image:var(--interaction-hover); }
   .settled-title,.reopen { border:0; background:none; font:inherit; cursor:pointer; color:var(--text-faintest); padding:0; }
   .settled-title { flex:1; display:flex; align-items:center; gap:var(--space-2); text-align:left; min-width:0; }
   .settled-title > span { flex:1; }
-  .settled-message-access { border:0; background:none; padding:var(--space-2) 0; color:var(--text-faintest); font:inherit; cursor:pointer; text-align:left; }
   .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
   button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }

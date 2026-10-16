@@ -5,6 +5,7 @@ import type {
   WorkAttention,
   WorkspaceMessageConversation
 } from "./types";
+import type { WorkItemTicketFacts } from "./workItemPresentation";
 
 /** Count conversations, not rows or messages. An ask without an unread reply adds none. */
 export function workspaceUnreadConversationCount(
@@ -32,6 +33,42 @@ export function workspaceSettledUnreadCount(
     .map((row) => row.conversationId)).size;
 }
 
+/** Retain each parent's real child access before deduplicating within that parent. */
+export function workspaceChildMessageConversations(
+  rows: readonly WorkspaceMessageConversation[],
+  parent: Pick<BoardSprintItem, "id" | "title" | "settled"> & {tickets: readonly WorkItemTicketFacts[]},
+  cards: readonly BoardCard[] = []
+): WorkspaceMessageConversation[] {
+  const unread = new Set(rows.map((row) => row.conversationId));
+  const byTicket = new Map(cards.map((card) => [card.id,card]));
+  const children = new Map<string,WorkspaceMessageConversation>();
+  for (const ticket of parent.tickets) {
+    const canonical = byTicket.get(ticket.id);
+    // The canonical same-Ticket address and read fact win over a stale child copy.
+    if (canonical && (!canonical.awaiting_reply || ticketParentId(canonical) !== parent.id)) continue;
+    const conversationId = canonical ? canonical.conversation_id : ticket.conversation_id;
+    if (!conversationId || !unread.has(conversationId)) continue;
+    const sameTicket = rows.find((row) => row.kind === "ticket" && row.id === ticket.id);
+    if (sameTicket && sameTicket.parentId !== parent.id) continue;
+    if (!children.has(conversationId)) children.set(conversationId, {
+      kind:"ticket", id:ticket.id, title:canonical?.title ?? ticket.title, conversationId,
+      parentId:parent.id, parentTitle:parent.title, settled:parent.settled === true
+    });
+  }
+  for (const row of rows) {
+    if (row.kind === "ticket" && row.parentId === parent.id && !children.has(row.conversationId)) {
+      children.set(row.conversationId,row);
+    }
+  }
+  return [...children.values()];
+}
+
+function ticketParentId(card: BoardCard): string {
+  return card.orchestrator?.kind === "chief" ? "chief"
+    : card.orchestrator?.kind === "sprint_item" ? card.orchestrator.id
+    : card.sprint_item_id ?? "chief";
+}
+
 /** Existing durable unread facts form this index; settlement never limits discovery. */
 export function workspaceMessageConversations(
   cards: readonly BoardCard[],
@@ -47,9 +84,7 @@ export function workspaceMessageConversations(
   for (const card of cards) {
     if (!card.awaiting_reply || !card.conversation_id) continue;
     // An explicit Chief assignment wins over any stale legacy parent column.
-    const parentId = card.orchestrator?.kind === "chief" ? "chief"
-      : card.orchestrator?.kind === "sprint_item" ? card.orchestrator.id
-      : card.sprint_item_id ?? "chief";
+    const parentId = ticketParentId(card);
     const parent = byItem.get(parentId);
     add({
       kind: "ticket", id: card.id, title: card.title, conversationId: card.conversation_id,

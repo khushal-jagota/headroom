@@ -17,7 +17,7 @@
     returnUnavailableReason?: string;
     contextRow?: Snippet;
   } = $props();
-  let scopePicker = $state<{openApproval: () => void} | undefined>();
+  let scopePicker = $state<{openApproval: (anchor?: HTMLElement) => void; openReviewer: (anchor?: HTMLElement) => void} | undefined>();
   let draft = $state("");
   let note = $state("");
   let returning = $state(false);
@@ -68,21 +68,21 @@
 
 <section inert={busy || resolved} class="worker-proposal" data-approval-block data-mode="pending" data-field={proposal.field}>
   <h2>{fieldLabelFor(lifecycle, proposal.field)} <span class="who">— for
-    <span class="reviewer">{reviewerLabel(holder)}</span> to approve</span></h2>
+    <button type="button" class="reviewer" data-reviewer-heading onclick={(event) => scopePicker?.openReviewer(event.currentTarget)}>{reviewerLabel(holder)}</button> to approve</span></h2>
   <div class="proposal-prose">
     <InlineEdit value={draft} markdown multiline dataEdit onSave={async (raw) => { draft = raw; }} onCancel={() => proposal.body} />
   </div>
   {#if contextRow}<div class="context">{@render contextRow()}</div>{/if}
   <div class="actions">
     <button type="button" class="primary" data-accept disabled={busy || resolved || !nextCeiling}
-      onclick={() => scopePicker?.openApproval()}>Approve</button>
+      onclick={(event) => scopePicker?.openApproval(event.currentTarget)}>Approve</button>
     {#if proposal.field !== "brief"}
       <button type="button" class="ghost" data-send-back disabled={!canReturn || busy || resolved}
         onclick={() => { if (canReturn) returning = true; }}>Send it back</button>
     {/if}
   </div>
   <div class="worker-ceiling-line" data-reviewer-control data-pending-ceiling>
-    <CeilingPicker newStage={stage} {lifecycle} {ceiling} {holder} {sprintItem} below pendingStage={stage}
+    <CeilingPicker document newStage={stage} {lifecycle} {ceiling} {holder} {sprintItem} below pendingStage={stage}
       pendingLabel={fieldLabelFor(lifecycle,proposal.field)} approvalCeiling={nextCeiling} bind:controller={scopePicker}
       triggerLabel={`Approved until ${stageLabelFor(lifecycle,ceiling)}, then ${reviewerLabel(holder)} reviews`}
       holderLabel={(value) => value ? reviewerLabel(value) : "User"} onComplete={(change) => void completeScope(change)} />
@@ -97,13 +97,15 @@
   {#if error}<ErrorLine {error} />{/if}
 </section>
 <style>
-  h2 { margin:0; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
+  h2 { margin:var(--space-2) 0 0; letter-spacing:-.006em; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
   .who { font-weight:400; color:var(--text-faint); }
-  .proposal-prose { margin-top:var(--space-4); }
+  .proposal-prose { line-height:1.6; margin-top:var(--space-4); }
   .proposal-prose :global(.ed), .proposal-prose :global(.markdown) { font-family:var(--font-ui); font-size:15px; line-height:1.6; }
   .actions { display:flex; align-items:center; flex-wrap:wrap; gap:var(--space-3); margin-top:var(--space-5); }
-  button { font:inherit; font-size:13px; font-weight:500; padding:8px 18px; border:0; border-radius:var(--radius-pill); cursor:pointer; }
+  button { font:inherit; font-size:13px; font-weight:500; line-height:1.6; padding:8px 18px; border:0; border-radius:var(--radius-pill); cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
+  .reviewer { font:inherit; line-height:inherit; padding:0 5px; margin:0 -5px; background:transparent; color:inherit; border-radius:var(--radius-sm); }
+  .reviewer:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .primary { background:var(--accent-bright); color:var(--surface-ink); }
   .ghost { background:transparent; color:var(--text-faint); padding:8px 12px; }
   .ghost:hover { background-image:var(--interaction-hover); color:var(--text-strong); }

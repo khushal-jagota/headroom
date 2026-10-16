@@ -10,7 +10,7 @@
   </div>
 </details>
 <style>
-  .artifacts-band { border-top:1px solid var(--border-color); border-bottom:1px solid var(--border-color); }
+  .artifacts-band { line-height:1.6; border-top:1px solid var(--border-color); border-bottom:1px solid var(--border-color); }
   summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:13px; font-weight:600; color:var(--text-faint); cursor:pointer; list-style:none; }
   summary::-webkit-details-marker { display:none; }
   summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
@@ -22,7 +22,7 @@
   .body :global(.artifact-strip-items) { display:flex; flex-direction:column; gap:0; }
   .body :global(.artifact-chip) { width:calc(100% + 2 * var(--space-2)); margin-inline:calc(-1 * var(--space-2)); display:flex; justify-content:space-between; gap:var(--space-3); padding:9px var(--space-2); border:0; border-radius:var(--radius-sm); background:transparent; font-size:15px; color:var(--text-muted); }
   .body :global(.artifact-chip:hover) { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .body :global(.artifact-chip small) { font-size:13px; color:var(--text-faintest); }
+  .body :global(.artifact-chip small) { font-size:13px; text-transform:none; letter-spacing:normal; color:var(--text-faintest); }
   .body :global(.artifact-chip--overflow) { display:flex; }
   .body :global(.artifact-strip-more) { display:none; }
   .body :global(.artifact-chip--nested) { padding-left:var(--space-5); }

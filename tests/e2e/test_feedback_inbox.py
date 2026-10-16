@@ -23,13 +23,13 @@ def test_feedback_capture_persists_and_phone_sheet_tracks_the_visual_viewport(
     api: ApiHelper,
 ) -> None:
     desktop = open_page(
-        context_factory(), server, "#/day", '[data-feedback-trigger]'
+        context_factory(), server, "#/workspace/chief-of-staff", '[data-feedback-trigger]'
     )
     trigger = desktop.locator("[data-feedback-trigger]")
     trigger.click()
     composer = desktop.locator("[data-feedback-input]")
     assert composer.evaluate("element => element === document.activeElement")
-    assert desktop.locator(".fb-context .chip").inner_text() == "Home"
+    assert desktop.locator(".fb-context .chip").inner_text() == "Workspace"
     composer.fill("Keep the feedback path close to the work.")
     desktop.keyboard.press("Enter")
 
@@ -38,8 +38,8 @@ def test_feedback_capture_persists_and_phone_sheet_tracks_the_visual_viewport(
     )
     saved = api.get(server, "/api/feedback")
     assert saved["open_count"] == 1
-    assert saved["open"][0]["page_address"] == "#/day"
-    assert saved["open"][0]["page_label"] == "Home"
+    assert saved["open"][0]["page_address"] == "#/workspace/chief-of-staff"
+    assert saved["open"][0]["page_label"] == "Workspace"
 
     desktop.locator("[data-feedback-toast] a", has_text="View").click()
     desktop.wait_for_url("**/#/feedback", timeout=WAIT_MS)
@@ -67,7 +67,9 @@ def test_feedback_capture_persists_and_phone_sheet_tracks_the_visual_viewport(
         """
     )
     try:
-        phone = open_page(phone_context, server, "#/day", '[data-feedback-trigger]')
+        phone = open_page(
+            phone_context, server, "#/workspace/chief-of-staff", '[data-feedback-trigger]'
+        )
         phone.evaluate("window.__setFeedbackKeyboardHeight(291)")
         phone.locator("[data-feedback-trigger]").click()
         sheet = phone.locator("[data-feedback-capture]")

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, expect
-from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle, open_status_group
+from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 
 from planner.conversation.events import ConversationTurnEnding, TurnEndedEventPayload
 from planner.conversation.storage import ConversationStore
@@ -151,7 +151,7 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
                 "title": title,
                 "worker_type": "coding",
                 "kickoff_note": "Agreed brief.",
-                "sprint_item_id": items[index]["id"],
+                "orchestrator": {"kind": "sprint_item", "id": items[index]["id"]},
             },
         )
         for title, index in (
@@ -185,9 +185,6 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
     page = open_page(context, server, "#/workspace", '[data-screen="workspace"]')
     evidence = Path(__file__).resolve().parents[2] / "data/ticket-evidence/consequences"
     evidence.mkdir(parents=True, exist_ok=True)
-    page.get_by_role("tab", name="Tickets", exact=True).click(timeout=WAIT_MS)
-    page.screenshot(path=str(evidence / "completed-errors-tickets.png"), full_page=True)
-    page.get_by_role("tab", name="Sprint Items", exact=True).click(timeout=WAIT_MS)
     expect(page.locator(f'[data-sprint-item="{items[0]["id"]}"]')).to_be_visible(timeout=WAIT_MS)
     page.screenshot(path=str(evidence / "completed-errors-workspace.png"), full_page=True)
     (evidence / "completed-errors-api.json").write_text(json.dumps(board, indent=2))
@@ -215,14 +212,7 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
         ).count()
         == 0
     )
-    page.get_by_role("tab", name="Tickets", exact=True).click(timeout=WAIT_MS)
-    open_status_group(page, "done")
-    for ticket in tickets[:3]:
-        row = page.locator(f'[data-bucket-key="done"] [data-ticket-id="{ticket["id"]}"]')
-        expect(row).to_be_visible(timeout=WAIT_MS)
-        # Idle work has no message dot; the API assertions above retain its state proof.
-        expect(row.locator(".stage-mark")).to_have_count(0, timeout=WAIT_MS)
-    page.screenshot(path=str(evidence / "completed-errors-tickets.png"), full_page=True)
+    # Completed Workers stay accessible in their orchestrator's complete Done band.
     for index, item in enumerate(items):
         item_page = open_page(
             context,
@@ -240,6 +230,9 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
             expect(done_group.locator(f'[data-sprint-ticket-id="{ticket["id"]}"]')).to_be_visible(
                 timeout=WAIT_MS,
             )
+            expect(
+                done_group.locator(f'[data-sprint-ticket-id="{ticket["id"]}"] .stage-mark')
+            ).to_have_count(0, timeout=WAIT_MS)
             assert (
                 pane.locator(
                     f'[data-workspace-group="errored"] [data-sprint-ticket-id="{ticket["id"]}"]'
@@ -247,6 +240,9 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
                 == 0
             )
         if index == 1:
+            error_group = pane.locator('[data-workspace-group="errored"]')
+            if error_group.get_attribute("open") is None:
+                error_group.locator("summary").click(timeout=WAIT_MS)
             expect(
                 pane.locator(
                     f'[data-workspace-group="errored"] [data-sprint-ticket-id="{tickets[3]["id"]}"]'

@@ -16,7 +16,7 @@ import sqlite3
 from collections.abc import Callable
 
 from playwright.sync_api import BrowserContext, Page
-from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle, open_status_group
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 WAIT_MS = 10_000
 
@@ -105,13 +105,12 @@ def test_a_change_reaches_the_open_board_without_a_reload(
     )["id"]
 
     page = open_page(
-        context_factory(), server, "#/workspace?view=tickets", 'section[data-screen="workspace"]'
+        context_factory(), server, "#/workspace/chief-of-staff", 'section[data-screen="workspace"]'
     )
-    card = f'[data-card][data-ticket-id="{ticket_id}"]'
-    # The kickoff proposal belongs to the canonical owner-approval group. Whether that
-    # group arrives open is the rail's choice, so this test opens it explicitly.
+    card = f'.board-workspace-left [data-ticket-id="{ticket_id}"]'
+    # The approved rail nests this exact Worker under Chief. Its own approval bucket
+    # stays visible; the live-update contract does not depend on the page body.
     page.wait_for_selector(card, state="attached", timeout=WAIT_MS)
-    open_status_group(page, "awaiting_approval")
     assert "Board card before the change" in page.inner_text(card)
 
     _mark_page(page)

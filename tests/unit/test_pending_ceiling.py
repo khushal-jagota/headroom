@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from sqlite3 import Connection
-from typing import Any
+from typing import Any, Unpack
 
 import pytest
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
@@ -12,7 +12,7 @@ from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, 
 from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets import data
 from planner.tickets.api import _marshal_accept
-from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, WorkerStepClaim
+from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit, WorkerStepClaim
 
 
 def _park(conn: Connection) -> Ticket:
@@ -35,7 +35,7 @@ def _park(conn: Connection) -> Ticket:
     )
 
 
-def _edit(conn: Connection, ticket: Ticket, **values: Any) -> Ticket:
+def _edit(conn: Connection, ticket: Ticket, **values: Unpack[TicketEdit]) -> Ticket:
     return data.edit_ticket(
         conn,
         ticket.id,
@@ -206,6 +206,7 @@ def test_accept_http_checks_the_visible_revision_before_settling(tmp_db: Connect
     from planner.core.server import create_app
 
     original = _park(tmp_db)
+    assert original.pending_proposal is not None
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     config = load_config(
         path=None,

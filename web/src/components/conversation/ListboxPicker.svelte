@@ -24,6 +24,7 @@
     chevron = "typed",
     below = false,
     align = "left",
+    anchor = null,
     attributes = {},
     triggerAttributes = {},
     panelAttributes = {},
@@ -53,6 +54,8 @@
     chevron?: "typed" | "drawn";
     below?: boolean;
     align?: "left" | "right";
+    /** Optional second entry point for the same picker; keeps one panel and draft. */
+    anchor?: HTMLElement | null;
     attributes?: Record<string, string | undefined>;
     triggerAttributes?: Record<string, string | undefined>;
     panelAttributes?: Record<string, string | undefined>;
@@ -77,10 +80,12 @@
 
   const listId = $props.id();
   let open = $state(false);
+  let anchorOffset = $state<{left:number;top:number} | null>(null);
   let activeIndex = $state(0);
   let root = $state<HTMLDivElement | null>(null);
   let trigger = $state<HTMLButtonElement | null>(null);
   let list = $state<HTMLDivElement | null>(null);
+  let panelElement = $state<HTMLDivElement | null>(null);
   let typeahead = "";
   let typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
   let returnFocusWhenEnabled = false;
@@ -113,7 +118,7 @@
   }
 
   function close(returnFocus = true): void {
-    if (returnFocus) trigger?.focus();
+    if (returnFocus) (anchor ?? trigger)?.focus();
     if (open) onClose?.();
     open = false;
     forgetTypeahead();
@@ -170,9 +175,20 @@
     if (disabled) return;
     onOpen?.();
     await tick();
+    const rootRect = root?.getBoundingClientRect();
+    const anchorRect = anchor?.getBoundingClientRect();
+    anchorOffset = rootRect && anchorRect ? {left:anchorRect.left-rootRect.left,top:anchorRect.bottom-rootRect.top} : null;
     activeIndex = Math.max(0, items.findIndex((item) => item.value === selectedValue));
     open = true;
     await tick();
+    // An alternate entry point can sit near the viewport edge. Bound the same
+    // panel using its rendered width; its draft, keyboard flow and focus stay here.
+    if (anchorOffset && panelElement && root) {
+      const panelRect = panelElement.getBoundingClientRect();
+      const rootRect = root.getBoundingClientRect();
+      const left = Math.max(0,Math.min(panelRect.left,document.documentElement.clientWidth-panelRect.width));
+      anchorOffset = { ...anchorOffset, left:left-rootRect.left };
+    }
     list?.focus();
   }
 
@@ -303,10 +319,14 @@
   {#if open}
     <div
       class="listbox-picker-panel"
+      bind:this={panelElement}
       class:rail={kind === "rail"}
       class:compact={kind === "compact"}
       class:below
       class:right={align === "right"}
+      style:left={anchorOffset ? `${anchorOffset.left}px` : undefined}
+      style:top={anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
+      style:bottom={anchorOffset ? "auto" : undefined}
       aria-busy={panelBusy}
       role="presentation"
       onkeydown={onPanelKeydown}

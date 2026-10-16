@@ -120,8 +120,8 @@ One screen per part of the system:
   resolution, order, API/CLI controls, and the existing Review edit path.
 
   One card holds the current step. A pending proposal names its reviewer and keeps
-  one editable ceiling/reviewer picker. Its draft previews the consequence before
-  commit. An explicit raise past the visible pending stage accepts that exact
+  one editable ceiling/reviewer picker that opens directly with one click. Its draft
+  previews the consequence before commit. An explicit raise past the visible pending stage accepts that exact
   submission through atomic Accept, with the selected onward ceiling and reviewer.
   Same/lower scope preserves the proposal. Reviewer-only changes reroute it without
   approval. Approve is a direct entry to the same picker and approval action. Send it back opens
@@ -481,7 +481,8 @@ hand-rolling the same shapes per screen. Each does one job:
 - **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
   may go, and who reviews it — sit in a rail on the left, so either can be edited on its
   own. A half-finished choice stays in the open panel: dismissing it writes nothing and
-  leaves nothing behind, and only a completed pair reaches the Ticket.
+  leaves nothing behind, and only a completed pair reaches the Ticket. The same picker
+  keeps its own trigger in both the current-step card and the approval row.
 - **PickerRail**, **PickerRailRow** — the left rail a picker panel uses to name the parts
   of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.

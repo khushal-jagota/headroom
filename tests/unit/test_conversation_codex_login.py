@@ -12,6 +12,7 @@ apart — good, unconfirmed, refused — must each be reported as themselves.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
@@ -37,6 +38,7 @@ from planner.conversation.backends.codex_app_server.auth_failure import (
     read_a_failed_turn,
 )
 from planner.conversation.backends.codex_app_server.client import (
+    CodexAppServerClient,
     CodexChildWouldNotStart,
     CodexLoginIsDuplicated,
     child_environment,
@@ -522,9 +524,29 @@ REFRESH_REJECTED_ON_STDERR = (
 
 
 def test_a_failed_turn_says_the_login_was_rejected_and_remembers_that_credential(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The whole path, on a synthetic login: codex's words in, an honest line out."""
+    original_read = CodexAppServerClient._read_standard_error
+
+    class DelayedStream(asyncio.StreamReader):
+        def __init__(self, stream: asyncio.StreamReader) -> None:
+            super().__init__()
+            self.stream = stream
+
+        async def readline(self) -> bytes:
+            line = await self.stream.readline()
+            if line:
+                await asyncio.sleep(0.01)
+            return line
+
+    async def delayed_read(
+        self: CodexAppServerClient, stream: asyncio.StreamReader
+    ) -> None:
+        await original_read(self, DelayedStream(stream))
+
+    # Force the stdout notification to beat an earlier stderr write.
+    monkeypatch.setattr(CodexAppServerClient, "_read_standard_error", delayed_read)
     home = tmp_path / "codex-home"
     _write_login(home)
     remembered = RememberedCodexLoginRejection()

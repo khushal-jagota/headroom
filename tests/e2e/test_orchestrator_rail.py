@@ -485,48 +485,41 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
         ),
     )
     left = page.locator(".board-workspace-left")
-    messages = left.locator("[data-workspace-messages]")
-    summary = messages.locator(":scope > summary")
-    if messages.evaluate("el => el.open"):
-        summary.click()
-    expect(summary.locator("[data-messages-count]")).to_contain_text("4", timeout=WAIT_MS)
-    expect(summary.get_by_role("img")).to_have_count(0)
-    settled_head = left.get_by_role("button", name="Settled", exact=False)
+    # Discovery stays nested in the approved rail; there is no global Messages block.
+    expect(left.locator(":scope > [data-workspace-messages]")).to_have_count(0)
+    settled_head = left.locator(".settled-head")
     expect(settled_head).to_have_attribute("aria-expanded", "false")
     expect(left.locator("[data-settled-count]")).to_contain_text("3 unread")
     expect(settled_head.get_by_role("img")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible()
-    settled_head.click()
+    settled_head.focus()
+    page.keyboard.press("Enter")
+    expect(settled_head).to_have_attribute("aria-expanded", "true")
     first_parent = left.locator(f'[data-settled-item="{parents[0]["id"]}"]')
     quiet_parent = left.locator(f'[data-settled-item="{parents[1]["id"]}"]')
     expect(first_parent.locator(".settled-title .stage-mark")).to_be_visible()
     expect(quiet_parent.locator(".settled-title .stage-mark")).to_have_count(0)
-    left.locator("[data-settled-message-access]").click()
-    expect(messages).to_have_attribute("open", "")
-    expect(summary).to_be_focused()
     rows = {
-        name: messages.locator(f'[data-message-conversation="{name}"]')
-        for name in (
-            "settled-child-one",
-            "settled-child-two",
-            "settled-supervisor",
-            "settled-chief",
-        )
+        "settled-child-one": first_parent.locator(
+            '[data-message-conversation="settled-child-one"]'
+        ),
+        "settled-child-two": quiet_parent.locator(
+            '[data-message-conversation="settled-child-two"]'
+        ),
+        "settled-supervisor": first_parent.locator(".settled-title"),
+        "settled-chief": left.locator("[data-chief-destination]"),
     }
     for row in rows.values():
         expect(row).to_be_visible()
         expect(row.get_by_role("img", name="Unread reply")).to_have_count(1)
-    expect(rows["settled-child-two"].locator(".message-context")).to_contain_text(
-        parents[1]["title"]
-    )
-    expect(rows["settled-child-two"].locator(".message-context")).to_contain_text("settled")
+    expect(first_parent.locator("[data-workspace-messages] .bucket-label")).to_have_text("Messages")
+    expect(quiet_parent.locator("[data-workspace-messages] .bucket-label")).to_have_text("Messages")
+    expect(left.locator(".message-context")).to_have_count(0)
     expect(rows["settled-child-one"]).to_have_attribute(
         "href", f"#/workspace/item/{parents[0]['id']}/{children[0]['id']}"
     )
-    expect(rows["settled-supervisor"]).to_have_attribute(
-        "href", f"#/workspace/item/{parents[0]['id']}"
-    )
-    expect(rows["settled-chief"]).to_have_attribute("href", "#/workspace/chief-of-staff")
+    rows["settled-child-two"].focus()
+    expect(rows["settled-child-two"]).to_be_focused()
     rows["settled-child-one"].click()
     expect(
         page.locator(f'[data-screen="ticket"][data-ticket-id="{children[0]["id"]}"]')
@@ -535,7 +528,7 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     pane = page.locator(f'[data-sprint-item-workspace="{parents[0]["id"]}"]')
     expect(pane).to_be_visible()
     # The local page no longer duplicates Messages. Terminal Workers keep their
-    # lifecycle group while the global Messages group remains exact discovery.
+    # lifecycle group while the nested settled Messages bucket keeps exact discovery.
     expect(pane.locator('[data-workspace-section="remaining"]')).to_have_count(0)
     expect(pane.locator('[data-workspace-group="awaiting_reply"]')).to_have_count(0)
     page_group = pane.locator('[data-workspace-group="done"]')
@@ -560,10 +553,8 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
         "/api/conversation/conversations/settled-supervisor/owner-read",
         {"through_sequence": 1},
     )
-    expect(rows["settled-supervisor"]).to_have_count(0, timeout=WAIT_MS)
     expect(first_parent.locator(".settled-title .stage-mark")).to_have_count(0)
     expect(left.locator("[data-settled-count]")).to_contain_text("2 unread")
-    expect(summary.locator("[data-messages-count]")).to_contain_text("3")
     expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible()
     api.direct_post(
         server,
@@ -572,7 +563,6 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     )
     expect(rows["settled-child-one"]).to_have_count(0, timeout=WAIT_MS)
     expect(left.locator("[data-settled-count]")).to_contain_text("1 unread")
-    expect(summary.locator("[data-messages-count]")).to_contain_text("2")
     # Reading clears the exact dot/count without moving the local terminal row.
     done = pane.locator('[data-workspace-group="done"]')
     expect(done).to_be_attached(timeout=WAIT_MS)
@@ -588,23 +578,21 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     )
     expect(rows["settled-child-two"]).to_have_count(0, timeout=WAIT_MS)
     expect(left.locator("[data-settled-count]")).not_to_contain_text("unread")
-    expect(summary.locator("[data-messages-count]")).to_contain_text("1")
     api.direct_post(
         server, "/api/conversation/conversations/settled-chief/owner-read", {"through_sequence": 1}
     )
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0, timeout=WAIT_MS)
-    expect(summary.locator("[data-messages-count]")).to_contain_text("0")
-    summary.click()
+    settled_head.click()
     _send_owner_message(
         server,
         Principal(PrincipalKind.ticket, children[0]["id"]),
         "A later message in the same settled conversation",
     )
-    expect(summary.locator("[data-messages-count]")).to_contain_text("1", timeout=WAIT_MS)
     expect(left.locator("[data-settled-count]")).to_contain_text("1 unread")
     expect(quiet_parent.locator(".settled-title .stage-mark")).to_have_count(0)
     expect(first_parent.locator(".settled-title .stage-mark")).to_have_count(0)
-    summary.click()
+    settled_head.focus()
+    page.keyboard.press("Enter")
     expect(rows["settled-child-one"]).to_be_visible()
     expect(page_group.locator("[data-group-unread-count]")).to_contain_text("1 unread")
     page.screenshot(path=str(artifacts / "later-message-without-reopen.png"), full_page=True)
@@ -631,15 +619,17 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     _send_owner_message(
         server, Principal(PrincipalKind.ticket, chief_child["id"]), "Chief child direct message"
     )
-    chief_child_row = messages.locator('[data-message-conversation="settled-chief-child"]')
+    chief_child_row = left.locator(
+        f'.orchestrator-card.chief [data-ticket-id="{chief_child["id"]}"]'
+    )
     expect(chief_child_row).to_be_visible(timeout=WAIT_MS)
-    expect(chief_child_row).to_have_attribute("href", f"#/workspace/{chief_child['id']}")
+    expect(chief_child_row.get_by_role("img", name="Unread reply")).to_have_count(1)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
     chief_child_row.click()
     expect(
         page.locator(f'[data-screen="ticket"][data-ticket-id="{chief_child["id"]}"]')
     ).to_be_visible()
-    assert page.evaluate("location.hash") == f"#/workspace/{chief_child['id']}"
+    assert page.evaluate("location.hash").split("?", 1)[0] == f"#/workspace/{chief_child['id']}"
     assert settlement_writes == []
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute("SELECT count(*) FROM sprint_items WHERE settled=1").fetchone()[0] == 2

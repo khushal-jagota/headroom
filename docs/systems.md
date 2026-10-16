@@ -266,9 +266,9 @@ _Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
   included in a delivered prompt.
 - **Conversation id versus backend session.** The caller owns the first. The
   conversation system owns the second.
-- **Managed skills versus packaged defaults.** `data/skills` is the live authority.
-  Packaged skills seed a database that has none. Codex, Claude and Hermes all provision
-  every managed Panels skill.
+- **Managed skills versus packaged defaults.** The `managed_skills` row is the authority,
+  and `data/skills` is the copy Panels writes from it. Packaged skills seed a database that
+  has none. Codex, Claude and Hermes all provision every managed Panels skill.
 - **Authority versus your own record.** Standing above a thing is one question. Being
   the thing — a Ticket proposing, a Sprint Item writing its own body — is another, and the
   chain does not decide it.

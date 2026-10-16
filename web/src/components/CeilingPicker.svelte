@@ -9,6 +9,7 @@
   import { ceilingOptionsFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
   import { holderOptionsFor, holderValue, holderFromValue, holderLabelFor } from "../lib/ceilingHolder";
   import { pendingCeilingApproves, pendingCeilingEffect, type PendingCeilingIntent } from "../lib/pendingCeiling";
+  import { ceilingLabelFor } from "../lib/ceilingPresentation";
   import type { Principal } from "../lib/types";
 
   // The whole ceiling in one control: how far the Ticket may go, and who is asked when
@@ -26,6 +27,7 @@
     sprintItem = null,
     stageLocked = false,
     below = false,
+    document = false,
     triggerLabel = null,
     holderLabel = null,
     pendingStage = null,
@@ -38,7 +40,8 @@
     pendingStage?: string | null;
     pendingLabel?: string | null;
     approvalCeiling?: string | null;
-    controller?: { openApproval: () => void };
+    document?: boolean;
+    controller?: { openApproval: (anchor?: HTMLElement) => void; openReviewer: (anchor?: HTMLElement) => void };
     triggerLabel?: string | null;
     holderLabel?: ((holder: Principal | null) => string) | null;
     lifecycle?: Lifecycle | null;
@@ -59,11 +62,19 @@
   let controlRoot = $state<HTMLDivElement | null>(null);
   let requestedApproval = false;
   let intent = $state<PendingCeilingIntent>("scope");
-  controller = { openApproval: () => {
+  let approvalAnchor = $state<HTMLElement | null>(null);
+  let requestedPart: "ceiling" | "holder" | null = null;
+  function openAt(part: "ceiling" | "holder", approval: boolean, anchor?: HTMLElement): void {
     picker.close(false);
-    requestedApproval = true;
+    approvalAnchor = anchor ?? null;
+    requestedApproval = approval;
+    requestedPart = part;
     controlRoot?.querySelector<HTMLButtonElement>("[data-scope-ceiling]")?.click();
-  } };
+  }
+  controller = {
+    openApproval: (anchor?: HTMLElement) => openAt("ceiling",true,anchor),
+    openReviewer: (anchor?: HTMLElement) => openAt("holder",false,anchor)
+  };
   let showing = $state<"ceiling" | "holder">("ceiling");
   let draftCeiling = $state<string | null>(null);
   let draftHolder = $state<Principal | null>(null);
@@ -83,8 +94,13 @@
   let draftHolderValue = $derived(holderValue(draftHolder ?? holder));
   let selectedValue = $derived(showing === "ceiling" ? draftCeiling : draftHolderValue);
   // The trigger reports the saved ceiling, never a draft.
-  let ceilingName = $derived(ceilingOptions.find((option) => option.value === ceiling)?.name ?? null);
+  let ceilingName = $derived(ceilingLabelFor(lifecycle,ceiling));
   let holderName = $derived(holderLabel ? holderLabel(holder) : holderLabelFor(sprintItem, holder));
+  let draftCeilingName = $derived(ceilingLabelFor(lifecycle,draftCeiling));
+  let draftHolderName = $derived(holderLabel ? holderLabel(draftHolder ?? holder) : holderLabelFor(sprintItem,draftHolder ?? holder));
+  let resolvedTriggerLabel = $derived(triggerLabel ?? (stageLocked
+    ? `then ${holderName}`
+    : `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`));
 
   let commitEffect = $derived(pendingStage ? pendingCeilingEffect(lifecycle,pendingStage,pendingLabel || pendingStage,
     ceiling,draftCeiling,ceilingTouched,intent,draftHolderValue !== holderValue(holder),
@@ -102,6 +118,7 @@
 
   // Drafts start and end with the panel, so a dismissal discards them.
   function reset(): void {
+    if (requestedPart === null) approvalAnchor = null;
     intent = requestedApproval ? "approve" : "scope";
     requestedApproval = false;
     draftCeiling = intent === "approve" && approvalCeiling ? approvalCeiling : preferredCeiling();
@@ -109,7 +126,8 @@
     previewHolder = null;
     ceilingTouched = false;
     holderTouched = false;
-    showing = stageLocked ? "holder" : "ceiling";
+    showing = requestedPart ?? (stageLocked ? "holder" : "ceiling");
+    requestedPart = null;
   }
 
   function show(part: "ceiling" | "holder"): void {
@@ -153,13 +171,14 @@
   }
 </script>
 
-<div bind:this={controlRoot}>
+<div bind:this={controlRoot} class:document>
 <ListboxPicker
   items={rows}
   {selectedValue}
-  label={triggerLabel ?? `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`}
+  label={resolvedTriggerLabel}
   listLabel={showing === "ceiling" ? "Ceiling stage" : "Who holds the ceiling"}
   kind="rail"
+  anchor={approvalAnchor}
   {below}
   attributes={{ "data-ceiling-picker": "" }}
   triggerAttributes={{ "data-scope-ceiling": "" }}
@@ -176,17 +195,20 @@
   })}
 >
   {#snippet triggerContent()}
-    <span>{triggerLabel ?? `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`}</span>
+    {#if document}
+      <span>Approved until <b>{ceilingName ?? "Choose ceiling"}</b>, then <b>{holderName}</b> reviews</span>
+    {:else}<span>{resolvedTriggerLabel}</span>{/if}
   {/snippet}
   {#snippet beforeList()}
     <PickerRail label="Parts of the ceiling" attributes={{ "data-ceiling-rail": "" }}>
-      <!-- The rail names the halves. What each one is set to is in the trigger right
-           above the panel, and on the ticked row in the list. -->
+      <!-- Each rail row keeps its current choice visible while the other half's list
+           is open. The active half is also ticked in the list. -->
       <PickerRailRow
         on={showing === "ceiling"}
         dim={stageLocked}
         disabled={stageLocked}
         label="How far"
+        detail={draftCeilingName}
         attributes={{
           "data-ceiling-part": "ceiling",
           "aria-pressed": showing === "ceiling" ? "true" : "false",
@@ -197,6 +219,7 @@
       <PickerRailRow
         on={showing === "holder"}
         label="Who reviews"
+        detail={draftHolderName}
         attributes={{
           "data-ceiling-part": "holder",
           "aria-pressed": showing === "holder" ? "true" : "false"
@@ -204,13 +227,14 @@
         onclick={() => show("holder")}
       />
     </PickerRail>
+    {#if document}<div class="document-list-label">{showing === "ceiling" ? "Ceiling stage" : "Who holds the ceiling"}</div>{/if}
   {/snippet}
   {#snippet optionContent(choice, selected)}
     {#if showing === "holder"}
       {@const option = holders.find((item) => item.value === choice.value)}
       <span>{option?.label ?? choice.name}</span>
       {#if option?.detail}<small class="holder-detail">{option.detail}</small>{/if}
-    {:else}<span>{choice.name}</span>{#if optionApproves(choice.value)}<small class="approves-mark">approves</small>{/if}{/if}
+    {:else}<span>{choice.name}{#if optionApproves(choice.value)}<small class="approves-mark"> · approves</small>{/if}</span>{/if}
   {/snippet}
   {#snippet afterList()}
     {#if pendingEffect}
@@ -223,6 +247,25 @@
 </div>
 
 <style>
+  .document { width:100%; }
+  .document :global(.listbox-picker) { display:block; width:100%; }
+  .document :global([data-scope-ceiling]) { display:block; width:fit-content; max-width:calc(100% + 24px); }
+  .document :global(.listbox-picker-chevron) { display:inline-block; vertical-align:middle; width:6px; height:6px; margin-left:4px; font-size:0; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:translateY(-2px) rotate(45deg); }
+  .document :global([data-scope-ceiling] b) { font-weight:600; color:var(--text-strong); }
+  .document :global(.listbox-picker-panel.rail) { width:404px; max-width:calc(100vw - 48px); grid-template-columns:168px minmax(0,1fr); border:0; border-radius:var(--radius-md); box-shadow:var(--shadow-float); background:var(--surface-2); }
+  .document :global(.picker-rail) { grid-column:1; grid-row:1 / span 3; background:var(--surface-recessed); border:0; padding:var(--space-2); }
+  .document :global(.picker-rail-row) { font-family:var(--font-ui); padding:8px var(--space-2); border-radius:var(--radius-sm); white-space:normal; }
+  .document :global(.picker-rail-row-label) { font-size:11px; color:var(--text-faintest); }
+  .document :global(.picker-rail-row-detail) { max-width:none; font-size:13px; color:var(--text-default); white-space:normal; overflow:visible; }
+  .document :global(.picker-rail-row.on) { background:var(--surface-2); }
+  .document-list-label { grid-column:2; grid-row:1; padding:14px 16px 4px; font-family:var(--font-ui); font-size:11px; font-weight:600; line-height:1.6; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faintest); }
+  .document :global(.listbox-picker-list) { grid-column:2; grid-row:2; padding:0 var(--space-2); }
+  .document :global(.listbox-picker-option) { font-family:var(--font-ui); font-size:13px; line-height:1.6; padding:7px var(--space-2); gap:var(--space-2); border-radius:var(--radius-sm); color:var(--text-faint); }
+  .document :global(.listbox-picker-option.on) { font-weight:600; color:var(--text-strong); }
+  .document :global(.listbox-picker-option.cursor) { background:transparent; background-image:var(--interaction-hover); color:var(--text-strong); }
+  .document .approves-mark { margin-left:0; color:var(--accent-bright); font-weight:400; }
+  .document .ceiling-picker-foot { grid-column:2; grid-row:3; margin:var(--space-2); border:0; padding:var(--space-2); border-radius:var(--radius-sm); font-family:var(--font-ui); font-size:11px; line-height:1.6; }
+  @media (max-width:480px) { .document :global(.listbox-picker-panel.rail) { grid-template-columns:40% minmax(0,1fr); } }
   .approves-mark { margin-left:auto; font-size:var(--type-xs); color:var(--accent-text); }
   .ceiling-picker-foot.ceiling-picker-foot--accepts { background:var(--accent-surface); color:var(--accent-text); }
   .holder-detail { color:var(--text-faintest); font-size:var(--type-xs); overflow-wrap:anywhere; }

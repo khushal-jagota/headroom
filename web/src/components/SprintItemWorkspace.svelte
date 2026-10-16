@@ -335,7 +335,8 @@
 
 <WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={hoverWorker?.stage === "cancelled" ? "Cancelled Worker" : "Worker"} worker={hoverWorker?.stage === "cancelled" ? null : hoverWorker} cards={[]} rail={hoverTarget} />
 <style>
-  .sprint-item-column { max-width:768px; margin-inline:auto; }
+  .sprint-item-doc { scrollbar-gutter:auto; }
+  .sprint-item-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; width:min(100%, 768px); max-width:768px; margin-inline:auto; padding-inline:var(--space-5); }
   .sprint-workspace-head { padding-top:var(--space-7); }
   .page-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .page-eyebrow a { color:inherit; text-decoration:none; }
@@ -356,8 +357,10 @@
   .sprint-workspace-status[open] > summary > .sprint-workspace-count { display:block; }
   .sprint-workspace-status:not([open]) > summary { padding-bottom:7px; }
   .sprint-workspace-status-body { padding:var(--space-1) 0; }
-  .sprint-item-column .ticket-row { width:100%; margin:0; padding:7px var(--space-3); gap:var(--space-3); border-radius:var(--radius-md); font-size:15px; }
-  .ticket-row-title { flex:1; min-width:0; white-space:normal; overflow-wrap:anywhere; }
+  .sprint-item-column .ticket-row { width:100%; margin:0; padding:7px var(--space-3); gap:var(--space-3); border-radius:var(--radius-md); font-size:15px; line-height:1.6; align-items:center; color:var(--text-muted); }
+  .sprint-item-column .ticket-row:hover, .sprint-item-column .ticket-row:focus-visible { color:var(--text-strong); }
+  .sprint-item-column .ticket-row-title { flex:1; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
+  .orchestrator-workers :global(.stage-mark) { width:7px; height:7px; }
   .orchestrator-artifacts { margin-top:var(--space-5); }
   a:focus-visible, button:focus-visible, summary:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
 </style>

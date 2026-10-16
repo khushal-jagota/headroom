@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, Route, expect
+from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_ticket_conversation_shared_behaviors import _append_rows
 
@@ -76,8 +77,8 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     )
     tickets = []
     for title, holder in (
-        ("Owner approval off Today", {"kind": "owner", "id": "owner"}),
-        ("Supervisor approval off Today", {"kind": "sprint_item", "id": item["id"]}),
+        ("Owner approval without Day membership", {"kind": "owner", "id": "owner"}),
+        ("Supervisor approval without Day membership", {"kind": "sprint_item", "id": item["id"]}),
     ):
         ticket = _post(
             server,
@@ -85,7 +86,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             {
                 "title": title,
                 "worker_type": "coding",
-                "sprint_item_id": item["id"],
+                "orchestrator": {"kind": "sprint_item", "id": item["id"]},
                 "kickoff_note": "The brief is agreed.",
             },
         )
@@ -104,20 +105,16 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             timeout=10,
         )
         assert response.is_success, response.text
-        response = httpx.delete(
-            server.base + f"/api/collections/day_tickets/today/{ticket['id']}", timeout=10
-        )
-        assert response.is_success, response.text
         tickets.append(ticket)
-    # Existing Day membership keeps this Item represented when its messages are read.
-    # Its Feedback assignment is not a parked approval.
+    # Active orchestrators remain represented without Day membership.
+    # The user-owned Feedback assignment is not a parked approval.
     feedback = _post(
         server,
         "/api/tickets",
         {
-            "title": "Today Feedback",
+            "title": "User-owned Feedback",
             "worker_type": "initiative_review",
-            "sprint_item_id": item["id"],
+            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
             "kickoff_note": "Review is ready.",
         },
     )
@@ -126,6 +123,8 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             "UPDATE tickets SET stage='needs_feedback',pending_proposal=NULL WHERE id=?",
             (feedback["id"],),
         )
+    with sqlite3.connect(server.db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0] == 0
     ticket = tickets[0]
     for name in ("dot-ticket", "dot-supervisor", "dot-chief"):
         _conversation(server, name)
@@ -152,135 +151,154 @@ def test_approval_membership_and_each_workers_durable_message_dot(
 
     context = context_factory()
     pending_events: list[tuple[Route, str]] = []
+    pending_workspace: list[tuple[Route, str]] = []
 
     def delay_transcript(route: Route) -> None:
         response = route.fetch()
         pending_events.append((route, response.text()))
 
-    context.route("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
-    page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
-    left = page.locator(f'[data-sprint-item="{item["id"]}"]')
-    owner_row = left.locator(f'[data-ticket-id="{ticket["id"]}"]')
-    expect(owner_row).to_have_attribute("data-workspace-mark", "reply", timeout=WAIT_MS)
-    expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(ticket["title"])
-    expect(left.locator('[data-bucket-key="awaiting_approval"]')).not_to_contain_text(
-        tickets[1]["title"]
-    )
-    expect(left.locator('[data-bucket-key="assigned"]')).to_contain_text(feedback["title"])
-    expect(left.locator('[data-bucket-key="awaiting_approval"]')).not_to_contain_text(
-        feedback["title"]
-    )
-    assert left.locator(".board-workspace-item-head .stage-mark").count() == 0
-    assert page.locator("[data-chief-destination] .stage-mark").count() == 0
+    try:
+        context.route("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
+        page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
+        left = page.locator(f'[data-sprint-item="{item["id"]}"]')
+        owner_row = left.locator(f'[data-ticket-id="{ticket["id"]}"]')
+        expect(owner_row).to_have_attribute("data-workspace-mark", "reply", timeout=WAIT_MS)
+        expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(
+            ticket["title"]
+        )
+        expect(left.locator('[data-bucket-key="awaiting_approval"]')).not_to_contain_text(
+            tickets[1]["title"]
+        )
+        expect(left.locator('[data-bucket-key="assigned"]')).to_contain_text(feedback["title"])
+        expect(left.locator('[data-bucket-key="awaiting_approval"]')).not_to_contain_text(
+            feedback["title"]
+        )
+        assert left.locator(".item-head .stage-mark").count() == 0
+        assert page.locator("[data-chief-destination] .stage-mark").count() == 0
 
-    pending_workspace: list[tuple[Route, str]] = []
+        def delay_workspace(route: Route) -> None:
+            response = route.fetch()
+            pending_workspace.append((route, response.text()))
+            page.evaluate("() => { window.__proofWorkspaceHeld = true; }")
 
-    def delay_workspace(route: Route) -> None:
-        response = route.fetch()
-        pending_workspace.append((route, response.text()))
-        page.evaluate("() => { window.__proofWorkspaceHeld = true; }")
+        workspace_pattern = f"**/api/items/{item['id']}/workspace"
+        context.route(workspace_pattern, delay_workspace)
+        left.locator(".item-head").click(timeout=WAIT_MS)
+        page.wait_for_function("() => window.__proofWorkspaceHeld === true", timeout=WAIT_MS)
+        expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(
+            ticket["title"]
+        )
+        for route, body in pending_workspace:
+            route.fulfill(status=200, content_type="application/json", body=body)
+        pending_workspace.clear()
+        context.unroute(workspace_pattern, delay_workspace)
+        right = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
+        expect(right.locator('[data-workspace-group="awaiting_approval"]')).to_contain_text(
+            ticket["title"]
+        )
+        expect(right.locator('[data-workspace-group="status_awaiting_approval"]')).to_contain_text(
+            tickets[1]["title"]
+        )
+        expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(
+            ticket["title"]
+        )
+        assert right.locator(".sprint-workspace-title-mark").count() == 0
+        # Ask for expanded groups explicitly; all approved page bands arrive closed.
+        right.locator('[data-workspace-group="awaiting_approval"] > summary').click(timeout=WAIT_MS)
+        right.locator('[data-workspace-group="status_awaiting_approval"] > summary').click(
+            timeout=WAIT_MS
+        )
+        expect(right.get_by_text(tickets[1]["title"], exact=True)).to_be_visible(timeout=WAIT_MS)
+        page.screenshot(path=str(EVIDENCE / "approvals-child-message.png"), full_page=True)
 
-    workspace_pattern = f"**/api/items/{item['id']}/workspace"
-    context.route(workspace_pattern, delay_workspace)
-    left.locator(".board-workspace-item-head").click(timeout=WAIT_MS)
-    page.wait_for_function("() => window.__proofWorkspaceHeld === true", timeout=WAIT_MS)
-    expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(ticket["title"])
-    for route, body in pending_workspace:
-        route.fulfill(status=200, content_type="application/json", body=body)
-    context.unroute(workspace_pattern, delay_workspace)
-    right = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
-    expect(right.locator('[data-workspace-group="awaiting_approval"]')).to_contain_text(
-        ticket["title"]
-    )
-    expect(right.locator('[data-workspace-group="status_awaiting_approval"]')).to_contain_text(
-        tickets[1]["title"]
-    )
-    expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(ticket["title"])
-    assert right.locator(".sprint-workspace-title-mark").count() == 0
-    # Ask for expanded groups explicitly so the captured browser proof shows both kinds.
-    right.locator('[data-workspace-section="remaining"] > summary').click(timeout=WAIT_MS)
-    right.locator('[data-workspace-group="status_awaiting_approval"] > summary').click(
-        timeout=WAIT_MS
-    )
-    expect(right.get_by_text(tickets[1]["title"], exact=True)).to_be_visible(timeout=WAIT_MS)
-    page.screenshot(path=str(EVIDENCE / "approvals-child-message.png"), full_page=True)
+        owner_row.click(timeout=WAIT_MS)
+        page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+        page.wait_for_function(
+            "() => document.querySelector('[data-conversation-state=peeked]')", timeout=WAIT_MS
+        )
+        # The snapshot can name an unread latest sequence, but undelivered rows cannot be read.
+        assert pending_events
+        assert _read_position(server, "dot-ticket") == 0
+        for route, body in pending_events:
+            route.fulfill(status=200, content_type="application/json", body=body)
+        pending_events.clear()
+        context.unroute("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
+        page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
+        expect(page.get_by_text("Child direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
+        expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
+        assert _read_position(server, "dot-ticket") == 1
 
-    owner_row.click(timeout=WAIT_MS)
-    page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
-    page.wait_for_function(
-        "() => document.querySelector('[data-conversation-state=peeked]')", timeout=WAIT_MS
-    )
-    # The snapshot can name an unread latest sequence, but undelivered rows cannot be read.
-    assert pending_events
-    assert _read_position(server, "dot-ticket") == 0
-    for route, body in pending_events:
-        route.fulfill(status=200, content_type="application/json", body=body)
-    context.unroute("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
-    page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
-    expect(page.get_by_text("Child direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
-    expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
-    assert _read_position(server, "dot-ticket") == 1
+        # The read is durable across refresh. A stale acknowledgement cannot eat a newer message.
+        page.goto(server.base + "/#/workspace?view=items")
+        page.reload()
+        expect(page.locator(f'[data-ticket-id="{ticket["id"]}"]')).to_have_attribute(
+            "data-workspace-mark", "none", timeout=WAIT_MS
+        )
+        _message(
+            server,
+            "dot-ticket",
+            Principal(PrincipalKind.ticket, ticket["id"]),
+            "New child direct message",
+        )
+        _post(
+            server, "/api/conversation/conversations/dot-ticket/owner-read", {"through_sequence": 1}
+        )
+        page.reload()
+        expect(page.locator(f'[data-ticket-id="{ticket["id"]}"]')).to_have_attribute(
+            "data-workspace-mark", "reply", timeout=WAIT_MS
+        )
+        assert _read_position(server, "dot-ticket") == 1
+        assert page.locator("[data-chief-destination] .stage-mark").count() == 0
+        assert (
+            page.locator(f'[data-sprint-item="{item["id"]}"] .item-head .stage-mark').count() == 0
+        )
 
-    # The read is durable across refresh. A stale acknowledgement cannot eat a newer message.
-    page.goto(server.base + "/#/workspace?view=items")
-    page.reload()
-    expect(page.locator(f'[data-ticket-id="{ticket["id"]}"]')).to_have_attribute(
-        "data-workspace-mark", "none", timeout=WAIT_MS
-    )
-    _message(
-        server,
-        "dot-ticket",
-        Principal(PrincipalKind.ticket, ticket["id"]),
-        "New child direct message",
-    )
-    _post(server, "/api/conversation/conversations/dot-ticket/owner-read", {"through_sequence": 1})
-    page.reload()
-    expect(page.locator(f'[data-ticket-id="{ticket["id"]}"]')).to_have_attribute(
-        "data-workspace-mark", "reply", timeout=WAIT_MS
-    )
-    assert _read_position(server, "dot-ticket") == 1
-    assert page.locator("[data-chief-destination] .stage-mark").count() == 0
-    assert (
-        page.locator(
-            f'[data-sprint-item="{item["id"]}"] .board-workspace-item-head .stage-mark'
-        ).count()
-        == 0
-    )
-
-    _post(server, "/api/conversation/conversations/dot-ticket/owner-read", {"through_sequence": 2})
-    _message(
-        server,
-        "dot-supervisor",
-        Principal(PrincipalKind.sprint_item, item["id"]),
-        "Supervisor direct message",
-    )
-    page.reload()
-    expect(left.locator(".board-workspace-item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
-    expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
-    assert page.locator("[data-chief-destination] .stage-mark").count() == 0
-    left.locator(".board-workspace-item-head").click(timeout=WAIT_MS)
-    expect(right.locator(".sprint-workspace-title-mark")).to_be_visible(timeout=WAIT_MS)
-    expect(left.locator(".board-workspace-item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
-    expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
-    assert page.locator("[data-chief-destination] .stage-mark").count() == 0
-    # Selecting the Item keeps the conversation at rest and does not claim a read.
-    expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
-    assert _read_position(server, "dot-supervisor") == 0
-    page.screenshot(
-        path=str(EVIDENCE / "supervisor-own-message-title-and-rail.png"), full_page=True
-    )
-    page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
-    expect(right.locator(".sprint-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
-    expect(left.locator(".board-workspace-item-head .stage-mark")).to_have_count(0, timeout=WAIT_MS)
-    assert _read_position(server, "dot-supervisor") == 1
-    page.goto(server.base + "/#/workspace?view=items")
-    _message(server, "dot-chief", CHIEF_PRINCIPAL, "Chief direct message")
-    page.reload()
-    expect(page.locator("[data-chief-destination] .stage-mark")).to_be_visible(timeout=WAIT_MS)
-    assert left.locator(".board-workspace-item-head .stage-mark").count() == 0
-    expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
-    page.screenshot(path=str(EVIDENCE / "chief-own-message-only.png"), full_page=True)
-    page.locator("[data-chief-destination]").click(timeout=WAIT_MS)
-    expect(page.get_by_text("Chief direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
-    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0, timeout=WAIT_MS)
-    assert _read_position(server, "dot-chief") == 1
+        _post(
+            server, "/api/conversation/conversations/dot-ticket/owner-read", {"through_sequence": 2}
+        )
+        _message(
+            server,
+            "dot-supervisor",
+            Principal(PrincipalKind.sprint_item, item["id"]),
+            "Supervisor direct message",
+        )
+        page.reload()
+        expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
+        expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
+        assert page.locator("[data-chief-destination] .stage-mark").count() == 0
+        left.locator(".item-head").click(timeout=WAIT_MS)
+        expect(right.locator(".sprint-workspace-title-mark")).to_be_visible(timeout=WAIT_MS)
+        expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
+        expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
+        assert page.locator("[data-chief-destination] .stage-mark").count() == 0
+        # Selecting the Item keeps the conversation at rest and does not claim a read.
+        expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
+        assert _read_position(server, "dot-supervisor") == 0
+        page.screenshot(
+            path=str(EVIDENCE / "supervisor-own-message-title-and-rail.png"), full_page=True
+        )
+        page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+        expect(right.locator(".sprint-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
+        expect(left.locator(".item-head .stage-mark")).to_have_count(0, timeout=WAIT_MS)
+        assert _read_position(server, "dot-supervisor") == 1
+        page.goto(server.base + "/#/workspace?view=items")
+        _message(server, "dot-chief", CHIEF_PRINCIPAL, "Chief direct message")
+        page.reload()
+        expect(page.locator("[data-chief-destination] .stage-mark")).to_be_visible(timeout=WAIT_MS)
+        assert left.locator(".item-head .stage-mark").count() == 0
+        expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
+        page.screenshot(path=str(EVIDENCE / "chief-own-message-only.png"), full_page=True)
+        page.locator("[data-chief-destination]").click(timeout=WAIT_MS)
+        expect(page.get_by_text("Chief direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
+        expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(
+            0, timeout=WAIT_MS
+        )
+        assert _read_position(server, "dot-chief") == 1
+    finally:
+        # Failed assertions must not strand intercepted requests during context teardown.
+        for route, body in (*pending_events, *pending_workspace):
+            try:
+                route.fulfill(status=200, content_type="application/json", body=body)
+            except PlaywrightError:
+                pass  # Already handled or the test's page closed.
+        context.unroute_all(behavior="ignoreErrors")

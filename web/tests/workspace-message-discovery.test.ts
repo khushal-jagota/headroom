@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { workspaceMessageConversations, workspaceSettledUnreadCount, workspaceUnreadConversationCount } from "../src/lib/workspaceMessageDiscovery";
+import { workspaceChildMessageConversations, workspaceMessageConversations, workspaceSettledUnreadCount, workspaceUnreadConversationCount } from "../src/lib/workspaceMessageDiscovery";
+import { buildWorkspaceRail } from "../src/lib/workspaceRail";
 import type { BoardCard, BoardSprintItem, ChiefManagementSettings, SprintItemWorkspaceTicket } from "../src/lib/types";
 
 const quiet = { awaiting_reply:false, awaiting_answer:false, awaiting_approval:false,
@@ -61,9 +62,16 @@ describe("exact unread conversation discovery", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].settled).toBe(false);
     expect(workspaceSettledUnreadCount(rows, [settled])).toBe(1);
+    const aliases = workspaceChildMessageConversations(rows,settled,[active]);
+    expect(aliases.map((row)=>[row.id,row.conversationId,row.parentId])).toEqual([["alias",active.conversation_id,"settled"]]);
+    const quietSettled = {...settled,awaiting_reply:false};
+    expect(workspaceChildMessageConversations(workspaceMessageConversations([active],[quietSettled]),quietSettled,[active])).toHaveLength(1);
+
     // A stale child copy cannot bring a read canonical conversation back.
     const canonical = card("alias", {awaiting_reply:false,conversation_id:active.conversation_id});
     expect(workspaceSettledUnreadCount(workspaceMessageConversations([canonical], [{...settled,awaiting_reply:false}]), [settled])).toBe(0);
+    expect(workspaceChildMessageConversations(workspaceMessageConversations([canonical],[{...settled,awaiting_reply:false}]),settled,[canonical])).toEqual([]);
+
   });
 
   it("takes explicit Chief assignment over stray legacy parent and retains quiet context", () => {
@@ -83,4 +91,33 @@ describe("exact unread conversation discovery", () => {
     expect(workspaceUnreadConversationCount(rows.map((row)=>({...row,awaiting_reply:false})))).toBe(0);
     expect(workspaceMessageConversations([],[],null)).toEqual([]);
   });
+  it("nests exact child conversations beneath their parent without supervisor or Chief rows", () => {
+    const parent = item("settled", {settled:true,awaiting_reply:true,tickets:[
+      card("done",{stage:"done",ticket_status:"empty",awaiting_reply:true}),
+      card("cancelled",{stage:"cancelled",ticket_status:"empty",awaiting_reply:true})]});
+    const rows = workspaceMessageConversations([], [parent], chief({awaiting_reply:true}));
+    expect(workspaceChildMessageConversations(rows,parent).map((row)=>row.id)).toEqual(["done","cancelled"]);
+    expect(workspaceSettledUnreadCount(rows,[parent])).toBe(3);
+    expect(workspaceChildMessageConversations(rows,item("other"))).toEqual([]);
+    const read = {...parent,awaiting_reply:false,tickets:parent.tickets.map((ticket)=>({...ticket,awaiting_reply:false}))};
+    expect(workspaceChildMessageConversations(workspaceMessageConversations([], [read]),read)).toEqual([]);
+  });
+
+  it("keeps active and Chief terminal/cancelled unread access in their existing nested Messages", () => {
+    const activeTickets = [card("active-done",{stage:"done",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"sprint_item",id:"active"}}),
+      card("active-cancelled",{stage:"cancelled",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"sprint_item",id:"active"}})];
+    const chiefTickets = [card("chief-done",{stage:"done",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"chief",id:"chief"}}),
+      card("chief-cancelled",{stage:"cancelled",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"chief",id:"chief"}})];
+    const rail = buildWorkspaceRail([...activeTickets,...chiefTickets],[item("active",{tickets:activeTickets})]);
+    expect(rail.items[0].groups.find((group)=>group.key==="awaiting_reply")?.cards.map((row)=>row.id)).toEqual(["active-cancelled","active-done"]);
+    expect(rail.chiefGroups.find((group)=>group.key==="awaiting_reply")?.cards.map((row)=>row.id)).toEqual(["chief-cancelled","chief-done"]);
+  });
+
+  it("keeps explicit Chief assignment above a stale same-Ticket parent while retaining different Ticket aliases", () => {
+    const canonical = card("moved",{awaiting_reply:true,orchestrator:{kind:"chief",id:"chief"},conversation_id:"shared"});
+    const parent = item("old",{settled:true,tickets:[card("moved",{awaiting_reply:true,conversation_id:"shared"}),card("alias",{awaiting_reply:true,conversation_id:"shared"})]});
+    const rows = workspaceMessageConversations([canonical],[parent]);
+    expect(workspaceChildMessageConversations(rows,parent,[canonical]).map((row)=>row.id)).toEqual(["alias"]);
+  });
+
 });
