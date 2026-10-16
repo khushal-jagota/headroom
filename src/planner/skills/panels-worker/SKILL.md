@@ -86,7 +86,6 @@ Proposal and help text arrive on stdin. Structured edits and creation read one J
   the source checkout cannot be found, request user help instead of changing the
   running installation.
 - **Do not over-specify fields.** 
-- **Explain your proposal judgment in chat.** After you propose a gated field, your chat reply should very briefly explain why you shaped the proposal that way. Do not merely announce that the field is ready, repeat which field you proposed, or restate approval/status details, the UI already shows this. 
 - **Use recap as cold-user orientation.** The recap is not a work log. Keep it short and scannable, so a cold user can read it alongside the title and understand what the ticket is and what was done before this proposal to refresh their mind before reviewing this proposal.
 - **Preserve direct user guidance.** When the user gives direction that must survive the turn, append it with `panels ticket edit --input-json -` and the `guidance_append` key. Read it with `panels ticket show guidance` at the start of every step.
 
