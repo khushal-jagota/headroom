@@ -43,20 +43,22 @@ and `project list` use pages of 30 by default. Every result reports omissions an
 next offset. Ticket list no longer filters live work by Day or Sprint.
 
 Ticket lists accept `--backlogged`, `--not-backlogged`, and repeated `--worker-type`
-filters. Retired records require `--include-terminal`. Direct record reads remain
-available regardless of those list filters.
+filters. Historical cancelled records require `--include-terminal`. Add `--stage cancelled`
+to select them. Direct record reads remain available regardless of those list filters.
 
 ```sh
 panels ticket backlog t_example
 panels ticket resume t_example
-panels ticket retire t_example --reason "The original obligation is obsolete."
 panels ticket list --backlogged --worker-type coding --limit 30
 ```
 
-Each action accepts `--expected-record-sha256` from the full Ticket read. A stale hash
-refuses the action without a write. Read retirement provenance with
-`panels ticket show t_example retirement --json`. Resume does not grant an approval or
-clear a blocker. These commands use existing caller authority.
+Backlog and Resume accept `--expected-record-sha256` from the full Ticket read. A stale
+hash refuses the action without a write. Resume does not grant an approval or clear a
+blocker. These commands use existing caller authority.
+
+Retire is no longer a Ticket action. Historical cancelled records keep their original
+retirement provenance. Read it with `panels ticket show t_example retirement --json`.
+The historical record does not admit a new cancellation or restore an actionable approval.
 
 ## Structured Ticket writes
 
