@@ -788,10 +788,36 @@ the credential itself rather than the whole file, because a copy with edited acc
 fields still rotates the same token. An unreadable login cannot be shown to be a copy, so
 it is allowed and logged. The guarantee covers the codex children Panels launches — the
 app-server child, the usage read, and the model catalogue read. A check in the test suite
-looks for the shape of the mistake in repository code — a module that both names a login
-file and copies files — which is how the two opt-in real-provider suites that were still
-copying the login were found. It is a scan for a known shape, not a proof that no copy can
-be written.
+looks for supported copy and hardlink calls whose source or destination names `auth.json`,
+including simple earlier assignments in the same scope. It deliberately misses whole-home
+copies and other documented routes. It is a scan for a known shape, not a proof that no
+copy can be written.
+
+The source tripwire `python scripts/check_agent_home_copies.py` reports copies whose
+destination becomes a selected Hermes, Codex, or Claude home. `--json` produces counts
+and findings; an accusation makes the command exit with status 1. Configuration copies
+of `config.yaml` and `.env` beside a link to the same source's canonical `auth.json` are
+reported as dismissals, not silently excluded. External `.env` contents remain
+unverified. Literal `settings.json` to the same filename is treated as configuration,
+without a dismissal finding; this does not verify its external contents or exempt
+arbitrary filenames.
+
+This is a bounded Python AST check. It follows simple local aliases, literal filename
+loops, imports, direct environment assignments and `setenv` calls within a lexical scope.
+It evaluates proven literal filename equality branches and separates opposite `if`
+branches. It does not infer relationships across functions.
+It does not analyze shell commands, helper returns, object attributes, arbitrary containers,
+conditional alias merges, byte transfers, or runtime paths. Synthetic credential writes
+and skill symlinks are not copies. Reviewers must inspect those omitted routes themselves.
+A clean result does not certify safety.
+
+This standalone command is invoked explicitly, rather than enforced in CI while a known
+copy remains. The inventory revision reports one accusation for the steering harness
+copying Claude credentials and two Hermes configuration dismissals, exiting with status 1.
+An in-memory simulation of the approved repair links only `.credentials.json` and retains
+the `settings.json` copy: the expected output is zero accusations, two dismissals, and
+status 0. That result verifies the checked source pattern; it does not certify credential
+safety, external configuration contents, or the omitted copy routes.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
