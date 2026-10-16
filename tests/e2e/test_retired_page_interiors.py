@@ -21,10 +21,6 @@ from tests.e2e.test_orchestrator_rail import rail_server  # noqa: F401
 
 # pytest resolves this explicitly imported fixture by name.
 
-EVIDENCE = Path(
-    "/home/vps/Deployments/Panels/current/data/files/tickets/t_9fh1vzxc/artifacts/page-interiors"
-)
-
 
 def _propose(server: ServerHandle, ticket_id: str, body: str) -> None:
     response = httpx.post(
@@ -54,12 +50,14 @@ def _measure(page: Page, selector: str) -> JsonObject:
 
 def test_page_approval_revision_artifacts_and_responsive_layout(
     rail_server: ServerHandle,  # noqa: F811
+    tmp_path: Path,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
 ) -> None:
     server = rail_server
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    evidence = tmp_path / "page-interiors"
+    evidence.mkdir(parents=True, exist_ok=True)
     project = api.direct_post(server, "/api/projects", {"name": "Page proof", "priority": "P1"})
     item = api.direct_post(
         server,
@@ -163,7 +161,7 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
           scopeShadow: scope.boxShadow};
         }""")
         )
-        page.screenshot(path=str(EVIDENCE / f"worker-pending-{width}.png"), full_page=True)
+        page.screenshot(path=str(evidence / f"worker-pending-{width}.png"), full_page=True)
     page.set_viewport_size({"width": 1440, "height": 1100})
     # The page offers one approval action. Opening it alone cannot mutate the stage.
     with page.expect_response(
@@ -249,7 +247,7 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
     for width in (1440, 1024, 820, 560):
         page.set_viewport_size({"width": width, "height": 1100})
         measurements.append({"surface": "worker", **_measure(page, '[data-screen="ticket"]')})
-        page.screenshot(path=str(EVIDENCE / f"worker-{width}.png"), full_page=True)
+        page.screenshot(path=str(evidence / f"worker-{width}.png"), full_page=True)
     page.goto(server.base + f"/#/workspace/item/{item['id']}")
     pane_selector = f'[data-sprint-item-workspace="{item["id"]}"]'
     pane = page.locator(pane_selector)
@@ -259,13 +257,17 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
     for width in (1440, 1024, 820, 560):
         page.set_viewport_size({"width": width, "height": 1100})
         measurements.append({"surface": "orchestrator", **_measure(page, pane_selector)})
-        page.screenshot(path=str(EVIDENCE / f"orchestrator-{width}.png"), full_page=True)
-    pane.locator(".page-eyebrow a").first.click()
-    expect(page.locator('[data-screen="backlog"]')).to_be_visible()
-    expect(page.locator(f'[data-ticket-id="{ticket_id}"]')).to_be_visible()
-    expect(page.locator(f'[data-ticket-id="{unrelated["id"]}"]')).to_have_count(0)
-    page.get_by_role("link", name="All Workers", exact=True).click()
-    expect(page.locator(f'[data-ticket-id="{unrelated["id"]}"]')).to_be_visible()
+        page.screenshot(path=str(evidence / f"orchestrator-{width}.png"), full_page=True)
+    # The project remains a fact after the standalone Workers page is removed.
+    expect(pane.locator(".page-eyebrow > span").first).to_have_text("Page proof")
+    expect(pane.locator('a[href*="#/backlog"]')).to_have_count(0)
+    children = pane.locator(f'[data-orchestrator-children="sprint_item:{item["id"]}"]')
+    expect(children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')).to_be_visible()
+    expect(children.locator(f'[data-sprint-ticket-id="{unrelated["id"]}"]')).to_have_count(0)
+    page.goto(server.base + "/#/workspace/chief-of-staff")
+    chief_children = page.locator('[data-orchestrator-children="chief:chief"]')
+    expect(chief_children.locator(f'[data-sprint-ticket-id="{unrelated["id"]}"]')).to_be_visible()
+    expect(chief_children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')).to_have_count(0)
     assert all(row["body"] == "15px" and row["label"] == "13px" for row in pending_type), (
         pending_type
     )
@@ -293,7 +295,7 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
     ), measurements
     assert len([request for request in requests if request["url"].endswith("/accept/brief")]) == 1
     assert len([request for request in requests if request["url"].endswith("/reject")]) == 1
-    (EVIDENCE / "connected-browser.json").write_text(
+    (evidence / "connected-browser.json").write_text(
         json.dumps(
             {
                 "measurements": measurements,
@@ -318,4 +320,4 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
         )
     )
 
-    shutil.copyfile(server.log_path, EVIDENCE / "isolated-server.log")
+    shutil.copyfile(server.log_path, evidence / "isolated-server.log")
