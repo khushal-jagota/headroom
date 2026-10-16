@@ -111,6 +111,7 @@ def respond(route):
     path = route.request.url.split("/api/", 1)[1].split("?")[0]
     if path == "board": result = board
     elif path == "workers": result = workers
+    elif path == "worker-types": result = {"worker_types": []}
     else: result = {}
     route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
 
@@ -125,7 +126,7 @@ with sync_playwright() as p:
 
     # Nothing is selected, and the groups are already there.
     assert page.locator('[data-sprint-item] [aria-current="page"]').count() == 0
-    assert page.locator(".board-workspace-item--selected").count() == 0
+    assert page.locator(".orchestrator-card.selected").count() == 0
 
     # Exactly the four groups. A broken worker does not open a fifth one here. An answer
     # he owes sits under the decision he owes and above the Stage that is merely his.
@@ -135,7 +136,7 @@ with sync_playwright() as p:
         "awaiting_approval", "awaiting_answer", "assigned", "awaiting_reply"
     ]
     assert [
-        headers.nth(i).locator(".board-workspace-bucket-label").inner_text() for i in range(4)
+        headers.nth(i).locator(".bucket-label").text_content() for i in range(4)
     ] == ["Needs your approval", "Needs your answer", "Yours", "Messages"]
 
     # The rows are there too, one Ticket under one header.
@@ -163,7 +164,7 @@ with sync_playwright() as p:
 
     # Only an exact conversation message creates a dot. Child attention does not
     # create a supervisor dot, and approval/ask/running/error rows have no mark.
-    expect(needs_him.locator(".board-workspace-item-head .stage-mark")).to_have_count(0)
+    expect(needs_him.locator(".item-head .stage-mark")).to_have_count(0)
     expect(needs_him.locator('[data-ticket-id="t_message"] .stage-mark')).to_have_count(1)
     expect(needs_him.locator('[data-ticket-id]:not([data-ticket-id="t_message"]) .stage-mark')).to_have_count(0)
     expect(quiet.locator(".stage-mark")).to_have_count(0)

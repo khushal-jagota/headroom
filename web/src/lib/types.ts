@@ -452,6 +452,9 @@ export type BoardResponse = {
 // A Sprint Item's own identity and its supervisor's conversation. No card answers for
 // the Item's own worker, so the mark on an Item title comes from here.
 export type BoardSprintItem = {
+  settled?: boolean;
+  project_id?: string;
+  project?: string;
   id: string;
   title: string;
   priority: Priority;
@@ -468,6 +471,7 @@ export type BoardSprintItem = {
 };
 
 export type BoardCard = WorkAttention & {
+  orchestrator?: Principal;
   id: string;
   title: string;
   priority: Priority;

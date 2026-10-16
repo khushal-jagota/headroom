@@ -7,7 +7,6 @@
   import {
     remainingWorkspaceTicketGroups,
     todayWorkspaceTicketGroups,
-    workspaceProgress,
     workspaceTicketIsBacklog,
     type WorkspaceTicketGroup
   } from "../lib/sprintItemWorkspace";
@@ -23,11 +22,11 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
   import ClampedText from "./ClampedText.svelte";
+  import OrchestratorEyebrow from "./OrchestratorEyebrow.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
   import StageMark from "./StageMark.svelte";
-  import TicketPriorityControl from "./TicketPriorityControl.svelte";
   import ArtifactStrip from "./ArtifactStrip.svelte";
   import ArtifactPreview from "./ArtifactPreview.svelte";
   import {
@@ -95,6 +94,20 @@
       method: "PATCH",
       body: { [field]: value }
     });
+  }
+
+  let settleBusy = $state(false);
+  let settleError = $state("");
+  async function setSettled(settled: boolean): Promise<void> {
+    settleBusy = true;
+    settleError = "";
+    try {
+      await mutateJson(`/api/items/${encodeURIComponent(itemId)}/settled`, { method: "PATCH", body: { settled } });
+    } catch (error) {
+      settleError = error instanceof Error ? error.message : "The orchestrator could not be updated.";
+    } finally {
+      settleBusy = false;
+    }
   }
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
@@ -237,15 +250,8 @@
             <a class="sprint-item-back" href={backHref}>‹ {sprintName}</a>
           {/if}
           <header class="sprint-workspace-head">
-            <div class="sprint-workspace-identity">
-              <TicketPriorityControl
-                priority={item.priority}
-                ariaLabel="Outcome priority"
-                onChange={(value) => void saveItem("priority", value)}
-              />
-              <span>·</span><span>{item.project}</span>
-              <span>·</span><span>{workspaceProgress(item)}</span>
-            </div>
+            <OrchestratorEyebrow project={item.project} title={item.title} settled={item.settled ?? false} busy={settleBusy} onSettle={() => void setSettled(!(item.settled ?? false))} />
+            {#if settleError}<p role="alert">{settleError}</p>{/if}
             <h1 class="sprint-workspace-title" data-feedback-page-title>
               <InlineEdit
                 value={item.title}

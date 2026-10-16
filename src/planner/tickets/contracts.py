@@ -117,6 +117,8 @@ class BoardSprintItemSource(TypedDict):
     id: str
     title: str
     priority: str
+    project_id: str
+    project: str
     created_at: int
     conversation_id: str | None
     tickets: list[JsonDict]

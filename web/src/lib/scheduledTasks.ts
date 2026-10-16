@@ -1,13 +1,13 @@
 import type {
   Priority,
+  Principal,
   ScheduleCadence,
-  SchedulePlacementMode,
   ScheduledTask
 } from "./types";
 
 export type ScheduledTaskForm = {
   enabled: boolean;
-  cadence: ScheduleCadence;
+  orchestrator: Principal;
   local_time: string;
   title: string;
   worker_type: string;
@@ -15,9 +15,6 @@ export type ScheduledTaskForm = {
   priority: Priority;
   deadline: string;
   project_id: string | null;
-  placement_mode: SchedulePlacementMode;
-  sprint_item_id: string | null;
-  sprint_id: string | null;
   employee_backend: string;
   employee_launch_model: string;
   blocked_by_ticket_ids: string;
@@ -26,7 +23,7 @@ export type ScheduledTaskForm = {
 export function blankScheduledTaskForm(workerType = ""): ScheduledTaskForm {
   return {
     enabled: true,
-    cadence: "every_planning_day",
+    orchestrator: { kind: "chief", id: "chief" },
     local_time: "09:00",
     title: "",
     worker_type: workerType,
@@ -34,9 +31,6 @@ export function blankScheduledTaskForm(workerType = ""): ScheduledTaskForm {
     priority: "P3",
     deadline: "",
     project_id: null,
-    placement_mode: "current_sprint",
-    sprint_item_id: null,
-    sprint_id: null,
     employee_backend: "",
     employee_launch_model: "",
     blocked_by_ticket_ids: ""
@@ -46,7 +40,9 @@ export function blankScheduledTaskForm(workerType = ""): ScheduledTaskForm {
 export function scheduledTaskFormFromSchedule(schedule: ScheduledTask): ScheduledTaskForm {
   return {
     enabled: schedule.enabled,
-    cadence: schedule.cadence,
+    orchestrator: schedule.orchestrator ?? (schedule.sprint_item_id
+      ? { kind: "sprint_item", id: schedule.sprint_item_id }
+      : { kind: "chief", id: "chief" }),
     local_time: schedule.local_time,
     title: schedule.title,
     worker_type: schedule.worker_type,
@@ -54,9 +50,6 @@ export function scheduledTaskFormFromSchedule(schedule: ScheduledTask): Schedule
     priority: schedule.priority,
     deadline: schedule.deadline || "",
     project_id: schedule.project_id,
-    placement_mode: schedule.placement_mode,
-    sprint_item_id: schedule.sprint_item_id,
-    sprint_id: schedule.sprint_id,
     employee_backend: schedule.employee_backend || "",
     employee_launch_model: schedule.employee_launch_model || "",
     blocked_by_ticket_ids: schedule.blocked_by_ticket_ids.join(", ")
@@ -73,7 +66,8 @@ function blockedByIds(raw: string): string[] {
 export function scheduledTaskPayload(form: ScheduledTaskForm): Record<string, unknown> {
   return {
     enabled: form.enabled,
-    cadence: form.cadence,
+    cadence: "daily",
+    orchestrator: form.orchestrator,
     local_time: form.local_time,
     title: form.title.trim(),
     worker_type: form.worker_type,
@@ -81,9 +75,6 @@ export function scheduledTaskPayload(form: ScheduledTaskForm): Record<string, un
     priority: form.priority,
     deadline: form.deadline.trim() || null,
     project_id: form.project_id,
-    placement_mode: form.placement_mode,
-    sprint_item_id: form.sprint_item_id,
-    sprint_id: form.placement_mode === "backlog" ? null : form.sprint_id,
     employee_backend: form.employee_backend.trim() || null,
     employee_launch_model: form.employee_launch_model.trim() || null,
     blocked_by_ticket_ids: blockedByIds(form.blocked_by_ticket_ids)
@@ -95,4 +86,19 @@ export function scheduledTaskFormError(form: ScheduledTaskForm): string | null {
   if (!form.worker_type) return "Choose a Worker type.";
   if (!form.local_time) return "Choose a local time.";
   return null;
+}
+
+/** Historical calendar schedules remain records, never editable daily templates. */
+export function scheduledTaskIsRetired(schedule: ScheduledTask): boolean {
+  return schedule.cadence !== "daily" ||
+    ["planning-day", "planning-midday-check", "planning-sprint"].includes(schedule.worker_type);
+}
+
+export function scheduledTaskCadenceLabel(cadence: ScheduleCadence): string {
+  return {
+    daily: "Every day",
+    every_planning_day: "Every planning day",
+    current_sprint_day_four: "Current sprint day four",
+    current_sprint_final_day: "Current sprint final day"
+  }[cadence];
 }

@@ -1,288 +1,136 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
-  import { conversationSignalPresentation } from "../lib/conversationSignalPresentation";
-  import {
-    buildWorkspaceRail,
-    workspaceRowMarkPresentation,
-    workspaceTicketRowMark,
-    type WorkspaceRailItem,
-    type WorkspaceTicketGroup
-  } from "../lib/workspaceRail";
-  import {
-    whatTheAddressOpens,
-    workspaceAddress,
-    type WorkspaceAddress
-  } from "../lib/workspaceAddress";
+  import { mutateJson } from "../lib/mutate";
+  import { buildWorkspaceRail, type WorkspaceRailItem, type WorkspaceTicketGroup } from "../lib/workspaceRail";
+  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
+  import { whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import ChiefConversation from "../components/ChiefConversation.svelte";
-  import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import SprintItemWorkspace from "../components/SprintItemWorkspace.svelte";
-  import SprintTicketRow from "../components/SprintTicketRow.svelte";
-  import StageMark from "../components/StageMark.svelte";
+  import WorkspaceRailCard from "../components/WorkspaceRailCard.svelte";
+  import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
   import TicketRoute from "./TicketRoute.svelte";
-  import chiefOfStaffProfile from "../assets/chief-of-staff-profile.webp";
 
   let { address }: { address: WorkspaceAddress } = $props();
-
-  const VIEWS = [
-    { key: "items", label: "Sprint Items" },
-    { key: "tickets", label: "Tickets" }
-  ] as const;
-
   const board = createQuery(() => queries.board());
   const workers = createQuery(() => queries.workers());
-  // The address says which list the rail shows, which Item is open, and which single row
-  // carries the selected mark. This screen keeps no answer of its own, so the same
-  // address always draws the same rail.
   let opening = $derived(whatTheAddressOpens(address));
-  const selectedItemWorkspace = createQuery(() => ({
-    ...queries.sprintItemWorkspace(opening.openItemId ?? ""),
-    enabled: opening.openItemId !== null
-  }));
+  const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspace(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
   let allCards = $derived((board.data?.columns ?? []).flatMap((column) => column.cards));
   let rail = $derived(buildWorkspaceRail(allCards, board.data?.sprint_items ?? []));
-  // A direct Item address is enough to open its canonical workspace. The rail is only
-  // today's index, so an unscheduled Item can be absent there and still be a real Item.
   let itemPane = $derived(opening.markedItemId !== null);
-  let nothingWaits = $derived(
-    opening.view === "tickets" ? rail.groups.length === 0 : rail.items.length === 0
-  );
+  let railElement = $state<HTMLElement | null>(null);
+  let shellElement = $state<HTMLDivElement | null>(null);
+  let railWidth = $state<number | null>(null);
+  let measuredRailWidth = $state(272);
+  let resizing = $state(false);
+  let settledOpen = $state(false);
+  let busyItem = $state<string | null>(null);
+  let settleError = $state("");
+  let hoverVisible = $state(false);
+  let hoverInstant = $state(false);
+  let hoverTarget = $state<HTMLElement | null>(null);
+  let hoverTitle = $state("");
+  let hoverKicker = $state("");
+  let hoverWorker = $state<WorkItemTicketFacts | null>(null);
+  let hoverGroups = $state<WorkspaceTicketGroup[] | null>(null);
+  const hover = createRailHoverController<{ target: HTMLElement; title: string; kicker: string; worker?: WorkItemTicketFacts; groups?: WorkspaceTicketGroup[] }>((value, instant) => {
+    hoverTarget = value.target; hoverTitle = value.title; hoverKicker = value.kicker;
+    hoverWorker = value.worker ?? null; hoverGroups = value.groups ?? null;
+    hoverInstant = instant; hoverVisible = true;
+    if (instant) requestAnimationFrame(() => requestAnimationFrame(() => hoverInstant = false));
+  }, () => hoverVisible = false);
 
-  // The artifact a Ticket in the pane opened. It rides in the address beside everything
-  // else the screen draws, so a reload, Back, and a shared link all show the same thing,
-  // and Back is how the reader closes what they opened.
+  onMount(() => {
+    railWidth = readRailWidth(preferenceStorage());
+    return () => hover.dispose();
+  });
+  $effect(() => {
+    if (!railElement) return;
+    const observedRail = railElement;
+    const measure = () => measuredRailWidth = observedRail.getBoundingClientRect().width;
+    const observer = new ResizeObserver(measure);
+    measure();
+    observer.observe(observedRail);
+    return () => observer.disconnect();
+  });
+  function preferenceStorage(): Storage | null {
+    try { return window.localStorage; } catch { return null; }
+  }
+  function setWidth(value: number | null): void {
+    railWidth = value === null ? null : clampRailWidth(value);
+    saveRailWidth(preferenceStorage(), railWidth);
+  }
+  function resizePointer(event: PointerEvent): void {
+    event.preventDefault();
+    const grip = event.currentTarget as HTMLElement;
+    grip.setPointerCapture(event.pointerId); resizing = true;
+  }
+  function resizeMove(event: PointerEvent): void {
+    if (resizing && shellElement) setWidth(event.clientX - shellElement.getBoundingClientRect().left);
+  }
+  function resizeKey(event: KeyboardEvent): void {
+    const currentWidth = railElement?.getBoundingClientRect().width ?? measuredRailWidth;
+    const next = railWidthForKey(currentWidth, event.key, event.shiftKey);
+    if (next !== null) { event.preventDefault(); setWidth(next); }
+    if (event.key === "Home") { event.preventDefault(); setWidth(null); }
+  }
   function openFileOnTicket(file: ManagedFileTarget | null): void {
     window.location.hash = workspaceAddress(address.selection, address.view, file);
   }
-
-  // Every click writes an address, and the draw follows from it. A Ticket clicked inside
-  // an open Item names that Item, which is the whole of "opened from inside an Item".
   function selectCard(id: string, insideItemId: string | null): void {
-    const selection = insideItemId
-      ? ({ kind: "ticket", id, openedFromItemId: insideItemId } as const)
-      : ({ kind: "ticket", id } as const);
-    window.location.hash = workspaceAddress(selection, opening.view);
+    window.location.hash = workspaceAddress(insideItemId ? { kind: "ticket", id, openedFromItemId: insideItemId } : { kind: "ticket", id }, opening.view);
   }
-
-  // The whole box is the target, and the click has one meaning: open this Item and
-  // show its supervisor. No click on an Item shuts it, including a click on the Item
-  // already in the pane.
-  function selectItem(id: string): void {
-    window.location.hash = workspaceAddress({ kind: "item", id });
+  function selectItem(id: string): void { window.location.hash = workspaceAddress({ kind: "item", id }); }
+  function hoverItem(target: HTMLElement, item: WorkspaceRailItem): void {
+    hover.enter({ target, title:item.title, kicker:item.project ?? "Orchestrator", groups:item.hoverGroups });
   }
-
-  // Changing the list the rail shows keeps whatever the pane is showing.
-  function showView(next: (typeof VIEWS)[number]["key"]): void {
-    window.location.hash = workspaceAddress(address.selection, next);
+  function hoverWorkerRow(target: HTMLElement, worker: WorkItemTicketFacts): void {
+    hover.enter({ target, title:worker.title, kicker:"Worker", worker });
   }
-
-  let chiefPresentation = $derived(
-    workers.data
-      ? conversationSignalPresentation(
-          {
-            awaiting_reply: workers.data.chief_of_staff.awaiting_reply,
-            agent_state: workers.data.chief_of_staff.agent_working ? "working" : "idle"
-          }
-        )
-      : null
-  );
-
-  // Attention keeps a completed Item's title awake without changing its position.
-  function itemIsAwake(item: WorkspaceRailItem): boolean {
-    return item.mark !== null;
+  async function settle(item: WorkspaceRailItem, settled: boolean): Promise<void> {
+    busyItem = item.id; settleError = ""; hoverVisible = false; hover.leave();
+    try { await mutateJson(`/api/items/${encodeURIComponent(item.id)}/settled`, { method:"PATCH", body:{settled} }); }
+    catch (error) { settleError = error instanceof Error ? error.message : "The orchestrator could not be updated."; }
+    finally { busyItem = null; }
   }
 </script>
 
-{#snippet ticketRow(card: WorkItemTicketFacts, withPriority: boolean, insideItemId: string | null)}
-  {@const mark = workspaceTicketRowMark(card)}
-  {@const presentation = workspaceRowMarkPresentation(mark)}
-  <SprintTicketRow
-    priority={withPriority ? card.priority : null}
-    title={card.title}
-    state={presentation.state}
-    ariaLabel={presentation.ariaLabel}
-    active={opening.markedTicketId === card.id}
-    onclick={() => selectCard(card.id, insideItemId)}
-    stageMarkClass="board-workspace-stage-mark"
-    stageMarkAttributes={{
-      "data-stage-state": presentation.state,
-      "data-awaiting-reply": card.awaiting_reply ? "true" : "false",
-      "data-awaiting-answer": card.awaiting_answer ? "true" : "false",
-      "data-awaiting-approval": card.awaiting_approval ? "true" : "false",
-      "data-assigned": card.assigned ? "true" : "false",
-      "data-agent-state": card.agent_state,
-      "data-workspace-mark": mark ?? "none",
-      "aria-hidden": mark === null ? "true" : undefined
-    }}
-    data-card=""
-    data-ticket-id={card.id}
-    data-ticket-stage={card.stage}
-    data-ticket-status={card.ticket_status}
-    data-workspace-mark={mark ?? "none"}
-  />
-{/snippet}
-
-{#snippet ticketGroups(
-  groups: WorkspaceTicketGroup[],
-  withPriority: boolean,
-  insideItemId: string | null
-)}
-  {#each groups as group (group.key)}
-    <Disclosure
-      variant="workspace-bucket"
-      chevron="trailing"
-      defaultOpen={!group.defaultCollapsed}
-      class={insideItemId ? "disclosure--workspace-bucket--nested" : ""}
-      data-bucket-section=""
-      data-bucket-key={group.key}
-    >
-      {#snippet summary()}
-        <span class="board-workspace-bucket-label">{group.label}</span>
-        <span
-          class="board-workspace-bucket-count"
-          role="img"
-          aria-label={`${group.cards.length} ${group.cards.length === 1 ? "Ticket" : "Tickets"}`}
-        >{group.cards.length}</span>
-      {/snippet}
-
-      <div class="board-workspace-bucket-tickets">
-        {#each group.cards as card (card.id)}
-          {@render ticketRow(card, withPriority, insideItemId)}
-        {/each}
-      </div>
-    </Disclosure>
-  {/each}
-{/snippet}
-
-{#snippet sprintItem(item: WorkspaceRailItem)}
-  {@const selected = opening.markedItemId === item.id}
-  {@const presentation = workspaceRowMarkPresentation(item.mark)}
-  <section
-    class="board-workspace-item"
-    class:board-workspace-item--selected={selected}
-    data-sprint-item={item.id}
-    onclick={() => selectItem(item.id)}
-    role="presentation"
-  >
-    <button
-      type="button"
-      class="board-workspace-item-head"
-      onclick={(event) => {
-        event.stopPropagation();
-        selectItem(item.id);
-      }}
-      aria-current={selected ? "page" : undefined}
-    >
-      <span
-        class="board-workspace-item-title"
-        class:board-workspace-item-title--rested={item.rested && !itemIsAwake(item)}
-      >{item.title}</span>
-      {#if presentation.state}
-        <StageMark
-          state={presentation.state}
-          class="board-workspace-stage-mark"
-          data-stage-state={presentation.state}
-          data-workspace-mark={item.mark ?? "none"}
-          aria-hidden={item.mark === null ? "true" : undefined}
-          aria-label={presentation.ariaLabel}
-        />
-      {/if}
-    </button>
-    {#if item.groups.length}
-      <!-- What needs him is under the Item whether or not the Item is the one open, so
-           the rail answers that without being opened. A fold or a Ticket inside the Item
-           is still not a click on the Item. -->
-      <div
-        class="board-workspace-item-groups"
-        onclick={(event) => event.stopPropagation()}
-        role="presentation"
-      >
-        {@render ticketGroups(item.groups, false, item.id)}
-      </div>
-    {/if}
-  </section>
-{/snippet}
-
 <section class="board-screen" data-screen="workspace">
-  <ResourceState
-    error={board.error}
-    loading={board.isFetching}
-    hasData={Boolean(board.data)}
-    loadingText="Loading workspace..."
-  >
+  <ResourceState error={board.error} loading={board.isFetching} hasData={Boolean(board.data)} loadingText="Loading workspace...">
     <div class="board-workspace-wrap">
-      <div
-        class="board-workspace-shell"
-        class:board-workspace-shell--chief={opening.chiefMarked}
-        class:board-workspace-shell--item={itemPane}
-        class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)}
-      >
-        <section class="board-workspace-left" aria-label="Workspace">
-          {#if workers.data}
-            <a
-              class="board-workspace-chief-row"
-              class:active={opening.chiefMarked}
-              href={workspaceAddress({ kind: "chief" }, opening.view)}
-              data-chief-destination
-              aria-current={opening.chiefMarked ? "page" : undefined}
-            >
-              <img
-                class="board-workspace-agent-profile"
-                src={chiefOfStaffProfile}
-                alt=""
-                aria-hidden="true"
-              />
-              <span class="board-workspace-chief-name">
-                {workers.data.chief_of_staff.label}
-              </span>
-              {#if chiefPresentation}
-                <StageMark
-                  state={chiefPresentation.state}
-                  data-stage-state={chiefPresentation.state}
-                  data-needs-me={workers.data.chief_of_staff.needs_me ? "true" : "false"}
-                  data-agent-working={workers.data.chief_of_staff.agent_working ? "true" : "false"}
-                  data-latest-turn-ended={workers.data.chief_of_staff.latest_turn_ended_sequence}
-                  aria-label={chiefPresentation.ariaLabel}
-                />
-              {/if}
-            </a>
-          {/if}
-
-          <div class="board-workspace-views" role="tablist" aria-label="Workspace view">
-            {#each VIEWS as option (option.key)}
-              <button
-                type="button"
-                class="board-workspace-view"
-                role="tab"
-                aria-selected={opening.view === option.key}
-                data-workspace-view={option.key}
-                onclick={() => showView(option.key)}
-              >{option.label}</button>
-            {/each}
+      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
+        <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" onscroll={() => hover.leave()}>
+          <WorkspaceRailCard id="chief" title={workers.data?.chief_of_staff.label ?? "Chief of Staff"} chief ownUnread={workers.data?.chief_of_staff.awaiting_reply ?? false} selected={opening.chiefMarked} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target) => hover.enter({target,title:workers.data?.chief_of_staff.label ?? "Chief of Staff",kicker:"Chief of Staff",groups:rail.chiefHoverGroups})} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
+          {#each rail.items as item (item.id)}
+            <WorkspaceRailCard id={item.id} title={item.title} project={item.project} ownUnread={item.mark === "reply"} selected={opening.markedItemId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target) => hoverItem(target,item)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
+          {/each}
+          <div class="settled">
+            <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => settledOpen = !settledOpen}><span>Settled</span><span class="rule"></span><span class="count">{rail.settledItems.length}</span></button>
+            {#if settledOpen}
+              {#each rail.settledItems as item (item.id)}
+                <div class="settled-row" data-settled-item={item.id}>
+                  <button class="settled-title" type="button" onclick={() => selectItem(item.id)}>{item.title}</button>
+                  <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
+                </div>
+              {/each}
+            {/if}
           </div>
-
-          {#if opening.view === "tickets"}
-            {@render ticketGroups(rail.groups, true, null)}
-          {:else}
-            {#each rail.items as item (item.id)}
-              {@render sprintItem(item)}
-            {/each}
-          {/if}
-
-          {#if nothingWaits}
-            <div class="board-workspace-quiet-line">Nothing waits for you.</div>
-          {/if}
+          {#if settleError}<p role="alert">{settleError}</p>{/if}
         </section>
-
+        <!-- A focusable separator implements the WAI-ARIA window splitter keyboard pattern. -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+        <div tabindex="0" class="rail-grip" role="separator" aria-label="Resize workspace panel" aria-orientation="vertical" aria-valuemin={RAIL_MIN_WIDTH} aria-valuemax={RAIL_MAX_WIDTH} aria-valuenow={Math.round(measuredRailWidth)} onpointerdown={resizePointer} onpointermove={resizeMove} onpointerup={() => resizing = false} onpointercancel={() => resizing = false} onlostpointercapture={() => resizing = false} onkeydown={resizeKey} ondblclick={() => setWidth(null)} style:left={`${measuredRailWidth}px`}></div>
         <section
           class:board-workspace-right--ticket={Boolean(opening.markedTicketId)}
           class:board-workspace-right--chief={opening.chiefMarked}
           class:board-workspace-right--item={itemPane}
           class="board-workspace-right"
-          aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Sprint Item workspace" : "Workspace inspector"}
+          aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Orchestrator workspace" : "Workspace inspector"}
         >
           {#if opening.chiefMarked}
             <div class="board-workspace-chief-conversation">
@@ -312,7 +160,7 @@
             {/key}
           {:else}
             <div class="board-workspace-empty-inspector">
-              <span>Select a Sprint Item or Ticket to inspect it.</span>
+              <span>Select an orchestrator or Worker to inspect it.</span>
             </div>
           {/if}
         </section>
@@ -320,3 +168,26 @@
     </div>
   </ResourceState>
 </section>
+
+<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverTitle} kicker={hoverKicker} worker={hoverWorker} groups={hoverGroups} cards={allCards} rail={railElement} />
+<style>
+  .approved-rail-shell { position:relative; grid-template-columns:var(--rail-width) minmax(0,1fr); }
+  .approved-rail { padding:var(--space-3); scrollbar-gutter:stable; scrollbar-width:thin; }
+  .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
+  .rail-grip::after { content:""; position:absolute; inset:0 4px; background:transparent; transition:background var(--motion-fast) var(--motion-ease); }
+  .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { background:var(--accent-bright); }
+  .resizing { user-select:none; cursor:col-resize; }
+  .settled { margin-top:var(--space-5); }
+  .settled-head { display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) 0; border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
+  .settled-head:hover { color:var(--text-strong); }
+  .rule { flex:1; height:var(--border-hairline); background:var(--border-color); }
+  .count { flex:none; font-size:var(--type-xs); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
+  .settled-row { display:flex; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border-radius:var(--radius-sm); }
+  .settled-row:hover { background-image:var(--interaction-hover); }
+  .settled-title,.reopen { border:0; background:none; font:inherit; cursor:pointer; color:var(--text-faintest); padding:0; }
+  .settled-title { flex:1; text-align:left; min-width:0; }
+  .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
+  .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
+  button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+  @media(max-width:960px) { .approved-rail-shell { grid-template-columns:1fr; } .rail-grip { display:none; } }
+</style>

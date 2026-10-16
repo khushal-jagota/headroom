@@ -585,9 +585,7 @@ def board_view(
         "columns": columns,
         "sprint_items": _board_sprint_items(
             conn,
-            item_ids=sorted(
-                {str(row["sprint_item_id"]) for row in rows if row["sprint_item_id"] is not None}
-            ),
+            item_ids=[str(row["id"]) for row in conn.execute("SELECT id FROM sprint_items")],
         ),
     }
 
@@ -610,8 +608,9 @@ def _board_sprint_items(
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        f"SELECT id, title, priority, created_at, settled FROM sprint_items "
-        f"WHERE id IN ({placeholders})",
+        f"SELECT i.id, i.title, i.priority, i.project_id, p.name AS project, "
+        f"i.created_at, i.settled FROM sprint_items i JOIN projects p ON p.id=i.project_id "
+        f"WHERE i.id IN ({placeholders})",
         item_ids,
     ).fetchall()
     conversations = conversation_start.read_agent_conversations(
@@ -623,6 +622,8 @@ def _board_sprint_items(
             title=str(row["title"]),
             priority=str(row["priority"]),
             settled=bool(row["settled"]),
+            project_id=str(row["project_id"]),
+            project=str(row["project"]),
             tickets=sprints_views.item_tickets(conn, str(row["id"])),
             created_at=int(row["created_at"]),
             conversation_id=conversations.get(sprints_data.supervisor_agent_key(str(row["id"]))),

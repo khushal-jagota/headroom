@@ -226,3 +226,18 @@ def test_api_rejects_calendar_and_legacy_assignment_creation(
 @pytest.mark.parametrize("query", ["day=today", "sprint_id=null"])
 def test_api_rejects_calendar_list_filters(client: TestClient, query: str) -> None:
     assert client.get(f"/api/tickets?{query}").status_code == 400
+
+
+def test_board_keeps_empty_orchestrators_and_their_project_after_settlement(
+    tmp_db: Connection,
+) -> None:
+    item_id = _item(tmp_db)
+    item = sprints_data.read_item(tmp_db, item_id).item
+    for settled in (False, True):
+        tmp_db.execute("UPDATE sprint_items SET settled=? WHERE id=?", (int(settled), item_id))
+        rows = views.board_view(tmp_db)["sprint_items"]
+        [row] = [entry for entry in rows if entry["id"] == item_id]
+        assert row["tickets"] == []
+        assert row["settled"] is settled
+        assert row["project_id"] == item.project_id
+        assert row["project"] == "Item Project"

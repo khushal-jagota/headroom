@@ -8,6 +8,7 @@ export type WorkItemTicketFacts = WorkAttention & {
   title: string;
   priority: Priority;
   stage: string;
+  worker_type?: string;
   ticket_status: string;
   waiting_to_closeout?: boolean;
   gating_field?: string | null;

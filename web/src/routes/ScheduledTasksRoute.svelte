@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
+  import { labelize } from "../lib/ui";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import {
@@ -7,12 +8,12 @@
     scheduledTaskFormError,
     scheduledTaskFormFromSchedule,
     scheduledTaskPayload,
+    scheduledTaskIsRetired,
+    scheduledTaskCadenceLabel,
     type ScheduledTaskForm
   } from "../lib/scheduledTasks";
   import type {
     Priority,
-    ScheduleCadence,
-    SchedulePlacementMode,
     ScheduledTask
   } from "../lib/types";
   import Button from "../components/Button.svelte";
@@ -25,18 +26,8 @@
   const schedules = createQuery(() => queries.schedules());
   const projects = createQuery(() => queries.projects());
   const sprintItems = createQuery(() => queries.sprintItems());
-  const sprintSummaries = createQuery(() => queries.sprintSummaries());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
 
-  const cadenceOptions: Array<{ value: ScheduleCadence; label: string }> = [
-    { value: "every_planning_day", label: "Every planning day" },
-    { value: "current_sprint_day_four", label: "Current sprint day four" },
-    { value: "current_sprint_final_day", label: "Current sprint final day" }
-  ];
-  const placementOptions: Array<{ value: SchedulePlacementMode; label: string }> = [
-    { value: "current_sprint", label: "Current sprint" },
-    { value: "backlog", label: "Backlog" }
-  ];
   const priorities: Priority[] = ["P0", "P1", "P2", "P3"];
 
   let formOpen = $state(false);
@@ -48,14 +39,17 @@
   let saving = $state(false);
   let togglingId = $state<string | null>(null);
 
-  let canSubmit = $derived(!saving);
+  let editingSchedule = $derived(schedules.data?.schedules.find((schedule) => schedule.id === editingId));
+  let historical = $derived(editingSchedule !== undefined && scheduledTaskIsRetired(editingSchedule));
+  let creatableWorkerTypes = $derived((workerTypes.data?.worker_types ?? []).filter((workerType) => workerType.creatable !== false));
+  let canSubmit = $derived(!saving && !historical);
   let catalogueError = $derived(
     [projects.error, sprintItems.error, workerTypes.error].find((error) => error != null)
   );
 
   function openCreate(): void {
     editingId = null;
-    draft = blankScheduledTaskForm(workerTypes.data?.worker_types[0]?.worker_type || "coding");
+    draft = blankScheduledTaskForm(creatableWorkerTypes[0]?.worker_type || "");
     saveError = null;
     toggleError = null;
     formError = null;
@@ -83,10 +77,6 @@
     return (event.currentTarget as HTMLSelectElement).value;
   }
 
-  function setCadence(event: Event): void {
-    draft.cadence = selectValue(event) as ScheduleCadence;
-  }
-
   function setWorkerType(event: Event): void {
     draft.worker_type = selectValue(event);
   }
@@ -97,22 +87,15 @@
 
   function setProject(event: Event): void {
     const projectId = selectValue(event) || null;
-    if (projectId !== draft.project_id) draft.sprint_item_id = null;
+    if (projectId !== draft.project_id) draft.orchestrator = { kind: "chief", id: "chief" };
     draft.project_id = projectId;
   }
 
-  function setPlacement(event: Event): void {
-    draft.placement_mode = selectValue(event) as SchedulePlacementMode;
-    if (draft.placement_mode === "backlog") draft.sprint_id = null;
-  }
-
-  function setSprintItem(event: Event): void {
-    draft.sprint_item_id = selectValue(event) || null;
-    const outcome = (sprintItems.data?.items || []).find((item) => item.id === draft.sprint_item_id);
-    if (outcome) draft.project_id = outcome.project_id;
-  }
-  function setSprint(event: Event): void {
-    draft.sprint_id = selectValue(event) || null;
+  function setOrchestrator(event: Event): void {
+    const itemId = selectValue(event);
+    draft.orchestrator = itemId ? { kind: "sprint_item", id: itemId } : { kind: "chief", id: "chief" };
+    const item = sprintItems.data?.items.find((item) => item.id === itemId);
+    if (item) draft.project_id = item.project_id;
   }
 
   function saveDraftField(field: "title" | "kickoff_note", raw: string): Promise<void> {
@@ -121,12 +104,12 @@
   }
 
   function toggleDraftEnabled(): void {
-    draft.enabled = !draft.enabled;
+    if (!historical) draft.enabled = !draft.enabled;
   }
 
   async function toggleEnabled(schedule: ScheduledTask, event: MouseEvent): Promise<void> {
     event.stopPropagation();
-    if (togglingId) return;
+    if (togglingId || (scheduledTaskIsRetired(schedule) && !schedule.enabled)) return;
     togglingId = schedule.id;
     toggleError = null;
     try {
@@ -143,6 +126,7 @@
 
   async function saveSchedule(event: SubmitEvent): Promise<void> {
     event.preventDefault();
+    if (historical) return;
     formError = scheduledTaskFormError(draft);
     if (formError) return;
 
@@ -181,6 +165,7 @@
       <section class="scheduled-task-editor" data-schedule-editor>
         <div class="scheduled-task-detail-head">
           <div class="scheduled-task-title-edit" data-schedule-title>
+            {#if historical}<span class="scheduled-task-title">{draft.title}</span>{:else}
             <InlineEdit
               className="scheduled-task-title"
               value={draft.title}
@@ -188,6 +173,7 @@
               ariaLabel="Scheduled task title"
               onSave={(raw) => saveDraftField("title", raw)}
             />
+            {/if}
           </div>
           <button
             class:scheduled-task-switch--on={draft.enabled}
@@ -196,6 +182,7 @@
             role="switch"
             aria-checked={draft.enabled}
             aria-label={draft.enabled ? "Disable schedule" : "Enable schedule"}
+            disabled={historical}
             data-input="enabled"
             onclick={() => toggleDraftEnabled()}
           ></button>
@@ -204,7 +191,11 @@
         {#if saveError}<ErrorLine error={saveError} />{/if}
         {#if catalogueError}<ErrorLine error={catalogueError} />{/if}
 
+        {#if historical && editingSchedule}
+          <p data-retired-schedule>Retired schedule · {scheduledTaskCadenceLabel(editingSchedule.cadence)} · {editingSchedule.placement_mode === "current_sprint" ? "Current sprint" : "Backlog"}</p>
+        {/if}
         <form class="scheduled-task-form" onsubmit={saveSchedule}>
+          <fieldset disabled={historical} style="border:0;padding:0;margin:0;min-width:0">
           <section class="scheduled-task-group" data-schedule-section="fires">
             <h2>Fires</h2>
             <div class="scheduled-task-values">
@@ -216,17 +207,7 @@
                 data-input="local-time"
               />
               <span class="scheduled-task-separator" aria-hidden="true">·</span>
-              <select
-                class="scheduled-task-quiet-control"
-                aria-label="Cadence"
-                value={draft.cadence}
-                onchange={setCadence}
-                data-input="cadence"
-              >
-                {#each cadenceOptions as option}
-                  <option value={option.value}>{option.label}</option>
-                {/each}
-              </select>
+              <span data-input="cadence">{historical && editingSchedule ? scheduledTaskCadenceLabel(editingSchedule.cadence) : "Every day"}</span>
               <span class="scheduled-task-separator" aria-hidden="true">·</span>
               <input
                 class="scheduled-task-quiet-control"
@@ -248,7 +229,8 @@
                 onchange={setWorkerType}
                 data-input="worker-type"
               >
-                {#each workerTypes.data?.worker_types || [] as workerType}
+                {#if historical}<option value={draft.worker_type}>{workerTypes.data?.worker_types.find((workerType) => workerType.worker_type === draft.worker_type)?.label ?? labelize(draft.worker_type)}</option>{/if}
+                {#each creatableWorkerTypes as workerType}
                   <option value={workerType.worker_type}>{workerType.label}</option>
                 {/each}
               </select>
@@ -267,43 +249,16 @@
             </div>
           </section>
 
-          <section class="scheduled-task-group" data-schedule-section="placement">
-            <h2>Placement</h2>
+          <section class="scheduled-task-group" data-schedule-section="orchestrator">
+            <h2>Orchestrator</h2>
             <div class="scheduled-task-values">
-              <select
-                class="scheduled-task-quiet-control"
-                aria-label="Placement"
-                value={draft.placement_mode}
-                onchange={setPlacement}
-                data-input="placement"
-              >
-                {#each placementOptions as option}
-                  <option value={option.value}>{option.label}</option>
-                {/each}
+              <select class="scheduled-task-quiet-control" aria-label="Project" value={draft.project_id || ""} onchange={setProject} data-input="project">
+                <option value="">No project</option>
+                {#each projects.data?.projects || [] as project}<option value={project.id}>{project.name}</option>{/each}
               </select>
               <span class="scheduled-task-separator" aria-hidden="true">·</span>
-              <select
-                  class="scheduled-task-quiet-control"
-                  aria-label="Project"
-                  value={draft.project_id || ""}
-                  onchange={setProject}
-                  data-input="project"
-                >
-                  <option value="">No project</option>
-                  {#each projects.data?.projects || [] as project}
-                    <option value={project.id}>{project.name}</option>
-                  {/each}
-              </select>
-              {#if draft.placement_mode === "current_sprint"}
-                <span class="scheduled-task-separator" aria-hidden="true">·</span>
-                <select class="scheduled-task-quiet-control" aria-label="Sprint" value={draft.sprint_id || ""} onchange={setSprint} data-input="sprint">
-                  <option value="">Current Sprint</option>
-                  {#each sprintSummaries.data?.sprints || [] as sprint}<option value={sprint.id}>{sprint.name}</option>{/each}
-                </select>
-              {/if}
-              <span class="scheduled-task-separator" aria-hidden="true">·</span>
-              <select class="scheduled-task-quiet-control" aria-label="Outcome" value={draft.sprint_item_id || ""} onchange={setSprintItem} data-input="sprint-item">
-                <option value="">No outcome</option>
+              <select class="scheduled-task-quiet-control" aria-label="Orchestrator" value={draft.orchestrator.kind === "sprint_item" ? draft.orchestrator.id : ""} onchange={setOrchestrator} data-input="orchestrator">
+                <option value="">Chief of Staff</option>
                 {#each (sprintItems.data?.items || []).filter((item) => !draft.project_id || item.project_id === draft.project_id) as item}<option value={item.id}>{item.title}</option>{/each}
               </select>
             </div>
@@ -312,6 +267,7 @@
           <section class="scheduled-task-group" data-schedule-section="kickoff">
             <h2>Kickoff</h2>
             <div class="ticket-recap-inner scheduled-task-kickoff" data-input="kickoff-note">
+              {#if historical}<span>{draft.kickoff_note}</span>{:else}
               <InlineEdit
                 className="scheduled-task-kickoff-edit"
                 value={draft.kickoff_note}
@@ -321,6 +277,7 @@
                 ariaLabel="Kickoff"
                 onSave={(raw) => saveDraftField("kickoff_note", raw)}
               />
+              {/if}
             </div>
           </section>
 
@@ -364,10 +321,11 @@
             </div>
           </Disclosure>
 
+          </fieldset>
           {#if formError}
             <p class="scheduled-form-error" role="alert" data-schedule-error>{formError}</p>
           {/if}
-          <div class="scheduled-task-form-actions">
+          {#if !historical}<div class="scheduled-task-form-actions">
             {#if !editingId}
               <Button variant="quiet" disabled={saving} onclick={() => closeForm()} data-close-schedule>
                 Cancel
@@ -381,7 +339,7 @@
             >
               {saving ? "Saving…" : editingId ? "Save changes" : "Add schedule"}
             </Button>
-          </div>
+          </div>{/if}
         </form>
       </section>
     {:else}
@@ -417,7 +375,7 @@
                   role="switch"
                   aria-checked={schedule.enabled}
                   aria-label={schedule.enabled ? "Disable schedule" : "Enable schedule"}
-                  disabled={togglingId === schedule.id}
+                  disabled={togglingId === schedule.id || (scheduledTaskIsRetired(schedule) && !schedule.enabled)}
                   data-schedule-toggle={schedule.id}
                   onclick={(event) => void toggleEnabled(schedule, event)}
                 ></button>

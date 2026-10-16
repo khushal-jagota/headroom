@@ -52,7 +52,7 @@
   let projectOptions = $derived(
     (projects.data?.projects || []).map((entry) => ({ value: entry.id, label: entry.name }))
   );
-  let availableWorkerTypes = $derived(workerTypes.data?.worker_types || []);
+  let availableWorkerTypes = $derived((workerTypes.data?.worker_types || []).filter((entry) => entry.creatable !== false));
 
   $effect(() => {
     const values = projectOptions.map((option) => option.value);
@@ -87,8 +87,7 @@
       kickoff_note: kickoffNote,
       project_id: project,
       priority,
-      sprint_id: null,
-      sprint_item_id: null,
+      orchestrator: { kind: "chief", id: "chief" },
       ceiling_holder: holder
     };
     if (deadline.trim()) payload.deadline = deadline.trim();
@@ -110,7 +109,7 @@
 
 <section class="backlog-screen" data-screen="backlog">
   <div class="doc">
-    <ScreenHeader title="Backlog" />
+    <ScreenHeader title="Workers" />
     <div class="col">
       <Disclosure variant="make" chevron="none" data-create="ticket">
         {#snippet summary()}<span class="plus">+</span> New ticket{/snippet}
@@ -156,7 +155,7 @@
       <section class="groups" data-backlog-tickets>
         <ResourceState error={tickets.error} loading={tickets.isFetching} hasData={Boolean(tickets.data)} loadingText="Loading tickets...">
           {#if !(tickets.data?.tickets || []).length}
-            <div class="quiet-line">No active unscheduled tickets.</div>
+            <div class="quiet-line">No Workers.</div>
           {:else}
             {#each PRIORITY_ORDER as value}
               {#if ticketGroups[value]?.length}

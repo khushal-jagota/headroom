@@ -106,13 +106,13 @@ try {
         ]
       });
     }
-    if (path === "/api/tickets?detail=summary&sprint_id=null&limit=30&offset=0") {
+    if (path === "/api/tickets?detail=summary&limit=30&offset=0") {
       return json({
         tickets: backlogTickets,
         page: page(backlogTickets.length, backlogTickets.length + 1, 0)
       });
     }
-    if (path === "/api/tickets?detail=summary&sprint_id=null&limit=30&offset=30") {
+    if (path === "/api/tickets?detail=summary&limit=30&offset=30") {
       return json({ tickets: [ticket("ticket_last", "P1")], page: page(1, backlogTickets.length + 1, 30) });
     }
     if (path === "/api/items?detail=summary&limit=30&offset=0") {
@@ -310,8 +310,7 @@ with sync_playwright() as playwright:
         "kickoff_note": "Keep the receipts.",
         "project_id": "project_tribe",
         "priority": "P1",
-        "sprint_id": None,
-        "sprint_item_id": None,
+        "orchestrator": {"kind": "chief", "id": "chief"},
         "ceiling_holder": {"kind": "chief", "id": "chief"},
     }
     assert not any("/api/items" in request["path"] for request in page.evaluate("window.__requests()"))

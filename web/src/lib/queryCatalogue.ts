@@ -52,7 +52,7 @@ export const queries = {
   backlogTicketSummaries: (offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
       ["tickets", "backlog", { limit, offset }],
-      `/api/tickets?detail=summary&sprint_id=null&limit=${limit}&offset=${offset}`
+      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}`
     ),
   outcomeSummaries: (offset: number, limit = 30, projectId = "", search = "") =>
     jsonQuery<SprintItemSummariesResponse>(
