@@ -275,6 +275,12 @@ def inspect_source(source: str, path: str = "<source>") -> list[Finding]:
 
 
 def scan(root: Path) -> list[Finding]:
+    root = root.resolve()
+    missing = [name for name in SEARCHED_DIRECTORIES if not (root / name).is_dir()]
+    if missing:
+        raise FileNotFoundError(
+            f"Cannot scan root {root}: missing searched directories: {', '.join(missing)}"
+        )
     findings = []
     for directory in SEARCHED_DIRECTORIES:
         for path in sorted((root / directory).rglob("*.py")):
@@ -289,7 +295,10 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--json", action="store_true")
     arguments = parser.parse_args()
-    findings = scan(arguments.root)
+    try:
+        findings = scan(arguments.root)
+    except FileNotFoundError as error:
+        parser.error(str(error))
     counts = {
         kind: sum(item.classification == kind for item in findings)
         for kind in ("accusation", "dismissal")

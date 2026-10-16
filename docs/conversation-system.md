@@ -795,8 +795,13 @@ copy can be written.
 
 The source tripwire `python scripts/check_agent_home_copies.py` reports copies whose
 destination becomes a selected Hermes, Codex, or Claude home. `--json` produces counts
-and findings; an accusation makes the command exit with status 1. Configuration copies
-of `config.yaml` and `.env` beside a link to the same source's canonical `auth.json` are
+and findings; an accusation makes the command exit with status 1.
+
+The root must contain all four searched directories: `src`, `tests`, `scripts`, and
+`ops`. A missing directory produces an error with the resolved root and status 2,
+without a clean finding summary.
+
+Configuration copies of `config.yaml` and `.env` beside a link to the same source's canonical `auth.json` are
 reported as dismissals, not silently excluded. External `.env` contents remain
 unverified. Literal `settings.json` to the same filename is treated as configuration,
 without a dismissal finding; this does not verify its external contents or exempt

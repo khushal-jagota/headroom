@@ -1,10 +1,48 @@
 """The home-copy tripwire accuses relationships, and records its bounded dismissals."""
 
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 from check_agent_home_copies import inspect_source
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("missing", [("src", "tests", "scripts", "ops"), ("ops",)])
+def test_cli_rejects_incomplete_scan_root(tmp_path: Path, missing: tuple[str, ...]) -> None:
+    for name in ("src", "tests", "scripts", "ops"):
+        if name not in missing:
+            (tmp_path / name).mkdir()
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/check_agent_home_copies.py"),
+            "--root",
+            str(tmp_path),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert str(tmp_path.resolve()) in result.stderr
+    assert "missing searched directories: " + ", ".join(missing) in result.stderr
+    assert result.stdout == ""
+
+
+def test_copied_script_reports_its_invalid_default_root(tmp_path: Path) -> None:
+    location = tmp_path / "copied"
+    location.mkdir()
+    script = location / "check_agent_home_copies.py"
+    shutil.copy2(ROOT / "scripts/check_agent_home_copies.py", script)
+    result = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
+    assert result.returncode == 2
+    assert str(tmp_path.resolve()) in result.stderr
+    assert "missing searched directories" in result.stderr
+    assert result.stdout == ""
 
 
 def test_real_provider_sites_accept_current_and_credential_only_repair() -> None:
