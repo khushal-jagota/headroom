@@ -29,7 +29,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server.login")
 
@@ -200,6 +200,16 @@ def _credentials(home: Path) -> tuple[str, ...] | None:
 # --- what a turn established about the login ---------------------------------------------
 
 
+class CodexLoginRejectionMemory(Protocol):
+    """Where a refused credential is kept, and the three things anyone needs of it."""
+
+    def remember(self, generation: CodexLoginGeneration | None) -> None: ...
+
+    def forget(self, generation: CodexLoginGeneration | None) -> None: ...
+
+    def applies_to(self, generation: CodexLoginGeneration | None) -> bool: ...
+
+
 class RememberedCodexLoginRejection:
     """The saved login codex refused, kept only while that same credential is in force.
 
@@ -210,9 +220,9 @@ class RememberedCodexLoginRejection:
     about. A rejection is recorded against the generation the turn ran on, and it stops
     applying the moment the saved login reports a different one.
 
-    This lives for as long as the process. A restart forgets it, and the card falls back to
-    what the file alone supports, which is honest: it says the login cannot be confirmed
-    rather than claiming it is good.
+    This one lives for as long as the process, and is what a test uses. The database-backed
+    one in ``conversation.backend_state`` is what the server runs on, because a refused
+    login outlives a restart and so must the fact.
     """
 
     def __init__(self) -> None:

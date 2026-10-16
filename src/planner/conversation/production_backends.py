@@ -31,7 +31,7 @@ from planner.conversation.backends.codex_app_server.adapter import (
     codex_app_server_child_launch,
 )
 from planner.conversation.backends.codex_app_server.login import (
-    RememberedCodexLoginRejection,
+    CodexLoginRejectionMemory,
 )
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.backends.hermes_acp import (
@@ -102,7 +102,7 @@ def production_backend_child_factories(
     *,
     panels_server_url: str,
     executable_path: ExecutablePathResolver = shutil.which,
-    remembered_codex_login_rejection: RememberedCodexLoginRejection | None = None,
+    remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
 ) -> Mapping[ConversationBackendKey, BackendChildFactory]:
     """One child factory per backend, pointed at this machine's copy of each agent.
 

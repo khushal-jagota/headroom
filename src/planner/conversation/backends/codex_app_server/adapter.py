@@ -67,6 +67,7 @@ from planner.conversation.backends.codex_app_server.client import (
 )
 from planner.conversation.backends.codex_app_server.login import (
     CodexLoginGeneration,
+    CodexLoginRejectionMemory,
     RememberedCodexLoginRejection,
     codex_home,
     read_stored_codex_login,
@@ -328,7 +329,7 @@ class CodexAppServerBackendChild:
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
         message_files: ConversationMessageFiles,
-        remembered_login_rejection: RememberedCodexLoginRejection,
+        remembered_login_rejection: CodexLoginRejectionMemory,
     ) -> None:
         self._launch = launch
         self._resolved_start = resolved_start
@@ -1569,7 +1570,12 @@ class CodexAppServerBackendChild:
         )
 
     async def _on_child_ended(self) -> None:
-        """The process is gone: a turn it was running stopped, and it failed."""
+        """The process is gone: a turn it was running stopped, and it failed.
+
+        Graded like any other failure. A codex that announces a refused refresh and then
+        exits is the loudest version of the fault this reads for, and saying only that the
+        process ended would lose the one line that explains it.
+        """
         turn = self._turn
         if turn is None:
             return
@@ -1580,7 +1586,9 @@ class CodexAppServerBackendChild:
         await self._sink.turn_ended(
             turn.token,
             ending=ConversationTurnEnding.failed,
-            error_summary="the codex process ended while the turn was running",
+            error_summary=self._read_the_login_in(
+                turn, "the codex process ended while the turn was running"
+            ),
             standard_error_tail=self._client.standard_error_tail(),
         )
         turn.ended.set()
@@ -1609,7 +1617,7 @@ class CodexAppServerBackendChildFactory:
         self,
         launch: CodexChildLaunch,
         *,
-        remembered_login_rejection: RememberedCodexLoginRejection | None = None,
+        remembered_login_rejection: CodexLoginRejectionMemory | None = None,
     ) -> None:
         self._launch = launch
         # Every codex child in this process shares one of these, because they share one

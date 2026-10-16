@@ -617,8 +617,9 @@ of these:
   file. It is remembered against the account and refresh stamp the turn ran on, and it
   stops applying as soon as the saved login reports a different one — a new sign-in, or
   any successful refresh. A turn that was cancelled clears nothing: pressing stop says
-  nothing about the login. The memory lives in the running process, so a restart falls
-  back to "cannot be confirmed" rather than to a claim.
+  nothing about the login. The record is in the database, because a refused login is still
+  refused after a restart and Panels restarts on every deploy. It holds the account id and
+  the login's own last-refresh stamp, and no token.
 - **Nothing at all.** The CLI answered with no text to read and there was no saved login
   to fall back on. The card stays quiet rather than inventing a state.
 
@@ -637,9 +638,12 @@ Two things keep that reading narrow. A turn is graded on what the child said sin
 previous turn ended, not on the whole of its standard error, so a refusal from an hour ago
 cannot explain an unrelated failure now — and a refusal announced during the handshake,
 before any turn existed, still belongs to the turn that fails on it. And a refusal only
-counts when codex's own login machinery wrote it: standard error carries everything the
-child and its tools write, and plenty of tools say "not logged in" about accounts that
-have nothing to do with codex.
+counts when codex's own login machinery wrote it, which is read as codex's crate path in
+the line: standard error carries everything the child and its tools write, and "github
+auth: not logged in" is a true sentence about github that says nothing about codex. A
+child that dies mid-turn is graded the same way, because a codex that announces a refused
+refresh and then exits is the loudest version of this and used to be the one that went
+unread.
 
 ### One home for the codex login
 

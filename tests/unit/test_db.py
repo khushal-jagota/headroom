@@ -20,8 +20,9 @@ PRE_COLLAPSE_HEAD_REVISION = db_module.PRE_COLLAPSE_HEAD_REVISION
 # A revision from the middle of the collapsed chain. No build carries it any more.
 REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
-# Every table, index and trigger the baseline builds.
-CURRENT_SCHEMA_OBJECT_COUNT = 58
+# Every table, index and trigger a current build holds: the baseline plus what the
+# revisions after it add.
+CURRENT_SCHEMA_OBJECT_COUNT = 59
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -105,6 +106,7 @@ def _build_database_at_the_pre_collapse_head(path: Path) -> sqlite3.Connection:
     create_schema(conn)
     # Reconstruct the collapsed head rather than leaving schema from later revisions in
     # place before we stamp it as old. Post-baseline data-only revisions need no undo.
+    conn.execute("DROP TABLE codex_login_rejection")
     conn.execute("DROP TABLE manager_wake_batch_members")
     conn.execute("DROP TABLE manager_wake_batches")
     conn.execute("DROP TABLE manager_wakes")
@@ -502,6 +504,7 @@ def _database_at_previous_head(
     tree = _migration_tree(tmp_path, monkeypatch)
     for revision in sorted(shipped.glob("*.py")):
         if revision.name in {
+            "a_refused_codex_login_outlives_a_restart.py",
             "address_manager_wakes_to_principals.py",
             "baseline_2026_09_schema.py",
             "remove_redundant_ticket_and_item_storage.py",
@@ -522,6 +525,7 @@ def _database_before_principal_wakes(
     tree = _migration_tree(tmp_path, monkeypatch)
     for migration in sorted(shipped.glob("*.py")):
         if migration.name in {
+            "a_refused_codex_login_outlives_a_restart.py",
             "address_manager_wakes_to_principals.py",
             "baseline_2026_09_schema.py",
         }:

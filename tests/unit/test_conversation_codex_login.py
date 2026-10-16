@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -26,6 +29,7 @@ from tests.unit.test_conversation_snapshot import (
     _run,
 )
 
+from planner.conversation.backend_state import DurableCodexLoginRejection
 from planner.conversation.backends.codex_app_server.auth_failure import (
     LOGIN_IS_REJECTED_SUMMARY,
     CodexAuthReading,
@@ -48,12 +52,32 @@ from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.message_content import text_message_content
 from planner.conversation.snapshot import (
     BackendIdentityStatus,
+    BackendSnapshotService,
     CodexLoginStanding,
     probe_backend,
 )
+from planner.core.db import connect, create_schema
 
 REFRESH_STAMP = "2026-10-16T00:33:10.678890887Z"
 ACCOUNT_ID = "11111111-2222-3333-4444-555555555555"
+
+
+@contextmanager
+def _codex_home_pointed_at(home: Path) -> Iterator[None]:
+    """Point this process's codex home at a synthetic login for the duration.
+
+    The snapshot service reads the login where codex would read it, so a test that drives
+    the real service has to put its synthetic one there.
+    """
+    before = os.environ.get("CODEX_HOME")
+    os.environ["CODEX_HOME"] = str(home)
+    try:
+        yield
+    finally:
+        if before is None:
+            del os.environ["CODEX_HOME"]
+        else:
+            os.environ["CODEX_HOME"] = before
 
 
 def _token(**claims: Any) -> str:
@@ -290,6 +314,38 @@ def test_a_tools_own_logged_out_message_is_not_codex_saying_it_is_logged_out() -
     )
 
     assert reading is CodexAuthReading.says_nothing_about_the_login
+
+
+def test_another_tools_auth_line_is_not_codex_saying_anything(tmp_path: Path) -> None:
+    """A line about somebody else's account, in codex's stream, is not codex's verdict.
+
+    Every one of these was accepted as a terminal codex refusal by an earlier reading that
+    took any line mentioning auth. The test is codex's own crate path now, so a tool that
+    writes its own auth lines cannot send a person to replace a working codex login.
+    """
+    for said in (
+        "github auth: not logged in",
+        "other_tool auth: invalid_grant",
+        "auth: not logged in",
+        "gcloud auth: you are logged out",
+        "docker: auth: not logged in to registry",
+        "AUTH: not logged in",
+    ):
+        assert (
+            read_a_failed_turn(
+                error_summary="the tool exited 1", standard_error_this_turn=said
+            )
+            is CodexAuthReading.says_nothing_about_the_login
+        ), said
+
+    for codex_said in (
+        "codex_login::auth::manager: Failed to refresh token: refresh token was already used",
+        "2026-10-16T00:22:20.1Z ERROR codex_login::auth: not logged in",
+    ):
+        assert (
+            read_a_failed_turn(error_summary="turn failed", standard_error_this_turn=codex_said)
+            is CodexAuthReading.login_is_rejected
+        ), codex_said
 
 
 def test_digits_inside_a_duration_or_a_timestamp_are_not_a_refusal() -> None:
@@ -783,3 +839,143 @@ def test_a_card_stops_claiming_a_login_once_its_token_expires(tmp_path: Path) ->
         CodexLoginStanding(stored=before, rejected=False).everything_a_card_reads
         != CodexLoginStanding(stored=after, rejected=False).everything_a_card_reads
     )
+
+
+def test_an_unchanged_login_goes_stale_when_its_token_expires_under_a_kept_card(
+    tmp_path: Path,
+) -> None:
+    """Time passing is the change. The file does not have to move.
+
+    This is the reading that an earlier version got wrong by comparing both sides at the
+    moment of comparison: after expiry the kept card and the current login agreed that the
+    token was expired, so the card never went stale and went on saying signed in for the
+    life of the process. The card's reading is of the instant it was probed at.
+    """
+    home = tmp_path / "codex-home"
+    expires_at = datetime.now(UTC) + timedelta(hours=1)
+    _write_login(home, expires_at=expires_at)
+    standing = CodexLoginStanding(stored=read_stored_codex_login(home), rejected=False)
+
+    while_it_was_good = standing.everything_a_card_reads(now=expires_at - timedelta(minutes=5))
+    after_it_expired = standing.everything_a_card_reads(now=expires_at + timedelta(minutes=5))
+
+    assert while_it_was_good != after_it_expired
+
+
+def test_a_kept_card_is_probed_again_once_its_token_expires(tmp_path: Path) -> None:
+    """The same service, the same untouched login file, a clock that moved."""
+    home = tmp_path / "codex-home"
+    expires_at = datetime.now(UTC) + timedelta(hours=1)
+    _write_login(home, expires_at=expires_at)
+    reading_time = [expires_at - timedelta(minutes=5)]
+    machine = _installed_codex()
+    service = BackendSnapshotService(
+        machine,
+        codex_model_catalog_probe=_codex_that_says_nothing,
+        now=lambda: reading_time[0],
+    )
+
+    async def exercise() -> None:
+        while_it_was_good = await service.snapshot(ConversationBackendKey.codex)
+        assert while_it_was_good.identity is not None
+        assert while_it_was_good.identity.status is BackendIdentityStatus.authenticated
+
+        reading_time[0] = expires_at + timedelta(minutes=5)
+        after_it_expired = await service.snapshot(ConversationBackendKey.codex)
+        assert after_it_expired.identity is not None
+        assert after_it_expired.identity.status is BackendIdentityStatus.unknown
+
+    with _codex_home_pointed_at(home):
+        _run(exercise)
+
+
+def test_a_rejection_a_turn_found_survives_a_restart(tmp_path: Path) -> None:
+    """A refused login is still refused after a deploy, so the fact is written down.
+
+    The process-lifetime memory lost this at every restart, which put the card back to
+    "cannot be confirmed" — honest, but it threw away the only evidence anybody had paid
+    for, and Panels restarts on every deploy.
+    """
+    database = tmp_path / "planner.db"
+    connection = connect(str(database))
+    try:
+        create_schema(connection)
+    finally:
+        connection.close()
+    was_rejected = CodexLoginGeneration(account_id=ACCOUNT_ID, last_refresh=REFRESH_STAMP)
+    signed_in_again = CodexLoginGeneration(
+        account_id=ACCOUNT_ID, last_refresh="2026-10-17T09:00:00Z"
+    )
+
+    DurableCodexLoginRejection(str(database)).remember(was_rejected)
+
+    # A different object entirely, as a restarted server would build.
+    after_a_restart = DurableCodexLoginRejection(str(database))
+    assert after_a_restart.applies_to(was_rejected)
+    assert not after_a_restart.applies_to(signed_in_again)
+
+    after_a_restart.forget(signed_in_again)
+    assert after_a_restart.applies_to(was_rejected)
+
+    after_a_restart.forget(was_rejected)
+    assert not after_a_restart.applies_to(was_rejected)
+
+
+def test_a_child_that_dies_on_a_refused_login_still_says_so(tmp_path: Path) -> None:
+    """The loudest version of this fault used to be the one that went ungraded.
+
+    A codex that announces a refused refresh and then exits reported only that the process
+    ended. The line explaining it was in the tail nobody reads, which is the whole problem
+    this ticket exists for.
+    """
+    home = tmp_path / "codex-home"
+    _write_login(home)
+    remembered = RememberedCodexLoginRejection()
+    script = {
+        "turns": [
+            {
+                "actions": [
+                    {"do": "say_on_stderr", "text": REFRESH_REJECTED_ON_STDERR},
+                    {"do": "die", "stderr": "", "code": 7},
+                ]
+            }
+        ]
+    }
+
+    async def exercise() -> None:
+        async with _scripted_child(
+            tmp_path,
+            script=script,
+            remembered_login_rejection=remembered,
+            codex_home=home,
+        ) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("run"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.error_summaries == [LOGIN_IS_REJECTED_SUMMARY]
+
+    _run(exercise)
+
+    assert remembered.applies_to(
+        CodexLoginGeneration(account_id=ACCOUNT_ID, last_refresh=REFRESH_STAMP)
+    )
+
+
+def test_a_child_that_dies_for_its_own_reasons_still_says_that(tmp_path: Path) -> None:
+    """Grading the exit must not turn every dead child into a login problem."""
+    home = tmp_path / "codex-home"
+    _write_login(home)
+    script = {"turns": [{"actions": [{"do": "die", "stderr": "thread panicked\n", "code": 7}]}]}
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script=script, codex_home=home) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("run"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.error_summaries == [
+                "the codex process ended while the turn was running"
+            ]
+
+    _run(exercise)

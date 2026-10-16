@@ -12,6 +12,7 @@ from planner.conversation.backend_usage import (
     BackendUsageWindow,
     BackendUsageWindowKind,
 )
+from planner.conversation.backends.codex_app_server.login import CodexLoginGeneration
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendSnapshot
 from planner.core.db import connect
@@ -22,6 +23,73 @@ from planner.core.errors import ErrorCode, PlannerError
 class CachedBackendUsage:
     observed_at: datetime
     windows: tuple[BackendUsageWindow, ...]
+
+
+class DurableCodexLoginRejection:
+    """The refused codex credential, kept in the database so a restart still knows.
+
+    A file reading cannot tell a login that works from one whose refresh the server will
+    reject. Only a turn can, by spending one. That answer is too expensive to lose at the
+    next restart — a dead login is dead across restarts, and Panels restarts on every
+    deploy — so it is written down.
+
+    What is written down is the account id and the login's own last-refresh stamp. No
+    token, and nothing derived from a token. The stamp is what retires the record: a new
+    sign-in or any successful refresh moves it, and the row stops applying to the
+    credential in force.
+    """
+
+    def __init__(self, db_path: str, *, busy_timeout_ms: int = 5000) -> None:
+        self._db_path = db_path
+        self._busy_timeout_ms = busy_timeout_ms
+
+    def remember(self, generation: CodexLoginGeneration | None) -> None:
+        if generation is None:
+            return
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO codex_login_rejection(id, account_id, last_refresh, rejected_at) "
+                "VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                "account_id = excluded.account_id, last_refresh = excluded.last_refresh, "
+                "rejected_at = excluded.rejected_at",
+                (
+                    generation.account_id,
+                    generation.last_refresh,
+                    int(datetime.now(UTC).timestamp()),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def forget(self, generation: CodexLoginGeneration | None) -> None:
+        if generation is None:
+            return
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "DELETE FROM codex_login_rejection WHERE account_id = ? AND last_refresh = ?",
+                (generation.account_id, generation.last_refresh),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def applies_to(self, generation: CodexLoginGeneration | None) -> bool:
+        if generation is None:
+            return False
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            found = conn.execute(
+                "SELECT 1 FROM codex_login_rejection WHERE account_id = ? AND last_refresh = ?",
+                (generation.account_id, generation.last_refresh),
+            ).fetchone()
+        finally:
+            conn.close()
+        return found is not None
 
 
 class BackendStateStore:

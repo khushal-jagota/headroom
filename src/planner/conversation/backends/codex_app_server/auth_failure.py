@@ -23,10 +23,11 @@ from enum import StrEnum
 
 # Codex's own login machinery, which is the only thing on this wire whose word about the
 # login counts. A turn's standard error carries everything the child writes, including
-# output from tools the agent ran, and plenty of command-line tools say "not logged in"
-# about accounts that have nothing to do with codex. A phrase is read as codex's verdict
-# only on a line codex's auth manager wrote.
-_CODEX_AUTH_SPEAKER = re.compile(r"codex_login::auth|\bauth:")
+# output from tools the agent ran, and plenty of command-line tools talk about their own
+# accounts in the same words. So the test is codex's crate path, which is what its tracing
+# writes as the target of the line, and nothing looser: "github auth: not logged in" is a
+# true sentence about github and says nothing about codex.
+_CODEX_AUTH_SPEAKER = re.compile(r"\bcodex_login::[\w:]*auth")
 
 # Codex said the saved login itself is finished: nothing but a new sign-in will fix it.
 _LOGIN_IS_REJECTED_PHRASES = (
