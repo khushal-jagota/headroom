@@ -1040,8 +1040,12 @@ async def probe_backend(
             + (f" Run `{recipe.login_command}` in a terminal." if recipe.login_command else "")
         )
     if identity is not None and identity.status is BackendIdentityStatus.unknown:
+        # A reader that says why it cannot stand behind an answer has said the useful
+        # thing already. The fallback is for a probe that came back with nothing at all,
+        # where not knowing who the account is really is the whole of it.
         diagnoses.append(
-            f"Panels could not read who `{recipe.executable_name}` is signed in as."
+            identity.detail
+            or f"Panels could not read who `{recipe.executable_name}` is signed in as."
         )
 
     catalog = await recipe.read_catalog(

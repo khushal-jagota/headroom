@@ -621,3 +621,20 @@ def test_a_refused_duplicate_is_reported_as_a_child_that_would_not_start(
 
     with pytest.raises(CodexChildWouldNotStart):
         child_environment(overrides=(("CODEX_HOME", str(copied)),))
+
+
+def test_an_unconfirmed_card_does_not_also_claim_the_account_is_unreadable(
+    tmp_path: Path,
+) -> None:
+    """The diagnosis line must not contradict the card above it.
+
+    "Panels could not read who codex is signed in as" is the right thing to say about a
+    probe that came back empty. It is wrong about an expired login whose account is named
+    right there, so the reader's own reason is used when it has one.
+    """
+    _write_login(tmp_path / "home", expires_at=datetime.now(UTC) - timedelta(days=2))
+
+    card = _codex_card(_standing(tmp_path / "home"))
+
+    assert card.diagnoses[0] == card.identity.detail
+    assert not any("could not read who" in said for said in card.diagnoses)
