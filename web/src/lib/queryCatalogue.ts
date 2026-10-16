@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson } from "./api";
 import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
 import type { ConversationStartValues } from "./conversation/wire";
+import type { UsageDays, UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BoardResponse,
@@ -42,6 +43,11 @@ function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
 }
 
 export const queries = {
+  recordedUsage: (days: UsageDays, timezone: string) =>
+    jsonQuery<UsageSummary>(
+      ["recorded-usage", { days, timezone }],
+      `/api/conversation/usage/summary?days=${days}&timezone=${encodeURIComponent(timezone)}`
+    ),
   deploymentStatus: () =>
     jsonQuery<DeploymentStatus>(["deployment-status"], "/api/deployment-status"),
   vpsStatusSummary: () =>

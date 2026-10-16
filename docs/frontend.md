@@ -243,24 +243,34 @@ waits. It checks the server identity again when composition becomes inactive, th
 applies the requested update. The push-only service worker and its subscription remain
 in place across this page reload.
 
-**Backends** at `#/backends` shows the conversation backends installed on this machine,
-their account and model facts, and any update Panels can run. Hermes shows its version
-and model catalogue without update discovery or an update action. The first catalogue
-paints before the page refreshes catalogue and Codex and Claude update advice in the
-background. An ordinary
-cached read remains immediate during that work. The page's **Refresh** action reads Codex
-and Claude usage only, then uses the current backend catalogues. A successful refresh
-shows each provider window as its remaining percentage, reset time, and
-observation time. The backend source still reports the used percentage. The shared
-ring derives the remaining value and empties counter-clockwise from the top as the
-allowance falls. One provider failure does not discard the other's new answer. Hermes
-has no usage source. Codex uses its app-server rate-limit read, so Refresh starts no
-model turn and consumes no allowance.
+**Usage** at `#/backends` offers Tokens, Cost, and Limits, with a backend filter.
+Limits opens first. It retains backend identity, sign-in, model controls, and supported
+updates. Hermes shows its version and model catalogue without an update action.
+Allowance cards show the percentage left at observation, reset time, and observation
+time. Cards mark snapshots that expired before the page's last check as cached and
+leave current allowance unavailable.
 
-The shared model picker offers the same Refresh action beside Reasoning. It replaces
-the picker owner's backend snapshots with that same refresh response, so model choices
-and usage rings update together. The picker stays open while it reads and reports a
-provider or transport failure in its existing feedback line.
+Tokens and Cost show local Codex and Claude activity, including work outside Panels.
+They offer 24-hour, 7-day, 30-day, and 90-day periods in the browser's time zone.
+The chart and breakdown show observed hours or days, provider totals, and model details.
+Unknown values display as a dash. Unrecorded intervals remain chart gaps.
+
+The coverage fold exposes partial sources and unavailable values. Hermes is absent from these
+historical charts. Cost means native reported USD, without model rate estimates.
+
+Ordinary reads and period changes use stored answers. The page's **Refresh** starts
+provider allowance reads and a bounded local record import independently. Either source
+keeps its previous records when its refresh fails. Opening the page still paints cached
+backend facts before catalogue and supported update advice refresh in the background.
+The [conversation system](conversation-system.md#recorded-local-usage) owns source and
+counting rules.
+
+The shared model picker keeps its allowance rings and Refresh action beside Reasoning.
+Its refresh reads provider allowances only and replaces the picker's backend snapshots.
+The picker stays open and reports failures in its existing feedback line.
+
+_Usage code paths:_ `web/src/routes/BackendsRoute.svelte`, `web/src/components/usage/`,
+and `web/src/lib/conversation/recordedUsageWire.ts`.
 
 ## The two rules that shape it
 
@@ -555,4 +565,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-09-15._
+_Last verified: 2026-10-16._

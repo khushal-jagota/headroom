@@ -774,18 +774,17 @@ Tickets. Hermes still offers no Panels reasoning control.
 Panels does not ask Hermes for update advice and does not offer a Hermes update action.
 Hermes version and model catalogue discovery remain available.
 
-Panels keeps the last successful usage reading for each backend in its database.
-Opening the Backends page, reading `GET /backends`, receiving a change signal, or
-refreshing another query only reads that stored answer. None of those actions contacts
-a provider. The one Refresh on the Backends page starts every usage source through
-`POST /backends/refresh`, then resolves those answers against ordinary backend snapshots.
-It does not force model catalogues, versions, identities, or update advice to refresh.
-Codex and Claude usage reads start independently, so catalogue work cannot delay them and
-one provider failure does not discard the other provider's new answer. A failed refresh
-also leaves that backend's prior reading in place. When the Backends page opens, it paints
-an ordinary snapshot first. It then refreshes catalogue and Codex and Claude update
-advice in the background. Cached ordinary reads stay available during that work. The
-page's Refresh action and the shared model picker stop after the usage answer.
+Panels keeps the last successful allowance reading for each backend in its database.
+Ordinary allowance reads use that stored answer without a provider request.
+The Usage page's Refresh starts provider allowance reads and the separate local record
+import in parallel. Allowance reads use ordinary backend snapshots. They do not force
+model catalogues, versions, identities, or update advice to refresh.
+
+Codex and Claude allowance reads start independently. A failure leaves that backend's
+prior reading in place and preserves the other backend's new answer. The page first
+shows an ordinary backend snapshot. Catalogue and supported update advice refresh in
+the background, while cached reads remain available. The shared model picker's Refresh
+reads provider allowances only.
 
 Codex starts one short-lived app-server child and asks its native
 `account/rateLimits/read` method. The request does not start a thread, run a model turn,
@@ -819,6 +818,42 @@ resolved choice after overrides. An enabled override works even if the default i
 Chief and Worker default saves refuse an off model. Each refusal names the model and
 requires an enabled choice. Panels never silently substitutes another model.
 Existing Ticket choices and existing conversations remain intact.
+
+### Recorded local usage
+
+Tokens and Cost describe local Codex and Claude records on this server. They include
+CLI activity outside Panels. They do not describe a complete account bill or allowance
+history. Hermes has no source for these historical charts.
+
+Opening the page, changing its period, or receiving a change signal reads stored usage.
+Only an explicit Refresh imports native files. The read has limits on age, file count,
+file and total size, line size, and elapsed time. A limit or unreadable source marks
+coverage partial and leaves earlier stored records available. Native files remain
+read-only. Panels stores usage fields and their origin, without prompts, tool content,
+or credentials.
+
+Copied records count once across files. Codex counts each stable completed response
+identity once. It keeps the response's original thread and session, even when another
+file contains a copy. Repeated counter updates and cumulative turn or thread totals do
+not add consumption. Old counter records need verified changes. Their producer history
+remains uncertain.
+
+Claude uses message and request identities. Overlapping or conflicting identities
+remain excluded with partial coverage. Conversation events and allowance snapshots do
+not become extra chart records.
+
+Missing token counts and USD amounts remain unknown. A valid zero remains zero. A total
+with an unknown contributing value remains unknown. Cost uses only USD that a native
+record states, without model rate estimates.
+
+Input already includes cache tokens, and output includes reasoning tokens. Neither
+subset is added twice. Charts show observed periods and leave unrecorded intervals as gaps.
+
+_Code paths:_ `src/planner/conversation/usage/` owns the contract, native adapters,
+bounded import, storage, and summaries. Its `api.py` exposes
+`GET /api/conversation/usage/summary` for stored reads and
+`POST /api/conversation/usage/refresh` for explicit imports. The refresh accepts no
+browser-supplied source paths or credentials.
 
 ## The composer catalog
 
@@ -1000,4 +1035,4 @@ steer into a turn that was genuinely running, on a receipt from the provider pro
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-21._
+_Last verified: 2026-10-16._

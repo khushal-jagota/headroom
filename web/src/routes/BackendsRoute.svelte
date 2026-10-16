@@ -1,5 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { createQuery, useQueryClient } from "@tanstack/svelte-query";
+  import { queries } from "../lib/queryCatalogue";
+  import UsageHeader from "../components/usage/UsageHeader.svelte";
+  import AllowanceWindows from "../components/usage/AllowanceWindows.svelte";
+  import RecordedUsage from "../components/usage/RecordedUsage.svelte";
+  import { refreshRecordedUsage, type UsageDays, type UsageProvider, type UsageSummary } from "../lib/conversation/recordedUsageWire";
+  import { timestampLabel, type UsageMetric } from "../components/usage/usagePresentation";
   import UsageRings from "../components/conversation/UsageRings.svelte";
   import { backendIdentityNote, type BackendIdentityNote } from "../lib/conversation/backendIdentity";
   import {
@@ -30,7 +37,26 @@
     type ConversationBackendKey
   } from "../lib/conversation/wire";
 
+  let metric = $state<UsageMetric>("limits");
+  let days = $state<UsageDays>(1);
+  let providerSelection = $state<string[] | null>(null);
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const queryClient = useQueryClient();
+  const recorded = createQuery(() => ({
+    ...queries.recordedUsage(days, timezone), enabled: metric !== "limits", retry: false
+  }));
+  let lastUsage = $state<UsageSummary | null>(null);
+  $effect(() => { if (recorded.data) lastUsage = recorded.data; });
+  let summary = $derived(recorded.data ?? lastUsage);
+  let nativeRefreshError = $state<string | null>(null);
+  let allowanceNow = $state(Date.now());
   let backends = $state<BackendSnapshot[]>([]);
+  let providerKeys = $derived(metric === "limits"
+    ? backends.map(backend => backend.backend_key)
+    : [...new Set([...(summary?.sources.map(source => source.provider) ?? []), ...(summary?.providers.map(row => row.provider) ?? [])])]);
+  let selectedProviders = $derived(providerSelection === null ? providerKeys : providerKeys.filter(provider => providerSelection?.includes(provider)));
+  let recordedProviders = $derived(selectedProviders.filter((provider): provider is UsageProvider => provider === "codex" || provider === "claude"));
+  let visibleBackends = $derived(backends.filter(backend => selectedProviders.includes(backend.backend_key)));
   let loading = $state(true);
   let refreshing = $state(false);
   let error = $state<string | null>(null);
@@ -80,13 +106,26 @@
     if (refreshing) return;
     refreshing = true;
     error = null;
-    try {
-      const result = await refreshBackendSnapshots();
-      if (result.snapshots !== null) backends = result.snapshots;
-      error = result.error;
-    } finally {
-      refreshing = false;
-    }
+    nativeRefreshError = null;
+    // Neither source waits for the other, and either keeps its previous good reading.
+    await Promise.allSettled([
+      (async () => {
+        const result = await refreshBackendSnapshots();
+        if (result.snapshots !== null) backends = result.snapshots;
+        error = result.error;
+        allowanceNow = Date.now();
+      })(),
+      (async () => {
+        try {
+          await refreshRecordedUsage();
+          await queryClient.invalidateQueries({ queryKey: ["recorded-usage"], refetchType: "none" });
+          await recorded.refetch();
+        } catch (problem) {
+          nativeRefreshError = sentenceFor(problem);
+        }
+      })()
+    ]);
+    refreshing = false;
   }
 
   async function runBackendUpdate(key: ConversationBackendKey): Promise<void> {
@@ -136,24 +175,6 @@
     }
   }
 
-  function observedLabel(snapshot: BackendSnapshot): string | null {
-    const observedAt = snapshot.cached_usage?.observed_at;
-    if (!observedAt) return null;
-    const elapsedMinutes = Math.max(0, Math.floor((Date.now() - Date.parse(observedAt)) / 60_000));
-    if (elapsedMinutes < 1) return "read just now";
-    if (elapsedMinutes === 1) return "read 1 minute ago";
-    if (elapsedMinutes < 60) return `read ${elapsedMinutes} minutes ago`;
-    const elapsedHours = Math.floor(elapsedMinutes / 60);
-    return `read ${elapsedHours} ${elapsedHours === 1 ? "hour" : "hours"} ago`;
-  }
-
-  function oldestObservedLabel(): string | null {
-    const snapshots = backends
-      .filter((snapshot) => snapshot.cached_usage !== null)
-      .sort((left, right) => Date.parse(left.cached_usage!.observed_at) - Date.parse(right.cached_usage!.observed_at));
-    return snapshots[0] ? observedLabel(snapshots[0]) : null;
-  }
-
   function isSignedOut(snapshot: BackendSnapshot): boolean {
     return snapshot.identity?.status === "unauthenticated";
   }
@@ -182,22 +203,19 @@
 </script>
 
 <section class="backends-page" data-screen="backends">
-  <header class="screen-header-row">
-    <div class="screen-header-title">
-      <div class="eyebrow">System</div>
-      <h1>Backends</h1>
-    </div>
-    <div class="readline">
-      {#if oldestObservedLabel()}<span class="when">{oldestObservedLabel()}</span>{/if}
-      <button class="quiet-button" disabled={refreshing} onclick={() => void runRefresh()} data-backends-refresh>
-        {refreshing ? "Reading…" : "Refresh"}
-      </button>
-    </div>
-  </header>
+  <UsageHeader {metric} {days} {providerKeys} {selectedProviders} busy={refreshing}
+    onMetric={value => metric = value} onDays={value => days = value}
+    onProviders={value => providerSelection = value} onRefresh={() => void runRefresh()} />
 
-  {#if error}
-    <p class="error" role="alert">{error}</p>
-  {/if}
+  {#if nativeRefreshError}<p class="error" role="alert">Local usage: {nativeRefreshError}</p>{/if}
+  {#if metric !== "limits"}
+    {#if recorded.error}<p class="error" role="alert">Local usage: {sentenceFor(recorded.error)}{summary ? " The previous reading remains below." : ""}</p>{/if}
+    {#if recorded.isFetching}<p class="quiet-line" role="status">Reading stored usage…</p>{/if}
+    {#if summary}
+      <div aria-busy={recorded.isFetching}><RecordedUsage {summary} providers={recordedProviders} {metric} /></div>
+    {:else if !recorded.isFetching && !recorded.error}<p class="quiet-line">No stored usage was reported.</p>{/if}
+  {:else}
+  {#if error}<p class="error" role="alert">Allowances: {error}</p>{/if}
 
   {#if loading}
     <p class="quiet-line">Loading backends…</p>
@@ -205,7 +223,7 @@
     <p class="quiet-line">No backends were reported.</p>
   {:else}
     <div class="rows">
-      {#each backends as snapshot (snapshot.backend_key)}
+      {#each visibleBackends as snapshot (snapshot.backend_key)}
         {@const open = openBackend === snapshot.backend_key}
         <section class="backend-row" class:open data-conversation-backend={snapshot.backend_key}>
           <div class="rowgrid rowhead">
@@ -217,6 +235,7 @@
             >
               <span class="chevron" aria-hidden="true">{open ? "⌄" : "›"}</span>
               <span class="backend-name">{snapshot.backend_key}</span>
+              {#if snapshot.cached_usage}<span class="observed">Observed {timestampLabel(snapshot.cached_usage.observed_at)}</span>{/if}
               {#each identityNotes(snapshot) as note (note.text)}
                 <span class="identity-note" data-backend-identity-note>
                   {note.text}
@@ -242,15 +261,11 @@
                 <span class="version">{snapshot.installed ? snapshot.version ?? "version unknown" : "not installed"}</span>
               {/if}
             </span>
-            <span class="usage-cell">
-              {#if !isSignedOut(snapshot)}
-                <UsageRings
-                  windows={snapshot.cached_usage?.windows ?? []}
-                  label={`Usage allowances for ${snapshot.backend_key}`}
-                />
-              {/if}
-            </span>
           </div>
+          {#if !isSignedOut(snapshot)}
+            <AllowanceWindows windows={snapshot.cached_usage?.windows ?? []}
+              observedAt={snapshot.cached_usage?.observed_at ?? null} now={allowanceNow} />
+          {/if}
           {#if backendCanBeSignedIn(snapshot)}
             {@const signIn = signInState.signIn}
             {@const outcome = signInOutcome(signIn)}
@@ -342,33 +357,32 @@
         </section>
       {/each}
     </div>
-    <p class="note">Refresh re-reads Codex and Claude usage. Their update checks run in the background after this page opens.</p>
+    {#if !visibleBackends.length}<p class="quiet-line">Select a backend to view its allowances.</p>{/if}
+    <p class="note">Stored allowances · refresh reads local CLI records and provider allowances.</p>
+  {/if}
   {/if}
 </section>
 
 <style>
-  .backends-page { width: min(100%, var(--measure-index)); margin: 0 auto; padding-bottom: var(--space-6); }
-  .screen-header-row { display: flex; align-items: flex-start; gap: var(--space-4); }
-  .screen-header-title { flex: 1; min-width: 0; }
-  .eyebrow { color: var(--text-faint); font-size: var(--type-xs); letter-spacing: var(--tracking-label); text-transform: uppercase; }
-  h1 { margin: var(--space-2) 0 0; color: var(--text-strong); font-family: var(--font-serif); font-size: var(--type-serif-display); font-weight: 500; }
-  .readline { display: flex; align-items: center; gap: var(--space-3); padding-top: var(--space-2); }
-  .when, .version, .version-action { color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs); }
-  .quiet-button { padding: var(--space-1) var(--space-3); background: var(--surface-2); border: var(--border-hairline) solid var(--text-faint); border-radius: var(--radius-sm); color: var(--text-strong); cursor: pointer; font: inherit; font-size: var(--type-sm); }
+  .backends-page { width: min(100%, calc(var(--measure-index) + var(--space-page-tail) + var(--space-page-tail))); margin: 0 auto; padding-bottom: var(--space-6); }
+  .version, .version-action { color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs); }
+  :is(button,input):focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:var(--space-1); }
   button:disabled, input:disabled { cursor: default; opacity: .5; }
-  .rowgrid { display: grid; grid-template-columns: minmax(0, 1fr) auto 5rem; align-items: center; gap: var(--space-4); }
-  .rows { display: grid; gap: var(--space-2); margin-top: var(--space-6); }
+  .rowgrid { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); }
+  .rows { display: grid; gap: var(--space-6); }
   .backend-row { border-radius: var(--radius-md); transition: background var(--motion-fast) var(--motion-ease); }
-  .backend-row:hover { background-image: var(--interaction-hover); }
+  .backend-row .rowhead:hover { background-image: var(--interaction-hover); }
   .backend-row.open { background: var(--surface-recessed); }
-  .rowhead { min-height: 4.25rem; padding: var(--space-2) var(--space-3); }
+  .rowhead { min-height: 4.25rem; padding: var(--space-2) 0; }
   .opener { margin: 0; padding: 0; background: none; border: 0; color: inherit; cursor: pointer; font: inherit; text-align: left; }
-  .subject { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+  .subject { display: flex; align-items: baseline; flex-wrap:wrap; gap: var(--space-2); min-width: 0; }
+  .observed { color:var(--text-faintest); font-size:var(--type-xs); }
   .chevron { display: inline-block; width: var(--space-3); color: var(--text-faintest); font-size: var(--type-md); }
-  .backend-name { color: var(--text-strong); font-family: var(--font-serif); font-size: var(--type-serif-lg); font-weight: 500; text-transform: capitalize; }
+  .backend-name { color: var(--text-strong); font-family: var(--font-ui); font-size: var(--type-sm); font-weight: 600; text-transform: capitalize; }
   .rowhead:hover .backend-name, .open .backend-name { color: var(--text-strong); }
   .sign-in { padding: var(--space-3) 0 var(--space-1); display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
   .sign-in-step { margin: 0; font-size: var(--type-sm); color: var(--text-default); }
+  .sign-in-step a { overflow-wrap:anywhere; }
   .sign-in-step b { font-family: var(--font-mono); color: var(--accent-text); letter-spacing: 0.06em; }
   .sign-in-caveat { margin: 0; font-size: var(--type-xs); color: var(--text-faint); max-width: 56ch; }
   .sign-in-outcome { margin: 0; font-size: var(--type-xs); color: var(--text-faint); }
@@ -376,8 +390,7 @@
   .sign-in-action:disabled { cursor: default; color: var(--text-faintest); }
   .identity-note { color: var(--text-faintest); font-size: var(--type-xs); }
   .identity-note b { color: var(--text-faint); font-family: var(--font-mono); font-weight: 500; }
-  .version-cell { min-width: 0; white-space: nowrap; }
-  .usage-cell { display: flex; justify-content: flex-end; min-width: 5rem; }
+  .version-cell { min-width: 0; white-space: normal; text-align:right; overflow-wrap:anywhere; }
   .version-action { padding: var(--space-1) var(--space-2); background: var(--surface-2); border: 0; border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer; letter-spacing: var(--tracking-mono); }
   .drawer { margin: 0 var(--space-3); padding: var(--space-1) 0 var(--space-2) calc(var(--space-3) + var(--space-3)); border-top: var(--border-hairline) solid var(--border-color); }
   .model-row { grid-template-columns: minmax(0, 1fr) auto auto; min-height: 2.5rem; padding: var(--space-2) 0; }
@@ -392,12 +405,9 @@
   .result.failed, .error { color: var(--accent-error); }
   .note { margin-top: var(--space-5); }
   @media (max-width: 720px) {
-    .screen-header-row { flex-direction: column; align-items: stretch; gap: var(--space-3); }
-    .readline { padding-top: 0; }
     .rowgrid { grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); }
     .subject { gap: var(--space-2); }
-    .version-cell { grid-column: 1; padding-left: calc(var(--space-3) + var(--space-2)); }
-    .usage-cell { grid-column: 2; grid-row: 1 / 3; }
+    .version-cell { grid-column: 1 / -1; text-align:left; padding-left: calc(var(--space-3) + var(--space-2)); }
     .drawer { margin-inline: var(--space-3); padding-left: calc(var(--space-3) + var(--space-2)); }
     .model-row { grid-template-columns: minmax(0, 1fr) auto auto; }
   }
