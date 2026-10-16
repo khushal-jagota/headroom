@@ -10,7 +10,7 @@ from planner.core.contracts import PlannerError
 from planner.list_reads.contracts import ListPageRequest
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data, views
-from planner.tickets.contracts import TicketListFilters, WorkerStepClaim
+from planner.tickets.contracts import Ticket, TicketListFilters, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -26,15 +26,20 @@ def create(conn: Connection) -> str:
     ).id
 
 
-def backlog(conn: Connection, tid: str, value: bool = True):
+def backlog(conn: Connection, tid: str, value: bool = True) -> Ticket:
     return data.set_ticket_backlog(
         conn, tid, is_backlogged=value, principal=OWNER_PRINCIPAL, now=20
     )
 
 
-def retire(conn: Connection, tid: str, **kwargs):
+def retire(conn: Connection, tid: str, *, expected_record_sha256: str | None = None) -> Ticket:
     return data.retire_ticket(
-        conn, tid, reason="Superseded", principal=OWNER_PRINCIPAL, now=30, **kwargs
+        conn,
+        tid,
+        reason="Superseded",
+        principal=OWNER_PRINCIPAL,
+        now=30,
+        expected_record_sha256=expected_record_sha256,
     )
 
 
@@ -204,7 +209,7 @@ def test_backlog_does_not_release_occupied_closeout_lane(tmp_db: Connection) -> 
     )
 
 
-def ready_ticket(conn: Connection, *, ceiling: str = "needs_success_condition"):
+def ready_ticket(conn: Connection, *, ceiling: str = "needs_success_condition") -> Ticket:
     tid = create(conn)
     return data.accept_proposal(
         conn,

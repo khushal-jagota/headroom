@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -74,7 +75,10 @@ def test_http_backlog_contact_resume_and_retire(tmp_path: Path) -> None:
         assert client.post(f"/api/tickets/{parked['id']}/resume", json={}).status_code != 200
 
 
-def test_retirement_refuses_held_only_delivery_without_changing_ticket(tmp_path: Path) -> None:
+def test_retirement_refuses_held_only_delivery_without_changing_ticket(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from unittest.mock import AsyncMock
 
     from planner.conversation.contracts import HeldPrompt
@@ -137,8 +141,8 @@ def test_retirement_refuses_held_only_delivery_without_changing_ticket(tmp_path:
                 ),
             )
         )
-        conversations.is_running = running
-        conversations.held_prompts = held
+        monkeypatch.setattr(conversations, "is_running", running)
+        monkeypatch.setattr(conversations, "held_prompts", held)
         conn = connect(str(db_path))
         try:
             original = dict(conn.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone())

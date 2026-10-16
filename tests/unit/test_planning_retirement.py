@@ -226,13 +226,16 @@ def _reviewed_source(monkeypatch: pytest.MonkeyPatch) -> sa.Connection:
     return conn
 
 
-def test_reviewed_reconciliation_retires_only_exact_survivor(monkeypatch):
+def test_reviewed_reconciliation_retires_only_exact_survivor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with _reviewed_source(monkeypatch) as conn:
         before = conn.exec_driver_sql("SELECT * FROM tickets WHERE id='completed'").one()
         retirement.retire_planning_workers(conn)
-        assert conn.exec_driver_sql("SELECT id FROM tickets WHERE stage='cancelled'").all() == [
-            ("t_tnmp9e7r",)
-        ]
+        assert [
+            tuple(row)
+            for row in conn.exec_driver_sql("SELECT id FROM tickets WHERE stage='cancelled'")
+        ] == [("t_tnmp9e7r",)]
         assert conn.exec_driver_sql("SELECT * FROM tickets WHERE id='completed'").one() == before
         values = json.loads(
             conn.exec_driver_sql(
@@ -247,7 +250,10 @@ def test_reviewed_reconciliation_retires_only_exact_survivor(monkeypatch):
 @pytest.mark.parametrize(
     "drift", ["excluded", "eligible", "extra", "completed", "missing", "missing_eligible"]
 )
-def test_reviewed_reconciliation_refuses_source_drift(monkeypatch, drift):
+def test_reviewed_reconciliation_refuses_source_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
     with _reviewed_source(monkeypatch) as conn:
         if drift == "excluded":
             conn.exec_driver_sql(
@@ -280,7 +286,9 @@ def test_reviewed_reconciliation_refuses_source_drift(monkeypatch, drift):
         )
 
 
-def test_reviewed_survivor_refuses_direct_delivery_ownership(monkeypatch):
+def test_reviewed_survivor_refuses_direct_delivery_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with _reviewed_source(monkeypatch) as conn:
         conn.exec_driver_sql(
             "CREATE TABLE manager_wakes(id INTEGER,ticket_id TEXT,closed_at INTEGER)"

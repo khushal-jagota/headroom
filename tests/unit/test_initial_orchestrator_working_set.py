@@ -10,7 +10,7 @@ migration = importlib.import_module(
 )
 
 
-def test_initial_set_preserves_children_and_is_repeatable(monkeypatch):
+def test_initial_set_preserves_children_and_is_repeatable(monkeypatch: pytest.MonkeyPatch) -> None:
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE sprint_items(id TEXT,title TEXT,settled INTEGER)")
@@ -23,20 +23,23 @@ def test_initial_set_preserves_children_and_is_repeatable(monkeypatch):
         monkeypatch.setattr(migration.op, "get_bind", lambda: conn)
         migration.upgrade()
         expected = [("older", 1), ("si_8nbv749p", 0), ("si_dmhx1u7h", 0)]
-        assert (
-            conn.exec_driver_sql("SELECT id,settled FROM sprint_items ORDER BY id").all()
-            == expected
-        )
+        assert [
+            tuple(row)
+            for row in conn.exec_driver_sql("SELECT id,settled FROM sprint_items ORDER BY id")
+        ] == expected
         migration.upgrade()
-        assert (
-            conn.exec_driver_sql("SELECT id,settled FROM sprint_items ORDER BY id").all()
-            == expected
-        )
+        assert [
+            tuple(row)
+            for row in conn.exec_driver_sql("SELECT id,settled FROM sprint_items ORDER BY id")
+        ] == expected
         assert conn.exec_driver_sql("SELECT * FROM tickets").all() == before
 
 
 @pytest.mark.parametrize("drift", ["missing", "renamed", "duplicate"])
-def test_initial_set_refuses_identity_drift_before_updates(monkeypatch, drift):
+def test_initial_set_refuses_identity_drift_before_updates(
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE sprint_items(id TEXT,title TEXT,settled INTEGER)")
@@ -58,7 +61,9 @@ def test_initial_set_refuses_identity_drift_before_updates(monkeypatch, drift):
         assert conn.exec_driver_sql("SELECT * FROM sprint_items").all() == before
 
 
-def test_initial_set_does_not_change_fresh_install_default(monkeypatch):
+def test_initial_set_does_not_change_fresh_install_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     engine = create_engine("sqlite:///:memory:")
     with engine.begin() as conn:
         conn.exec_driver_sql(

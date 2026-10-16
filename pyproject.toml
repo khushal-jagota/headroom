@@ -35,6 +35,7 @@ planner = [
   "core/migrations/script.py.mako",
   "core/migrations/versions/*.py",
   "core/migrations/planning_retirement_cohort.json",
+  "core/migrations/planning_retirement_reconciliation.json",
   "core/migrations/planning_retirement_skill_corrections.json",
   "core/migrations/planning_retirement_skill_appendices.json",
   "worker_types/shipped_worker_types.json",
