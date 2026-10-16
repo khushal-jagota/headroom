@@ -12,6 +12,9 @@ from dataclasses import asdict
 
 from planner.core import ticket_blocks
 from planner.core.contracts import BlockerSummary, JsonDict
+from planner.files.lifecycle import database_path
+from planner.files.logic.listing import entries_as_json, fold_directory
+from planner.files.logic.paths import ticket_files_root
 from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
@@ -373,6 +376,7 @@ def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> J
     ).fetchall()
     detail.update(
         {
+            "artifacts": _ticket_artifacts(conn, ticket_id),
             "blocked": blocker_summary.blocked,
             "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(ticket),
@@ -388,6 +392,17 @@ def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> J
     if blocker_summary.blocked:
         detail["blocker_summary"] = blocker_summary_json(blocker_summary)
     return detail
+
+
+def _ticket_artifacts(conn: sqlite3.Connection, ticket_id: str) -> list[dict[str, object]]:
+    try:
+        root = ticket_files_root(database_path(conn)) / ticket_id
+    except RuntimeError:
+        # In-memory read fixtures have no managed-file directory.
+        return []
+    if any(path.is_symlink() for path in (root, *root.parents)):
+        return []
+    return entries_as_json(fold_directory(root))
 
 
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:

@@ -49,10 +49,10 @@ export const queries = {
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
-  backlogTicketSummaries: (offset: number, limit = 30) =>
+  backlogTicketSummaries: (offset: number, limit = 30, projectId = "") =>
     jsonQuery<TicketSummariesResponse>(
-      ["tickets", "backlog", { limit, offset }],
-      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}`
+      ["tickets", "backlog", { limit, offset, projectId }],
+      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}`
     ),
   outcomeSummaries: (offset: number, limit = 30, projectId = "", search = "") =>
     jsonQuery<SprintItemSummariesResponse>(

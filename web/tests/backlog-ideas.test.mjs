@@ -290,11 +290,11 @@ with sync_playwright() as playwright:
     page.locator('[data-create="ticket"] [data-seg="priority"] [data-value="P1"]').click()
     assert priority_control.locator('[data-value="P1"]').get_attribute("aria-pressed") == "true"
     assert priority_control.locator('[data-value="P3"]').get_attribute("aria-pressed") == "false"
-    # Creation names who is asked at the ceiling. Unchanged it is "me"; a Ticket made
+    # Creation names who is asked at the ceiling. Unchanged it is "User"; a Ticket made
     # for somebody else says so here, and the creator does not have to hold it first.
     holder_select = page.locator('[data-create="ticket"] [data-input="ceiling-holder"]')
     assert holder_select.input_value() == "owner"
-    assert [option.inner_text() for option in holder_select.locator("option").all()] == ["me", "Chief"]
+    assert [option.inner_text() for option in holder_select.locator("option").all()] == ["User", "Chief"]
     holder_select.select_option("chief")
     page.locator('[data-create="ticket"] [data-commit]').click()
     created = page.locator('[data-ticket-id="ticket_created"]')

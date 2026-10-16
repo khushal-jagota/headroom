@@ -18,9 +18,10 @@
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
   const PAGE_SIZE = 30;
+  let { projectId = "" }: { projectId?: string } = $props();
 
   let ticketOffset = $state(0);
-  const tickets = createQuery(() => queries.backlogTicketSummaries(ticketOffset, PAGE_SIZE));
+  const tickets = createQuery(() => queries.backlogTicketSummaries(ticketOffset, PAGE_SIZE, projectId));
   const projects = createQuery(() => queries.projects());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
 
@@ -52,12 +53,13 @@
   let projectOptions = $derived(
     (projects.data?.projects || []).map((entry) => ({ value: entry.id, label: entry.name }))
   );
+  let projectName = $derived(projects.data?.projects.find((entry) => entry.id === projectId)?.name);
   let availableWorkerTypes = $derived((workerTypes.data?.worker_types || []).filter((entry) => entry.creatable !== false));
 
   $effect(() => {
     const values = projectOptions.map((option) => option.value);
     if ((!project || !values.includes(project)) && values.length) {
-      project = values[0];
+      project = values.includes(projectId) ? projectId : values[0];
     }
   });
 
@@ -110,6 +112,7 @@
 <section class="backlog-screen" data-screen="backlog">
   <div class="doc">
     <ScreenHeader title="Workers" />
+    {#if projectId}<p class="quiet-line" data-workers-project>{projectName ?? "Project"} · <a href="#/backlog">All Workers</a></p>{/if}
     <div class="col">
       <Disclosure variant="make" chevron="none" data-create="ticket">
         {#snippet summary()}<span class="plus">+</span> New ticket{/snippet}

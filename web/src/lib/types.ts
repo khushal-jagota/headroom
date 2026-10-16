@@ -277,6 +277,7 @@ export type TicketConversationHistoryEntry = {
 };
 
 export type TicketDetail = {
+  artifacts?: SprintItemArtifact[];
   orchestrator?: Principal;
   id: string;
   title: string;

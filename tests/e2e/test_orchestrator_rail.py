@@ -410,7 +410,7 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     This risk spans durable message/read state, real board projections, change-stream
     invalidation and rendered fold counts/routes. No mocked frontend query or backend-only
     assertion proves the connected owner experience. Counts name conversations, not rows
-    in the event transcript. Existing terminal-Worker grouping precedence stays intact.
+    in the event transcript. Terminal rows retain their local lifecycle group.
     """
     server = rail_server
     project = api.direct_post(server, "/api/projects", {"name": "Settled proof", "priority": "P1"})
@@ -534,14 +534,21 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     rows["settled-supervisor"].click()
     pane = page.locator(f'[data-sprint-item-workspace="{parents[0]["id"]}"]')
     expect(pane).to_be_visible()
-    remaining = pane.locator('[data-workspace-section="remaining"]')
-    expect(remaining.locator(":scope > summary")).to_contain_text("1 unread")
-    if not remaining.evaluate("el => el.open"):
-        remaining.locator(":scope > summary").click()
-    page_group = pane.locator('[data-workspace-group="awaiting_reply"]')
-    if page_group.evaluate("el => el.open"):
-        page_group.locator(":scope > summary").click()
+    # The local page no longer duplicates Messages. Terminal Workers keep their
+    # lifecycle group while the global Messages group remains exact discovery.
+    expect(pane.locator('[data-workspace-section="remaining"]')).to_have_count(0)
+    expect(pane.locator('[data-workspace-group="awaiting_reply"]')).to_have_count(0)
+    page_group = pane.locator('[data-workspace-group="done"]')
+    expect(page_group).to_be_attached()
+    expect(page_group).not_to_have_attribute("open", "")
     expect(page_group.locator("[data-group-unread-count]")).to_contain_text("1 unread")
+    page_group.locator(":scope > summary").focus()
+    page.keyboard.press("Enter")
+    expect(page_group).to_have_attribute("open", "")
+    terminal_row = page_group.locator(f'[data-sprint-ticket-id="{children[0]["id"]}"]')
+    expect(terminal_row).to_be_visible()
+    expect(terminal_row.get_by_role("img", name="Unread reply")).to_have_count(1)
+    page_group.locator(":scope > summary").click()
     artifacts = EVIDENCE.parent / "settled-messages"
     artifacts.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(artifacts / "settled-and-messages-1440.png"), full_page=True)
@@ -566,14 +573,14 @@ def test_settled_messages_keep_exact_rows_and_distinct_counts_after_reads(
     expect(rows["settled-child-one"]).to_have_count(0, timeout=WAIT_MS)
     expect(left.locator("[data-settled-count]")).to_contain_text("1 unread")
     expect(summary.locator("[data-messages-count]")).to_contain_text("2")
-    expect(page_group).to_have_count(0)
-    # Existing precedence moves a terminal Worker from Messages back into Done.
+    # Reading clears the exact dot/count without moving the local terminal row.
     done = pane.locator('[data-workspace-group="done"]')
     expect(done).to_be_attached(timeout=WAIT_MS)
     if not done.evaluate("el => el.open"):
         done.locator(":scope > summary").click()
     expect(done.locator(f'[data-sprint-ticket-id="{children[0]["id"]}"]')).to_be_visible()
-    expect(done.locator("[data-group-unread-count]")).to_have_text("1")
+    expect(done.locator("[data-group-unread-count]")).not_to_contain_text("unread")
+    expect(done.locator(".stage-mark")).to_have_count(0)
     api.direct_post(
         server,
         "/api/conversation/conversations/settled-child-two/owner-read",

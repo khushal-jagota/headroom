@@ -107,53 +107,50 @@ One screen per part of the system:
   and only when the reader asked for the view the selection does not already imply. All
   of these addresses survive refresh, sharing, and browser history. A stale Item drops
   out of the address, keeping a Ticket that was open beside it. At 960px or less, an
-  Item workspace or a Ticket replaces the rail, and a link back to the Workspace appears
-  above the Ticket.
+  Item workspace or a Worker replaces the rail. Its inline eyebrow supplies the way back.
 
   A Ticket never opens as a full-screen page. Every Ticket link in the app, including
   the ones on the Sprint page and in Review, uses the Workspace address. The old
   `#/ticket/<ticket-id>` address redirects there, so shared links and stored
   notifications still work. A Ticket opens this way even when it is not on today's
   board, because the Ticket resource answers for it rather than the board card.
-- **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
-  priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
-  Item appears only when the Ticket has one. Project and Sprint Item are static facts.
-  The eyebrow states no Sprint and has no placement controls. The Ticket details
-  disclosure is the leash: one control holding both halves of the ceiling. A parked
-  proposal shows the ceiling half greyed and unselectable, with the reason under the
-  list, and leaves the holder half free. Direct blockers get
-  their own **Blocked by** line in the masthead, and the exact backend Worker failure
-  reason remains visible when one exists. The inline-editable recap is always open on a
-  recessed surface, without another label.
+- **Worker** — one document with clickable project and parent links above its title and
+  recap. The title is 28px, recap 17px, body 15px, labels 13px, and quiet text 11px.
+  Priority and the Worker-type label do not appear here. Priority keeps its stored
+  resolution, order, API/CLI controls, and the existing Review edit path.
 
-  The stages and their workflow remain the Ticket's Worker type's, derived from the
-  served manifest (see below and `worker-types.md`). Guidance stays off this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
-  Its summary adds **awaiting approval** for a parked proposal. Running,
-  completed, and upcoming marks need no
-  extra label. Stage bodies, editing and approval behavior, and the worker conversation
-  in serif along the bottom remain in place. During a pristine Brief, the approval context also shows a restrained
-  **Worker** picker whose choices come only from the backends this machine actually has —
-  the same answer the conversation composer's model and effort pickers read. Changing
-  it writes the stored Ticket choice but does not create a session. The first prompt attaches
-  through that choice; accepting the Brief may eagerly attach. Once the Brief advances or
-  the Ticket has a conversation, the pill becomes read-only.
+  One card holds the current step. A pending proposal names its reviewer. That word
+  opens the existing reviewer-only control. The parked proposal keeps its current
+  ceiling fixed. Approve opens the existing ceiling picker for the next scope. The
+  reviewer choice completes approval with the selected ceiling. Send it back opens
+  a note and uses the existing revision action. Pristine Kickoff keeps the existing
+  Review exception: edit its proposal before approval instead of sending revision
+  guidance to a Worker that does not yet have a conversation. A running step states its approved
+  ceiling and reviewer in one sentence that opens the same control. Holder wording
+  uses the shared User / Orchestrator / Chief roles. Principal identities and
+  identifying detail stay intact.
 
-  A compact artifact strip is the first element under the header when lifecycle fields
-  link to managed Ticket or Sprint Item files. It reads the pending proposal first, then
-  the lifecycle fields from latest to earliest. It removes duplicate links. The same strip
-  shows a Sprint Item's own files, where a folder is one chip. A folder with no index opens
-  where it stands and its files follow it along the strip.
-- **Sprint** — one tracking overview that presents Projects and their Sprint Items,
-  plus a dedicated view for each Item and a separate documents page. The overview shows
-  Item progress as `done/total`. One collapsed **No Sprint Item** row follows all Projects
-  when unclassified Tickets exist. It opens their canonical Ticket links. An Item view joins today's Day membership
-  to split its Tickets into Today and Other Tickets. Each section uses the same status
-  groups and includes its own Done group. Project priority
-  orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
-  Review. See `sprints.md`.
-- **Backlog** — active unscheduled Tickets as bounded summaries. Each row shows only its
-  title and Project chip, and opens its canonical Workspace screen. The page does not
-  request Sprint Items. Its compact form creates an ordinary explicitly unscheduled Ticket.
+  Steps and Artifacts are closed bands below the live card. Each step opens its own
+  text. Future stages, guidance, and a separate historical record do not appear.
+  Cancelled planning work retains truthful historical content without actionable
+  approval controls. Artifacts remain accessible even when no inline link exists,
+  and their preview opens over the page. Blockers, backend errors, kickoff
+  configuration, and conversation behavior remain available in their existing states.
+- **Orchestrator** — project and parent navigation, title, recap, and a Settle control
+  above closed Worker bands. Worker rows show title and an exact-conversation dot.
+  Hover or keyboard focus reuses the rail's stage panel. Groups keep the shared names
+  and order, including exceptional states. The local page omits only the duplicate
+  Messages group: unread Workers appear in their ordinary group with their own dot.
+  Global Messages and rail discovery remain unchanged. Closed group headers include
+  distinct unread-conversation counts as text. Artifacts occupy their own closed band
+  below the Workers. Chief keeps its existing conversation screen and cannot settle.
+- **Historical Sprint** — retained dated links and documents remain readable. These
+  screens do not supply planning or change Worker continuation. See `sprints.md`.
+- **Workers** — the retained `#/backlog` address lists ordinary Workers as bounded
+  summaries with their Project context and priority order. Project eyebrow links use
+  this same list with the existing server project filter. All Workers clears that
+  filter. Its form creates a Worker with explicit Chief assignment. Rows open the
+  canonical Workspace screen.
 - **Ideas** — remembered possibilities with an optional note and Project. See
   `backlog-and-ideas.md`.
 - **Feedback** — open notes and handled history. Open notes link to their source page.
@@ -487,11 +484,10 @@ hand-rolling the same shapes per screen. Each does one job:
   of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.
 
-The Ticket page shows the leash from the moment a ceiling can move. A pending proposal
-holds its ceiling half visible but unselectable and keeps its holder half free, matching
-the server rule: the ceiling is frozen under a filed proposal, and the proposal can still
-be re-addressed. A reviewer changed on its own is written on its own, so moving a
-proposal to another queue never moves the ceiling.
+The Worker page reuses the existing ceiling control. A pending proposal opens only
+its reviewer half from the heading. Approval sets the next ceiling through a separate
+Approve trigger. A reviewer changed on its own is written on its own, so a different
+review queue never moves the current ceiling.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each

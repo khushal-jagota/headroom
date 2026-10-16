@@ -131,6 +131,40 @@ export function ticketArtifactStripItems(
   );
 }
 
+/** Canonical managed artifacts remain discoverable even without a Markdown link.
+ * Historical links to other managed files remain alongside them. */
+export function ticketPageArtifactItems(
+  ticketId: string,
+  artifacts: SprintItemArtifact[] | undefined,
+  fieldIds: string[],
+  values: TicketFieldValues,
+  proposal: PendingTicketProposal | null
+): ArtifactStripItem[] {
+  const seen = new Set<string>();
+  function canonical(entries: SprintItemArtifact[], parentKey = ""): ArtifactStripItem[] {
+    return entries.map((artifact) => {
+      const key = parentKey ? `${parentKey}/${artifact.name}` : artifact.name;
+      const target = artifact.opens ? managedFileTargetFromLinkHref(`/files/tickets/${ticketId}/${artifact.opens}`) : null;
+      if (target) seen.add(targetKey(target));
+      const children = canonical(artifact.children, key);
+      const dot = artifact.name.lastIndexOf(".");
+      return {key:`managed:${key}`, path:artifact.opens || key,
+        label:dot > 0 ? artifact.name.slice(0,dot) : artifact.name,
+        kind:artifact.opens ? extensionOf(artifact.opens) : String(children.length),
+        href:target ? previewHashHref(target) : null, target, children};
+    });
+  }
+  const managed = canonical(artifacts ?? []);
+  const linked = ticketArtifactStripItems(fieldIds, values, proposal).filter((item) => {
+    if (!item.target) return true;
+    const key = targetKey(item.target);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return [...managed, ...linked];
+}
+
 export function artifactPreviewLabel(target: ManagedFileTarget): string {
   return resolvePreview(target).label;
 }

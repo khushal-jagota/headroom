@@ -150,7 +150,6 @@
               <ChiefConversation />
             </div>
           {:else if opening.markedTicketId}
-            <a class="board-workspace-back" href={workspaceAddress({ kind: "none" }, opening.view)}>&lsaquo; Workspace</a>
             {#key opening.markedTicketId}
               <TicketRoute
                 id={opening.markedTicketId}

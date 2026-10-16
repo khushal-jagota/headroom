@@ -7,11 +7,11 @@
   import PickerRail from "./conversation/PickerRail.svelte";
   import PickerRailRow from "./conversation/PickerRailRow.svelte";
   import { ceilingOptionsFor, preferredScopeCeilingFor, type Lifecycle } from "../lib/lifecycle";
-  import { holderOptionsFor, holderValue, holderFromValue } from "../lib/ceilingHolder";
+  import { holderOptionsFor, holderValue, holderFromValue, holderLabelFor } from "../lib/ceilingHolder";
   import type { Principal } from "../lib/types";
 
   // The whole ceiling in one control: how far the Ticket may go, and who is asked when
-  // it gets there. It reads "Until Approach · then me", and the approve row is where a
+  // it gets there. It reads "Until Approach · then User", and the approve row is where a
   // ceiling is set with both halves live. The two halves sit in a rail on the left, the
   // same shape as the model picker, so either one can be edited on its own — changing
   // the reviewer never touches the ceiling. The Backlog create form is its own markup
@@ -25,9 +25,13 @@
     sprintItem = null,
     stageLocked = false,
     below = false,
+    triggerLabel = null,
+    holderLabel = null,
     onComplete
   }: {
     newStage: string | null;
+    triggerLabel?: string | null;
+    holderLabel?: ((holder: Principal | null) => string) | null;
     lifecycle?: Lifecycle | null;
     ceiling?: string | null;
     holder?: Principal | null;
@@ -55,14 +59,14 @@
       .map((option) => ({ value: option.value, name: option.label }))
   ]);
   let holders = $derived(holderOptionsFor(sprintItem, holder).map((option) => ({
-    value: option.value, name: option.label
+    value: option.value, name: `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, label: option.label, detail:option.detail
   })));
   let rows = $derived((showing === "ceiling" ? ceilingOptions : holders) as readonly ListboxPickerItem[]);
   let draftHolderValue = $derived(holderValue(draftHolder ?? holder));
   let selectedValue = $derived(showing === "ceiling" ? draftCeiling : draftHolderValue);
   // The trigger reports the saved ceiling, never a draft.
   let ceilingName = $derived(ceilingOptions.find((option) => option.value === ceiling)?.name ?? null);
-  let holderName = $derived(holders.find((option) => option.value === holderValue(holder))?.name ?? "Choose holder");
+  let holderName = $derived(holderLabel ? holderLabel(holder) : holderLabelFor(sprintItem, holder));
 
   function preferredCeiling(): string | null {
     return ceiling ?? preferredScopeCeilingFor(lifecycle, newStage) ?? "none";
@@ -119,7 +123,7 @@
 <ListboxPicker
   items={rows}
   {selectedValue}
-  label={`Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`}
+  label={triggerLabel ?? `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`}
   listLabel={showing === "ceiling" ? "Ceiling stage" : "Who holds the ceiling"}
   kind="rail"
   {below}
@@ -136,7 +140,7 @@
   })}
 >
   {#snippet triggerContent()}
-    <span>Until {ceilingName ?? "Choose ceiling"} · then {holderName}</span>
+    <span>{triggerLabel ?? `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`}</span>
   {/snippet}
   {#snippet beforeList()}
     <PickerRail label="Parts of the ceiling" attributes={{ "data-ceiling-rail": "" }}>
@@ -166,7 +170,11 @@
     </PickerRail>
   {/snippet}
   {#snippet optionContent(choice, selected)}
-    <span>{choice.name}</span>
+    {#if showing === "holder"}
+      {@const option = holders.find((item) => item.value === choice.value)}
+      <span>{option?.label ?? choice.name}</span>
+      {#if option?.detail}<small class="holder-detail">{option.detail}</small>{/if}
+    {:else}<span>{choice.name}</span>{/if}
   {/snippet}
   {#snippet afterList()}
     {#if stageLocked}
@@ -176,6 +184,7 @@
 </ListboxPicker>
 
 <style>
+  .holder-detail { color:var(--text-faintest); font-size:var(--type-xs); overflow-wrap:anywhere; }
   .ceiling-picker-foot {
     grid-column: 1 / -1; border-top: var(--border-hairline) solid var(--border-color);
     background: var(--surface-recessed); color: var(--text-faint); font-size: var(--type-xs);

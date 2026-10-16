@@ -1,15 +1,8 @@
 import type { Principal } from "./types";
 
-// Who a ceiling is held for, in the words Khushal reads: "then me", "then Chief",
-// "then <Sprint Item>". The three options are the only principals worth choosing from
-// his screens. A Ticket can hold another Ticket's ceiling and tooling keeps that, but it
-// is not something he would pick, so it is not offered here.
-//
-// A holder already set to something outside the three — another Ticket, a Sprint Item
-// that is not this one's — is still shown, so that a control can never silently
-// misreport who holds the Ticket in front of it.
-
-export type HolderOption = { value: string; label: string };
+// Role words are shared across holder controls. Assigned orchestrator identity stays
+// available as detail; a foreign principal always retains its identifying value.
+export type HolderOption = { value: string; label: string; detail?: string };
 
 export const OWNER_HOLDER: Principal = { kind: "owner", id: "owner" };
 export const CHIEF_HOLDER: Principal = { kind: "chief", id: "chief" };
@@ -24,15 +17,26 @@ export function holderOptionsFor(
   holder: Principal | null = null
 ): HolderOption[] {
   const options: HolderOption[] = [
-    { value: "owner", label: "me" },
+    { value: "owner", label: "User" },
     { value: "chief", label: "Chief" }
   ];
-  if (sprintItem) options.push({ value: sprintItem.id, label: sprintItem.title });
+  if (sprintItem) options.push({ value: sprintItem.id, label: "Orchestrator", detail: sprintItem.title });
   const current = holderValue(holder);
   if (!options.some((option) => option.value === current)) {
-    options.push({ value: current, label: holder?.id || current });
+    options.push({ value: current, label: holder?.kind === "sprint_item" ? "Orchestrator" : "Worker", detail: holder?.id || current });
   }
   return options;
+}
+
+export function holderLabelFor(
+  sprintItem: { id: string; title: string } | null,
+  holder: Principal | null
+): string {
+  const option = holderOptionsFor(sprintItem, holder).find((candidate) => candidate.value === holderValue(holder));
+  if (!option) return holder?.id || "User";
+  // The assigned parent has an identifying navigation link. Foreign holders have no
+  // such context, so the face must retain their identity as well as their role.
+  return option.detail && option.value !== sprintItem?.id ? `${option.label} · ${option.detail}` : option.label;
 }
 
 export function holderFromValue(

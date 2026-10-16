@@ -13,7 +13,7 @@
   } = $props();
   const manifests = createQuery(() => ({ queryKey: ["worker-types"], queryFn: () => fetchJson<WorkerTypesResponse>("/api/worker-types") }));
   let card = $derived(cards.find((entry) => entry.id === worker?.id));
-  let stages = $derived(worker ? workspaceWorkerStages(worker, lifecycleFor(manifests.data, card?.worker_type)) : []);
+  let stages = $derived(worker ? workspaceWorkerStages(worker, lifecycleFor(manifests.data, card?.worker_type ?? worker?.worker_type)) : []);
   let panel = $state<HTMLDivElement | null>(null);
   let left = $state(0);
   let top = $state(0);

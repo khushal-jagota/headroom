@@ -13,7 +13,7 @@
     lifecycleFor,
     stageLabelFor
   } from "../lib/lifecycle";
-  import { holderOptionsFor, holderValue } from "../lib/ceilingHolder";
+  import { holderLabelFor } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
@@ -30,12 +30,12 @@
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
-  import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
-  import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
-  import ArtifactStrip from "../components/ArtifactStrip.svelte";
-  import { ticketArtifactStripItems } from "../lib/artifactStrip";
+  import ArtifactsBand from "../components/ArtifactsBand.svelte";
+  import WorkerProposalCard from "../components/WorkerProposalCard.svelte";
+  import { workerPageHistory } from "../lib/workerPageHistory";
+  import { ticketPageArtifactItems } from "../lib/artifactStrip";
   import { isPlainLinkClick } from "../lib/linkClick";
   import {
     targetFromPreviewHref,
@@ -89,19 +89,14 @@
       : null
   );
 
-  function holderLabel(detail: TicketDetail): string {
-    const value = holderValue(detail.ceiling_holder);
-    const match = holderOptionsFor(ticketSprintItem, detail.ceiling_holder).find(
-      (option) => option.value === value
-    );
-    return match?.label || value;
+  function pageHolderLabel(holder: import("../lib/types").Principal | null): string {
+    return holderLabelFor(ticketSprintItem, holder);
   }
 
   const emptyTicketFieldText = "Not written yet.";
 
   let headerError = $state<unknown>(null);
   let conversationBackends = $state<readonly BackendSnapshot[]>([]);
-  let leashMenu = $state<HTMLDetailsElement | null>(null);
 
   /** How far open this page's conversation is.
    *
@@ -258,17 +253,13 @@
     return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
   }
 
-  function closeLeash(): void {
-    if (leashMenu) leashMenu.open = false;
-  }
-
   async function updateScope(body: Record<string, unknown>): Promise<void> {
     headerError = null;
     try {
       await saveScope(body);
-      closeLeash();
     } catch (err) {
       headerError = err;
+      throw err;
     }
   }
 
@@ -367,31 +358,14 @@
       <div class="ticket-reading">
       <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
         <header class="ticket-head">
-          <div class="ticket-identity" data-ticket-identity>
-            <TicketPriorityControl
-              priority={detail.priority}
-              onChange={(priority) => {
-                if (priority !== detail.priority) void patch({ priority });
-              }}
-            />
-            <span class="ticket-identity-group" data-ticket-placement>
-              <span class="ticket-identity-separator" aria-hidden="true">·</span>
-              <span class="ticket-identity-fact" data-project-fact>
-                {detail.project || "No project"}
-              </span>
-              {#if detail.sprint_item_id}
-                <span class="ticket-identity-separator" aria-hidden="true">·</span>
-                <span class="ticket-identity-fact" data-outcome-fact>
-                  {detail.resolved_priority_anchors.sprint_item?.title || "Sprint Item"}
-                </span>
-              {/if}
-            </span>
-            {#if lc}
-              <span class="ticket-identity-group">
-                <span class="ticket-identity-separator" aria-hidden="true">·</span>
-                <span class="ticket-identity-fact" data-ticket-worker-name>{lc.workerTypeLabel}</span>
-              </span>
-            {/if}
+          <div class="worker-eyebrow" data-ticket-identity>
+            <a href={detail.project_id ? `#/backlog?project=${encodeURIComponent(detail.project_id)}` : "#/backlog"} data-project-fact>{detail.project || "No project"}</a>
+            <span aria-hidden="true">·</span>
+            <a href={detail.orchestrator?.kind === "chief" || !detail.sprint_item_id
+              ? workspaceAddress({ kind: "chief" })
+              : workspaceAddress({ kind: "item", id: detail.sprint_item_id })} data-parent-link>
+              {detail.orchestrator?.kind === "chief" || !detail.sprint_item_id ? "Chief" : "Orchestrator"}
+            </a>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title" data-feedback-page-title>
@@ -419,48 +393,6 @@
               />
             </ClampedText>
           </div>
-          <div class="ticket-operating">
-            <!-- The ceiling is set here: how far the Ticket may go, and who is asked when
-                 it gets there. A parked proposal freezes the stage, because moving it
-                 would change what was proposed, and leaves the holder free — which is how
-                 a proposal sitting in the wrong queue gets moved to the right one.
-                 A parked Kickoff is one of those: a Ticket opened for somebody else
-                 parks its Kickoff in their queue, so the holder half belongs here too.
-                 The picker reports which halves the reader set, and only those are written. -->
-            {#if detail.stage !== "done" && (detail.stage !== "needs_brief" || detail.pending_proposal !== null)}
-              <details class="ticket-leash" bind:this={leashMenu} data-leash>
-                <summary
-                  class="ticket-leash-face"
-                  data-leash-face
-                >
-                  {#if detail.pending_proposal === null}
-                    Until
-                    <span class="ticket-leash-value" data-leash-ceiling>{stageLabelFor(lc, detail.ceiling)}</span>
-                    <span class="ticket-leash-word" aria-hidden="true">·</span>
-                  {/if}
-                  then
-                  <span class="ticket-leash-value" data-leash-holder>{holderLabel(detail)}</span>
-                  <span class="disclosure-chev" aria-hidden="true"></span>
-                </summary>
-                <div class="ticket-leash-menu" role="menu">
-                  <CeilingPicker
-                    newStage={detail.stage}
-                    lifecycle={lc}
-                    ceiling={detail.ceiling}
-                    holder={detail.ceiling_holder}
-                    sprintItem={ticketSprintItem}
-                    stageLocked={detail.pending_proposal !== null}
-                    below
-                    onComplete={(change) => void updateScope(
-                      change.ceiling === undefined
-                        ? { ceiling_holder: change.holder }
-                        : { ceiling: change.ceiling, ceiling_holder: change.holder }
-                    )}
-                  />
-                </div>
-              </details>
-            {/if}
-          </div>
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
               <span class="ticket-blocker-heading">Blocked by</span>
@@ -482,97 +414,73 @@
         </header>
 
         <div class="ticket-col">
-          {#if lc}
-            <ArtifactStrip items={ticketArtifactStripItems(lc.fieldIds, detail.field_values, detail.pending_proposal)} />
-          {/if}
-          <div class="fields">
-            {#snippet kickoffContextRow()}
-              {#if detail.employee_configuration_editable}
-                <WorkerConfigurationSetup
-                  ticketId={stableId}
-                  employeeBackend={detail.employee_backend}
-                  employeeLaunchModel={detail.employee_launch_model}
-                  employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
-                  onSave={saveEmployeeConfiguration}
-                />
-              {/if}
-            {/snippet}
-            {#if lc}
-              {@const settledFields = lc.fieldIds.filter(
-                (name) => fieldStageVisualStateFor(lc, detail, name) === "completed"
-              )}
-              {#if settledFields.length}
-                <details class="stage-fold" data-stage-fold>
-                  <summary class="stage-fold-summary" data-stage-fold-open>
-                    <StageMark state="completed" />
-                    <span class="stage-fold-names">{settledFields.map((name) => fieldLabelFor(lc, name)).join(" · ")}</span>
-                    <span class="disclosure-chev" aria-hidden="true"></span>
-                  </summary>
-                  <div class="stage-fold-rows">
-                    {#each settledFields as name}
-                      {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
-                      <TicketStageSection
-                        {name}
-                        value={detail.field_values[name] ?? ""}
-                        pendingProposal={detail.pending_proposal?.field === name ? detail.pending_proposal : null}
-                        {stageState}
-                        lifecycle={lc}
-                        ticketStage={detail.stage}
-                        ceiling={detail.ceiling}
-                        sprintItem={ticketSprintItem}
-                        emptyText={emptyTicketFieldText}
-                        editableCurrentValue={detail.assigned}
-                        runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
-                        runLabelAttention={stageState === "current-awaiting-approval"}
-                        readerLeftItOpen={readerStageFolds.get(name) ?? null}
-                        onReaderToggle={(open) => readerStageFolds.set(name, open)}
-                        contextRow={name === "brief" && kickoffCardShowsContextRow
-                          ? kickoffContextRow
-                          : undefined}
-                        onAccept={(payload) => acceptField(name, payload)}
-                        onSaveValue={(raw) => saveValue(name, raw)}
-                        onCompleteGate={(raw) => completeGate(name, raw)}
-                      />
-                    {/each}
-                    <button
-                      type="button"
-                      class="stage-fold-close"
-                      data-stage-fold-close
-                      onclick={(event) => {
-                        const fold = event.currentTarget.closest("details");
-                        if (fold) fold.open = false;
-                      }}
-                    >Fold settled stages</button>
-                  </div>
-                </details>
-              {/if}
-              {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name (`${detail.id}:${name}`)}
-                {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
-                <TicketStageSection
-                  {name}
-                  value={detail.field_values[name] ?? ""}
-                  pendingProposal={detail.pending_proposal?.field === name ? detail.pending_proposal : null}
-                  {stageState}
-                  lifecycle={lc}
-                  ticketStage={detail.stage}
-                  ceiling={detail.ceiling}
-                  sprintItem={ticketSprintItem}
-                  emptyText={emptyTicketFieldText}
-                  editableCurrentValue={detail.assigned}
-                  runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
-                  runLabelAttention={stageState === "current-awaiting-approval"}
-                  readerLeftItOpen={readerStageFolds.get(name) ?? null}
-                  onReaderToggle={(open) => readerStageFolds.set(name, open)}
-                  contextRow={name === "brief" && kickoffCardShowsContextRow
-                    ? kickoffContextRow
-                    : undefined}
-                  onAccept={(payload) => acceptField(name, payload)}
-                  onSaveValue={(raw) => saveValue(name, raw)}
-                  onCompleteGate={(raw) => completeGate(name, raw)}
-                />
-              {/each}
+          {#snippet kickoffContextRow()}
+            {#if detail.employee_configuration_editable}
+              <WorkerConfigurationSetup ticketId={stableId} employeeBackend={detail.employee_backend}
+                employeeLaunchModel={detail.employee_launch_model} employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
+                onSave={saveEmployeeConfiguration} />
             {/if}
-          </div>
+          {/snippet}
+          {#if lc}
+            {@const currentField = gatingFieldFor(lc, detail.stage)}
+            {@const history = workerPageHistory(lc, detail)}
+            {@const completedFields = history.completed}
+            {@const occurredFields = history.fields}
+            {#if detail.stage === "cancelled"}
+              <section class="worker-live-card" data-worker-live-card><h2>Cancelled</h2><p>Obsolete planning work retired without success.</p></section>
+            {:else if currentField}
+              <section class="worker-live-card" data-worker-live-card>
+                {#if detail.pending_proposal?.field === currentField}
+                  {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
+                    <WorkerProposalCard proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
+                      holder={detail.ceiling_holder} sprintItem={ticketSprintItem} canReturn={Boolean(detail.conversation_id)}
+                      onAccept={(payload) => acceptField(currentField, payload)}
+                      onReviewer={(holder) => updateScope({ ceiling_holder: holder })}
+                      onReturn={(message) => mutateJson(`/api/tickets/${stableId}/reject`, { method:"POST", body:{ message } })}
+                      contextRow={currentField === "brief" && kickoffCardShowsContextRow ? kickoffContextRow : undefined} />
+                  {/key}
+                {:else}
+                  <h2>{detail.blocked || detail.ticket_status === "blocked" ? "Blocked on" : detail.agent_state === "errored" ? "Error working on" : detail.assigned ? "Your step:" : detail.stage === "needs_brief" ? "Waiting for" : detail.agent_state === "working" || detail.ticket_status === "agent" ? "Currently working on" : "Waiting at"} {fieldLabelFor(lc, currentField)}</h2>
+                  {#if detail.stage !== "needs_brief"}
+                    <div class="worker-ceiling-line" data-leash>
+                      <CeilingPicker newStage={detail.stage} lifecycle={lc} ceiling={detail.ceiling} holder={detail.ceiling_holder}
+                        triggerLabel={`Approved until ${detail.ceiling === "none" ? "No further" : stageLabelFor(lc, detail.ceiling)}, then ${pageHolderLabel(detail.ceiling_holder)} reviews`}
+                        holderLabel={pageHolderLabel} sprintItem={ticketSprintItem} below onComplete={(change) => void updateScope(change.ceiling === undefined
+                          ? { ceiling_holder:change.holder } : { ceiling:change.ceiling, ceiling_holder:change.holder }).catch(() => undefined)} />
+                    </div>
+                  {/if}
+                  {#if detail.assigned}
+                    <TicketStageSection name={currentField} value={detail.field_values[currentField] ?? ""} lifecycle={lc}
+                      stageState={fieldStageVisualStateFor(lc, detail, currentField)} ticketStage={detail.stage} ceiling={detail.ceiling}
+                      sprintItem={ticketSprintItem} variant="review" editableCurrentValue={true}
+                      onAccept={(payload) => acceptField(currentField, payload)} onCompleteGate={(raw) => completeGate(currentField, raw)} />
+                  {/if}
+                  {#if detail.employee_configuration_editable}{@render kickoffContextRow()}{/if}
+                {/if}
+              </section>
+            {/if}
+            <div class="worker-bands">
+              <details class="worker-steps" data-stage-fold>
+                <summary data-stage-fold-open>Steps<span class="band-count">{completedFields.length} of {lc.fieldIds.filter((name) => name !== "retirement").length} done</span></summary>
+                <div class="worker-step-rows">
+                  {#each occurredFields as name (`${detail.id}:${name}`)}
+                    {@const stageState = detail.stage === "cancelled" ? (completedFields.includes(name) ? "completed" : "current-waiting") : fieldStageVisualStateFor(lc, detail, name)}
+                    <TicketStageSection {name} value={detail.stage === "cancelled" && history.historicalProposal?.field === name
+                      ? `${detail.field_values[name] || ""}\n\nHistorical proposal (not approved):\n\n${history.historicalProposal.body}`
+                      : detail.field_values[name] ?? ""} pendingProposal={null}
+                      {stageState} lifecycle={lc} ticketStage={detail.stage} ceiling={detail.ceiling} sprintItem={ticketSprintItem}
+                      emptyText={emptyTicketFieldText} editableValue={detail.stage !== "cancelled"}
+                      editableCurrentValue={false} readerLeftItOpen={readerStageFolds.get(name) ?? false}
+                      onReaderToggle={(open) => readerStageFolds.set(name, open)}
+                      runLabel={name === currentField ? currentStageRunLabel(detail) : null}
+                      onAccept={(payload) => acceptField(name,payload)} onSaveValue={(raw) => saveValue(name,raw)}
+                      onCompleteGate={(raw) => completeGate(name,raw)} />
+                  {/each}
+                </div>
+              </details>
+              <ArtifactsBand items={ticketPageArtifactItems(detail.id, detail.artifacts, lc.fieldIds, detail.field_values, detail.pending_proposal)} />
+            </div>
+          {/if}
         </div>
       </main>
       {#if shownFile}
@@ -609,3 +517,36 @@
     {/if}
   </ResourceState>
 </section>
+
+<style>
+  .ticket-head, .ticket-col { width:min(720px, calc(100% - 48px)); padding-inline:0; }
+  .ticket-col { padding-top:0; }
+  .ticket-head { padding-top:48px; }
+  .worker-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
+  .worker-eyebrow a { color:inherit; text-decoration:none; }
+  .worker-eyebrow a:hover { color:var(--text-strong); }
+  .ticket-title-row { display:block; margin-top:var(--space-3); }
+  .ticket-title { font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
+  .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
+  .ticket-head :global([data-recap]) { margin-top:var(--space-3); max-width:66ch; font-family:var(--font-ui); font-size:17px; line-height:1.6; color:var(--text-faint); }
+  .ticket-head :global([data-recap] .ed) { font:inherit; }
+  .worker-live-card { margin-top:var(--space-6); padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
+  .worker-live-card h2 { margin:0; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
+  .worker-live-card p { font-size:15px; }
+  .worker-ceiling-line { margin-top:var(--space-3); }
+  .worker-ceiling-line :global([data-scope-ceiling]) { font-size:15px; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); }
+  .worker-bands { margin-top:var(--space-7); padding-bottom:var(--space-7); }
+  .worker-steps { border-top:1px solid var(--border-color); }
+  .worker-steps > summary { display:flex; align-items:center; gap:var(--space-3); padding:14px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:13px; font-weight:600; color:var(--text-faint); cursor:pointer; list-style:none; }
+  .worker-steps > summary::-webkit-details-marker { display:none; }
+  .worker-steps > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
+  .band-count { margin-left:auto; font-weight:400; color:var(--text-faintest); }
+  .worker-step-rows { padding-bottom:var(--space-4); }
+  .worker-step-rows :global(.disclosure--stage) { margin:0; border:0; }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-summary) { padding:9px var(--space-2); margin-inline:calc(-1 * var(--space-2)); border-radius:var(--radius-sm); font-size:15px; color:var(--text-muted); }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-summary:hover) { background-image:var(--interaction-hover); color:var(--text-strong); }
+  .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:15px; color:var(--text-faint); }
+  .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:15px; letter-spacing:normal; }
+  .worker-step-rows :global(.stage-mark) { border-radius:1px; }
+  @media (max-width:560px) { .ticket-head, .ticket-col { width:calc(100% - 32px); } .ticket-head { padding-top:var(--space-5); } .worker-live-card { padding:var(--space-4); } }
+</style>
