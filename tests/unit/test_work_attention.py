@@ -26,11 +26,12 @@ from planner.worker_settings.api import add_agent_conversation_signals
 
 
 class _ConversationFacts:
-    def __init__(self, *, running: bool = False) -> None:
+    def __init__(self, *, running: bool = False, running_ids: set[str] | None = None) -> None:
         self.running = running
+        self.running_ids = running_ids
 
     async def is_running(self, conversation_id: str) -> bool:
-        return self.running
+        return conversation_id in self.running_ids if self.running_ids is not None else self.running
 
     async def has_pending_permission_ask(self, conversation_id: str) -> bool:
         return False
@@ -85,6 +86,7 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
     # A coding Brief is the worker's Stage, so the Ticket is never named as his own work.
     assert row == {
         "id": ticket.id,
+        "conversation_signal": {"working": False, "message_for_owner": True},
         "awaiting_reply": True,
         "awaiting_answer": False,
         "awaiting_approval": True,
@@ -139,6 +141,7 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
     )
     assert running_row["awaiting_reply"] is False
     assert running_row["agent_state"] == "working"
+    assert running_row["conversation_signal"] == {"working": True, "message_for_owner": False}
 
     conn.execute(
         'UPDATE tickets SET ceiling_holder=\'{"id":"chief","kind":"chief"}\' WHERE id=?',
@@ -206,6 +209,15 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     conn.execute(
         "UPDATE tickets SET conversation_id = 'c_off_today_child' WHERE id = ?", (rows[1].id,)
     )
+    conn.execute(
+        "INSERT INTO conversations "
+        "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+        "VALUES ('c_quiet_supervisor', 'codex', '/tmp/workspace', 'full', 0, 1)"
+    )
+    conn.execute(
+        "UPDATE agents SET conversation_id = 'c_quiet_supervisor' WHERE agent_key = ?",
+        (item.supervisor_agent_key,),
+    )
     conn.commit()
     board = board_view(conn)
     record = ConversationStore(str(db_path))
@@ -213,10 +225,13 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     with patch.object(record, "attention_facts", wraps=record.attention_facts) as attention:
         asyncio.run(
             add_conversation_row_signals(
-                conn, board, cast(ConversationSystem, _ConversationFacts()), record
+                conn,
+                board,
+                cast(ConversationSystem, _ConversationFacts(running_ids={"c_off_today_child"})),
+                record,
             )
         )
-    attention.assert_awaited_once_with({"c_off_today_child"})
+    attention.assert_awaited_once_with({"c_off_today_child", "c_quiet_supervisor"})
     assert {card["id"] for column in board["columns"] for card in column["cards"]} == {
         row.id for row in rows
     }
@@ -228,6 +243,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     owner_approval = children[rows[1].id]
     assert owner_approval["awaiting_approval"] is True
     assert owner_approval["awaiting_reply"] is True
+    assert owner_approval["conversation_signal"] == {"working": True, "message_for_owner": True}
     assert owner_approval["awaiting_agent_approval"] is False
     assert owner_approval["gating_field"] == "brief"
     assert owner_approval["ceiling_holder"] == {"kind": "owner", "id": "owner"}
@@ -246,6 +262,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     assert item_row["ticket_rollup"]["assigned"] is True
     assert item_row["ticket_rollup"]["awaiting_reply"] is True
     assert item_row["awaiting_reply"] is False
+    assert item_row["conversation_signal"] == {"working": False, "message_for_owner": False}
     assert all(not children[row.id]["awaiting_reply"] for row in (rows[0], rows[2], rows[3]))
     conn.close()
 
@@ -293,6 +310,7 @@ def test_chief_message_attention_uses_exact_conversation_and_owner_read_mark(
     quiet = chief()
     assert quiet["conversation_id"] == "c_chief"
     assert quiet["awaiting_reply"] is False
+    assert quiet["conversation_signal"] == {"working": True, "message_for_owner": False}
     assert quiet["agent_working"] is True
     assert quiet["needs_me"] is waiting_ask
     assert quiet["latest_turn_ended_sequence"] == 1
@@ -304,6 +322,7 @@ def test_chief_message_attention_uses_exact_conversation_and_owner_read_mark(
     conn.execute("UPDATE conversations SET latest_sequence = 2 WHERE conversation_id = 'c_chief'")
     conn.commit()
     assert chief()["awaiting_reply"] is True
+    assert chief()["conversation_signal"] == {"working": True, "message_for_owner": True}
     asyncio.run(record.advance_owner_read_through_sequence("c_chief", 2))
     read = chief()
     assert read["awaiting_reply"] is False
@@ -351,6 +370,9 @@ def test_only_a_user_owned_stage_is_the_owners_work(tmp_path: Path) -> None:
 
     assigned_by_id = {str(row["id"]): row["assigned"] for row in rows}
     assert assigned_by_id == {worker_owned.id: False, user_owned.id: True}
+    assert all(
+        row["conversation_signal"] == {"working": False, "message_for_owner": False} for row in rows
+    )
     conn.close()
 
 
@@ -403,6 +425,7 @@ def test_a_waiting_ask_is_not_reported_as_a_message(tmp_path: Path) -> None:
 
     assert row["awaiting_answer"] is True
     assert row["awaiting_reply"] is False
+    assert row["conversation_signal"] == {"working": True, "message_for_owner": False}
     assert row["agent_state"] == "working"
 
 
@@ -483,6 +506,7 @@ def test_completed_failure_history_does_not_poison_ticket_or_item_attention(
     )
     assert rows[0] == {
         "id": tickets[0].id,
+        "conversation_signal": {"working": False, "message_for_owner": True},
         "awaiting_reply": True,
         "awaiting_answer": False,
         "awaiting_approval": False,
@@ -564,3 +588,80 @@ def test_attention_facts_preserve_message_and_failure_boundaries(
         "selected": ConversationAttentionFacts(*expected)
     }
     assert asyncio.run(record.attention_facts([])) == {}
+
+
+@pytest.mark.parametrize("running", [False, True])
+@pytest.mark.parametrize("unread", [False, True])
+def test_exact_conversation_signal_is_independent_for_workers_supervisors_and_chief(
+    tmp_path: Path, running: bool, unread: bool
+) -> None:
+    db_path = tmp_path / "signals.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    item = sprints_data.create_item(
+        conn, title="Independent signals", project_id="project_vylo", clock=RealClock()
+    )
+    ticket = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Completed worker",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        sprint_item_id=item.id,
+    )
+    for conversation_id in ("worker", "supervisor", "chief"):
+        conn.execute(
+            "INSERT INTO conversations "
+            "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+            "VALUES (?, 'codex', '/tmp', 'full', 1, 1)",
+            (conversation_id,),
+        )
+        conn.execute(
+            "INSERT INTO conversation_events "
+            "(conversation_id, sequence, kind, payload, created_at) VALUES (?, 1, ?, ?, 1)",
+            (
+                conversation_id,
+                "message_to_owner" if unread else "turn_ended",
+                "{}" if unread else json.dumps({"ending": "completed"}),
+            ),
+        )
+    # A completed stage and a parked approval cannot suppress actual runtime work.
+    conn.execute(
+        "UPDATE tickets SET conversation_id = 'worker', stage = 'done', pending_proposal = '{}' "
+        "WHERE id = ?",
+        (ticket.id,),
+    )
+    conn.executemany(
+        "INSERT INTO agents(conversation_id, agent_key) VALUES (?, ?) "
+        "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id",
+        [("supervisor", item.supervisor_agent_key), ("chief", "chief_of_staff")],
+    )
+    conn.commit()
+    record = ConversationStore(str(db_path))
+    system = cast(ConversationSystem, _ConversationFacts(running=running))
+    worker: JsonDict = {"id": ticket.id}
+    supervisor: JsonDict = {"id": item.id}
+
+    async def project() -> JsonDict:
+        await add_work_attention(conn, system, record, tickets=[worker], sprint_items=[supervisor])
+        return (
+            await add_agent_conversation_signals(
+                [{"employee_id": "chief_of_staff"}], conn, system, record
+            )
+        )[0]
+
+    chief = asyncio.run(project())
+    expected = {"working": running, "message_for_owner": unread}
+    assert worker["conversation_signal"] == expected
+    assert supervisor["conversation_signal"] == expected
+    assert chief["conversation_signal"] == expected
+    assert "conversation_signal" not in supervisor["ticket_rollup"]
+
+    # Reading the supervisor clears only its message. Work and other messages survive.
+    asyncio.run(record.advance_owner_read_through_sequence("supervisor", 1))
+    chief = asyncio.run(project())
+    assert supervisor["conversation_signal"] == {"working": running, "message_for_owner": False}
+    assert worker["conversation_signal"] == expected
+    assert chief["conversation_signal"] == expected
+    conn.close()

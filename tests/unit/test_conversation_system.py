@@ -92,6 +92,7 @@ from planner.conversation.system import (
     MODEL_THINKING_PULSE_INTERVAL_SECONDS,
     SqliteProcessConversationSystem,
 )
+from planner.core import change_signal
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
@@ -1317,6 +1318,96 @@ def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
 
 
 # --- is_running through the lifecycle -----------------------------------------------------
+
+
+@pytest.mark.parametrize("ending", ["completed", "failed", "interrupted"])
+def test_change_signal_observers_see_the_settled_runtime_transition(
+    harness: _Harness, ending: str
+) -> None:
+    """A commit wake can race the live turn. Its final wake must see the new state."""
+
+    async def exercise() -> None:
+        await _start(harness)
+        observed_running: list[bool] = []
+
+        def observe() -> None:
+            observed_running.append(harness.system._conversations["c"].running_turn is not None)
+
+        unsubscribe = change_signal.subscribe(observe)
+        try:
+            await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            assert observed_running and observed_running[-1] is True
+            observed_running.clear()
+            if ending == "completed":
+                await harness.complete_turn("c")
+            elif ending == "failed":
+                await harness.fail_turn("c")
+            else:
+                await harness.system.interrupt("c")
+            assert observed_running and observed_running[-1] is False
+            assert ConversationEventKind.message_to_owner not in await harness.recorded_kinds("c")
+        finally:
+            unsubscribe()
+
+    _run(exercise)
+
+
+def test_live_tokens_do_not_invalidate_the_workspace(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        backend = harness.backend("c")
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        changes: list[None] = []
+        unsubscribe = change_signal.subscribe(lambda: changes.append(None))
+        try:
+            for _ in range(50):
+                await backend.sink.agent_message_delta(token, "piece")
+                await backend.sink.model_thinking_happened(token)
+            assert changes == []
+        finally:
+            unsubscribe()
+
+    _run(exercise)
+
+
+def test_queue_drain_announces_the_next_running_turn(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        observed_running: list[bool] = []
+
+        def observe() -> None:
+            observed_running.append(harness.system._conversations["c"].running_turn is not None)
+
+        unsubscribe = change_signal.subscribe(observe)
+        try:
+            steered = await harness.system.send(
+                "c",
+                text_message_content("steer"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+            )
+            assert isinstance(steered, PromptDeliveryInjected)
+            queued = await harness.system.send(
+                "c",
+                text_message_content("next"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+            )
+            assert isinstance(queued, PromptDeliveryQueued)
+            assert all(observed_running)
+            observed_running.clear()
+            await harness.complete_turn("c")
+            assert False in observed_running
+            assert observed_running[-1] is True
+            assert await harness.system.is_running("c") is True
+            assert ConversationEventKind.message_to_owner not in await harness.recorded_kinds("c")
+        finally:
+            unsubscribe()
+
+    _run(exercise)
 
 
 # --- saying the model is thinking ----------------------------------------------------------

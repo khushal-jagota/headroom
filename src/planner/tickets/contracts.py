@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal, Required, TypedDict
 
+from planner.conversation.contracts import ConversationSignal
 from planner.core.contracts import JsonDict, Principal, Priority
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
@@ -107,6 +108,8 @@ class BoardCardSource(TypedDict):
 class BoardCard(BoardCardSource, WorkAttention):
     """The complete Ticket projection returned to the Workspace rail."""
 
+    conversation_signal: ConversationSignal
+
 
 class BoardSprintItemSource(TypedDict):
     """A represented Sprint Item and its complete children before live attention.
@@ -129,6 +132,7 @@ class BoardSprintItemSource(TypedDict):
 class BoardSprintItem(BoardSprintItemSource, WorkAttention):
     """The complete Sprint Item projection returned to the Workspace rail."""
 
+    conversation_signal: ConversationSignal
     ticket_rollup: WorkAttention
 
 

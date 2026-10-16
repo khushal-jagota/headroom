@@ -20,12 +20,28 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Protocol
+from typing import Final, Protocol, TypedDict
 
 from planner.conversation.message_content import MessageContent
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
+
+
+class ConversationSignal(TypedDict):
+    """Independent marks for actual work and an unread explicit owner message."""
+
+    working: bool
+    message_for_owner: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationAttention:
+    """An exact conversation's signal and existing ask/error attention facts."""
+
+    signal: ConversationSignal
+    awaiting_answer: bool
+    last_turn_failed: bool
 
 
 @dataclass(frozen=True, slots=True)

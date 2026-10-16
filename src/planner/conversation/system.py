@@ -134,6 +134,7 @@ from planner.conversation.storage import (
     ConversationStore,
     StoredConversationEvent,
 )
+from planner.core import change_signal
 from planner.core.contracts import Principal, PrincipalKind
 
 LOGGER = logging.getLogger("planner.conversation")
@@ -2273,6 +2274,10 @@ class SqliteProcessConversationSystem:
                     automatic_notice=reservation.automatic_notice,
                 )
                 self._set_phase(state, _ConversationPhase.running)
+                # The prompt commit can announce before this process-owned state is
+                # visible. Publish again after the runtime transition, so a reader of
+                # that earlier announcement cannot keep an idle answer indefinitely.
+                change_signal.emit()
                 return True
             finally:
                 if state.phase is not _ConversationPhase.starting:
@@ -2711,6 +2716,9 @@ class SqliteProcessConversationSystem:
                     state.record.latest_agent_activity_sequence
                 ),
             )
+        # The ending commit precedes clearing the live turn. Announce the runtime
+        # transition only after its state and committed record agree.
+        change_signal.emit()
         return ended
 
     # --- the child ----------------------------------------------------------------------

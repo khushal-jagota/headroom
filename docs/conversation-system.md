@@ -79,10 +79,30 @@ announcing each one sends every open tab back for everything it is showing.
 
 The rows anything else reads still announce themselves the ordinary way: a delivered,
 refused, or discarded prompt, a permission ask and its answer, an agent question and
-its answer, a model change, and a turn ending. Those are what the board reads to say
-whether a Ticket is working or needs its owner, so they are what a screen outside the
-conversation is told about. A kind added later announces itself unless somebody
+its answer, a model change, an explicit owner message, and a turn ending. Other screens
+read those facts, so they receive the ordinary change announcement. A kind added later
+announces itself unless somebody
 establishes that nothing outside the conversation shows it.
+
+## Work and messages on other screens
+
+Each Worker, supervisor, and Chief exposes the same `conversation_signal` from its own
+conversation. `working` means that its runtime is running. `message_for_owner` means that
+an explicit `message_to_owner` row is newer than the owner read position. Both can be true
+at once. A conversation with neither fact exposes two false values.
+
+A turn ending stops work and creates no message mark. Pending approvals, permission asks,
+Ticket stages, and child activity do not define either mark. Child totals remain separate
+from the supervisor's own conversation signal. Existing answer, approval, error, and
+notification facts remain available for their own purposes.
+
+Reading or sending a prompt advances only that conversation's established read position.
+A later explicit message remains unread when an earlier position is acknowledged.
+
+The runtime publishes the ordinary change signal after work starts and after its settled
+end. This publication follows the runtime state transition, so a query cannot retain an
+answer from before the prompt or ending commit settled. The event stream carries no
+payload. Mounted queries fetch the canonical conversation signal again.
 
 ## What a message is
 
