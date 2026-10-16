@@ -1060,8 +1060,7 @@ class ConversationStore:
         try:
             rows = conn.execute(
                 "SELECT c.conversation_id, c.owner_read_through_sequence, "
-                "MAX(CASE WHEN e.kind = 'message_to_owner' THEN e.sequence END) "
-                "AS latest_owner_message, "
+                "e.latest_owner_message, "
                 "(SELECT CASE WHEN te.kind = 'turn_ended' "
                 " THEN json_extract(te.payload, '$.ending') ELSE NULL END "
                 " FROM conversation_events te "
@@ -1071,9 +1070,12 @@ class ConversationStore:
                 " FROM conversation_error_acknowledgements a "
                 " WHERE a.conversation_id = c.conversation_id), 0) "
                 " ORDER BY te.sequence DESC LIMIT 1) AS last_turn_ending "
-                "FROM conversations c LEFT JOIN conversation_events e "
-                "ON e.conversation_id = c.conversation_id "
-                f"WHERE c.conversation_id IN ({placeholders}) GROUP BY c.conversation_id",
+                "FROM conversations c LEFT JOIN ("
+                "SELECT conversation_id, MAX(sequence) AS latest_owner_message "
+                "FROM conversation_events WHERE kind = 'message_to_owner' "
+                "GROUP BY conversation_id"
+                ") e ON e.conversation_id = c.conversation_id "
+                f"WHERE c.conversation_id IN ({placeholders})",
                 ids,
             ).fetchall()
         finally:
