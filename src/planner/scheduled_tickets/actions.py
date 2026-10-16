@@ -27,23 +27,22 @@ from planner.scheduled_tickets.logic import (
     planning_day_for,
     validate_local_time,
 )
-from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
+from planner.tickets.logic.admission import require_creatable_worker_type
+from planner.worker_types.contracts import RETIRED_WORKER_TYPES
 
 _LOG = logging.getLogger(__name__)
 
 
 def _validate_template(conn: sqlite3.Connection, template: ScheduledTicketTemplate) -> None:
-    if (
-        template.placement_mode is ScheduledTicketPlacementMode.backlog
-        and template.sprint_id is not None
+    require_creatable_worker_type(template.worker_type)
+    if template.orchestrator_kind not in {"chief", "sprint_item"} or (
+        (template.orchestrator_kind == "sprint_item") != (template.sprint_item_id is not None)
     ):
         raise PlannerError(
-            ErrorCode.validation,
-            "backlog scheduled Ticket cannot name a Sprint",
-            {"sprint_id": template.sprint_id},
+            ErrorCode.validation, "schedule requires an explicit orchestrator assignment"
         )
     tickets_data.validate_ticket_creation_context(
         conn,
@@ -53,7 +52,7 @@ def _validate_template(conn: sqlite3.Connection, template: ScheduledTicketTempla
         employee_backend=template.employee_backend,
         employee_launch_model=template.employee_launch_model,
         project_id=template.project_id,
-        sprint_id=template.sprint_id,
+        sprint_id=None,
         deadline=template.deadline,
         sprint_item_id=template.sprint_item_id,
         blocked_by_ticket_ids=list(template.blocked_by_ticket_ids),
@@ -69,6 +68,10 @@ def create_schedule(
     template: ScheduledTicketTemplate,
     now: int,
 ) -> ScheduledTicketSchedule:
+    if template.sprint_id is not None:
+        raise PlannerError(ErrorCode.validation, "Sprint placement is retired")
+    if cadence is not ScheduleCadence.daily:
+        raise PlannerError(ErrorCode.validation, "calendar planning cadences are retired")
     with data.transaction(conn):
         if template.sprint_item_id is not None and template.project_id is None:
             item = conn.execute(
@@ -111,15 +114,22 @@ def _update_schedule_locked(
 ) -> ScheduledTicketSchedule:
     current = data.read_schedule(conn, schedule_id)
     normalized_changes = dict(changes)
-    raw_mode = normalized_changes.get("placement_mode", current.template.placement_mode)
-    placement_mode = (
-        raw_mode
-        if isinstance(raw_mode, ScheduledTicketPlacementMode)
-        else ScheduledTicketPlacementMode(str(raw_mode))
-    )
-    if placement_mode is ScheduledTicketPlacementMode.backlog:
-        normalized_changes["sprint_id"] = None
-
+    if (
+        "cadence" in changes
+        and ScheduleCadence(str(changes["cadence"])) is not ScheduleCadence.daily
+    ):
+        raise PlannerError(ErrorCode.validation, "calendar planning cadences are retired")
+    if "sprint_id" in changes or "placement_mode" in changes:
+        raise PlannerError(ErrorCode.validation, "Sprint placement is retired")
+    # Historical schedules can be disabled, but retired types cannot be reactivated.
+    if changes.get("enabled") is True and (
+        current.cadence is not ScheduleCadence.daily
+        or current.template.worker_type
+        in RETIRED_WORKER_TYPES
+    ):
+        raise PlannerError(ErrorCode.validation, "retired schedules cannot be enabled")
+    if set(changes) <= {"enabled"} and changes.get("enabled") is False:
+        return data.update_schedule(conn, schedule_id, changes, now=now)
     item_id = normalized_changes.get("sprint_item_id", current.template.sprint_item_id)
     if item_id is not None:
         item = conn.execute("SELECT project_id FROM sprint_items WHERE id=?", (item_id,)).fetchone()
@@ -141,6 +151,7 @@ def _update_schedule_locked(
         "sprint_id": current.template.sprint_id,
         "placement_mode": current.template.placement_mode,
         "sprint_item_id": current.template.sprint_item_id,
+        "orchestrator_kind": current.template.orchestrator_kind,
         "employee_backend": current.template.employee_backend,
         "employee_launch_model": current.template.employee_launch_model,
         "blocked_by_ticket_ids": current.template.blocked_by_ticket_ids,
@@ -149,6 +160,7 @@ def _update_schedule_locked(
         if key in normalized_changes:
             template_values[key] = normalized_changes[key]
     template = ScheduledTicketTemplate(
+        orchestrator_kind=str(template_values["orchestrator_kind"]),
         title=str(template_values["title"]),
         worker_type=str(template_values["worker_type"]),
         kickoff_note=str(template_values["kickoff_note"]),
@@ -197,43 +209,6 @@ def _update_schedule_locked(
     return data.update_schedule(conn, schedule_id, encoded, now=now)
 
 
-def _sprint_ranges(conn: sqlite3.Connection) -> tuple[DateRange, ...]:
-    return tuple(
-        DateRange(
-            id=str(row["id"]),
-            date_start=str(row["date_start"]),
-            date_end=str(row["date_end"]),
-        )
-        for row in conn.execute(
-            "SELECT id, date_start, date_end FROM sprints ORDER BY date_start, id"
-        ).fetchall()
-    )
-
-
-def _existing_ticket_for_schedule_on_day(
-    conn: sqlite3.Connection,
-    *,
-    target_day_id: str,
-    worker_type: str,
-    title: str,
-) -> str | None:
-    title_clause = " AND tickets.title = ?" if worker_type == "personal" else ""
-    parameters = (
-        (target_day_id, worker_type, title)
-        if worker_type == "personal"
-        else (target_day_id, worker_type)
-    )
-    row = conn.execute(
-        "SELECT tickets.id FROM tickets "
-        "JOIN day_tickets ON day_tickets.ticket_id = tickets.id "
-        "WHERE day_tickets.day_id = ? AND tickets.worker_type = ? "
-        f"{title_clause} "
-        "ORDER BY day_tickets.position, tickets.id LIMIT 1",
-        parameters,
-    ).fetchone()
-    return None if row is None else str(row["id"])
-
-
 def _settle_occurrence(
     conn: sqlite3.Connection,
     schedule: ScheduledTicketSchedule,
@@ -243,38 +218,16 @@ def _settle_occurrence(
     boundary_hour: int,
 ) -> ScheduledTicketOccurrence:
     key = occurrence_key(planning_now)
-    # The planning date—not the calendar date—is the target. This remains explicit here
-    # because a pre-5am exact time belongs to the previous planning day.
+    # New receipts use the local calendar date. Stored historical target_day_id values
+    # remain untouched; this value is a receipt label, not a Day membership.
     target_day = f"day_{planning_day_for(planning_now, boundary_hour)}"
     try:
         with data.transaction(conn):
             existing_occurrence = data.read_occurrence(conn, schedule.id, key)
             if existing_occurrence is not None:
                 return existing_occurrence
-            existing_ticket_id = _existing_ticket_for_schedule_on_day(
-                conn,
-                target_day_id=target_day,
-                worker_type=schedule.template.worker_type,
-                title=schedule.template.title,
-            )
-            if existing_ticket_id is not None:
-                return data.insert_occurrence(
-                    conn,
-                    schedule_id=schedule.id,
-                    occurrence_key=key,
-                    target_day_id=target_day,
-                    outcome=OccurrenceOutcome.suppressed,
-                    ticket_id=existing_ticket_id,
-                    error=None,
-                    now=now,
-                )
             sprint_item_id = schedule.template.sprint_item_id
             project_id = schedule.template.project_id
-            sprint_id = schedule.template.sprint_id
-            sprint_id_explicit = (
-                schedule.template.placement_mode is ScheduledTicketPlacementMode.backlog
-                or sprint_id is not None
-            )
             ticket = tickets_actions.create_ticket(
                 conn,
                 title=schedule.template.title,
@@ -286,7 +239,7 @@ def _settle_occurrence(
                 employee_launch_model=schedule.template.employee_launch_model,
                 kickoff_note=schedule.template.kickoff_note,
                 project_id=project_id,
-                sprint_id=sprint_id,
+                sprint_id=None,
                 priority=schedule.template.priority,
                 deadline=schedule.template.deadline,
                 sprint_item_id=sprint_item_id,
@@ -294,7 +247,8 @@ def _settle_occurrence(
                 planning_now=planning_now,
                 boundary_hour=boundary_hour,
                 sprint_item_id_explicit=True,
-                sprint_id_explicit=sprint_id_explicit,
+                sprint_id_explicit=True,
+                orchestrator_kind=schedule.template.orchestrator_kind,
             )
             return data.insert_occurrence(
                 conn,
@@ -343,14 +297,15 @@ def run_current_slot(
     if not schedules:
         return []
     planning_day = planning_day_for(planning_now, boundary_hour)
-    sprint_ranges = _sprint_ranges(conn)
     results: list[ScheduledTicketOccurrence] = []
     for schedule in schedules:
+        if schedule.template.worker_type in RETIRED_WORKER_TYPES:
+            continue
         try:
             qualifies = cadence_qualifies(
                 schedule.cadence,
                 planning_day=planning_day,
-                sprint_ranges=sprint_ranges,
+                sprint_ranges=(),
             )
         except (StopIteration, ValueError) as exc:
             raise PlannerError(

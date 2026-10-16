@@ -1,15 +1,14 @@
+import type { Lifecycle } from "./lifecycle";
 import type {
   BoardCard,
   BoardSprintItem,
   Priority,
-  SprintItemWorkspace,
   WorkAttention
 } from "./types";
 import {
   WORK_ITEM_ATTENTION_GROUP_KEYS,
   workItemActivityMark,
   workItemActivityMarkPresentation,
-  workItemRollupActivityMark,
   workItemTicketGroupKey,
   workItemTicketGroups,
   type WorkItemActivityMark,
@@ -35,11 +34,19 @@ export type WorkspaceRailItem = {
   mark: WorkspaceRowMark;
   groups: WorkspaceTicketGroup[];
   rested: boolean;
+  settled: boolean;
+  project: string | null;
+  projectId: string | null;
+  tickets: WorkItemTicketFacts[];
+  hoverGroups: WorkspaceTicketGroup[];
 };
 
 export type WorkspaceRail = {
   groups: WorkspaceTicketGroup[];
   items: WorkspaceRailItem[];
+  settledItems: WorkspaceRailItem[];
+  chiefGroups: WorkspaceTicketGroup[];
+  chiefHoverGroups: WorkspaceTicketGroup[];
 };
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
@@ -49,9 +56,9 @@ export const workspaceTicketRowMark = workItemActivityMark;
 export const workspaceRowMarkPresentation = workItemActivityMarkPresentation;
 
 export function workspaceSprintItemRowMark(
-  item: WorkAttention & { ticket_rollup: WorkAttention }
+  item: WorkAttention
 ): WorkspaceRowMark {
-  return workItemRollupActivityMark(item, item.ticket_rollup);
+  return workItemActivityMark(item);
 }
 
 function priorityRank(priority: Priority): number {
@@ -75,7 +82,7 @@ function railGroups(
 }
 
 export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGroup[] {
-  return railGroups(cards);
+  return railGroups(cards.filter((card) => card.ticket_status !== "cancelled"));
 }
 
 export function workspaceAttentionGroups(
@@ -84,42 +91,49 @@ export function workspaceAttentionGroups(
   return railGroups(cards, true);
 }
 
+export function workspaceHoverGroups(cards: readonly WorkItemTicketFacts[]): WorkspaceTicketGroup[] {
+  return railGroups(cards.filter((card) => card.stage !== "done" && card.ticket_status !== "cancelled"));
+}
+
+/** Only an unread reply marks a row. An answer request remains a separate group fact. */
+export function workspaceWorkerRowMarks(ticket: WorkAttention): { reply: boolean; answer: boolean } {
+  return { reply: ticket.awaiting_reply, answer: false };
+}
+
+export type WorkspaceWorkerStage = { id: string; label: string; state: "done" | "now" | "todo" };
+
+export function workspaceWorkerStages(
+  ticket: Pick<WorkItemTicketFacts, "stage">,
+  lifecycle: Lifecycle | null
+): WorkspaceWorkerStage[] {
+  if (!lifecycle) return [];
+  const current = lifecycle.stageOrder.indexOf(ticket.stage);
+  return lifecycle.stageOrder.map((id, index) => ({
+    id,
+    label: lifecycle.stageLabel[id],
+    state: current < 0 ? "todo" : index < current ? "done" : index === current ? "now" : "todo"
+  }));
+}
+
 export function buildWorkspaceRail(
   cards: readonly BoardCard[],
-  sprintItems: readonly BoardSprintItem[] = [],
-  selectedWorkspace: SprintItemWorkspace | undefined = undefined
+  sprintItems: readonly BoardSprintItem[] = []
 ): WorkspaceRail {
-  const itemCards = new Map<string, WorkItemTicketFacts[]>();
-  const summaries = new Map<string, BoardSprintItem | SprintItemWorkspace>(
-    sprintItems.map((item) => [item.id, item])
-  );
-
-  for (const card of cards) {
-    if (!card.sprint_item_id) continue;
-    const grouped = itemCards.get(card.sprint_item_id) ?? [];
-    grouped.push(card);
-    itemCards.set(card.sprint_item_id, grouped);
-  }
-
-  if (selectedWorkspace) {
-    itemCards.set(selectedWorkspace.id, selectedWorkspace.tickets);
-    summaries.set(selectedWorkspace.id, selectedWorkspace);
-  }
-
-  const items = [...itemCards.entries()].map(([id, groupedCards]) => {
-    const first = cards.find((card) => card.sprint_item_id === id);
-    const summary = summaries.get(id);
-    const selected = selectedWorkspace?.id === id ? selectedWorkspace : undefined;
-    return {
-      id,
-      title: selected?.title ?? first?.sprint_item_title ?? "Untitled Sprint Item",
-      priority: selected?.priority ?? first?.sprint_item_priority ?? "P3",
-      createdAt: summary?.created_at ?? 0,
-      mark: summary ? workspaceSprintItemRowMark(summary) : null,
-      groups: workspaceAttentionGroups(groupedCards),
-      rested: groupedCards.every((groupedCard) => groupedCard.stage === "done")
-    } satisfies WorkspaceRailItem;
-  });
+  // Complete children come from each orchestrator, never the currently open pane.
+  const items = sprintItems.map((item) => ({
+    id: item.id,
+    title: item.title,
+    priority: item.priority,
+    createdAt: item.created_at,
+    mark: workspaceSprintItemRowMark(item),
+    groups: workspaceAttentionGroups(item.tickets.filter((ticket) => ticket.ticket_status !== "cancelled")),
+    hoverGroups: workspaceHoverGroups(item.tickets),
+    tickets: item.tickets,
+    settled: item.settled === true,
+    rested: item.settled === true,
+    project: item.project ?? null,
+    projectId: item.project_id ?? null
+  } satisfies WorkspaceRailItem));
 
   items.sort(
     (left, right) =>
@@ -127,6 +141,16 @@ export function buildWorkspaceRail(
       left.createdAt - right.createdAt ||
       left.id.localeCompare(right.id)
   );
-
-  return { groups: workspaceGroups(cards), items };
+  const chiefTickets = cards.filter((card) =>
+    card.orchestrator?.kind === "chief" ||
+    (card.orchestrator == null && card.sprint_item_id == null)
+  );
+  return {
+    // Legacy projection remains available to references outside the new rail.
+    groups: workspaceGroups(cards),
+    items: items.filter((item) => !item.settled),
+    settledItems: items.filter((item) => item.settled),
+    chiefGroups: workspaceAttentionGroups(chiefTickets.filter((ticket) => ticket.ticket_status !== "cancelled")),
+    chiefHoverGroups: workspaceHoverGroups(chiefTickets)
+  };
 }

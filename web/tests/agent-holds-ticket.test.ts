@@ -24,9 +24,9 @@ describe("a worker that holds the claim but is between turns", () => {
     expect(sprintItemHeading(held)).toBe("Agent");
     expect(sprintItemWord(held)).toBe("agent");
     expect(feedbackLabel(held)).toBe("Agent");
-    expect(feedbackMark(held)).toBe("upcoming");
+    expect(feedbackMark(held)).toBeNull();
     expect(homeTiles(held)).toEqual([]);
-    expect(homeDotLabel(held)).toBe("No current activity");
+    expect(homeDotLabel(held)).toBe("");
   });
 
   it("does not read as an untouched Stage on its own page", () => {

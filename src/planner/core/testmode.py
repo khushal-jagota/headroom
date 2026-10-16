@@ -14,7 +14,7 @@ from planner.core.clock import Clock, TestClock, parse_fake_now
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import planning_date, resolve_day_id
+from planner.days.logic.dates import planning_date
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -56,9 +56,6 @@ def build_test_router(config: Config, clock: Clock) -> APIRouter:
             connect_database=request.app.state.conn_factory,
             conversation_system=request.app.state.conversation_system,
             worker_type_registry=configured_worker_type_registry(),
-            planning_day_id_resolver=lambda: resolve_day_id(
-                "today", clock.now(), config.boundary_hour
-            ),
             now=clock.now_unix,
         )
         return {

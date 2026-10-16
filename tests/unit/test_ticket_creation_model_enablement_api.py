@@ -47,7 +47,11 @@ def test_http_ticket_creation_refuses_disabled_model_without_partial_writes(
     with TestClient(app) as client:
         worker_ticket = client.post(
             "/api/tickets",
-            json={"title": "Existing worker", "worker_type": "probe"},
+            json={
+                "title": "Existing worker",
+                "worker_type": "probe",
+                "orchestrator": {"kind": "chief", "id": "chief"},
+            },
         )
         assert worker_ticket.status_code == 200, worker_ticket.text
         headers: dict[str, str] = {}
@@ -55,7 +59,11 @@ def test_http_ticket_creation_refuses_disabled_model_without_partial_writes(
             headers["X-Plan-Actor"] = actor
         if actor == "worker":
             headers["X-Plan-Ticket-ID"] = worker_ticket.json()["id"]
-        body = {"title": "Refused new work", "worker_type": "probe"}
+        body: dict[str, object] = {
+            "title": "Refused new work",
+            "worker_type": "probe",
+            "orchestrator": {"kind": "chief", "id": "chief"},
+        }
         if explicit:
             body.update(employee_backend="hermes", employee_launch_model="probe-model")
         conn = connect(str(db_path))
@@ -76,7 +84,7 @@ def test_http_ticket_creation_refuses_disabled_model_without_partial_writes(
             assert enabled.json()["employee_backend"] == "hermes"
             assert enabled.json()["employee_launch_model"] == "enabled-model"
             assert conn.execute("SELECT count(*) FROM tickets").fetchone()[0] == 2
-            assert conn.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 2
+            assert conn.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 0
             historical = conn.execute(
                 "SELECT employee_launch_model FROM tickets WHERE id = ?",
                 (worker_ticket.json()["id"],),

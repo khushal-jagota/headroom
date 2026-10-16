@@ -13,9 +13,7 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import resolve_day_id
 from planner.message_delivery import service as message_delivery_service
-from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission
@@ -34,9 +32,8 @@ def resolve_creation_placement(
     sprint_id_explicit: bool,
     worker_type: str,
     project_id_explicit: bool = False,
-) -> tuple[str, str, str | None, str | None]:
+) -> tuple[None, str, str | None, str | None]:
     """Resolve defaults for a newly created Ticket without overriding placement intent."""
-    day_id = resolve_day_id("today", planning_now, boundary_hour)
     if sprint_item_id is not None:
         item = conn.execute(
             "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
@@ -47,19 +44,12 @@ def resolve_creation_placement(
             if project_id is not None and project_id != item["project_id"]:
                 raise PlannerError(ErrorCode.validation, "ticket Project does not match Outcome")
             project_id = str(item["project_id"])
-    if sprint_id_explicit:
-        return day_id, project_id or "project_other", sprint_id, sprint_item_id
-    planning_day = day_id.removeprefix("day_")
-    ranges = [
-        DateRange(
-            id=str(row["id"]),
-            date_start=str(row["date_start"]),
-            date_end=str(row["date_end"]),
-        )
-        for row in conn.execute("SELECT id, date_start, date_end FROM sprints").fetchall()
-    ]
-    current_id = current_sprint_id(planning_day, ranges)
-    return day_id, project_id or "project_other", current_id, sprint_item_id
+    return (
+        None,
+        project_id or "project_other",
+        sprint_id if sprint_id_explicit else None,
+        sprint_item_id,
+    )
 
 
 def create_ticket(
@@ -78,6 +68,7 @@ def create_ticket(
     priority: Priority | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
+    orchestrator_kind: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     planning_now: datetime | None = None,
     boundary_hour: int = 5,
@@ -113,6 +104,7 @@ def create_ticket(
         priority=priority,
         deadline=deadline,
         sprint_item_id=sprint_item_id,
+        orchestrator_kind=orchestrator_kind,
         day_id=day_id,
         worker_type=worker_type,
         employee_backend=employee_backend,
@@ -202,7 +194,6 @@ async def reject_ticket_proposal(
     message: str | None,
     ctx: RequestContext,
     clock: Clock,
-    boundary_hour: int,
 ) -> Ticket:
     """Send the proposal back, with guidance for the executing agent or without."""
     if message is not None:
@@ -213,7 +204,6 @@ async def reject_ticket_proposal(
     )
     planning_now = clock.now()
     now = int(planning_now.timestamp())
-    planning_day_id = resolve_day_id("today", planning_now, boundary_hour)
     ticket = tickets_data.require_reject(
         conn,
         ticket_id,
@@ -225,7 +215,6 @@ async def reject_ticket_proposal(
         ticket_id,
         message=message,
         principal=principal,
-        planning_day_id=planning_day_id,
         now=now,
         expected_proposal=ticket.pending_proposal,
     )

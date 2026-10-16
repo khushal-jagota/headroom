@@ -98,7 +98,7 @@ try {
       return json({ running_worker_count: 0, awaiting_approval_count: 0 });
     }
     if (path === "/api/projects?detail=full") return json({ projects });
-    if (path === "/api/worker-types") {
+    if (path === "/api/worker-types" || path === "/api/worker-types?supported=true") {
       return json({
         worker_types: [
           { worker_type: "coding", label: "Coding" },
@@ -106,13 +106,13 @@ try {
         ]
       });
     }
-    if (path === "/api/tickets?detail=summary&sprint_id=null&limit=30&offset=0") {
+    if (path === "/api/tickets?detail=summary&limit=30&offset=0") {
       return json({
         tickets: backlogTickets,
         page: page(backlogTickets.length, backlogTickets.length + 1, 0)
       });
     }
-    if (path === "/api/tickets?detail=summary&sprint_id=null&limit=30&offset=30") {
+    if (path === "/api/tickets?detail=summary&limit=30&offset=30") {
       return json({ tickets: [ticket("ticket_last", "P1")], page: page(1, backlogTickets.length + 1, 30) });
     }
     if (path === "/api/items?detail=summary&limit=30&offset=0") {
@@ -290,11 +290,11 @@ with sync_playwright() as playwright:
     page.locator('[data-create="ticket"] [data-seg="priority"] [data-value="P1"]').click()
     assert priority_control.locator('[data-value="P1"]').get_attribute("aria-pressed") == "true"
     assert priority_control.locator('[data-value="P3"]').get_attribute("aria-pressed") == "false"
-    # Creation names who is asked at the ceiling. Unchanged it is "me"; a Ticket made
+    # Creation names who is asked at the ceiling. Unchanged it is "User"; a Ticket made
     # for somebody else says so here, and the creator does not have to hold it first.
     holder_select = page.locator('[data-create="ticket"] [data-input="ceiling-holder"]')
     assert holder_select.input_value() == "owner"
-    assert [option.inner_text() for option in holder_select.locator("option").all()] == ["me", "Chief"]
+    assert [option.inner_text() for option in holder_select.locator("option").all()] == ["User", "Chief"]
     holder_select.select_option("chief")
     page.locator('[data-create="ticket"] [data-commit]').click()
     created = page.locator('[data-ticket-id="ticket_created"]')
@@ -310,8 +310,7 @@ with sync_playwright() as playwright:
         "kickoff_note": "Keep the receipts.",
         "project_id": "project_tribe",
         "priority": "P1",
-        "sprint_id": None,
-        "sprint_item_id": None,
+        "orchestrator": {"kind": "chief", "id": "chief"},
         "ceiling_holder": {"kind": "chief", "id": "chief"},
     }
     assert not any("/api/items" in request["path"] for request in page.evaluate("window.__requests()"))

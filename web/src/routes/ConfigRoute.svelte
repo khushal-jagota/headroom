@@ -4,17 +4,20 @@
   import ManagedLaunchDefaults from "../components/ManagedLaunchDefaults.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import RoleSkillEditor from "../components/RoleSkillEditor.svelte";
+  import { fetchJson } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { resourceStateForQueries } from "../lib/resourceStateForQueries";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
-  import { labelize } from "../lib/ui";
+  import { errorMessage, labelize } from "../lib/ui";
   import type {
     ChiefManagementSettings,
     EmployeeConfigurationSnapshot,
     ManagedSkill,
+    StageOwnershipMode,
     WorkerManagementDetail,
-    WorkerManagementSettings
+    WorkerManagementSettings,
+    WorkerTypeRecord
   } from "../lib/types";
 
   type RoleKind = "index" | "agent" | "skill" | "worker";
@@ -131,6 +134,67 @@
       method: "PUT",
       body: next
     }).then((saved) => saved.launch_defaults);
+  }
+
+  const ownerOptions: Array<{ value: StageOwnershipMode; label: string }> = [
+    { value: "worker", label: "worker" },
+    { value: "user", label: "user" }
+  ];
+
+  // What the row shows while its save is in flight, and what went wrong if it failed.
+  // A finished save clears the pending value, so the table falls back to what the
+  // refetched record says. A failed save clears it too, which reverts the control.
+  let pendingOwners = $state<Record<string, StageOwnershipMode>>({});
+  let ownerSaving = $state<Record<string, boolean>>({});
+  let ownerErrors = $state<Record<string, unknown>>({});
+
+  function stageOwnerValue(
+    stage: { id: string; ownership_mode: StageOwnershipMode | null }
+  ): string {
+    return pendingOwners[stage.id] || stage.ownership_mode || "";
+  }
+
+  // Owner saves run one at a time. Each one reads the whole record and writes it
+  // back, so a second Stage changed while the first is in flight must not read the
+  // record from before that write and post the old value over it.
+  let ownerWrites: Promise<void> = Promise.resolve();
+
+  // A Worker type is coherent only as a whole record, so there is no write for one
+  // Stage's owner. Read the stored record, change this Stage, and post it back.
+  async function saveStageOwner(
+    workerType: string,
+    stage: string,
+    ownershipMode: StageOwnershipMode
+  ): Promise<void> {
+    pendingOwners = { ...pendingOwners, [stage]: ownershipMode };
+    ownerSaving = { ...ownerSaving, [stage]: true };
+    const { [stage]: _cleared, ...remainingErrors } = ownerErrors;
+    ownerErrors = remainingErrors;
+    const write = ownerWrites.then(async () => {
+      const record = await fetchJson<WorkerTypeRecord>(
+        `/api/worker-types/${encodeURIComponent(workerType)}`
+      );
+      await mutateJson<WorkerTypeRecord>("/api/worker-types", {
+        method: "POST",
+        body: {
+          ...record,
+          stages: record.stages.map((candidate) =>
+            candidate.id === stage ? { ...candidate, ownership_mode: ownershipMode } : candidate
+          )
+        }
+      });
+    });
+    // A refused write stops that row, not the queue behind it.
+    ownerWrites = write.catch(() => undefined);
+    try {
+      await write;
+    } catch (error) {
+      ownerErrors = { ...ownerErrors, [stage]: error };
+    } finally {
+      const { [stage]: _settled, ...remainingPending } = pendingOwners;
+      pendingOwners = remainingPending;
+      ownerSaving = { ...ownerSaving, [stage]: false };
+    }
   }
 
   function gatedFieldLabel(manifest: WorkerTypeManifest, fieldId: string | null): string {
@@ -357,11 +421,31 @@
                         <span class="worker-stage-id">{stage.id}</span>
                       </td>
                       <td class="worker-stage-gated-field" data-gated-field>{gatedFieldLabel(manifest, stage.gating_field)}</td>
-                      <td data-stage-owner={stage.ownership_mode || ""}>
+                      <td data-stage-owner={stage.is_terminal ? "" : stageOwnerValue(stage)}>
                         {#if stage.is_terminal}
                           <span class="worker-readonly-owner" data-terminal-owner>terminal</span>
                         {:else}
-                          <span class="worker-readonly-owner">{stage.ownership_mode}</span>
+                          <select
+                            class="worker-owner-select"
+                            aria-label={`Owner for ${stage.label}`}
+                            data-stage-owner-select
+                            data-saving={ownerSaving[stage.id] ? "true" : "false"}
+                            value={stageOwnerValue(stage)}
+                            onchange={(event) => void saveStageOwner(
+                              detail.settings.worker_type,
+                              stage.id,
+                              event.currentTarget.value as StageOwnershipMode
+                            )}
+                          >
+                            {#each ownerOptions as option}
+                              <option value={option.value}>{option.label}</option>
+                            {/each}
+                          </select>
+                          {#if ownerErrors[stage.id]}
+                            <div class="worker-row-error" data-stage-owner-error>
+                              {errorMessage(ownerErrors[stage.id])}
+                            </div>
+                          {/if}
                         {/if}
                       </td>
                     </tr>

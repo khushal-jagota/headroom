@@ -105,7 +105,6 @@ def _cases(
         worker_step_readiness.is_ready_for_worker_step(
             conn,
             ticket,
-            planning_day_id="day_2099-01-01",
             worker_type_definition=definition,
         ),
         bool,
@@ -114,7 +113,6 @@ def _cases(
         tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket.id,
-            planning_day_id_resolver=lambda: "day_2099-01-01",
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
             now=0,
         ),

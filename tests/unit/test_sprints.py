@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from sqlite3 import Connection
-from threading import Barrier, Event
+from threading import Barrier
 
 import pytest
 
@@ -141,62 +141,32 @@ def test_compound_sprint_updates_serialize_overlap_validation_with_the_write(
     )
 
 
-def test_planning_claim_and_sprint_write_share_one_write_lock(
+def test_historical_planning_worker_cannot_write_a_sprint(
     tmp_db: Connection, fake_clock: TestClock
 ) -> None:
     sprint = create_sprint(
-        tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
+        tmp_db, name="Historical", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
     )
-    _insert_ticket(tmp_db, "t_planning_sprint", "needs_success")
+    _insert_ticket(tmp_db, "t_planning_sprint", "needs_brief")
     tmp_db.execute(
-        "UPDATE tickets SET worker_type = 'planning-sprint' WHERE id = 't_planning_sprint'"
+        "UPDATE tickets SET worker_type='planning-sprint',ceiling='needs_brief' "
+        "WHERE id='t_planning_sprint'"
     )
-    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    admitted = Event()
-    deletion_attempted = Event()
-    deletion_done = Event()
     ctx = _classify("worker", "t_planning_sprint")
-
-    def write_as_planning_worker() -> None:
-        conn = connect(db_path)
-        try:
-
-            def admit() -> None:
-                require_above(conn, ctx.principal, authority.plan("sprint"))
-                admitted.set()
-                assert deletion_attempted.wait(timeout=5)
-                assert not deletion_done.is_set()
-
-            update_sprint(
-                conn,
-                sprint.id,
-                text_edits={"primary_bet": "Ship the generalized surface."},
-                set_dates=False,
-                date_start=None,
-                date_end=None,
-                clock=fake_clock,
-                admit=admit,
-            )
-        finally:
-            conn.close()
-
-    def revoke_claim() -> None:
-        assert admitted.wait(timeout=5)
-        conn = connect(db_path)
-        try:
-            deletion_attempted.set()
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute("DELETE FROM tickets WHERE id = 't_planning_sprint'")
-            conn.execute("COMMIT")
-            deletion_done.set()
-        finally:
-            conn.close()
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        writer = executor.submit(write_as_planning_worker)
-        revoker = executor.submit(revoke_claim)
-        writer.result()
-        revoker.result()
-
-    assert read_sprint(tmp_db, sprint.id).primary_bet == "Ship the generalized surface."
-    assert tmp_db.execute("SELECT 1 FROM tickets WHERE id = 't_planning_sprint'").fetchone() is None
+    before = read_sprint(tmp_db, sprint.id)
+    with pytest.raises(PlannerError) as refused:
+        update_sprint(
+            tmp_db,
+            sprint.id,
+            text_edits={"primary_bet": "Replacement"},
+            set_dates=False,
+            date_start=None,
+            date_end=None,
+            clock=fake_clock,
+            admit=lambda: require_above(tmp_db, ctx.principal, authority.plan("sprint")),
+        )
+    assert refused.value.code is ErrorCode.agent_forbidden
+    assert read_sprint(tmp_db, sprint.id) == before
+    assert (
+        tmp_db.execute("SELECT 1 FROM tickets WHERE id='t_planning_sprint'").fetchone() is not None
+    )

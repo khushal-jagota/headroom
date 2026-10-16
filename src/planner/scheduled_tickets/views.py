@@ -39,6 +39,10 @@ def schedule_json(
         "sprint_id": schedule.template.sprint_id,
         "placement_mode": schedule.template.placement_mode.value,
         "sprint_item_id": schedule.template.sprint_item_id,
+        "orchestrator": {
+            "kind": schedule.template.orchestrator_kind,
+            "id": schedule.template.sprint_item_id or "chief",
+        },
         "employee_backend": schedule.template.employee_backend,
         "employee_launch_model": schedule.template.employee_launch_model,
         "blocked_by_ticket_ids": list(schedule.template.blocked_by_ticket_ids),

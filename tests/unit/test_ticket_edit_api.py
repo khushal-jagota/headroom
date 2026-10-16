@@ -19,7 +19,6 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.days import data as days_data
 from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
@@ -167,106 +166,61 @@ def _employee_configuration_body(
     }
 
 
-def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_explicit_backlog(
+def test_creation_defaults_to_chief_without_calendar_and_preserves_priority_anchors(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
-    conn = connect(str(db_path))
-    try:
-        _seed_sprint(conn)
-        conn.execute("UPDATE projects SET priority = 'P1' WHERE id = 'project_vylo'")
-        conn.commit()
-    finally:
-        conn.close()
+    with connect(str(db_path)) as conn:
+        _seed_sprint(conn)  # Existing history does not choose live placement.
+        conn.execute("UPDATE projects SET priority='P1' WHERE id='project_vylo'")
     with TestClient(app) as client:
-        defaulted = client.post(
-            "/api/tickets", json={"title": "Default placement", "worker_type": "coding"}
-        )
-        reused = client.post(
-            "/api/tickets", json={"title": "Same fallback", "worker_type": "coding"}
-        )
-        project_fallback = client.post(
+        defaulted = client.post("/api/tickets", json={"title": "Default", "worker_type": "coding"})
+        project = client.post(
             "/api/tickets",
             json={
-                "title": "Project fallback",
+                "title": "Project default",
                 "worker_type": "coding",
                 "project_id": "project_vylo",
+                "orchestrator": {"kind": "chief", "id": "chief"},
             },
         )
-        explicit_backlog = client.post(
-            "/api/tickets",
-            json={
-                "title": "Explicit backlog",
-                "worker_type": "coding",
-                "sprint_id": None,
-            },
-        )
-        project_priority_default = client.post(
-            "/api/tickets",
-            json={
-                "title": "Assessed project default",
-                "worker_type": "coding",
-                "project_id": "project_vylo",
-                "sprint_item_id": None,
-            },
-        )
-        explicit_priority = client.post(
+        explicit = client.post(
             "/api/tickets",
             json={
                 "title": "Explicit priority",
                 "worker_type": "coding",
                 "priority": "P0",
                 "project_id": "project_vylo",
-                "sprint_item_id": None,
+                "orchestrator": {"kind": "chief", "id": "chief"},
             },
         )
-
-    assert (
-        defaulted.status_code
-        == reused.status_code
-        == project_fallback.status_code
-        == explicit_backlog.status_code
-        == project_priority_default.status_code
-        == explicit_priority.status_code
-        == 200
-    )
-    assert defaulted.json()["effective_sprint_id"] == "sp_edit"
-    assert defaulted.json()["sprint_id"] == "sp_edit"
-    assert defaulted.json()["sprint_item_id"] is None
-    assert reused.json()["sprint_item_id"] is None
-    assert project_fallback.json()["project_id"] == "project_vylo"
-    assert project_fallback.json()["effective_sprint_id"] == "sp_edit"
-    assert explicit_backlog.json()["effective_sprint_id"] is None
-    assert explicit_backlog.json()["sprint_id"] is None
-    assert project_priority_default.json()["effective_sprint_id"] == "sp_edit"
-    assert project_priority_default.json()["sprint_item_id"] is None
-    assert project_priority_default.json()["priority"] == "P1"
-    assert explicit_priority.json()["priority"] == "P0"
-    assert project_priority_default.json()["resolved_priority_anchors"] == {
-        "sprint_item": None,
-        "project": {
-            "id": "project_vylo",
-            "name": "Vylo",
-            "priority": "P1",
-        },
-    }
-
-    conn = connect(str(db_path))
-    try:
-        assert "kind" not in {
-            str(row[1]) for row in conn.execute("PRAGMA table_info(sprint_items)")
+        for response in (defaulted, project, explicit):
+            assert response.status_code == 200, response.text
+            assert response.json()["orchestrator"] == {"kind": "chief", "id": "chief"}
+            assert response.json()["sprint_id"] is None
+            assert response.json()["effective_sprint_id"] is None
+            detail = client.get(f"/api/tickets?detail=full&id={response.json()['id']}")
+            assert detail.json()["day_ids"] == []
+        assert project.json()["project_id"] == "project_vylo"
+        assert project.json()["priority"] == "P1"
+        assert explicit.json()["priority"] == "P0"
+        assert project.json()["resolved_priority_anchors"] == {
+            "sprint_item": None,
+            "project": {"id": "project_vylo", "name": "Vylo", "priority": "P1"},
         }
-    finally:
-        conn.close()
-    with TestClient(app) as client:
-        defaulted_read = f"/api/tickets?detail=full&id={defaulted.json()['id']}"
-        assert client.get(defaulted_read).json()["day_ids"] == [
-            "day_2026-07-10"
-        ]
-        explicit_backlog_read = f"/api/tickets?detail=full&id={explicit_backlog.json()['id']}"
-        assert client.get(explicit_backlog_read).json()["day_ids"] == [
-            "day_2026-07-10"
-        ]
+        with connect(str(db_path)) as conn:
+            before = tuple(conn.iterdump())
+        for removed in ({"sprint_id": None}, {"sprint_id": "sp_edit"}, {"sprint_item_id": None}):
+            rejected = client.post(
+                "/api/tickets",
+                json={"title": "Obsolete ingress", "worker_type": "coding", **removed},
+            )
+            assert rejected.status_code == 400
+            assert "orchestrator assignment" in rejected.json()["error"]["message"]
+        with connect(str(db_path)) as conn:
+            assert tuple(conn.iterdump()) == before
+            assert conn.execute("SELECT count(*) FROM days").fetchone()[0] == 0
+            assert conn.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 0
 
 
 def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
@@ -285,28 +239,29 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
             json={
                 "title": "Derived project ticket",
                 "worker_type": "coding",
-                "sprint_item_id": vylo_item["id"],
+                "orchestrator": {"kind": "sprint_item", "id": vylo_item["id"]},
             },
         )
         assert created.status_code == 200, created.text
         ticket_id = str(created.json()["id"])
         assert created.json()["project_id"] == "project_vylo"
         with connect(str(db_path)) as conn:
-            assert conn.execute(
-                "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
-            ).fetchone()[0] is None
+            assert (
+                conn.execute("SELECT project_id FROM tickets WHERE id=?", (ticket_id,)).fetchone()[
+                    0
+                ]
+                is None
+            )
 
         full = client.get("/api/tickets?detail=full&project_id=project_vylo")
-        summary = client.get(
-            "/api/tickets?detail=summary&project_id=project_vylo&search=Derived"
-        )
+        summary = client.get("/api/tickets?detail=summary&project_id=project_vylo&search=Derived")
         assert ticket_id in {row["id"] for row in full.json()["tickets"]}
         assert ticket_id in {row["id"] for row in summary.json()["tickets"]}
 
         incompatible = client.patch(
             f"/api/tickets/{ticket_id}",
             json={
-                "sprint_item_id": personal_item["id"],
+                "orchestrator": {"kind": "sprint_item", "id": personal_item["id"]},
                 "project_id": "project_vylo",
             },
         )
@@ -318,42 +273,51 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
         moved = client.patch(
             f"/api/tickets/{ticket_id}",
             json={
-                "sprint_item_id": personal_item["id"],
+                "orchestrator": {"kind": "sprint_item", "id": personal_item["id"]},
                 "project_id": "project_personal",
             },
         )
         assert moved.status_code == 200, moved.text
         assert moved.json()["project_id"] == "project_personal"
         with connect(str(db_path)) as conn:
-            assert conn.execute(
-                "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
-            ).fetchone()[0] is None
+            assert (
+                conn.execute("SELECT project_id FROM tickets WHERE id=?", (ticket_id,)).fetchone()[
+                    0
+                ]
+                is None
+            )
 
         detached = client.patch(
-            f"/api/tickets/{ticket_id}", json={"sprint_item_id": None}
+            f"/api/tickets/{ticket_id}", json={"orchestrator": {"kind": "chief", "id": "chief"}}
         )
         assert detached.status_code == 200, detached.text
         assert detached.json()["project_id"] == "project_personal"
         with connect(str(db_path)) as conn:
-            assert conn.execute(
-                "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
-            ).fetchone()[0] == "project_personal"
+            assert (
+                conn.execute("SELECT project_id FROM tickets WHERE id=?", (ticket_id,)).fetchone()[
+                    0
+                ]
+                == "project_personal"
+            )
 
         reattached = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"sprint_item_id": personal_item["id"]},
+            json={"orchestrator": {"kind": "sprint_item", "id": personal_item["id"]}},
         )
         assert reattached.status_code == 200, reattached.text
         replacement = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"sprint_item_id": None, "project_id": "project_vylo"},
+            json={"orchestrator": {"kind": "chief", "id": "chief"}, "project_id": "project_vylo"},
         )
         assert replacement.status_code == 200, replacement.text
         assert replacement.json()["project_id"] == "project_vylo"
         with connect(str(db_path)) as conn:
-            assert conn.execute(
-                "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
-            ).fetchone()[0] == "project_vylo"
+            assert (
+                conn.execute("SELECT project_id FROM tickets WHERE id=?", (ticket_id,)).fetchone()[
+                    0
+                ]
+                == "project_vylo"
+            )
 
 
 def test_employee_configuration_endpoint_allows_pristine_statuses(
@@ -520,12 +484,9 @@ def test_an_active_worker_does_not_block_an_ordinary_edit(
     ticket_id = _create_ticket(db_path)
     conn = connect(str(db_path))
     try:
-        planning_day_id = "day_2026-07-10"
-        days_data.add_day_ticket(conn, planning_day_id, ticket_id, 2)
         started = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
-            planning_day_id_resolver=lambda: planning_day_id,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
             now=2,
         )

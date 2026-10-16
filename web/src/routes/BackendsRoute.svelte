@@ -1,13 +1,28 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import UsageRings from "../components/conversation/UsageRings.svelte";
+  import { backendIdentityNote, type BackendIdentityNote } from "../lib/conversation/backendIdentity";
+  import {
+    BACKENDS_PAGE_SURROUNDINGS,
+    backendCanBeSignedIn,
+    signInCaveat,
+    signInIsPending,
+    signInOutcome
+  } from "../lib/conversation/backendSignIn";
+  import {
+    BackendSignInSession,
+    type SignInPageState
+  } from "../lib/conversation/backendSignInSession";
   import {
     loadBackendPageSnapshots,
     refreshBackendSnapshots
   } from "../lib/conversation/backendRefresh";
   import {
+    cancelBackendSignIn,
     ConversationWireError,
+    readBackendSignIn,
     readBackends,
+    startBackendSignIn,
     setBackendModelEnabled,
     updateBackend,
     type BackendSnapshot,
@@ -24,6 +39,22 @@
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
   let savingModels = $state<Record<string, boolean>>({});
   let modelErrors = $state<Record<string, string | null>>({});
+  // Only codex can be signed in, so there is one session controller rather than a map.
+  const SIGN_IN_BACKEND: ConversationBackendKey = "codex";
+  let signInState = $state<SignInPageState>({ signIn: null, busy: false, error: null });
+  const signInSession = new BackendSignInSession(
+    {
+      start: startBackendSignIn,
+      read: readBackendSignIn,
+      cancel: cancelBackendSignIn,
+      reloadCards: () => loadBackends(),
+      setTimer: (run, ms) => setTimeout(run, ms),
+      clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)
+    },
+    (next) => {
+      signInState = next;
+    }
+  );
 
   function sentenceFor(problem: unknown): string {
     if (problem instanceof ConversationWireError) return problem.message;
@@ -127,11 +158,27 @@
     return snapshot.identity?.status === "unauthenticated";
   }
 
+  /** The card's one identity line, as nothing or as itself: a list of at most one, so
+   *  the markup reads it once. */
+  function identityNotes(snapshot: BackendSnapshot): BackendIdentityNote[] {
+    const note = backendIdentityNote(snapshot);
+    return note ? [note] : [];
+  }
+
   function hasModelUsage(snapshot: BackendSnapshot, modelId: string): boolean {
     return snapshot.cached_usage?.windows.some((window) => window.model_id === modelId) ?? false;
   }
 
-  onMount(() => void loadBackends());
+  onMount(() => {
+    void loadBackends();
+    // Nothing about a sign-in is persisted, so a page that has just opened or reconnected
+    // has to ask whether one is already running.
+    void signInSession.enter(SIGN_IN_BACKEND);
+  });
+
+  // Leaving the screen stops the asking and nothing else. Cancelling here would end a
+  // sign-in somebody is in the middle of finishing on their phone.
+  onDestroy(() => signInSession.leave());
 </script>
 
 <section class="backends-page" data-screen="backends">
@@ -170,14 +217,14 @@
             >
               <span class="chevron" aria-hidden="true">{open ? "⌄" : "›"}</span>
               <span class="backend-name">{snapshot.backend_key}</span>
-              {#if isSignedOut(snapshot)}
-                <span class="identity-note">
-                  not signed in
-                  {#if snapshot.identity?.login_command}
-                    · <b>{snapshot.identity.login_command}</b>
+              {#each identityNotes(snapshot) as note (note.text)}
+                <span class="identity-note" data-backend-identity-note>
+                  {note.text}
+                  {#if note.loginCommand && !backendCanBeSignedIn(snapshot)}
+                    · <b>{note.loginCommand}</b>
                   {/if}
                 </span>
-              {/if}
+              {/each}
             </button>
             <span class="version-cell">
               {#if snapshot.update_advisory?.update_available && snapshot.update_advisory.update_command}
@@ -204,6 +251,51 @@
               {/if}
             </span>
           </div>
+          {#if backendCanBeSignedIn(snapshot)}
+            {@const signIn = signInState.signIn}
+            {@const outcome = signInOutcome(signIn)}
+            <div class="sign-in" data-backend-sign-in={snapshot.backend_key}>
+              {#if signInIsPending(signIn) && signIn}
+                <p class="sign-in-step">
+                  1. Open
+                  <a href={signIn.verification_url ?? "#"} target="_blank" rel="noreferrer noopener"
+                    data-backend-sign-in-url>{signIn.verification_url}</a>
+                  and sign in.
+                </p>
+                <p class="sign-in-step">
+                  2. Enter this one-time code:
+                  <b data-backend-sign-in-code>{signIn.user_code}</b>
+                </p>
+                <p class="sign-in-caveat">
+                  Panels stops showing this code after its own time limit. It cannot promise
+                  the code stays valid until then.
+                </p>
+                <button
+                  class="sign-in-action"
+                  disabled={signInState.busy}
+                  onclick={() => void signInSession.cancel(snapshot.backend_key)}
+                  data-backend-sign-in-cancel={snapshot.backend_key}
+                >Cancel sign-in</button>
+              {:else}
+                {@const caveat = signInCaveat(snapshot, BACKENDS_PAGE_SURROUNDINGS)}
+                {#if caveat}
+                  <p class="sign-in-caveat" data-backend-sign-in-caveat>{caveat}</p>
+                {/if}
+                <button
+                  class="sign-in-action"
+                  disabled={signInState.busy}
+                  onclick={() => void signInSession.start(snapshot.backend_key)}
+                  data-backend-sign-in-start={snapshot.backend_key}
+                >{signInState.busy ? "Starting…" : "Sign in"}</button>
+              {/if}
+              {#if outcome}
+                <p class="sign-in-outcome" data-backend-sign-in-outcome>{outcome}</p>
+              {/if}
+              {#if signInState.error}
+                <p class="error" role="alert">{signInState.error}</p>
+              {/if}
+            </div>
+          {/if}
           {#if open}
             <div class="drawer" data-backend-model-drawer={snapshot.backend_key}>
               {#if snapshot.available_models.length === 0}
@@ -275,6 +367,13 @@
   .chevron { display: inline-block; width: var(--space-3); color: var(--text-faintest); font-size: var(--type-md); }
   .backend-name { color: var(--text-strong); font-family: var(--font-serif); font-size: var(--type-serif-lg); font-weight: 500; text-transform: capitalize; }
   .rowhead:hover .backend-name, .open .backend-name { color: var(--text-strong); }
+  .sign-in { padding: var(--space-3) 0 var(--space-1); display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
+  .sign-in-step { margin: 0; font-size: var(--type-sm); color: var(--text-default); }
+  .sign-in-step b { font-family: var(--font-mono); color: var(--accent-text); letter-spacing: 0.06em; }
+  .sign-in-caveat { margin: 0; font-size: var(--type-xs); color: var(--text-faint); max-width: 56ch; }
+  .sign-in-outcome { margin: 0; font-size: var(--type-xs); color: var(--text-faint); }
+  .sign-in-action { font: inherit; font-size: var(--type-xs); cursor: pointer; background: var(--surface-2); color: var(--text-default); border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-3); }
+  .sign-in-action:disabled { cursor: default; color: var(--text-faintest); }
   .identity-note { color: var(--text-faintest); font-size: var(--type-xs); }
   .identity-note b { color: var(--text-faint); font-family: var(--font-mono); font-weight: 500; }
   .version-cell { min-width: 0; white-space: nowrap; }

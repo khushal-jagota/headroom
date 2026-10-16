@@ -154,8 +154,7 @@ def _registered_command_paths() -> tuple[tuple[str, ...], ...]:
             ),
             2,
             (
-                "error: Invalid value for '--priority': "
-                "'PX' is not one of 'P0', 'P1', 'P2', 'P3'.",
+                "error: Invalid value for '--priority': 'PX' is not one of 'P0', 'P1', 'P2', 'P3'.",
                 "Use: panels ticket create --input-json FILE",
             ),
         ),
@@ -198,9 +197,7 @@ def test_every_registered_command_has_concise_unknown_option_output(
 
     assert result.exit_code == 2
     assert 1 <= len(lines) <= 2
-    assert lines[0].startswith(
-        'error: "--not-a-panels-option" is not an option for panels'
-    )
+    assert lines[0].startswith('error: "--not-a-panels-option" is not an option for panels')
     assert "Usage:" not in result.stderr
     if lines[-1].startswith("Use: "):
         _assert_registered_call(lines[-1].removeprefix("Use: "))
@@ -226,9 +223,7 @@ def test_each_manual_validation_recovery_names_a_registered_call(recovery: str) 
     _assert_registered_call(recovery)
 
 
-def test_local_validation_uses_a_complete_call_and_keeps_existing_good_guidance() -> (
-    None
-):
+def test_local_validation_uses_a_complete_call_and_keeps_existing_good_guidance() -> None:
     missing_target = CliRunner().invoke(cli_main, ["send-message"])
     retired_recap = CliRunner().invoke(
         cli_main,
@@ -238,8 +233,7 @@ def test_local_validation_uses_a_complete_call_and_keeps_existing_good_guidance(
 
     assert missing_target.exit_code == 1
     assert _lines(missing_target.stderr) == [
-        "error: send-message requires exactly one of --owner, --chief, --ticket, or "
-        "--sprint-item",
+        "error: send-message requires exactly one of --owner, --chief, --ticket, or --sprint-item",
         "Use: panels send-message --owner --message TEXT",
     ]
     _assert_registered_call("panels send-message --owner --message TEXT")
@@ -285,8 +279,7 @@ def test_revision_feedback_error_names_its_real_non_cli_path(
 
     assert result.exit_code == 1
     assert _lines(result.stderr) == [
-        "error: unknown part names: rejection; valid part names: brief, proposal, recap, "
-        "guidance",
+        "error: unknown part names: rejection; valid part names: brief, proposal, recap, guidance",
         "Revision feedback arrives in the Worker prompt. No panels command reads it.",
     ]
 
@@ -306,8 +299,7 @@ def test_revision_feedback_json_envelope_stays_machine_readable(
         "error": {
             "code": "validation",
             "message": (
-                "unknown part names: rejection; valid part names: brief, proposal, recap, "
-                "guidance"
+                "unknown part names: rejection; valid part names: brief, proposal, recap, guidance"
             ),
             "detail": {},
         }
@@ -411,6 +403,27 @@ def test_environment_exception_keeps_the_cause_and_names_the_command_shape(
         "--deployed-revision TEXT",
     ]
     _assert_registered_call(
-        "panels environment backup --source-db FILE --backup-dir DIRECTORY "
-        "--deployed-revision TEXT"
+        "panels environment backup --source-db FILE --backup-dir DIRECTORY --deployed-revision TEXT"
     )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "recovery"),
+    (
+        (("day", "set", "focus", "--value", "old"), "panels day show DATE"),
+        (("day", "add-ticket", "t_example"), "panels day show DATE"),
+        (("sprint", "create", "--name", "old"), "panels sprint list"),
+        (("sprint", "outcome", "carry", "sp_a", "si_a"), "panels sprint list"),
+    ),
+)
+def test_retired_calendar_writes_name_only_a_historical_read(
+    arguments: tuple[str, ...],
+    recovery: str,
+) -> None:
+    result = CliRunner().invoke(cli_main, list(arguments))
+    assert result.exit_code == 2
+    assert _lines(result.stderr) == [
+        "error: Calendar planning writes are retired.",
+        f"Use: {recovery}",
+    ]
+    _assert_registered_call(recovery)

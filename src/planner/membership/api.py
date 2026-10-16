@@ -10,6 +10,7 @@ from functools import partial
 
 from fastapi import APIRouter
 
+from planner.core.errors import ErrorCode, PlannerError
 from planner.membership.collections import ENTRIES, CollectionEntry, MembershipWrite
 from planner.membership.contracts import Collection, MembershipAnswer
 from planner.tickets.api import Cfg, Clk, Ctx, DbConn, parse_enum
@@ -28,7 +29,12 @@ def _prepare(
     cfg: Cfg,
     clk: Clk,
 ) -> tuple[CollectionEntry, MembershipWrite]:
-    entry = ENTRIES[parse_enum(Collection, collection, "collection")]
+    kind = parse_enum(Collection, collection, "collection")
+    if kind in (Collection.day_tickets, Collection.sprint_outcomes):
+        raise PlannerError(
+            ErrorCode.validation, "calendar membership is retired", {"collection": collection}
+        )
+    entry = ENTRIES[kind]
     resolved_container = entry.resolve_container(container_id, clk, cfg)
     write = MembershipWrite(
         conn=conn,

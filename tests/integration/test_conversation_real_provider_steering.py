@@ -48,7 +48,6 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 REAL_SYSTEM_STEERING_ENVIRONMENT_NAME = "PANELS_REAL_SYSTEM_STEERING_TESTS"
 EVIDENCE_ROOT_ENVIRONMENT_NAME = "PANELS_STEERING_EVIDENCE_ROOT"
 HERMES_HOME_TEMPLATE_ENVIRONMENT_NAME = "PANELS_REAL_HERMES_HOME_TEMPLATE"
-CODEX_HOME_TEMPLATE_ENVIRONMENT_NAME = "PANELS_REAL_CODEX_HOME_TEMPLATE"
 CLAUDE_CONFIG_TEMPLATE_ENVIRONMENT_NAME = "PANELS_REAL_CLAUDE_CONFIG_TEMPLATE"
 
 real_system_steering_only = pytest.mark.skipif(
@@ -571,12 +570,10 @@ def _prepare_isolated_provider_home(
         monkeypatch.setenv("PLAN_HERMES_HOME", str(destination))
         return
     if backend_key is ConversationBackendKey.codex:
-        source = _required_template(CODEX_HOME_TEMPLATE_ENVIRONMENT_NAME)
-        destination = runtime_root / "codex-home"
-        destination.mkdir()
-        for name in ("auth.json", "config.toml"):
-            shutil.copy2(source / name, destination / name)
-        monkeypatch.setenv("CODEX_HOME", str(destination))
+        # Codex keeps one account in one file, and refreshes it in whichever home it is
+        # pointed at. A copied home takes the rotation with it and leaves the real login
+        # holding a spent token, so this case uses the real home as production does. There
+        # is nothing of codex's to isolate that is worth that.
         return
     source = _required_template(CLAUDE_CONFIG_TEMPLATE_ENVIRONMENT_NAME)
     destination = runtime_root / "claude-config"

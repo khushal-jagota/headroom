@@ -9,7 +9,7 @@ anything afterwards. A Ticket moves again only when someone files or decides a p
 ```
 the readiness loop                      one Ticket's start
 ──────────────────                      ──────────────────
-today's Tickets, oldest first           is the worker busy? → leave it alone
+ordinary Tickets, oldest first           is the worker busy? → leave it alone
     │                                   take the Ticket out of "empty"
     │  ask of each: is it ready?        start a conversation if it has none
     └──────────────────────────────►    write the opening message and send it
@@ -21,18 +21,18 @@ today's Tickets, oldest first           is the worker busy? → leave it alone
 
 ## Deciding, then claiming
 
-The loop only ever looks at Tickets on today's planning day. A Ticket is ready when
+The loop considers all ordinary Tickets. A Ticket is ready when
 all of these hold right now:
 
-1. It is on today's planning day.
-2. Its Stage is not terminal and has a next blank to fill.
-3. It reads as `empty`. That one answer keeps blocked work, parked approvals, active
+0. It is not explicitly backlogged. This check runs again inside claim admission.
+1. Its Stage is not terminal and has a next blank to fill.
+2. It reads as `empty`. That one answer keeps blocked work, parked approvals, active
    claims, and errors out of the runnable set. A parked proposal is not asked about
-   separately: a Ticket with one reads as `awaiting_approval`, so rule 3 already refuses
+   separately: a Ticket with one reads as `awaiting_approval`, so rule 2 already refuses
    it.
-4. If the Stage's owner is the user, its one opening turn has not run yet. The opener
+3. If the Stage's owner is the user, its one opening turn has not run yet. The opener
    fact belongs to that Stage entry, so a later entry gets its own turn.
-5. If the blank is Consequences, no other Ticket in the same project-and-Worker-type
+4. If the blank is Consequences, no other Ticket in the same project-and-Worker-type
    lane is at Consequences and not resting. One poll sends at most one Ticket into
    each free lane.
 
@@ -53,12 +53,11 @@ The canonical Stage writer clears the fact when the Ticket leaves that Stage. A 
 Stage entry can therefore receive its own opener without a database trigger.
 All readiness questions run again inside the write, so only one racer wins the claim.
 
-Day membership is one of those questions, and it is asked at the start of a worker step
-and again inside the claim. Nothing reads it afterwards to continue, re-wake, or end
-that turn: a supervisor restart reads it once more, only to explain why a start produced
-nothing. Taking a Ticket off today
-therefore stops its next wake, and it does not stop the turn already in flight. That
-turn ends on its own, and the Ticket moves again only when someone acts on it.
+Today membership is no longer a readiness question. No replacement activation gate
+exists. Existing ceilings, proposals, blockers, ownership, claims, busy checks, and
+context recovery keep their normal meaning. Orchestrator settlement does not gate
+continuation. One-time obsolete planning cancellation is migration hygiene, not a
+runtime rule for ordinary unfinished work.
 
 Checking too often costs nothing: the check reads and decides, and writes nothing. So
 the loop does not wait out its timer. Every write committed through the database door
@@ -100,12 +99,12 @@ and worker-error writers in `src/planner/tickets/data.py`.
 ## Scheduled Ticket handoff
 
 The scheduled-Ticket loop shares the server lifespan and single-machine lock, but not
-this system's job. Scheduling stops after ordinary Ticket creation and Day placement.
+this system's job. Scheduling stops after ordinary Ticket creation.
 That commit emits the change signal, and readiness applies the same rules as it does to
 any other Ticket. There is no schedule-to-Worker shortcut.
 
 See **Scheduled Ticket creation** (`scheduled-tickets.md`) for schedule configuration,
-occurrences, and suppression.
+occurrences, and receipts.
 
 ## Sending the step
 
@@ -228,10 +227,9 @@ before the next Worker starts.
 
 One narrow recovery also covers Tickets stranded by an older rejection. It requires a
 Worker-owned Stage, Empty status, no claim, an existing conversation, and pending revision
-feedback for that Stage. Restart adds that Ticket to the current Day and starts normal
-readiness without resetting its conversation. It clears stale running and queued traffic
-first, then sends the revision into the same conversation history. Other prior-Day Tickets
-remain at rest. This recovery preserves the launch configuration, so it refuses restart
+feedback for that Stage. Restart starts normal readiness without resetting its conversation. It clears stale running and queued traffic
+first, then sends the revision into the same conversation history. Ordinary unfinished
+Tickets follow the same readiness rules regardless of their historical Day membership. This recovery preserves the launch configuration, so it refuses restart
 options that name a backend, model, or reasoning effort.
 
 ## Sending a proposal back
@@ -239,8 +237,7 @@ options that name a backend, model, or reasoning effort.
 When the holder returns a proposal for revision, one Ticket transaction checks every
 authorization and current-parent route. It clears the proposal, appends the exact comment
 to a separate attributed revision-feedback record, and returns the Ticket to its resting
-status. If the rejected Stage belongs to the Worker, the same transaction adds the Ticket
-to the current Day. Its commit wakes normal readiness, which reuses the existing
+status. Its commit wakes normal readiness, which reuses the existing
 conversation. A same-Stage user opener is cleared so the discussion can open again. The
 next normal worker-step prompt carries feedback for that Stage, and only a successful
 send consumes it. Ticket guidance is not sent with it, and the worker reads that off the

@@ -106,6 +106,13 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
   };
 }
 
+function boardItem(rows: SprintItemWorkspaceTicket[]): BoardSprintItem {
+  const full = workspace(rows);
+  return { id: full.id, title: full.title, priority: full.priority,
+    created_at: full.created_at, conversation_id: null, tickets: rows,
+    ticket_rollup: quiet, ...quiet };
+}
+
 describe("the shared Item and Ticket presentation", () => {
   it.each([
     [{ awaiting_approval: true }, "awaiting_approval"],
@@ -133,7 +140,7 @@ describe("the shared Item and Ticket presentation", () => {
     expect(workItemTicketGroups(rows.map((row) => boardCard(row)))
       .map((group) => [group.label, group.tickets.map((row) => row.id)]))
       .toEqual([["Errored", [unfinished.id]], ["Done", [completed.id]]]);
-    const rail = buildWorkspaceRail([], [], workspace(rows));
+    const rail = buildWorkspaceRail([], [boardItem(rows)]);
     expect(rail.items[0].groups.map((group) => [group.label, group.cards.map((row) => row.id)]))
       .toEqual([["Errored", [unfinished.id]]]);
     expect(dayVisualTicket(completed as unknown as DayTicket).group).toBe("done");
@@ -144,8 +151,8 @@ describe("the shared Item and Ticket presentation", () => {
   });
 
   it.each([
-    [{ awaiting_approval: true }, "awaiting_approval", "owner-approval"],
-    [{ awaiting_answer: true }, "awaiting_answer", "owner-answer"],
+    [{ awaiting_approval: true }, "awaiting_approval", null],
+    [{ awaiting_answer: true }, "awaiting_answer", null],
     [{ assigned: true }, "assigned", null],
     [{ awaiting_reply: true }, "awaiting_reply", "reply"]
   ] as const)("keeps %o above completed history and explicit failure", (values, group, mark) => {
@@ -162,7 +169,7 @@ describe("the shared Item and Ticket presentation", () => {
       stage: "done", ticket_status: "errored", agent_state: "errored"
     });
     expect(workItemTicketGroupKey(live)).toBe("agent");
-    expect(workItemActivityMark(live)).toBe("working");
+    expect(workItemActivityMark(live)).toBeNull();
     expect(workItemTicketGroupKey(failed)).toBe("errored");
   });
 
@@ -191,27 +198,27 @@ describe("the shared Item and Ticket presentation", () => {
       agent_state: "working"
     });
     expect(workItemTicketGroupKey(assignedAndWorking)).toBe("assigned");
-    expect(workItemActivityMark(assignedAndWorking)).toBe("working");
-    expect(workItemActivityMarkPresentation("working").state).toBe("current-running");
+    expect(workItemActivityMark(assignedAndWorking)).toBeNull();
+    expect(workItemActivityMarkPresentation(null).state).toBeNull();
   });
 
-  it("uses white, blue, spinner, then empty precedence", () => {
+  it("uses only direct replies for activity marks", () => {
     expect(workItemActivityMark(ticket("all", {
       awaiting_approval: true,
       awaiting_answer: true,
       awaiting_reply: true,
       agent_state: "working"
-    }))).toBe("owner-approval");
+    }))).toBe("reply");
     expect(workItemActivityMark(ticket("answer", {
       awaiting_answer: true,
       awaiting_reply: true,
       agent_state: "working"
-    }))).toBe("owner-answer");
+    }))).toBe("reply");
     expect(workItemActivityMark(ticket("reply", {
       awaiting_reply: true,
       agent_state: "working"
     }))).toBe("reply");
-    expect(workItemActivityMark(ticket("working", { agent_state: "working" }))).toBe("working");
+    expect(workItemActivityMark(ticket("working", { agent_state: "working" }))).toBeNull();
     expect(workItemActivityMark(ticket("quiet"))).toBeNull();
   });
 
@@ -223,14 +230,14 @@ describe("the shared Item and Ticket presentation", () => {
     });
     const reply = ticket("reply", { awaiting_reply: true, agent_state: "working" });
     const working = ticket("working", { assigned: true, agent_state: "working" });
-    expect(dayVisualTicket(approval as unknown as DayTicket).state).toBe("needs-me");
-    expect(feedbackTicketStageState(approval)).toBe("needs-me");
+    expect(dayVisualTicket(approval as unknown as DayTicket).state).toBe("current-awaiting-approval");
+    expect(feedbackTicketStageState(approval)).toBe("current-awaiting-approval");
     expect(dayVisualTicket(reply as unknown as DayTicket).state).toBe(
       "current-awaiting-approval"
     );
     expect(feedbackTicketStageState(reply)).toBe("current-awaiting-approval");
-    expect(dayVisualTicket(working as unknown as DayTicket).state).toBe("current-running");
-    expect(feedbackTicketStageState(working)).toBe("current-running");
+    expect(dayVisualTicket(working as unknown as DayTicket).state).toBeNull();
+    expect(feedbackTicketStageState(working)).toBeNull();
   });
 
   it("returns identical groups, counts, marks, and activity order for both payload shapes", () => {
@@ -260,52 +267,31 @@ describe("the shared Item and Ticket presentation", () => {
     ]);
   });
 
-  it("uses the selected workspace snapshot for both the rail Item and its children", () => {
-    const stale = ticket("same", { assigned: true, agent_state: "idle", activity_at: 1 });
-    const current = ticket("same", { assigned: true, agent_state: "working", activity_at: 2 });
-    const selected = workspace([current]);
-    selected.ticket_rollup = { ...quiet, assigned: true, agent_state: "working" };
-    const summary: BoardSprintItem = {
-      id: selected.id,
-      created_at: selected.created_at,
-      conversation_id: null,
-      ticket_rollup: { ...quiet, assigned: true, agent_state: "idle" },
-      ...quiet
-    };
-    const rail = buildWorkspaceRail([boardCard(stale)], [summary], selected);
-    expect(rail.items[0].mark).toBe("working");
-    expect(rail.items[0].groups[0].cards[0].agent_state).toBe("working");
-
-    const direct = buildWorkspaceRail([], [], selected);
-    expect(direct.items.map((item) => item.id)).toEqual([selected.id]);
+  it("uses complete board Item tickets even when Today has a different classification", () => {
+    const today = ticket("same", { assigned: true, activity_at: 1 });
+    const full = ticket("same", { awaiting_approval: true, activity_at: 2 });
+    const offDay = ticket("off-day", { awaiting_approval: true });
+    const summary = boardItem([full, offDay]);
+    summary.ticket_rollup = { ...quiet, awaiting_reply: true };
+    const rail = buildWorkspaceRail([boardCard(today)], [summary]);
+    expect(rail.items[0].mark).toBeNull();
+    expect(rail.items[0].groups[0].key).toBe("awaiting_approval");
+    expect(rail.items[0].groups[0].cards.map((row) => row.id)).toEqual(["same", "off-day"]);
+    expect(rail.groups[0].key).toBe("assigned");
+    expect(buildWorkspaceRail([], []).items).toEqual([]);
   });
 
-  it("keeps priority, age, and ID order when a full child snapshot changes completion", () => {
-    const done = ticket("done", { stage: "done" });
-    const unfinished = ticket("off-day", { assigned: true });
-    const cards = [
-      { ...boardCard(ticket("newer"), "si_newer"), sprint_item_priority: "P1" as const },
-      { ...boardCard(done), sprint_item_priority: "P1" as const },
-      { ...boardCard(ticket("urgent"), "si_urgent"), sprint_item_priority: "P0" as const },
-      { ...boardCard(ticket("same-age"), "si_after"), sprint_item_priority: "P1" as const }
+  it("keeps board membership and priority, age, ID order with complete children", () => {
+    const summaries = [
+      { ...boardItem([]), id: "si_newer", created_at: 2 },
+      { ...boardItem([ticket("done", { stage: "done" }), ticket("off-day", { assigned: true })]), id: "si_mirror", created_at: 1 },
+      { ...boardItem([]), id: "si_urgent", priority: "P0" as const },
+      { ...boardItem([]), id: "si_after", created_at: 1 }
     ];
-    const summaries = cards.map((card) => ({
-      id: card.sprint_item_id!,
-      created_at: card.sprint_item_id === "si_newer" ? 2 : 1,
-      conversation_id: null,
-      ticket_rollup: quiet,
-      ...quiet
-    }));
-    const before = buildWorkspaceRail(cards, summaries);
-    const selected = workspace([done, unfinished]);
-    const after = buildWorkspaceRail(cards, summaries, selected);
-    const expected = ["si_urgent", "si_after", "si_mirror", "si_newer"];
-    expect(before.items.map((item) => item.id)).toEqual(expected);
-    expect(after.items.map((item) => item.id)).toEqual(expected);
-    expect(before.items.find((item) => item.id === "si_mirror")?.rested).toBe(true);
-    expect(after.items.find((item) => item.id === "si_mirror")?.rested).toBe(false);
-    expect(after.items.find((item) => item.id === "si_mirror")?.groups[0].cards[0].id)
-      .toBe("off-day");
+    const rail = buildWorkspaceRail([], summaries);
+    expect(rail.items.map((item) => item.id)).toEqual(["si_urgent", "si_after", "si_mirror", "si_newer"]);
+    expect(rail.items.find((item) => item.id === "si_mirror")?.rested).toBe(false);
+    expect(rail.items.find((item) => item.id === "si_mirror")?.groups[0].cards[0].id).toBe("off-day");
   });
 
   it("publishes the exact approved group order", () => {

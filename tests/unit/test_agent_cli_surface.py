@@ -13,9 +13,7 @@ from planner.cli import http
 from planner.cli.main import main
 
 
-def _visible_leaves(
-    command: click.Command, path: tuple[str, ...]
-) -> list[tuple[str, ...]]:
+def _visible_leaves(command: click.Command, path: tuple[str, ...]) -> list[tuple[str, ...]]:
     if not isinstance(command, click.Group):
         return [path]
     leaves: list[tuple[str, ...]] = []
@@ -25,14 +23,15 @@ def _visible_leaves(
     return leaves
 
 
-def test_ordinary_help_has_five_roots_and_forty_leaves() -> None:
-    visible_roots = [
-        name for name, command in main.commands.items() if not command.hidden
-    ]
+def test_ordinary_help_exposes_orchestrators_and_retires_calendar_writes() -> None:
+    visible_roots = [name for name, command in main.commands.items() if not command.hidden]
     leaves = _visible_leaves(main, ("panels",))
 
-    assert visible_roots == ["send-message", "project", "day", "ticket", "sprint"]
-    assert len(leaves) == 40
+    assert visible_roots == ["send-message", "project", "day", "ticket", "sprint", "orchestrator"]
+    assert ("panels", "orchestrator", "settle") in leaves
+    assert ("panels", "ticket", "assign") in leaves
+    assert ("panels", "day", "set") not in leaves
+    assert ("panels", "sprint", "create") not in leaves
     assert ("panels", "ticket", "edit") in leaves
     assert ("panels", "ticket", "proposal") in leaves
     assert ("panels", "worker", "propose") not in leaves
@@ -85,9 +84,7 @@ def test_ticket_show_reads_selected_parts_from_current_worker_ticket(
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs))
         if path == "/api/worker-types":
-            return {
-                "worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]
-            }
+            return {"worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]}
         return _ticket_record("t_current")
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -113,9 +110,7 @@ def test_ticket_show_reads_selected_parts_from_named_ticket(
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs))
         if path == "/api/worker-types":
-            return {
-                "worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]
-            }
+            return {"worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]}
         return _ticket_record("t_named")
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -147,7 +142,7 @@ def test_structured_create_forwards_the_existing_create_body(
         "title": "One Ticket",
         "worker_type": "coding",
         "project_id": "project_panels",
-        "sprint_id": None,
+        "orchestrator": {"kind": "chief", "id": "chief"},
         "blocked_by_ticket_ids": ["t_blocker"],
     }
     result = CliRunner().invoke(

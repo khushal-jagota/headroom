@@ -69,18 +69,18 @@ function boardCard(values: Partial<BoardCard>): BoardCard {
 }
 
 describe("a worker waiting on an answer", () => {
-  it("takes the pure white dot on the Workspace rail, and says what it is", () => {
+  it("has no conversation dot on the Workspace rail", () => {
     const waiting = boardCard({ awaiting_answer: true });
     const mark = workspaceTicketRowMark(waiting);
     expect(workspaceRowMarkPresentation(mark)).toEqual({
-      state: "needs-me",
-      ariaLabel: "Needs your answer"
+      state: null,
+      ariaLabel: ""
     });
   });
 
   it("is not called a message on the Sprint Item page", () => {
     expect(sprintTicketCondition({ ...quiet, awaiting_answer: true })).toEqual({
-      mark: "needs-me",
+      mark: null,
       word: "needs your answer"
     });
   });
@@ -88,7 +88,7 @@ describe("a worker waiting on an answer", () => {
   it("is not called a message in the Feedback inbox", () => {
     const waiting = { ...quiet, awaiting_answer: true };
     expect(feedbackTicketStateLabel(waiting)).toBe("Needs your answer");
-    expect(feedbackTicketStageState(waiting)).toBe("needs-me");
+    expect(feedbackTicketStageState(waiting)).toBeNull();
   });
 
   it("is not called a message on the Agents roster", () => {
@@ -98,7 +98,7 @@ describe("a worker waiting on an answer", () => {
         awaiting_answer: true,
         agent_state: "working"
       })
-    ).toEqual({ state: "needs-me", ariaLabel: "Needs an answer" });
+    ).toBeNull();
   });
 });
 
@@ -113,10 +113,10 @@ describe("an unread message", () => {
     expect(feedbackTicketStateLabel({ ...quiet, awaiting_reply: true })).toBe("Messages");
   });
 
-  it("does not outrank the answer the worker is blocked on", () => {
+  it("keeps its message dot while the answer owns the group", () => {
     const both = boardCard({ awaiting_reply: true, awaiting_answer: true });
     expect(workspaceRowMarkPresentation(workspaceTicketRowMark(both)).ariaLabel).toBe(
-      "Needs your answer"
+      "Unread reply"
     );
   });
 
@@ -140,8 +140,8 @@ describe("the Day", () => {
     expect(dayPageState(tickets)).toBe("populated");
   });
 
-  it("gives the two of them different dots", () => {
-    expect(dayVisualTicket(dayTicket({ awaiting_answer: true })).state).toBe("needs-me");
+  it("gives only the unread message a dot", () => {
+    expect(dayVisualTicket(dayTicket({ awaiting_answer: true })).state).toBeNull();
     expect(dayVisualTicket(dayTicket({ awaiting_reply: true })).state).toBe(
       "current-awaiting-approval"
     );

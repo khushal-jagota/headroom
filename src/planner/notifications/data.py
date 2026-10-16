@@ -297,7 +297,8 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
                 stage=str(row["stage"]),
                 worker_type=str(row["worker_type"]),
             ),
-            "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
+            "errored": facts.ticket_status is TicketStatus.errored
+            or (conversation.errored and str(row["stage"]) != "cancelled"),
         }
         for notification_type, active in flags.items():
             occurred_at = (

@@ -1,11 +1,4 @@
-"""A message the owner has not read reaches the Workspace rail off its Day.
-
-The Day is the rail's roster. That is right for work he scheduled, and wrong for a
-message: he has not seen it, so a Day he did not put its Ticket on cannot be his answer.
-These tests hold the two halves of that — which conversations hold an unread message,
-and which Tickets the board therefore returns — and hold the Day rule for everything
-else.
-"""
+"""Global discovery retains unread messages and includes ordinary off-Day work."""
 
 from __future__ import annotations
 
@@ -36,11 +29,7 @@ A_DAY = "2026-09-20"
 def _card_ids(board: dict[str, object]) -> set[str]:
     columns = board["columns"]
     assert isinstance(columns, list)
-    return {
-        str(card["id"])
-        for column in columns
-        for card in column["cards"]
-    }
+    return {str(card["id"]) for column in columns for card in column["cards"]}
 
 
 def _make_ticket(conn: Connection, title: str) -> str:
@@ -116,12 +105,10 @@ def test_a_named_ticket_joins_the_board_from_off_the_day(tmp_db: Connection) -> 
 
     board = board_view(
         tmp_db,
-        day_id=A_DAY,
         ticket_ids_holding_unread_owner_message=[off_day_with_a_message],
     )
 
-    assert _card_ids(board) == {on_day, off_day_with_a_message}
-    assert off_day_quiet not in _card_ids(board)
+    assert _card_ids(board) == {on_day, off_day_with_a_message, off_day_quiet}
 
 
 def test_a_named_ticket_already_on_the_day_appears_once(tmp_db: Connection) -> None:
@@ -130,7 +117,6 @@ def test_a_named_ticket_already_on_the_day_appears_once(tmp_db: Connection) -> N
 
     board = board_view(
         tmp_db,
-        day_id=A_DAY,
         ticket_ids_holding_unread_owner_message=[on_day, on_day],
     )
 

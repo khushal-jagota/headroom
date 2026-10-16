@@ -62,4 +62,5 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
             ]
         }
         assert "stage" in list_parameters
-        assert "worker_type" not in list_parameters
+        assert "worker_type" in list_parameters
+        assert "is_backlogged" in list_parameters

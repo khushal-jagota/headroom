@@ -53,6 +53,7 @@ def create_proposal_wake(
     ticket_title: str,
     proposal_field: str,
     now: int,
+    target: Principal | None = None,
 ) -> bool:
     return create_wake(
         conn,
@@ -64,6 +65,7 @@ def create_proposal_wake(
             f"Ticket `{ticket_id}` ({ticket_title}) filed a proposal for `{proposal_field}`."
         ),
         now=now,
+        target=target,
     )
 
 

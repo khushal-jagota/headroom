@@ -49,7 +49,7 @@ def _target_parent_outcome_id(conn: sqlite3.Connection, target: Target) -> str |
     row = conn.execute(
         "SELECT item.id AS id FROM tickets AS ticket "
         "JOIN sprint_items AS item ON item.id = ticket.sprint_item_id "
-        "WHERE ticket.id = ?",
+        "WHERE ticket.id = ? AND ticket.orchestrator_kind = 'sprint_item'",
         (target.id,),
     ).fetchone()
     return None if row is None else str(row["id"])
@@ -79,7 +79,7 @@ def _caller_parent_outcome_id(conn: sqlite3.Connection, caller: Principal) -> st
     row = conn.execute(
         "SELECT item.id AS id FROM tickets AS ticket "
         "JOIN sprint_items AS item ON item.id = ticket.sprint_item_id "
-        "WHERE ticket.id = ?",
+        "WHERE ticket.id = ? AND ticket.orchestrator_kind = 'sprint_item'",
         (caller.id,),
     ).fetchone()
     return None if row is None else str(row["id"])

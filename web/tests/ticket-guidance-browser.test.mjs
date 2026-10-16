@@ -92,6 +92,8 @@ def respond(route):
         result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'brief':'Context'}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':True}
     elif path == 'tickets/t_kickoff':
         result={**ticket, 'id': 't_kickoff', 'stage': 'needs_brief', 'ceiling': 'needs_brief', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}, 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': {'field': 'brief', 'body': 'Opened for somebody else', 'proposed_by': 'chief', 'created_at': 1}, 'field_values': {}}
+    elif path == 'tickets/t_with_session':
+        result={**ticket, 'id': 't_with_session', 'conversation_id':'existing-worker-session'}
     elif path == 'tickets/t_open':
         result={**ticket, 'id': 't_open', 'ticket_status': 'empty', 'pending_proposal': None, 'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}
     elif path == 'tickets/t_done':
@@ -112,68 +114,68 @@ with sync_playwright() as p:
     page.route('**/api/**', respond)
     page.goto(sys.argv[1])
     expect(page.locator('[data-project-fact]')).to_have_text('One')
-    expect(page.locator('[data-outcome-fact]')).to_have_text('Kept outcome')
+    expect(page.locator('[data-parent-link]')).to_have_text('Orchestrator')
+    expect(page.locator('[data-parent-link]')).to_have_attribute('href', '#/workspace/item/outcome_kept')
     assert page.locator('[data-project-control], [data-outcome-control], [data-sprint-control]').count() == 0
     assert page.get_by_label('Ticket project').count() == 0
     assert page.get_by_label('Ticket outcome').count() == 0
     assert page.get_by_label('Ticket Sprint').count() == 0
     assert page.locator('[data-ticket-guidance], [data-ticket-history]').count() == 0
     assert page.get_by_text('Old unapproved draft').count() == 0
-    # A parked proposal freezes how far the Ticket may go and not who is asked, so the
-    # leash is here with only its holder half. This Ticket is held by the Chief, which is
-    # the state that had no control at all: a proposal in an agent's queue, and no way to
-    # move it to Khushal's.
-    parked_leash=page.locator('[data-leash]')
-    assert parked_leash.count() == 1
-    assert 'then Chief' in parked_leash.locator('[data-leash-face]').inner_text()
-    assert 'Until' not in parked_leash.locator('[data-leash-face]').inner_text()
-    parked_leash.locator(':scope > summary').click()
-    assert parked_leash.locator('[data-scope-ceiling]').count() == 1
+    # A later step with no Worker session cannot deliver a revision; do not offer an invalid send.
+    expect(page.locator('[data-send-back]')).to_be_disabled()
+    expect(page.locator('[data-return-unavailable]')).to_contain_text('No existing Worker conversation')
+    # Waiting uses the same editable stage+reviewer control as running. Scope-only
+    # rerouting preserves the pending body; choices past the boundary announce approval.
+    parked_leash=page.locator('[data-reviewer-control]')
+    expect(parked_leash.locator('[data-scope-ceiling]')).to_have_attribute('aria-label', 'Approved until Success, then Chief reviews')
     parked_leash.locator('[data-scope-ceiling]').click()
-    # The panel opens on the reviewer, and says why the other half cannot be touched.
-    expect(parked_leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
-    assert parked_leash.locator('[data-ceiling-picker-locked]').count() == 1
-    assert parked_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
-    # The held half is not reachable from the keyboard either: ArrowLeft out of the list
-    # lands on the reviewer row, because a disabled row is not one of the panel's actions.
-    parked_leash.get_by_role('listbox').press('ArrowLeft')
-    assert page.evaluate("document.activeElement.getAttribute('data-ceiling-part')") == 'holder'
-    page.keyboard.press('ArrowRight')
-    parked_leash.locator('[data-ceiling-picker-choice="owner"]').click()
+    expect(parked_leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    expect(parked_leash.locator('[data-ceiling-effect]')).to_have_text('Nothing is approved while the ceiling stays at Success.')
+    assert parked_leash.locator('[data-ceiling-picker-locked]').count() == 0
+    assert not parked_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
+    expect(parked_leash.locator('[data-ceiling-picker-choice="done"] [class*="approves-mark"]')).to_have_text('· approves')
+    parked_leash.locator('[data-ceiling-part="holder"]').click()
+    parked_leash.get_by_role('listbox').press('u')
+    expect(parked_leash.locator('[data-ceiling-effect]')).to_have_text('Sends this Success proposal to User. Nothing is approved.')
+    assert ceiling_writes == []
+    parked_leash.get_by_role('listbox').press('Enter')
     for _ in range(100):
         if ceiling_writes: break
         page.wait_for_timeout(50)
     assert ceiling_writes == [{'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}]
+    assert approvals == []
 
     page.evaluate("window.__showTicket('t_open')")
     page.locator('[data-ticket-id="t_open"]').wait_for()
     leash=page.locator('[data-leash]')
     # No proposal parked, so the whole ceiling is here: the stage and the holder.
-    assert 'Until Success' in leash.locator('[data-leash-face]').inner_text()
-    assert 'then me' in leash.locator('[data-leash-face]').inner_text()
-    leash.locator(':scope > summary').click()
+    expect(leash.locator('[data-scope-ceiling]')).to_have_attribute('aria-label', 'Approved until Success, then User reviews')
     assert leash.locator('select').count() == 0
     assert leash.locator('[data-scope-ceiling]').count() == 1
     assert leash.locator('[data-scope-holder]').count() == 0
     leash.locator('[data-scope-ceiling]').click()
+    assert leash.locator('[data-ceiling-picker-panel]').count() == 1
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
+    assert leash.locator('[data-ceiling-part="ceiling"] .picker-rail-row-detail').inner_text() == 'Success'
+    assert leash.locator('[data-ceiling-part="holder"] .picker-rail-row-detail').inner_text() == 'User'
     # A stage chosen and then abandoned is a draft. Escape discards it: nothing is sent,
     # the shut trigger still reads the saved ceiling, and the list ticks it again.
     leash.get_by_role('listbox').press('End')
     leash.get_by_role('listbox').press('Enter')
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
+    expect(leash.locator('[data-ceiling-part="ceiling"] .picker-rail-row-detail')).to_have_text('Done')
     leash.get_by_role('listbox').press('Escape')
     expect(leash.get_by_role('listbox')).to_have_count(0)
     page.wait_for_timeout(200)
     assert ceiling_writes == [{'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}], ceiling_writes
-    assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Success · then me'
+    assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Approved until Success, then User reviews'
     leash.locator('[data-scope-ceiling]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
     assert leash.locator('[role="option"][aria-selected="true"]').get_attribute('data-ceiling-picker-choice') == 'needs_success_condition'
-    # The rail names both halves and reaches either one directly. What each is set to is
-    # on the trigger above the panel.
-    assert 'Until Success' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
-    assert 'then me' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
+    # Each rail names its part and retains the selected draft as the other list opens.
+    assert 'Approved until Success' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
+    assert 'then User reviews' in leash.locator('[data-scope-ceiling]').get_attribute('aria-label')
     leash.locator('[data-ceiling-part="holder"]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     leash.locator('[data-ceiling-part="ceiling"]').click()
@@ -192,7 +194,6 @@ with sync_playwright() as p:
 
     # A reviewer changed on its own writes the reviewer alone. The ceiling is not sent,
     # so a Ticket cannot have its ceiling moved by a reader who only changed the queue.
-    leash.locator(':scope > summary').click()
     leash.locator('[data-scope-ceiling]').click()
     leash.locator('[data-ceiling-part="holder"]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
@@ -205,7 +206,6 @@ with sync_playwright() as p:
 
     # A reviewer chosen and then abandoned is discarded too, and letters typed at one
     # half never join letters typed at the other.
-    leash.locator(':scope > summary').click()
     leash.locator('[data-scope-ceiling]').click()
     expect(leash.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
     leash.get_by_role('listbox').press('d')
@@ -216,36 +216,41 @@ with sync_playwright() as p:
     expect(leash.get_by_role('listbox')).to_have_count(0)
     page.wait_for_timeout(200)
     assert len(ceiling_writes) == 3, ceiling_writes
-    assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Success · then me'
+    assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Approved until Success, then User reviews'
+    leash.locator('[data-scope-ceiling]').click()
+    page.locator('.ticket-title-row').click()
+    expect(leash.get_by_role('listbox')).to_have_count(0)
     assert page.locator('[data-copy], [data-ticket-takeover-toggle]').count() == 0
     assert placement_writes == []
-    assert 'Copy' not in page.locator('.ticket-operating').inner_text()
-    assert 'Take over' not in page.locator('.ticket-operating').inner_text()
+    assert page.locator('.ticket-operating').count() == 0
     def assert_ticket_layout(width):
         page.set_viewport_size({'width': width, 'height': 900})
         page.wait_for_timeout(50)
         assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
         identity_box=page.locator('[data-ticket-identity]').bounding_box()
         title_box=page.locator('.ticket-title-row').bounding_box()
-        menu_box=page.locator('.ticket-leash-menu').bounding_box()
+        leash.locator('[data-scope-ceiling]').click()
+        menu_box=leash.locator('[data-ceiling-picker-panel]').bounding_box()
         assert identity_box and title_box and menu_box
         assert identity_box['y'] + identity_box['height'] <= title_box['y'] + 1
         assert menu_box['x'] >= -1
         assert menu_box['x'] + menu_box['width'] <= width + 1
+        assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
+        leash.get_by_role('listbox').press('Escape')
     assert_ticket_layout(1280)
     assert_ticket_layout(390)
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.evaluate("window.__showTicket('t_guidance')")
     page.locator('[data-ticket-id="t_guidance"]').wait_for()
     assert page.locator('[data-accept]').count() == 1
-    proposal=page.locator('[data-field="success_condition"] [contenteditable]')
+    proposal=page.locator('[data-approval-block][data-field="success_condition"] [contenteditable]')
     proposal.click()
     proposal.fill('Edited pending result')
-    page.locator('[data-field="success_condition"] summary').click()
+    proposal.press('Tab')
     page.wait_for_function("document.body.textContent.includes('Edited pending result')")
     page.locator('[data-stage-fold]').evaluate('(element) => element.open = true')
-    page.locator('[data-field="brief"]').evaluate('(element) => element.open = true')
-    saved=page.locator('[data-field="brief"] [contenteditable]')
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate('(element) => element.open = true')
+    saved=page.locator('[data-stage-fold] [data-field="brief"] [contenteditable]')
     saved.click()
     saved.fill('Edited saved kickoff')
     saved.press('Tab')
@@ -256,7 +261,7 @@ with sync_playwright() as p:
     assert writes == [{'value': {'brief': 'Edited saved kickoff'}}]
     page.evaluate("window.__showTicket('t_personal')")
     page.locator('[data-ticket-id="t_personal"]').wait_for()
-    personal_outcome=page.locator('[data-field="outcome"] [contenteditable]')
+    personal_outcome=page.locator('[data-worker-live-card] [data-field="outcome"] [contenteditable]')
     expect(personal_outcome).to_have_count(1)
     assert page.locator('[data-field="consequences"] [contenteditable]').count() == 0
     personal_outcome.fill('Completed by user')
@@ -268,22 +273,24 @@ with sync_playwright() as p:
     expect(page.locator('[data-project-fact]')).to_have_text('One')
     assert page.locator('[data-outcome-fact]').count() == 0
     assert page.locator('[data-copy]').count() == 0
-    # A Ticket opened for somebody else parks its Kickoff in their queue. That is the
-    # first moment a proposal can sit in the wrong place, so the holder half is here too.
-    kickoff_leash=page.locator('[data-leash]')
-    assert kickoff_leash.count() == 1
-    assert kickoff_leash.locator('[data-leash-face]').inner_text().strip() == 'then Chief'
-    kickoff_leash.locator(':scope > summary').click()
-    assert kickoff_leash.locator('[data-scope-ceiling]').count() == 1
+    # Kickoff keeps its no-revision exception while both ceiling halves remain editable.
+    kickoff_leash=page.locator('[data-reviewer-control]')
+    expect(page.locator('[data-send-back]')).to_have_count(0)
     kickoff_leash.locator('[data-scope-ceiling]').click()
-    assert kickoff_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
-    # No Sprint Item on this one, so the Item option is absent.
+    assert not kickoff_leash.locator('[data-ceiling-part="ceiling"]').is_disabled()
+    kickoff_leash.locator('[data-ceiling-part="holder"]').click()
     assert [option.get_attribute('data-ceiling-picker-choice') for option in kickoff_leash.locator('[role="option"]').all()] == ['owner', 'chief']
     kickoff_leash.get_by_role('listbox').press('Escape')
+    page.evaluate("window.__showTicket('t_with_session')")
+    page.locator('[data-ticket-id="t_with_session"]').wait_for()
+    expect(page.locator('[data-send-back]')).to_be_enabled()
+    expect(page.locator('[data-return-unavailable]')).to_have_count(0)
+    page.locator('[data-send-back]').click()
+    expect(page.locator('[data-revision-note]')).to_be_visible()
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()
     assert page.locator('[data-copy]').count() == 0
-    assert 'Copy' not in page.locator('.ticket-operating').inner_text()
+    assert page.locator('.ticket-operating').count() == 0
     page.evaluate('window.__showReview()')
     expect(page.locator('[data-ticket-guidance]')).to_have_count(1)
     guidance=page.locator('[data-ticket-guidance]')
@@ -298,7 +305,7 @@ with sync_playwright() as p:
     # the value that will be sent, so the owner does not need to reselect it.
     approve_row=page.locator('[data-approval-block][data-field="success_condition"] .approval-control-group')
     assert approve_row.locator('[data-scope-ceiling]').count() == 1
-    assert approve_row.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Done · then me'
+    assert approve_row.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Done · then User'
     assert not page.locator('[data-approval-block][data-field="success_condition"] [data-accept]').is_disabled()
     # A half-finished change is still a draft. Escape restores the bound default.
     approve_row.locator('[data-scope-ceiling]').click()
@@ -307,7 +314,7 @@ with sync_playwright() as p:
     expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     approve_row.get_by_role('listbox').press('Escape')
     expect(approve_row.get_by_role('listbox')).to_have_count(0)
-    assert approve_row.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Done · then me'
+    assert approve_row.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Until Done · then User'
     # Changing only the reviewer keeps the default ceiling and commits the holder.
     approve_row.locator('[data-scope-ceiling]').click()
     approve_row.locator('[data-ceiling-part="holder"]').click()
@@ -324,12 +331,16 @@ with sync_playwright() as p:
     assert len(approvals) == 1
     assert approvals[0]['next_ceiling'] == 'done'
     assert approvals[0]['next_holder'] == {'kind': 'chief', 'id': 'chief'}
-    # Declared ownership is Config's to show and nobody's to edit: the Stage table is
-    # display-only, so who owns a Stage cannot be changed from the screen that reads it.
+    # Declared ownership is Config's to change. Every non-terminal Stage carries one
+    # owner control, and the Stage table carries nothing else that edits.
     page.evaluate('window.__showConfig()')
     stage_table=page.locator('[data-worker-stage-table]')
     stage_table.locator('[data-worker-stage-row]').first.wait_for()
-    assert stage_table.locator('select, input, [contenteditable]').count() == 0
+    editable_rows = stage_table.locator('[data-worker-stage-row][data-terminal="false"]').count()
+    assert editable_rows > 0
+    assert stage_table.locator('[data-stage-owner-select]').count() == editable_rows
+    assert stage_table.locator('select').count() == editable_rows
+    assert stage_table.locator('input, [contenteditable]').count() == 0
     browser.close()
 `;
   const child = spawn(join(root, '..', '.venv', 'bin', 'python'), ['-c', script, `http://127.0.0.1:${address.port}/.test-scratch/${stem}.html`], { stdio: 'inherit' });

@@ -200,40 +200,42 @@ with sync_playwright() as p:
 
     coding_block = page.locator('[data-approval-block][data-field="success_condition"]')
     expect(coding_block).to_have_count(1)
-    coding_picker = coding_block.locator('[data-scope-ceiling]')
-    expect(coding_picker).to_have_attribute('aria-label', 'Until What Changes · then me')
-    assert not coding_block.locator('[data-accept]').is_disabled()
+    coding_picker = coding_block.locator('[data-accept]')
+    expect(coding_picker).to_have_text('Approve')
+    expect(coding_block.locator('[data-reviewer-control] [data-scope-ceiling]')).to_have_attribute('aria-label', 'Approved until Success Condition, then User reviews')
 
-    # Picker cancellation still leaves the actual bound default untouched.
+    # Approve opens the existing scope picker; a dismissed draft never approves.
     coding_picker.click()
     coding_block.locator('[data-ceiling-picker-choice="done"]').click()
     expect(coding_block.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     coding_block.get_by_role('listbox').press('Escape')
-    expect(coding_picker).to_have_attribute('aria-label', 'Until What Changes · then me')
+    assert approvals == []
 
-    # An explicit scope and an unsaved proposal edit survive fresh response objects.
-    coding_picker.click()
-    coding_block.locator('[data-ceiling-picker-choice="none"]').click()
-    coding_block.locator('[data-ceiling-picker-choice="chief"]').click()
-    expect(coding_picker).to_have_attribute('aria-label', 'Until No further · then Chief')
+    # An explicit picker draft and proposal edit survive fresh response objects.
     proposal = coding_block.locator('[contenteditable]')
     proposal.fill('Local edit')
+    proposal.press('Tab')
+    coding_picker.click()
+    coding_block.locator('[data-ceiling-picker-choice="done"]').click()
     page.evaluate('window.__refresh()')
-    expect(coding_picker).to_have_attribute('aria-label', 'Until No further · then Chief')
+    expect(coding_block.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     expect(proposal).to_have_text('Local edit')
+    assert approvals == []
 
-    # A replacement proposal resets both the proposal draft and the valid default.
+    # Replacement revision (same timestamp) resets proposal text and valid default.
     page.evaluate("fetch('/api/test/replace-coding', {method: 'POST'})")
     state = page.evaluate("fetch('/api/test/state').then(response => response.json())")
-    assert state['created_at'] == 1
-    assert state['revision'] == 2
+    assert state['created_at'] == 1 and state['revision'] == 2
     reads_before_replacement = state['read_count']
     page.evaluate('window.__refresh()')
     state = page.evaluate("fetch('/api/test/state').then(response => response.json())")
     assert state['read_count'] > reads_before_replacement
     expect(proposal).to_have_text('Replacement result')
-    expect(coding_picker).to_have_attribute('aria-label', 'Until What Changes · then me')
-    coding_block.locator('[data-accept]').click()
+    expect(coding_block.get_by_role('listbox')).to_have_count(0)
+    coding_picker.click()
+    expect(coding_block.locator('[role="option"][aria-selected="true"]')).to_have_attribute('data-ceiling-picker-choice', 'needs_what_changes')
+    coding_block.locator('[data-ceiling-part="holder"]').click()
+    coding_block.locator('[data-ceiling-picker-choice="owner"]').click()
     for _ in range(100):
         if len(approvals) == 1: break
         page.wait_for_timeout(20)
@@ -242,38 +244,44 @@ with sync_playwright() as p:
     page.evaluate("window.__showReview('t_findings', 'findings')")
     findings_block = page.locator('[data-approval-block][data-field="findings"]')
     expect(findings_block).to_have_count(1)
-    expect(findings_block.locator('[data-scope-ceiling]')).to_have_attribute('aria-label', 'Until Answer · then me')
+    expect(findings_block.locator('[data-scope-ceiling]')).to_have_attribute('aria-label', 'Until Answer · then User')
     assert not findings_block.locator('[data-accept]').is_disabled()
     findings_block.locator('[data-accept]').click()
     for _ in range(100):
         if len(approvals) == 2: break
         page.wait_for_timeout(20)
 
-    # The final proposal uses the terminal Stage without picker interaction.
+    # Final proposal still offers the immediate terminal ceiling through Approve.
     page.evaluate("window.__showTicket('t_consequences')")
     consequences_block = page.locator('[data-approval-block][data-field="consequences"]')
     expect(consequences_block).to_have_count(1)
-    expect(consequences_block.locator('[data-scope-ceiling]')).to_have_attribute('aria-label', 'Until Done · then me')
-    assert not consequences_block.locator('[data-accept]').is_disabled()
     consequences_block.locator('[data-accept]').click()
+    expect(consequences_block.locator('[role="option"][aria-selected="true"]')).to_have_attribute('data-ceiling-picker-choice', 'done')
+    consequences_block.locator('[data-ceiling-part="holder"]').click()
+    consequences_block.locator('[data-ceiling-picker-choice="owner"]').click()
     for _ in range(100):
         if len(approvals) == 3: break
         page.wait_for_timeout(20)
 
-    # A same-tick duplicate cannot pass the in-flight guard. A failed request restores
-    # the action and leaves the visible default intact for a successful retry.
+    # Choosing a reviewer commits once; same-tick duplicate choice is guarded. A failed
+    # request keeps the draft/action usable for a deliberate retry.
     page.evaluate("window.__showTicket('t_failure')")
     failure_block = page.locator('[data-approval-block][data-field="what_changes"]')
     expect(failure_block).to_have_count(1)
     failure_button = failure_block.locator('[data-accept]')
-    expect(failure_block.locator('[data-scope-ceiling]')).to_have_attribute('aria-label', 'Until Plan · then me')
-    failure_button.evaluate('(button) => { button.click(); button.click(); }')
+    failure_proposal = failure_block.locator('[contenteditable]')
+    failure_proposal.fill('Edited retry')
+    failure_proposal.press('Tab')
+    failure_button.click()
+    failure_block.locator('[data-ceiling-part="holder"]').click()
+    failure_block.locator('[data-ceiling-picker-choice="owner"]').evaluate('(button) => { button.click(); button.click(); }')
     expect(failure_block).to_contain_text('approval failed')
-    assert not failure_button.is_disabled()
     state = page.evaluate("fetch('/api/test/state').then(response => response.json())")
     assert state['failure_attempts'] == 1
-    expect(failure_block.locator('[data-scope-ceiling]')).to_have_attribute('aria-label', 'Until Plan · then me')
     failure_button.click()
+    expect(failure_block.locator('[role="option"][aria-selected="true"]')).to_have_attribute('data-ceiling-picker-choice', 'needs_plan')
+    failure_block.locator('[data-ceiling-part="holder"]').click()
+    failure_block.locator('[data-ceiling-picker-choice="owner"]').click()
     for _ in range(100):
         if len(approvals) == 4: break
         page.wait_for_timeout(20)
@@ -283,21 +291,21 @@ with sync_playwright() as p:
     # A host-level disable still wins even though the approval scope is now valid.
     page.evaluate('window.__showDisabled()')
     disabled_block = page.locator('[data-approval-block][data-field="what_changes"]')
-    expect(disabled_block.locator('[data-scope-ceiling]')).to_have_attribute('aria-label', 'Until Plan · then me')
+    expect(disabled_block.locator('[data-scope-ceiling]')).to_have_attribute('aria-label', 'Until Plan · then User')
     assert disabled_block.locator('[data-accept]').is_disabled()
 
     assert approvals == [
         {'ticket_id': 't_coding', 'field': 'success_condition', 'body': {
-            'next_ceiling': 'needs_what_changes', 'next_holder': {'kind': 'owner', 'id': 'owner'}
+            'next_ceiling': 'needs_what_changes', 'next_holder': {'kind': 'owner', 'id': 'owner'}, 'expected_proposal_revision': 2
         }},
         {'ticket_id': 't_findings', 'field': 'findings', 'body': {
             'next_ceiling': 'needs_answer', 'next_holder': {'kind': 'owner', 'id': 'owner'}
         }},
         {'ticket_id': 't_consequences', 'field': 'consequences', 'body': {
-            'next_ceiling': 'done', 'next_holder': {'kind': 'owner', 'id': 'owner'}
+            'next_ceiling': 'done', 'next_holder': {'kind': 'owner', 'id': 'owner'}, 'expected_proposal_revision': 1
         }},
         {'ticket_id': 't_failure', 'field': 'what_changes', 'body': {
-            'next_ceiling': 'needs_plan', 'next_holder': {'kind': 'owner', 'id': 'owner'}
+            'next_ceiling': 'needs_plan', 'next_holder': {'kind': 'owner', 'id': 'owner'}, 'expected_proposal_revision': 1, 'edited_body': 'Edited retry'
         }},
     ]
     browser.close()

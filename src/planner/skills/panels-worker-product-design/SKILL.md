@@ -17,10 +17,26 @@ Keep this outcome-level; do not hide an assumed solution inside the Brief.
 
 ### needs_best_guess_and_open_options
 
-Inspect the real product, then make a concise first best guess from that evidence and
-the Brief. Note the top-level issues, the intended flow, and consequential assumptions.
-Be opinionated but easy for the user to correct; this is not yet a specification or
-wireframe.
+This Stage is words, not pictures. No mockup, no HTML, no wireframe — a short description
+the user can check at a glance. The proposal is the sense check: approving it is how they
+confirm you have understood.
+
+Write two parts, and keep them apart.
+
+**Best guess.** Explain simply what the thing should be. Ground it in the Brief and in what
+the product already does, so inspect the real product first and do not contradict behaviour
+that already exists. State the rules and logic that are settled: what has to be shown, what
+has to be true, what the Brief already decides. Be opinionated and easy to correct.
+
+**Open options.** Name what is not confirmed. These are the places a different answer is
+plausible, and they are what the Wireframe will be asked to show as real alternatives, so
+name them here or they will not be built. Say what each option is about and what would make
+one of them right, rather than picking a favourite. If the guess genuinely settles
+everything, say so; an empty list is an answer, a missing one is not.
+
+The user is checking two things: that the settled part matches what they decided, and that
+the open part is genuinely open. "We know what needs to be shown, we have no idea how to
+show it yet" is the normal shape of a good one.
 
 ### needs_wireframe
 

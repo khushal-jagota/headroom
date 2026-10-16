@@ -56,7 +56,7 @@ let address = $state(parseWorkspaceAddress(window.location.hash)!);
   assert.ok(address && typeof address === "object");
 
   const script = String.raw`
-import json, sys
+import json, re, sys
 from playwright.sync_api import sync_playwright, expect
 
 def card(ticket_id, item_id, item_title, **values):
@@ -83,8 +83,8 @@ def item(item_id):
     return {"id": item_id, "created_at": 0, "conversation_id": None, "ticket_rollup": dict(quiet), **quiet}
 
 # The old Item has only a done child on today’s board. Its full workspace also
-# contains unfinished, off-day children. Opening it must change completion styling
-# and child visibility without promoting the Item above its legitimate position.
+# contains unfinished, off-day children. The board includes those children before
+# opening it, and delayed detail delivery must change neither rail nor completion.
 quiet = item("si_old")["ticket_rollup"]
 old = card("t_done", "si_old", "Old Item", stage="done", is_done=True)
 peer = card("t_peer", "si_peer", "Peer Item")
@@ -108,7 +108,10 @@ def workspace(item_id):
                 "launch_configuration": {"employee_backend": "codex", "employee_launch_model": None,
                                          "employee_launch_reasoning_effort": None}}}
 
-workers = {"chief_of_staff": {"label": "Chief of Staff", "needs_me": False,
+for summary in board["sprint_items"]:
+    detail = workspace(summary["id"])
+    summary.update(title=detail["title"], priority=detail["priority"], tickets=detail["tickets"])
+workers = {"chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "awaiting_reply": False,
     "agent_working": False, "latest_turn_ended_sequence": 0}, "workers": []}
 held = []
 delay_old = True
@@ -146,7 +149,7 @@ def order(page, expected):
         raise AssertionError(f"Item order changed: expected {expected}, actual {actual}")
 
 def title(page, item_id):
-    return page.locator('[data-sprint-item="' + item_id + '"] .board-workspace-item-title')
+    return page.locator('[data-sprint-item="' + item_id + '"] .item-title')
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
@@ -157,17 +160,17 @@ with sync_playwright() as p:
     page.goto(sys.argv[1] + "#/workspace?view=items")
     expected = ["si_old", "si_peer", "si_newer"]
     order(page, expected)
-    expect(title(page, "si_old")).to_have_class("board-workspace-item-title board-workspace-item-title--rested")
+    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
 
-    page.locator('[data-sprint-item="si_old"] .board-workspace-item-head').click()
-    expect(page.locator('[data-sprint-item="si_old"] .board-workspace-item-head')).to_have_attribute("aria-current", "page")
+    page.locator('[data-sprint-item="si_old"] .item-head').click()
+    expect(page.locator('[data-sprint-item="si_old"] .item-head')).to_have_attribute("aria-current", "page")
     order(page, expected)
     page.wait_for_function("() => document.querySelector('[data-sprint-item-workspace=si_old]') !== null")
     # Python route interception keeps this response pending until selection is proven.
     assert len(held) == 1, "the full workspace request was not delayed"
     delay_old = False
     fulfill(held.pop(), workspace("si_old"))
-    expect(title(page, "si_old")).to_have_class("board-workspace-item-title")
+    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, expected)
     rows = page.locator('[data-sprint-item="si_old"] [data-ticket-id]')
     expect(rows).to_have_count(2)
@@ -176,21 +179,22 @@ with sync_playwright() as p:
     page.locator('[data-sprint-item="si_old"] [data-ticket-id="t_recent"]').click()
     page.wait_for_function("() => location.hash === '#/workspace/item/si_old/t_recent'")
     order(page, expected)
-    assert page.locator('.board-workspace-item--selected').count() == 0
+    expect(page.locator('[data-sprint-item="si_old"] [data-ticket-id="t_recent"]')).to_have_class(re.compile(r"\bticket-row--active\b"))
+    assert page.locator('.orchestrator-card.selected').count() == 0
     page.go_back()
-    expect(page.locator('[data-sprint-item="si_old"] .board-workspace-item-head')).to_have_attribute("aria-current", "page")
+    expect(page.locator('[data-sprint-item="si_old"] .item-head')).to_have_attribute("aria-current", "page")
     order(page, expected)
-    page.locator('[data-sprint-item="si_peer"] .board-workspace-item-head').click()
+    page.locator('[data-sprint-item="si_peer"] .item-head').click()
     order(page, expected)
     page.go_back()
     order(page, expected)
     page.reload()
-    expect(title(page, "si_old")).to_have_class("board-workspace-item-title")
+    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, expected)
 
     # A real priority edit must still move an Item. A real child activity update
     # must still reorder children inside their group, while Item age order survives.
-    peer["sprint_item_priority"] = "P0"
+    board["sprint_items"][1]["priority"] = "P0"
     page.evaluate("window.__refresh()")
     order(page, ["si_peer", "si_old", "si_newer"])
     children[1]["activity_at"] = 30
@@ -198,27 +202,27 @@ with sync_playwright() as p:
     expect(rows.first).to_have_attribute("data-ticket-id", "t_older")
     order(page, ["si_peer", "si_old", "si_newer"])
 
-    # Clearing a read mark on a completed Item changes its attention and styling,
-    # but cannot demote it behind a younger Item with the same priority.
+    # Completion and clearing a direct unread mark do not settle or reorder an Item.
+    # Only the owner Settle action changes retirement, never child completion.
     page.goto(sys.argv[1] + "#/workspace?view=items")
     summary = board["sprint_items"][0]
+    summary["tickets"] = [old]
     summary["awaiting_reply"] = True
     page.evaluate("window.__refresh()")
-    expect(page.locator('[data-sprint-item="si_old"] .board-workspace-stage-mark')).to_have_attribute("data-workspace-mark", "reply")
-    expect(title(page, "si_old")).to_have_class("board-workspace-item-title")
+    expect(page.locator('[data-sprint-item="si_old"] .item-head .stage-mark')).to_have_attribute("data-workspace-mark", "reply")
+    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, ["si_peer", "si_old", "si_newer"])
     summary["awaiting_reply"] = False
     page.evaluate("window.__refresh()")
-    expect(title(page, "si_old")).to_have_class("board-workspace-item-title board-workspace-item-title--rested")
+    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, ["si_peer", "si_old", "si_newer"])
 
-    # A direct-linked Item absent from today's board still joins the rail in the
-    # canonical priority/age position, and survives reload.
+    # A direct-linked Item absent from the board opens its pane without joining the rail.
     page.goto(sys.argv[1] + "#/workspace/item/si_direct")
-    order(page, ["si_peer", "si_old", "si_newer", "si_direct"])
-    expect(page.locator('[data-sprint-item="si_direct"] .board-workspace-item-head')).to_have_attribute("aria-current", "page")
+    order(page, ["si_peer", "si_old", "si_newer"])
+    expect(page.locator('[data-sprint-item-workspace="si_direct"]')).to_have_count(1)
     page.reload()
-    order(page, ["si_peer", "si_old", "si_newer", "si_direct"])
+    order(page, ["si_peer", "si_old", "si_newer"])
     assert not errors, errors
     browser.close()
 `;

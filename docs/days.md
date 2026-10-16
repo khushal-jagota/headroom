@@ -1,74 +1,26 @@
-# Days
+# Historical Days
 
-A Day is the daily orientation surface. Its four morning fields are focus, brief take,
-watchout, and what makes the day land. A separate **Midday reconciliation** field records
-where things stand without replacing the morning plan. The planning date flips at
-**5am, not midnight**, so late-night work stays with the day it belongs to.
+Days and Today membership are retired from live work. A Worker does not need Day
+membership to continue. Existing ceilings, approvals, blockers, claims, stage ownership,
+and conversation recovery still govern continuation.
 
-The four morning fields steer attention, motivation, and behavior. They do not act as
-literal summaries of the Tickets on the Day:
+Existing Day records retain their original writing and ordered Ticket associations.
+`GET /api/day/{date}` and `GET /api/day/{date}/tickets` read those records.
+A missing Day returns not found. A read never creates a Day.
+`panels day show <date>` retains historical access. Day edits and membership commands
+are retired, as are the HTTP write routes.
 
-- **Focus** (`focus`) tells the user what to keep their mind and attention on.
-- **Brief take** (`brief_take`) gives the shortest useful framing for a clear, intentional, and manageable day.
-- **Watchout** (`watchout`) names the likely psychological or behavioral trap and the response that defeats it.
-- **What makes the day land** (`if_today_lands`) states the user's personal gain from completing the day, not the work completed or a system state.
+The morning, midday, and Sprint planning schedules no longer supply work. Their old
+Tickets and receipts remain historical records. Retirement cancels only the reviewed
+obsolete planning cohort through an explicit forward migration. It does not mark that
+work Done or cancel ordinary unfinished work.
 
-```
-   5am   05:05                                      14:30
-   boundary + planning-day Ticket                   midday-check Ticket
-   ────────   ───────────────────                   ───────────────────
-   Day becomes current                              compare intent to reality
-              gather current evidence                    │
-                         │                               ▼
-                         ▼                          agree any intervention
-                    plan with you                         │
-                         │                               ▼
-                         ▼                          record reconciliation
-                    commit the Day
-```
+The old `day_YYYY-MM-DD` identifiers and planning-date helper remain meaningful for
+historical links. New useful daily schedules use the local calendar date for receipts.
+They neither create Days nor assign Workers to them.
 
-## How a day flows
+The final frontend removal follows the approved design handoff. Backend retirement
+alone does not establish that the new navigation is delivered.
 
-The Home page combines the morning orientation with live Ticket progress. It shows one
-mark per Ticket and action tiles for work that needs the user, needs review, is working,
-is assigned to the user, or is done. The tiles lead to Review or Workspace. The page does not edit the
-Day fields or show the Midday reconciliation.
-
-The four morning fields and Midday reconciliation remain canonical Day data. Their
-planning Workers write them through guarded Day actions. Reading or writing a planning
-date creates its row when needed. Crossing 5am only changes which planning date is
-current. It does not copy a plan or start a rollover workflow.
-
-At 05:05 local time, just after the 5am planning-day boundary, the internal schedule
-creates a `planning-day` Ticket for the current planning day. Its specialist Worker
-gathers current evidence, plans the four morning fields with the user, and writes the
-agreed Day only at Consequences. At 14:30, a
-`planning-midday-check` Ticket compares that intent with current execution, agrees any
-useful intervention, carries it out, and records the reconciliation. Each planning
-Ticket uses the Personal Project and direct current-Sprint placement. Repeat or pre-laid
-matching Tickets suppress duplicates.
-
-If a scheduled run is missed, recovery is ordinary creation of the intended planning
-Ticket with `panels ticket create --input-json -` and the applicable planning Worker type,
-with the Personal Project and intended Sprint selected. There is no backfill and no rollover fallback.
-
-## Quick capture
-
-Loose capture is not in the Day UI right now. Tickets, backlog items, and ideas are
-created through their own surfaces or the command-line tool.
-
-_Code paths:_ `src/planner/days/` (the Day record, guarded writes, and 5am planning
-date), `web/src/routes/DayRoute.svelte` (the daily hub), and
-`web/src/lib/dayPresentation.ts` (Ticket progress and action tiles).
-
-## Handoffs
-
-- **Tickets & the gates** (`tickets-and-gates.md`) — the tickets a day lists and the
-  ceiling that governs whether the day's work advances on its own.
-- **The conversation system** (`conversation-system.md`) — a Ticket's conversation is
-  separate from the Day page.
-- **Backlog & Ideas** (`backlog-and-ideas.md`) — where a captured idea lands.
-
----
-
-_Last verified: 2026-08-12._
+_Code paths:_ `src/planner/days/`, `src/planner/membership/api.py`,
+`src/planner/runtime/worker_step_readiness.py`, and `src/planner/scheduled_tickets/`.

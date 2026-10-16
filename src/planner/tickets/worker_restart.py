@@ -15,7 +15,6 @@ from planner.conversation.contracts import ConversationSystem
 from planner.core import authority
 from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days import data as days_data
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
@@ -74,8 +73,7 @@ def require_restartable(
         ticket.ticket_status is TicketStatus.empty
         and revision_feedback.snapshot(conn, ticket_id) is not None
     ):
-        # Rejections before the rollover repair could leave revision work off today's
-        # Day. Its conversation remains the right one, so restart only has to rearm it.
+        # Revision work keeps its conversation, so restart only has to rearm it.
         return ticket
     raise PlannerError(
         ErrorCode.validation,
@@ -110,8 +108,7 @@ async def restart_worker(
     ticket_id: str,
     *,
     write_employee_configuration: Callable[[sqlite3.Connection, int], None] | None,
-    start_worker_step: Callable[[str], Awaitable[WorkerStepStartResult]],
-    resolve_planning_write: Callable[[], tuple[str, int]],
+    start_worker_step: Callable[[], Awaitable[WorkerStepStartResult]],
     now: Callable[[], int],
 ) -> dict[str, object]:
     """Kill this Ticket's dead conversation, give the claim back, and start again.
@@ -147,7 +144,7 @@ async def restart_worker(
             # this conversation if the Ticket moves while kill is awaited.
             await conversations.kill(killed_conversation_id)
 
-        planning_day_id, write_now = resolve_planning_write()
+        write_now = now()
         conn.execute("BEGIN IMMEDIATE")
         try:
             _require_same_restart_target(conn, principal, ticket)
@@ -181,8 +178,6 @@ async def restart_worker(
                             "the Ticket moved while it was being restarted",
                             {"ticket_id": ticket_id},
                         )
-            elif rearming_idle_revision:
-                days_data.add_day_ticket(conn, planning_day_id, ticket_id, write_now)
             if write_employee_configuration is not None:
                 write_employee_configuration(conn, write_now)
             conn.execute("COMMIT")
@@ -190,7 +185,7 @@ async def restart_worker(
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
             raise
-    start_result = await start_worker_step(planning_day_id)
+    start_result = await start_worker_step()
     restarted = tickets_data.read_ticket(conn, ticket_id)
     return {
         "ticket_id": ticket_id,
@@ -211,7 +206,6 @@ async def restart_worker(
             else worker_step_readiness.worker_step_blocker(
                 conn,
                 restarted,
-                planning_day_id=planning_day_id,
                 worker_type_definition=configured_worker_type_registry().require(
                     restarted.worker_type
                 ),

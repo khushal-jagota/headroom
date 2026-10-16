@@ -681,6 +681,47 @@ export function updateBackend(
   });
 }
 
+export type BackendSignInState = "pending" | "confirmed" | "unconfirmed" | "ended";
+
+export type BackendSignIn = {
+  session_id: string;
+  state: BackendSignInState;
+  /** Present only while pending. A finished sign-in has no use for the code. */
+  verification_url: string | null;
+  user_code: string | null;
+  started_at: string;
+  deadline_at: string;
+  detail: string | null;
+  account_label: string | null;
+};
+
+export function startBackendSignIn(
+  backendKey: ConversationBackendKey
+): Promise<{ sign_in: BackendSignIn }> {
+  return request<{ sign_in: BackendSignIn }>(
+    `/backends/${encodeURIComponent(backendKey)}/sign-in`,
+    { method: "POST" }
+  );
+}
+
+export function readBackendSignIn(
+  backendKey: ConversationBackendKey
+): Promise<{ sign_in: BackendSignIn | null }> {
+  return request<{ sign_in: BackendSignIn | null }>(
+    `/backends/${encodeURIComponent(backendKey)}/sign-in`
+  );
+}
+
+export function cancelBackendSignIn(
+  backendKey: ConversationBackendKey,
+  sessionId: string
+): Promise<{ sign_in: BackendSignIn }> {
+  return request<{ sign_in: BackendSignIn }>(
+    `/backends/${encodeURIComponent(backendKey)}/sign-in/${encodeURIComponent(sessionId)}`,
+    { method: "DELETE" }
+  );
+}
+
 export function refreshBackends(): Promise<BackendsRefreshResult> {
   return request<BackendsRefreshResult>("/backends/refresh", { method: "POST" });
 }

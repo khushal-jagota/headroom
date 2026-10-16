@@ -78,8 +78,7 @@
   function parseRoute(): Route {
     const hash = window.location.hash;
     if (hash === "" || hash === "#") {
-      window.location.replace("#/day");
-      return { name: "day", params: {}, key: "day" };
+      return redirectToWorkspace({ kind: "chief" });
     }
     const routeText = hash.slice(1);
     const queryIndex = routeText.indexOf("?");
@@ -87,8 +86,11 @@
     const query = queryIndex >= 0 ? routeText.slice(queryIndex) : "";
     const search = new URLSearchParams(query.startsWith("?") ? query.slice(1) : query);
     const segments = path.split("/").filter(Boolean);
-    const name = segments[0] || "day";
+    const name = segments[0] || "workspace";
     const params: Record<string, string> = {};
+    if (name === "day" && segments.length === 1) {
+      return redirectToWorkspace({ kind: "chief" });
+    }
     if (name === "board") {
       return redirectToWorkspace({ kind: "none" });
     }
@@ -180,6 +182,7 @@
     if (name === "sprint" && search.has("sprint")) {
       params.sprint = search.get("sprint") || "";
     }
+    if (name === "backlog") params.project = search.get("project") || "";
     const screenKey = segments.join("/") || "day";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
@@ -311,7 +314,6 @@
   </header>
   <header class="shell-nav">
     <nav class="shell-links">
-      <a class:active={currentNav("day")} class="nav-link" data-screen="home" href="#/day">Home</a>
       <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
         Review
         {#if (review.data?.items || []).length > 0}
@@ -342,9 +344,8 @@
             data-shell-more-menu
           >
             <div class="shell-more-grab" aria-hidden="true"></div>
-            <div class="shell-more-group">Planning</div>
-            <a class:active={currentNav("sprint")} href="#/sprint" onclick={closeMore}>Sprint</a>
-            <a class:active={currentNav("backlog")} href="#/backlog" onclick={closeMore}>Backlog</a>
+            <div class="shell-more-group">Work</div>
+            <a class:active={currentNav("backlog")} href="#/backlog" onclick={closeMore}>Workers</a>
             <a class:active={currentNav("ideas")} href="#/ideas" onclick={closeMore}>Ideas</a>
             <a class:active={currentNav("feedback")} href="#/feedback" onclick={closeMore}>
               <span>Feedback</span>
@@ -403,7 +404,7 @@
           {:else if route.name === "sprint"}
             <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} sprintId={route.params.sprint || null} />
           {:else if route.name === "backlog"}
-            <BacklogRoute />
+            <BacklogRoute projectId={route.params.project || ""} />
           {:else if route.name === "ideas"}
             <IdeasRoute />
           {:else if route.name === "feedback"}

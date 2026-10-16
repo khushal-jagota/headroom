@@ -1,0 +1,442 @@
+[
+  {
+    "ticket_id": "t_d1prmbs8",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": false,
+    "conversation_id": "conv_5b83f1c8c1fb41918efb2b5b9a877a14",
+    "original_record_sha256": "c4eb812cf9954a2794327be637c46eb0cf32c9b058d1f052a67480f757b1bacd"
+  },
+  {
+    "ticket_id": "t_36z2qdt3",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_day_changes",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 8,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_bef6aafacb134cb5bf6dca3560b35e95",
+    "original_record_sha256": "456acd4ba315af94e23e20a990895188b3fb2f9b4375e4a2c218d34141c1b186"
+  },
+  {
+    "ticket_id": "t_c3htctyw",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_a75e401af93b4f7fac5e507dcacdd290",
+    "original_record_sha256": "cec597a6a5970f8ff1fcc59d1bf37de24a7aec3dfa2cfb1b0e9221ea63dfa980"
+  },
+  {
+    "ticket_id": "t_pwheynf1",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_9bbd1ce4b7724630ba121db4f1f6e7f1",
+    "original_record_sha256": "f875d8ad840b7eb6e36c22811dafd8fd0dcf9bfedd6de95ec367092462806d9b"
+  },
+  {
+    "ticket_id": "t_t3ryy360",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_fafbd2867ddb4ad3b39e22b451c5428f",
+    "original_record_sha256": "3443a5dd1d129ff6348ed3ad58c57743df3584001b7b2a39a71cab5b5f92a039"
+  },
+  {
+    "ticket_id": "t_w7zc6p96",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 3,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_1e8c79c010674b4b9280e7d1fe0e8071",
+    "original_record_sha256": "09ed232826e08c18701452e86e54a7a410ea4b105011afe1e69ffc6cd3ff01a5"
+  },
+  {
+    "ticket_id": "t_zwgmkvuy",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_85356619247e4dfa8ebd82be7dbc2eda",
+    "original_record_sha256": "c6abd0f61c5e0aa2700877a61f3bb7cb05b473d33db3661ddd20b95686330c6b"
+  },
+  {
+    "ticket_id": "t_0befryd2",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_d750c63f64ff4e2c950842d822697046",
+    "original_record_sha256": "205974fd5c40fa43553ab57653e43ac014c9930f70c502ba9fd9e6160227ae68"
+  },
+  {
+    "ticket_id": "t_harnmhrx",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_b2871d15c418490891d688577b64fb47",
+    "original_record_sha256": "4416ba5ff1d313f318751314d765356c6220b250c5dec5ab8789caf00abb952b"
+  },
+  {
+    "ticket_id": "t_pehztr0f",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_5d7a50b2e0b84a17aaf524cb656e0837",
+    "original_record_sha256": "8a6e2f0ca6a4f9b0b4ad85c3d68d85a30b27ba9cac8bb494f28b85524141bc54"
+  },
+  {
+    "ticket_id": "t_dqh9azcr",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_c509f7c9ea844dce995fc3a27e7adbe8",
+    "original_record_sha256": "301f05309767d923cc9f8fd79502672035fe118ec89f249785fa7e5be00e4594"
+  },
+  {
+    "ticket_id": "t_uuybnrv6",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_1067fd8b7e424b2395c501037df741fe",
+    "original_record_sha256": "f266a5b829240e27170d543724cb4109c4226d16801104b24d1bffc4f1324e5d"
+  },
+  {
+    "ticket_id": "t_txfxv9np",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_79a31e4c614148bf8939989a5500e840",
+    "original_record_sha256": "a5c8c1e86190bebbcbec323317aae172e6b2780a256947a5d58fb504c78b70cd"
+  },
+  {
+    "ticket_id": "t_9t25rj6k",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_633f5e64c68f47cbbc7b6ee85b7cd241",
+    "original_record_sha256": "a257845cdd60c63e626aed952d0fc533741953965f0c2fa47756a1091a670205"
+  },
+  {
+    "ticket_id": "t_pxyfkee1",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_4bf11ef4ef3f4739adbe735f05611f10",
+    "original_record_sha256": "56cee7bb7ad0308cab3146c55f545fa9fac9f99918d19293fa32f7c25ac6285f"
+  },
+  {
+    "ticket_id": "t_cstwgkbq",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "out",
+    "worker_step_claim_revision": 1,
+    "has_pending_proposal": false,
+    "conversation_id": "conv_c8304893e7394328a9938dbdd0e9e2e0",
+    "original_record_sha256": "b888d17c652f0937aac741fc231ba95a41b7e8aa8b4378a53d43fe21428ffac7"
+  },
+  {
+    "ticket_id": "t_er0jat18",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_7d6083df3922426b8ae29c2970ee084c",
+    "original_record_sha256": "190d24e71b27c1dd56b691b01ece11d5fa26a9f06f97b6ab216e8f82dd63b6ea"
+  },
+  {
+    "ticket_id": "t_j2vqrkvk",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_af06031634434117a1ff4b9a84322011",
+    "original_record_sha256": "84fb7035ab2a6c2675d473e77f7a18e7aaea6edbc61294eaabc4fe88163b8b0a"
+  },
+  {
+    "ticket_id": "t_gxvmyt7y",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_a492f018bacb4ef3b5b7e07c5d9f1e0e",
+    "original_record_sha256": "38c2a9b485ad88078c3bb11eeb958b2b450c75a5a0dd548a614f913acc9c1f7c"
+  },
+  {
+    "ticket_id": "t_056190ks",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_d4b455ccb362419abe7683d99c4eb3f1",
+    "original_record_sha256": "42481b176c01c5fef1dac7c195b4d215824bf58949b5ad30fe40bbb005705f31"
+  },
+  {
+    "ticket_id": "t_q9sf5e3t",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_bff6faec79714fbba3fb33bd8e7f053a",
+    "original_record_sha256": "1dbf55265bdd9b981827f9582b670c4fb78858a14bc5c3c6470a38616f5c5773"
+  },
+  {
+    "ticket_id": "t_akh6f6wc",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_153803d2f6d747799ef4fee6cde6733c",
+    "original_record_sha256": "041a04ed2b1670e66181a72beab307d8cba7f4d3a45e457a1393024f11d962a0"
+  },
+  {
+    "ticket_id": "t_63wpnguh",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_310533f9a4f24cac8651ad01c2407ae1",
+    "original_record_sha256": "11bcd77de88b832a438c606defaa60ec24bd3bb91a60d88aa211690608667a35"
+  },
+  {
+    "ticket_id": "t_djskxxu6",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_9903de2d82694c769e2a5f2d75460e18",
+    "original_record_sha256": "152dcd3bb9af57a78f306a86dee05348c6fa5abe18b8898bd86cc8958fd873d1"
+  },
+  {
+    "ticket_id": "t_fagkz6gs",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_0f163c97f42d4ac2a5621d170368e336",
+    "original_record_sha256": "bcf809ef04b631844934d7e07e76ca4129b4b1284418236b19cf80d360f15991"
+  },
+  {
+    "ticket_id": "t_kjxs06sp",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_41a61fa9b9554d65823f45ea273e9e1f",
+    "original_record_sha256": "7158c63f992cc8acc6f4f44bef0895aeb9687d43f918f48870ee2e442e8cd25f"
+  },
+  {
+    "ticket_id": "t_7m05hyu0",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_bd3803ace7d544a3a60ef64109d2d47b",
+    "original_record_sha256": "3535163a8cca8a8e2c19e9c34c04afbfc3e75b5297797ce8a6d860a529d3fa32"
+  },
+  {
+    "ticket_id": "t_jb0rjnwv",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_841e8714031a443a8d3b424582da6c3c",
+    "original_record_sha256": "62ff1b8120950511e5e526fc657848f1ab75f3200a632776df33207a0dd17be2"
+  },
+  {
+    "ticket_id": "t_x87srr94",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_1f7e3ed354f542f5b6eb8fb42e52e2f5",
+    "original_record_sha256": "3699dad2fc0149ed6c002f829c15577dfcdd47d91585af73a81693fef91d9f11"
+  },
+  {
+    "ticket_id": "t_k1bz75j4",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_bb3199e3c7f549829f4ae2559a78b434",
+    "original_record_sha256": "5a4f6c0a60eb1a92bd11c8e8b68e89bcc0196a0d2a8e724a4973ff4cf3b86a46"
+  },
+  {
+    "ticket_id": "t_qf11p86m",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_e689b6e0d8124f8d86fc8de69e7fb67b",
+    "original_record_sha256": "200347509af83c40a538f6949d54d3b3972f1a9d24e0f4fb4a2b37cd12694a52"
+  },
+  {
+    "ticket_id": "t_w1c8jen3",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_d56f8db0d1c74cbdbbc2e50aca9c5503",
+    "original_record_sha256": "974c42c006ac6b0a4dd7828778d217c7989c3efd6f3ce425276b4fc7c4c420bd"
+  },
+  {
+    "ticket_id": "t_dt7fkcq8",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_b1d34cf1dfb1417eaf50e1d58592d1bf",
+    "original_record_sha256": "429e8a01f1d8619ad1d3879ad8c4cf5a40a9e1b70c0d3e36add7db54d4c6f7b1"
+  },
+  {
+    "ticket_id": "t_9gp5hgzk",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_b3435e0f786e4203ba7984798d56e3f5",
+    "original_record_sha256": "5f91d15435c6fe33785e4a5be8103403b6879ccff88d327af54ef8eca834e753"
+  },
+  {
+    "ticket_id": "t_xt3p8ggq",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_c28cff5a57d544c68d6ca3f83dc61184",
+    "original_record_sha256": "a579aba6028802d40257c9af16f7224d92025b1a56c23fcfa2f7d0fc9b216840"
+  },
+  {
+    "ticket_id": "t_3s6mbx6r",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_4335301e1ba34475897c0b29329f02d3",
+    "original_record_sha256": "77a212fac869d034dcf270f8a691f2cc0ee8c811a3ed1a94e9550f1d81ed14db"
+  },
+  {
+    "ticket_id": "t_7s8esp73",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_01708e384f144f188242d842bc22752a",
+    "original_record_sha256": "b16f5702f134fba6b3521ac9b9e10284c8f04f635bc0f6c3df29f79b70df0140"
+  },
+  {
+    "ticket_id": "t_rdubgph9",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_f7908b188230407b869c7c100b0337ef",
+    "original_record_sha256": "d4b83db50ae6dc3f0cde4066f0773e3b26771fbdcb43a6314bc057f47cca5fc0"
+  },
+  {
+    "ticket_id": "t_4tvn7cqa",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_baa6b03a7a0a4ef69391215244b618b3",
+    "original_record_sha256": "2d998b5a57dc9f3a16675bfe6b5249c37b702c8db65a2446bdedd4404de7baf1"
+  },
+  {
+    "ticket_id": "t_dvj22wf5",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_59eba829ecd44726b249e5031bc3766c",
+    "original_record_sha256": "8f5dcd4e39cebe185cf3c0fbac62af4f83f916ba0e8d60d9d7745f641b779c66"
+  },
+  {
+    "ticket_id": "t_h2v2dfwp",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_6d065b4a1ff54e4e8eafa8ec5fd30bea",
+    "original_record_sha256": "0e9f1e2936e840b02037182a64d7b5bb04c2a6071c53266f6a19f079a9a3bffe"
+  },
+  {
+    "ticket_id": "t_zmpga1pz",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_81dc9ca29a644d2391218543fafec4ad",
+    "original_record_sha256": "afc77460849ad68e9cfeee1ef4429cb1ae20cba8c3ef428d0d360db5294deefe"
+  },
+  {
+    "ticket_id": "t_xjnz37t1",
+    "original_worker_type": "planning-day",
+    "original_stage": "needs_review",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_0089627ea1934bdc94db0a482f0a944c",
+    "original_record_sha256": "77ccecea13b9cbc18f49758b30cef760184d1af395cdd989d1998b3af88de3cf"
+  },
+  {
+    "ticket_id": "t_tnmp9e7r",
+    "original_worker_type": "planning-sprint",
+    "original_stage": "needs_brief",
+    "worker_step_claim": "none",
+    "worker_step_claim_revision": 2,
+    "has_pending_proposal": true,
+    "conversation_id": "conv_5c4d865e062d4670ac5f96954c4bc1d2",
+    "original_record_sha256": "b99e322d7498e16bf6fdfa1b65fe964ca423d555f08017630e4f3cd190a5ecae"
+  }
+]

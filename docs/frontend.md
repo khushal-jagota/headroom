@@ -20,10 +20,8 @@ anything had changed.
 
 One screen per part of the system:
 
-- **Home** — the daily hub. It combines focus, what makes the day land, brief take,
-  and watchout with one progress mark per Ticket. Action tiles lead to work that needs
-  Khushal, needs review, is working, is assigned, or is done. Day fields are written by
-  the planning Workers, not edited on this page.
+- **Historical Days** — dated Day links remain readable. The primary navigation no longer
+  supplies a Today planning screen. A bare former Home address opens Chief.
 - **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
   walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
   Proposal items add their labelled recap, ask, approval, and send-back controls.
@@ -36,90 +34,44 @@ One screen per part of the system:
   clearing the proposal and returning the Ticket to its resting control status. Ticket
   guidance stays independent. A reply in the Ticket conversation leaves the proposal in
   Review until a decision.
-- **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
-  follows the same 5am planning-day boundary as the Day screen. One thing joins today:
-  a ticket holding a message the owner has not read appears whatever day it is on,
-  because he has not seen the message and a day he did not put it on is not his answer
-  to it. Everything else in the rail is today's tickets.
-  The Chief of Staff row leads, and under it a selector chooses one of two views
-  over the same tickets: **Tickets** or **Sprint Items**.
+- **Workspace** — an adjustable rail of orchestrator cards beside the selected conversation
+  or Worker. Chief leads, keeps its portrait, and never settles. Ordinary orchestrators
+  have Project and Settle above the title. Only the owner settles or reopens one.
+  Existing orchestrators start active. Settlement does not change Worker eligibility.
 
-  The Tickets view starts with four owner-attention groups in this order: Needs your
-  approval, Needs your answer, Yours, and Messages. Each name says whose the work is.
-  Needs your approval is a proposal the owner himself holds; a proposal parked on a
-  supervisor or another ticket is a different fact, named Awaiting an agent's approval,
-  and it is never one of the four. Needs your answer is a worker stopped on a permission
-  request or a question, which is why it sits above a stage that is merely the owner's
-  to do. Yours is a stage the ticket's worker type gives to the user rather than to a
-  worker. A ticket appears in only its first applicable group. Owner approval, an owner
-  answer, assignment, and an unread reply take precedence in that order. Errored follows
-  those groups. Errored means the Ticket has a failed Worker claim, or an unfinished
-  Ticket has a latest failed turn. A completed Ticket keeps its old failure in conversation
-  history without a current error in its row or its Item summary. Unread replies and live
-  activity still show, and a Supervisor's own failure stays independent. Empty groups are
-  not drawn.
-  Every ticket outside these groups follows in the existing status order, so no ticket
-  becomes unreachable.
+  Each active card shows the existing attention groups: Needs your approval, Needs your
+  answer, Yours, Messages, then Errored. The shared rule gives each Worker its first
+  applicable group. Holder-aware approval and the existing priority/creation ordering
+  remain. Priority is not displayed in the rail. Quiet children remain in the
+  orchestrator workspace and hover details. Empty orchestrators remain visible.
 
-  Blocked and Done arrive shut. Every other group arrives open. A shut group is still
-  its own group, with its own name and count, and
-  the reader opens it — nothing hides behind a "+n more", and no status is missing from
-  the rail. Rows inside a group are ordered by activity, newest first.
+  A card opens its orchestrator. A row opens its Worker. The address preserves selection
+  across reload and Back. Opening a detail pane never replaces rail classification.
+  Hover lights the card edge and title. Worker rows retain the existing hover wash.
+  Single-line Worker titles clip before a reserved mark column. Hover or keyboard focus
+  supplies the full title and manifest stages. Orchestrator hover supplies its children
+  grouped by the existing rule, excluding Done. One panel swaps between targets without
+  a second delay. It stays inside the viewport and does not capture the pointer.
 
-  The Tickets view is every ticket on today. Each owner-attention group and each
-  remaining status group has its own box. Rows inside each group retain activity order,
-  newest first.
+  The rail defaults to `clamp(17rem, 22vw, 20rem)`. Its edge resizes from 232 to 520
+  pixels with a pointer or arrow keys. Double click resets it. The preference persists
+  in the browser. The existing narrow layout stacks the rail and hides this splitter.
 
-  The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
-  shows only its non-empty Needs your approval, Needs your answer, Yours, and Messages
-  child groups. Quiet
-  child tickets remain available in the Tickets view and the Item workspace. An Item
-  shows those groups, and their rows, whether or not it is the Item the reader has
-  opened. The rail therefore says what needs the reader before anything is clicked, and
-  an Item with none of the four shows its title and its mark alone. Clicking anywhere in
-  the box selects the Item and opens its workspace beside the rail. That is all a click on
-  an Item ever does: no click shuts an Item. A reader inside one of its tickets clicks
-  the Item to come back to it. The groups sit inside the Item without boxes of their own.
-  Folding one of those groups, or opening a ticket, leaves the Item selected. Items are
-  ordered by priority and then by age, so an Item holds its place while its tickets move
-  under it.
+  Settled orchestrators live in a fold below the active stack. Their own rows can show
+  their own unread supervisor message dot. A child message never marks its parent.
+  Closed folds expose distinct unread-conversation counts as text and retain an expand
+  control. The Messages group ignores settlement. Each unread Worker, supervisor, or
+  Chief conversation has its own linked row and dot. Workers retain quiet parent
+  context. These rows reuse durable unread facts and normal read acknowledgments.
+  Reading a conversation refreshes its dots and counts. Later messages make it
+  discoverable again without reopening an orchestrator. Counts describe conversations,
+  not individual messages or repeated appearances of the same conversation.
 
-  Hovering a row or an Item box changes its background and nothing else. Selection is a
-  background too — the same language the rest of the app uses for a selected thing — and
-  it moves the other way: hover lifts a row off the rail, selection sinks it into one, so
-  the two never read as more and less of the same state. A selected Item is a lifted
-  surface and nothing more; its edge is the same hairline it always had. A selected
-  ticket takes the larger step of the two, so a selected row inside a selected Item is
-  still the strongest thing in the rail. Nothing but colour changes, so selecting
-  anything moves nothing on the screen.
-
-  What is open in the rail is the address, and nothing else. The Workspace keeps no
-  memory of what you looked at before, so the same address always draws the same rail: on
-  a click, on a reload, on Back, and while a change lands underneath it. Going to the
-  Chief of Staff, or opening a ticket from the Tickets view, leaves no Item open.
-  Selection in the rail is exclusive: what the workspace beside it is showing is the one
-  thing that looks selected, and nothing else does. A ticket opened from inside an Item
-  leaves that Item open around it — the address names the Item as well as the ticket —
-  and selection moves to the ticket. An open Item carries no selection of its own.
-
-  Every Ticket row and Item title uses one activity mark. A needed approval or answer is
-  a white dot. An unread reply is a blue dot. Active agent work is a spinner. The mark is
-  empty when none applies. That precedence is white, blue, spinner, then empty. The mark
-  never changes the Ticket's group. A Ticket under Yours can therefore show a spinner.
-  An Item title applies the same rule across its supervisor and every child Ticket.
-  The empty mark slot stays in place, so the title layout does not move.
-
-  When an Item is open, the rail Item and detail pane read the same Item workspace
-  snapshot. A change signal refreshes that one query for both renderers. The rail keeps
-  its compact four-group subset. The detail keeps every Ticket split into Today and
-  Other Tickets. Shared Tickets have identical groups, marks, labels, counts, and order.
-  A ticket without a Sprint Item appears in the Tickets view like any other. Every
-  Ticket row is the shared Ticket row and uses the same blue dot and spinner. It carries
-  its priority tile in the Tickets view and drops it inside a Sprint Item, where the Item
-  is the thing being read.
-
-  The Chief of Staff row starts with its bundled portrait. The portrait is an agent
-  identity on this row only; ticket rows and Worker types do not use it.
+  Every Worker dot means an unread owner message in that exact conversation. Approval,
+  pending questions, assignment, running state, errors, and child activity never create
+  a dot. Conversation spinners and failure diamonds retain their separate meanings.
+  Fold summaries use text counts, never aggregate dots. Status group membership and
+  ordering remain unchanged, including precedence for unread completed Workers.
 
   The Chief of Staff keeps its separate conversation mark. A browser with no saved lens
   choice opens in Focus. Focus shows the owner's prompts, explicit messages to the owner,
@@ -155,53 +107,52 @@ One screen per part of the system:
   and only when the reader asked for the view the selection does not already imply. All
   of these addresses survive refresh, sharing, and browser history. A stale Item drops
   out of the address, keeping a Ticket that was open beside it. At 960px or less, an
-  Item workspace or a Ticket replaces the rail, and a link back to the Workspace appears
-  above the Ticket.
+  Item workspace or a Worker replaces the rail. Its inline eyebrow supplies the way back.
 
   A Ticket never opens as a full-screen page. Every Ticket link in the app, including
   the ones on the Sprint page and in Review, uses the Workspace address. The old
   `#/ticket/<ticket-id>` address redirects there, so shared links and stored
   notifications still work. A Ticket opens this way even when it is not on today's
   board, because the Ticket resource answers for it rather than the board card.
-- **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
-  priority, effective project, Sprint Item, and Worker above a serif title. The Sprint
-  Item appears only when the Ticket has one. Project and Sprint Item are static facts.
-  The eyebrow states no Sprint and has no placement controls. The Ticket details
-  disclosure is the leash: one control holding both halves of the ceiling. A parked
-  proposal shows the ceiling half greyed and unselectable, with the reason under the
-  list, and leaves the holder half free. Direct blockers get
-  their own **Blocked by** line in the masthead, and the exact backend Worker failure
-  reason remains visible when one exists. The inline-editable recap is always open on a
-  recessed surface, without another label.
+- **Worker** — one document with clickable project and parent links above its title and
+  recap. The title is 28px, recap 17px, body 15px, labels 13px, and quiet text 11px.
+  Priority and the Worker-type label do not appear here. Priority keeps its stored
+  resolution, order, API/CLI controls, and the existing Review edit path.
 
-  The stages and their workflow remain the Ticket's Worker type's, derived from the
-  served manifest (see below and `worker-types.md`). Guidance stays off this page. Review still shows Guidance with an approval. The current Stage mark speaks without a second status pill.
-  Its summary adds **awaiting approval** for a parked proposal. Running,
-  completed, and upcoming marks need no
-  extra label. Stage bodies, editing and approval behavior, and the worker conversation
-  in serif along the bottom remain in place. During a pristine Brief, the approval context also shows a restrained
-  **Worker** picker whose choices come only from the backends this machine actually has —
-  the same answer the conversation composer's model and effort pickers read. Changing
-  it writes the stored Ticket choice but does not create a session. The first prompt attaches
-  through that choice; accepting the Brief may eagerly attach. Once the Brief advances or
-  the Ticket has a conversation, the pill becomes read-only.
+  One card holds the current step. A pending proposal names its reviewer and keeps
+  one editable ceiling/reviewer picker that opens directly with one click. Its draft
+  previews the consequence before commit. An explicit raise past the visible pending stage accepts that exact
+  submission through atomic Accept, with the selected onward ceiling and reviewer.
+  Same/lower scope preserves the proposal. Reviewer-only changes reroute it without
+  approval. Approve is a direct entry to the same picker and approval action. Send it back opens
+  a note and uses the existing revision action. Pristine Kickoff keeps the existing
+  Review exception: edit its proposal before approval instead of sending revision
+  guidance to a Worker that does not yet have a conversation. A running step states its approved
+  ceiling and reviewer in one sentence that opens the same control. Holder wording
+  uses the shared User / Orchestrator / Chief roles. Principal identities and
+  identifying detail stay intact.
 
-  A compact artifact strip is the first element under the header when lifecycle fields
-  link to managed Ticket or Sprint Item files. It reads the pending proposal first, then
-  the lifecycle fields from latest to earliest. It removes duplicate links. The same strip
-  shows a Sprint Item's own files, where a folder is one chip. A folder with no index opens
-  where it stands and its files follow it along the strip.
-- **Sprint** — one tracking overview that presents Projects and their Sprint Items,
-  plus a dedicated view for each Item and a separate documents page. The overview shows
-  Item progress as `done/total`. One collapsed **No Sprint Item** row follows all Projects
-  when unclassified Tickets exist. It opens their canonical Ticket links. An Item view joins today's Day membership
-  to split its Tickets into Today and Other Tickets. Each section uses the same status
-  groups and includes its own Done group. Project priority
-  orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
-  Review. See `sprints.md`.
-- **Backlog** — active unscheduled Tickets as bounded summaries. Each row shows only its
-  title and Project chip, and opens its canonical Workspace screen. The page does not
-  request Sprint Items. Its compact form creates an ordinary explicitly unscheduled Ticket.
+  Steps and Artifacts are closed bands below the live card. Each step opens its own
+  text. Future stages, guidance, and a separate historical record do not appear.
+  Cancelled planning work retains truthful historical content without actionable
+  approval controls. Artifacts remain accessible even when no inline link exists,
+  and their preview opens over the page. Blockers, backend errors, kickoff
+  configuration, and conversation behavior remain available in their existing states.
+- **Orchestrator** — project and parent navigation, title, recap, and a Settle control
+  above closed Worker bands. Worker rows show title and an exact-conversation dot.
+  Hover or keyboard focus reuses the rail's stage panel. Groups keep the shared names
+  and order, including exceptional states. The local page omits only the duplicate
+  Messages group: unread Workers appear in their ordinary group with their own dot.
+  Global Messages and rail discovery remain unchanged. Closed group headers include
+  distinct unread-conversation counts as text. Artifacts occupy their own closed band
+  below the Workers. Chief keeps its existing conversation screen and cannot settle.
+- **Historical Sprint** — retained dated links and documents remain readable. These
+  screens do not supply planning or change Worker continuation. See `sprints.md`.
+- **Workers** — the retained `#/backlog` address lists ordinary Workers as bounded
+  summaries with their Project context and priority order. Project eyebrow links use
+  this same list with the existing server project filter. All Workers clears that
+  filter. Its form creates a Worker with explicit Chief assignment. Rows open the
+  canonical Workspace screen.
 - **Ideas** — remembered possibilities with an optional note and Project. See
   `backlog-and-ideas.md`.
 - **Feedback** — open notes and handled history. Open notes link to their source page.
@@ -530,16 +481,18 @@ hand-rolling the same shapes per screen. Each does one job:
 - **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
   may go, and who reviews it — sit in a rail on the left, so either can be edited on its
   own. A half-finished choice stays in the open panel: dismissing it writes nothing and
-  leaves nothing behind, and only a completed pair reaches the Ticket.
+  leaves nothing behind, and only a completed pair reaches the Ticket. The same picker
+  keeps its own trigger in both the current-step card and the approval row.
 - **PickerRail**, **PickerRailRow** — the left rail a picker panel uses to name the parts
   of the thing it edits. The model picker and the ceiling picker share it.
 - **ErrorLine** — a single error message line.
 
-The Ticket page shows the leash from the moment a ceiling can move. A pending proposal
-holds its ceiling half visible but unselectable and keeps its holder half free, matching
-the server rule: the ceiling is frozen under a filed proposal, and the proposal can still
-be re-addressed. A reviewer changed on its own is written on its own, so moving a
-proposal to another queue never moves the ceiling.
+The Worker page uses the same ceiling/reviewer control while running or waiting.
+A pending proposal no longer locks its stage half. The panel explains an approval
+or reroute before commit, and marks approving choices. Approval uses the visible
+proposal revision as an atomic freshness check. A changed or rerouted proposal must
+be read again before approval. Existing CLI accept callers remain compatible.
+User-owned stages still require explicit review, even below the ceiling.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each

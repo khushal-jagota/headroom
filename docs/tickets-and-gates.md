@@ -48,9 +48,36 @@ step), then
 proposed), then **Consequences** (only the applicable merge, deploy, follow-up, and
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
-what moves the ticket one stage forward. **done** is the only ending a Ticket has.
+what moves the ticket one stage forward. **done** records successful completion.
+Retirement records a separate non-success ending, `cancelled`, outside the Stage ladder
+and ceiling choices.
 Stages advance through approval or direct completion of a current user-owned gate;
 there is no arbitrary Stage jump.
+
+## Backlog, resume, and retirement
+
+Explicit backlog prevents the next automatic Worker step. It preserves the current
+Stage, proposal, approval holder, assignment, history, conversations, and artifacts.
+Messages and approvals remain available. Backlog does not cancel a delivered turn or
+remove a live blocker. Parent settlement is independent.
+
+Resume clears only backlog state. The ordinary readiness and approval rules still
+apply. A ceiling controls whether a result parks for approval. It does not prevent
+the Worker from preparing that result.
+
+The Ticket page provides Backlog ticket, Resume ticket, and Retire ticket controls.
+Retirement requires a reason and ends the Ticket without a success claim. The original
+record, proposal, approval holder, revision feedback, actor, and time remain in retirement
+provenance. The Steps section retains historical proposal evidence. Retirement removes
+the live approval obligation and follows the existing terminal blocker rules.
+
+Retirement refuses unresolved claims, live or held conversation work, and unresolved
+manager delivery ownership. It does not silently reset or interrupt that work. A repeated
+successful retirement returns the original result. It creates no second transition.
+
+The supported actions share one writer per transition. An optional stored-record hash
+precondition refuses stale requests inside the write transaction. The browser sends that
+precondition automatically. Agents can use it for reviewed manifest application.
 
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -278,10 +305,11 @@ which is the ordinary case for intake the human wants to sense-check.
 
 Both halves can change later, and they change separately.
 
-- **How far it may go** — `ticket set <id> ceiling`. This is refused while a proposal is
-  parked, because moving the ceiling under a filed proposal changes what was proposed.
-  Setting it never moves the holder: raising or lowering a ceiling must not move a Ticket
-  into somebody else's queue.
+- **How far it may go** — `ticket set <id> ceiling`. Same or lower scope can change
+  while a proposal waits, without approval, discard, or rewind. A generic field edit
+  cannot approve unseen work. An explicit raise past the visible pending stage uses
+  the existing atomic Accept action, with selected onward ceiling/reviewer and the
+  visible proposal revision. Setting scope never implicitly changes its holder.
 - **Who is asked** — `ticket set <id> ceiling-holder`. This is allowed while a proposal is
   parked. Re-addressing a parked proposal does not change what was proposed, so it is the
   way a proposal sitting in the wrong queue reaches the right one. Anyone standing above
@@ -304,34 +332,40 @@ refuses an approval that omits either. Approving is a ceiling-setting moment lik
 other, so the approve row carries the same control the Ticket page does, and the approver
 can hand the Ticket onward rather than only keeping it.
 
-The approve row starts with the immediate next valid Stage and the owner already selected.
-The label, enabled Approve action, and submitted values all read that same state. The owner
-can approve that displayed scope without opening the picker. The click remains the approval.
-A new proposal or changed approval context restores this default. An unrelated data refresh
-does not erase a proposal edit or an explicit scope choice.
+The direct Approve entry starts with the immediate next valid Stage and the owner
+selected. The waiting card uses the same editable stage/reviewer picker as the
+running card. Choosing scope first shows the approval or reroute consequence before
+commit. A new proposal revision restores the draft. Unrelated refreshes retain
+proposal edits and unfinished picker choices.
 
-The Ticket details disclosure shows the same permission as a readable leash:
-"Until [a stage] · then [who]", where who reads `me`, `Chief`, or the Ticket's Sprint Item
-by its name. The stage name is the Worker type's own label, so a renamed stage reads
-correctly with no code change. While a proposal is parked the disclosure drops its stage
-select and keeps the holder one, which is the split refusal made visible. A Ticket can hold
-another Ticket's ceiling and tooling can set that; it is not offered on screen.
+The ceiling sentence states the saved stage and reviewer and opens both choices
+directly with one click. Controls use User,
+Orchestrator, or Chief; actual entity names remain in navigation and identifying
+context. The parked stage is editable. An explicit raise beyond both the saved
+ceiling and the pending stage approves through atomic Accept. Same/lower scope
+preserves the proposal, including a user-owned proposal already below a higher
+ceiling. Reviewer-only changes reroute without approval. Direct Approve remains an
+explicit approval for such user-owned proposals. Future user-owned answers still
+park for explicit review.
 
-The worker runs to the new ceiling and parks there for the named holder. At the Brief, an
-unchosen ceiling starts from that Worker type's managed suggestion. Other approvals start
-from their normal next Stage. `No further` remains a one-off choice. The stages it offers
-are always the current one and the
-ones after it, never an earlier one, so you can't hand back ground the ticket has
-already covered. One shared source of the allowed stages feeds both the Ticket leash
-and the approval screen, so the two cannot disagree.
-While a proposal is pending, the leash drops its ceiling select and keeps its holder one.
-The ceiling cannot change without silently changing what was proposed, and the proposal can
-still be re-addressed.
+The acceptance request can include `expected_proposal_revision`. The server checks
+that revision inside the existing transaction before settlement. A stale visible
+submission cannot approve its replacement. Legacy accept callers can omit the field.
+Generic ceiling PATCH requests that cross a waiting boundary are refused with the
+explicit acceptance path identified. No separate permission or settlement mechanism
+is introduced.
 
-Review's single, oldest-first walk shows today's owner-addressed proposals. A proposal
-routed to a Sprint Item manager creates a durable manager wake. Other holders inspect
-canonical Ticket state through their normal Chief and Ticket views. A parked proposal
-keeps its approval and revision controls. A Worker
+`No further` remains an onward acceptance choice: it accepts the present answer and
+sets the ceiling to the next stage. It does not pause the next Worker turn. Current
+scope edits use actual lifecycle stages. The existing readiness, authority, blocker,
+claim, and user-owned review rules continue unchanged.
+
+Review's oldest-first walk shows owner-addressed proposals independently of Today.
+A proposal addressed to an ordinary orchestrator or Chief creates a durable notice
+through the existing principal-aware manager queue. Kickoff, new filing and reviewer
+reroute all use that path. The notice reaches the intended canonical conversation
+as a real prompt; a saved holder is not delivery evidence. A parked proposal keeps
+its approval and applicable revision controls. A Worker
 help request is an addressed conversation message. Its unread state feeds the shared
 attention projection, and the answer belongs in that conversation.
 
@@ -360,7 +394,8 @@ There is one approval gate. Every parked proposal waits on `awaiting_approval` f
 principal it is addressed to. Anyone above the Ticket approves it or rejects it with
 focused revision guidance, and either way the canonical proposal resolver does the work.
 Review contains owner-addressed proposals; anyone else reads theirs on the Ticket.
-The ceiling cannot change while a proposal waits, so what was proposed stays fixed.
+Same or lower ceiling edits preserve the waiting proposal. An explicit raise past
+it approves that visible revision through the same canonical acceptance action.
 
 Owner-held proposals appear in Review and produce the owner's needs-approval notification.
 Anyone else reads proposals from canonical Ticket state through their normal Ticket and

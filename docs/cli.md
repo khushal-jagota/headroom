@@ -3,13 +3,14 @@
 `panels` speaks to the Panels server over HTTP. Add `--json` to receive the existing
 machine-readable response from each route.
 
-Ordinary help exposes five roots:
+Ordinary help exposes these roots:
 
 - `send-message` sends text to an existing Panels conversation.
 - `project` reads and changes Projects.
-- `day` reads and changes Days and their Ticket membership.
+- `day` reads historical Days.
 - `ticket` reads and changes Tickets.
-- `sprint` reads and changes Sprints and Sprint Items.
+- `orchestrator` reads and changes ordinary orchestrators.
+- `sprint` retains historical reads and the stable `sprint item` alias.
 
 The command name does not grant authority. Each request carries the principal from the
 runtime context. The server admits or refuses that principal through the existing
@@ -38,8 +39,24 @@ the ordinary Ticket record route. Neither form reads conversation history. Use `
 history` when that record is necessary.
 
 List commands return bounded summaries. `ticket list`, `sprint list`, `sprint item list`,
-and `project list` use pages of 30 by default. Use `ticket list --day today` for Day
-membership. Every result reports omissions and the next offset.
+and `project list` use pages of 30 by default. Every result reports omissions and the
+next offset. Ticket list no longer filters live work by Day or Sprint.
+
+Ticket lists accept `--backlogged`, `--not-backlogged`, and repeated `--worker-type`
+filters. Retired records require `--include-terminal`. Direct record reads remain
+available regardless of those list filters.
+
+```sh
+panels ticket backlog t_example
+panels ticket resume t_example
+panels ticket retire t_example --reason "The original obligation is obsolete."
+panels ticket list --backlogged --worker-type coding --limit 30
+```
+
+Each action accepts `--expected-record-sha256` from the full Ticket read. A stale hash
+refuses the action without a write. Read retirement provenance with
+`panels ticket show t_example retirement --json`. Resume does not grant an approval or
+clear a blocker. These commands use existing caller authority.
 
 ## Structured Ticket writes
 
@@ -53,7 +70,7 @@ panels ticket create --input-json - <<'JSON'
   "title": "Clear outcome title",
   "worker_type": "coding",
   "project_id": "project_panels",
-  "sprint_id": null,
+  "orchestrator": {"kind": "chief", "id": "chief"},
   "kickoff_note": "Faithful intake context"
 }
 JSON
@@ -96,7 +113,7 @@ and revise retain the existing proposal resolver and authority checks. `ticket c
 remains separate because it completes a user-owned Stage directly.
 
 Revise stores the attributed feedback, removes the proposal, and returns the Stage to
-rest in one commit. A Worker-owned Stage also returns to the current Day. Normal readiness
+rest in one commit. Normal readiness
 then reuses the existing conversation for one revision prompt.
 
 `ticket request-help` reads its message from standard input. It records the Ticket
@@ -115,30 +132,29 @@ The human output reports the uncertainty without a restart success claim. Panels
 not enforce a delay. Use one explicit `ticket restart-worker` call when it is safe to try
 again.
 
-## Sprint Item membership
+## Orchestrator assignment and settlement
 
-The public commands use the user-facing term Sprint Item:
+`orchestrator create/list/show/set/workspace` keeps the existing Item identity and
+conversation. `sprint item` remains an alias. Artifact operations keep their existing
+managed roots. `send-message --sprint-item` keeps its stable recipient address.
 
-- `sprint add-item`
-- `sprint remove-item`
-- `sprint list-items`
-- `sprint carry-item`
+`ticket assign <ticket> --chief` assigns to Chief. `--orchestrator <item>` assigns to
+an ordinary orchestrator. Structured create and edit use the same explicit `orchestrator`
+reference. Assignment and the ceiling holder are independent.
 
-They call the existing Sprint membership and carry routes. `sprint item` owns Sprint Item
-records, Ticket classification, workspace reads, and artifacts. `send-message
---sprint-item` owns supervisor messages. Conversation reset remains an internal recovery
-path.
+`orchestrator settle <item>` is owner-only. Add `--active` to return it to active.
+Chief cannot settle. Day edits, Sprint edits, commitments, and carry-forward are retired.
+Historical `day show` and `sprint list/show/list-items` remain readable.
 
 ## Compatibility and errors
 
-Hidden aliases keep the old Worker, Ticket edit, proposal, Day list, Sprint outcome, and
-Sprint Item conversation paths callable during skill migration. They call the same
-handlers and routes as before. They do not appear in help.
+Hidden aliases retain Worker, Ticket edit, proposal, historical Day list, and Item
+conversation paths. No alias restores retired calendar writes.
 
 `ticket restart-worker` also recovers an older rejected Ticket only when it is
 Worker-owned, Empty, claim-free, attached to a conversation, and holds matching revision
-feedback. Recovery keeps that conversation, returns the Ticket to the current Day, and
-refuses launch overrides. Other prior-Day Tickets remain at rest.
+feedback. Recovery keeps that conversation and refuses launch overrides. Historical Day
+membership does not affect ordinary continuation.
 
 Human errors use one cause line and, when a valid recovery exists, one exact command
 shape. JSON errors keep the existing envelope and exit code. Authority refusals do not

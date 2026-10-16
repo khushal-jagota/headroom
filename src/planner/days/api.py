@@ -1,20 +1,14 @@
-"""Day routes (§9). The {date} path segment accepts the literal `today` (resolved
-via the planning date) or any ISO date. Thin HTTP shells over the day data layer;
-materialize-on-read is spec'd (§3.4)."""
+"""Read-only historical Day routes."""
 
 from __future__ import annotations
 
 import sqlite3
-from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core import authority
-from planner.core.authority import require_above
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
-from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.days.logic import dates
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
@@ -24,11 +18,8 @@ from planner.tickets.api import (
     Clk,
     ConversationRecord,
     Conversations,
-    Ctx,
     DbConn,
     add_conversation_row_signals,
-    body_opt_str,
-    txn,
 )
 from planner.tickets.contracts import TicketListFilters
 from planner.tickets.data import read_ticket
@@ -54,13 +45,13 @@ async def _day_view(
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    # A2: read_day materializes an absent day (INSERT + event, multi-statement) on an
-    # autocommit connection, so this one read is wrapped; the rest run bare.
-    with txn(conn):
-        day = days_data.read_day(conn, did, now)
+    day = days_data.read_day(conn, did, now)
     dts = days_data.list_day_tickets(conn, did)
     board = await add_conversation_row_signals(
-        conn, board_view(conn, day_id=did), conversations, conversation_record
+        conn,
+        board_view(conn, ticket_ids_holding_unread_owner_message=tuple(dt.ticket_id for dt in dts)),
+        conversations,
+        conversation_record,
     )
     cards_by_id = {str(card["id"]): card for column in board["columns"] for card in column["cards"]}
     tickets = []
@@ -101,42 +92,6 @@ async def get_day(
     return await _day_view(conn, did, clk.now_unix(), conversations, conversation_record)
 
 
-@router.patch("/day/{date}")
-async def patch_day(
-    date: str,
-    raw: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    did = resolve_day_id(date, clk, cfg)
-    now = clk.now_unix()
-    for field in raw:
-        if field not in days_data.DAY_TEXT_FIELDS:
-            raise PlannerError(ErrorCode.validation, "unknown day field", {"field": field})
-    # Each overview field (and notes) edits on its own — no whole-blob re-serialize.
-    edits: dict[str, str] = {}
-    for field in days_data.DAY_TEXT_FIELDS:
-        value = body_opt_str(raw, field)
-        if value is not None:
-            edits[field] = value
-    if not edits:
-        raise PlannerError(ErrorCode.validation, "no day fields to update", {})
-    # Validate the complete request above, then keep every field in one write transaction.
-    with txn(conn):
-        # Which Day fields a planning Worker type may write is that type's own
-        # declaration, in planner.core.authority.declarations, not a branch here. A
-        # request mixing a declared field with an undeclared one was never a planning
-        # request and is refused as a whole, exactly as the branches did.
-        require_above(conn, ctx.principal, authority.plan("day", *sorted(edits)))
-        for field, value in edits.items():
-            days_data.set_day_field(conn, did, field, value, now)
-    return await _day_view(conn, did, now, conversations, conversation_record)
-
-
 @router.get("/day/{date}/tickets")
 async def get_day_ticket_summaries(
     date: str,
@@ -147,8 +102,7 @@ async def get_day_ticket_summaries(
     offset: int = 0,
 ) -> JsonDict:
     did = resolve_day_id(date, clk, cfg)
-    with txn(conn):
-        days_data.read_day(conn, did, clk.now_unix())
+    days_data.read_day(conn, did, clk.now_unix())
     page = list_ticket_summaries(
         conn,
         page_request=ListPageRequest(limit=limit, offset=offset),
@@ -162,4 +116,3 @@ async def get_day_ticket_summaries(
     response = page.response("tickets")
     response["id"] = did
     return response
-

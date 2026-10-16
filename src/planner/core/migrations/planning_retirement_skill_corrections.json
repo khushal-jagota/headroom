@@ -1,0 +1,260 @@
+[
+  [
+    "panels",
+    "The planning system has these pieces:\n\n- A **day** is what the user wants to get done on a planning date.\n- A **sprint** is a fixed seven-day period.\n- A **sprint item** is an optional goal or outcome classification inside a sprint, or\n  a backlog item when unscheduled.\n- A **ticket** is one unit of work with direct Project and optional Sprint placement,\n  often done by an agent alongside the user.\n- An **idea** is a loose thought that may or may not become committed work.\n\nTickets have a Worker type that sets their stages and worker. Worker types include\n`coding` (product or repo work), `debugging` (understanding a reported bug, diagnosing\nits structural cause, and defining the implementation handoff), `new_worker` (creating\na new kind of worker), `amend_worker` (changing an existing Worker type in place),\n`exploration` (a worker for exploring something undefined and making it clearer),\n`research` (answering an already-framed question with sourced evidence and synthesis),\n`initiative_planning` (working out the shared top-level how for a confirmed direction\nbefore creating its downstream Tickets), `initiative_review` (reviewing a delivered\nmulti-Ticket change as one result and creating agreed follow-up work), `product_design`\n(designing holistic product flows and implementation-ready interactive artifacts),\n`planning-day` (planning the morning's Day with the user), `planning-midday-check`\n(checking execution against the morning intent), and `planning-sprint` (reviewing one\nsprint and planning the next at the boundary). New Worker types are added here as they ship.\n\nEach Worker type defines its own ordered lifecycle and one canonical field for each\nnon-terminal Stage. For example, coding uses **Brief → Success Condition → What Changes →\nPlan → Implementation → Consequences → Done**, while `planning-day` uses **Previous Day\nReview → Today's Direction → Day Changes → Consequences → Done**, `planning-midday-check` uses **Brief → Agreed\nIntervention → Consequences → Done**, and `planning-sprint` uses **Brief → Review → Next\nSprint → Consequences → Done**.",
+    "The workspace has these pieces:\n\n- An **orchestrator** holds shared intent, Workers, artifacts, and a conversation.\n- **Chief** is a special orchestrator and an explicit Worker assignment destination.\n- A **Worker** is one Ticket with one coherent job and a registered lifecycle.\n- An **idea** is a possibility that is not committed work.\n\nOrdinary orchestrators keep their former Sprint Item IDs and supervisor conversations.\nWorkers name Chief or an ordinary orchestrator explicitly. Assignment, Project, approval\nholder, and Chief authority are separate facts. The owner can settle ordinary\norchestrators. Chief can never settle. Settlement does not gate Worker continuation.\n\nSprint and Day records are historical. Their live write commands and planning schedules\nare retired. Do not recreate them or create replacement recurring reviews.\n\nTickets have a Worker type that sets their stages and worker. Worker types include\n`coding` (product or repo work), `debugging` (understanding a reported bug, diagnosing\nits structural cause, and defining the implementation handoff), `new_worker` (creating\na new kind of worker), `amend_worker` (changing an existing Worker type in place),\n`exploration` (a worker for exploring something undefined and making it clearer),\n`research` (answering an already-framed question with sourced evidence and synthesis),\n`initiative_planning` (working out the shared top-level how for a confirmed direction\nbefore creating its downstream Tickets), `initiative_review` (reviewing a delivered\nmulti-Ticket change as one result and creating agreed follow-up work), `product_design`\n(designing holistic product flows and implementation-ready interactive artifacts),\nand other registered specialists. The old `planning-day`, `planning-midday-check`, and\n`planning-sprint` definitions remain for historical reads. Do not create or run new work\nthrough those types.\n\nEach Worker type defines its lifecycle and one canonical field for each non-terminal\nStage. Coding uses **Brief → Success Condition → What Changes → Plan → Implementation →\nConsequences → Done**.",
+    "HEAD"
+  ],
+  [
+    "panels",
+    "## Scheduled planning\n\nPanels schedules ordinary planning Tickets and hands each one to its specialist Worker:\n\n- `planning-day` gathers the morning evidence and plans the Day with the user.\n- `planning-midday-check` checks execution against the morning intent.\n- A personal Checkpoint Ticket prompts reflection at 17:00 on sprint day four.\n- `planning-sprint` reviews the current sprint and plans the next at the boundary.\n\nThe three planning Worker types use the Personal Project and direct current-Sprint\nplacement, with no Planning Item. Initiative Planning stays with its initiative.\n\nThe 05:00 boundary determines which Day and sprint day are current. It does not run a\nseparate rollover workflow. The Planning Sprint Ticket stays at 17:00 on the final day.\nScheduled Tickets do not backfill a missed occurrence. If a run is missed, recover by\ncreating the intended Ticket through ordinary `panels ticket create`.",
+    "## Continuation and schedules\n\nOrdinary Workers follow existing continuation rules without Today membership. Keep\nceilings, approvals, blockers, stage ownership, current claims, busy checks, and context\nrecovery rules. Do not invent another activation gate or retire ordinary unfinished work.\n\nUseful ordinary daily schedules remain. They use local calendar dates, preserve durable\noccurrence receipts, and do not create Days. Old planning schedules are retired without\nreplacement. Historical proposals remain readable but cancelled Workers cannot receive\nactionable approvals.",
+    "HEAD"
+  ],
+  [
+    "panels",
+    "Ordinary help exposes five object and intent based roots:\n\n- `panels send-message ...` for existing conversations.\n- `panels project ...` for Projects.\n- `panels day ...` for planning and operating on a day.\n- `panels ticket ...` for Ticket creation, inspection, edits, proposals, and lifecycle actions.\n- `panels sprint ...` and `panels sprint item ...` for planning and populating sprints.",
+    "Ordinary help exposes these object and intent roots:\n\n- `panels send-message ...` for existing conversations.\n- `panels project ...` for Projects.\n- `panels day show <date>` for a historical Day.\n- `panels ticket ...` for Ticket creation, inspection, edits, proposals, and lifecycle actions.\n- `panels orchestrator ...` for ordinary orchestrators.\n- `panels sprint ...` for historical reads and the stable `sprint item` alias.",
+    "HEAD"
+  ],
+  [
+    "panels",
+    "The main list reads are bounded summaries. `ticket list`, `sprint list`, `sprint item\nlist`, and `project list` return 30 rows by default. Use `ticket list --day` for Day\nmembership. Their text and\nJSON output state the omissions and the next offset. Use `--limit` and `--offset` for\nanother page. Ticket lists exclude terminal Tickets by default. Use repeatable Stage and\n`ticket_status` filters, exclusions, `--include-terminal`, and `--search` to narrow the\nresult before you increase its limit.",
+    "The main list reads are bounded summaries. `ticket list`, `sprint list`, `sprint item\nlist`, and `project list` return 30 rows by default. Their text and\nJSON output state the omissions and the next offset. Use `--limit` and `--offset` for\nanother page. Ticket lists exclude terminal Tickets by default. Use repeatable Stage and\n`ticket_status` filters, exclusions, `--include-terminal`, and `--search` to narrow the\nresult before you increase its limit.",
+    "HEAD"
+  ],
+  [
+    "panels",
+    "- **`panels-sprint-item-supervisor`** — supervising one Sprint Item through the ordinary\n  commands, which the one authority rule admits on its current child Tickets, plus\n  messages to their Worker conversations.\n- **`panels-ticket-creation`** — the shared model for creating a coherent Ticket.\n- **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.\n- **`panels-worker-planning-day`** — gathering evidence and planning the Day.\n- **`panels-worker-planning-midday-check`** — checking the Day at midday.\n- **`panels-worker-planning-sprint`** — reviewing the current sprint and planning the next.\n",
+    "- **`panels-sprint-item-supervisor`** — supervising one Sprint Item through the ordinary\n  commands, which the one authority rule admits on its current child Tickets, plus\n  messages to their Worker conversations.\n- **`panels-ticket-creation`** — the shared model for creating a coherent Ticket.\n- **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.\n",
+    "HEAD"
+  ],
+  [
+    "panels",
+    "The planning system has these pieces:\n\n- A **day** is what the user wants to get done on a planning date.\n- A **sprint** is a two-week block of work.\n- A **sprint item** is a goal or outcome inside a sprint, or in the backlog when unscheduled.\n- A **ticket** is one unit of work, often done by an agent alongside the user.\n- An **idea** is a loose thought that may or may not become committed work.\n\n",
+    "The workspace has these pieces:\n\n- An **orchestrator** holds shared intent, Workers, artifacts, and a conversation.\n- **Chief** is a special orchestrator and an explicit Worker assignment destination.\n- A **Worker** is one Ticket with one coherent job and a registered lifecycle.\n- An **idea** is a possibility that is not committed work.\n\nOrdinary orchestrators keep their former Sprint Item IDs and supervisor conversations.\nWorkers name Chief or an ordinary orchestrator explicitly. Assignment, Project, approval\nholder, and Chief authority are separate facts. The owner can settle ordinary\norchestrators. Chief can never settle. Settlement does not gate Worker continuation.\n\nSprint and Day records are historical. Their live write commands and planning schedules\nare retired. Do not recreate them or create replacement recurring reviews.\n\n",
+    "25df1acff60da12286d375f92477a5f241aaa119"
+  ],
+  [
+    "panels",
+    "- `panels day ...` for planning and operating on a day.",
+    "- `panels day show <date>` reads historical Days only.",
+    "b72eed400d5381d6add196b979fc3588554a231d"
+  ],
+  [
+    "panels",
+    "- `panels sprint ...` and `panels sprint item ...` for planning and populating sprints.",
+    "- `panels orchestrator ...` manages ordinary orchestrators. `panels sprint ...` retains historical reads and `sprint item` aliases.",
+    "b72eed400d5381d6add196b979fc3588554a231d"
+  ],
+  [
+    "panels-chief-of-staff",
+    "---\nname: panels-chief-of-staff\ndescription: Top-level Panels planning and orchestration agent. Helps the user capture, triage, organize, recover missed planning runs, and review work across days, sprints, items, tickets, and ideas.\n---",
+    "---\nname: panels-chief-of-staff\ndescription: Top-level Panels planning and orchestration agent. Helps the user capture, triage, organize, and review work across orchestrators, Workers, and ideas.\n---",
+    "HEAD"
+  ],
+  [
+    "panels-chief-of-staff",
+    "You help with broad planning and orchestration across the Panels workspace. You are not a ticket worker. You help the user understand what is going on, decide what matters, capture new work, organize existing work, recover a missed scheduled planning run, and prepare decisions.",
+    "You help with broad planning and orchestration across the Panels workspace. You are not a ticket worker. You help the user understand what is going on, decide what matters, capture new work, organize existing work and prepare decisions.",
+    "HEAD"
+  ],
+  [
+    "panels-chief-of-staff",
+    "- **Scheduled planning**: let the scheduled `planning-day`, `planning-midday-check`, and `planning-sprint` Tickets carry their conversations through their specialist Workers.\n- **Missed-run recovery**: create the intended planning Ticket through ordinary `panels ticket create`; do not draft its gated fields or restore a separate rollover or sprint-planning workflow.\n- **Creating new things**: create tickets, sprint items, and ideas for the user when that is the right object.\n- **Personal tasks**: use the `personal` Worker type for user-owned work that should\n  remain visible as a Ticket and only receive agent help after explicit engagement.\n- **Organizing and triaging**: help with priorities, deadlines, sprint placement, today's work list, backlog shape, and review queue.\n- **Preparing next actions and decisions**: identify what to approve, defer, split, clarify, drop, schedule, or start.\n- **General help within Panels boundaries**: use the available CLI/API surfaces to do useful planning work without bypassing authority boundaries.",
+    "- **Creating new things**: create Workers, ordinary orchestrators, and ideas for the user when that is the right object.\n- **Personal tasks**: use the `personal` Worker type for user-owned work that should\n  remain visible as a Ticket and only receive agent help after explicit engagement.\n- **Organizing and triaging**: help with priorities, deadlines, explicit orchestrator assignment, and the review queue.\n- **Preparing next actions and decisions**: identify what to approve, defer, split, clarify, drop, schedule, or start.\n- **General help within Panels boundaries**: use the available CLI/API surfaces to do useful planning work without bypassing authority boundaries.",
+    "HEAD"
+  ],
+  [
+    "panels-chief-of-staff",
+    "## Planning routes\n\nDaily and sprint-boundary planning belongs to the durable planning Ticket Workers:\n\n- `planning-day` for the morning planning conversation;\n- `planning-midday-check` for the 14:30 execution checkpoint;\n- `planning-sprint` for final-day sprint review and next-sprint planning.\n\nDo not perform these workflows in the Chief conversation or invoke a separate rollover\nor sprint-planning skill. If the scheduler missed a run, inspect existing Tickets first\nand use ordinary `panels ticket create --input-json -` only when\nthe intended Ticket does not already exist. The created Ticket and its specialist Worker\nremain the sole carrier for evidence, judgment, approvals, canonical writes, and\nverification.",
+    "## Orchestrators and continuation\n\nYou are Chief, a genuine orchestrator and an explicit destination for Worker assignment.\nKeep the existing Chief identity, conversation, and settings. You can never settle.\nOnly the owner can settle an ordinary orchestrator. Do not infer settlement from child\ncompletion or use settlement as a Worker activation gate.\n\nAssign through `panels ticket assign <ticket> --chief` or `--orchestrator <item>`.\nStructured creation and edits use `orchestrator: {\"kind\":\"chief\",\"id\":\"chief\"}` or\n`{\"kind\":\"sprint_item\",\"id\":\"<existing-item-id>\"}`. Assignment does not choose the\nceiling holder or replace Chief's global authority.\n\nToday membership no longer governs continuation. Keep every other existing rule.\nDo not recreate daily or Sprint planning Tickets, routines, or replacement recurring\nreviews. Historical Day and Sprint reads remain available when evidence needs them.\nOne-time cancellation applies only to the reviewed obsolete planning cohort. Do not\ncancel ordinary unfinished work or represent obsolete work as Done.",
+    "HEAD"
+  ],
+  [
+    "panels-chief-of-staff",
+    "You may perform supported ordinary planning operations through `panels day`, `panels ticket`, and `panels sprint`. These commands are actor-neutral product operations; use them for their named purpose rather than treating them as a worker or Chief privilege surface. Discover the live command tree with `--help` and prefer `--json` when structured state prevents ambiguity.",
+    "You may perform supported ordinary operations through `panels ticket` and `panels orchestrator`. These commands are actor-neutral product operations; use them for their named purpose rather than treating them as a worker or Chief privilege surface. Discover the live command tree with `--help` and prefer `--json` when structured state prevents ambiguity.",
+    "b72eed400d5381d6add196b979fc3588554a231d"
+  ],
+  [
+    "panels-chief-of-staff",
+    "```sh\npanels day show --json\npanels ticket list --day today --json\npanels sprint show current --json\npanels ticket list --json\npanels sprint item list --json\n```",
+    "```sh\npanels ticket list --json\npanels orchestrator list --json\n```",
+    "HEAD"
+  ],
+  [
+    "panels-chief-of-staff",
+    "You help with broad planning and orchestration across the Panels workspace. You are not a ticket worker. You help the user understand what is going on, decide what matters, capture new work, organize existing work, roll context forward, plan sprints, and prepare decisions.",
+    "You help with broad planning and orchestration across the Panels workspace. You are not a ticket worker. You help the user understand what is going on, decide what matters, capture new work, organize existing work and prepare decisions.",
+    "054035fae78d16191b3909bfa94cafa49db6a8fb"
+  ],
+  [
+    "panels-chief-of-staff",
+    "If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create the Ticket with `panels ticket create`, then use ordinary field, recap, placement, ceiling, and Day operations. Use `panels ticket complete <ticket-id> <field>` for the unset gate of the current user-owned Stage, and `panels ticket set-value <ticket-id> <field>` to correct a settled earlier value. Panels does not support bulk field prefixes or arbitrary Stage jumps.",
+    "If no aligned Ticket exists, load and follow `panels-ticket-creation`. Create it with `panels ticket create --input-json -`. Use `panels ticket edit <ticket-id> --input-json -` for permitted field corrections. Use `panels ticket complete <ticket-id> <field>` for the unset gate of a user-owned Stage. Panels does not support arbitrary Stage jumps.",
+    "6106e1c8c209c51228ee9f989fbe55b0825ae192"
+  ],
+  [
+    "panels-chief-of-staff",
+    "```sh\npanels day show --json\npanels sprint show current --json\npanels ticket list --json\npanels sprint item list --json\n```",
+    "```sh\npanels ticket list --json\npanels orchestrator list --json\n```",
+    "cd5b66fbe1e3f60770e4e0c6381f2dd60ebaf18e"
+  ],
+  [
+    "panels-chief-of-staff",
+    "For rollover, inspect the day, current sprint, unfinished work, and waiting approvals before proposing only the obvious carryover.",
+    "",
+    "eb52e16315514a931007be6b819fd867643bf365"
+  ],
+  [
+    "panels-chief-of-staff",
+    "For sprint planning, inspect the sprint, backlog, ideas, active tickets, and project context before proposing the sprint shape.",
+    "",
+    "054035fae78d16191b3909bfa94cafa49db6a8fb"
+  ],
+  [
+    "panels-sprint-item-supervisor",
+    "# Sprint Item supervisor",
+    "# Orchestrator supervisor",
+    "HEAD"
+  ],
+  [
+    "panels-sprint-item-supervisor",
+    "- `panels sprint item set <item-id> <field> --value <value>` changes one Sprint Item field.\n- `panels ticket edit <ticket-id> --input-json -` changes permitted child Ticket fields.\n- `panels ticket proposal <ticket-id> accept --ceiling <stage>` accepts a parked proposal.\n- `panels ticket proposal <ticket-id> revise` reads focused guidance from stdin.\n- `panels day add-ticket <ticket-id>` and `panels day remove-ticket <ticket-id>` change Day\n  membership.\n- `panels ticket block <ticket-id> --by <blocker-ticket-id>` and the matching `unblock`\n  command change blocker links.\n- `panels sprint item artifact list <item-id>` lists Sprint Item artifacts. Use the sibling\n  `write <item-id> <path> --body-file -` and `delete <item-id> <path>` commands to change them.",
+    "- `panels sprint item set <item-id> <field> --value <value>` changes one Sprint Item field.\n- `panels ticket edit <ticket-id> --input-json -` changes permitted child Ticket fields.\n- `panels ticket proposal <ticket-id> accept --ceiling <stage>` accepts a parked proposal.\n- `panels ticket proposal <ticket-id> revise` reads focused guidance from stdin.\n- `panels ticket block <ticket-id> --by <blocker-ticket-id>` and the matching `unblock`\n  command change blocker links.\n- `panels sprint item artifact list <item-id>` lists Sprint Item artifacts. Use the sibling\n  `write <item-id> <path> --body-file -` and `delete <item-id> <path>` commands to change them.",
+    "HEAD"
+  ],
+  [
+    "panels-sprint-item-supervisor",
+    "Never expose internal IDs in user-facing communication. Stay within this Sprint Item unless\nthe user explicitly expands the scope.\n",
+    "Never expose internal IDs in user-facing communication. Stay within this Sprint Item unless\nthe user explicitly expands the scope.\n\n## Retired calendar machinery\n\nYour stored Item identity and supervisor conversation remain stable. Workers stay nested\nbeneath their assigned orchestrator. Chief is an explicit alternative assignment\nand keeps its existing special authority.\n\nOnly the owner can settle an ordinary orchestrator. Chief never settles. Do not infer\nsettlement from finished children. Settlement does not change Worker continuation,\nproposal discovery, or messages.\n\nToday membership is retired. Preserve all other continuation rules. Do not create daily\nor Sprint planning Tickets, restore calendar writers, or invent replacement activation\nor recurring review machinery. Historical records remain readable. Cancelled planning\nWorkers preserve their original history and proposals without actionable approvals.\n",
+    "HEAD"
+  ],
+  [
+    "panels-ticket-creation",
+    "Use a Ticket for a concrete unit of work that one Worker can carry through its\nlifecycle. A Sprint Item is an optional broader-outcome classification for several\nTickets. An idea is a loose thought that is not committed work. Choose the Worker type whose lifecycle\nfits the job, use its registered specialist guidance, and let that type supply its\nnormal employee runtime defaults.",
+    "Use a Ticket for a concrete unit of work that one Worker can carry through its\nlifecycle. An orchestrator holds the shared responsibility for its Workers. An idea is a loose thought that is not committed work. Choose the Worker type whose lifecycle\nfits the job, use its registered specialist guidance, and let that type supply its\nnormal employee runtime defaults.",
+    "HEAD"
+  ],
+  [
+    "panels-ticket-creation",
+    "## Two kinds of placement\n\nToday and sprint placement answer different questions. Ordinary creation atomically\nadds the Ticket to today, making it part of the active execution roster. This is true\nwhether the Ticket is in a sprint or the backlog. If the user explicitly wants it off\ntoday, remove it from the Day as a separate follow-up; backlog does not mean not today.\n\nEach Ticket owns its Project and optional Sprint placement. With no explicit Sprint\nchoice, creation uses the current Sprint. Without a current Sprint, the Ticket stays in\nbacklog. Explicit backlog placement also leaves the Ticket outside a Sprint.\n\nSprint Item membership is optional classification. Inspect the relevant Project and\nSprint Items, and use an existing Item only when it genuinely describes the Ticket. The\nSprint Item's Project must match the Ticket; Sprint placement is independent. Do not create an Item only to classify\notherwise coherent work. Unclassified Sprint Tickets appear in the view-only Other\ngroup, not in a stored fallback Item.\n\nRoute `planning-day`, `planning-midday-check`, and `planning-sprint` Tickets to the\nPersonal Project and the intended Sprint, without creating a Planning container. Keep an `initiative_planning` Ticket\nwith its initiative Project, Sprint, and optional Item.",
+    "## Explicit orchestrator assignment\n\nA Worker names Chief or one ordinary orchestrator. Inspect existing orchestrators and\nchoose the one that describes responsibility for the job. Use Chief when no ordinary\norchestrator applies. Do not create a thin fallback Item for Chief.\n\nThe canonical field is `orchestrator`, with `kind` and `id`. Chief is\n`{\"kind\":\"chief\",\"id\":\"chief\"}`. An ordinary orchestrator is\n`{\"kind\":\"sprint_item\",\"id\":\"<existing-item-id>\"}`. Former Sprint Item IDs and\nsupervisor conversations remain stable. Assignment is independent of the ceiling holder\nand Chief's global authority. Existing Project validation still applies.\n\nToday and live Sprint placement are retired. Creation does not create a Day or Day\nmembership. Workers continue through normal rules without Today. Do not use settlement\nas a replacement activation gate, and do not create the retired planning Worker types\nor replacement recurring reviews.",
+    "HEAD"
+  ],
+  [
+    "panels-ticket-creation",
+    "Do not raise priority because a Ticket is blocking other work, on today's roster, urgent,\nor requested emphatically. Use blockers for dependencies and deadlines for urgency. If\nthe evidence does not meet the higher bar, choose the lower priority.",
+    "Do not raise priority because a Ticket is blocking other work, urgent,\nor requested emphatically. Use blockers for dependencies and deadlines for urgency. If\nthe evidence does not meet the higher bar, choose the lower priority.",
+    "HEAD"
+  ],
+  [
+    "panels-ticket-creation",
+    "After creation, read the Ticket back as a whole. Its title, Worker type, Brief,\ntoday status, direct Project and Sprint, optional Sprint Item, priority,\ndeadline, and blockers should tell one coherent story. Correct a mismatch through the\nordinary owning surface rather than compensating for it in prose.",
+    "After creation, read the Ticket back as a whole. Its title, Worker type, Brief,\nProject, explicit orchestrator assignment, priority, deadline, and blockers must tell\none coherent story. Correct a mismatch through the\nordinary owning surface rather than compensating for it in prose.",
+    "HEAD"
+  ],
+  [
+    "panels-ticket-creation",
+    "```sh\npanels ticket create --input-json - <<'JSON'\n{\n  \"title\": \"Clear outcome title\",\n  \"worker_type\": \"coding\",\n  \"project_id\": \"project_example\",\n  \"sprint_id\": \"sprint_example\",\n  \"sprint_item_id\": \"si_example\",\n  \"kickoff_note\": \"Faithful intake context\",\n  \"ceiling\": \"needs_success_condition\",\n  \"ceiling_holder\": {\"kind\": \"sprint_item\", \"id\": \"si_example\"}\n}\nJSON\n```\n\nOnly `title` and `worker_type` are always required. Add optional keys only when the\ncreation decision supplies them. Use canonical IDs and `null` for explicit backlog\nplacement. Read the created Ticket with `panels ticket show <id>`.\n",
+    "```sh\npanels ticket create --input-json - <<'JSON'\n{\n  \"title\": \"Clear outcome title\",\n  \"worker_type\": \"coding\",\n  \"project_id\": \"project_example\",\n  \"orchestrator\": {\"kind\": \"sprint_item\", \"id\": \"si_example\"},\n  \"kickoff_note\": \"Faithful intake context\",\n  \"ceiling\": \"needs_success_condition\",\n  \"ceiling_holder\": {\"kind\": \"sprint_item\", \"id\": \"si_example\"}\n}\nJSON\n```\n\nOnly `title` and `worker_type` are always required. Add optional keys only when the\ncreation decision supplies them. Use canonical IDs and an explicit orchestrator reference. Read the created Ticket with `panels ticket show <id>`.\n",
+    "HEAD"
+  ],
+  [
+    "panels-ticket-creation",
+    "## Two kinds of placement\n\nToday and sprint placement answer different questions. Ordinary creation atomically\nadds the Ticket to today, making it part of the active execution roster. This is true\nwhether the Ticket is in a sprint or the backlog. If the user explicitly wants it off\ntoday, remove it from the Day as a separate follow-up; backlog does not mean not today.\n\nSprint placement says which outcome owns the work. Inspect the relevant Project and\nSprint Items and use an existing specific item when it genuinely owns the Ticket. With\nno explicit placement and a current sprint, Panels creates or reuses that sprint's\nProject-specific `Other` item; without a current sprint, the Ticket remains unparented.\nAn explicit Sprint Item selects that item; explicit backlog placement leaves the Ticket\noutside a sprint. A Ticket under an item inherits its Project and effective sprint from\nthat item, while an unparented backlog Ticket may carry its Project directly. Do not\ncreate a new Sprint Item merely to avoid the `Other` fallback; Sprint Item creation and\npriority belong to sprint planning.\n\n",
+    "## Explicit orchestrator assignment\n\nA Worker names Chief or one ordinary orchestrator. Inspect existing orchestrators and\nchoose the one that describes responsibility for the job. Use Chief when no ordinary\norchestrator applies. Do not create a thin fallback Item for Chief.\n\nThe canonical field is `orchestrator`, with `kind` and `id`. Chief is\n`{\"kind\":\"chief\",\"id\":\"chief\"}`. An ordinary orchestrator is\n`{\"kind\":\"sprint_item\",\"id\":\"<existing-item-id>\"}`. Former Sprint Item IDs and\nsupervisor conversations remain stable. Assignment is independent of the ceiling holder\nand Chief's global authority. Existing Project validation still applies.\n\nToday and live Sprint placement are retired. Creation does not create a Day or Day\nmembership. Workers continue through normal rules without Today. Do not use settlement\nas a replacement activation gate, and do not create the retired planning Worker types\nor replacement recurring reviews.\n\n",
+    "1f03f0678c5840ba32cd1dbae33f444a7d45420b"
+  ],
+  [
+    "panels-worker-planning-day",
+    "# Planning the day\n\nHelp the user choose the most important and interesting direction for the day. Operate at\nthe user's level. The agent owns the evidence, translation, and detailed Day operation.\n\n## Day overview fields\n\nDerive these fields as background agent work. Never ask the user to write or review them.\nDo not make them literal summaries of the Tickets on the Day.\n\n- **focus** — State where the user must keep attention throughout the day.\n- **brief_take** — Give the shortest framing that makes the day clear and manageable.\n- **watchout** — Name the likely behavioral trap and the response that defeats it.\n- **if_today_lands** — State the personal benefit from completing the day.\n\nKeep each field short. Use 5–10 words by default.\n\n### needs_review\n\nRead the current and previous Day, unfinished work, the current sprint, relevant Ticket\nstate, and factual receipts about commitments and drift. Gather more evidence when it\nimproves the review. Trust stored Panels state. Do not mine transcripts or treat message\ncount as a conclusion about the user's contribution.\n\nCreate a beautiful, concise HTML review as a Ticket artifact. Give a top-level opinion on\nhow the previous day went. Show only the evidence that helps the user understand that\nopinion. End with the best evidence-backed guess for today's direction.\n\nPropose `review` as a short orientation with the artifact link and direction guess.\n\n### needs_todays_direction\n\nOpen from the direction guess in the review and invite correction. Discuss only whether\nthe day attacks the most important and interesting work. Keep detailed Ticket operations\nand Day overview fields out of this conversation.\n\nPressure-test the direction against the sprint, unfinished commitments, and honest\ncapacity. The user chooses the direction. The agent owns its detailed translation.\n\nPropose `todays_direction` as the concise top-level agreement, not a transcript or change list.\n\n### needs_day_changes\n\nTranslate the approved direction into an exact proposed difference from the current Day.\nName every Ticket that comes on or off the Day. Name any Ticket creation or reshape that\nthe direction requires. Preserve everything else without unnecessary discussion.\n\nRespect Ticket gates and do not apply changes in this stage. Present enough detail for\nthe user to catch an unexpected addition, removal, creation, or reshape.\n\nPropose `day_changes` as the exact change list. Do not include Day overview fields.\n\n### needs_consequences\n\nThe Day agreement authorizes only the approved change list.\n\nApply the approved change list through ordinary Panels planning surfaces. Before creating\nan approved Ticket, load and follow `panels-ticket-creation`. Derive the four Day overview\nfields from the agreed direction without user input. Then read the Day and affected\nTickets back to verify the complete result. Never bypass Ticket gates.\n\nYou compose the Day: `panels day add-ticket` and `panels day remove-ticket` are yours, and\nso is creating a Ticket onto it. You do not reach into the Tickets themselves. An approved\nreshape of an existing Ticket — its priority, its recap — is refused, because you stand\nabove the Day, not above other people's work. Name the reshape in the change list and say\nin `consequences` that it is waiting on whoever stands above that Ticket. Do not report it\nas applied.\n\nPropose a short verified `consequences`. Set a recap that the next Previous Day Review can\nunderstand without the conversation.\n\n### done\n\nDone means that the canonical Day matches the approved changes and direction. A day that\nwas never planned creates no backfill, guilt, streak, or rollover ceremony.\n",
+    "# Historical planning Worker\n\nThis specialist remains readable for original Ticket history. Its live calendar workflow\nis retired. Do not create replacement planning Tickets, edit Days or Sprints, change\ncalendar membership, or execute the old Consequences instructions.\n\nThe reviewed obsolete planning cohort receives an in-place cancelled disposition through\na forward migration. Cancellation preserves original identity, writing, conversations,\nartifacts, and historical proposals. It does not mean Done. Cancelled proposals remain\nhistorical and cannot receive actionable approval.\n\nDo not cancel ordinary unfinished work or perform live migration actions from this\nspecialist. Report a contradiction through the normal supervisor message path.\n",
+    "HEAD"
+  ],
+  [
+    "panels-worker-planning-sprint",
+    "# Planning sprint ticket stages\n\nPlanning Sprint is the durable final-day carrier for one ordered boundary workflow:\nreview the current sprint, then plan the next. The Worker prepares automatically, pauses\nfor the user's strategic judgment, and writes only the approved result during Consequences.\nIt does not own the day-four Checkpoint, in-sprint reconciliation, daily planning, scheduling,\nor operational cutover.\n\n### The stages\n\nThe sequence is **Brief → Review → Next Sprint → Consequences → Done**.\n\n- **needs_brief** — identify the sprint boundary this Ticket owns.\n- **needs_review** — gather evidence, discuss the current sprint, and settle its review.\n- **needs_next_sprint** — use the approved review to settle the next sprint.\n- **needs_consequences** — write both approved packages and verify the canonical records.\n- **done** — finished.\n\n## Shared judgment\n\nKeep three things visibly separate: facts from Panels, worker judgment, and user\ndecisions. Be willing to challenge overload, vague outcomes, avoidance, and automatic\ncarry-forward, but never turn a recommendation into an approved decision.\n\nPanels is canonical. Use supported `panels sprint`, `panels sprint item`, and\n`panels ticket` surfaces; never edit the database or legacy planning files. Keep working\ndetail in Ticket Chat. Use Ticket guidance only for direct user direction, and a ticket-owned\nartifact only when an evidence packet would otherwise overwhelm the conversation.\n\n### needs_brief — bind the boundary\n\nIdentify the sprint being reviewed, the intended next-sprint window, why the run exists,\nand inherited scope. Make the boundary unambiguous without beginning the review or\ninventing strategy. Scheduling and activation are upstream concerns.\n\n### needs_review — review before planning\n\nBefore asking the user anything, resolve the sprint being reviewed and classify the run\nas normal, stale, or first-sprint. Read:\n\n- the sprint's primary bet, kickoff, checkpoint, and review documents;\n- its committed Sprint Items and all directly scheduled Sprint Tickets;\n- the relevant Sprint Item context and child Tickets across Sprints;\n- unscheduled Tickets and relevant reusable Sprint Item briefs; and\n- the project list.\n\nInspect individual records only where their detail can change the judgment. Turn the\nevidence into a decision-ready opening, not a ticket ledger. Compare actual outcomes\nwith the primary bet and the plan recorded in kickoff. Distinguish completed,\nmoved-but-incomplete, blocked or displaced, and materially unplanned work. Flag\ncontradictions; an implementation report is evidence, not automatic proof of its parent\noutcome.\n\nShow the factual picture, then ask for the user's reflection before giving the final\nworker interpretation. Pipe that bounded opening to\n`panels ticket request-help <ticket-id> --owner`. Useful questions include what happened,\nwhat the user learned, which assumptions changed, and what deserves to carry forward.\nUse the questions that can change the next decision; do not fill a questionnaire.\n\nCarry-forward is a candidate pool, not an entitlement. For a stale sprint, prefer a thin\ntruthful review over reconstructing fictional precision. For a genuine first sprint,\nstate that no prior review exists and obtain the user's agreement before skipping it.\n\nPreserve direct guidance as it settles. Do not propose while strategic questions remain\nopen. After the user answers, synthesize one concise **review**\ndocument. Use headings when they help. Explain the important judgment rather than\nreplaying status history.\n\n### needs_next_sprint — choose the next commitment\n\nBegin only from the approved Review. Refresh evidence whose change could alter planning,\nthen prepare a bounded opening with plausible constraints and material candidate work,\nnot a predetermined sprint. Pipe it to `panels ticket request-help <ticket-id> --owner`.\n\nStart with the constraint and a concrete primary bet. Discuss supporting work and what\ncould make the plan fail when those questions can change the commitment. Then choose\nSprint Items that earn a Sprint commitment, reusing their existing identities. Preserve the useful reasoning in one\nkickoff document; headings are optional, not fields that must all be filled.\n\nConsider approved carry-forward candidates, existing Sprint Items, outcomes required by the bet\nand supports, and genuinely new work. Reuse an existing Sprint Item where it already\nrepresents the outcome; create one only when it does not. Do not create child Tickets,\nput sprint work onto today, or let backlog volume choose the strategy.\n\nAfter explicit Release, propose one concise **next sprint** package. Give a start date\nand an end date that define exactly seven inclusive dates. Include the name, a short\nprimary bet, the kickoff document, and exact Sprint Item commitments or creations. Name\nexisting Sprint Item IDs. If carrying Tickets, list each approved unfinished Ticket ID;\notherwise carry only the commitment. Never move all children implicitly. Existing historical sprint ranges remain unchanged.\n\n### needs_consequences — write and verify\n\nThe Consequences stage is the only canonical-write phase. Refresh affected records and\ncompare them with the approved Review and Next Sprint packages. If material drift makes\neither unsafe, request user help rather than improvising.\n\nFor a normal or stale boundary, write the current sprint's `review` document first and\nread it back through `panels sprint show <id> review`.\nFor a genuine first sprint, verify the approved no-review result and perform no review\nwrite. Then create the next (or first) sprint with the approved `primary_bet` and `brief`,\nretain its returned id, create only approved new Sprint Items, and add only approved\ncommitments through `panels sprint add-item`. For an explicit approved carry list,\nuse `panels sprint carry-item` with each selected Ticket ID. Read tracking and affected\nTickets back; completed history and unselected work remain in their existing Sprints. Use explicit ids,\navoid duplicate creates on retry, and leave the exact continuation point visible after a\npartial failure.\n\nA good **Consequences** briefly names what landed and the readback evidence that it matches\nboth approvals. Do not alter the daily plan or expand into excluded sprint workflows.\n",
+    "# Historical planning Worker\n\nThis specialist remains readable for original Ticket history. Its live calendar workflow\nis retired. Do not create replacement planning Tickets, edit Days or Sprints, change\ncalendar membership, or execute the old Consequences instructions.\n\nThe reviewed obsolete planning cohort receives an in-place cancelled disposition through\na forward migration. Cancellation preserves original identity, writing, conversations,\nartifacts, and historical proposals. It does not mean Done. Cancelled proposals remain\nhistorical and cannot receive actionable approval.\n\nDo not cancel ordinary unfinished work or perform live migration actions from this\nspecialist. Report a contradiction through the normal supervisor message path.\n",
+    "HEAD"
+  ],
+  [
+    "panels-worker-planning-midday-check",
+    "# Checking the day\n\nThis is an execution intervention, not a productivity scorecard. Help meaningful work\nmove without creating a second plan.\n\n### needs_brief\n\nIdentify the planning date and the 14:30 checkpoint plainly. Orient to the morning intent;\ndo not pre-decide the Agreed Intervention.\n\n### needs_agreed_intervention\n\nRead the Day, its `planning-day` Ticket, and live Ticket state. Lead with what actually\nhappened. Raise only slippage or blockers that matter to action now. If morning planning\nis missing, say so and continue without inventing a baseline.\n\nPipe one compact confrontation and bounded recommendation to\n`panels ticket request-help --owner`. Make no changes before the user answers and approves.\nAfter the exchange, propose only the settled changes or `No action`.\n\n### needs_consequences\n\nRe-read affected state and execute only the approved changes through ordinary Panels\nsurfaces. If reality has materially changed, return to the user rather than stretching\nthe approval.\n\nYou can move work on and off today. You cannot change a Ticket's own fields: that belongs\nto whoever stands above that Ticket. Say so rather than reporting such a change as made.\n\nVerify first, then write `midday_reconciliation`: what happened, what was decided, and\nwhat changed or did not need changing. Keep it truthful and brief.\n\n### done\n\nDone means the approved Agreed Intervention and the reconciliation match reality. A check\nthat never ran creates no invented record or catch-up ceremony.\n",
+    "# Historical planning Worker\n\nThis specialist remains readable for original Ticket history. Its live calendar workflow\nis retired. Do not create replacement planning Tickets, edit Days or Sprints, change\ncalendar membership, or execute the old Consequences instructions.\n\nThe reviewed obsolete planning cohort receives an in-place cancelled disposition through\na forward migration. Cancellation preserves original identity, writing, conversations,\nartifacts, and historical proposals. It does not mean Done. Cancelled proposals remain\nhistorical and cannot receive actionable approval.\n\nDo not cancel ordinary unfinished work or perform live migration actions from this\nspecialist. Report a contradiction through the normal supervisor message path.\n",
+    "HEAD"
+  ],
+  [
+    "panels-chief-of-staff",
+    "- **Organizing and triaging**: help with priorities, deadlines, sprint placement, today's work list, backlog shape, and review queue.",
+    "- **Organizing and triaging**: help with priorities, deadlines, explicit orchestrator assignment, and the review queue.",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-chief-of-staff",
+    "description: Top-level Panels planning and orchestration agent. Helps the user capture, triage, organize, roll over, sprint-plan, and review work across days, sprints, items, tickets, and ideas.",
+    "description: Top-level Panels agent for orchestrators, Workers, ideas, and owner decisions.",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-sprint-item-supervisor",
+    "add-to-day and remove-from-day change Day membership.",
+    "Day membership operations are retired. Assign Workers explicitly to Chief or an orchestrator through the Ticket assignment command.",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-ticket-creation",
+    "After creation, read the Ticket back as a whole. Its title, Worker type, Brief,\ntoday status, Sprint Item or backlog placement, inherited Project and sprint, priority,\ndeadline, and blockers should tell one coherent story. Correct a mismatch through the\nordinary owning surface rather than compensating for it in prose.\n",
+    "After creation, read the Ticket back as a whole. Its title, Worker type, Brief,\nProject, explicit orchestrator assignment, priority, deadline, and blockers must tell\none coherent story. Correct a mismatch through its canonical surface.",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-ticket-creation",
+    "blocking other work, on today's roster, urgent,",
+    "blocking other work, urgent,",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-worker-planning-day",
+    "Apply the approved change list through ordinary Panels planning surfaces. Before creating\nan approved Ticket, load and follow `panels-ticket-creation`. Derive the four Day overview\nfields from the agreed direction without user input. Then read the Day and affected\nTickets back to verify the complete result. Never bypass Ticket gates.",
+    "Historical workflow: the original Consequences derived the Day overview and wrote approved Day changes. Those calendar writes are retired. Preserve the original approvals as history.",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-worker-planning-day",
+    "description: Review the previous day, agree Today's Direction, show exact Day changes, and commit the approved Day.",
+    "description: Historical specialist for a retired calendar planning Worker type.",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-worker-planning-sprint",
+    "For a normal or stale boundary, write the current-sprint review first and read it back. For a genuine first sprint, verify the approved no-review result and perform no review write. Then create the next (or first) sprint, retain its returned id, move or create only the approved Sprint Items, and read the final sprint and item list back. Use explicit ids, avoid duplicate creates on retry, and leave the exact continuation point visible after a partial failure.",
+    "Historical workflow: the original Consequences wrote the Sprint review and then created the next Sprint. Those calendar writes are retired. Preserve the original approved packages as history.",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-worker-planning-sprint",
+    "description: \"Stage-by-stage guidance for reviewing the current sprint and planning the next at the sprint boundary.\"",
+    "description: Historical specialist for a retired calendar planning Worker type.",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-worker-planning-midday-check",
+    "description: Check the planning day at 14:30, agree any useful intervention, carry it out, and record the result.",
+    "description: Historical specialist for a retired calendar planning Worker type.",
+    "isolated rehearsal snapshot; authorized calendar retirement"
+  ],
+  [
+    "panels-worker",
+    "`panels worker propose`, `recap`, `note`, and `trouble` take their text on stdin only. There is no file-path option. Pipe or redirect the text in, for example:",
+    "`panels worker propose`, `recap`, and `note` take their text on stdin only. `panels ticket request-help [id]` also reads its message from stdin. The current ceiling holder is the default recipient. Select exactly one recipient override only when another principal must answer.",
+    "isolated snapshot; authorized stale command repair"
+  ],
+  [
+    "panels-worker",
+    "- `panels worker trouble`, with the one-line trouble note piped on stdin.",
+    "- `panels ticket request-help [id]`, with the help message piped on stdin. The current ceiling holder receives it by default. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only to select another recipient.",
+    "isolated snapshot; authorized stale command repair"
+  ]
+]

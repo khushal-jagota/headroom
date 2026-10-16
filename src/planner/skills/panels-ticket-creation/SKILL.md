@@ -6,8 +6,7 @@ description: The shared Panels model for creating a coherent Ticket.
 # Creating a Ticket
 
 Use a Ticket for a concrete unit of work that one Worker can carry through its
-lifecycle. A Sprint Item is an optional broader-outcome classification for several
-Tickets. An idea is a loose thought that is not committed work. Choose the Worker type whose lifecycle
+lifecycle. An orchestrator holds the shared responsibility for its Workers. An idea is a loose thought that is not committed work. Choose the Worker type whose lifecycle
 fits the job, use its registered specialist guidance, and let that type supply its
 normal employee runtime defaults.
 
@@ -16,26 +15,23 @@ the user's request plus only the factual context the Worker needs to understand 
 Ground references to existing work, preserve agreed boundaries and dependencies, and
 do not turn creation into premature planning.
 
-## Two kinds of placement
+## Explicit orchestrator assignment
 
-Today and sprint placement answer different questions. Ordinary creation atomically
-adds the Ticket to today, making it part of the active execution roster. This is true
-whether the Ticket is in a sprint or the backlog. If the user explicitly wants it off
-today, remove it from the Day as a separate follow-up; backlog does not mean not today.
+A Worker names Chief or one ordinary orchestrator. Inspect existing orchestrators and
+choose the one that describes responsibility for the job. Use Chief when no ordinary
+orchestrator applies. Do not create a thin fallback Item for Chief.
 
-Each Ticket owns its Project and optional Sprint placement. With no explicit Sprint
-choice, creation uses the current Sprint. Without a current Sprint, the Ticket stays in
-backlog. Explicit backlog placement also leaves the Ticket outside a Sprint.
+The canonical field is `orchestrator`, with `kind` and `id`. Chief is
+`{"kind":"chief","id":"chief"}`. An ordinary orchestrator is
+`{"kind":"sprint_item","id":"<existing-item-id>"}`. Former Sprint Item IDs and
+supervisor conversations remain stable. Assignment is independent of the ceiling holder
+and Chief's global authority. Existing Project validation still applies.
 
-Sprint Item membership is optional classification. Inspect the relevant Project and
-Sprint Items, and use an existing Item only when it genuinely describes the Ticket. The
-Sprint Item's Project must match the Ticket; Sprint placement is independent. Do not create an Item only to classify
-otherwise coherent work. Unclassified Sprint Tickets appear in the view-only Other
-group, not in a stored fallback Item.
-
-Route `planning-day`, `planning-midday-check`, and `planning-sprint` Tickets to the
-Personal Project and the intended Sprint, without creating a Planning container. Keep an `initiative_planning` Ticket
-with its initiative Project, Sprint, and optional Item.
+Today and live Sprint placement are retired. Creation does not create a Day or Day
+membership. Workers continue through normal rules without Today. Do not use settlement
+as a replacement activation gate. Do not create, retype, or schedule `personal`,
+`planning-day`, `planning-midday-check`, or `planning-sprint` work. Do not create
+replacement recurring reviews. Existing personal Tickets keep their ordinary Stage gates.
 
 ## Importance, timing, and dependencies
 
@@ -55,7 +51,7 @@ outcome; exceed it only when the Ticket's consequences materially escape the anc
   an important outcome to fail.
 - **P3:** background, polish, maintenance, or optional work.
 
-Do not raise priority because a Ticket is blocking other work, on today's roster, urgent,
+Do not raise priority because a Ticket is blocking other work, urgent,
 or requested emphatically. Use blockers for dependencies and deadlines for urgency. If
 the evidence does not meet the higher bar, choose the lower priority.
 
@@ -86,8 +82,8 @@ State only the ceiling you were actually given. Widening a Ticket beyond what th
 authorized is not a creation detail.
 
 After creation, read the Ticket back as a whole. Its title, Worker type, Brief,
-today status, direct Project and Sprint, optional Sprint Item, priority,
-deadline, and blockers should tell one coherent story. Correct a mismatch through the
+Project, explicit orchestrator assignment, priority, deadline, and blockers must tell
+one coherent story. Correct a mismatch through the
 ordinary owning surface rather than compensating for it in prose.
 
 Create the Ticket through one structured body:
@@ -98,8 +94,7 @@ panels ticket create --input-json - <<'JSON'
   "title": "Clear outcome title",
   "worker_type": "coding",
   "project_id": "project_example",
-  "sprint_id": "sprint_example",
-  "sprint_item_id": "si_example",
+  "orchestrator": {"kind": "sprint_item", "id": "si_example"},
   "kickoff_note": "Faithful intake context",
   "ceiling": "needs_success_condition",
   "ceiling_holder": {"kind": "sprint_item", "id": "si_example"}
@@ -108,5 +103,4 @@ JSON
 ```
 
 Only `title` and `worker_type` are always required. Add optional keys only when the
-creation decision supplies them. Use canonical IDs and `null` for explicit backlog
-placement. Read the created Ticket with `panels ticket show <id>`.
+creation decision supplies them. Use canonical IDs and an explicit orchestrator reference. Read the created Ticket with `panels ticket show <id>`.

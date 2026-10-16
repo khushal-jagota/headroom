@@ -1,0 +1,249 @@
+"""Prove lifecycle controls across UI, real writers, SSE, and durable history.
+
+Mocked frontend responses cannot establish that approval controls, persisted state,
+and retired history agree after a live write and reload. This bounded synthetic
+proof uses the existing deterministic conversation adapter and no provider calls.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Callable
+from pathlib import Path
+
+from playwright.sync_api import BrowserContext, Page, expect
+from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
+from tests.e2e.test_approval_groups_message_dots import _conversation
+from tests.e2e.test_orchestrator_rail import rail_server  # noqa: F401
+from tests.e2e.test_retired_page_interiors import _propose
+
+EVIDENCE = Path(
+    "/home/vps/Deployments/Panels/current/data/files/tickets/t_8g8n40qk/artifacts/screenshots"
+)
+
+
+def _screenshot(page: Page, name: str) -> None:
+    # Record the settled visual state, rather than an entry animation frame.
+    page.evaluate("""async () => {
+      await document.fonts.ready;
+      await Promise.all(document.getAnimations().map(
+        animation => animation.finished.catch(() => {})));
+    }""")
+    page.screenshot(path=str(EVIDENCE / name), full_page=True)
+
+
+def test_ticket_backlog_resume_retirement_and_settled_discovery(
+    rail_server: ServerHandle,  # noqa: F811
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    api: ApiHelper,
+) -> None:
+    server = rail_server
+    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    project = api.direct_post(
+        server, "/api/projects", {"name": "Lifecycle proof", "priority": "P2"}
+    )
+    item = api.direct_post(
+        server, "/api/items", {"title": "Synthetic lifecycle review", "project_id": project["id"]}
+    )
+    ticket = api.direct_post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Synthetic ticket with retained evidence",
+            "worker_type": "coding",
+            "kickoff_note": "A synthetic brief for browser verification.",
+            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+        },
+    )
+    ticket_id = str(ticket["id"])
+    artifact_href = f"/files/tickets/{ticket_id}/evidence.md"
+    artifact = server.db_path.parent / "files" / "tickets" / ticket_id / "evidence.md"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("# Retained evidence\n\nThis file survives retirement.")
+    api.direct_post(
+        server,
+        f"/api/tickets/{ticket_id}/accept/brief",
+        {
+            "next_ceiling": "needs_success_condition",
+            "next_holder": {"kind": "owner", "id": "owner"},
+        },
+    )
+    api.direct_patch(
+        server,
+        f"/api/tickets/{ticket_id}",
+        {"field_values": {"brief": f"Approved brief with [retained evidence]({artifact_href})."}},
+    )
+    proposal = f"Pending success evidence stays historical. [Original artifact]({artifact_href})"
+    _propose(server, ticket_id, proposal)
+    _conversation(server, "synthetic-lifecycle-conversation")
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET conversation_id=? WHERE id=?",
+            ("synthetic-lifecycle-conversation", ticket_id),
+        )
+        conn.execute(
+            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
+            ("synthetic-lifecycle-conversation", ticket_id),
+        )
+
+    path = f"/api/tickets?detail=full&id={ticket_id}"
+    before = api.get(server, path)
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/workspace/item/{item['id']}/{ticket_id}",
+        "[data-ticket-lifecycle]",
+    )
+    page.set_default_timeout(WAIT_MS)
+    page.set_viewport_size({"width": 1440, "height": 1100})
+    worker = page.locator('[data-screen="ticket"]')
+    expect(worker.get_by_role("button", name="Approve", exact=True)).to_be_visible()
+    expect(worker.locator("[data-ticket-retire-action]")).not_to_be_visible()
+    _screenshot(page, "ticket-active-desktop.png")
+    page.set_viewport_size({"width": 560, "height": 1100})
+    _screenshot(page, "ticket-active-compact.png")
+    page.set_viewport_size({"width": 1440, "height": 1100})
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/{ticket_id}/backlog")
+    ) as response:
+        worker.locator("[data-ticket-backlog-action]").click()
+    assert response.value.ok, response.value.text()
+    deferred = api.get(server, path)
+    assert deferred["is_backlogged"] is True
+    assert deferred["stage"] == before["stage"]
+    assert deferred["pending_proposal"] == before["pending_proposal"]
+    assert deferred["conversation_id"] == before["conversation_id"]
+    expect(worker.locator("[data-ticket-backlogged]")).to_be_visible()
+    expect(worker.get_by_role("button", name="Approve", exact=True)).to_be_visible()
+    page.reload()
+    expect(worker.locator("[data-ticket-backlogged]")).to_be_visible()
+    expect(worker.get_by_role("button", name="Approve", exact=True)).to_be_visible()
+    _screenshot(page, "ticket-backlogged-desktop.png")
+    page.set_viewport_size({"width": 560, "height": 1100})
+    _screenshot(page, "ticket-backlogged-compact.png")
+    page.goto(server.base + "/#/backlog")
+    state_filter = page.get_by_label("Ticket state", exact=True)
+    with page.expect_response(
+        lambda response: (
+            "/api/tickets?detail=summary" in response.url and "is_backlogged=true" in response.url
+        )
+    ) as filtered:
+        state_filter.select_option("backlogged")
+    assert filtered.value.ok
+    expect(page.locator(f'[data-backlog-tickets] [data-ticket-id="{ticket_id}"]')).to_be_visible()
+    expect(page.locator("[data-backlogged-label]")).to_have_text("Backlogged")
+    for width, label in ((1440, "desktop"), (560, "compact")):
+        page.set_viewport_size({"width": width, "height": 1100})
+        _screenshot(page, f"backlog-filter-list-{label}.png")
+    page.goto(server.base + f"/#/workspace/item/{item['id']}/{ticket_id}")
+    expect(worker.locator("[data-ticket-backlogged]")).to_be_visible()
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/{ticket_id}/resume")
+    ) as response:
+        worker.locator("[data-ticket-backlog-action]").click()
+    assert response.value.ok, response.value.text()
+    resumed = api.get(server, path)
+    assert resumed["is_backlogged"] is False
+    assert resumed["pending_proposal"] == before["pending_proposal"]
+    expect(worker.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
+    page.reload()
+    expect(worker.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
+    worker.locator("[data-ticket-actions]").click()
+    worker.locator("[data-ticket-retire-action]").click()
+    expect(worker.locator("[data-confirm-retirement]")).to_be_disabled()
+    reason = "This synthetic work is obsolete. Preserve its evidence without success."
+    worker.locator("[data-retirement-input]").fill(reason)
+    for width, label in ((1440, "desktop"), (560, "compact")):
+        page.set_viewport_size({"width": width, "height": 1100})
+        _screenshot(page, f"ticket-retirement-confirm-{label}.png")
+    with page.expect_response(
+        lambda response: response.url.endswith(f"/{ticket_id}/retire")
+    ) as response:
+        worker.locator("[data-confirm-retirement]").click()
+    assert response.value.ok, response.value.text()
+    retired = api.get(server, path)
+    assert retired["stage"] == "cancelled"
+    assert retired["pending_proposal"] is None
+    assert retired["field_values"]["brief"] == before["field_values"]["brief"]
+    provenance = json.loads(retired["field_values"]["retirement"])
+    assert provenance["reason"] == reason
+    assert provenance["original_stage"] == before["stage"]
+    assert json.loads(provenance["original_pending_proposal_json"])["body"] == proposal
+    assert retired["conversation_id"] == before["conversation_id"]
+    expect(worker.locator("[data-retirement-reason]")).to_have_text(reason)
+    expect(worker.get_by_role("button", name="Approve", exact=True)).to_have_count(0)
+    expect(worker.locator("[data-ticket-retire-action]")).to_have_count(0)
+    expect(worker.locator("[data-worker-live-card]")).to_have_count(0)
+    page.reload()
+    expect(worker.locator("[data-ticket-retired]")).to_be_visible()
+    worker.locator("[data-stage-fold-open]").click()
+    for summary in worker.locator(".disclosure--stage > summary").all():
+        summary.click()
+    expect(worker).to_contain_text("Historical proposal (not approved)")
+    expect(worker).to_contain_text("Pending success evidence stays historical")
+    artifact_links = worker.locator('[data-field="success_condition"] a[href*="preview"]')
+    expect(artifact_links.first).to_be_visible()
+    artifact_links.first.click()
+    expect(page.locator("[data-ticket-artifact]")).to_contain_text("This file survives retirement.")
+    page.keyboard.press("Escape")
+    _screenshot(page, "ticket-retired-history-compact.png")
+    page.set_viewport_size({"width": 1440, "height": 1100})
+    _screenshot(page, "ticket-retired-history-desktop.png")
+    with sqlite3.connect(server.db_path) as conn:
+        stored = conn.execute(
+            "SELECT stage,is_backlogged,conversation_id FROM tickets WHERE id=?", (ticket_id,)
+        ).fetchone()
+    assert stored == ("cancelled", 0, "synthetic-lifecycle-conversation")
+
+    page.goto(server.base + "/#/backlog")
+    state_filter = page.get_by_label("Ticket state", exact=True)
+    expect(page.locator(f'[data-backlog-tickets] [data-ticket-id="{ticket_id}"]')).to_have_count(0)
+    with page.expect_response(
+        lambda response: (
+            "/api/tickets?detail=summary" in response.url
+            and "include_terminal=true" in response.url
+            and "stage=cancelled" in response.url
+        )
+    ) as filtered:
+        state_filter.select_option("retired")
+    assert filtered.value.ok
+    retired_row = page.locator(f'[data-backlog-tickets] [data-ticket-id="{ticket_id}"]')
+    expect(retired_row).to_be_visible()
+    expect(retired_row.locator("[data-retired-label]")).to_have_text("Retired without success")
+    for width, label in ((1440, "desktop"), (560, "compact")):
+        page.set_viewport_size({"width": width, "height": 1100})
+        _screenshot(page, f"retired-filter-list-{label}.png")
+    retired_row.click()
+    expect(worker.locator("[data-retirement-reason]")).to_have_text(reason)
+
+    api.direct_patch(server, f"/api/items/{item['id']}/settled", {"settled": True})
+    page.goto(server.base + "/#/workspace")
+    settled = page.locator(".settled-head")
+    expect(settled).to_be_visible()
+    settled.click()
+    row = page.locator(f'[data-settled-item="{item["id"]}"]')
+    expect(row).to_be_visible()
+    for width, label in ((1440, "desktop"), (560, "compact")):
+        page.set_viewport_size({"width": width, "height": 1100})
+        _screenshot(page, f"settled-discovery-{label}.png")
+    page.set_viewport_size({"width": 1440, "height": 1100})
+    row.locator(".settled-title").click()
+    expect(page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')).to_be_visible()
+    (EVIDENCE / "lifecycle-browser-evidence.json").write_text(
+        json.dumps(
+            {
+                "ticket_id": ticket_id,
+                "stage_before": before["stage"],
+                "retired_stage": retired["stage"],
+                "preserved_pending_proposal": provenance["original_pending_proposal_json"],
+                "isolation": (
+                    "temporary rail-proof.db with deterministic conversation adapter, "
+                    "no provider calls"
+                ),
+                "settled_discovery": "existing Workspace Settled fold",
+            },
+            indent=2,
+        )
+    )

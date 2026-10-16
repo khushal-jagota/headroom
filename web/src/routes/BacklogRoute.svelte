@@ -18,11 +18,15 @@
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
   const PAGE_SIZE = 30;
+  let { projectId = "" }: { projectId?: string } = $props();
 
   let ticketOffset = $state(0);
-  const tickets = createQuery(() => queries.backlogTicketSummaries(ticketOffset, PAGE_SIZE));
+  let backlogFilter = $state("active");
+  let workerTypeFilter = $state("");
+  const tickets = createQuery(() => queries.backlogTicketSummaries(ticketOffset, PAGE_SIZE, projectId, backlogFilter === "backlogged" ? true : backlogFilter === "not_backlogged" ? false : null, workerTypeFilter, backlogFilter === "retired"));
   const projects = createQuery(() => queries.projects());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
+  const supportedWorkerTypes = createQuery(() => queries.supportedWorkerTypeManifests());
 
   const priorityOptions = [
     { value: null, label: "Project default" },
@@ -52,12 +56,13 @@
   let projectOptions = $derived(
     (projects.data?.projects || []).map((entry) => ({ value: entry.id, label: entry.name }))
   );
-  let availableWorkerTypes = $derived(workerTypes.data?.worker_types || []);
+  let projectName = $derived(projects.data?.projects.find((entry) => entry.id === projectId)?.name);
+  let availableWorkerTypes = $derived((supportedWorkerTypes.data?.worker_types || []).filter((entry) => entry.creatable !== false));
 
   $effect(() => {
     const values = projectOptions.map((option) => option.value);
     if ((!project || !values.includes(project)) && values.length) {
-      project = values[0];
+      project = values.includes(projectId) ? projectId : values[0];
     }
   });
 
@@ -87,8 +92,7 @@
       kickoff_note: kickoffNote,
       project_id: project,
       priority,
-      sprint_id: null,
-      sprint_item_id: null,
+      orchestrator: { kind: "chief", id: "chief" },
       ceiling_holder: holder
     };
     if (deadline.trim()) payload.deadline = deadline.trim();
@@ -110,13 +114,14 @@
 
 <section class="backlog-screen" data-screen="backlog">
   <div class="doc">
-    <ScreenHeader title="Backlog" />
+    <ScreenHeader title="Workers" />
+    {#if projectId}<p class="quiet-line" data-workers-project>{projectName ?? "Project"} · <a href="#/backlog">All Workers</a></p>{/if}
     <div class="col">
       <Disclosure variant="make" chevron="none" data-create="ticket">
         {#snippet summary()}<span class="plus">+</span> New ticket{/snippet}
         <div class="form">
-          {#if createError || projects.error || workerTypes.error}
-            <ErrorLine error={createError || projects.error || workerTypes.error} />
+          {#if createError || projects.error || supportedWorkerTypes.error}
+            <ErrorLine error={createError || projects.error || supportedWorkerTypes.error} />
           {/if}
           <input class="in title-in" type="text" placeholder="What needs doing?" data-input="title" bind:value={title} />
           <textarea class="in detail-in" rows="2" placeholder="Kickoff context — optional" data-input="kickoff-note" bind:value={kickoffNote}></textarea>
@@ -153,10 +158,24 @@
         </div>
       </Disclosure>
 
+      <div class="foot" data-ticket-filters>
+        <select class="in" aria-label="Ticket state" value={backlogFilter} onchange={(event) => { backlogFilter = event.currentTarget.value; ticketOffset = 0; }}>
+          <option value="active">Active tickets</option>
+          <option value="backlogged">Backlogged tickets</option>
+          <option value="not_backlogged">Tickets outside backlog</option>
+          <option value="retired">Retired tickets</option>
+        </select>
+        <select class="in" aria-label="Filter worker type" value={workerTypeFilter} onchange={(event) => { workerTypeFilter = event.currentTarget.value; ticketOffset = 0; }}>
+          <option value="">All worker types</option>
+          {#each workerTypes.data?.worker_types ?? [] as entry (entry.worker_type)}
+            <option value={entry.worker_type}>{entry.label}</option>
+          {/each}
+        </select>
+      </div>
       <section class="groups" data-backlog-tickets>
         <ResourceState error={tickets.error} loading={tickets.isFetching} hasData={Boolean(tickets.data)} loadingText="Loading tickets...">
           {#if !(tickets.data?.tickets || []).length}
-            <div class="quiet-line">No active unscheduled tickets.</div>
+            <div class="quiet-line">No Workers.</div>
           {:else}
             {#each PRIORITY_ORDER as value}
               {#if ticketGroups[value]?.length}
@@ -173,6 +192,8 @@
                     >
                       {#snippet trailing()}
                         <span class="chips">
+                          {#if ticket.is_backlogged}<span data-backlogged-label>Backlogged</span>{/if}
+                          {#if ticket.stage === "cancelled"}<span data-retired-label>Retired without success</span>{/if}
                           {#if ticket.project}<Chip variant="project" value={ticket.project} />{/if}
                         </span>
                       {/snippet}

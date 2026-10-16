@@ -35,6 +35,9 @@ from planner.conversation.backends.codex_app_server.client import (
     CodexRequestRejected,
     child_environment,
 )
+from planner.conversation.backends.codex_app_server.login import (
+    RememberedCodexLoginRejection,
+)
 from planner.conversation.backends.contracts import (
     BackendSteerAccepted,
     TurnToken,
@@ -122,24 +125,26 @@ def _real_child(
         event_sink=sink,
         message_files=message_files
         or _message_files(workspace.parent / "message-files" if environment_overrides else None),
+        # Its own, because nothing here reads a card: these exercises are about the wire.
+        remembered_login_rejection=RememberedCodexLoginRejection(),
     )
 
 
 def _isolated_codex_environment(root: Path) -> tuple[tuple[str, str], ...]:
-    """Copy only login inputs into a test-owned home and isolate all runtime state."""
-    codex_home = root / "codex-home"
+    """Isolate this exercise's runtime state, and leave the login where it lives.
+
+    This used to copy the login into a home of its own, which looked like isolation and
+    was not. There is one account and one rotating refresh token: codex refreshes in
+    whichever home it is pointed at and writes the new token there, so a copy ends with
+    the rotation and the real file ends holding a token the server has already spent. The
+    next thing to use the real login then fails, and says nothing useful about why.
+
+    So these exercises run on the one real home, as production does, and isolate only
+    what is theirs to isolate.
+    """
     temporary_directory = root / "tmp"
-    codex_home.mkdir(parents=True)
     temporary_directory.mkdir(parents=True)
-    source_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
-    for name in ("auth.json", "config.toml"):
-        source = source_home / name
-        if source.exists():
-            shutil.copy2(source, codex_home / name)
-    return (
-        ("CODEX_HOME", str(codex_home)),
-        ("TMPDIR", str(temporary_directory)),
-    )
+    return (("TMPDIR", str(temporary_directory)),)
 
 
 async def _turn(

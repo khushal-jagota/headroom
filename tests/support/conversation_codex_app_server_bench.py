@@ -26,6 +26,9 @@ from planner.conversation.backends.codex_app_server.adapter import (
     CodexAppServerBackendChild,
     CodexChildLaunch,
 )
+from planner.conversation.backends.codex_app_server.login import (
+    RememberedCodexLoginRejection,
+)
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendUserInputRequest,
@@ -322,7 +325,11 @@ class _ScriptedChild:
 
 @asynccontextmanager
 async def _scripted_child(
-    workspace: Path, *, script: dict[str, Any]
+    workspace: Path,
+    *,
+    script: dict[str, Any],
+    remembered_login_rejection: RememberedCodexLoginRejection | None = None,
+    codex_home: Path | None = None,
 ) -> AsyncIterator[_ScriptedChild]:
     transcript_path = workspace / "transcript.jsonl"
     script_path = workspace / "script.json"
@@ -330,6 +337,11 @@ async def _scripted_child(
         json.dumps({"transcript_path": str(transcript_path), **script}), encoding="utf-8"
     )
     argv, environment = scripted_app_server_launch(script_path)
+    if codex_home is not None:
+        # A test that cares which login the adapter reads says where it is. The scripted
+        # app-server does not read it; the adapter does, to name the credential a turn ran
+        # on.
+        environment = {**environment, "CODEX_HOME": str(codex_home)}
     sink = _RecordingSink()
     message_files = ConversationMessageFiles(str(workspace / "planner.db"))
     child = CodexAppServerBackendChild(
@@ -337,6 +349,9 @@ async def _scripted_child(
         resolved_start=_resolved_start(workspace),
         event_sink=sink,
         message_files=message_files,
+        remembered_login_rejection=(
+            remembered_login_rejection or RememberedCodexLoginRejection()
+        ),
     )
     try:
         yield _ScriptedChild(

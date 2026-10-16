@@ -24,6 +24,7 @@
     chevron = "typed",
     below = false,
     align = "left",
+    anchor = null,
     attributes = {},
     triggerAttributes = {},
     panelAttributes = {},
@@ -33,6 +34,7 @@
     onOpen,
     onClose,
     onChoose,
+    onActiveChange,
     triggerContent,
     beforeList,
     optionContent,
@@ -52,6 +54,8 @@
     chevron?: "typed" | "drawn";
     below?: boolean;
     align?: "left" | "right";
+    /** Optional second entry point for the same picker; keeps one panel and draft. */
+    anchor?: HTMLElement | null;
     attributes?: Record<string, string | undefined>;
     triggerAttributes?: Record<string, string | undefined>;
     panelAttributes?: Record<string, string | undefined>;
@@ -66,6 +70,8 @@
     /** Every close, dismissal or not. A picker with a draft discards it here. */
     onClose?: () => void;
     onChoose: (value: string) => void;
+    /** Optional explanatory preview only; activation still belongs to onChoose. */
+    onActiveChange?: (value: string | null) => void;
     triggerContent: Snippet<[boolean]>;
     beforeList?: Snippet;
     optionContent: Snippet<[ListboxPickerItem, boolean]>;
@@ -74,10 +80,13 @@
 
   const listId = $props.id();
   let open = $state(false);
+  let anchorOffset = $state<{left:number;top:number} | null>(null);
+  let anchorPositionReady = $state(true);
   let activeIndex = $state(0);
   let root = $state<HTMLDivElement | null>(null);
   let trigger = $state<HTMLButtonElement | null>(null);
   let list = $state<HTMLDivElement | null>(null);
+  let panelElement = $state<HTMLDivElement | null>(null);
   let typeahead = "";
   let typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
   let returnFocusWhenEnabled = false;
@@ -87,8 +96,12 @@
 
   let active = $derived(items.length === 0 ? 0 : Math.min(activeIndex, items.length - 1));
 
+  $effect(() => {
+    onActiveChange?.(open ? items[active]?.value ?? null : null);
+  });
+
   function focusList(): void {
-    void tick().then(() => list?.focus());
+    void tick().then(() => list?.focus(anchor ? {preventScroll:true} : undefined));
   }
 
   function setActiveValue(value: string | null): void {
@@ -106,7 +119,7 @@
   }
 
   function close(returnFocus = true): void {
-    if (returnFocus) trigger?.focus();
+    if (returnFocus) (anchor ?? trigger)?.focus();
     if (open) onClose?.();
     open = false;
     forgetTypeahead();
@@ -155,6 +168,7 @@
   });
 
   $effect(() => {
+    if (anchor && !anchorPositionReady) return;
     active;
     list?.querySelector<HTMLElement>("[data-listbox-picker-active]")?.scrollIntoView({ block: "nearest" });
   });
@@ -163,10 +177,25 @@
     if (disabled) return;
     onOpen?.();
     await tick();
+    const rootRect = root?.getBoundingClientRect();
+    const anchorRect = anchor?.getBoundingClientRect();
+    anchorOffset = rootRect && anchorRect ? {left:anchorRect.left-rootRect.left,top:anchorRect.bottom-rootRect.top} : null;
+    anchorPositionReady = anchorOffset === null;
     activeIndex = Math.max(0, items.findIndex((item) => item.value === selectedValue));
     open = true;
     await tick();
-    list?.focus();
+    // An alternate entry point can sit near the viewport edge. Bound the same
+    // panel using its rendered width; its draft, keyboard flow and focus stay here.
+    if (anchorOffset && panelElement && root) {
+      const panelRect = panelElement.getBoundingClientRect();
+      const rootRect = root.getBoundingClientRect();
+      const left = Math.max(0,Math.min(panelRect.left,document.documentElement.clientWidth-panelRect.width));
+      anchorOffset = { ...anchorOffset, left:left-rootRect.left };
+      // Publish the bounded position before focus or the active-row scroll effect.
+      await tick();
+    }
+    anchorPositionReady = true;
+    list?.focus(anchor ? {preventScroll:true} : undefined);
   }
 
   function choose(value: string): void {
@@ -296,10 +325,14 @@
   {#if open}
     <div
       class="listbox-picker-panel"
+      bind:this={panelElement}
       class:rail={kind === "rail"}
       class:compact={kind === "compact"}
       class:below
       class:right={align === "right"}
+      style:left={anchorOffset ? `${anchorOffset.left}px` : undefined}
+      style:top={anchorOffset ? `calc(${anchorOffset.top}px + var(--space-1))` : undefined}
+      style:bottom={anchorOffset ? "auto" : undefined}
       aria-busy={panelBusy}
       role="presentation"
       onkeydown={onPanelKeydown}

@@ -40,7 +40,6 @@ from planner.conversation.contracts import (
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
 from planner.core.db import connect
-from planner.days.logic import dates
 from planner.runtime import conversation_start, worker_memory, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     compose_worker_step_prompt,
@@ -60,10 +59,7 @@ _log = logging.getLogger(__name__)
 
 LOOP_SENDER_LABEL: Final = "loop"
 
-_CANDIDATE_SQL = (
-    "SELECT t.id FROM tickets t JOIN day_tickets dt ON dt.ticket_id = t.id WHERE dt.day_id = ? "
-    "ORDER BY t.updated_at, t.id"
-)
+_CANDIDATE_SQL = "SELECT t.id FROM tickets t ORDER BY t.updated_at, t.id"
 
 
 type WorkerStepDeliveryFate = Literal[
@@ -111,7 +107,6 @@ async def start_ready_worker_step(
     connect_database: Callable[[], sqlite3.Connection],
     conversation_system: ConversationSystem,
     worker_type_registry: WorkerTypeRegistry,
-    planning_day_id_resolver: Callable[[], str],
     now: Callable[[], int],
 ) -> WorkerStepStartResult:
     """Start one worker step for this Ticket. Reports whether the send got anywhere.
@@ -137,7 +132,6 @@ async def start_ready_worker_step(
         claimed = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
-            planning_day_id_resolver=planning_day_id_resolver,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
             now=now(),
         )
@@ -289,7 +283,6 @@ async def tell_a_worker_it_lost_its_memory(
     connect_database: Callable[[], sqlite3.Connection],
     conversation_system: ConversationSystem,
     worker_type_registry: WorkerTypeRegistry,
-    planning_day_id_resolver: Callable[[], str],
     now: Callable[[], int],
 ) -> bool:
     """Say the one thing a Worker compacted part-way through a step cannot find out.
@@ -306,12 +299,6 @@ async def tell_a_worker_it_lost_its_memory(
         ticket = tickets_data.read_ticket(conn, ticket_id)
         conversation_id = ticket.conversation_id
         if conversation_id is None:
-            return False
-        if not worker_memory.ticket_is_on_the_planning_day(
-            conn, ticket_id, planning_day_id=planning_day_id_resolver()
-        ):
-            # A Ticket can leave the Day between the scan and here. Membership is asked
-            # again for the same reason a wake re-runs its readiness under the claim.
             return False
         if not worker_memory.conversation_holds_an_unanswered_memory_loss(conn, conversation_id):
             # Something answered the boundary between the scan and here. That is the
@@ -367,14 +354,12 @@ class WorkerStepReadinessLoop:
         *,
         conversation_system: ConversationSystem,
         asyncio_loop: asyncio.AbstractEventLoop,
-        boundary_hour: int,
         busy_timeout_ms: int = 5000,
     ) -> None:
         self._db_path = db_path
         self._clock = clock
         self._conversation_system = conversation_system
         self._asyncio_loop = asyncio_loop
-        self._boundary_hour = boundary_hour
         self._busy_timeout_ms = busy_timeout_ms
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -386,13 +371,10 @@ class WorkerStepReadinessLoop:
         """Ask the loop to poll now; the periodic timer remains the backstop."""
         self._wake.set()
 
-    def _planning_day_id(self) -> str:
-        return dates.resolve_day_id("today", self._clock.now(), self._boundary_hour)
-
-    def _ready_ticket_ids(self, planning_day_id: str) -> list[str]:
+    def _ready_ticket_ids(self) -> list[str]:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
-            rows = conn.execute(_CANDIDATE_SQL, (planning_day_id,)).fetchall()
+            rows = conn.execute(_CANDIDATE_SQL).fetchall()
             ready_ticket_ids: list[str] = []
             claimed_closeout_lanes: set[worker_step_readiness.CloseoutLaneIdentity] = set()
             registry = configured_worker_type_registry()
@@ -402,7 +384,6 @@ class WorkerStepReadinessLoop:
                 if not worker_step_readiness.is_ready_for_worker_step(
                     conn,
                     ticket,
-                    planning_day_id=planning_day_id,
                     worker_type_definition=worker_type_definition,
                 ):
                     continue
@@ -425,12 +406,7 @@ class WorkerStepReadinessLoop:
 
     def poll_once(self) -> list[str]:
         """Start a worker step for every ready Ticket. Returns the ids it set going."""
-        planning_day_id = self._planning_day_id()
-        started = [
-            ticket_id
-            for ticket_id in self._ready_ticket_ids(planning_day_id)
-            if self._schedule(ticket_id)
-        ]
+        started = [ticket_id for ticket_id in self._ready_ticket_ids() if self._schedule(ticket_id)]
         try:
             self.tell_every_worker_that_lost_its_memory()
         except Exception:
@@ -441,17 +417,12 @@ class WorkerStepReadinessLoop:
 
     def tell_every_worker_that_lost_its_memory(self) -> list[str]:
         """Send the notice to every Ticket compacted part-way through its step."""
-        planning_day_id = self._planning_day_id()
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
-            ticket_ids = worker_memory.ticket_ids_holding_an_unanswered_memory_loss(
-                conn, planning_day_id=planning_day_id
-            )
+            ticket_ids = worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn)
         finally:
             conn.close()
-        return [
-            ticket_id for ticket_id in ticket_ids if self._schedule_memory_notice(ticket_id)
-        ]
+        return [ticket_id for ticket_id in ticket_ids if self._schedule_memory_notice(ticket_id)]
 
     def _schedule_memory_notice(self, ticket_id: str) -> bool:
         with self._in_flight_lock:
@@ -467,7 +438,6 @@ class WorkerStepReadinessLoop:
                 connect_database=lambda: connect(self._db_path, self._busy_timeout_ms),
                 conversation_system=self._conversation_system,
                 worker_type_registry=configured_worker_type_registry(),
-                planning_day_id_resolver=self._planning_day_id,
                 now=self._clock.now_unix,
             ),
             self._asyncio_loop,
@@ -489,7 +459,6 @@ class WorkerStepReadinessLoop:
                 connect_database=lambda: connect(self._db_path, self._busy_timeout_ms),
                 conversation_system=self._conversation_system,
                 worker_type_registry=configured_worker_type_registry(),
-                planning_day_id_resolver=self._planning_day_id,
                 now=self._clock.now_unix,
             ),
             self._asyncio_loop,

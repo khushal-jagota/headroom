@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.api import build_conversation_runtime
 from planner.conversation.api import router as conversation_router
+from planner.conversation.backend_state import DurableCodexLoginRejection
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
@@ -153,6 +154,13 @@ def create_app(
         # the three real agents on this machine, and spawns none of them until a
         # conversation has something to send. Everything that starts or steers a worker
         # goes through it, so it has to exist before the readiness loop starts.
+        # One account, one login, so one memory of what a turn found out about it. The
+        # conversations that run codex write it and the backends card reads it. It is in
+        # the database because a refused login is still refused after a restart, and
+        # Panels restarts on every deploy.
+        remembered_codex_login_rejection = DurableCodexLoginRejection(
+            config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
+        )
         conversation = build_conversation_runtime(
             db_path=config.db_path,
             db_busy_timeout_ms=config.db_busy_timeout_ms,
@@ -163,7 +171,9 @@ def create_app(
                 # conversation, so a conversation resumed after a restart reaches the
                 # server that resumed it.
                 panels_server_url=f"http://{HOST}:{config.port}",
+                remembered_codex_login_rejection=remembered_codex_login_rejection,
             ),
+            remembered_codex_login_rejection=remembered_codex_login_rejection,
         )
         app.state.conversation = conversation
         # A test that drives workers wants a conversation system it can hold still, so it
@@ -305,11 +315,14 @@ def create_app(
         return summary.as_dict()
 
     @app.get("/api/worker-types")
-    async def worker_types() -> dict[str, Any]:
+    async def worker_types(supported: bool = False) -> dict[str, Any]:
         registry = configured_worker_runtime_definitions().worker_type_registry
+        worker_type_ids = (
+            registry.supported_worker_types() if supported else registry.registered_worker_types()
+        )
         return {
             "worker_types": [
-                registry.manifest(worker_type) for worker_type in registry.registered_worker_types()
+                registry.manifest(worker_type) for worker_type in worker_type_ids
             ],
         }
 

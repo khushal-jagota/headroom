@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal, Required, TypedDict
 
-from planner.core.contracts import Principal, Priority
+from planner.core.contracts import JsonDict, Principal, Priority
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
 # `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
@@ -94,12 +94,14 @@ class BoardCardSource(TypedDict):
     gating_field: str | None
     gating_field_label: str | None
     is_done: bool
+    is_backlogged: bool
     blocked: bool
     conversation_id: str | None
     waiting_to_closeout: bool
     sprint_item_id: str | None
     sprint_item_title: str | None
     sprint_item_priority: str | None
+    orchestrator: JsonDict
 
 
 class BoardCard(BoardCardSource, WorkAttention):
@@ -107,15 +109,21 @@ class BoardCard(BoardCardSource, WorkAttention):
 
 
 class BoardSprintItemSource(TypedDict):
-    """A Sprint Item's identity before live work attention is attached.
+    """A represented Sprint Item and its complete children before live attention.
 
-    The shared attention projection adds the Item's own supervisor state and one rollup
-    over its child Tickets after this database read.
+    The shared attention projection adds each child's facts, the Item's own supervisor
+    state, and a separate child rollup after this database read.
     """
 
     id: str
+    title: str
+    priority: str
+    project_id: str
+    project: str
     created_at: int
     conversation_id: str | None
+    tickets: list[JsonDict]
+    settled: bool
 
 
 class BoardSprintItem(BoardSprintItemSource, WorkAttention):
@@ -132,6 +140,8 @@ class TicketListFilters:
     excluded_ticket_statuses: tuple[TicketStatus, ...] = ()
     include_terminal: bool = False
     search: str | None = None
+    is_backlogged: bool | None = None
+    worker_types: tuple[str, ...] = ()
 
 
 TicketFieldValues = Mapping[str, str]
@@ -174,6 +184,7 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
+    orchestrator: object  # explicit chief or sprint_item Principal reference
     blocked_by_ticket_ids: list[str]
     # Scope stated at creation by whoever has the authority to grant it. A creator that
     # states scope creates the Ticket already scoped. Omission keeps the default leash:
@@ -199,11 +210,12 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
+    orchestrator: Principal
     recap: str
     guidance: str  # replaces the document
     guidance_append: str  # adds to it; naming both in one call is refused
     field_values: Mapping[str, str]  # settled values only, by field id
-    ceiling: str  # how far the Ticket may go; refused while a proposal is parked
+    ceiling: str  # pending same/lower scope is editable; raising past the stage uses accept
     ceiling_holder: Principal  # who is asked; allowed while a proposal is parked
 
 
@@ -212,6 +224,7 @@ class ProposalBody(TypedDict, total=False):  # POST /tickets/{id}/propose
 
 
 class AcceptBody(TypedDict, total=False):  # POST /tickets/{id}/accept/{field}
+    expected_proposal_revision: int | None  # visible proposal identity for approval gestures
     edited_body: str | None  # direct edit applied before resolution
     next_ceiling: str | None  # Stage id or NO_FURTHER; the onward ceiling (§4.4.7)
     next_holder: object  # required full Principal for the next ceiling
@@ -254,7 +267,8 @@ class Ticket:  # §3.3 — column names match exactly
     project_name: str | None
     sprint_id: str | None  # canonical Ticket Sprint placement; NULL is backlog
     sprint_item_id: str | None
-    effective_sprint_id: str | None  # compatibility alias for sprint_id
+    orchestrator_kind: str = field(default="chief", kw_only=True)
+    effective_sprint_id: str | None  # historical Sprint association
     resolved_priority_anchors: ResolvedTicketPriorityAnchors
     recap: str  # writable only past the type's first worker Stage
     guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
@@ -278,6 +292,7 @@ class Ticket:  # §3.3 — column names match exactly
     updated_at: int
     # Monotonic proposal identity. Proposal timestamps have whole-second precision, so
     # readers use this when they must distinguish a replacement filed in the same second.
+    is_backlogged: bool = field(default=False, kw_only=True)
     pending_proposal_revision: int = field(default=0, kw_only=True)
 
 

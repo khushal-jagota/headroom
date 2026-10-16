@@ -23,7 +23,7 @@ from planner.scheduled_tickets.contracts import (
 _SCHEDULE_COLUMNS = (
     "id, enabled, cadence, local_time, title, worker_type, kickoff_note, priority, "
     "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
-    "employee_launch_model, blocked_by_ticket_ids, created_at, updated_at"
+    "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, created_at, updated_at"
 )
 
 
@@ -59,16 +59,8 @@ CHECKPOINT_KICKOFF_NOTE: Final = (
 
 
 def seed_shipped_schedules(conn: sqlite3.Connection) -> None:
-    """Put the shipped schedules in an empty table, and nothing in a populated one."""
-    if conn.execute("SELECT 1 FROM scheduled_ticket_schedules LIMIT 1").fetchone() is not None:
-        return
-    conn.execute(
-        "INSERT INTO scheduled_ticket_schedules (id, enabled, cadence, local_time, title, "
-        "worker_type, kickoff_note, priority, blocked_by_ticket_ids, created_at, updated_at, "
-        "placement_mode) VALUES (?, 1, 'current_sprint_day_four', '17:00', 'Checkpoint', "
-        "'personal', ?, 'P3', '[]', 0, 0, 'current_sprint')",
-        (CHECKPOINT_SCHEDULE_ID, CHECKPOINT_KICKOFF_NOTE),
-    )
+    """Planning schedules are retired. New installations receive no recurring reviews."""
+    return
 
 
 def _blocked_by_from_json(raw: object) -> tuple[str, ...]:
@@ -76,9 +68,7 @@ def _blocked_by_from_json(raw: object) -> tuple[str, ...]:
         payload = json.loads(str(raw))
     except ValueError as exc:
         raise RuntimeError("scheduled Ticket blocker ids are corrupt") from exc
-    if not isinstance(payload, list) or any(
-        not isinstance(item, str) for item in payload
-    ):
+    if not isinstance(payload, list) or any(not isinstance(item, str) for item in payload):
         raise RuntimeError("scheduled Ticket blocker ids are not a string list")
     return tuple(payload)
 
@@ -90,6 +80,7 @@ def _row_to_schedule(row: sqlite3.Row) -> ScheduledTicketSchedule:
         cadence=ScheduleCadence(str(row["cadence"])),
         local_time=str(row["local_time"]),
         template=ScheduledTicketTemplate(
+            orchestrator_kind=str(row["orchestrator_kind"]),
             title=str(row["title"]),
             worker_type=str(row["worker_type"]),
             kickoff_note=str(row["kickoff_note"]),
@@ -98,18 +89,12 @@ def _row_to_schedule(row: sqlite3.Row) -> ScheduledTicketSchedule:
             project_id=None if row["project_id"] is None else str(row["project_id"]),
             sprint_id=None if row["sprint_id"] is None else str(row["sprint_id"]),
             placement_mode=ScheduledTicketPlacementMode(str(row["placement_mode"])),
-            sprint_item_id=(
-                None if row["sprint_item_id"] is None else str(row["sprint_item_id"])
-            ),
+            sprint_item_id=(None if row["sprint_item_id"] is None else str(row["sprint_item_id"])),
             employee_backend=(
-                None
-                if row["employee_backend"] is None
-                else str(row["employee_backend"])
+                None if row["employee_backend"] is None else str(row["employee_backend"])
             ),
             employee_launch_model=(
-                None
-                if row["employee_launch_model"] is None
-                else str(row["employee_launch_model"])
+                None if row["employee_launch_model"] is None else str(row["employee_launch_model"])
             ),
             blocked_by_ticket_ids=_blocked_by_from_json(row["blocked_by_ticket_ids"]),
         ),
@@ -145,8 +130,9 @@ def create_schedule(
             "INSERT INTO scheduled_ticket_schedules ("
             "id, enabled, cadence, local_time, title, worker_type, kickoff_note, priority, "
             "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
-            "employee_launch_model, blocked_by_ticket_ids, created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, "
+            "created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 schedule_id,
                 int(enabled),
@@ -164,6 +150,7 @@ def create_schedule(
                 template.employee_backend,
                 template.employee_launch_model,
                 json.dumps(list(template.blocked_by_ticket_ids)),
+                template.orchestrator_kind,
                 now,
                 now,
             ),
@@ -190,9 +177,7 @@ def list_enabled_for_time(
     return [_row_to_schedule(row) for row in rows]
 
 
-def read_schedule(
-    conn: sqlite3.Connection, schedule_id: str
-) -> ScheduledTicketSchedule:
+def read_schedule(conn: sqlite3.Connection, schedule_id: str) -> ScheduledTicketSchedule:
     row = conn.execute(
         f"SELECT {_SCHEDULE_COLUMNS} FROM scheduled_ticket_schedules WHERE id = ?",
         (schedule_id,),
@@ -220,6 +205,7 @@ _UPDATABLE_COLUMNS = frozenset(
         "sprint_id",
         "placement_mode",
         "sprint_item_id",
+        "orchestrator_kind",
         "employee_backend",
         "employee_launch_model",
         "blocked_by_ticket_ids",
@@ -280,9 +266,7 @@ def read_occurrence(
     return None if row is None else _row_to_occurrence(row)
 
 
-def list_occurrences(
-    conn: sqlite3.Connection, schedule_id: str
-) -> list[ScheduledTicketOccurrence]:
+def list_occurrences(conn: sqlite3.Connection, schedule_id: str) -> list[ScheduledTicketOccurrence]:
     rows = conn.execute(
         "SELECT schedule_id, occurrence_key, target_day_id, outcome, ticket_id, error, "
         "created_at FROM scheduled_ticket_occurrences "

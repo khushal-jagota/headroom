@@ -19,9 +19,7 @@ LEGACY_SUPERVISOR_RECOVERIES: dict[str, str] = {
     "set-item": "panels sprint item set ITEM_ID FIELD --value VALUE",
     "set-ticket": "panels ticket edit TICKET_ID --input-json FILE",
     "artifact-list": "panels sprint item artifact list ITEM_ID",
-    "artifact-write": (
-        "panels sprint item artifact write ITEM_ID ARTIFACT_PATH --body-file FILE"
-    ),
+    "artifact-write": ("panels sprint item artifact write ITEM_ID ARTIFACT_PATH --body-file FILE"),
     "artifact-delete": "panels sprint item artifact delete ITEM_ID ARTIFACT_PATH",
     "send": "panels send-message --sprint-item ITEM_ID --message TEXT",
     "reset": "panels sprint item conversation reset ITEM_ID",
@@ -40,9 +38,10 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
         "panels worker-type skill WORKER_TYPE --description TEXT < SKILL_FILE"
     ),
     "panels project set": "panels project set PROJECT_ID FIELD --value VALUE",
-    "panels day set": "panels day set FIELD --value TEXT",
     "panels ticket delete": "panels ticket delete TICKET_ID --yes",
     "panels ticket create": "panels ticket create --input-json FILE",
+    "panels ticket assign": "panels ticket assign TICKET_ID --chief",
+    "panels orchestrator settle": "panels orchestrator settle ITEM_ID",
     "panels ticket edit": "panels ticket edit TICKET_ID --input-json FILE",
     "panels ticket proposal": "panels ticket proposal TICKET_ID ACTION",
     "panels ticket request-help": "panels ticket request-help TICKET_ID < MESSAGE_FILE",
@@ -52,10 +51,7 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels ticket place": "panels ticket place TICKET_ID --project-id PROJECT_ID",
     "panels ticket approve": "panels ticket approve TICKET_ID --ceiling STAGE",
     "panels ticket reject": "panels ticket reject TICKET_ID --message TEXT",
-    "panels sprint set": "panels sprint set SPRINT_ID FIELD --value VALUE",
-    "panels sprint item create": (
-        "panels sprint item create --title TEXT --project-id PROJECT_ID"
-    ),
+    "panels sprint item create": ("panels sprint item create --title TEXT --project-id PROJECT_ID"),
     "panels sprint item delete": "panels sprint item delete ITEM_ID --yes",
     "panels sprint item set": "panels sprint item set ITEM_ID FIELD --value VALUE",
     "panels sprint item conversation send": (
@@ -88,9 +84,7 @@ def _canonical_command_path(ctx: click.Context) -> str:
 
 
 def _option_shape(option: click.Option, ctx: click.Context) -> str:
-    option_name = next(
-        (name for name in option.opts if name.startswith("--")), option.opts[0]
-    )
+    option_name = next((name for name in option.opts if name.startswith("--")), option.opts[0])
     if option.is_flag:
         return option_name
     return f"{option_name} {option.make_metavar(ctx)}"
@@ -173,6 +167,28 @@ def _show_usage_error(error: click.UsageError, args: Sequence[str]) -> None:
         return
 
     if isinstance(error, click.NoSuchCommand):
+        retired_day = tuple(args[:2]) in {
+            ("day", "set"),
+            ("day", "add-ticket"),
+            ("day", "remove-ticket"),
+        }
+        retired_sprint = tuple(args[:2]) in {
+            ("sprint", "create"),
+            ("sprint", "set"),
+            ("sprint", "add-item"),
+            ("sprint", "remove-item"),
+            ("sprint", "carry-item"),
+        } or tuple(args[:3]) in {
+            ("sprint", "outcome", "add"),
+            ("sprint", "outcome", "remove"),
+            ("sprint", "outcome", "carry"),
+        }
+        if retired_day or retired_sprint:
+            render_human_error(
+                "Calendar planning writes are retired.",
+                recovery="panels day show DATE" if retired_day else "panels sprint list",
+            )
+            return
         path = _canonical_command_path(ctx) if ctx is not None else "panels"
         recovery = _legacy_supervisor_recovery(args)
         if recovery is None and ctx is not None and error.possibilities:
@@ -230,15 +246,10 @@ def _show_click_exception(
     ctx = _resolved_context(root, args)
     path = _canonical_command_path(ctx)
     message = error.format_message()
-    if (
-        path == "panels environment run"
-        and message == "environment instance is not prepared"
-    ):
+    if path == "panels environment run" and message == "environment instance is not prepared":
         render_human_error(
             message,
-            recovery=(
-                "panels environment prepare --kind staging --environment-root DIRECTORY"
-            ),
+            recovery=("panels environment prepare --kind staging --environment-root DIRECTORY"),
         )
         return
     if path in {"panels restart", "panels serve"}:

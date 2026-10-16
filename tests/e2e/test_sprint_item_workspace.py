@@ -1,4 +1,4 @@
-"""The real Sprint Item route composes its workspace, transcript, and live updates."""
+"""The orchestrator route composes its Workers, artifacts, transcript and live updates."""
 
 from __future__ import annotations
 
@@ -79,8 +79,8 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         "/api/tickets",
         {
             "title": "Mirror Ticket",
-            "worker_type": "personal",
-            "sprint_item_id": item["id"],
+            "worker_type": "coding",
+            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )
     quiet = {
@@ -112,10 +112,11 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
             "has_pending_proposal": False,
             "gating_field": "brief",
             "blocked": False,
-            "worker_type": "personal",
+            "worker_type": "coding",
             "day_ids": [],
             "sprint_id": None,
             "sprint_name": None,
+            "conversation_id": "mirror-child-conversation",
             **attention(),
         }
 
@@ -135,8 +136,8 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
                 "conversation_id": None,
                 "launch_configuration": item["supervisor"]["launch_configuration"],
             },
-            "planning_day_id": "day_2026-09-22",
-            "today_ticket_ids": [ticket["id"]],
+            "planning_day_id": None,
+            "today_ticket_ids": [],
             "tickets": [workspace_ticket()],
             "ticket_rollup": attention(),
             "artifacts": [],
@@ -155,8 +156,9 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
             "stage_label": "Brief",
             "gating_field_label": "Brief",
             "is_done": False,
-            "conversation_id": None,
+            "conversation_id": "mirror-child-conversation",
             "employee_backend": "codex",
+            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
             "sprint_item_id": item["id"],
             "sprint_item_title": "Mirror Item",
             "sprint_item_priority": "P1",
@@ -164,6 +166,9 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         summary = {
             "id": item["id"],
             "created_at": 10,
+            "title": "Mirror Item",
+            "priority": "P1",
+            "tickets": [workspace_ticket()],
             "conversation_id": None,
             "ticket_rollup": attention(),
             **quiet,
@@ -194,17 +199,17 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
     left_ticket = left_item.locator(f'[data-ticket-id="{ticket["id"]}"]')
     right_ticket = right_item.locator(f'[data-sprint-ticket-id="{ticket["id"]}"]')
 
+    assigned_group = right_item.locator('[data-workspace-group="assigned"]')
+    expect(assigned_group).not_to_have_attribute("open", "")
+    assigned_group.locator(":scope > summary").click()
     for row in (left_ticket, right_ticket):
         row.wait_for(timeout=WAIT_MS)
-        assert row.get_attribute("data-workspace-mark") == "working"
+        assert row.get_attribute("data-workspace-mark") == "none"
     assert left_item.locator('[data-bucket-key="assigned"]').count() == 1
     assert right_item.locator('[data-workspace-group="assigned"]').count() == 1
-    assert left_item.locator(".board-workspace-item-head [data-workspace-mark]").get_attribute(
-        "data-workspace-mark"
-    ) == "working"
-    assert right_item.locator(".sprint-workspace-title-mark").get_attribute(
-        "data-workspace-mark"
-    ) == "working"
+    # Child work never supplies a dot on the supervisor conversation.
+    assert left_item.locator(".item-head .stage-mark").count() == 0
+    assert right_item.locator(".sprint-workspace-title-mark").count() == 0
 
     before = int(page.evaluate("() => window.__plannerDebug.flushes"))
     mutable.update(awaiting_answer=True, awaiting_reply=True, agent_state="working")
@@ -214,19 +219,21 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         arg=before,
         timeout=WAIT_MS,
     )
+    answer_group = right_item.locator('[data-workspace-group="awaiting_answer"]')
+    expect(answer_group).not_to_have_attribute("open", "")
+    expect(answer_group.locator("[data-group-unread-count]")).to_contain_text("1 unread")
+    answer_group.locator(":scope > summary").click()
     for row in (left_ticket, right_ticket):
         row.wait_for(timeout=WAIT_MS)
         expect(row).to_have_attribute(
             "data-workspace-mark",
-            "owner-answer",
+            "reply",
             timeout=WAIT_MS,
         )
-    assert left_item.locator(".board-workspace-item-head [data-workspace-mark]").get_attribute(
-        "data-workspace-mark"
-    ) == "owner-answer"
-    assert right_item.locator(".sprint-workspace-title-mark").get_attribute(
-        "data-workspace-mark"
-    ) == "owner-answer"
+    assert left_item.locator(".item-head .stage-mark").count() == 0
+    assert right_item.locator(".sprint-workspace-title-mark").count() == 0
+    assert left_item.locator('[data-bucket-key="awaiting_answer"]').count() == 1
+    assert right_item.locator('[data-workspace-group="awaiting_answer"]').count() == 1
 
     before = int(page.evaluate("() => window.__plannerDebug.flushes"))
     mutable.update(awaiting_answer=False, agent_state="idle")
@@ -240,6 +247,7 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         arg=before,
         timeout=WAIT_MS,
     )
+    assigned_group.locator(":scope > summary").click()
     for row in (left_ticket, right_ticket):
         expect(row).to_have_attribute(
             "data-workspace-mark",
@@ -248,6 +256,7 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         )
 
     page.reload()
+    assigned_group.locator(":scope > summary").click()
     right_ticket.wait_for(timeout=WAIT_MS)
     assert left_ticket.get_attribute("data-workspace-mark") == "reply"
     assert right_ticket.get_attribute("data-workspace-mark") == "reply"
@@ -266,11 +275,6 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
         "/api/projects",
         {"name": "Workspace project", "summary": "", "priority": "P2"},
     )
-    sprint = _post(
-        server,
-        "/api/sprints",
-        {"name": "Workspace sprint", "date_start": "2026-07-01", "date_end": "2026-07-07"},
-    )
     item = _post(
         server,
         "/api/items",
@@ -281,57 +285,47 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
             "project_id": project["id"],
         },
     )
-    committed = httpx.put(
-        f"{server.base}/api/collections/sprint_outcomes/{sprint['id']}/{item['id']}", timeout=10.0
-    )
-    assert committed.status_code < 300, committed.text
-    today_ticket = _post(
+    ordinary_ticket = _post(
         server,
         "/api/tickets",
         {
-            "title": "Work today",
+            "title": "Ordinary Worker in this orchestrator",
             "worker_type": "coding",
             "kickoff_note": "Start.",
-            "sprint_item_id": item["id"],
-            "sprint_id": sprint["id"],
+            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )
-    review_ticket = _post(
+    approval_ticket = _post(
         server,
         "/api/tickets",
         {
-            "title": "Review off today",
+            "title": "Review the pending result",
             "worker_type": "coding",
             "kickoff_note": "Start.",
-            "sprint_item_id": item["id"],
-            "sprint_id": sprint["id"],
+            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )
-    backlog_ticket = _post(
+    agent_ticket = _post(
         server,
         "/api/tickets",
         {
-            "title": "Keep the Backlog Ticket name visible",
+            "title": "Keep the complete Worker title visible",
             "worker_type": "coding",
             "kickoff_note": "Start.",
-            "sprint_item_id": item["id"],
+            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )
-    removed = httpx.delete(
-        f"{server.base}/api/collections/day_tickets/today/{review_ticket['id']}", timeout=10.0
-    )
-    assert removed.status_code < 300, removed.text
     api.direct_post(
         server,
-        f"/api/tickets/{review_ticket['id']}/accept/brief",
+        f"/api/tickets/{approval_ticket['id']}/accept/brief",
         {
             "next_ceiling": "needs_success_condition",
             "next_holder": {"kind": "owner", "id": "owner"},
         },
     )
     proposed = httpx.post(
-        f"{server.base}/api/tickets/{review_ticket['id']}/propose",
-        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(review_ticket["id"])},
+        f"{server.base}/api/tickets/{approval_ticket['id']}/propose",
+        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(approval_ticket["id"])},
         json={"recap": "Ready for review", "body": "The outcome is proven."},
         timeout=10.0,
     )
@@ -385,9 +379,8 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     active_id = "conv_workspace_active"
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET worker_step_claim = 'out', pending_proposal = NULL, "
-            "sprint_id = NULL WHERE id = ?",
-            (backlog_ticket["id"],),
+            "UPDATE tickets SET worker_step_claim = 'out', pending_proposal = NULL WHERE id = ?",
+            (agent_ticket["id"],),
         )
         _store_supervisor_conversation(
             conn,
@@ -411,54 +404,52 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     page = open_page(
         context_factory(),
         server,
-        f"#/sprint?item={item['id']}",
+        f"#/workspace/item/{item['id']}",
         f'[data-sprint-item-view="{item["id"]}"]',
     )
-    page.locator(f'[data-sprint-ticket-id="{today_ticket["id"]}"]').wait_for(timeout=WAIT_MS)
-    backlog_row = page.locator(f'[data-sprint-ticket-id="{backlog_ticket["id"]}"]')
-    backlog_title = backlog_row.get_by_text("Keep the Backlog Ticket name visible", exact=True)
-    backlog_placement = backlog_row.locator("[data-ticket-backlog]")
-    backlog_title.wait_for(timeout=WAIT_MS)
-    backlog_placement.wait_for(state="attached", timeout=WAIT_MS)
-    assert backlog_placement.text_content() == "Backlog"
-    # The group says that the agent owns the work. The empty mark says no turn runs now.
-    assert backlog_row.get_attribute("data-ticket-state") == "upcoming"
-    assert backlog_row.get_attribute("href") == (
-        f"#/workspace/item/{item['id']}/{backlog_ticket['id']}"
+    pane = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
+    expect(pane.locator('[data-workspace-section="today"]')).to_have_count(0)
+    expect(pane.locator('[data-workspace-section="remaining"]')).to_have_count(0)
+    expect(pane.locator('[data-workspace-group="awaiting_reply"]')).to_have_count(0)
+    approval_group = pane.locator('[data-workspace-group="awaiting_approval"]')
+    expect(approval_group).not_to_have_attribute("open", "")
+    approval_group.locator(":scope > summary").click()
+    page.locator(f'[data-sprint-ticket-id="{ordinary_ticket["id"]}"]').wait_for(timeout=WAIT_MS)
+    approval_row = page.locator(f'[data-sprint-ticket-id="{approval_ticket["id"]}"]')
+    expect(approval_row).to_be_visible()
+    expect(approval_row.locator(".stage-mark")).to_have_count(0)
+    expect(approval_group.locator("[data-group-unread-count]")).not_to_contain_text("unread")
+    agent_group = pane.locator('[data-workspace-group="agent"]')
+    expect(agent_group).not_to_have_attribute("open", "")
+    agent_group.locator(":scope > summary").click()
+    agent_row = page.locator(f'[data-sprint-ticket-id="{agent_ticket["id"]}"]')
+    agent_title = agent_row.get_by_text("Keep the complete Worker title visible", exact=True)
+    expect(agent_title).to_be_visible()
+    expect(agent_row.locator("[data-ticket-backlog]")).to_have_count(0)
+    # Group headings carry ownership. Only direct unread messages supply a dot.
+    expect(agent_row.locator(".stage-mark")).to_have_count(0)
+    expect(agent_row).to_have_attribute(
+        "href", f"#/workspace/item/{item['id']}/{agent_ticket['id']}"
     )
-    assert backlog_row.locator("xpath=ancestor::details[1]").get_attribute(
-        "data-workspace-group"
-    ) == "agent"
-    desktop_geometry = page.evaluate(
-        """([rowSelector]) => {
-            const row = document.querySelector(rowSelector);
-            const title = row.querySelector('.ticket-row-title').getBoundingClientRect();
-            const placement = row.querySelector('[data-ticket-backlog]').getBoundingClientRect();
-            return { titleWidth: title.width, titleTop: title.top, placementTop: placement.top };
-        }""",
-        [f'[data-sprint-ticket-id="{backlog_ticket["id"]}"]'],
+    assert (
+        agent_row.locator("xpath=ancestor::details[1]").get_attribute("data-workspace-group")
+        == "agent"
     )
-    assert desktop_geometry["titleWidth"] > 200, desktop_geometry
-    assert abs(desktop_geometry["titleTop"] - desktop_geometry["placementTop"]) < 2
-    # Remaining Tickets starts collapsed, and its rows carry the shared row grammar:
-    # the condition is the stage mark's label, not a separate word, and the word is the
-    # heading the row sits under, lowercased.
-    remaining = page.locator('[data-workspace-section="remaining"]')
-    assert remaining.get_attribute("open") is None
-    remaining.locator("> summary").click()
-    off_today = page.locator(f'[data-sprint-ticket-id="{review_ticket["id"]}"]')
-    assert off_today.get_attribute("data-ticket-state") == "needs-me"
-    off_today.get_by_label("Needs your approval").wait_for(timeout=WAIT_MS)
-    artifacts = page.locator("[data-artifact-strip]")
-    artifacts.wait_for(timeout=WAIT_MS)
+    title_box = agent_title.bounding_box()
+    assert title_box is not None and title_box["width"] > 200
+    artifact_band = pane.locator("[data-artifacts-band]")
+    expect(artifact_band).not_to_have_attribute("open", "")
+    artifact_band.locator(":scope > summary").focus()
+    page.keyboard.press("Enter")
+    artifacts = artifact_band.locator("[data-artifact-strip]")
+    expect(artifacts).to_be_visible()
     # Eleven files, nine things to open: the site is its index, and the stylesheet beside
-    # that index never appears on its own.
+    # that index never appears on its own. All artifact rows use the closed page band.
     assert artifacts.locator("[data-artifact-chip]").count() == 8
     assert artifacts.locator('[data-artifact-chip="artifacts/site/index.html"]').count() == 1
     assert artifacts.locator('[data-artifact-chip="artifacts/site/style.css"]').count() == 0
-    assert artifacts.get_by_role("button", name="+4 more").is_visible()
-    artifacts.get_by_role("button", name="+4 more").click()
-    assert artifacts.get_by_role("button", name="Show fewer").is_visible()
+    assert artifacts.locator("[data-artifact-chip]").nth(6).is_visible()
+    assert artifacts.get_by_role("button", name="+4 more").count() == 0
     # A folder with no index opens where it stands rather than sending the reader away.
     notes = artifacts.locator('[data-artifact-folder="notes"]')
     assert notes.get_attribute("aria-expanded") == "false"
@@ -491,7 +482,7 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
     page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
     options = page.get_by_role("button", name="Conversation options")
     options.click()
-    history = page.get_by_label("Sprint Item conversation")
+    history = page.get_by_label("Orchestrator conversation")
     history.select_option(past_id)
     assert page.get_by_text("Past supervisor marker", exact=True).count() == 0
     page.locator('[data-conversation-lens-choice="full"]').click()
@@ -535,72 +526,56 @@ def test_sprint_item_workspace_real_route_is_responsive_live_and_keeps_history(
                 titleWidth: title.width
             };
         }""",
-        [f'[data-sprint-ticket-id="{backlog_ticket["id"]}"]'],
+        [f'[data-sprint-ticket-id="{agent_ticket["id"]}"]'],
     )
     assert narrow_geometry["titleWidth"] > narrow_geometry["rowWidth"] / 2, narrow_geometry
-    assert artifacts.get_by_role("button", name="Show fewer").is_hidden()
     assert artifacts.locator("[data-artifact-chip]").nth(6).is_visible()
-    assert artifacts.locator(".artifact-strip-items").evaluate(
-        "element => element.scrollWidth >= element.clientWidth"
-    ) is True
-
-    # The same component also renders from the Workspace route, where no Sprint screen
-    # surrounds it. That route is where the pane's own rules were dead, so a phone is
-    # proven here as well: the rules have to travel with the pane and not with a route.
-    column = (
-        "([column, doc]) => { const el = document.querySelector(column);"
-        " const style = getComputedStyle(el);"
-        " return [Math.round(el.getBoundingClientRect().width)"
-        " === document.querySelector(doc).clientWidth,"
-        " style.paddingLeft, style.paddingRight]; }"
-    )
-    page.goto(f"{server.base}/#/workspace/item/{item['id']}")
-    page.locator(f'[data-sprint-item-view="{item["id"]}"]').wait_for(timeout=WAIT_MS)
-    assert page.locator("[data-conversation-input]").is_visible()
-    assert page.evaluate("document.documentElement.scrollWidth <= 390") is True
     assert (
-        page.evaluate(
-            "() => { const pane = document.querySelector('[data-sprint-item-view]');"
-            " return pane.scrollWidth <= pane.clientWidth; }"
+        artifacts.locator(".artifact-strip-items").evaluate(
+            "element => element.scrollWidth >= element.clientWidth"
         )
         is True
     )
-    item_column = page.evaluate(column, [".sprint-item-column", ".sprint-item-doc"])
-    assert item_column == [True, "16px", "16px"], item_column
-    # The conversation column is what proves the pane's own rules are alive on this
-    # route: its inset is 48px unless a query on this pane brings it down. The column
-    # above would read 16px from an unconditional rule even with every query dead.
-    assert (
-        page.evaluate(
-            "() => getComputedStyle(document.querySelector('.conversation-column')).paddingLeft"
-        )
-        == "16px"
-    )
 
-    # An Item and a Ticket open one after the other in this same slot, so they read
-    # against one edge only if a single measure serves both. The Ticket answers for the
-    # Item, at a phone width and again past the width where the column takes the wider
-    # inset — one sample cannot see a rule that only applies beyond it.
-    page.goto(f"{server.base}/#/workspace/{today_ticket['id']}")
+    # At phone and wide widths, each approved document stays within its own pane.
+    # Worker and orchestrator interiors deliberately have different reading measures.
+    def assert_pane_fits() -> None:
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        assert page.evaluate("""() => {
+            const pane = document.querySelector('.board-workspace-right');
+            return pane.scrollWidth <= pane.clientWidth;
+        }""")
+        assert page.locator("[data-conversation-input]").is_visible()
+
+    assert_pane_fits()
+    page.goto(f"{server.base}/#/workspace/{ordinary_ticket['id']}")
     page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
-    assert item_column == page.evaluate(column, [".ticket-col", ".ticket-doc"])
-
-    page.set_viewport_size({"width": 2200, "height": 1200})
-    page.locator(".ticket-col").wait_for(timeout=WAIT_MS)
-    ticket_wide = page.evaluate(column, [".ticket-col", ".ticket-doc"])
-    assert ticket_wide == [False, "48px", "48px"], ticket_wide
-    page.goto(f"{server.base}/#/workspace/item/{item['id']}")
-    page.locator(f'[data-sprint-item-view="{item["id"]}"]').wait_for(timeout=WAIT_MS)
-    assert ticket_wide == page.evaluate(column, [".sprint-item-column", ".sprint-item-doc"])
-
+    assert_pane_fits()
+    for width in (2200, 1000):
+        page.set_viewport_size({"width": width, "height": 1100})
+        assert_pane_fits()
+        page.goto(f"{server.base}/#/workspace/item/{item['id']}")
+        page.locator(f'[data-sprint-item-view="{item["id"]}"]').wait_for(timeout=WAIT_MS)
+        assert_pane_fits()
+        page.goto(f"{server.base}/#/workspace/{ordinary_ticket['id']}")
+        page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
     # A window this wide keeps the rail, so the pane beside it is narrow while the window
     # is not. Both panes must read their own width here. This is the only band that tells
     # a pane query from a window query, so it is the only place a return to a window query
     # shows up as the step it is.
     inset = "() => getComputedStyle(document.querySelector('%s')).paddingLeft"
     page.set_viewport_size({"width": 1000, "height": 900})
+    page.goto(f"{server.base}/#/workspace/item/{item['id']}")
     page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
+    # The approved rail is narrower at rest. Widen it explicitly so the pane,
+    # unlike the window, crosses the conversation-host breakpoint.
+    grip = page.get_by_role("separator", name="Resize workspace panel")
+    expect(grip).to_be_visible()
+    grip.focus()
+    grip.press("Shift+ArrowRight")
+    assert page.evaluate("innerWidth > 720")
+    assert page.locator(".board-workspace-right").evaluate("pane => pane.clientWidth <= 720")
     assert page.evaluate(inset % ".conversation-column") == "24px"
-    page.goto(f"{server.base}/#/workspace/{today_ticket['id']}")
+    page.goto(f"{server.base}/#/workspace/{ordinary_ticket['id']}")
     page.locator("[data-conversation-input]").wait_for(timeout=WAIT_MS)
     assert page.evaluate(inset % ".conversation-column") == "24px"

@@ -92,7 +92,7 @@ try {
   );
 
   // The Ticket screen. A stage the reader opened is rebuilt somewhere else on the page
-  // when it settles, and the stage that becomes current must still open by itself.
+  // when it settles. The new current step lives in its card, without opening Steps.
   const ticket = await page(
     "ticket",
     `<script lang="ts">
@@ -227,25 +227,25 @@ with sync_playwright() as playwright:
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.route('**/api/**', serve_ticket)
         page.goto(ticket_url)
-        page.wait_for_selector('[data-field="what_changes"]')
-
-        # The reader puts their hands on the stage they are reading.
+        page.wait_for_selector('[data-worker-live-card]')
+        assert not is_open(page, '[data-stage-fold]'), 'Steps did not start closed'
+        assert page.locator('[data-field="plan"]').count() == 0, 'future stage leaked into Steps'
+        page.locator('[data-stage-fold-open]').click()
         page.locator('[data-field="what_changes"] summary').first.click()
-        page.locator('[data-field="what_changes"] summary').first.click()
-        page.wait_for_timeout(100)
         assert is_open(page, '[data-field="what_changes"]')
-        assert not is_open(page, '[data-field="plan"]')
+        page.evaluate('window.__refresh()')
+        page.wait_for_timeout(200)
+        assert is_open(page, '[data-stage-fold]'), 'refresh closed the reader-opened Steps band'
+        assert is_open(page, '[data-field="what_changes"]'), 'refresh closed the opened step'
 
         page.evaluate("() => fetch('/api/__advance')")
-        page.wait_for_timeout(100)
         page.evaluate('window.__refresh()')
-        page.wait_for_timeout(500)
-
+        page.wait_for_function("document.querySelector('[data-worker-live-card]')?.textContent.includes('plan')")
+        assert is_open(page, '[data-stage-fold]'), 'advancing closed the reader-opened Steps band'
         assert is_open(page, '[data-field="what_changes"]'), \
-            'advancing the stage closed a stage the reader had opened'
-        # The other half of the rule: data still opens what nobody has touched.
-        assert is_open(page, '[data-field="plan"]'), \
-            'the stage that became current did not open by itself'
+            'advancing the stage closed a step the reader had opened'
+        assert not is_open(page, '[data-field="plan"]'), \
+            'the new current step opened history instead of staying in its live card'
         page.close()
 
         # --- The Sprint documents -----------------------------------------------------

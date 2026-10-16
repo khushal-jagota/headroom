@@ -52,6 +52,7 @@ class SprintItem:  # §3.2
     project_id: str
     project_name: str
     supervisor_launch_configuration: SprintItemSupervisorLaunchConfiguration
+    settled: bool = False
     created_at: int = 0
     updated_at: int = 0
 
@@ -149,6 +150,7 @@ class CarryOutcomeResult(TypedDict):
 
 
 class OutcomeSummary(TypedDict):
+    settled: bool
     id: str
     title: str
     priority: str

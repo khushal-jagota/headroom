@@ -1,25 +1,31 @@
 # Backlog & Ideas
 
-Backlog and Ideas are two separate pages under Planning in the More menu because they
-are two different things: one is committed work without a sprint, and the other is a
-thought you do not want to lose.
+Workers and Ideas are separate views. A Worker is committed work. An Idea preserves
+a possibility. Explicit Ticket backlog defers automatic work without changing assignment.
 
 ```
-Backlog: unscheduled Tickets ──► plan into a sprint
-Ideas:   remembered possibility                    ──► stays an Idea
+Backlogged Ticket ──► resume ──► ordinary readiness and approvals
+Idea: remembered possibility
 ```
 
-## Backlog
+## Workers and explicit backlog
 
-Backlog shows committed work that has no sprint. Active unscheduled Tickets are the
-main list. They are fetched as bounded summaries and sorted into P0–P3 groups. Each
-row opens the canonical Ticket in Workspace and shows only its title and Project chip.
-A list that spans pages shows its range and page controls. The page does not request or
-show a Sprint Item catalog.
+The Workers view retains the historical `#/backlog` address. It lists bounded Ticket
+summaries in P0–P3 groups. Ticket state selects active, backlogged, outside backlog,
+or retired Tickets. A separate filter selects Worker type. Retired discovery requests
+the canonical terminal Stage explicitly and remains paginated.
+Each row opens the canonical Ticket in Workspace. Backlogged rows display their state.
+Pages show their range and navigation controls.
+
+Backlog ticket on the Ticket page prevents automatic progression. Resume ticket restores
+ordinary readiness checks. Messages, proposals, approvals, assignment, history, and
+artifacts remain available. A delivered turn continues. Parent Settle remains independent.
+Backlog no longer means an unscheduled Ticket or an assignment change.
 
 A faint "+ New ticket" sits at the top, closed and out of the way. It opens a compact
 form for title, kickoff context, Worker type, Project, priority, and optional deadline.
-The form creates an ordinary Ticket with explicit backlog placement. Priority uses the
+The form creates an ordinary Ticket assigned to Chief. It does not implicitly defer
+the Ticket. Priority uses the
 Project default unless you choose one. Its Worker and
 Project choices come from the same server catalogs used elsewhere, so it does not
 carry its own list or creation rules.
@@ -41,8 +47,8 @@ live in `src/planner/sprints/`.
 ## Handoffs
 
 - **Feedback** (`feedback.md`) — the loose capture path available from every page.
-- **Days** (`days.md`) — the daily overview and its planned Tickets.
-- **Sprints** (`sprints.md`) — where Tickets are scheduled and Sprint Items are chosen for a Sprint.
+- **Days** (`days.md`) — historical Day records.
+- **Orchestrators** (`sprints.md`) — assignment and independent settlement.
 - **Projects** (`projects.md`) — where the project list comes from.
 
 ## Deferred
@@ -53,4 +59,4 @@ live in `src/planner/sprints/`.
 
 ---
 
-_Last verified: 2026-09-11._
+_Last verified: 2026-10-16._

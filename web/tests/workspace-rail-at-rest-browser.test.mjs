@@ -24,6 +24,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
 import BoardRoute from "../src/routes/BoardRoute.svelte";
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+(window as any).__refresh = () => client.invalidateQueries();
 const address = { selection: { kind: "none" as const }, view: "items" as const, openFile: null };
 </script>
 
@@ -97,8 +98,12 @@ board = {
     ]}],
     "sprint_items": [item("si_needs_him"), item("si_quiet")],
 }
+for summary in board["sprint_items"]:
+    summary["tickets"] = [row for column in board["columns"] for row in column["cards"] if row["sprint_item_id"] == summary["id"]]
+    summary["title"] = summary["tickets"][0]["sprint_item_title"]
+    summary["priority"] = "P1"
 workers = {
-    "chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "agent_working": False, "latest_turn_ended_sequence": 0},
+    "chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "awaiting_reply": False, "agent_working": False, "latest_turn_ended_sequence": 0},
     "workers": [],
 }
 
@@ -106,6 +111,7 @@ def respond(route):
     path = route.request.url.split("/api/", 1)[1].split("?")[0]
     if path == "board": result = board
     elif path == "workers": result = workers
+    elif path == "worker-types": result = {"worker_types": []}
     else: result = {}
     route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
 
@@ -120,7 +126,7 @@ with sync_playwright() as p:
 
     # Nothing is selected, and the groups are already there.
     assert page.locator('[data-sprint-item] [aria-current="page"]').count() == 0
-    assert page.locator(".board-workspace-item--selected").count() == 0
+    assert page.locator(".orchestrator-card.selected").count() == 0
 
     # Exactly the four groups. A broken worker does not open a fifth one here. An answer
     # he owes sits under the decision he owes and above the Stage that is merely his.
@@ -130,7 +136,7 @@ with sync_playwright() as p:
         "awaiting_approval", "awaiting_answer", "assigned", "awaiting_reply"
     ]
     assert [
-        headers.nth(i).locator(".board-workspace-bucket-label").inner_text() for i in range(4)
+        headers.nth(i).locator(".bucket-label").text_content() for i in range(4)
     ] == ["Needs your approval", "Needs your answer", "Yours", "Messages"]
 
     # The rows are there too, one Ticket under one header.
@@ -155,6 +161,27 @@ with sync_playwright() as p:
     quiet = page.locator('[data-sprint-item="si_quiet"]')
     assert quiet.locator("[data-bucket-key]").count() == 0
     assert quiet.locator("[data-ticket-id]").count() == 0
+
+    # Only an exact conversation message creates a dot. Child attention does not
+    # create a supervisor dot, and approval/ask/running/error rows have no mark.
+    expect(needs_him.locator(".item-head .stage-mark")).to_have_count(0)
+    expect(needs_him.locator('[data-ticket-id="t_message"] .stage-mark')).to_have_count(1)
+    expect(needs_him.locator('[data-ticket-id]:not([data-ticket-id="t_message"]) .stage-mark')).to_have_count(0)
+    expect(quiet.locator(".stage-mark")).to_have_count(0)
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
+
+    # Chief's ask/running/error-like work facts cannot create its message dot.
+    chief = workers["chief_of_staff"]
+    chief.update(needs_me=True, agent_working=True)
+    page.evaluate("window.__refresh()")
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
+    chief["awaiting_reply"] = True
+    page.evaluate("window.__refresh()")
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(1)
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_attribute("aria-label", "Unread reply")
+    chief["awaiting_reply"] = False
+    page.evaluate("window.__refresh()")
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
 
     # Selection is the card. No count line stands in for the groups any more.
     assert page.locator(".board-workspace-item-line").count() == 0

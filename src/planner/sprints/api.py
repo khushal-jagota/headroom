@@ -5,7 +5,6 @@ because the Idea shape lives in this domain's contracts. Sprint writers take a
 
 from __future__ import annotations
 
-from datetime import date
 from functools import partial
 from typing import Annotated, Any
 
@@ -17,7 +16,7 @@ from planner.core import authority
 from planner.core.authority import require_above, require_above_or_self
 from planner.core.contracts import JsonDict, Principal, PrincipalKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import planning_date, resolve_day_id
+from planner.days.logic.dates import planning_date
 from planner.files import sprint_item_files
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
@@ -31,7 +30,6 @@ from planner.message_delivery import service as message_delivery_service
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
-from planner.sprints import commitments
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import views as sprints_views
@@ -39,7 +37,6 @@ from planner.sprints.contracts import (
     SPRINT_DOCUMENT_FIELDS,
     CreateIdeaBody,
     CreateItemBody,
-    CreateSprintBody,
 )
 from planner.tickets.api import (
     Cfg,
@@ -51,7 +48,6 @@ from planner.tickets.api import (
     MessageFiles,
     body_opt_str,
     body_str,
-    body_str_list,
     parse_enum,
 )
 from planner.work_attention import add_work_attention
@@ -74,22 +70,6 @@ def _marshal_create_item(raw: JsonDict) -> CreateItemBody:
         project_id=body_opt_str(raw, "project_id"),
         body=body_str(raw, "body"),
         priority=body_opt_str(raw, "priority"),
-    )
-
-
-def _marshal_create_sprint(raw: JsonDict) -> CreateSprintBody:
-    recognized = set(_SPRINT_TEXT_FIELDS) | {"date_start", "date_end"}
-    for field in raw:
-        if field not in recognized:
-            raise PlannerError(ErrorCode.validation, "unknown sprint field", {"field": field})
-    return CreateSprintBody(
-        name=body_str(raw, "name"),
-        date_start=body_str(raw, "date_start"),
-        date_end=body_str(raw, "date_end"),
-        primary_bet=body_str(raw, "primary_bet"),
-        kickoff=body_str(raw, "kickoff"),
-        checkpoint=body_str(raw, "checkpoint"),
-        review=body_str(raw, "review"),
     )
 
 
@@ -163,9 +143,7 @@ async def read_items(
     )
     resolved_project_id = resolved_project.id if resolved_project is not None else None
     if level is ReadDetail.full:
-        reject_parameters(
-            "detail=full", {"search": search, "limit": limit, "offset": offset}
-        )
+        reject_parameters("detail=full", {"search": search, "limit": limit, "offset": offset})
         rows = sprints_views.list_items(conn, project_id=resolved_project_id)
         await add_work_attention(conn, conversations, conversation_record, sprint_items=rows)
         return {"items": rows}
@@ -201,8 +179,7 @@ async def get_item_workspace(
     address, and this is the read of it.
     """
     require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
-    planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
-    result = sprints_views.item_workspace(conn, item_id, planning_day_id)
+    result = sprints_views.item_workspace(conn, item_id)
     await add_work_attention(
         conn,
         conversations,
@@ -377,32 +354,6 @@ async def patch_item(
 # --- sprint routes -------------------------------------------------------------
 
 
-@router.post("/sprints")
-async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    body = _marshal_create_sprint(raw)
-    for label, value in (
-        ("date_start", body["date_start"]),
-        ("date_end", body["date_end"]),
-    ):
-        try:
-            date.fromisoformat(value)
-        except ValueError:
-            raise PlannerError(ErrorCode.validation, f"invalid {label}", {label: value}) from None
-    sprint = sprints_data.create_sprint(
-        conn,
-        name=body["name"],
-        date_start=body["date_start"],
-        date_end=body["date_end"],
-        primary_bet=body["primary_bet"],
-        kickoff=body["kickoff"],
-        checkpoint=body["checkpoint"],
-        review=body["review"],
-        clock=clk,
-        admit=lambda: require_above(conn, ctx.principal, authority.plan("sprint")),
-    )
-    return dict(sprints_views.sprint_json(sprint))
-
-
 @router.get("/sprints")
 async def read_sprints(
     conn: DbConn,
@@ -428,38 +379,6 @@ async def read_sprints(
         ),
     )
     return page.response("sprints")
-
-
-@router.patch("/sprints/{sprint_id}")
-async def patch_sprint(
-    sprint_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    recognized = set(_SPRINT_TEXT_FIELDS) | {"date_start", "date_end"}
-    for key in body:
-        if key not in recognized:
-            raise PlannerError(ErrorCode.validation, "unknown sprint field", {"field": key})
-    # Marshal each field to a string, mirroring the Day PATCH: a null or non-string
-    # value raises the validation envelope instead of hitting the NOT NULL constraint
-    # or a raw SQLite binding error. A null is treated as absent (skipped).
-    edits: dict[str, str] = {}
-    for field in _SPRINT_TEXT_FIELDS:
-        value = body_opt_str(body, field)
-        if value is not None:
-            edits[field] = value
-    setting_dates = "date_start" in body or "date_end" in body
-    if not edits and not setting_dates:
-        raise PlannerError(ErrorCode.validation, "no sprint fields to update", {})
-    sprint = sprints_data.update_sprint(
-        conn,
-        sprint_id,
-        text_edits=edits,
-        set_dates=setting_dates,
-        date_start=body_opt_str(body, "date_start"),
-        date_end=body_opt_str(body, "date_end"),
-        clock=clk,
-        admit=lambda: require_above(conn, ctx.principal, authority.plan("sprint")),
-    )
-    return dict(sprints_views.sprint_json(sprint))
 
 
 @router.get("/sprint/current")
@@ -510,30 +429,6 @@ async def list_ideas(
     }
 
 
-@router.post("/sprints/{source_id}/outcomes/{outcome_id}/carry")
-async def carry_outcome(
-    source_id: str, outcome_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
-) -> JsonDict:
-    if set(body) != {"target_sprint_id", "ticket_ids"}:
-        raise PlannerError(
-            ErrorCode.validation, "carry requires target_sprint_id and explicit ticket_ids"
-        )
-    return dict(
-        commitments.carry_outcome(
-            conn,
-            source_id,
-            body_str(body, "target_sprint_id"),
-            outcome_id,
-            body_str_list(body, "ticket_ids"),
-            principal=ctx.principal,
-            now=clk.now_unix(),
-            admit=lambda: require_above(
-                conn, ctx.principal, authority.plan("sprint_outcomes")
-            ),
-        )
-    )
-
-
 @router.get("/sprints/{sprint_id}/tracking")
 async def sprint_tracking(
     sprint_id: str,
@@ -569,3 +464,15 @@ async def _add_tracking_attention(
         tickets=tickets,
         sprint_items=items,
     )
+
+
+@router.patch("/items/{item_id}/settled")
+async def settle_item(
+    item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    if set(raw) != {"settled"} or not isinstance(raw.get("settled"), bool):
+        raise PlannerError(ErrorCode.validation, "settled must be a boolean")
+    sprints_data.set_item_settled(
+        conn, item_id, settled=raw["settled"], principal=ctx.principal, clock=clk
+    )
+    return sprints_views.item_detail(conn, item_id)

@@ -47,15 +47,6 @@ def _item(client: TestClient, title: str = "An outcome") -> dict[str, Any]:
     return cast(dict[str, Any], created.json())
 
 
-def _sprint(client: TestClient) -> dict[str, Any]:
-    created = client.post(
-        "/api/sprints",
-        json={"name": "A sprint", "date_start": "2026-07-01", "date_end": "2026-07-07"},
-    )
-    assert created.status_code == 200, created.text
-    return cast(dict[str, Any], created.json())
-
-
 def _ticket(
     client: TestClient,
     title: str = "A ticket",
@@ -68,7 +59,7 @@ def _ticket(
         "kickoff_note": "Start here.",
     }
     if item_id is not None:
-        body["sprint_item_id"] = item_id
+        body["orchestrator"] = {"kind": "sprint_item", "id": item_id}
     created = client.post("/api/tickets", json=body)
     assert created.status_code == 200, created.text
     return str(created.json()["id"])
@@ -85,27 +76,16 @@ def _worker_headers(ticket_id: str) -> dict[str, str]:
 # --- each collection, added and removed ---------------------------------------
 
 
-def test_a_ticket_goes_on_a_day_and_comes_off_again(tmp_path: Path) -> None:
+def test_calendar_membership_writes_are_retired_without_changing_history(tmp_path: Path) -> None:
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         ticket_id = _ticket(client)
         path = _member(client, "day_tickets", "2026-07-02", ticket_id)
-        added = client.put(path)
+        for response in (client.put(path), client.delete(path)):
+            assert response.status_code == 400
+            assert response.json()["error"]["message"] == "calendar membership is retired"
         with connect(str(db_path)) as conn:
-            on_the_day = conn.execute(
-                "SELECT count(*) FROM day_tickets WHERE day_id = ?", ("day_2026-07-02",)
-            ).fetchone()[0]
-        removed = client.delete(path)
-
-    assert added.status_code == 200, added.text
-    assert added.json() == {
-        "collection": "day_tickets",
-        "container_id": "day_2026-07-02",
-        "member_id": ticket_id,
-        "ok": True,
-    }
-    assert on_the_day == 1
-    assert removed.status_code == 200, removed.text
+            assert conn.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 0
 
 
 def test_a_ticket_goes_under_an_outcome_and_comes_out_again(tmp_path: Path) -> None:
@@ -113,10 +93,14 @@ def test_a_ticket_goes_under_an_outcome_and_comes_out_again(tmp_path: Path) -> N
     with TestClient(app) as client:
         item = _item(client)
         ticket_id = _ticket(client)
-        path = _member(client, "outcome_tickets", str(item["id"]), ticket_id)
-        added = client.put(path)
+        added = client.patch(
+            f"/api/tickets/{ticket_id}",
+            json={"orchestrator": {"kind": "sprint_item", "id": item["id"]}},
+        )
         placed = client.get(f"/api/tickets?detail=full&id={ticket_id}").json()["sprint_item_id"]
-        removed = client.delete(path)
+        removed = client.patch(
+            f"/api/tickets/{ticket_id}", json={"orchestrator": {"kind": "chief", "id": "chief"}}
+        )
         detached = client.get(f"/api/tickets?detail=full&id={ticket_id}").json()["sprint_item_id"]
 
     assert added.status_code == 200, added.text
@@ -137,22 +121,17 @@ def test_an_unknown_collection_is_a_validation_error(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "validation"
 
 
-def test_a_planning_sprint_worker_commits_an_outcome_and_another_worker_cannot(
-    tmp_path: Path,
-) -> None:
+def test_sprint_commitment_writes_are_retired_for_owner_and_worker(tmp_path: Path) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
-        sprint = _sprint(client)
         item = _item(client)
-        planner_ticket = _ticket(client, "Plan the sprint", worker_type="planning-sprint")
-        coding_ticket = _ticket(client, "Ordinary work")
-        path = _member(client, "sprint_outcomes", str(sprint["id"]), str(item["id"]))
-        refused = client.put(path, headers=_worker_headers(coding_ticket))
-        allowed = client.put(path, headers=_worker_headers(planner_ticket))
-
-    assert refused.status_code == 400
-    assert refused.json()["error"]["code"] == "agent_forbidden"
-    assert allowed.status_code == 200, allowed.text
+        worker = _ticket(client)
+        for headers in ({}, _worker_headers(worker)):
+            response = client.put(
+                _member(client, "sprint_outcomes", "historical", str(item["id"])), headers=headers
+            )
+            assert response.status_code == 400
+            assert response.json()["error"]["message"] == "calendar membership is retired"
 
 
 def test_removing_a_ticket_from_an_outcome_it_does_not_belong_to_is_refused(
@@ -172,7 +151,7 @@ def test_removing_a_ticket_from_an_outcome_it_does_not_belong_to_is_refused(
 # --- the same call, with a supervisor's authority -----------------------------
 
 
-def test_a_supervisor_puts_its_own_child_on_a_day_and_no_one_else(tmp_path: Path) -> None:
+def test_a_supervisor_edits_its_own_child_and_no_one_else(tmp_path: Path) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:
         item = _item(client, "Supervised")
@@ -180,18 +159,19 @@ def test_a_supervisor_puts_its_own_child_on_a_day_and_no_one_else(tmp_path: Path
         child = _ticket(client, "Child", item_id=str(item["id"]))
         outsider = _ticket(client, "Outsider", item_id=str(other["id"]))
         headers = _supervisor_headers(str(item["id"]))
-        allowed = client.put(_member(client, "day_tickets", "2026-07-02", child), headers=headers)
-        refused = client.put(
-            _member(client, "day_tickets", "2026-07-02", outsider), headers=headers
+        allowed = client.patch(f"/api/tickets/{child}", json={"title": "Revised"}, headers=headers)
+        refused = client.patch(
+            f"/api/tickets/{outsider}", json={"title": "Revised"}, headers=headers
         )
-        removed = client.delete(
-            _member(client, "day_tickets", "2026-07-02", child), headers=headers
-        )
-
+        for ticket_id in (child, outsider):
+            retired = client.put(
+                _member(client, "day_tickets", "2026-07-02", ticket_id), headers=headers
+            )
+            assert retired.status_code == 400
+            assert retired.json()["error"]["message"] == "calendar membership is retired"
     assert allowed.status_code == 200, allowed.text
     assert refused.status_code == 400
     assert refused.json()["error"]["code"] == "agent_forbidden"
-    assert removed.status_code == 200, removed.text
 
 
 def test_a_supervisor_blocks_inside_its_own_item_only(tmp_path: Path) -> None:
@@ -216,8 +196,9 @@ def test_a_supervisor_cannot_place_a_ticket_under_an_outcome(tmp_path: Path) -> 
     with TestClient(app) as client:
         item = _item(client, "Supervised")
         child = _ticket(client, "Child", item_id=str(item["id"]))
-        response = client.delete(
-            _member(client, "outcome_tickets", str(item["id"]), child),
+        response = client.patch(
+            f"/api/tickets/{child}",
+            json={"orchestrator": {"kind": "chief", "id": "chief"}},
             headers=_supervisor_headers(str(item["id"])),
         )
 

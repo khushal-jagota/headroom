@@ -38,7 +38,7 @@ try {
     project: "Panels",
     kind: "normal"
   }];
-  const workerTypes = [
+  const workerTypes = [{ worker_type: "planning-day", label: "Retired planning", creatable: false },
     {
       worker_type: "coding",
       label: "Coding",
@@ -56,15 +56,16 @@ try {
   let schedules: any[] = [{
     id: "schedule_demo",
     enabled: true,
-    cadence: "every_planning_day",
+    cadence: "daily",
     local_time: "09:00",
-    title: "Existing planning task",
+    title: "Existing daily task",
     worker_type: "coding",
     kickoff_note: "Use the saved schedule.",
     priority: "P2",
     deadline: null,
     project_id: "project_panels",
-    placement_mode: "current_sprint",
+    placement_mode: "backlog",
+    orchestrator: { kind: "sprint_item", id: "si_demo" },
     sprint_item_id: "si_demo",
     employee_backend: null,
     employee_launch_model: null,
@@ -72,6 +73,9 @@ try {
     created_at: 1,
     updated_at: 1
   }];
+  schedules.push({ ...schedules[0], id: "schedule_retired", enabled: false, title: "Historical planning task", cadence: "every_planning_day", worker_type: "planning-day", placement_mode: "current_sprint", sprint_id: "sprint_history" });
+  schedules.push({ ...schedules[1], id: "schedule_retired_active", enabled: true, title: "Disable old planning task" });
+  schedules.push({ ...schedules[0], id: "schedule_personal", enabled: false, title: "Historical daily personal task", worker_type: "personal" });
   const requests: Array<{ path: string; method: string; body: any }> = [];
 
   class QuietEventSource {
@@ -101,8 +105,9 @@ try {
       priority: body.priority,
       deadline: body.deadline,
       project_id: body.project_id,
-      placement_mode: body.placement_mode,
-      sprint_item_id: body.sprint_item_id,
+      placement_mode: "backlog",
+      orchestrator: body.orchestrator,
+      sprint_item_id: body.orchestrator.kind === "sprint_item" ? body.orchestrator.id : null,
       employee_backend: body.employee_backend,
       employee_launch_model: body.employee_launch_model,
       blocked_by_ticket_ids: body.blocked_by_ticket_ids,
@@ -120,8 +125,13 @@ try {
     }
     if (path === "/api/projects?detail=full") return json({ projects });
     if (path === "/api/items?detail=full") return json({ items: sprintItems });
+    if (path === "/api/worker-types?supported=true") return json({ worker_types: workerTypes.filter(entry => entry.creatable !== false) });
     if (path === "/api/worker-types") return json({ worker_types: workerTypes });
     if (path === "/api/schedules" && method === "GET") return json({ schedules });
+    if ((path === "/api/schedules" && method === "POST") || (path.startsWith("/api/schedules/") && method === "PATCH")) {
+      if (["placement_mode", "sprint_item_id", "sprint_id"].some(key => key in body)) return json({error:{message:"Retired placement field"}},422);
+      if ("cadence" in body && body.cadence !== "daily") return json({error:{message:"Retired cadence"}},422);
+    }
     if (path === "/api/schedules" && method === "POST") {
       if (body.title === "Reject me") {
         return json({ error: { code: "validation", message: "The schedule was rejected." } }, 422);
@@ -130,11 +140,10 @@ try {
       schedules = [created, ...schedules];
       return json(created);
     }
-    if (path === "/api/schedules/schedule_demo" && method === "PATCH") {
-      schedules = schedules.map((schedule) =>
-        schedule.id === "schedule_demo" ? { ...schedule, ...body, updated_at: 3 } : schedule
-      );
-      return json(schedules.find((schedule) => schedule.id === "schedule_demo"));
+    if (path.startsWith("/api/schedules/") && method === "PATCH") {
+      const id = path.split("/").at(-1);
+      schedules = schedules.map((schedule) => schedule.id === id ? { ...schedule, ...body, sprint_item_id: body.orchestrator ? (body.orchestrator.kind === "sprint_item" ? body.orchestrator.id : null) : schedule.sprint_item_id, updated_at: 3 } : schedule);
+      return json(schedules.find((schedule) => schedule.id === id));
     }
     return json({ error: { code: "unexpected", message: path } }, 500);
   }) as typeof fetch;
@@ -202,8 +211,8 @@ with sync_playwright() as playwright:
         page.set_viewport_size({"width": 1280, "height": 900})
     card = page.locator('[data-schedule-id="schedule_demo"]')
     card.wait_for()
-    assert "Existing planning task" in card.inner_text()
-    assert card.locator('[data-schedule-title]').inner_text() == "Existing planning task"
+    assert "Existing daily task" in card.inner_text()
+    assert card.locator('[data-schedule-title]').inner_text() == "Existing daily task"
     assert card.locator('[data-schedule-toggle]').get_attribute("aria-checked") == "true"
 
     page.get_by_role("button", name="Add").click()
@@ -213,6 +222,10 @@ with sync_playwright() as playwright:
         page.set_viewport_size({"width": 390, "height": 844})
         page.screenshot(path=os.path.join(screenshot_dir, "scheduled-tasks-editor-phone.png"), full_page=True)
         page.set_viewport_size({"width": 1280, "height": 900})
+    assert editor.locator('[data-input="orchestrator"]').input_value() == ""
+    assert editor.locator('[data-input="worker-type"] option[value="planning-day"]').count() == 0
+    assert editor.locator('[data-input="cadence"]').inner_text() == "Every day"
+    assert editor.locator('[data-input="placement"], [data-input="sprint"], [data-input="sprint-item"]').count() == 0
     submit = editor.locator("[data-commit-schedule]")
     submit.click()
     page.locator("[data-schedule-error]").wait_for()
@@ -228,7 +241,7 @@ with sync_playwright() as playwright:
     title.fill("Created browser schedule")
     editor.locator('[data-input="local-time"]').fill("11:30")
     editor.locator('[data-input="project"]').select_option("project_panels")
-    editor.locator('[data-input="sprint-item"]').select_option("si_demo")
+    editor.locator('[data-input="orchestrator"]').select_option("si_demo")
     submit.click()
     created = page.locator('[data-schedule-id="schedule_created"]')
     created.wait_for()
@@ -236,18 +249,18 @@ with sync_playwright() as playwright:
     created.locator('[data-schedule-title]').click()
     editor.locator('[data-input="local-time"]').wait_for()
     assert editor.locator('[data-input="local-time"]').input_value() == "11:30"
-    assert editor.locator('[data-input="sprint-item"]').input_value() == "si_demo"
+    assert editor.locator('[data-input="orchestrator"]').input_value() == "si_demo"
     page.locator('[data-back-to-schedules]').click()
 
     card.locator('[data-schedule-toggle]').click()
     page.wait_for_function("document.querySelector('[data-schedule-id=\\\"schedule_demo\\\"] [data-schedule-toggle]')?.getAttribute('aria-checked') === 'false'")
     assert card.locator('[data-schedule-toggle]').get_attribute("aria-checked") == "false"
     card.locator('[data-schedule-title]').click()
-    assert editor.locator('[data-input="sprint-item"]').input_value() == "si_demo"
+    assert editor.locator('[data-input="orchestrator"]').input_value() == "si_demo"
     editor.locator('[data-input="project"]').select_option("project_panels")
-    assert editor.locator('[data-input="sprint-item"]').input_value() == "si_demo"
+    assert editor.locator('[data-input="orchestrator"]').input_value() == "si_demo"
     editor.locator('[data-input="project"]').select_option("project_other")
-    assert editor.locator('[data-input="sprint-item"]').input_value() == ""
+    assert editor.locator('[data-input="orchestrator"]').input_value() == ""
     editor.locator('[data-schedule-title] .ed').fill("Edited existing schedule")
     editor.locator('[data-input="local-time"]').fill("09:50")
     editor.get_by_text("Advanced Ticket settings").click()
@@ -256,7 +269,7 @@ with sync_playwright() as playwright:
     card = page.locator('[data-schedule-id="schedule_demo"]')
     card.locator('[data-schedule-title]').filter(has_text="Edited existing schedule").wait_for()
     assert "Edited existing schedule" in card.inner_text()
-    assert page.locator('[data-schedule-id]').count() == 2
+    assert page.locator('[data-schedule-id]').count() == 5
 
     requests = page.evaluate("window.__requests()")
     assert any(request["path"] == "/api/schedules" and request["method"] == "POST" for request in requests)
@@ -265,7 +278,45 @@ with sync_playwright() as playwright:
     assert any(request["path"] == "/api/schedules/schedule_demo" and request["method"] == "PATCH" and request["body"].get("title") == "Edited existing schedule" for request in requests)
     placement = next(request["body"] for request in requests if request["method"] == "PATCH" and request["body"].get("title") == "Edited existing schedule")
     assert placement["project_id"] == "project_other"
-    assert placement["sprint_item_id"] is None
+    assert placement["orchestrator"] == {"kind": "chief", "id": "chief"}
+    for request in requests:
+        if request["method"] in ("POST", "PATCH") and "/api/schedules" in request["path"]:
+            assert not ({"placement_mode", "sprint_id", "sprint_item_id"} & set(request["body"]))
+    created_body = next(request["body"] for request in requests if request["method"] == "POST" and request["body"].get("title") == "Created browser schedule")
+    assert created_body["cadence"] == "daily"
+    assert created_body["orchestrator"] == {"kind": "sprint_item", "id": "si_demo"}
+    retired = page.locator('[data-schedule-id="schedule_retired"]')
+    assert retired.locator('[data-schedule-toggle]').is_disabled()
+    before = len(page.evaluate("window.__requests()"))
+    retired.locator('[data-schedule-title]').click()
+    assert "Every planning day" in editor.locator('[data-retired-schedule]').inner_text()
+    assert "Current sprint" in editor.locator('[data-retired-schedule]').inner_text()
+    assert "sprint_history" not in editor.inner_text()
+    assert editor.locator('[data-input="worker-type"] option:checked').inner_text() == "Retired planning"
+    assert editor.locator('[data-input="worker-type"]').input_value() == "planning-day"
+    assert editor.locator('[data-input="local-time"]').is_disabled()
+    assert editor.locator('[data-input="enabled"]').is_disabled()
+    assert editor.locator('[data-commit-schedule]').count() == 0
+    assert editor.locator('[data-schedule-title] .ed').count() == 0
+    page.locator('[data-back-to-schedules]').click()
+    personal = page.locator('[data-schedule-id="schedule_personal"]')
+    assert personal.locator('[data-schedule-toggle]').is_disabled()
+    assert personal.get_by_role('switch', name='Enable schedule').count() == 0
+    personal.locator('[data-schedule-title]').click()
+    assert "Retired schedule" in editor.locator('[data-retired-schedule]').inner_text()
+    assert "Every day" in editor.locator('[data-retired-schedule]').inner_text()
+    assert editor.locator('[data-input="worker-type"]').is_disabled()
+    assert editor.locator('[data-input="enabled"]').is_disabled()
+    assert editor.get_by_role('switch', name='Enable schedule').count() == 0
+    assert editor.locator('[data-commit-schedule]').count() == 0
+    page.locator('[data-back-to-schedules]').click()
+    active_retired = page.locator('[data-schedule-id="schedule_retired_active"]')
+    active_retired.locator('[data-schedule-toggle]').click()
+    page.wait_for_function("window.__requests().some(r => r.path.endsWith('/schedule_retired_active') && r.method === 'PATCH')")
+    disable = next(request for request in page.evaluate("window.__requests()") if request["path"].endswith("/schedule_retired_active") and request["method"] == "PATCH")
+    assert disable["body"] == {"enabled": False}
+    assert active_retired.locator('[data-schedule-toggle]').is_disabled()
+    assert not any(request["method"] != "GET" and request["path"].endswith("/schedule_retired") for request in page.evaluate("window.__requests()")[before:])
     browser.close()
 
 print("scheduled tasks browser assertions passed")

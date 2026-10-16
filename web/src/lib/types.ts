@@ -90,6 +90,8 @@ export type ListPageFacts = {
 };
 
 export type TicketSummary = WorkAttention & {
+  is_backlogged?: boolean;
+  orchestrator?: Principal;
   id: string;
   title: string;
   worker_type: string;
@@ -111,6 +113,7 @@ export type TicketSummariesResponse = {
 };
 
 export type OutcomeSummary = WorkAttention & {
+  settled?: boolean;
   id: string;
   title: string;
   priority: Priority;
@@ -149,6 +152,7 @@ export type ProjectsResponse = {
 };
 
 export type ScheduleCadence =
+  | "daily"
   | "every_planning_day"
   | "current_sprint_day_four"
   | "current_sprint_final_day";
@@ -156,6 +160,8 @@ export type ScheduleCadence =
 export type SchedulePlacementMode = "current_sprint" | "backlog";
 
 export type ScheduledTask = {
+  orchestrator_kind?: "chief" | "sprint_item";
+  orchestrator?: Principal;
   id: string;
   enabled: boolean;
   cadence: ScheduleCadence;
@@ -209,6 +215,32 @@ export type BlockerSummary = {
 
 export type StageOwnershipMode = "worker" | "user";
 
+// The stored Worker type record, exactly as GET /api/worker-types/{type} returns it
+// and POST /api/worker-types takes it back. The write door replaces the whole record
+// and refuses unknown keys, so an edit reads this, changes one value, and posts it
+// back unchanged otherwise.
+export type WorkerTypeRecordStage = {
+  id: string;
+  label: string;
+  gating_field: string | null;
+  is_terminal: boolean;
+  ownership_mode: StageOwnershipMode | null;
+};
+
+export type WorkerTypeRecord = {
+  worker_type: string;
+  label: string;
+  stages: WorkerTypeRecordStage[];
+  fields: Array<{ id: string; label: string }>;
+  profile: {
+    specialist_skill: string;
+    default_model: string;
+    default_reasoning_effort: string | null;
+    toolset_profile: string;
+    default_backend: string;
+  };
+};
+
 export type ManagedSkill = {
   name: string;
   description: string;
@@ -235,6 +267,7 @@ export type ChiefManagementSettings = {
   launch_defaults: EmployeeConfigurationSnapshot;
   conversation_id: string | null;
   needs_me: boolean;
+  awaiting_reply: boolean;
   agent_working: boolean;
   latest_turn_ended_sequence: number;
   owner_read_through_sequence: number;
@@ -271,6 +304,10 @@ export type TicketConversationHistoryEntry = {
 };
 
 export type TicketDetail = {
+  is_backlogged?: boolean;
+  record_sha256?: string;
+  artifacts?: SprintItemArtifact[];
+  orchestrator?: Principal;
   id: string;
   title: string;
   worker_type: string;
@@ -377,6 +414,7 @@ export type CarryOutcomeResult = {
 };
 
 export type SprintItemWorkspaceTicket = WorkAttention & {
+  conversation_id?: string | null;
   id: string;
   title: string;
   stage: string;
@@ -445,7 +483,13 @@ export type BoardResponse = {
 // A Sprint Item's own identity and its supervisor's conversation. No card answers for
 // the Item's own worker, so the mark on an Item title comes from here.
 export type BoardSprintItem = {
+  settled?: boolean;
+  project_id?: string;
+  project?: string;
   id: string;
+  title: string;
+  priority: Priority;
+  tickets: SprintItemWorkspaceTicket[];
   created_at: number;
   conversation_id: string | null;
   awaiting_reply: boolean;
@@ -458,6 +502,7 @@ export type BoardSprintItem = {
 };
 
 export type BoardCard = WorkAttention & {
+  orchestrator?: Principal;
   id: string;
   title: string;
   priority: Priority;
@@ -532,4 +577,15 @@ export type NotificationSubjectSettings = {
 export type NotificationSettingsResponse = {
   subjects: NotificationSubjectSettings[];
   vapid_public_key: string;
+};
+
+// One row names one durable unread conversation, independent of settlement.
+export type WorkspaceMessageConversation = {
+  kind: "chief" | "sprint_item" | "ticket";
+  id: string;
+  title: string;
+  conversationId: string;
+  parentId: string | null;
+  parentTitle: string | null;
+  settled: boolean;
 };

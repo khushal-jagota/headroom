@@ -7,20 +7,28 @@ codex binary** — the same one the adapter launches — with
 ``codex app-server generate-json-schema``. The upstream tag that binary was cut from is
 recorded alongside it so a reader can go and diff the Rust.
 
-Three things come out of a run:
+**There are two bundles, and each carries its own pin.** The turn bundle is everything
+the thread-and-turn adapter speaks. The login bundle is the five device-code sign-in
+messages. They are generated separately because they were generated against different
+codex versions, and a shared pin would force one of them to move whenever the other did.
+The two are safe to keep apart because their definitions do not overlap: the login closure
+shares no definition name with the turn subset, so neither bundle can silently redefine
+anything the other depends on. ``_refuse_overlapping_bundles`` checks that on every run.
 
-- ``schema/codex_app_server_protocol.subset.schema.json`` — the vendored schema, pruned to
-  the definitions this adapter can reach from the messages it actually sends and reads.
-  Vendoring the pruned document rather than the whole dump keeps the diff readable: when a
-  regeneration changes it, the change is in something we use.
-- ``bindings_gen.py`` — pydantic models for those definitions.
-- The pin, written into the generated file's header: binary version, upstream commit, how
+Three things come out of a bundle:
+
+- its vendored schema under ``schema/`` — the dump pruned to the definitions reachable from
+  the messages that bundle speaks. Vendoring the pruned document rather than the whole dump
+  keeps the diff readable: when a regeneration changes it, the change is in something we use.
+- its generated module — pydantic models for those definitions.
+- its pin, written into the generated file's header: binary version, upstream commit, how
   the schema was obtained, and a canonical digest of the full dump the subset came from.
 
-Run it as ``python -m planner.conversation.backends.codex_app_server.generate_bindings``.
-It refuses to run against a codex whose version is not the pinned one, because a
-regeneration that silently moves the protocol is the failure this file exists to prevent.
-Moving the pin is a deliberate edit of the three constants below.
+Run it as ``python -m planner.conversation.backends.codex_app_server.generate_bindings``,
+optionally with ``--bundle turn`` or ``--bundle login``. A bundle refuses to regenerate
+against a codex whose version is not *its* pinned one, because a regeneration that silently
+moves the protocol is the failure this file exists to prevent. Moving a pin is a deliberate
+edit of that bundle's three constants below.
 """
 
 from __future__ import annotations
@@ -32,19 +40,27 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------------------
-# The pin. Change these three together, never one of them.
+# The pins. Each bundle has three, and they change together, never one of them.
 # ---------------------------------------------------------------------------------------
 
-# What ``codex --version`` must print for this generated file to be the one that matches.
+# What ``codex --version`` must print for the turn bundle to be the one that matches, and
+# the upstream tag that binary was cut from with its commit, so the Rust can be read.
 PINNED_CODEX_CLI_VERSION = "codex-cli 0.153.3"
-
-# The upstream tag that binary was cut from, and its commit, so the Rust can be read.
 PINNED_UPSTREAM_TAG = "rust-v0.153.3"
 PINNED_UPSTREAM_COMMIT = "b1a547b1f73ce86205d9222ac19cff334b3b7a2e"
+
+# The same three for the login bundle. It is pinned later than the turn bundle on purpose:
+# the device-code sign-in messages did not exist to be vendored at 0.153.3, and moving the
+# turn bundle forward to reach them would change 22 definitions the thread and turn core
+# depends on. That migration is real and is deliberately not part of this bundle.
+LOGIN_PINNED_CODEX_CLI_VERSION = "codex-cli 0.163.0"
+LOGIN_PINNED_UPSTREAM_TAG = "rust-v0.163.0"
+LOGIN_PINNED_UPSTREAM_COMMIT = "83086188ae0614bd882818ff1aa23f3194962012"
 
 # ---------------------------------------------------------------------------------------
 
@@ -55,6 +71,10 @@ FULL_SCHEMA_DUMP_FILE_NAME = "codex_app_server_protocol.schemas.json"
 _HERE = Path(__file__).parent
 VENDORED_SUBSET_SCHEMA_PATH = _HERE / "schema" / "codex_app_server_protocol.subset.schema.json"
 GENERATED_BINDINGS_PATH = _HERE / "bindings_gen.py"
+LOGIN_VENDORED_SUBSET_SCHEMA_PATH = (
+    _HERE / "schema" / "codex_app_server_protocol.login.subset.schema.json"
+)
+LOGIN_GENERATED_BINDINGS_PATH = _HERE / "login_bindings_gen.py"
 
 # The nested namespace the v2 surface lives in inside the dump, and how its definitions are
 # referred to from anywhere in the document.
@@ -147,6 +167,54 @@ SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
     (_V2_NAMESPACE, "ModelListResponse"),
 )
 
+# The device-code sign-in, which is its own bundle. Five messages: start a login, cancel
+# one, and the notification that says how it ended. ``LoginAccountParams`` carries every
+# login kind codex supports and only the device-code variant is ever sent, but the whole
+# union is vendored because that is the shape the server validates against.
+LOGIN_SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
+    (_V2_NAMESPACE, "LoginAccountParams"),
+    (_V2_NAMESPACE, "LoginAccountResponse"),
+    (_V2_NAMESPACE, "CancelLoginAccountParams"),
+    (_V2_NAMESPACE, "CancelLoginAccountResponse"),
+    (_V2_NAMESPACE, "AccountLoginCompletedNotification"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Bundle:
+    """One independently pinned set of messages, its vendored schema and its models."""
+
+    name: str
+    pinned_codex_cli_version: str
+    pinned_upstream_tag: str
+    pinned_upstream_commit: str
+    roots: tuple[tuple[str, str], ...]
+    vendored_subset_schema_path: Path
+    generated_bindings_path: Path
+
+
+TURN_BUNDLE = Bundle(
+    name="turn",
+    pinned_codex_cli_version=PINNED_CODEX_CLI_VERSION,
+    pinned_upstream_tag=PINNED_UPSTREAM_TAG,
+    pinned_upstream_commit=PINNED_UPSTREAM_COMMIT,
+    roots=SCHEMA_ROOTS,
+    vendored_subset_schema_path=VENDORED_SUBSET_SCHEMA_PATH,
+    generated_bindings_path=GENERATED_BINDINGS_PATH,
+)
+
+LOGIN_BUNDLE = Bundle(
+    name="login",
+    pinned_codex_cli_version=LOGIN_PINNED_CODEX_CLI_VERSION,
+    pinned_upstream_tag=LOGIN_PINNED_UPSTREAM_TAG,
+    pinned_upstream_commit=LOGIN_PINNED_UPSTREAM_COMMIT,
+    roots=LOGIN_SCHEMA_ROOTS,
+    vendored_subset_schema_path=LOGIN_VENDORED_SUBSET_SCHEMA_PATH,
+    generated_bindings_path=LOGIN_GENERATED_BINDINGS_PATH,
+)
+
+BUNDLES: tuple[Bundle, ...] = (TURN_BUNDLE, LOGIN_BUNDLE)
+
 
 class BindingGenerationFailed(Exception):
     """The bindings could not be regenerated, and why."""
@@ -159,52 +227,94 @@ def main(argv: list[str] | None = None) -> int:
         default="codex",
         help="the codex binary to ask for the schema (default: the one on PATH)",
     )
+    parser.add_argument(
+        "--bundle",
+        default="all",
+        choices=("all", *(bundle.name for bundle in BUNDLES)),
+        help="which independently pinned bundle to regenerate (default: all of them)",
+    )
     arguments = parser.parse_args(argv)
     try:
-        generate_bindings(codex_executable=arguments.codex_executable)
+        generate_bindings(
+            codex_executable=arguments.codex_executable, bundle_name=arguments.bundle
+        )
     except BindingGenerationFailed as failed:
         print(f"bindings not regenerated: {failed}", file=sys.stderr)
         return 1
     return 0
 
 
-def generate_bindings(*, codex_executable: str = "codex") -> None:
-    """Ask the pinned binary for its schema, prune it, vendor it, and generate models."""
+def generate_bindings(*, codex_executable: str = "codex", bundle_name: str = "all") -> None:
+    """Ask each selected bundle's pinned binary for its schema, vendor it, write models."""
+    selected = BUNDLES if bundle_name == "all" else tuple(
+        bundle for bundle in BUNDLES if bundle.name == bundle_name
+    )
+    if not selected:
+        raise BindingGenerationFailed(f"no bundle named {bundle_name!r}")
     installed_version = _installed_codex_version(codex_executable)
-    if installed_version != PINNED_CODEX_CLI_VERSION:
-        raise BindingGenerationFailed(
-            f"this file is pinned to {PINNED_CODEX_CLI_VERSION!r} and the binary at "
-            f"{codex_executable!r} is {installed_version!r}. Regenerating against a "
-            "different binary changes what the adapter believes the protocol is, so move "
-            "the pin constants in this file deliberately and then run it again."
-        )
+    for bundle in selected:
+        if installed_version != bundle.pinned_codex_cli_version:
+            raise BindingGenerationFailed(
+                f"the {bundle.name!r} bundle is pinned to "
+                f"{bundle.pinned_codex_cli_version!r} and the binary at "
+                f"{codex_executable!r} is {installed_version!r}. Regenerating against a "
+                "different binary changes what the adapter believes the protocol is, so "
+                "move that bundle's pin constants in this file deliberately and then run "
+                "it again. To regenerate only the bundle this binary matches, pass "
+                "--bundle with its name."
+            )
     with tempfile.TemporaryDirectory(prefix="codex-app-server-schema-") as scratch:
         dump = _dump_schema(codex_executable, Path(scratch))
         full_dump_digest = _canonical_digest(dump)
-        subset = _pruned_subset(dump)
-        subset_text = json.dumps(subset, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
-        VENDORED_SUBSET_SCHEMA_PATH.parent.mkdir(parents=True, exist_ok=True)
-        VENDORED_SUBSET_SCHEMA_PATH.write_text(subset_text, encoding="utf-8")
-        # What the generator reads is the vendored subset with codex's prose taken out.
-        # Upstream writes paragraphs into ``description``, and a code generator turns each
-        # one into a single very long line. The prose is worth keeping where a person
-        # reads it — the vendored schema — and worth dropping where a machine writes it.
-        codegen_input = Path(scratch) / "subset-without-prose.json"
-        codegen_input.write_text(
-            json.dumps(_without_prose(subset), indent=1, ensure_ascii=False), encoding="utf-8"
-        )
-        _run_datamodel_code_generator(
-            subset_schema_path=codegen_input,
-            output_path=GENERATED_BINDINGS_PATH,
-            header=_generated_file_header(
-                installed_version=installed_version,
-                full_dump_digest=full_dump_digest,
-                subset_digest=hashlib.sha256(subset_text.encode("utf-8")).hexdigest(),
-                definition_count=len(subset["definitions"]),
-            ),
-        )
-    print(f"wrote {VENDORED_SUBSET_SCHEMA_PATH}")
-    print(f"wrote {GENERATED_BINDINGS_PATH}")
+        pruned = {bundle.name: _pruned_subset(dump, roots=bundle.roots) for bundle in selected}
+        _refuse_overlapping_bundles(pruned)
+        for bundle in selected:
+            subset = pruned[bundle.name]
+            subset_text = json.dumps(subset, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
+            bundle.vendored_subset_schema_path.parent.mkdir(parents=True, exist_ok=True)
+            bundle.vendored_subset_schema_path.write_text(subset_text, encoding="utf-8")
+            # What the generator reads is the vendored subset with codex's prose taken out.
+            # Upstream writes paragraphs into ``description``, and a code generator turns
+            # each one into a single very long line. The prose is worth keeping where a
+            # person reads it — the vendored schema — and worth dropping where a machine
+            # writes it.
+            codegen_input = Path(scratch) / f"{bundle.name}-subset-without-prose.json"
+            codegen_input.write_text(
+                json.dumps(_without_prose(subset), indent=1, ensure_ascii=False), encoding="utf-8"
+            )
+            _run_datamodel_code_generator(
+                subset_schema_path=codegen_input,
+                output_path=bundle.generated_bindings_path,
+                header=_generated_file_header(
+                    bundle=bundle,
+                    installed_version=installed_version,
+                    full_dump_digest=full_dump_digest,
+                    subset_digest=hashlib.sha256(subset_text.encode("utf-8")).hexdigest(),
+                    definition_count=len(subset["definitions"]),
+                ),
+            )
+            print(f"wrote {bundle.vendored_subset_schema_path}")
+            print(f"wrote {bundle.generated_bindings_path}")
+
+
+def _refuse_overlapping_bundles(pruned: dict[str, dict[str, Any]]) -> None:
+    """Two bundles sharing a definition name would each claim to own that shape.
+
+    Separate pins are only safe while the bundles are disjoint. The moment two of them
+    reach the same definition, one bundle's pin silently decides what the other believes,
+    which is the whole failure the pins exist to prevent. It is refused rather than merged.
+    """
+    for name, subset in pruned.items():
+        for other_name, other in pruned.items():
+            if name >= other_name:
+                continue
+            shared = sorted(set(subset["definitions"]) & set(other["definitions"]))
+            if shared:
+                raise BindingGenerationFailed(
+                    f"the {name!r} and {other_name!r} bundles both reach "
+                    f"{', '.join(shared)}, so their separate pins would disagree about one "
+                    "shape. Either keep them disjoint or generate them as one bundle."
+                )
 
 
 def _installed_codex_version(codex_executable: str) -> str:
@@ -245,7 +355,7 @@ def _canonical_digest(document: Any) -> str:
 # --- pruning ------------------------------------------------------------------------------
 
 
-def _pruned_subset(dump: dict[str, Any]) -> dict[str, Any]:
+def _pruned_subset(dump: dict[str, Any], *, roots: tuple[tuple[str, str], ...]) -> dict[str, Any]:
     """The definitions reachable from the messages we speak, flattened into one namespace.
 
     The dump keeps the v2 surface nested, so a v2 definition is referred to as
@@ -259,7 +369,7 @@ def _pruned_subset(dump: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(definitions, dict):
         raise BindingGenerationFailed("the schema dump has no definitions")
     namespaced = _namespaced_definitions(definitions)
-    reachable = _reachable_from_roots(namespaced)
+    reachable = _reachable_from_roots(namespaced, roots=roots)
 
     flattened: dict[str, Any] = {}
     claimed_by: dict[str, str] = {}
@@ -304,10 +414,12 @@ def _namespaced_definitions(definitions: dict[str, Any]) -> dict[tuple[str, str]
     return namespaced
 
 
-def _reachable_from_roots(namespaced: dict[tuple[str, str], Any]) -> set[tuple[str, str]]:
+def _reachable_from_roots(
+    namespaced: dict[tuple[str, str], Any], *, roots: tuple[tuple[str, str], ...]
+) -> set[tuple[str, str]]:
     reachable: set[tuple[str, str]] = set()
-    pending = list(SCHEMA_ROOTS)
-    for root in SCHEMA_ROOTS:
+    pending = list(roots)
+    for root in roots:
         if root not in namespaced:
             raise BindingGenerationFailed(
                 f"{root[1]!r} is not in the schema dump's "
@@ -366,6 +478,7 @@ def _rewrite_references(definition: Any) -> Any:
 
 def _generated_file_header(
     *,
+    bundle: Bundle,
     installed_version: str,
     full_dump_digest: str,
     subset_digest: str,
@@ -373,19 +486,22 @@ def _generated_file_header(
 ) -> str:
     return "\n".join(
         (
-            '"""Codex app-server protocol bindings. Generated — do not edit.',
+            f'"""Codex app-server {bundle.name} protocol bindings. Generated — do not edit.',
             "",
             "Regenerate with:",
-            "    python -m planner.conversation.backends.codex_app_server.generate_bindings",
+            "    python -m planner.conversation.backends.codex_app_server.generate_bindings"
+            f" --bundle {bundle.name}",
             "",
             "The pin these models were generated under:",
             "",
+            f"    bundle                 {bundle.name}",
             f"    codex binary version   {installed_version}",
-            f"    upstream openai/codex  {PINNED_UPSTREAM_TAG} = {PINNED_UPSTREAM_COMMIT}",
+            f"    upstream openai/codex  {bundle.pinned_upstream_tag}"
+            f" = {bundle.pinned_upstream_commit}",
             "    schema obtained by     codex app-server generate-json-schema --out <dir>",
             f"    from the dump's        {FULL_SCHEMA_DUMP_FILE_NAME}",
             f"    dump digest (sha256)   {full_dump_digest}",
-            "    pruned and vendored    schema/codex_app_server_protocol.subset.schema.json",
+            f"    pruned and vendored    schema/{bundle.vendored_subset_schema_path.name}",
             f"    subset digest (sha256) {subset_digest}",
             f"    definitions generated  {definition_count}",
             "",

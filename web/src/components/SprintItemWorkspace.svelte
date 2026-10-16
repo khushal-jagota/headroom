@@ -1,20 +1,17 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
+  import { workspaceUnreadConversationCount } from "../lib/workspaceMessageDiscovery";
   import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
-  import {
-    remainingWorkspaceTicketGroups,
-    todayWorkspaceTicketGroups,
-    workspaceProgress,
-    workspaceTicketIsBacklog,
-    type WorkspaceTicketGroup
-  } from "../lib/sprintItemWorkspace";
+  import { orchestratorPageGroups } from "../lib/orchestratorPage";
+  import { createRailHoverController } from "../lib/workspaceRailInteraction";
+  import WorkspaceRailHover from "./WorkspaceRailHover.svelte";
+  import type { SprintItemWorkspaceTicket } from "../lib/types";
   import {
     workItemActivityMark,
-    workItemActivityMarkPresentation,
-    workItemRollupActivityMark
+    workItemActivityMarkPresentation
   } from "../lib/workItemPresentation";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {
@@ -28,8 +25,7 @@
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
   import StageMark from "./StageMark.svelte";
-  import TicketPriorityControl from "./TicketPriorityControl.svelte";
-  import ArtifactStrip from "./ArtifactStrip.svelte";
+  import ArtifactsBand from "./ArtifactsBand.svelte";
   import ArtifactPreview from "./ArtifactPreview.svelte";
   import {
     managedFileTargetFromLinkHref,
@@ -77,10 +73,19 @@
   let conversationState = $state<ConversationState>("rest");
   let backends = $state<readonly BackendSnapshot[]>([]);
 
-  let todayGroups = $derived(workspace.data ? todayWorkspaceTicketGroups(workspace.data) : []);
-  let remainingGroups = $derived(
-    workspace.data ? remainingWorkspaceTicketGroups(workspace.data) : []
-  );
+  let groups = $derived(orchestratorPageGroups(workspace.data?.tickets ?? []));
+  let hoverTarget = $state<HTMLElement | null>(null);
+  let hoverWorker = $state<SprintItemWorkspaceTicket | null>(null);
+  let hoverVisible = $state(false);
+  let hoverInstant = $state(false);
+  const hover = createRailHoverController<{target:HTMLElement; ticket:SprintItemWorkspaceTicket}>((value, instant) => {
+    hoverTarget = value.target; hoverWorker = value.ticket;
+    hoverVisible = true; hoverInstant = instant;
+  }, () => hoverVisible = false);
+  onDestroy(() => hover.dispose());
+  function hoverRow(target: HTMLElement, ticket: SprintItemWorkspaceTicket): void {
+    hover.enter({target, ticket});
+  }
   $effect(() => {
     if (workspace.data) conversationId = workspace.data.supervisor.conversation_id;
   });
@@ -96,6 +101,20 @@
       method: "PATCH",
       body: { [field]: value }
     });
+  }
+
+  let settleBusy = $state(false);
+  let settleError = $state("");
+  async function setSettled(settled: boolean): Promise<void> {
+    settleBusy = true;
+    settleError = "";
+    try {
+      await mutateJson(`/api/items/${encodeURIComponent(itemId)}/settled`, { method: "PATCH", body: { settled } });
+    } catch (error) {
+      settleError = error instanceof Error ? error.message : "The orchestrator could not be updated.";
+    } finally {
+      settleBusy = false;
+    }
   }
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
@@ -172,16 +191,15 @@
 
 <svelte:window onkeydown={closeFileOnEscape} />
 
-{#snippet statusGroups(groups: WorkspaceTicketGroup[], emptyText: string)}
+{#snippet statusGroups()}
   {#each groups as group (group.key)}
     <details
       class="sprint-workspace-status"
-      open={!group.quiet}
       data-workspace-group={group.key}
     >
       <summary>
         <span class="sprint-workspace-status-label">{group.label}</span>
-        <span class="sprint-workspace-count">{group.tickets.length}</span>
+        <span class="sprint-workspace-count" data-group-unread-count>{group.tickets.length}{workspaceUnreadConversationCount(group.tickets) ? ` · ${workspaceUnreadConversationCount(group.tickets)} unread` : ""}</span>
         <span class="sprint-workspace-chevron" aria-hidden="true"></span>
       </summary>
       <div class="sprint-workspace-status-body">
@@ -195,11 +213,14 @@
             data-sprint-ticket-id={ticket.id}
             data-ticket-state={presentation.state}
             data-workspace-mark={mark ?? "none"}
+            onmouseenter={(event) => hoverRow(event.currentTarget, ticket)}
+            onmouseleave={() => hover.leave()}
+            onfocus={(event) => hoverRow(event.currentTarget, ticket)}
+            onblur={() => hover.leave()}
           >
-            <StageMark state={presentation.state} aria-label={presentation.ariaLabel} />
             <span class="ticket-row-title">{ticket.title}</span>
-            {#if workspaceTicketIsBacklog(ticket)}
-              <span class="ticket-row-backlog" data-ticket-backlog>Backlog</span>
+            {#if presentation.state}
+              <StageMark state={presentation.state} aria-label={presentation.ariaLabel} />
             {/if}
           </a>
         {/each}
@@ -207,7 +228,7 @@
     </details>
   {/each}
   {#if !groups.length}
-    <div class="sprint-workspace-empty">{emptyText}</div>
+    <div class="sprint-workspace-empty">No Workers</div>
   {/if}
 {/snippet}
 
@@ -225,39 +246,37 @@
       error={workspace.error}
       loading={workspace.isLoading}
       hasData={workspace.data !== undefined}
-      loadingText="Loading Sprint Item..."
+      loadingText="Loading orchestrator…"
     >
       {#if workspace.data}
         {@const item = workspace.data}
-        {@const itemMark = workItemRollupActivityMark(item, item.ticket_rollup)}
+        {@const itemMark = workItemActivityMark(item)}
         {@const itemMarkPresentation = workItemActivityMarkPresentation(itemMark)}
         <div class="sprint-item-column">
-          {#if backHref !== null}
-            <a class="sprint-item-back" href={backHref}>‹ {sprintName}</a>
-          {/if}
           <header class="sprint-workspace-head">
-            <div class="sprint-workspace-identity">
-              <TicketPriorityControl
-                priority={item.priority}
-                ariaLabel="Outcome priority"
-                onChange={(value) => void saveItem("priority", value)}
-              />
-              <span>·</span><span>{item.project}</span>
-              <span>·</span><span>{workspaceProgress(item)}</span>
+            <div class="page-eyebrow">
+              <a href={item.project_id ? `#/backlog?project=${encodeURIComponent(item.project_id)}` : "#/backlog"}>{item.project}</a>
+              {#if backHref !== null}<span aria-hidden="true">/</span><a href={backHref} aria-label={`Back to ${sprintName}`}>↖</a>{/if}
+              <button type="button" class="page-settle" disabled={settleBusy} onclick={() => void setSettled(!(item.settled ?? false))} aria-label={`${item.settled ? "Reopen" : "Settle"} ${item.title}`}>
+                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>{item.settled ? "Reopen" : "Settle"}
+              </button>
             </div>
+            {#if settleError}<p role="alert">{settleError}</p>{/if}
             <h1 class="sprint-workspace-title" data-feedback-page-title>
               <InlineEdit
                 value={item.title}
                 placeholder="(untitled Outcome)"
                 onSave={(value) => saveItem("title", value)}
               />
-              <StageMark
-                state={itemMarkPresentation.state}
-                class="sprint-workspace-title-mark"
-                data-workspace-mark={itemMark ?? "none"}
-                aria-hidden={itemMark === null ? "true" : undefined}
-                aria-label={itemMarkPresentation.ariaLabel}
-              />
+              {#if itemMarkPresentation.state}
+                <StageMark
+                  state={itemMarkPresentation.state}
+                  class="sprint-workspace-title-mark"
+                  data-workspace-mark={itemMark ?? "none"}
+                  aria-hidden={itemMark === null ? "true" : undefined}
+                  aria-label={itemMarkPresentation.ariaLabel}
+                />
+              {/if}
             </h1>
             <ClampedText
               class="sprint-workspace-brief"
@@ -275,28 +294,10 @@
             </ClampedText>
           </header>
 
-          <ArtifactStrip items={artifactRows} />
-
-          <section class="sprint-workspace-work" data-workspace-section="today">
-            <div class="sprint-workspace-section-heading">
-              <span class="sprint-workspace-section-label">Today</span>
-              <span class="sprint-workspace-count">{todayGroups.reduce((sum, group) => sum + group.tickets.length, 0)}</span>
-            </div>
-            {@render statusGroups(todayGroups, "Nothing from this outcome is on today.")}
+          <section class="orchestrator-workers" aria-label="Workers">
+            {@render statusGroups()}
           </section>
-
-          <details class="sprint-workspace-section" data-workspace-section="remaining">
-            <summary>
-              <span class="sprint-workspace-section-label">Other Tickets</span>
-              <span class="sprint-workspace-count">
-                {remainingGroups.reduce((sum, group) => sum + group.tickets.length, 0)}
-              </span>
-              <span class="sprint-workspace-chevron" aria-hidden="true"></span>
-            </summary>
-            <div class="sprint-workspace-section-body">
-              {@render statusGroups(remainingGroups, "Every Ticket on this outcome is on today.")}
-            </div>
-          </details>
+          <div class="orchestrator-artifacts"><ArtifactsBand items={artifactRows} /></div>
         </div>
       {/if}
     </ResourceState>
@@ -320,8 +321,8 @@
         readOnly={selectedPastConversationId !== null}
         {pastConversations}
         bind:selectedPastConversationId
-        label="Sprint Item"
-        composerPlaceholder="Message this Sprint Item…"
+        label="Orchestrator"
+        composerPlaceholder="Message this orchestrator…"
         bind:backends
         startValues={startValues.data ?? null}
         senderLabel="owner"
@@ -331,3 +332,35 @@
     </div>
   </div>
 </div>
+
+<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={hoverWorker?.stage === "cancelled" ? "Cancelled Worker" : "Worker"} worker={hoverWorker?.stage === "cancelled" ? null : hoverWorker} cards={[]} rail={hoverTarget} />
+<style>
+  .sprint-item-doc { scrollbar-gutter:auto; }
+  .sprint-item-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; width:min(100%, 768px); max-width:768px; margin-inline:auto; padding-inline:var(--space-5); }
+  .sprint-workspace-head { padding-top:var(--space-7); }
+  .page-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
+  .page-eyebrow a { color:inherit; text-decoration:none; }
+  .page-eyebrow a:hover { color:var(--text-strong); }
+  .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; margin-right:-8px; border:0; border-radius:var(--radius-sm); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
+  .page-settle svg { width:13px; height:13px; }
+  .sprint-item-doc:hover .page-settle, .page-settle:focus-visible { opacity:1; }
+  .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
+  .sprint-workspace-title { font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-0.014em; margin-top:var(--space-3); overflow-wrap:anywhere; }
+  .sprint-workspace-head :global(.sprint-workspace-brief) { font-family:var(--font-ui); font-size:17px; line-height:1.6; margin-top:var(--space-3); max-width:66ch; }
+  .orchestrator-workers { margin-top:var(--space-5); }
+  .sprint-workspace-status + .sprint-workspace-status { margin-top:0; }
+  .sprint-workspace-status > summary { display:flex; align-items:center; gap:var(--space-3); padding:7px var(--space-3); margin:0; font-family:var(--font-ui); line-height:1.6; letter-spacing:normal; border:0; border-radius:var(--radius-md); background:var(--surface-2); font-size:13px; font-weight:600; color:var(--text-faint); list-style:none; }
+  .sprint-workspace-status > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
+  .sprint-workspace-status-label { font-size:13px; text-transform:none; letter-spacing:normal; color:inherit; }
+  .sprint-workspace-count { margin-left:auto; font-size:13px; font-weight:400; color:var(--text-faintest); }
+  .sprint-workspace-chevron { display:none; }
+  .sprint-workspace-status[open] > summary > .sprint-workspace-count { display:block; }
+  .sprint-workspace-status:not([open]) > summary { padding-bottom:7px; }
+  .sprint-workspace-status-body { padding:var(--space-1) 0; }
+  .sprint-item-column .ticket-row { width:100%; margin:0; padding:7px var(--space-3); gap:var(--space-3); border-radius:var(--radius-md); font-size:15px; line-height:1.6; align-items:center; color:var(--text-muted); }
+  .sprint-item-column .ticket-row:hover, .sprint-item-column .ticket-row:focus-visible { color:var(--text-strong); }
+  .sprint-item-column .ticket-row-title { flex:1; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
+  .orchestrator-workers :global(.stage-mark) { width:7px; height:7px; }
+  .orchestrator-artifacts { margin-top:var(--space-5); }
+  a:focus-visible, button:focus-visible, summary:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+</style>

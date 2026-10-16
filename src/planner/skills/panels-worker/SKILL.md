@@ -57,7 +57,7 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **`panels send-message --owner --message "…"`** — send one addressed chat message to
   the owner through this Ticket's current conversation. Use the same command with exactly
   one of `--chief`, `--ticket <id>`, or `--sprint-item <id>` to message another employee.
-  This is conversation, not a substitute for a canonical Ticket, Day, or Sprint action.
+  This is conversation, not a substitute for a canonical Ticket action.
   Your ordinary turn-end prose is runtime-only; use this command when another principal
   must receive a message.
 
@@ -79,6 +79,7 @@ Proposal and help text arrive on stdin. Structured edits and creation read one J
 
 ### Cross-cutting disciplines
 
+- **Record an asked-in-absence note.** If a Ticket Stage proceeds without Khushal's direct judgment, add this note to the settled field. State where Khushal's judgment was needed and what assumption replaced it. State that the assumption applies only to the current Ticket and establishes no general rule.
 - **Treat deployed apps as immutable.** Repository work must happen in a Git checkout
   under the assigned workspace, normally in an isolated worktree. Never edit or run
   tests from `~/Deployments/Panels/current/app` or another deployed app artifact. If

@@ -85,7 +85,7 @@ def _open_ticket_field(page: Page, field: str) -> None:
     section = page.locator(f'details[data-field="{field}"]').first
     section.evaluate(
         """(node) => {
-          const settledStages = node.closest('details.stage-fold');
+          const settledStages = node.closest('details[data-stage-fold]');
           if (settledStages) settledStages.open = true;
           node.open = true;
         }"""

@@ -39,6 +39,10 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ValidationError
 
 from planner.conversation.backends.codex_app_server import bindings_gen as bindings
+from planner.conversation.backends.codex_app_server.login import (
+    codex_home,
+    logins_hold_the_same_credential,
+)
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 
@@ -87,6 +91,10 @@ REQUEST_TIMEOUT_SECONDS = 60.0
 # How long a child gets to end politely before it is killed.
 CHILD_SHUTDOWN_GRACE_SECONDS = 2.0
 
+# Standard output and error are separate pipes. A failed-turn notification can reach its
+# reader before an earlier stderr write reaches the other reader.
+STANDARD_ERROR_SETTLE_SECONDS = 0.02
+
 
 class CodexAppServerError(Exception):
     """Something on the codex wire could not be done. Always say which."""
@@ -117,6 +125,14 @@ class CodexRequestRejected(CodexAppServerError):
         self.data = data
 
 
+class CodexLoginIsDuplicated(CodexChildWouldNotStart):
+    """A codex child was about to run on a copy of the live login, and will not.
+
+    A reason the child would not start, so every caller that already reports a failed
+    spawn reports this one too, in its own words rather than as an unhandled error.
+    """
+
+
 class CodexServerMessageHandler(Protocol):
     """What the adapter does with what the child says.
 
@@ -136,9 +152,22 @@ class CodexServerMessageHandler(Protocol):
 class CodexAppServerClient:
     """One ``codex app-server`` child process and the wire to it."""
 
-    def __init__(self, *, handler: CodexServerMessageHandler, description: str) -> None:
+    def __init__(
+        self,
+        *,
+        handler: CodexServerMessageHandler,
+        description: str,
+        consumed_notifications: Mapping[str, type[BaseModel]] | None = None,
+    ) -> None:
         self._handler = handler
         self._description = description
+        # Which notifications this client decodes. The turn adapter's table is the
+        # default; the sign-in client passes its own, because its models come from a
+        # separately pinned bundle and must not become shapes the turn adapter believes.
+        self._consumed_notifications: Mapping[str, type[BaseModel]] = (
+            CONSUMED_SERVER_NOTIFICATIONS if consumed_notifications is None
+            else consumed_notifications
+        )
         self._process: asyncio.subprocess.Process | None = None
         self._request_ids = itertools.count(1)
         self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
@@ -147,6 +176,10 @@ class CodexAppServerClient:
         self._child_watcher: asyncio.Task[None] | None = None
         self._standard_error: deque[bytes] = deque()
         self._standard_error_bytes = 0
+        # Every byte this child has ever written on standard error, counted. The ring holds
+        # only the tail, so a turn cannot ask for "my own stderr" by position in the ring —
+        # it takes this count when it starts and asks for what arrived after it.
+        self._standard_error_bytes_ever = 0
         self._wire_broken = False
 
     # --- the process --------------------------------------------------------------------
@@ -225,6 +258,36 @@ class CodexAppServerClient:
         if not self._standard_error:
             return None
         return b"".join(self._standard_error).decode("utf-8", errors="replace")
+
+    def standard_error_bytes_so_far(self) -> int:
+        """How many bytes this child has written on standard error in its whole life.
+
+        A turn keeps this when it ends, so the next turn can read back what was said
+        after it and nothing earlier.
+        """
+        return self._standard_error_bytes_ever
+
+    def standard_error_since(self, byte_count: int) -> str | None:
+        """What the child said after that many bytes, as far as the ring kept it.
+
+        The ring is one buffer for the life of the process, so the whole of it is the
+        child's history and not this turn's. A failure is diagnosed from this slice
+        instead: an authentication line from an hour ago cannot then be read as the reason
+        a turn just failed. When the ring has already dropped everything the turn wrote,
+        the honest answer is that the turn said nothing.
+        """
+        arrived_since = self._standard_error_bytes_ever - byte_count
+        if arrived_since <= 0 or not self._standard_error:
+            return None
+        kept = b"".join(self._standard_error)
+        slice_of_it = kept[-arrived_since:] if arrived_since < len(kept) else kept
+        return slice_of_it.decode("utf-8", errors="replace") or None
+
+    async def settle_standard_error(self) -> None:
+        """Give stderr already written beside a failed-turn notification time to drain."""
+        reader = self._standard_error_reader
+        if reader is not None and not reader.done():
+            await asyncio.sleep(STANDARD_ERROR_SETTLE_SECONDS)
 
     # --- talking ------------------------------------------------------------------------
 
@@ -393,7 +456,7 @@ class CodexAppServerClient:
         LOGGER.warning("codex %s: a message was none of the three shapes", self._description)
 
     async def _on_notification(self, method: str, params: Any) -> None:
-        model = CONSUMED_SERVER_NOTIFICATIONS.get(method)
+        model = self._consumed_notifications.get(method)
         if model is None:
             LOGGER.debug("codex %s: dropped notification %s", self._description, method)
             return
@@ -446,6 +509,7 @@ class CodexAppServerClient:
                 return
             self._standard_error.append(chunk)
             self._standard_error_bytes += len(chunk)
+            self._standard_error_bytes_ever += len(chunk)
             while (
                 self._standard_error_bytes > STANDARD_ERROR_RING_BUFFER_BYTES
                 and len(self._standard_error) > 1
@@ -455,6 +519,10 @@ class CodexAppServerClient:
     async def _watch_for_the_child_ending(self, process: asyncio.subprocess.Process) -> None:
         """Wait for the process to go, then stop everything that is waiting on its wire."""
         await process.wait()
+        # The pipes reach EOF separately. Finish draining stderr before the adapter
+        # classifies the turn that ended with the child.
+        if self._standard_error_reader is not None:
+            await self._standard_error_reader
         self._wire_broken = True
         self._fail_everything_pending("the codex process ended")
         await self._handler.on_child_ended()
@@ -477,8 +545,50 @@ def child_environment(
     SDK gives hermes one. Its account lives under the real ``HOME`` and it reads a long tail
     of its own variables, so taking the environment away would be taking away the login.
     ``CODEX_HOME`` is deliberately untouched: Panels runs one codex account.
+
+    This is the one door every codex child Panels launches goes through — the app-server
+    child, the usage probe, and the model catalogue probe — so it is where a duplicated
+    login is refused. Raises ``CodexLoginIsDuplicated``.
     """
     environment = dict(os.environ)
     environment.update(dict(overrides))
     environment.update(dict(identity))
+    refuse_a_duplicated_codex_login(environment)
     return environment
+
+
+def refuse_a_duplicated_codex_login(environment: Mapping[str, str]) -> None:
+    """Stop a codex child that would run on a copy of the live login.
+
+    One account, one rotating refresh token, one file: that is the arrangement codex gives
+    and Panels keeps. A second home holding the same credential breaks it in a way nothing
+    notices — codex refreshes wherever it is pointed, writes the new token there, and the
+    file everything else reads is left holding one the server has already spent.
+
+    A scratch home of its own is fine and tests need one. What is refused is a scratch home
+    holding the live credential. An unreadable login cannot be shown to be a copy, so it is
+    allowed and said out loud instead: refusing every unparseable file under a test's home
+    would stop work that is not doing anything wrong.
+    """
+    home = codex_home(environment)
+    real_home = codex_home(os.environ)
+    try:
+        if home.resolve() == real_home.resolve():
+            return
+    except OSError:
+        return
+    shared = logins_hold_the_same_credential(home, real_home)
+    if shared is None:
+        LOGGER.warning(
+            "cannot tell whether the codex login under CODEX_HOME=%s copies the one in %s, "
+            "so the child is allowed to start",
+            home,
+            real_home,
+        )
+        return
+    if shared:
+        raise CodexLoginIsDuplicated(
+            f"CODEX_HOME={home} holds the same codex credential as {real_home}. "
+            "Two homes sharing one rotating refresh token lose the rotation, so this "
+            "child will not start. Give that home its own login, or use the real home."
+        )

@@ -1,29 +1,22 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
   import { shortMonthDayLabel } from "../lib/dates";
-  import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
   import { resourceStateForQueries } from "../lib/resourceStateForQueries";
   import {
     outcomeTicketProgress,
-    sprintDayLabel,
     sprintProjectGroups,
     sprintTicketCondition,
     sprintTicketSectionsForTickets,
     type SprintTicket
   } from "../lib/sprintPresentation";
-  import type { OutcomeSummary } from "../lib/types";
   import ClampedText from "../components/ClampedText.svelte";
   import Disclosure from "../components/Disclosure.svelte";
-  import InlineEdit from "../components/InlineEdit.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import PriorityTile from "../components/PriorityTile.svelte";
   import ResourceState from "../components/ResourceState.svelte";
-  import SprintItemWorkspace from "../components/SprintItemWorkspace.svelte";
   import StageMark from "../components/StageMark.svelte";
-  import OutcomePicker from "../components/OutcomePicker.svelte";
-  import Button from "../components/Button.svelte";
 
   let {
     sub = "tracking",
@@ -33,20 +26,16 @@
 
   const current = createQuery(() => sprintId ? queries.sprintTracking(sprintId) : queries.currentSprint());
   const projects = createQuery(() => queries.projects());
-  const today = createQuery(() => queries.todayDay());
 
   let documents = $derived(sub === "documents");
-  let resource = $derived(
-    documents
-      ? resourceStateForQueries(current)
-      : resourceStateForQueries(current, projects, today)
-  );
+  // Historical Sprint content is complete on its own. The optional project catalogue
+  // can enrich stored project labels, but neither it nor a live Day gates this record.
+  let resource = $derived(resourceStateForQueries(current));
   let projectGroups = $derived(sprintProjectGroups(current.data?.outcome_groups || [], projects.data?.projects || []));
-  let todayTicketIds = $derived(new Set((today.data?.tickets || []).map((ticket) => ticket.id)));
   let looseTicketSections = $derived(
     sprintTicketSectionsForTickets(
       (current.data?.unclassified_tickets || []) as SprintTicket[],
-      todayTicketIds
+      new Set<string>()
     )
   );
   let looseTickets = $derived([
@@ -81,16 +70,6 @@
     toggleSummary();
   }
 
-  function saveSprint(sprintId: string, field: string, raw: string): Promise<unknown> {
-    return mutateJson(`/api/sprints/${sprintId}`, { method: "PATCH", body: { [field]: raw } });
-  }
-
-  let addOutcomeOpen = $state(false);
-
-  async function commitOutcome(sprintId: string, outcome: OutcomeSummary): Promise<void> {
-    await mutateJson(`/api/collections/sprint_outcomes/${encodeURIComponent(sprintId)}/${encodeURIComponent(outcome.id)}`, { method: "PUT" });
-    addOutcomeOpen = false;
-  }
   function sprintDate(iso: string): string {
     const parsed = Date.parse(`${iso}T00:00:00`);
     return Number.isNaN(parsed) ? iso : shortMonthDayLabel(new Date(parsed));
@@ -110,7 +89,9 @@
       data-sprint-ticket-id={ticket.id}
       data-ticket-state={condition.mark}
     >
-      <StageMark state={condition.mark} aria-label={condition.word} />
+      {#if condition.mark}
+        <StageMark state={condition.mark} aria-label="Unread reply" />
+      {/if}
       <span class="list-row-title">{ticket.title}</span>
       <span class="sprint-ticket-state">
         <span class="sprint-ticket-priority">{ticket.priority}</span>{#if ticket.stage !== "done"} · {condition.word}{/if}
@@ -131,11 +112,14 @@
     loadingText="Loading sprint..."
   >
     {#if !current.data?.sprint}
-      <div class="quiet-line">No current sprint.</div>
+      <div class="quiet-line">No sprint record.</div>
     {:else}
       {@const sprint = current.data.sprint}
       {#if selectedItemId}
-        <SprintItemWorkspace itemId={selectedItemId} sprintName={sprint.name} backHref={sprintHref(sprint.id)} />
+        <div class="doc"><div class="col">
+          <a class="sprint-back" href={sprintHref(sprint.id)}>‹ {sprint.name}</a>
+          <a href={workspaceAddress({ kind:"item", id:selectedItemId })} data-historical-orchestrator>Open orchestrator ›</a>
+        </div></div>
       {:else}
         <div class="doc">
           <div class="col">
@@ -148,14 +132,7 @@
             <div class="field" data-field="primary_bet">
               <div class="flabel">Primary bet</div>
               <div class="fval">
-                <InlineEdit
-                  value={sprint.primary_bet}
-                  markdown
-                  multiline
-                  ariaLabel="Primary bet"
-                  placeholder="What matters this sprint?"
-                  onSave={(raw) => saveSprint(sprint.id, "primary_bet", raw)}
-                />
+                <MarkdownBlock text={sprint.primary_bet} />
               </div>
             </div>
             {@const reviewHas = sprint.review.trim() !== ""}
@@ -171,25 +148,14 @@
                   <span class="pmeta">{document.meta}</span>
                 {/snippet}
                 <div class="field" data-field={document.field}>
-                  <InlineEdit
-                    value={sprint[document.field]}
-                    markdown
-                    multiline
-                    ariaLabel={document.name}
-                    placeholder="Write here..."
-                    onSave={(raw) => saveSprint(sprint.id, document.field, raw)}
-                  />
+                  <MarkdownBlock text={sprint[document.field]} />
                 </div>
               </Disclosure>
             {/each}
           {:else}
             <header class="sprint-head">
               <h1 class="sprint-title">
-                <InlineEdit
-                  value={sprint.name}
-                  placeholder="(unnamed sprint)"
-                  onSave={(raw) => saveSprint(sprint.id, "name", raw)}
-                />
+                {sprint.name || "(unnamed sprint)"}
               </h1>
               {#if String(sprint.primary_bet || "").trim()}
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -213,10 +179,6 @@
               {/if}
               <div class="sprint-meta-line">
                 <span>{sprintDate(sprint.date_start)} – {sprintDate(sprint.date_end)}</span>
-                {#if sprintDayLabel(sprint, current.data.planning_date)}
-                  <span class="sep">·</span>
-                  <span>{sprintDayLabel(sprint, current.data.planning_date)}</span>
-                {/if}
                 <a class="sprint-docs-link" href={sprintHref(sprint.id, "/documents")}>Sprint documents ›</a>
               </div>
             </header>
@@ -236,7 +198,7 @@
                     {#each group.outcomes as outcomeGroup (outcomeGroup.outcome.id)}
                       {@const outcome = outcomeGroup.outcome}
                       <div class="sprint-outcome-block" data-outcome-id={outcome.id} data-committed={outcomeGroup.committed}>
-                        <a class="list-row sprint-item-row" href={`${sprintHref(sprint.id)}&item=${encodeURIComponent(outcome.id)}`}>
+                        <a class="list-row sprint-item-row" href={workspaceAddress({ kind:"item", id:outcome.id })}>
                           <PriorityTile priority={outcome.priority} /><span class="list-row-title">{outcome.title}</span>
                           <span class="sprint-item-rollup">{outcomeTicketProgress(outcomeGroup)}</span>
                         </a>
@@ -256,10 +218,6 @@
                     {@render ticketRows(looseTickets)}
                   </div>
                 </details>
-              {/if}
-              <div class="sprint-outcome-actions"><Button onclick={() => (addOutcomeOpen = !addOutcomeOpen)}>Add outcome</Button></div>
-              {#if addOutcomeOpen}
-                <OutcomePicker projects={projects.data?.projects || []} chooseLabel="Add" onChoose={(outcome) => commitOutcome(sprint.id, outcome)} />
               {/if}
             </div>
           {/if}

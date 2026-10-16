@@ -38,6 +38,7 @@ def item_json(item: SprintItem) -> JsonDict:
     return {
         "id": item.id,
         "title": item.title,
+        "settled": item.settled,
         "body": item.body,
         "priority": item.priority.value,
         "project_id": item.project_id,
@@ -116,9 +117,7 @@ def item_tickets(
     for r in rows:
         stage = str(r["stage"])
         facts = derivation.derive_ticket_facts(
-            derivation.stored_facts_from_row(
-                r, has_live_blocker=str(r["id"]) in blocked_ticket_ids
-            )
+            derivation.stored_facts_from_row(r, has_live_blocker=str(r["id"]) in blocked_ticket_ids)
         )
         worker_type_definition = registry.require(str(r["worker_type"]))
         gating_field = worker_type_definition.gating_field(stage)
@@ -133,6 +132,7 @@ def item_tickets(
                 "stage": stage,
                 "priority": str(r["priority"]),
                 "activity_at": int(r["updated_at"]),
+                "conversation_id": r["conversation_id"],
                 "has_pending_proposal": r["pending_proposal"] is not None,
                 # Who a parked proposal is addressed to. The shared attention projection
                 # answers `awaiting_approval` for Khushal and `awaiting_agent_approval`
@@ -190,7 +190,7 @@ def item_detail(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     return result
 
 
-def item_workspace(conn: sqlite3.Connection, item_id: str, planning_day_id: str) -> JsonDict:
+def item_workspace(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     """The smallest coherent read for the Sprint Item workspace.
 
     Ticket writes remain on their canonical routes. This read only assembles the child
@@ -201,11 +201,7 @@ def item_workspace(conn: sqlite3.Connection, item_id: str, planning_day_id: str)
         tickets = item_tickets(conn, item_id)
         result.update(
             {
-                "planning_day_id": planning_day_id,
                 "tickets": tickets,
-                "today_ticket_ids": [
-                    str(ticket["id"]) for ticket in tickets if planning_day_id in ticket["day_ids"]
-                ],
                 "conversation_history": (
                     conversation_start.read_sprint_item_supervisor_conversation_history(
                         conn, item_id
@@ -248,6 +244,7 @@ def outcome_summary(item: SprintItem) -> OutcomeSummary:
     return OutcomeSummary(
         id=item.id,
         title=item.title,
+        settled=item.settled,
         priority=item.priority.value,
         project_id=item.project_id,
         project=item.project_name,

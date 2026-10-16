@@ -196,7 +196,6 @@ class _World:
                 connect_database=self.connect,
                 conversation_system=cast(ConversationSystem, self.conversations),
                 worker_type_registry=configured_worker_type_registry(),
-                planning_day_id_resolver=lambda: TODAY_DAY_ID,
                 now=self.clock.now_unix,
             )
         )
@@ -284,7 +283,7 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
     tmp_path: Path,
 ) -> None:
     world = _World(tmp_path)
-    ticket_id = world.ready_ticket()
+    ticket_id = world.ready_ticket(on_today=False)
     barrier = threading.Barrier(2)
     outcomes: list[bool] = []
     outcomes_lock = threading.Lock()
@@ -296,7 +295,6 @@ def test_two_racing_claimers_on_one_database_produce_exactly_one_winner(
             claimed = tickets_data.claim_ticket_for_worker_step(
                 conn,
                 ticket_id,
-                planning_day_id_resolver=lambda: TODAY_DAY_ID,
                 readiness_check=worker_step_readiness.is_ready_for_worker_step,
                 now=1,
             )
@@ -375,7 +373,6 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                     _UncertainConversationSystem(world.conversations),
                 ),
                 worker_type_registry=configured_worker_type_registry(),
-                planning_day_id_resolver=lambda: TODAY_DAY_ID,
                 now=world.clock.now_unix,
             )
         )
@@ -396,7 +393,7 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                 OWNER_PRINCIPAL,
                 ticket_id,
                 write_employee_configuration=None,
-                start_worker_step=lambda planning_day_id: start_ready_worker_step(
+                start_worker_step=lambda: start_ready_worker_step(
                     ticket_id,
                     connect_database=world.connect,
                     conversation_system=cast(
@@ -404,10 +401,8 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                         _UncertainConversationSystem(world.conversations),
                     ),
                     worker_type_registry=configured_worker_type_registry(),
-                    planning_day_id_resolver=lambda: planning_day_id,
                     now=world.clock.now_unix,
                 ),
-                resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
                 now=world.clock.now_unix,
             )
         )
@@ -423,15 +418,13 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
                 OWNER_PRINCIPAL,
                 ticket_id,
                 write_employee_configuration=None,
-                start_worker_step=lambda planning_day_id: start_ready_worker_step(
+                start_worker_step=lambda: start_ready_worker_step(
                     ticket_id,
                     connect_database=world.connect,
                     conversation_system=cast(ConversationSystem, world.conversations),
                     worker_type_registry=configured_worker_type_registry(),
-                    planning_day_id_resolver=lambda: planning_day_id,
                     now=world.clock.now_unix,
                 ),
-                resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
                 now=world.clock.now_unix,
             )
         )
@@ -458,7 +451,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
                 now=world.clock.now_unix(),
             )
 
-    async def unexpected_start(_planning_day_id: str) -> WorkerStepStartResult:
+    async def unexpected_start() -> WorkerStepStartResult:
         raise AssertionError("a moved Ticket must not start another worker step")
 
     with world.connect() as conn:
@@ -477,7 +470,6 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
                     ticket_id,
                     write_employee_configuration=None,
                     start_worker_step=unexpected_start,
-                    resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
                     now=world.clock.now_unix,
                 )
             )
@@ -520,7 +512,7 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
                 now=world.clock.now_unix(),
             )
 
-    async def unexpected_start(_planning_day_id: str) -> WorkerStepStartResult:
+    async def unexpected_start() -> WorkerStepStartResult:
         raise AssertionError("a moved Ticket must not start another worker step")
 
     with world.connect() as conn:
@@ -539,7 +531,6 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
                     ticket_id,
                     write_employee_configuration=None,
                     start_worker_step=unexpected_start,
-                    resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
                     now=world.clock.now_unix,
                 )
             )
@@ -563,7 +554,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
     async def run_race() -> tuple[PlannerError, WorkerStepStartResult]:
         pausing = _PauseKillConversationSystem(world.conversations)
 
-        async def unexpected_restart_start(_planning_day_id: str) -> WorkerStepStartResult:
+        async def unexpected_restart_start() -> WorkerStepStartResult:
             raise AssertionError("a moved restart must not start another worker step")
 
         with world.connect() as restart_conn:
@@ -575,7 +566,6 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
                     ticket_id,
                     write_employee_configuration=None,
                     start_worker_step=unexpected_restart_start,
-                    resolve_planning_write=lambda: (TODAY_DAY_ID, world.clock.now_unix()),
                     now=world.clock.now_unix,
                 )
             )
@@ -596,7 +586,6 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
                     connect_database=world.connect,
                     conversation_system=cast(ConversationSystem, world.conversations),
                     worker_type_registry=configured_worker_type_registry(),
-                    planning_day_id_resolver=lambda: TODAY_DAY_ID,
                     now=world.clock.now_unix,
                 )
             )
@@ -635,7 +624,6 @@ def test_an_uncertain_first_opener_stays_errored_without_a_live_worker(world: _W
                 _UncertainConversationSystem(world.conversations),
             ),
             worker_type_registry=configured_worker_type_registry(),
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
             now=world.clock.now_unix,
         )
     )
@@ -655,7 +643,6 @@ def test_an_old_uncertain_delivery_cannot_error_a_newer_claim(world: _World) -> 
         first_claim = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
             now=1,
         )
@@ -670,7 +657,6 @@ def test_an_old_uncertain_delivery_cannot_error_a_newer_claim(world: _World) -> 
         newer_claim = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
             now=3,
         )
@@ -769,7 +755,6 @@ def test_a_refused_user_owned_opener_rearms_the_stage(world: _World) -> None:
         assert worker_step_readiness.is_ready_for_worker_step(
             conn,
             tickets_data.read_ticket(conn, ticket_id),
-            planning_day_id=TODAY_DAY_ID,
             worker_type_definition=configured_worker_type_registry().require("new_worker"),
         )
 
@@ -786,7 +771,6 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
         claimed = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
             readiness_check=worker_step_readiness.is_ready_for_worker_step,
             now=1,
         )
@@ -814,7 +798,6 @@ def test_a_queued_send_counts_as_a_success(world: _World) -> None:
             connect_database=world.connect,
             conversation_system=cast(ConversationSystem, queueing),
             worker_type_registry=configured_worker_type_registry(),
-            planning_day_id_resolver=lambda: TODAY_DAY_ID,
             now=world.clock.now_unix,
         )
     )
@@ -973,7 +956,7 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
 
 
 def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="Busy", conversation_id="conv-busy")
+    ticket_id = world.ready_ticket(title="Busy", conversation_id="conv-busy", on_today=False)
     world.start_conversation("conv-busy")
     assert world.start_step(ticket_id).started is True
     # The turn runs on, so anything sent now queues behind it and writes no event row.
@@ -997,7 +980,7 @@ def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _Wo
     assert len(world.held_prompts("conv-busy")) == 1
 
 
-def test_a_ticket_that_left_the_day_gets_no_notice(world: _World) -> None:
+def test_a_ticket_that_left_the_day_still_receives_memory_recovery(world: _World) -> None:
     ticket_id = world.ready_ticket(title="Off the Day", conversation_id="conv-off-day")
     world.start_conversation("conv-off-day")
     assert world.start_step(ticket_id).started is True
@@ -1010,19 +993,21 @@ def test_a_ticket_that_left_the_day_gets_no_notice(world: _World) -> None:
 
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
     try:
-        assert readiness_loop.tell_every_worker_that_lost_its_memory() == []
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
+        assert _waited_for(
+            lambda: len(world.conversations.backend_prompt_writes("conv-off-day")) == 2
+        )
     finally:
         readiness_loop.stop()
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
         thread.join(5)
         asyncio_loop.close()
 
-    # One write, the wake. A Ticket off the Day is not woken for any reason.
-    assert len(world.conversations.backend_prompt_writes("conv-off-day")) == 1
+    assert len(world.conversations.backend_prompt_writes("conv-off-day")) == 2
 
 
 def test_a_worker_resting_between_steps_is_left_for_its_next_wake(world: _World) -> None:
-    ticket_id = world.ready_ticket(title="Resting", conversation_id="conv-resting")
+    ticket_id = world.ready_ticket(title="Resting", conversation_id="conv-resting", on_today=False)
     world.start_conversation("conv-resting")
     world.record_compacted_conversation(
         "conv-resting", last_worker_step_sequence=4, compacted_through=9
@@ -1062,7 +1047,6 @@ def _loop_in_a_thread(
                 else conversation_system
             ),
             asyncio_loop=asyncio_loop,
-            boundary_hour=BOUNDARY_HOUR,
         ),
         asyncio_loop,
         thread,
@@ -1081,11 +1065,11 @@ def _waited_for(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
 def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World) -> None:
     ready_one = world.ready_ticket(title="One")
     ready_two = world.ready_ticket(title="Two")
-    world.ready_ticket(title="Not today", on_today=False)
+    off_day = world.ready_ticket(title="No Day membership", on_today=False)
     readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
     try:
         scheduled = readiness_loop.poll_once()
-        assert sorted(scheduled) == sorted([ready_one, ready_two])
+        assert sorted(scheduled) == sorted([ready_one, ready_two, off_day])
         assert _waited_for(
             lambda: (
                 world.ticket(ready_one).conversation_id is not None
@@ -1094,6 +1078,21 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
         )
         assert world.ticket(ready_one).ticket_status is TicketStatus.agent
         assert world.ticket(ready_two).ticket_status is TicketStatus.agent
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
+
+
+def test_the_poll_starts_an_ordinary_worker_without_any_day_rows(world: _World) -> None:
+    ticket_id = world.ready_ticket(on_today=False)
+    with world.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM days").fetchone()[0] == 0
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        assert readiness_loop.poll_once() == [ticket_id]
+        assert _waited_for(lambda: world.ticket(ticket_id).ticket_status is TicketStatus.agent)
     finally:
         readiness_loop.stop()
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)

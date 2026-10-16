@@ -36,9 +36,7 @@ class ItemRead(NamedTuple):
     item: SprintItem
 
 
-_ITEM_PLAIN_FIELDS: frozenset[str] = frozenset(
-    {"title", "body", "priority", "project_id"}
-)
+_ITEM_PLAIN_FIELDS: frozenset[str] = frozenset({"title", "body", "priority", "project_id"})
 _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(SPRINT_DOCUMENT_FIELDS + ("primary_bet", "name"))
 PERSONAL_PROJECT_ID = "project_personal"
 
@@ -99,6 +97,7 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
         priority=Priority(row["priority"]),
         project_id=row["project_id"],
         project_name=row["project_name"],
+        settled=bool(row["settled"]),
         supervisor_launch_configuration=SprintItemSupervisorLaunchConfiguration(
             employee_backend=ConversationBackendKey(str(row["supervisor_backend"])),
             employee_launch_model=str(row["supervisor_model"]),
@@ -566,3 +565,27 @@ def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
 
 def read_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:
     return _load_sprint(conn, sprint_id)
+
+
+def set_item_settled(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    settled: bool,
+    principal: Principal,
+    clock: Clock,
+) -> SprintItem:
+    """The owner controls settlement. It changes visibility, never child continuation."""
+    from planner.core.contracts import PrincipalKind
+
+    if principal.kind is not PrincipalKind.owner:
+        raise PlannerError(ErrorCode.agent_forbidden, "only the owner can settle an orchestrator")
+    if item_id == "chief":
+        raise PlannerError(ErrorCode.validation, "Chief can never be settled")
+    with _tx(conn):
+        _load_item(conn, item_id)
+        conn.execute(
+            "UPDATE sprint_items SET settled = ?, updated_at = ? WHERE id = ?",
+            (int(settled), clock.now_unix(), item_id),
+        )
+    return _load_item(conn, item_id)

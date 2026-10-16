@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.tickets.contracts import StageOwnershipMode
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -14,6 +14,7 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 class ProposalRouteKind(StrEnum):
     auto_accept = "auto_accept"
     item_manager = "item_manager"
+    chief = "chief"
     owner = "owner"
 
 
@@ -37,6 +38,8 @@ def route_proposal(
     )
     if ownership is StageOwnershipMode.worker and below_the_ceiling:
         return ProposalRoute(ProposalRouteKind.auto_accept)
+    if holder.kind is PrincipalKind.chief:
+        return ProposalRoute(ProposalRouteKind.chief)
     if holder.kind is PrincipalKind.sprint_item:
         return ProposalRoute(ProposalRouteKind.item_manager, holder.id)
     return ProposalRoute(ProposalRouteKind.owner)
@@ -49,4 +52,6 @@ def parked_destination(route: ProposalRoute) -> Principal | None:
     if route.kind is ProposalRouteKind.item_manager:
         assert route.sprint_item_id is not None
         return Principal(PrincipalKind.sprint_item, route.sprint_item_id)
+    if route.kind is ProposalRouteKind.chief:
+        return CHIEF_PRINCIPAL
     return OWNER_PRINCIPAL

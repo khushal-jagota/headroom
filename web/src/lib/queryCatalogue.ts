@@ -49,10 +49,10 @@ export const queries = {
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
-  backlogTicketSummaries: (offset: number, limit = 30) =>
+  backlogTicketSummaries: (offset: number, limit = 30, projectId = "", isBacklogged: boolean | null = null, workerType = "", retired = false) =>
     jsonQuery<TicketSummariesResponse>(
-      ["tickets", "backlog", { limit, offset }],
-      `/api/tickets?detail=summary&sprint_id=null&limit=${limit}&offset=${offset}`
+      ["tickets", "backlog", { limit, offset, projectId, isBacklogged, workerType, retired }],
+      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${isBacklogged === null ? "" : `&is_backlogged=${isBacklogged}`}${workerType ? `&worker_type=${encodeURIComponent(workerType)}` : ""}${retired ? "&include_terminal=true&stage=cancelled" : ""}`
     ),
   outcomeSummaries: (offset: number, limit = 30, projectId = "", search = "") =>
     jsonQuery<SprintItemSummariesResponse>(
@@ -108,6 +108,7 @@ export const queries = {
       // Hiding it behind automatic attempts makes a blank/new thread appear authoritative.
       retry: false
     }),
+  supportedWorkerTypeManifests: () => jsonQuery<WorkerTypesResponse>(["worker-types", "supported"], "/api/worker-types?supported=true"),
   workerTypeManifests: () => jsonQuery<WorkerTypesResponse>(["worker-types"], "/api/worker-types"),
   workers: () => jsonQuery<WorkersResponse>(["workers"], "/api/workers"),
   worker: (workerType: string) =>

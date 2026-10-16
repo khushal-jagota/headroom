@@ -1,5 +1,6 @@
 import type { FieldStageVisualState } from "./ui";
-import type { AgentState, Priority, WorkAttention } from "./types";
+import type { Priority, WorkAttention } from "./types";
+import { conversationSignalPresentation } from "./conversationSignalPresentation";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type WorkItemTicketFacts = WorkAttention & {
@@ -7,6 +8,8 @@ export type WorkItemTicketFacts = WorkAttention & {
   title: string;
   priority: Priority;
   stage: string;
+  worker_type?: string;
+  conversation_id?: string | null;
   ticket_status: string;
   waiting_to_closeout?: boolean;
   gating_field?: string | null;
@@ -50,15 +53,10 @@ export const WORK_ITEM_TICKET_GROUPS: readonly WorkItemTicketGroupDefinition[] =
   { key: "done", label: "Done", quiet: true }
 ] as const;
 
-export type WorkItemActivityMark =
-  | "owner-approval"
-  | "owner-answer"
-  | "reply"
-  | "working"
-  | null;
+export type WorkItemActivityMark = "reply" | null;
 
 export type WorkItemActivityMarkPresentation = {
-  state: FieldStageVisualState;
+  state: FieldStageVisualState | null;
   ariaLabel: string;
 };
 
@@ -85,47 +83,14 @@ export function workItemActivityMark(
     "awaiting_approval" | "awaiting_answer" | "awaiting_reply" | "agent_state"
   >
 ): WorkItemActivityMark {
-  if (facts.awaiting_approval) return "owner-approval";
-  if (facts.awaiting_answer) return "owner-answer";
-  if (facts.awaiting_reply) return "reply";
-  if (facts.agent_state === "working") return "working";
-  return null;
+  return conversationSignalPresentation(facts) ? "reply" : null;
 }
 
 export function workItemActivityMarkPresentation(
   mark: WorkItemActivityMark
 ): WorkItemActivityMarkPresentation {
-  if (mark === "owner-approval") {
-    return { state: "needs-me", ariaLabel: "Needs your approval" };
-  }
-  if (mark === "owner-answer") {
-    return { state: "needs-me", ariaLabel: "Needs your answer" };
-  }
-  if (mark === "reply") {
-    return { state: "current-awaiting-approval", ariaLabel: "Unread reply" };
-  }
-  if (mark === "working") {
-    return { state: "current-running", ariaLabel: "Agent working" };
-  }
-  return { state: "upcoming", ariaLabel: "No current activity" };
-}
-
-export function workItemRollupActivityMark(
-  own: WorkAttention,
-  children: WorkAttention
-): WorkItemActivityMark {
-  return workItemActivityMark({
-    awaiting_approval: own.awaiting_approval || children.awaiting_approval,
-    awaiting_answer: own.awaiting_answer || children.awaiting_answer,
-    awaiting_reply: own.awaiting_reply || children.awaiting_reply,
-    agent_state: (
-      own.agent_state === "working" || children.agent_state === "working"
-        ? "working"
-        : own.agent_state === "errored" || children.agent_state === "errored"
-          ? "errored"
-          : "idle"
-    ) satisfies AgentState
-  });
+  return conversationSignalPresentation({ awaiting_reply: mark === "reply" })
+    ?? { state: null, ariaLabel: "" };
 }
 
 export function workItemTicketOrder(

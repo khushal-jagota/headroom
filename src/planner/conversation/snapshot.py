@@ -31,6 +31,7 @@ import signal
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, Protocol
@@ -41,6 +42,12 @@ from planner.conversation.backends.claude_model_catalog import (
     ClaudeModelCatalog,
     ClaudeModelCatalogUnavailable,
     probe_claude_model_catalog,
+)
+from planner.conversation.backends.codex_app_server.login import (
+    CodexLoginGeneration,
+    CodexLoginRejectionMemory,
+    StoredCodexLogin,
+    read_stored_codex_login,
 )
 from planner.conversation.backends.codex_app_server.model_catalog import (
     CodexModelCatalog,
@@ -493,6 +500,26 @@ def _version_is_newer(latest: str, installed: str) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
+class _IdentityRequest:
+    """What an identity reader has to work with.
+
+    Claude's login is a question its CLI answers in full, so its reader uses the outcome
+    and nothing else. Codex's cannot be: ``codex login status`` reads the stored file and
+    reports that it exists, which is not the same as the server still accepting it. So the
+    saved login and anything a turn has already established about it travel here too.
+
+    ``codex_login`` is absent when nobody took that reading, which is a real state and not
+    an empty login: the CLI's own word is then all there is, and it stands.
+    """
+
+    outcome: CommandOutcome
+    codex_login: CodexLoginStanding | None
+    # The instant this card is about. One clock for the staleness check and the wording,
+    # so a card cannot be re-probed for an expiry its own reader then disagrees with.
+    now: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class _CatalogRequest:
     environment: BackendProbeEnvironment
     version: str | None
@@ -520,7 +547,7 @@ class _BackendProbeRecipe:
     executable_name: str
     missing_binary_diagnosis: str
     identity_arguments: tuple[str, ...] | None
-    read_identity: Callable[[CommandOutcome], BackendIdentity] | None
+    read_identity: Callable[[_IdentityRequest], BackendIdentity] | None
     login_command: str | None
     registry_package_name: str | None
     homebrew_formula: str | None
@@ -542,7 +569,8 @@ _CLAUDE_IDENTITY_ARGUMENTS: Final = ("auth", "status", "--json")
 _CLAUDE_FALLBACK_REASONING_EFFORT_OPTIONS: Final = ("low", "medium", "high", "xhigh", "max")
 
 
-def _read_claude_identity(outcome: CommandOutcome) -> BackendIdentity:
+def _read_claude_identity(request: _IdentityRequest) -> BackendIdentity:
+    outcome = request.outcome
     if not outcome.succeeded:
         return BackendIdentity(status=BackendIdentityStatus.unknown)
     try:
@@ -618,17 +646,64 @@ _CODEX_IDENTITY_ARGUMENTS: Final = ("login", "status")
 _CODEX_NATIVE_PATH_MARKER: Final = "/.codex/packages/standalone/"
 
 
-def _read_codex_identity(outcome: CommandOutcome) -> BackendIdentity:
+def _read_codex_identity(request: _IdentityRequest) -> BackendIdentity:
+    """Who codex is signed in as, and whether that sign-in can be believed.
+
+    ``codex login status`` answers a narrower question than it looks like it answers: it
+    reads the saved file and says a login is there. It never asks the server, so it said
+    "Logged in using ChatGPT" for twelve days while every turn failed. This reader stops
+    treating it as proof and adds the two things that can be known for free.
+
+    The saved login states when its access token expires. An expired one is routine —
+    codex refreshes on demand — so expiry alone is not a fault. What it does mean is that
+    the next thing codex does depends on a refresh nobody has tried, and Panels cannot
+    confirm that without spending one. That is ``unknown``: no answer this can stand
+    behind, which is what the status has always meant.
+
+    A turn that already failed has spent a refresh, and if the server refused the saved
+    login, that is an answer. It arrives scoped to the credential it was about, so it is
+    read only while the file still holds that same credential.
+    """
+    outcome = request.outcome
     reported = outcome.standard_output.strip() or outcome.standard_error.strip()
-    if not outcome.succeeded:
+    cli_line = reported.splitlines()[0] if reported else None
+    if not outcome.succeeded or "not logged in" in reported.lower():
         return BackendIdentity(status=BackendIdentityStatus.unauthenticated)
+    standing = request.codex_login
+    if standing is None:
+        if not reported:
+            return BackendIdentity(status=BackendIdentityStatus.unknown)
+        return BackendIdentity(
+            status=BackendIdentityStatus.authenticated, account_label=cli_line
+        )
+    stored = standing.stored
+    label = stored.account_label or cli_line
+    if not stored.present:
+        return BackendIdentity(status=BackendIdentityStatus.unauthenticated)
+    if standing.rejected:
+        return BackendIdentity(
+            status=BackendIdentityStatus.unauthenticated,
+            account_label=label,
+            detail="This saved login was rejected the last time codex used it.",
+        )
+    if not stored.readable:
+        return BackendIdentity(
+            status=BackendIdentityStatus.unknown,
+            account_label=label,
+            detail="Panels could not read the saved codex login, so it cannot say more.",
+        )
+    if stored.access_token_has_expired(now=request.now):
+        return BackendIdentity(
+            status=BackendIdentityStatus.unknown,
+            account_label=label,
+            detail=(
+                "This saved login expired and codex has not refreshed it yet. Panels "
+                "cannot confirm it works until a turn runs."
+            ),
+        )
     if not reported:
-        return BackendIdentity(status=BackendIdentityStatus.unknown)
-    if "not logged in" in reported.lower():
-        return BackendIdentity(status=BackendIdentityStatus.unauthenticated)
-    return BackendIdentity(
-        status=BackendIdentityStatus.authenticated, account_label=reported.splitlines()[0]
-    )
+        return BackendIdentity(status=BackendIdentityStatus.unknown, account_label=label)
+    return BackendIdentity(status=BackendIdentityStatus.authenticated, account_label=label)
 
 
 async def _codex_catalog(request: _CatalogRequest) -> _CatalogAnswer:
@@ -885,6 +960,54 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
 # --- probing ------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class CodexLoginStanding:
+    """The saved codex login as it stands right now, and what a turn made of it.
+
+    Read in one place and passed in, so that one probe cannot see one state and the check
+    that decides whether a kept card is still true see another.
+    """
+
+    stored: StoredCodexLogin
+    rejected: bool
+
+    @property
+    def generation(self) -> CodexLoginGeneration | None:
+        return self.stored.generation
+
+    def everything_a_card_reads(self, *, now: datetime) -> tuple[object, ...]:
+        """Every part of this standing a card's wording depends on, at one instant.
+
+        Expiry is in here and not only the generation, because a token expiring is the one
+        change that moves a card from signed-in to unconfirmed while the file itself sits
+        still. A kept card that watched only the generation would go on saying signed in
+        for as long as the process lived, which is a smaller version of the fault this
+        whole ticket is about.
+
+        ``now`` is taken rather than read, because the answer is about an instant. The kept
+        card's reading is the instant it was probed at: computing both sides at the moment
+        of comparison would make an expired token equal to itself, which is exactly the
+        reading a stale card needs to be caught by.
+        """
+        return (
+            self.generation,
+            self.rejected,
+            self.stored.present,
+            self.stored.readable,
+            self.stored.access_token_has_expired(now=now),
+        )
+
+
+def read_codex_login_standing(
+    remembered_rejection: CodexLoginRejectionMemory | None,
+) -> CodexLoginStanding:
+    stored = read_stored_codex_login()
+    rejected = remembered_rejection is not None and remembered_rejection.applies_to(
+        stored.generation
+    )
+    return CodexLoginStanding(stored=stored, rejected=rejected)
+
+
 async def probe_backend(
     backend_key: ConversationBackendKey,
     environment: BackendProbeEnvironment,
@@ -893,9 +1016,17 @@ async def probe_backend(
     claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
     refresh: bool = False,
     discover_update_advisory: bool = True,
+    codex_login: CodexLoginStanding | None = None,
+    now: datetime | None = None,
 ) -> BackendSnapshot:
-    """Everything this machine can say about one backend, without touching an agent API."""
+    """Everything this machine can say about one backend, without touching an agent API.
+
+    ``codex_login`` is the saved codex login as somebody already read it. Without it this
+    probe reads no files and reports what the CLIs say, which is what a test driving a
+    scripted machine wants.
+    """
     recipe = _BACKEND_PROBE_RECIPES[backend_key]
+    now = now if now is not None else datetime.now(UTC)
     if backend_key is ConversationBackendKey.hermes:
         # Hermes launch is derived from PLAN_HERMES_PYTHON, so its snapshot must describe
         # that exact install rather than an unrelated executable that happens to be on
@@ -929,15 +1060,19 @@ async def probe_backend(
             "cannot tell which one is installed."
         )
 
-    identity = await _probe_identity(recipe, executable_path, environment)
+    identity = await _probe_identity(recipe, executable_path, environment, codex_login, now)
     if identity is not None and identity.status is BackendIdentityStatus.unauthenticated:
         diagnoses.append(
             f"`{recipe.executable_name}` is not signed in."
             + (f" Run `{recipe.login_command}` in a terminal." if recipe.login_command else "")
         )
     if identity is not None and identity.status is BackendIdentityStatus.unknown:
+        # A reader that says why it cannot stand behind an answer has said the useful
+        # thing already. The fallback is for a probe that came back with nothing at all,
+        # where not knowing who the account is really is the whole of it.
         diagnoses.append(
-            f"Panels could not read who `{recipe.executable_name}` is signed in as."
+            identity.detail
+            or f"Panels could not read who `{recipe.executable_name}` is signed in as."
         )
 
     catalog = await recipe.read_catalog(
@@ -973,7 +1108,11 @@ async def probe_backend(
 
 
 async def _probe_identity(
-    recipe: _BackendProbeRecipe, executable_path: str, environment: BackendProbeEnvironment
+    recipe: _BackendProbeRecipe,
+    executable_path: str,
+    environment: BackendProbeEnvironment,
+    codex_login: CodexLoginStanding | None,
+    now: datetime,
 ) -> BackendIdentity | None:
     """Who the CLI is signed in as, when the CLI has a cheap way of saying.
 
@@ -987,7 +1126,8 @@ async def _probe_identity(
         (executable_path, *recipe.identity_arguments),
         timeout_seconds=IDENTITY_PROBE_TIMEOUT_SECONDS,
     )
-    return replace(recipe.read_identity(outcome), login_command=recipe.login_command)
+    request = _IdentityRequest(outcome=outcome, codex_login=codex_login, now=now)
+    return replace(recipe.read_identity(request), login_command=recipe.login_command)
 
 
 async def _update_advisory(
@@ -1089,11 +1229,22 @@ class BackendSnapshotService:
         *,
         codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
         claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
+        remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self._environment = environment or SubprocessBackendProbeEnvironment()
+        self._now = now or (lambda: datetime.now(UTC))
         self._codex_model_catalog_probe = codex_model_catalog_probe
         self._claude_model_catalog_probe = claude_model_catalog_probe
+        self._remembered_codex_login_rejection = remembered_codex_login_rejection
         self._snapshots: dict[ConversationBackendKey, BackendSnapshot] = {}
+        # What the kept codex card was probed against, read at the instant it was probed.
+        # A card is kept because probing costs subprocesses and the machine rarely changes
+        # — but a login is the one thing here that changes without the machine changing,
+        # and a card that outlives its login is the lie this is for. The reading is kept
+        # alongside the card, and a card whose login no longer reads the same is probed
+        # again.
+        self._codex_card_was_probed_against: tuple[object, ...] | None = None
         # A probe is shared only with another reader of the same backend. Independent
         # backends use separate CLIs and catalogues, so one slow child must not hold the
         # others behind it.
@@ -1123,14 +1274,21 @@ class BackendSnapshotService:
     ) -> BackendSnapshot:
         # A forced advisory refresh keeps the last complete card readable. An ordinary
         # reader never waits behind remote work when this process already has an answer.
-        if not refresh:
+        stale = self._codex_login_has_moved(backend_key)
+        if not refresh and not stale:
             kept = self._snapshots.get(backend_key)
             if kept is not None:
                 return kept
         async with self._snapshot_locks[backend_key]:
-            kept = None if refresh else self._snapshots.get(backend_key)
+            kept = None if refresh or stale else self._snapshots.get(backend_key)
             if kept is not None:
                 return kept
+            reading_at = self._now()
+            codex_login = (
+                read_codex_login_standing(self._remembered_codex_login_rejection)
+                if backend_key is ConversationBackendKey.codex
+                else None
+            )
             probed = await probe_backend(
                 backend_key,
                 self._environment,
@@ -1141,9 +1299,37 @@ class BackendSnapshotService:
                 # discovery. An explicit refresh replaces this cached answer with the
                 # complete advisory, which update_backend also requires before it acts.
                 discover_update_advisory=refresh,
+                codex_login=codex_login,
+                now=reading_at,
             )
+            if stale and not refresh and probed.update_advisory is None:
+                # This probe happened because the login moved, not because anybody asked
+                # for update discovery, so it carries no advisory. Dropping the one the
+                # kept card had would make the Update button vanish for a reason that has
+                # nothing to do with updates.
+                kept_advisory = self._snapshots.get(backend_key)
+                if kept_advisory is not None and kept_advisory.update_advisory is not None:
+                    probed = replace(probed, update_advisory=kept_advisory.update_advisory)
             self._snapshots[backend_key] = probed
+            if backend_key is ConversationBackendKey.codex and codex_login is not None:
+                self._codex_card_was_probed_against = codex_login.everything_a_card_reads(
+                    now=reading_at
+                )
             return probed
+
+    def _codex_login_has_moved(self, backend_key: ConversationBackendKey) -> bool:
+        """Whether the kept codex card was probed against a login that no longer stands.
+
+        This is a file read and a comparison, so every reader can afford it, and it is what
+        makes a sign-in or a rejection show up on the card without anyone pressing refresh.
+        """
+        if backend_key is not ConversationBackendKey.codex:
+            return False
+        at_probe = self._codex_card_was_probed_against
+        if at_probe is None:
+            return False
+        standing = read_codex_login_standing(self._remembered_codex_login_rejection)
+        return standing.everything_a_card_reads(now=self._now()) != at_probe
 
     async def update_backend(self, backend_key: ConversationBackendKey) -> BackendUpdateResult:
         """Run the update this backend's install implies, then look again.

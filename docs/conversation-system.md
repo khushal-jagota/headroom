@@ -595,6 +595,172 @@ The update command comes from how the CLI was installed. Panels checks the card 
 afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
 in the terminal, and the card names the command.
 
+### What a card can say about the codex login
+
+`codex login status` answers a narrower question than it looks like it answers. It reads
+the saved login file and says a login is there. It never asks the server. So it reported a
+healthy account for twelve days while every codex turn failed, because the saved login's
+rotating refresh token had already been spent and no refresh could work.
+
+The codex card therefore reads the saved login as well as asking the CLI, and says one
+of these:
+
+- **Signed in.** The CLI reports a login, the saved file can be read, and its access
+  token has not expired.
+- **Not signed in.** There is no saved login. The codex card offers a sign-in Panels can
+  run; every other backend names its own login command instead.
+- **Cannot be confirmed.** The saved login is there and its access token has expired, or
+  the file cannot be read. An expired token is ordinary — codex refreshes on demand — so
+  this is not a fault and the card offers no action. It says that nothing has tested the
+  login, because confirming it would mean spending a refresh.
+- **Rejected.** A codex turn failed and codex's own login machinery said the saved login
+  was refused. That is the only evidence here that was actually tested, so it outranks the
+  file. It is remembered against the account and refresh stamp the turn ran on, and it
+  stops applying as soon as the saved login reports a different one — a new sign-in, or
+  any successful refresh. A turn that was cancelled clears nothing: pressing stop says
+  nothing about the login. The record is in the database, because a refused login is still
+  refused after a restart and Panels restarts on every deploy. It holds the account id and
+  the login's own last-refresh stamp, and no token.
+- **Nothing at all.** The CLI answered with no text to read and there was no saved login
+  to fall back on. The card stays quiet rather than inventing a state.
+
+A kept card follows its login. Cards are kept because probing costs subprocesses, so the
+saved login is re-read on every reading of the card: a sign-in, a refresh, a rejection, or
+an access token simply reaching its expiry all re-probe the card without anyone pressing
+Refresh.
+
+A failed codex turn is read the same way before its line is written. An explicit refusal
+replaces codex's own text, which names whichever subsystem met the refusal first, with a
+line saying the login was rejected and must be replaced. A bare `401` keeps codex's words
+and adds only that the sign-in may be worth checking. Every other failure is left exactly
+as codex put it.
+
+Two things keep that reading narrow. A turn is graded on what the child said since the
+previous turn ended, not on the whole of its standard error, so a refusal from an hour ago
+cannot explain an unrelated failure now — and a refusal announced during the handshake,
+before any turn existed, still belongs to the turn that fails on it. And a refusal only
+counts when codex's own login machinery wrote it, which is read as codex's crate path in
+the line: standard error carries everything the child and its tools write, and "github
+auth: not logged in" is a true sentence about github that says nothing about codex. A
+child that dies mid-turn is graded the same way, because a codex that announces a refused
+refresh and then exits is the loudest version of this and used to be the one that went
+unread.
+
+### Signing codex back in from Panels
+
+A dead codex login used to leave one option: open a terminal on the machine Panels runs on
+and type `codex login`. The app server Panels already talks to can start the sign-in
+itself, so the codex card offers it.
+
+Pressing Sign in starts a short-lived `codex app-server` child against the real codex home
+and asks it for a device-code login. It answers at once with a verification URL and a
+one-time code, both shown on the card, so the browser step can be finished on a phone or
+any other machine. There is a Cancel beside them.
+
+**Why the app server and not the command line.** `codex login --device-auth` removes the
+saved login within a second of starting, and ending the process does not bring it back —
+so on that path the account is down from the moment you begin until the browser step
+finishes. The app-server path left the saved login byte-identical across every operation
+that was measured: the start, the whole pending window, and the cancel. That is narrower
+than a promise of no outage. Nothing was measured about the instant a sign-in succeeds, so
+Panels does not claim anything about it.
+
+**What it warns you about, and when.** An account that still works, or one with turns in
+flight, is told before the sign-in starts that it writes a new credential and that a
+running turn may have to be retried. An account that already cannot authenticate, with
+nothing running against it, has nothing to lose and gets no caveat.
+
+Whether a turn is running is answered per conversation, and nothing lists a backend's
+conversations, so the Backends page cannot tell. It says so rather than guessing: running
+turns are **unknown** there, not absent. With the account known unusable and running turns
+unknown, the caveat becomes conditional — it says that *if* a turn is running it may have
+to be retried, and never claims one does. The caveat is suppressed only when the account is
+known unusable **and** nothing is known to be running, which is both halves known rather
+than one half unexamined.
+
+**Opening the page finds what is already there.** Nothing about a sign-in is persisted, so
+a page that has just opened or reconnected asks whether one is running and shows the same
+URL and code if so. If the server no longer has a sign-in the page was watching, the page
+says it ended rather than keeping a code nobody will honour on screen.
+
+**Leaving stops everything the page is doing and nothing the server is doing.** Closing a
+screen never cancels a sign-in, because the point of a device code is finishing it
+elsewhere. Clearing the one armed timer is not enough on its own: a read already in flight
+would come back and arm another. So leaving marks the page inactive, and every outstanding
+read, poll, start and cancel checks that before it shows anything or schedules anything.
+Entering again makes the page live and reconnects normally.
+
+**Nothing is inferred.** A cancel answering `canceled`, a cancel answering `notFound`, a
+deadline passing and the child exiting all say what Panels did. None of them is evidence
+about the saved login, because the browser step can land in the same instant as a cancel.
+So every way a sign-in can end does the same three things: settle the child, take in any
+completion that already arrived, then re-read the saved login last.
+
+**Success is a completion and a reading that agrees.** Codex reporting success is not
+enough. The saved login must then be readable, hold a credential generation different from
+the one the sign-in started on, carry no remembered rejection, and have an access token
+that has not already expired. That last condition is what keeps the sign-in and the
+identity card saying the same thing: the card calls an expired token `unknown` rather than
+signed in, and a sign-in must not claim more than the card will. When any of them
+disagrees the card says **unconfirmed** — not signed in, and not failed. No rejection is
+ever cleared by hand: a rejection is scoped to its generation and lapses on its own, so
+clearing one would be Panels asserting the thing it just failed to confirm.
+
+A completion can arrive in the same instant as a cancel, delivered while the cancel is
+already settling. So settling takes in what the child has already said before it reads the
+login: the child is stopped, every delivered event belonging to this sign-in is taken in,
+and only then is the credential read. A success that landed during a cancel, or during
+shutdown, is reported as the sign-in it was rather than lost.
+
+The same rule holds inside a single batch of events. A child exiting and a completion
+arriving are delivered by two independent tasks, so both can land before anything looks —
+and deciding on the first of them would settle the sign-in while the second was still
+unread. So all the evidence in hand is taken in first, and only then is the terminal state
+decided once. A completion is read before a child exiting whichever order they arrived in:
+the exit says only that the child is gone, while a completion is codex's own account of how
+the sign-in went. Throughout, a completion carrying another sign-in's id is dropped rather
+than absorbed, and a reported success is never overwritten by a later reported failure.
+
+**One sign-in at a time, and nothing kept.** There is at most one pending sign-in per
+backend. Pressing Sign in twice hands back the one already running rather than minting a
+second code, because a code you were shown that nobody will honour is worse than no code.
+A disconnected page changes nothing and never cancels. A page holding an old session id is
+refused rather than allowed to cancel whatever is current. A restart drops the pending
+sign-in and says so, because a login id whose child is gone cannot be cancelled or
+completed by anyone — storing it would store a handle to nothing.
+
+**Every wait is Panels' own.** The command line prints that its one-time code expires in
+fifteen minutes. That is a program's words, not a protocol guarantee, and no Panels
+behaviour rests on it. Panels bounds the child's startup, the pending sign-in, the cancel
+and the shutdown, and stops showing the code when its own limit passes. It does not claim
+the code was still valid up to that point.
+
+**The protocol shapes are pinned separately.** The login messages are vendored as their
+own subset, generated against `codex-cli 0.163.0`, with their own pin header. The
+thread-and-turn subset stays pinned where it was. The two are kept apart because
+regenerating everything together would change twenty-two definitions the thread and turn
+core depends on, and the login closure shares none of them — the generator refuses to run
+if the two bundles ever reach the same definition.
+
+### One home for the codex login
+
+Panels runs one codex account, so the login is one file holding one rotating refresh
+token. Codex refreshes that token in whichever home it is pointed at and writes the new
+one there. A second home holding a copy of the file is therefore a credential with two
+owners: the copy takes the rotation, the original keeps a token the server has already
+spent, and everything using the original fails.
+
+So Panels refuses to start a codex child whose `CODEX_HOME` holds the same credential as
+the real home. A scratch home with its own login, or with none, is fine. The comparison is
+the credential itself rather than the whole file, because a copy with edited account
+fields still rotates the same token. An unreadable login cannot be shown to be a copy, so
+it is allowed and logged. The guarantee covers the codex children Panels launches — the
+app-server child, the usage read, and the model catalogue read. A check in the test suite
+looks for the shape of the mistake in repository code — a module that both names a login
+file and copies files — which is how the two opt-in real-provider suites that were still
+copying the login were found. It is a scan for a known shape, not a proof that no copy can
+be written.
+
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
 Hermes-only inventory door asks `hermes_cli.inventory` for configured providers
@@ -753,16 +919,23 @@ where a steer is proved to cross into a live turn.
 
 That fourth exercise asks for more before it will start. It refuses a dirty tree, so
 `git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs three credential
-directories, because it gives each agent a private home rather than borrowing yours:
+into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs two credential
+directories, because it gives hermes and claude a private home rather than borrowing
+yours:
 
 - `PANELS_REAL_HERMES_HOME_TEMPLATE` — a copy of `~/.hermes`.
-- `PANELS_REAL_CODEX_HOME_TEMPLATE` — a directory holding `auth.json` and `config.toml`.
 - `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — a directory holding `.credentials.json` and
   `settings.json`.
 
-You build those three yourself. Nothing in the repository makes them for you, and a stale
+You build those two yourself. Nothing in the repository makes them for you, and a stale
 copy fails as a login problem rather than as a missing file.
+
+Codex is the exception, and deliberately. It keeps one account in one file and refreshes
+that file in whichever home it is pointed at, so a private copy takes the new token with
+it and leaves the real login holding one the server has already spent. Everything that
+uses codex afterwards then fails, and codex reports it as the subsystem that happened to
+ask first rather than as a login. So this exercise uses the real codex home, and Panels
+refuses to start any codex child whose `CODEX_HOME` holds a copy of that login.
 
 ### A red run is expected today
 

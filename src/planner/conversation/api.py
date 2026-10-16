@@ -40,6 +40,15 @@ from planner.conversation.backend_usage import (
     BackendUsageWindow,
     production_backend_usage_service,
 )
+from planner.conversation.backends.codex_app_server.login import (
+    CodexLoginRejectionMemory,
+)
+from planner.conversation.backends.codex_app_server.login_session import (
+    CodexSignIn,
+    CodexSignInService,
+    CodexSignInUnavailable,
+    UnknownSignInSession,
+)
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -137,6 +146,9 @@ class ConversationRuntime:
     database_path: str
     sse_heartbeat_ms: int
     backend_state: BackendStateStore | None = None
+    # Absent when this process has no backend that can start a sign-in. The routes say
+    # so rather than pretending the affordance exists.
+    codex_sign_in: CodexSignInService | None = None
 
     async def shutdown(self) -> None:
         """Let the watchers go first, then stop the system's children.
@@ -146,6 +158,8 @@ class ConversationRuntime:
         """
         self.live_tail.close_all_subscriptions()
         await self.system.shutdown()
+        if self.codex_sign_in is not None:
+            await self.codex_sign_in.shutdown()
 
 
 def build_conversation_runtime(
@@ -154,11 +168,26 @@ def build_conversation_runtime(
     db_busy_timeout_ms: int,
     sse_heartbeat_ms: int,
     backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory],
+    remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
 ) -> ConversationRuntime:
     """Compose the conversation system, its record, the files it keeps, and the tail."""
     store = ConversationStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
     live_tail = ConversationLiveTail()
     message_files = ConversationMessageFiles(db_path)
+    backend_snapshots = BackendSnapshotService(
+        remembered_codex_login_rejection=remembered_codex_login_rejection
+    )
+
+    async def codex_app_server_argv() -> tuple[str, ...] | None:
+        """How to run a codex app-server here, read when a sign-in starts, not at boot.
+
+        A machine can gain or lose codex while the server runs, so the path comes from the
+        current card rather than being captured once.
+        """
+        snapshot = await backend_snapshots.snapshot(ConversationBackendKey.codex)
+        executable = snapshot.executable_path
+        return None if executable is None else (executable, "app-server")
+
     return ConversationRuntime(
         store=store,
         system=SqliteProcessConversationSystem(
@@ -168,12 +197,16 @@ def build_conversation_runtime(
             live_tail=live_tail,
         ),
         live_tail=live_tail,
-        backend_snapshots=BackendSnapshotService(),
+        backend_snapshots=backend_snapshots,
         backend_usage=production_backend_usage_service(),
         message_files=message_files,
         database_path=db_path,
         sse_heartbeat_ms=sse_heartbeat_ms,
         backend_state=BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms),
+        codex_sign_in=CodexSignInService(
+            resolve_argv=codex_app_server_argv,
+            remembered_login_rejection=remembered_codex_login_rejection,
+        ),
     )
 
 
@@ -796,6 +829,66 @@ async def update_backend(backend_key: ConversationBackendKey, runtime: Runtime) 
     return _update_result_json(await runtime.backend_snapshots.update_backend(backend_key))
 
 
+@router.post("/backends/{backend_key}/sign-in")
+async def start_backend_sign_in(
+    backend_key: ConversationBackendKey, runtime: Runtime
+) -> dict[str, Any]:
+    """Start a device-code sign-in, or hand back the one already pending.
+
+    Starting twice is not an error and does not mint a second one-time code: the pending
+    sign-in comes back instead, because a code nobody will honour is worse than no code.
+    """
+    service = _sign_in_service(runtime, backend_key)
+    try:
+        return _sign_in_json(await service.start())
+    except CodexSignInUnavailable as would_not_start:
+        raise HTTPException(status_code=503, detail=str(would_not_start)) from would_not_start
+
+
+@router.get("/backends/{backend_key}/sign-in")
+async def read_backend_sign_in(
+    backend_key: ConversationBackendKey, runtime: Runtime
+) -> dict[str, Any]:
+    """The sign-in in force, pending or terminal, or nothing if there has been none.
+
+    A page watching a pending sign-in reads this. Nothing is persisted, so a sign-in that
+    ends while nobody is looking is simply gone next time the server is asked.
+    """
+    service = _sign_in_service(runtime, backend_key)
+    pending = service.read()
+    return {"sign_in": None if pending is None else _sign_in_json(pending)["sign_in"]}
+
+
+@router.delete("/backends/{backend_key}/sign-in/{session_id}")
+async def cancel_backend_sign_in(
+    backend_key: ConversationBackendKey, session_id: str, runtime: Runtime
+) -> dict[str, Any]:
+    """End this sign-in. A session id that is not the one in force is refused as stale."""
+    service = _sign_in_service(runtime, backend_key)
+    try:
+        return _sign_in_json(await service.cancel(session_id))
+    except UnknownSignInSession as stale:
+        raise HTTPException(
+            status_code=409, detail="that sign-in is not the one in force any more"
+        ) from stale
+
+
+def _sign_in_service(
+    runtime: ConversationRuntime, backend_key: ConversationBackendKey
+) -> CodexSignInService:
+    """The service for this backend, or a refusal naming which backends have one.
+
+    Only codex can be signed in from Panels today. Saying so is better than a route that
+    accepts a claude sign-in and then cannot do one.
+    """
+    if backend_key is not ConversationBackendKey.codex or runtime.codex_sign_in is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{backend_key} cannot be signed in from Panels",
+        )
+    return runtime.codex_sign_in
+
+
 # --- turning values into JSON ---------------------------------------------------------------
 
 
@@ -1264,6 +1357,27 @@ def _snapshot_json(
                 "windows": [_usage_window_json(window) for window in cached_usage.windows],
             }
         ),
+    }
+
+
+def _sign_in_json(sign_in: CodexSignIn) -> dict[str, Any]:
+    """What a surface is told about a sign-in.
+
+    The one-time code and the verification URL are in here while a sign-in is pending,
+    because a person has to read them to finish. They are the only secret-adjacent values
+    this answer carries, and ``CodexSignIn`` already drops them once a session is terminal.
+    """
+    return {
+        "sign_in": {
+            "session_id": sign_in.session_id,
+            "state": str(sign_in.state),
+            "verification_url": sign_in.verification_url,
+            "user_code": sign_in.user_code,
+            "started_at": sign_in.started_at.isoformat(),
+            "deadline_at": sign_in.deadline_at.isoformat(),
+            "detail": sign_in.detail,
+            "account_label": sign_in.account_label,
+        }
     }
 
 

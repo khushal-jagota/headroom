@@ -4,8 +4,8 @@
    * One line, and at rest it is the whole of the conversation that is on the screen. The
    * job it exists for is the loud one: nothing in this design opens itself, so a
    * permission ask that is waiting shows here or the person never learns about it at all.
-   * That case is the brightest thing the line can be — the accent the app uses for "needs
-   * the human", and the white mark it uses for "only you can answer this".
+   * The waiting request stays in the line's text. Circular attention dots are reserved
+   * for direct messages in the exact conversation.
    *
    * The rest of the time it is as quiet as the turn head it is made of: the same mono
    * line, counting the same seconds off the same instant, so moving the conversation
@@ -49,9 +49,9 @@
 
 <div class="c2-rest" class:is-waiting={line?.waiting ?? false} data-conversation-rest-bar>
   {#if line}
-    <!-- Four independent axes, four shapes, never words. A turn can be running while a
-         reply nobody has read is still above it, so these are drawn together. -->
-    {#if line.marks.running || line.marks.unreadReply || line.marks.needsYou || line.marks.failed}
+    <!-- Running and failed turns keep their status shapes. Questions stay in the text;
+         only a direct message creates a conversation attention mark. -->
+    {#if line.marks.running || line.marks.unreadReply || line.marks.failed}
     <span class="c2-marks" data-conversation-rest-marks>
       {#if line.marks.running}
         <span
@@ -67,15 +67,6 @@
           data-conversation-mark="reply"
           role="img"
           aria-label="a reply you have not read"
-        ></span>
-      {/if}
-      {#if line.marks.needsYou}
-        <span
-          class="c2-rest-dot c2-mark"
-          data-conversation-mark="needs-you"
-          data-conversation-rest-waiting
-          role="img"
-          aria-label="needs you"
         ></span>
       {/if}
       {#if line.marks.failed}
@@ -176,18 +167,6 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .c2-mark--running { animation: none; }
-  }
-  /* The brightest mark in the palette, and the app already means one thing by it: an ask
-     only this person can answer. It is the same mark a Worker's row carries. */
-  .c2-rest-dot {
-    flex: none;
-    width: var(--space-2);
-    height: var(--space-2);
-    border-radius: var(--radius-pill);
-    background: var(--accent-needs-me);
-    /* The halo the design gives it. The one mark that means "only you can answer this"
-       carries more weight than its own nine pixels. */
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-needs-me) 10%, transparent);
   }
   .c2-rest-working {
     flex: none;

@@ -73,30 +73,27 @@ def _ready(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
-    planning_day_id: str = PLANNING_DAY_ID,
     definition: WorkerTypeDefinition | None = None,
 ) -> bool:
     return is_ready_for_worker_step(
         conn,
         tickets_data.read_ticket(conn, ticket.id),
-        planning_day_id=planning_day_id,
         worker_type_definition=(
             definition or configured_worker_type_registry().require(ticket.worker_type)
         ),
     )
 
 
-def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None:
+def test_membership_in_any_day_is_not_required(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
         no_day = _ticket(conn, planning_day_id=None)
         other_day = _ticket(conn, planning_day_id=OTHER_DAY_ID)
         supplied_day = _ticket(conn)
 
-        assert not _ready(conn, no_day)
-        assert not _ready(conn, other_day)
+        assert _ready(conn, no_day)
+        assert _ready(conn, other_day)
         assert _ready(conn, supplied_day)
-        assert not _ready(conn, supplied_day, planning_day_id=OTHER_DAY_ID)
     finally:
         conn.close()
 
@@ -107,8 +104,7 @@ def test_user_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None
         ticket = _ticket(conn, worker_type="new_worker")
         assert _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
         conn.execute(
-            "INSERT INTO ticket_paired_stage_openers(ticket_id, stage, opened_at) "
-            "VALUES (?, ?, 4)",
+            "INSERT INTO ticket_paired_stage_openers(ticket_id, stage, opened_at) VALUES (?, ?, 4)",
             (ticket.id, ticket.stage),
         )
         assert not _ready(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
@@ -120,10 +116,13 @@ def test_user_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None
             principal=OWNER_PRINCIPAL,
             now=5,
         )
-        assert conn.execute(
-            "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ?",
-            (ticket.id,),
-        ).fetchone() is None
+        assert (
+            conn.execute(
+                "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id = ?",
+                (ticket.id,),
+            ).fetchone()
+            is None
+        )
         assert _ready(conn, moved, definition=NEW_WORKER_TYPE_DEFINITION)
     finally:
         conn.close()

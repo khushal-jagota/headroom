@@ -1,12 +1,13 @@
-"""The day data layer. Materializes a day on first read/write (no "missing day"
-state), owns the ordered day-ticket list (contiguous positions from 0), and the
-overview-field/notes writes. No FastAPI/pydantic; times come in as unix-second
-ints from the caller's clock."""
+"""Historical Day reads and low-level helpers for existing historical records.
+
+Live Day writes are retired. Reading an absent Day never creates one.
+"""
 
 from __future__ import annotations
 
 import sqlite3
 
+from planner.core.errors import ErrorCode, PlannerError
 from planner.days.contracts import Day, DayTicket
 
 
@@ -24,16 +25,15 @@ def materialize_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Non
 
 
 def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
-    """§3.4 'reading a nonexistent day materializes it empty'. Materializes, then
-    SELECTs the row and builds a Day."""
-    materialize_day(conn, day_id, now_unix)
+    """Read one retained historical Day without materializing new state."""
     row = conn.execute(
         "SELECT id, focus, brief_take, watchout, if_today_lands, midday_reconciliation, notes, "
         "created_at, updated_at "
         "FROM days WHERE id = ?",
         (day_id,),
     ).fetchone()
-    assert row is not None
+    if row is None:
+        raise PlannerError(ErrorCode.not_found, "historical day not found", {"id": day_id})
     return Day(
         id=row["id"],
         focus=row["focus"],
@@ -59,9 +59,7 @@ def list_day_tickets(conn: sqlite3.Connection, day_id: str) -> list[DayTicket]:
     ]
 
 
-def add_day_ticket(
-    conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int
-) -> bool:
+def add_day_ticket(conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int) -> bool:
     """§3.4: append at end with the next contiguous position (= current count).
     Idempotent: if (day_id, ticket_id) already present → return False, no write.
     On add → INSERT, bump updated_at, return True. Materializes the day first
@@ -84,9 +82,7 @@ def add_day_ticket(
     return True
 
 
-def remove_day_ticket(
-    conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int
-) -> bool:
+def remove_day_ticket(conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int) -> bool:
     """§3.4: delete the association only (Ticket untouched). If nothing was
     deleted (rowcount 0) → no-op, no re-pack. Else re-pack remaining positions to
     0..n-1 in existing position order, bump updated_at, and return True. The

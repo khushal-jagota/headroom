@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import datetime
 
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import planning_date
 from planner.scheduled_tickets.contracts import ScheduleCadence
-from planner.sprints.logic import DateRange, current_sprint_id
+from planner.sprints.logic import DateRange
 
 _LOCAL_TIME = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
@@ -38,20 +37,9 @@ def cadence_qualifies(
     planning_day: str,
     sprint_ranges: tuple[DateRange, ...],
 ) -> bool:
-    if cadence is ScheduleCadence.every_planning_day:
-        return True
-    sprint_id = current_sprint_id(planning_day, sprint_ranges)
-    if sprint_id is None:
-        return False
-    sprint_range = next(item for item in sprint_ranges if item.id == sprint_id)
-    if cadence is ScheduleCadence.current_sprint_day_four:
-        sprint_day = (
-            date.fromisoformat(planning_day)
-            - date.fromisoformat(sprint_range.date_start)
-        ).days + 1
-        return sprint_day == 4
-    return sprint_range.date_end == planning_day
+    # Legacy calendar cadences remain readable for receipts, but never execute.
+    return cadence is ScheduleCadence.daily
 
 
 def planning_day_for(now: datetime, boundary_hour: int) -> str:
-    return planning_date(now, boundary_hour).isoformat()
+    return now.date().isoformat()
