@@ -203,11 +203,11 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             ticket["title"]
         )
         assert right.locator(".sprint-workspace-title-mark").count() == 0
-        # Ask for expanded groups explicitly; all approved page bands arrive closed.
-        right.locator('[data-workspace-group="awaiting_approval"] > summary').click(timeout=WAIT_MS)
-        right.locator('[data-workspace-group="status_awaiting_approval"] > summary').click(
-            timeout=WAIT_MS
-        )
+        # Request visible child rows without assuming a group's initial disclosure state.
+        for key in ("awaiting_approval", "status_awaiting_approval"):
+            group = right.locator(f'[data-workspace-group="{key}"]')
+            if not group.evaluate("element => element.open"):
+                group.locator(":scope > summary").click(timeout=WAIT_MS)
         expect(right.get_by_text(tickets[1]["title"], exact=True)).to_be_visible(timeout=WAIT_MS)
         page.screenshot(path=str(EVIDENCE / "approvals-child-message.png"), full_page=True)
 

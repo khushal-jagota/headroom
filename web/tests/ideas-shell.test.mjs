@@ -95,6 +95,7 @@ try {
         workers: [],
         chief_of_staff: {
           label: "Chief of Staff",
+          skill: { description: "Chief role", markdown_body: "# Chief" },
           conversation_id: null,
           needs_me: false,
           agent_working: false,
@@ -230,12 +231,15 @@ with sync_playwright() as playwright:
         page.set_viewport_size({"width": width, "height": 900})
         page.evaluate("window.location.hash = " + ("'#/workspace/item/item_offboard'" if selected else "'#/workspace'"))
         page.locator('section[data-screen="workspace"]').wait_for()
-        page.get_by_role("button", name="More", exact=False).click()
+        more = page.get_by_role("button", name="More", exact=False)
+        menu_visible = more.is_visible()
+        if menu_visible: more.click()
         for label in ["Settings", "Ideas", "Feedback", "Usage and Backends"]:
             assert page.get_by_role("link", name=label, exact=True).count() == 1, (width, selected, label)
         screenshot(page, "shell-utilities-" + str(width) + ("-selected" if selected else "-rail"))
-        page.keyboard.press("Escape")
-        assert page.get_by_role("button", name="More", exact=False).evaluate("n => n === document.activeElement")
+        if menu_visible:
+            page.keyboard.press("Escape")
+            assert more.evaluate("n => n === document.activeElement")
 
     # Config detail keys must remount its initial-prop snapshot on in-shell changes.
     for old, canonical, kind, ident in [

@@ -280,7 +280,7 @@
         {/if}
       </a>
       <a class:active={currentNav("workspace")} class="nav-link" data-screen="workspace" href="#/workspace">Workspace</a>
-      <div class="shell-more">
+      <div class="shell-more" class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"}>
         <button
           type="button"
           class="nav-link shell-more-trigger"
@@ -383,8 +383,10 @@
 
 <style>
   /* Keep system destinations reachable when a selected compact pane hides the rail. */
+  .shell-more.rail-utility-fallback,
   .shell-more-menu a.rail-utility-fallback { display:none; }
   @media (max-width:960px) {
+    .shell-more.rail-utility-fallback--pane { display:block; }
     .shell-more-menu a.rail-utility-fallback--pane { display:flex; }
   }
 </style>
