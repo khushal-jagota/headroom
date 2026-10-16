@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
-from tests.support.probe import shipped_definition
+from tests.support.retired_workers import historical_definition
 
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -17,7 +17,8 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import resolution
 
-PERSONAL_TASK_WORKER_TYPE_DEFINITION = shipped_definition("personal")
+PERSONAL_TASK_WORKER_TYPE_DEFINITION = historical_definition("personal")
+
 
 def _ticket(*, stage: str = "needs_success_condition") -> Ticket:
     return Ticket(

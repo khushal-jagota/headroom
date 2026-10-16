@@ -283,8 +283,8 @@ def validate_ticket_creation_context(
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
-    runtime_definitions.worker_type_registry.require(worker_type)
     admission.require_creatable_worker_type(worker_type)
+    runtime_definitions.worker_type_registry.require(worker_type)
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         runtime_definitions.worker_type_registry, worker_type
     )

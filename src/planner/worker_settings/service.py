@@ -266,7 +266,7 @@ def read_worker_management_index(
     registry: WorkerTypeRegistry,
 ) -> tuple[WorkerManagementSummary, ...]:
     summaries: list[WorkerManagementSummary] = []
-    for worker_type in registry.registered_worker_types():
+    for worker_type in registry.supported_worker_types():
         definition = registry.require(worker_type)
         summaries.append(
             WorkerManagementSummary(

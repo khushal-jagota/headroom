@@ -98,7 +98,7 @@ try {
       return json({ running_worker_count: 0, awaiting_approval_count: 0 });
     }
     if (path === "/api/projects?detail=full") return json({ projects });
-    if (path === "/api/worker-types") {
+    if (path === "/api/worker-types" || path === "/api/worker-types?supported=true") {
       return json({
         worker_types: [
           { worker_type: "coding", label: "Coding" },

@@ -9,7 +9,7 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Fourteen Worker types are seeded into a new database:
+Ten Worker types are seeded into a new database:
 
 - **`coding`** handles product and repository work.
 - **`general`** is the catch-all, chosen when no specialist type fits. It runs a
@@ -29,13 +29,15 @@ Fourteen Worker types are seeded into a new database:
   the user's feedback, and creates the agreed follow-up work.
 - **`product_design`** designs holistic product flows and implementation-ready interactive
   artifacts before handing implementation to a coding Ticket.
-- **`planning-day`** reviews the previous Day, agrees the top-level direction with the
-  user, shows the exact proposed Ticket changes, and commits the approved Day.
-- **`planning-midday-check`** compares the morning intent with current execution at
-  14:30, agrees any useful intervention, carries it out, and records the result.
-- **`planning-sprint`** reviews the current sprint and plans the next at the final-day
-  boundary, with canonical writes deferred until Consequences.
-- **`personal`** represents user-owned work, with optional explicit agent support.
+
+The retired `personal`, `planning-day`, `planning-midday-check`, and `planning-sprint`
+Worker types do not appear in the supported catalog or fresh-install seed. Canonical
+Ticket creation, retyping, and schedule writes reject these types. Owner edits to their
+stored definitions remain available for historical compatibility. Existing definitions
+remain in the historical manifest for original
+Tickets, connected pages, specialist references, and ordinary personal Stage gates.
+Existing managed skill rows and versions remain intact. Fresh installs do not seed
+these four specialist skills.
 
 Tests also declare **`probe`**. Its Stage and field names are deliberately unfamiliar,
 apart from the two the rules fix: the `brief` field it opens with and the `consequences`
@@ -86,16 +88,8 @@ ownership. `initiative_planning` uses user ownership for Question Answers, where
 consequential cross-Ticket choices are settled with the user; its other non-terminal
 Stages use worker ownership. `product_design` uses user ownership for Wireframe
 and Design, while its Best Guess and Open Options Stage and its handoff are
-worker-owned. `planning-day` uses user ownership for Today's Direction, where the Worker
-and user agree on the most important work.
-Previous Day Review, Day Changes, and Consequences are worker-owned. The Worker derives Day
-overview fields without user input. `planning-midday-check` keeps its Stages worker-owned,
-but its
-Agreed Intervention Stage deliberately pauses through user-help before any approved
-intervention is performed in Consequences. `planning-sprint` also keeps its four non-terminal Stages
-worker-owned, but Review and Next Sprint deliberately pause through user-help until the
-user explicitly releases the conversation. Every Worker type chooses deliberately for
-each Stage; it does not inherit that choice from registry order or another definition.
+worker-owned. Each Worker type chooses ownership for each Stage. It does not inherit
+that choice from registry order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
 workflow. Ticket contracts still own universal Ticket facts such as the worker-step claim
@@ -103,7 +97,7 @@ and the ceiling, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/store.py` reads and writes the rows.
-`src/planner/worker_types/shipped_worker_types.json` holds the fourteen definitions a new
+`src/planner/worker_types/shipped_worker_types.json` holds the ten definitions a new
 database is seeded with, and `shipped.py` puts them in when the table is empty.
 
 ## Validation at the write door
@@ -224,8 +218,9 @@ No registry position means “default.” Order is composition and presentation 
 
 ## The served manifest and frontend
 
-`GET /api/worker-types` calls the Worker-type registry's `manifest` method for each
-definition. It does not list the agent backends: what backends this machine has, which
+`GET /api/worker-types` returns all stored definitions for historical Ticket views.
+`GET /api/worker-types?supported=true` returns only types available for new work.
+Both call the Worker-type registry's `manifest` method for each selected definition. It does not list the agent backends: what backends this machine has, which
 models each offers, and which reasoning efforts each of those takes are one answer, and
 it comes from `GET /api/conversation/backends`. Every
 Worker-type entry contains the label, Stages, gates, advance map, fields, ceiling range,
@@ -234,9 +229,9 @@ effort. Every Stage also carries its ownership mode; terminal Stages carry none.
 Clients combine the Ticket's Worker type and current Stage with this manifest to derive
 the Stage's declared ownership.
 
-`panels worker-type list` exposes this same response at the command line. Its normal
-output lists the registered identifiers in registry order, while `--json` preserves the
-complete manifest for automation. The CLI does not maintain its own Worker-type list.
+`panels worker-type list` exposes the supported catalog at the command line. Its normal
+output lists supported identifiers in registry order. Its `--json` output preserves
+the supported manifests for automation. The CLI does not maintain its own Worker-type list.
 
 ## Declaring and changing a Worker type
 
@@ -253,7 +248,7 @@ Declaring a Worker type is a direct operation. A worker cannot declare one.
 
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
 Ticket against the entry matching the Ticket's stored `worker_type`. Every stored type,
-including `general` and `personal`, therefore shows its own Stage spine without frontend
+including `general` and historical `personal`, therefore shows its own Stage spine without frontend
 type tables, and a type declared today shows one without a frontend change.
 
 During a pristine Brief, one launch picker shows the Ticket's backend, model, and Reasoning
@@ -455,10 +450,10 @@ process is started again under it when there is a reason to.
 - `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
 - `panels-worker-initiative-review` guides `initiative_review` Tickets.
 - `panels-worker-product-design` guides `product_design` Tickets.
-- `panels-worker-planning-day` guides `planning-day` Tickets.
-- `panels-worker-planning-midday-check` guides `planning-midday-check` Tickets.
-- `panels-worker-planning-sprint` guides `planning-sprint` Tickets.
-- `panels-worker-personal-task` guides `personal` Tickets.
+
+Stored specialist references for retired personal and planning Tickets remain readable.
+They are absent from the fresh skill seed. Owner-approved live skill updates preserve
+owner prose and remove obsolete instructions to create these Worker types.
 
 For `new_worker`, the visible lifecycle after the universal Brief is
 Purpose and Boundaries, Stages, What Good Looks Like at Each Stage, Model and Effort,

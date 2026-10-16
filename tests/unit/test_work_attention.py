@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
+from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationStore
@@ -327,12 +328,15 @@ def test_only_a_user_owned_stage_is_the_owners_work(tmp_path: Path) -> None:
     )
     user_owned = tickets_data.create_ticket(
         conn,
-        worker_type="personal",
+        worker_type="coding",
         title="Khushal writes this Brief",
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
     )
+    seed_historical_worker_type(conn, "personal")
+    conn.execute("UPDATE tickets SET worker_type='personal' WHERE id=?", (user_owned.id,))
+    conn.commit()
     assert worker_owned.stage == user_owned.stage == "needs_brief"
 
     rows: list[JsonDict] = [{"id": worker_owned.id}, {"id": user_owned.id}]

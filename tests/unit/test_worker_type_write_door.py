@@ -75,6 +75,9 @@ def test_a_worker_type_and_its_skill_are_declared_in_one_write(
     listed = test_client.get("/api/worker-types").json()["worker_types"]
     assert "arrival" in [manifest["worker_type"] for manifest in listed]
     assert "arrival" in configured_worker_type_registry().registered_worker_types()
+    supported = test_client.get("/api/worker-types?supported=true").json()["worker_types"]
+    assert "arrival" in [manifest["worker_type"] for manifest in supported]
+    assert "arrival" in configured_worker_type_registry().supported_worker_types()
     # The skill is on disk too, because that is what an agent reads.
     written = tmp_path / "skills" / "panels-worker-arrival" / "SKILL.md"
     assert "Do the work." in written.read_text(encoding="utf-8")

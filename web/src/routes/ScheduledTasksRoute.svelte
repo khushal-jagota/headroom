@@ -27,6 +27,7 @@
   const projects = createQuery(() => queries.projects());
   const sprintItems = createQuery(() => queries.sprintItems());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
+  const supportedWorkerTypes = createQuery(() => queries.supportedWorkerTypeManifests());
 
   const priorities: Priority[] = ["P0", "P1", "P2", "P3"];
 
@@ -41,10 +42,10 @@
 
   let editingSchedule = $derived(schedules.data?.schedules.find((schedule) => schedule.id === editingId));
   let historical = $derived(editingSchedule !== undefined && scheduledTaskIsRetired(editingSchedule));
-  let creatableWorkerTypes = $derived((workerTypes.data?.worker_types ?? []).filter((workerType) => workerType.creatable !== false));
+  let creatableWorkerTypes = $derived((supportedWorkerTypes.data?.worker_types ?? []).filter((workerType) => workerType.creatable !== false));
   let canSubmit = $derived(!saving && !historical);
   let catalogueError = $derived(
-    [projects.error, sprintItems.error, workerTypes.error].find((error) => error != null)
+    [projects.error, sprintItems.error, workerTypes.error, supportedWorkerTypes.error].find((error) => error != null)
   );
 
   function openCreate(): void {
@@ -181,7 +182,7 @@
             type="button"
             role="switch"
             aria-checked={draft.enabled}
-            aria-label={draft.enabled ? "Disable schedule" : "Enable schedule"}
+            aria-label={historical ? "Retired schedule" : draft.enabled ? "Disable schedule" : "Enable schedule"}
             disabled={historical}
             data-input="enabled"
             onclick={() => toggleDraftEnabled()}
@@ -374,7 +375,7 @@
                   type="button"
                   role="switch"
                   aria-checked={schedule.enabled}
-                  aria-label={schedule.enabled ? "Disable schedule" : "Enable schedule"}
+                  aria-label={scheduledTaskIsRetired(schedule) && !schedule.enabled ? "Retired schedule" : schedule.enabled ? "Disable schedule" : "Enable schedule"}
                   disabled={togglingId === schedule.id || (scheduledTaskIsRetired(schedule) && !schedule.enabled)}
                   data-schedule-toggle={schedule.id}
                   onclick={(event) => void toggleEnabled(schedule, event)}

@@ -66,7 +66,7 @@ def _body_bool(raw: JsonDict, key: str, default: bool) -> bool:
 
 
 def _require_worker_type(worker_type: str) -> str:
-    known_worker_types = configured_worker_type_registry().registered_worker_types()
+    known_worker_types = configured_worker_type_registry().supported_worker_types()
     if worker_type not in known_worker_types:
         raise PlannerError(
             ErrorCode.validation,

@@ -30,13 +30,14 @@ from planner.scheduled_tickets.logic import (
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
+from planner.tickets.logic.admission import require_creatable_worker_type
+from planner.worker_types.contracts import RETIRED_WORKER_TYPES
 
 _LOG = logging.getLogger(__name__)
 
 
 def _validate_template(conn: sqlite3.Connection, template: ScheduledTicketTemplate) -> None:
-    if template.worker_type in {"planning-day", "planning-midday-check", "planning-sprint"}:
-        raise PlannerError(ErrorCode.validation, "planning Worker templates are retired")
+    require_creatable_worker_type(template.worker_type)
     if template.orchestrator_kind not in {"chief", "sprint_item"} or (
         (template.orchestrator_kind == "sprint_item") != (template.sprint_item_id is not None)
     ):
@@ -120,13 +121,13 @@ def _update_schedule_locked(
         raise PlannerError(ErrorCode.validation, "calendar planning cadences are retired")
     if "sprint_id" in changes or "placement_mode" in changes:
         raise PlannerError(ErrorCode.validation, "Sprint placement is retired")
-    # Historical planning schedules can be disabled, but cannot be reactivated.
+    # Historical schedules can be disabled, but retired types cannot be reactivated.
     if changes.get("enabled") is True and (
         current.cadence is not ScheduleCadence.daily
         or current.template.worker_type
-        in {"planning-day", "planning-midday-check", "planning-sprint"}
+        in RETIRED_WORKER_TYPES
     ):
-        raise PlannerError(ErrorCode.validation, "retired planning schedules cannot be enabled")
+        raise PlannerError(ErrorCode.validation, "retired schedules cannot be enabled")
     if set(changes) <= {"enabled"} and changes.get("enabled") is False:
         return data.update_schedule(conn, schedule_id, changes, now=now)
     item_id = normalized_changes.get("sprint_item_id", current.template.sprint_item_id)
@@ -298,11 +299,7 @@ def run_current_slot(
     planning_day = planning_day_for(planning_now, boundary_hour)
     results: list[ScheduledTicketOccurrence] = []
     for schedule in schedules:
-        if schedule.template.worker_type in {
-            "planning-day",
-            "planning-midday-check",
-            "planning-sprint",
-        }:
+        if schedule.template.worker_type in RETIRED_WORKER_TYPES:
             continue
         try:
             qualifies = cadence_qualifies(

@@ -315,11 +315,14 @@ def create_app(
         return summary.as_dict()
 
     @app.get("/api/worker-types")
-    async def worker_types() -> dict[str, Any]:
+    async def worker_types(supported: bool = False) -> dict[str, Any]:
         registry = configured_worker_runtime_definitions().worker_type_registry
+        worker_type_ids = (
+            registry.supported_worker_types() if supported else registry.registered_worker_types()
+        )
         return {
             "worker_types": [
-                registry.manifest(worker_type) for worker_type in registry.registered_worker_types()
+                registry.manifest(worker_type) for worker_type in worker_type_ids
             ],
         }
 

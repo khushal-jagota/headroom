@@ -91,7 +91,7 @@ export function scheduledTaskFormError(form: ScheduledTaskForm): string | null {
 /** Historical calendar schedules remain records, never editable daily templates. */
 export function scheduledTaskIsRetired(schedule: ScheduledTask): boolean {
   return schedule.cadence !== "daily" ||
-    ["planning-day", "planning-midday-check", "planning-sprint"].includes(schedule.worker_type);
+    ["personal", "planning-day", "planning-midday-check", "planning-sprint"].includes(schedule.worker_type);
 }
 
 export function scheduledTaskCadenceLabel(cadence: ScheduleCadence): string {

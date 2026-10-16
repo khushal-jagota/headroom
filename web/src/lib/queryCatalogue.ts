@@ -108,6 +108,7 @@ export const queries = {
       // Hiding it behind automatic attempts makes a blank/new thread appear authoritative.
       retry: false
     }),
+  supportedWorkerTypeManifests: () => jsonQuery<WorkerTypesResponse>(["worker-types", "supported"], "/api/worker-types?supported=true"),
   workerTypeManifests: () => jsonQuery<WorkerTypesResponse>(["worker-types"], "/api/worker-types"),
   workers: () => jsonQuery<WorkersResponse>(["workers"], "/api/workers"),
   worker: (workerType: string) =>

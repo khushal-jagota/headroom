@@ -405,12 +405,12 @@ def test_calendar_cli_writes_are_retired_and_planning_types_reject_creation(
         result = CliRunner().invoke(cli_main, list(args))
         assert result.exit_code != 0
         assert "Calendar planning writes are retired" in result.output
-    for worker_type in ("planning-day", "planning-midday-check", "planning-sprint"):
+    for worker_type in ("personal", "planning-day", "planning-midday-check", "planning-sprint"):
         response = api.client.post(
             "/api/tickets", json={"title": "Retired", "worker_type": worker_type}
         )
         assert response.status_code == 400
-        assert "retired" in response.json()["error"]["message"]
+        assert response.json()["error"]["code"] == "validation"
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(

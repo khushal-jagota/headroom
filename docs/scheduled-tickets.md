@@ -19,6 +19,12 @@ migration disables the old morning, midday, Sprint review, and Sprint checkpoint
 Unrelated daily schedules retain their identity and time. No recurring review replaces
 those planning routines. Empty installations receive no shipped planning schedule.
 
+The catalog retirement migration also disables every remaining schedule for `personal`,
+`planning-day`, `planning-midday-check`, and `planning-sprint`. It preserves schedule
+identity and templates, every occurrence receipt, and all Tickets. Schedule creation
+and edits reject retired types through the canonical action layer. Existing personal
+Tickets retain their ordinary Stage gates and are not cancelled by this migration.
+
 Only the current local minute can run. The loop does not backfill missed minutes.
 The occurrence key retains its timezone-aware local-minute format. Repeated polls and
 restarts return the same durable receipt. A failure records its error and does not stop

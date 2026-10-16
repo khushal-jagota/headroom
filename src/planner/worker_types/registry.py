@@ -14,6 +14,7 @@ from planner.worker_types.contracts import (
     CONSEQUENCES_FIELD_ID,
     NEEDS_BRIEF_STAGE_ID,
     RETIRED_PLANNING_WORKER_TYPES,
+    RETIRED_WORKER_TYPES,
     RETIREMENT_FIELD_ID,
     WorkerTypeDefinition,
     WorkerTypeManifest,
@@ -215,6 +216,7 @@ def validate_definition(
             {"worker_type": worker_type, "default_reasoning_effort": default_reasoning_effort},
         )
 
+
 class WorkerTypeRegistry:
     __slots__ = ("_definitions",)
 
@@ -244,6 +246,14 @@ class WorkerTypeRegistry:
     def registered_worker_types(self) -> tuple[str, ...]:
         return tuple(self._definitions)
 
+    def supported_worker_types(self) -> tuple[str, ...]:
+        """Worker types available for new work and supported configuration."""
+        return tuple(
+            worker_type
+            for worker_type in self._definitions
+            if worker_type not in RETIRED_WORKER_TYPES
+        )
+
     def require(self, worker_type: str) -> WorkerTypeDefinition:
         try:
             return self._definitions[worker_type]
@@ -263,9 +273,7 @@ class WorkerTypeRegistry:
                 "gating_field": stage.gating_field,
                 "is_terminal": stage.is_terminal,
                 "ownership_mode": (
-                    stage.ownership_mode.value
-                    if stage.ownership_mode is not None
-                    else None
+                    stage.ownership_mode.value if stage.ownership_mode is not None else None
                 ),
             }
             for stage in definition.stages
@@ -279,7 +287,7 @@ class WorkerTypeRegistry:
             if target is not None:
                 advance[stage] = target
         return {
-            "creatable": definition.worker_type not in RETIRED_PLANNING_WORKER_TYPES,
+            "creatable": definition.worker_type not in RETIRED_WORKER_TYPES,
             "worker_type": definition.worker_type,
             "label": definition.label,
             "stages": stages,

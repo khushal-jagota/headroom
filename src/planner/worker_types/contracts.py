@@ -20,6 +20,8 @@ RETIREMENT_FIELD_ID: Final = "retirement"
 RETIRED_PLANNING_WORKER_TYPES: Final = frozenset(
     {"planning-day", "planning-midday-check", "planning-sprint"}
 )
+# New-work admission is separate from the frozen three-type planning cutover.
+RETIRED_WORKER_TYPES: Final = RETIRED_PLANNING_WORKER_TYPES | frozenset({"personal"})
 
 
 @dataclass(frozen=True, slots=True)

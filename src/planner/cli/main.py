@@ -886,7 +886,7 @@ def worker_type_group() -> None:
 @worker_type_group.command("list")
 @json_option
 def worker_type_list(as_json: bool) -> None:
-    data = http.send("GET", "/api/worker-types", as_json=as_json)
+    data = http.send("GET", "/api/worker-types?supported=true", as_json=as_json)
     http.emit(
         data,
         as_json,

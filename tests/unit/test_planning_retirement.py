@@ -7,6 +7,7 @@ from sqlite3 import Connection
 
 import pytest
 import sqlalchemy as sa
+from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.core.migrations import planning_retirement as retirement
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
@@ -146,6 +147,7 @@ def test_unknown_planning_work_is_not_automatically_retired() -> None:
 
 
 def test_cancelled_is_terminal_without_progression_or_historical_error(tmp_db: Connection) -> None:
+    seed_historical_worker_type(tmp_db, "planning-day")
     definition = configured_worker_type_registry().require("planning-day")
     assert definition.is_terminal("cancelled")
     assert "cancelled" not in definition.ceiling_range()

@@ -26,7 +26,7 @@ from planner.sprints import data as sprints_data
 def _template() -> ScheduledTicketTemplate:
     return ScheduledTicketTemplate(
         title="Ordinary task",
-        worker_type="personal",
+        worker_type="general",
         kickoff_note="Prepare one result",
         priority=Priority.P3,
         deadline=None,

@@ -6,7 +6,7 @@ from datetime import date
 from typing import Final
 
 from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
-from planner.worker_types.contracts import RETIRED_PLANNING_WORKER_TYPES, WorkerTypeDefinition
+from planner.worker_types.contracts import RETIRED_WORKER_TYPES, WorkerTypeDefinition
 
 REVISION_GUIDANCE_MAX_CHARACTERS: Final = 10_000
 
@@ -41,8 +41,8 @@ def validate_orchestrator(orchestrator: Principal) -> None:
 
 
 def require_creatable_worker_type(worker_type: str) -> None:
-    if worker_type in RETIRED_PLANNING_WORKER_TYPES:
-        raise PlannerError(ErrorCode.validation, "calendar planning Worker types are retired")
+    if worker_type in RETIRED_WORKER_TYPES:
+        raise PlannerError(ErrorCode.validation, "Worker type is retired")
 
 
 def check_agent_proposal(

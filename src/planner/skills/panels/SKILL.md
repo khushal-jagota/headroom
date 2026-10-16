@@ -32,7 +32,7 @@ a new kind of worker), `amend_worker` (changing an existing Worker type in place
 before creating its downstream Tickets), `initiative_review` (reviewing a delivered
 multi-Ticket change as one result and creating agreed follow-up work), `product_design`
 (designing holistic product flows and implementation-ready interactive artifacts),
-and other registered specialists. The old `planning-day`, `planning-midday-check`, and
+and other registered specialists. The retired `personal`, `planning-day`, `planning-midday-check`, and
 `planning-sprint` definitions remain for historical reads. Do not create or run new work
 through those types.
 

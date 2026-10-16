@@ -8,6 +8,7 @@ from sqlite3 import Connection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
+from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -126,13 +127,16 @@ def test_completing_a_user_owned_gate_advances_the_ticket(
     try:
         ticket = create_ticket(
             conn,
-            worker_type="personal",
+            worker_type="coding",
             title="Personal task",
             principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=200,
             kickoff_note=None,
         )
+        seed_historical_worker_type(conn, "personal")
+        conn.execute("UPDATE tickets SET worker_type='personal' WHERE id=?", (ticket.id,))
+        conn.commit()
     finally:
         conn.close()
 

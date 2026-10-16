@@ -31,6 +31,7 @@ from typing import Any, Final, cast
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
@@ -182,7 +183,7 @@ def _seed(db_path: Path) -> Seed:
             client.post(
                 "/api/tickets",
                 json={
-                    "worker_type": "personal",
+                    "worker_type": "coding",
                     "title": "A user-owned gate",
                     "kickoff_note": "Start here.",
                     "orchestrator": {"kind": "sprint_item", "id": item_a["id"]},
@@ -200,7 +201,10 @@ def _seed(db_path: Path) -> Seed:
                 clock=build_clock(config),
             )
             sprint = {"id": historical.id}
+            for worker_type in ("personal", "planning-day", "planning-sprint"):
+                seed_historical_worker_type(conn, worker_type)
             for ticket, worker_type in (
+                (ticket_user_owned, "personal"),
                 (ticket_planning, "planning-day"),
                 (ticket_planning_sprint, "planning-sprint"),
             ):

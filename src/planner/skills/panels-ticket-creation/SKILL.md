@@ -29,8 +29,9 @@ and Chief's global authority. Existing Project validation still applies.
 
 Today and live Sprint placement are retired. Creation does not create a Day or Day
 membership. Workers continue through normal rules without Today. Do not use settlement
-as a replacement activation gate, and do not create the retired planning Worker types
-or replacement recurring reviews.
+as a replacement activation gate. Do not create, retype, or schedule `personal`,
+`planning-day`, `planning-midday-check`, or `planning-sprint` work. Do not create
+replacement recurring reviews. Existing personal Tickets keep their ordinary Stage gates.
 
 ## Importance, timing, and dependencies
 

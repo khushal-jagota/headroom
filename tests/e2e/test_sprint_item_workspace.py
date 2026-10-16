@@ -79,7 +79,7 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         "/api/tickets",
         {
             "title": "Mirror Ticket",
-            "worker_type": "personal",
+            "worker_type": "coding",
             "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )
@@ -112,7 +112,7 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
             "has_pending_proposal": False,
             "gating_field": "brief",
             "blocked": False,
-            "worker_type": "personal",
+            "worker_type": "coding",
             "day_ids": [],
             "sprint_id": None,
             "sprint_name": None,

@@ -34,11 +34,11 @@ describe("scheduled Ticket retirement form", () => {
     expect(historical.cadence).toBe("every_planning_day");
     expect(scheduledTaskIsRetired(historical)).toBe(true);
   });
-  it("matches backend retirement protection for calendar cadences and planning types", () => {
+  it("matches backend retirement protection for calendar cadences and retired Worker types", () => {
     expect(scheduledTaskIsRetired(schedule)).toBe(false);
     for (const cadence of ["every_planning_day", "current_sprint_day_four", "current_sprint_final_day"] as const)
       expect(scheduledTaskIsRetired({ ...schedule, cadence })).toBe(true);
-    for (const worker_type of ["planning-day", "planning-midday-check", "planning-sprint"])
+    for (const worker_type of ["personal", "planning-day", "planning-midday-check", "planning-sprint"])
       expect(scheduledTaskIsRetired({ ...schedule, worker_type })).toBe(true);
   });
 });

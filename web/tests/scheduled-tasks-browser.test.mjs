@@ -75,6 +75,7 @@ try {
   }];
   schedules.push({ ...schedules[0], id: "schedule_retired", enabled: false, title: "Historical planning task", cadence: "every_planning_day", worker_type: "planning-day", placement_mode: "current_sprint", sprint_id: "sprint_history" });
   schedules.push({ ...schedules[1], id: "schedule_retired_active", enabled: true, title: "Disable old planning task" });
+  schedules.push({ ...schedules[0], id: "schedule_personal", enabled: false, title: "Historical daily personal task", worker_type: "personal" });
   const requests: Array<{ path: string; method: string; body: any }> = [];
 
   class QuietEventSource {
@@ -124,6 +125,7 @@ try {
     }
     if (path === "/api/projects?detail=full") return json({ projects });
     if (path === "/api/items?detail=full") return json({ items: sprintItems });
+    if (path === "/api/worker-types?supported=true") return json({ worker_types: workerTypes.filter(entry => entry.creatable !== false) });
     if (path === "/api/worker-types") return json({ worker_types: workerTypes });
     if (path === "/api/schedules" && method === "GET") return json({ schedules });
     if ((path === "/api/schedules" && method === "POST") || (path.startsWith("/api/schedules/") && method === "PATCH")) {
@@ -267,7 +269,7 @@ with sync_playwright() as playwright:
     card = page.locator('[data-schedule-id="schedule_demo"]')
     card.locator('[data-schedule-title]').filter(has_text="Edited existing schedule").wait_for()
     assert "Edited existing schedule" in card.inner_text()
-    assert page.locator('[data-schedule-id]').count() == 4
+    assert page.locator('[data-schedule-id]').count() == 5
 
     requests = page.evaluate("window.__requests()")
     assert any(request["path"] == "/api/schedules" and request["method"] == "POST" for request in requests)
@@ -296,6 +298,17 @@ with sync_playwright() as playwright:
     assert editor.locator('[data-input="enabled"]').is_disabled()
     assert editor.locator('[data-commit-schedule]').count() == 0
     assert editor.locator('[data-schedule-title] .ed').count() == 0
+    page.locator('[data-back-to-schedules]').click()
+    personal = page.locator('[data-schedule-id="schedule_personal"]')
+    assert personal.locator('[data-schedule-toggle]').is_disabled()
+    assert personal.get_by_role('switch', name='Enable schedule').count() == 0
+    personal.locator('[data-schedule-title]').click()
+    assert "Retired schedule" in editor.locator('[data-retired-schedule]').inner_text()
+    assert "Every day" in editor.locator('[data-retired-schedule]').inner_text()
+    assert editor.locator('[data-input="worker-type"]').is_disabled()
+    assert editor.locator('[data-input="enabled"]').is_disabled()
+    assert editor.get_by_role('switch', name='Enable schedule').count() == 0
+    assert editor.locator('[data-commit-schedule]').count() == 0
     page.locator('[data-back-to-schedules]').click()
     active_retired = page.locator('[data-schedule-id="schedule_retired_active"]')
     active_retired.locator('[data-schedule-toggle]').click()

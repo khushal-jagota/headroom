@@ -102,8 +102,9 @@ _Code paths:_ `src/planner/days/`, `src/planner/sprints/`,
 ### 3. Tickets, gates, and Worker types
 
 A Ticket's Worker type declares its ordered Stages, gated fields, Stage
-ownership, specialist skill, and launch defaults. Fourteen Worker types ship, including
-coding, planning, design, debugging, general, and user-owned personal work. The browser
+ownership, specialist skill, and launch defaults. Ten Worker types ship, including
+coding, design, debugging, and general work. Historical personal and planning Tickets
+remain readable. The browser
 gets the same registry manifest that the server uses.
 
 Workers propose gated Ticket fields. The proposal resolver alone settles one of those
@@ -223,9 +224,9 @@ principal, not a Ticket write group.
 
 Every request resolves to one principal: the owner, Chief, a Sprint Item, or a Ticket.
 An unattributed browser request resolves to the owner. What that principal may then do is
-one sentence, asked at every door: you may act on anything strictly below you. The
-`planning-day`, `planning-midday-check`, and `planning-sprint` Workers are the one place
-position is declared rather than derived, because the plan they write stands in no chain.
+one sentence, asked at every door: you may act on anything strictly below you. Historical
+planning Workers retain their original authority interpretation for preserved records.
+The retired personal and planning types cannot supply new Tickets or schedules.
 Missing or mismatched claims fail closed. These local claims narrow authority; they are
 not authentication credentials.
 

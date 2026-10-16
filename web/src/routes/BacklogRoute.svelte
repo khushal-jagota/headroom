@@ -26,6 +26,7 @@
   const tickets = createQuery(() => queries.backlogTicketSummaries(ticketOffset, PAGE_SIZE, projectId, backlogFilter === "backlogged" ? true : backlogFilter === "not_backlogged" ? false : null, workerTypeFilter, backlogFilter === "retired"));
   const projects = createQuery(() => queries.projects());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
+  const supportedWorkerTypes = createQuery(() => queries.supportedWorkerTypeManifests());
 
   const priorityOptions = [
     { value: null, label: "Project default" },
@@ -56,7 +57,7 @@
     (projects.data?.projects || []).map((entry) => ({ value: entry.id, label: entry.name }))
   );
   let projectName = $derived(projects.data?.projects.find((entry) => entry.id === projectId)?.name);
-  let availableWorkerTypes = $derived((workerTypes.data?.worker_types || []).filter((entry) => entry.creatable !== false));
+  let availableWorkerTypes = $derived((supportedWorkerTypes.data?.worker_types || []).filter((entry) => entry.creatable !== false));
 
   $effect(() => {
     const values = projectOptions.map((option) => option.value);
@@ -119,8 +120,8 @@
       <Disclosure variant="make" chevron="none" data-create="ticket">
         {#snippet summary()}<span class="plus">+</span> New ticket{/snippet}
         <div class="form">
-          {#if createError || projects.error || workerTypes.error}
-            <ErrorLine error={createError || projects.error || workerTypes.error} />
+          {#if createError || projects.error || supportedWorkerTypes.error}
+            <ErrorLine error={createError || projects.error || supportedWorkerTypes.error} />
           {/if}
           <input class="in title-in" type="text" placeholder="What needs doing?" data-input="title" bind:value={title} />
           <textarea class="in detail-in" rows="2" placeholder="Kickoff context — optional" data-input="kickoff-note" bind:value={kickoffNote}></textarea>

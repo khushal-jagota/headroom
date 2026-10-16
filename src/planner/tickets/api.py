@@ -283,7 +283,7 @@ def body_str_list(body: JsonDict, key: str) -> list[str]:
 def _require_create_worker_type(raw: JsonDict) -> str:
     """A create's Worker type, required and known before any writer runs."""
     worker_type = body_str(raw, "worker_type")
-    known = configured_worker_type_registry().registered_worker_types()
+    known = configured_worker_type_registry().supported_worker_types()
     if worker_type not in known:
         raise PlannerError(
             ErrorCode.validation,
