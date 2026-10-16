@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { workItemTicketGroups } from "../src/lib/workItemPresentation";
 import { conversationSignalPresentation } from "../src/lib/conversationSignalPresentation";
 import { dayActionTiles, dayPageState, dayVisualTicket } from "../src/lib/dayPresentation";
 import { feedbackTicketStageState, feedbackTicketStateLabel } from "../src/lib/feedback";
@@ -69,6 +70,21 @@ function boardCard(values: Partial<BoardCard>): BoardCard {
 }
 
 describe("a worker waiting on an answer", () => {
+  it("appears after approvals and before assignment and unread replies", () => {
+    const groups = workItemTicketGroups([
+      boardCard({ id: "reply", awaiting_reply: true }),
+      boardCard({ id: "assigned", assigned: true, awaiting_reply: true }),
+      boardCard({ id: "answer", awaiting_answer: true, assigned: true, awaiting_reply: true }),
+      boardCard({ id: "approval", awaiting_approval: true, awaiting_answer: true })
+    ]);
+    expect(groups.map(({ label, tickets }) => [label, tickets.map(({ id }) => id)])).toEqual([
+      ["Needs your approval", ["approval"]],
+      ["Needs your answer", ["answer"]],
+      ["Yours", ["assigned"]],
+      ["Messages", ["reply"]]
+    ]);
+  });
+
   it("has no conversation dot on the Workspace rail", () => {
     const waiting = boardCard({ awaiting_answer: true });
     const mark = workspaceTicketRowMark(waiting);
