@@ -43,20 +43,7 @@
     enabled: opening.openItemId !== null
   }));
   let allCards = $derived((board.data?.columns ?? []).flatMap((column) => column.cards));
-  let rail = $derived(
-    buildWorkspaceRail(
-      allCards,
-      board.data?.sprint_items ?? [],
-      selectedItemWorkspace.data
-    )
-  );
-  // A Ticket opens here from anywhere, including the Sprint page and Review, so the
-  // selection is not limited to the cards on today's board. The rail highlights a
-  // Ticket only when it holds a card for it, and TicketRoute answers for the Ticket
-  // itself, including one that does not exist.
-  let selectedCard = $derived(
-    allCards.find((card) => card.id === opening.markedTicketId) ?? null
-  );
+  let rail = $derived(buildWorkspaceRail(allCards, board.data?.sprint_items ?? []));
   // A direct Item address is enough to open its canonical workspace. The rail is only
   // today's index, so an unscheduled Item can be absent there and still be a real Item.
   let itemPane = $derived(opening.markedItemId !== null);
@@ -96,11 +83,7 @@
     workers.data
       ? conversationSignalPresentation(
           {
-            // `needs_me` is a pending ask and only a pending ask, which the roster has
-            // always read straight from the live conversation. It was handed over as a
-            // message, and it never was one.
-            awaiting_reply: false,
-            awaiting_answer: workers.data.chief_of_staff.needs_me,
+            awaiting_reply: workers.data.chief_of_staff.awaiting_reply,
             agent_state: workers.data.chief_of_staff.agent_working ? "working" : "idle"
           }
         )
@@ -121,7 +104,7 @@
     title={card.title}
     state={presentation.state}
     ariaLabel={presentation.ariaLabel}
-    active={selectedCard?.id === card.id}
+    active={opening.markedTicketId === card.id}
     onclick={() => selectCard(card.id, insideItemId)}
     stageMarkClass="board-workspace-stage-mark"
     stageMarkAttributes={{
@@ -197,14 +180,16 @@
         class="board-workspace-item-title"
         class:board-workspace-item-title--rested={item.rested && !itemIsAwake(item)}
       >{item.title}</span>
-      <StageMark
-        state={presentation.state}
-        class="board-workspace-stage-mark"
-        data-stage-state={presentation.state}
-        data-workspace-mark={item.mark ?? "none"}
-        aria-hidden={item.mark === null ? "true" : undefined}
-        aria-label={presentation.ariaLabel}
-      />
+      {#if presentation.state}
+        <StageMark
+          state={presentation.state}
+          class="board-workspace-stage-mark"
+          data-stage-state={presentation.state}
+          data-workspace-mark={item.mark ?? "none"}
+          aria-hidden={item.mark === null ? "true" : undefined}
+          aria-label={presentation.ariaLabel}
+        />
+      {/if}
     </button>
     {#if item.groups.length}
       <!-- What needs him is under the Item whether or not the Item is the one open, so

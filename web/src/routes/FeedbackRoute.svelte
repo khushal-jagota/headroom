@@ -120,7 +120,10 @@
               <section class="fb-group" data-feedback-group={group.ticket?.id || "dismissed"}>
                 <div class="fb-group-head">
                   {#if group.ticket}
-                    <StageMark state={feedbackTicketStageState(group.ticket)} />
+                    {@const messageState = feedbackTicketStageState(group.ticket)}
+                    {#if messageState}
+                      <StageMark state={messageState} aria-label="Unread reply" />
+                    {/if}
                     <a href={`#/workspace/${encodeURIComponent(group.ticket.id)}`}>{group.ticket.title}</a>
                     <span class="fb-group-state">{feedbackTicketStateLabel(group.ticket)} · {group.notes.length} {group.notes.length === 1 ? "note" : "notes"}</span>
                   {:else}

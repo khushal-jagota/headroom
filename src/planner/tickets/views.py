@@ -16,6 +16,7 @@ from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
+from planner.sprints import views as sprints_views
 from planner.tickets import data as tickets_data
 from planner.tickets import derivation
 from planner.tickets.contracts import (
@@ -462,9 +463,9 @@ def board_view(
     Each card carries its conversation link. The async route uses it to add the shared
     owner-attention and agent-state projection.
 
-    Beside the columns, ``sprint_items`` carries each represented Sprint Item's own
-    supervisor conversation. A card answers for its Ticket's worker, and no card answers
-    for the Item's own worker, so the rail cannot mark an Item's title without this.
+    Beside the columns, ``sprint_items`` carries each represented Sprint Item's complete
+    child roster and its own supervisor conversation. Item classification therefore
+    uses the same work before and after opening the Item workspace.
     Those Items follow the rows, so a Ticket that joined by its unread message brings
     its own Item with it.
     """
@@ -593,21 +594,20 @@ def _board_sprint_items(
     *,
     item_ids: list[str],
 ) -> list[BoardSprintItemSource]:
-    """Each Sprint Item's creation stamp and its supervisor's conversation.
+    """Each represented Sprint Item's metadata, complete children, and conversation.
 
     The supervisor is an ordinary non-Ticket agent, so its conversation is the one the
     ``agents`` roster holds under the key derived from the Item id. An Item nobody
     has spoken to has none, and reads as ``None``.
 
-    The Item's half of the row mark is its conversation's last turn end, the same fact a
-    card uses. That is not a database fact this read owns, so it arrives later, beside
-    the two live conversation signals.
+    The shared attention projection adds direct conversation facts to the Item and
+    each child later, alongside the Item's separate child rollup.
     """
     if not item_ids:
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        "SELECT id, created_at " f"FROM sprint_items WHERE id IN ({placeholders})",
+        f"SELECT id, title, priority, created_at FROM sprint_items WHERE id IN ({placeholders})",
         item_ids,
     ).fetchall()
     conversations = conversation_start.read_agent_conversations(
@@ -616,10 +616,11 @@ def _board_sprint_items(
     return [
         BoardSprintItemSource(
             id=str(row["id"]),
+            title=str(row["title"]),
+            priority=str(row["priority"]),
+            tickets=sprints_views.item_tickets(conn, str(row["id"])),
             created_at=int(row["created_at"]),
-            conversation_id=conversations.get(
-                sprints_data.supervisor_agent_key(str(row["id"]))
-            ),
+            conversation_id=conversations.get(sprints_data.supervisor_agent_key(str(row["id"]))),
         )
         for row in sorted(rows, key=lambda row: str(row["id"]))
     ]

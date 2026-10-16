@@ -24,6 +24,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
 import BoardRoute from "../src/routes/BoardRoute.svelte";
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+(window as any).__refresh = () => client.invalidateQueries();
 const address = { selection: { kind: "none" as const }, view: "items" as const, openFile: null };
 </script>
 
@@ -97,8 +98,12 @@ board = {
     ]}],
     "sprint_items": [item("si_needs_him"), item("si_quiet")],
 }
+for summary in board["sprint_items"]:
+    summary["tickets"] = [row for column in board["columns"] for row in column["cards"] if row["sprint_item_id"] == summary["id"]]
+    summary["title"] = summary["tickets"][0]["sprint_item_title"]
+    summary["priority"] = "P1"
 workers = {
-    "chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "agent_working": False, "latest_turn_ended_sequence": 0},
+    "chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "awaiting_reply": False, "agent_working": False, "latest_turn_ended_sequence": 0},
     "workers": [],
 }
 
@@ -155,6 +160,27 @@ with sync_playwright() as p:
     quiet = page.locator('[data-sprint-item="si_quiet"]')
     assert quiet.locator("[data-bucket-key]").count() == 0
     assert quiet.locator("[data-ticket-id]").count() == 0
+
+    # Only an exact conversation message creates a dot. Child attention does not
+    # create a supervisor dot, and approval/ask/running/error rows have no mark.
+    expect(needs_him.locator(".board-workspace-item-head .stage-mark")).to_have_count(0)
+    expect(needs_him.locator('[data-ticket-id="t_message"] .stage-mark')).to_have_count(1)
+    expect(needs_him.locator('[data-ticket-id]:not([data-ticket-id="t_message"]) .stage-mark')).to_have_count(0)
+    expect(quiet.locator(".stage-mark")).to_have_count(0)
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
+
+    # Chief's ask/running/error-like work facts cannot create its message dot.
+    chief = workers["chief_of_staff"]
+    chief.update(needs_me=True, agent_working=True)
+    page.evaluate("window.__refresh()")
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
+    chief["awaiting_reply"] = True
+    page.evaluate("window.__refresh()")
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(1)
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_attribute("aria-label", "Unread reply")
+    chief["awaiting_reply"] = False
+    page.evaluate("window.__refresh()")
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
 
     # Selection is the card. No count line stands in for the groups any more.
     assert page.locator(".board-workspace-item-line").count() == 0

@@ -129,8 +129,8 @@ async def add_agent_conversation_signals(
     The settings index knows which agents exist; the agents table links each one to its
     current conversation. Liveness and asks belong to the live conversation system,
     while the last completed-turn position belongs to its durable record. Keeping this
-    projection here gives any future small roster the same four facts without adding a
-    second route or state vocabulary.
+    projection here also preserves the durable direct-message fact. A completed turn,
+    running turn, or pending ask does not mean that the owner has a message.
     """
     conversation_ids = conversation_start.read_agent_conversations(
         conn, [str(agent["employee_id"]) for agent in agents]
@@ -141,9 +141,15 @@ async def add_agent_conversation_signals(
     owner_read_through = await conversation_record.owner_read_through_sequences(
         conversation_ids.values()
     )
+    attention = await conversation_record.attention_facts(conversation_ids.values())
     for agent in agents:
         conversation_id = conversation_ids.get(str(agent["employee_id"]))
         agent["conversation_id"] = conversation_id
+        agent["awaiting_reply"] = (
+            attention[conversation_id].unread_message_to_owner
+            if conversation_id in attention
+            else False
+        )
         agent["agent_working"] = (
             await conversation_system.is_running(conversation_id)
             if conversation_id is not None

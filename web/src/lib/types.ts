@@ -235,6 +235,7 @@ export type ChiefManagementSettings = {
   launch_defaults: EmployeeConfigurationSnapshot;
   conversation_id: string | null;
   needs_me: boolean;
+  awaiting_reply: boolean;
   agent_working: boolean;
   latest_turn_ended_sequence: number;
   owner_read_through_sequence: number;
@@ -446,6 +447,9 @@ export type BoardResponse = {
 // the Item's own worker, so the mark on an Item title comes from here.
 export type BoardSprintItem = {
   id: string;
+  title: string;
+  priority: Priority;
+  tickets: SprintItemWorkspaceTicket[];
   created_at: number;
   conversation_id: string | null;
   awaiting_reply: boolean;

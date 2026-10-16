@@ -31,7 +31,7 @@ export type SprintProjectGroup = {
 };
 
 export type SprintTicketCondition = {
-  mark: FieldStageVisualState;
+  mark: FieldStageVisualState | null;
   word: string;
 };
 

@@ -21,7 +21,7 @@ anything had changed.
 One screen per part of the system:
 
 - **Home** — the daily hub. It combines focus, what makes the day land, brief take,
-  and watchout with one progress mark per Ticket. Action tiles lead to work that needs
+  and watchout with message dots for conversations needing a reply. Action tiles lead to work that needs
   Khushal, needs review, is working, is assigned, or is done. Day fields are written by
   the planning Workers, not edited on this page.
 - **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
@@ -40,9 +40,9 @@ One screen per part of the system:
   follows the same 5am planning-day boundary as the Day screen. One thing joins today:
   a ticket holding a message the owner has not read appears whatever day it is on,
   because he has not seen the message and a day he did not put it on is not his answer
-  to it. Everything else in the rail is today's tickets.
-  The Chief of Staff row leads, and under it a selector chooses one of two views
-  over the same tickets: **Tickets** or **Sprint Items**.
+  to it. The **Tickets** view retains that roster. The **Sprint Items** view uses the
+  Items represented by that roster and shows their complete child attention groups.
+  The Chief of Staff row leads, and under it a selector chooses between these views.
 
   The Tickets view starts with four owner-attention groups in this order: Needs your
   approval, Needs your answer, Yours, and Messages. Each name says whose the work is.
@@ -70,13 +70,14 @@ One screen per part of the system:
   remaining status group has its own box. Rows inside each group retain activity order,
   newest first.
 
-  The Sprint Items view is one box per Sprint Item with a ticket on today. Each Item
-  shows only its non-empty Needs your approval, Needs your answer, Yours, and Messages
-  child groups. Quiet
-  child tickets remain available in the Tickets view and the Item workspace. An Item
+  The Sprint Items view keeps the board's Item membership. Each Item uses its complete
+  Ticket set, including off-Today and Backlog Tickets, for its non-empty Needs your
+  approval, Needs your answer, Yours, Messages, and Errored groups. Quiet
+  child Tickets remain available in the Item workspace. Those on Today or with unread
+  messages also appear in the Tickets view. An Item
   shows those groups, and their rows, whether or not it is the Item the reader has
   opened. The rail therefore says what needs the reader before anything is clicked, and
-  an Item with none of the four shows its title and its mark alone. Clicking anywhere in
+  an Item with no attention groups shows its title and any direct message dot. Clicking anywhere in
   the box selects the Item and opens its workspace beside the rail. That is all a click on
   an Item ever does: no click shuts an Item. A reader inside one of its tickets clicks
   the Item to come back to it. The groups sit inside the Item without boxes of their own.
@@ -102,21 +103,24 @@ One screen per part of the system:
   leaves that Item open around it — the address names the Item as well as the ticket —
   and selection moves to the ticket. An open Item carries no selection of its own.
 
-  Every Ticket row and Item title uses one activity mark. A needed approval or answer is
-  a white dot. An unread reply is a blue dot. Active agent work is a spinner. The mark is
-  empty when none applies. That precedence is white, blue, spinner, then empty. The mark
-  never changes the Ticket's group. A Ticket under Yours can therefore show a spinner.
-  An Item title applies the same rule across its supervisor and every child Ticket.
-  The empty mark slot stays in place, so the title layout does not move.
+  Every Worker dot means that exact conversation needs the owner's attention to a
+  direct message. This applies to Chief of Staff, Item supervisors, and Ticket Workers
+  throughout Workspace, Home, Sprint, and Feedback. Approval, questions, assignment,
+  running work, errors, and child Ticket attention never create a dot. Pending requests
+  remain in the conversation rest line as text. Its running spinner and failed diamond
+  remain turn status shapes. With no direct
+  message there is no dot, including no empty or hollow mark. Work facts still determine
+  groups, status text, and Home action counts. Field progress and connection indicators
+  have their own meanings.
 
-  When an Item is open, the rail Item and detail pane read the same Item workspace
-  snapshot. A change signal refreshes that one query for both renderers. The rail keeps
-  its compact four-group subset. The detail keeps every Ticket split into Today and
-  Other Tickets. Shared Tickets have identical groups, marks, labels, counts, and order.
-  A ticket without a Sprint Item appears in the Tickets view like any other. Every
-  Ticket row is the shared Ticket row and uses the same blue dot and spinner. It carries
-  its priority tile in the Tickets view and drops it inside a Sprint Item, where the Item
-  is the thing being read.
+  The rail always reads each Item's complete Ticket set, title, priority, and completion
+  from the board response. Opening an Item loads its detail pane without replacing any
+  rail facts. A delayed detail response, Back, reload, or switching Items cannot change
+  rail classification. The detail pane uses the same grouping rule across its Today and
+  Other Tickets sections. A direct-linked Item absent from the board opens its pane
+  without adding itself to the rail. A Ticket without a Sprint Item remains in the
+  Tickets view. Shared Ticket rows carry their priority tile in the Tickets view and
+  drop it inside a Sprint Item, where the Item is the thing being read.
 
   The Chief of Staff row starts with its bundled portrait. The portrait is an agent
   identity on this row only; ticket rows and Worker types do not use it.

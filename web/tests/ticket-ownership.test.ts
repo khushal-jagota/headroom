@@ -44,7 +44,7 @@ describe("a Stage the owner owns", () => {
     expect(sprintItemWord(userOwned)).toBe("yours");
     expect(feedbackLabel(userOwned)).toBe("Yours");
     expect(homeTiles(userOwned)).toEqual(["Assigned 1"]);
-    expect(homeDotLabel(userOwned)).toBe("No current activity");
+    expect(homeDotLabel(userOwned)).toBe("");
     expect(ticketPageMark(userOwned)).toBe("current-assigned");
   });
 

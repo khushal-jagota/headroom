@@ -26,6 +26,8 @@ try {
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
 
   let conversationId = $state("conversation-a");
+  let conversationState = $state<"rest" | "peeked" | "opened">("opened");
+  (window as any).__setConversationState = (state: typeof conversationState) => conversationState = state;
   (window as any).__switchConversation = (id: string) => (conversationId = id);
 
   async function sendMessage(): Promise<any> {
@@ -41,7 +43,7 @@ try {
   {conversationId}
   persistenceKey="switch-fixture"
   label="Worker"
-  conversationState="opened"
+  bind:conversationState
   {sendMessage}
   onNewConversation={newConversation}
 />
@@ -72,6 +74,20 @@ try {
 );
 
 (globalThis as any).__ownerReads = [];
+let focused = true;
+let visible = true;
+Object.defineProperty(document, "hasFocus", { value: () => focused });
+Object.defineProperty(document, "visibilityState", { get: () => visible ? "visible" : "hidden" });
+(globalThis as any).__setAttention = (nextFocused: boolean, nextVisible: boolean) => {
+  focused = nextFocused;
+  visible = nextVisible;
+  document.dispatchEvent(new Event("visibilitychange"));
+  window.dispatchEvent(new Event(focused ? "focus" : "blur"));
+};
+let delayNextRead = false;
+let releaseRead: (() => void) | null = null;
+(globalThis as any).__delayNextRead = () => delayNextRead = true;
+(globalThis as any).__releaseRead = () => releaseRead?.();
 let delayNextASnapshot = false;
 let delayedASnapshotRequested = false;
 let releaseDelayedASnapshot: (() => void) | null = null;
@@ -88,6 +104,10 @@ const recordedBRows: unknown[] = [];
       conversationId: ownerReadMatch[1],
       sequence: body.through_sequence
     });
+    if (delayNextRead) {
+      delayNextRead = false;
+      await new Promise<void>((resolve) => releaseRead = resolve);
+    }
     return Response.json({ owner_read_through_sequence: body.through_sequence });
   }
   const eventsMatch = url.match(/conversations\/(conversation-[ab])\/events\?after=\d+$/);
@@ -285,6 +305,47 @@ with sync_playwright() as playwright:
         {"conversationId": "conversation-b", "sequence": 4},
         {"conversationId": "conversation-b", "sequence": 5}
     ]
+
+    # Snapshot latest_sequence is ahead of delivered rows at startup; it never grants
+    # read credit. Rest, focus loss and hidden documents likewise cannot grant credit.
+    def emit_message(sequence):
+        page.evaluate("""sequence => window.__emitConversationRow('conversation-b', {
+          conversation_id: 'conversation-b', sequence, kind: 'message_to_owner',
+          payload: { text: 'B message ' + sequence, sender_label: 'Ticket B',
+            sender: {kind: 'ticket', id: 'b'}, recipient: {kind: 'owner', id: 'owner'} },
+          created_at: sequence
+        })""", sequence)
+
+    page.evaluate("window.__setConversationState('rest')")
+    page.wait_for_function("document.querySelector('[data-conversation-state=rest]')")
+    emit_message(6)
+    page.wait_for_function("document.querySelector('[data-conversation-mark=reply]')")
+    assert len(page.evaluate("window.__ownerReads")) == 2
+    page.evaluate("window.__setConversationState('peeked')")
+    page.wait_for_function("window.__ownerReads.length === 3")
+    assert page.evaluate("window.__ownerReads.at(-1).sequence") == 6
+
+    for focused, visible, sequence in [(False, True, 7), (True, False, 8)]:
+        page.evaluate("([f,v]) => window.__setAttention(f,v)", [focused, visible])
+        emit_message(sequence)
+        page.get_by_text("B message " + str(sequence), exact=True).wait_for()
+        assert page.evaluate("window.__ownerReads.at(-1).sequence") == sequence - 1
+        page.evaluate("window.__setAttention(true,true)")
+        page.wait_for_function("sequence => window.__ownerReads.at(-1).sequence === sequence", arg=sequence)
+
+    # A response acknowledging one delivered position must not consume a newer
+    # message that arrives after the owner closes the transcript.
+    page.evaluate("window.__delayNextRead()")
+    emit_message(9)
+    page.wait_for_function("window.__ownerReads.at(-1).sequence === 9")
+    page.evaluate("window.__setConversationState('rest')")
+    page.wait_for_function("document.querySelector('[data-conversation-state=rest]')")
+    emit_message(10)
+    page.evaluate("window.__releaseRead()")
+    page.wait_for_function("document.querySelector('[data-conversation-mark=reply]')")
+    assert page.evaluate("window.__ownerReads.at(-1).sequence") == 9
+    page.evaluate("window.__setConversationState('opened')")
+    page.wait_for_function("window.__ownerReads.at(-1).sequence === 10")
 
     page.reload(wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")

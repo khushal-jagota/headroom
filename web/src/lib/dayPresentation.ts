@@ -8,7 +8,7 @@ import {
 
 export type DayVisualTicket = {
   ticket: DayTicket;
-  state: FieldStageVisualState;
+  state: FieldStageVisualState | null;
   ariaLabel: string;
   group: string;
 };
@@ -49,32 +49,11 @@ export function dayVisualTicket(
   return { ticket, state: presentation.state, ariaLabel: presentation.ariaLabel, group };
 }
 
-/**
- * Where each dot state sits in the Day progress row, most urgent first.
- *
- * The Day row uses the shared white, blue, spinner, and empty mark states. The other
- * states remain ranked so the sort stays total for old or external callers.
- */
-const dotOrder: Record<FieldStageVisualState, number> = {
-  "needs-me": 0,
-  errored: 1,
-  "current-awaiting-approval": 2,
-  "current-assigned": 3,
-  "current-running": 4,
-  "current-waiting": 5,
-  upcoming: 6,
-  "reply-seen": 7,
-  completed: 8
-};
-
-/**
- * The Day's tickets in progress-row order: one unbroken run per state, roster
- * order inside a run. The sort is stable, and the given list is left alone.
- */
+/** Show the exact conversations needing message attention in roster order. */
 export function dayDotOrder(
   visualTickets: readonly DayVisualTicket[]
 ): DayVisualTicket[] {
-  return [...visualTickets].sort((left, right) => dotOrder[left.state] - dotOrder[right.state]);
+  return visualTickets.filter((visual) => visual.state !== null);
 }
 
 export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayActionTile[] {
@@ -86,15 +65,15 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
     done: 0
   };
 
-  // Counts follow ownership groups. Marks stay independent, so assigned work can spin.
+  // Counts follow attention and activity facts, independently of conversation dots.
   for (const visual of visualTickets) {
     if (visual.group === "awaiting_answer" || visual.group === "awaiting_reply") {
       counts["needs-me"] += 1;
     }
-    else if (visual.state === "current-running") counts.working += 1;
     else if (visual.group === "awaiting_approval" || visual.group === "waiting_for_kickoff") {
       counts.review += 1;
     }
+    else if (visual.ticket.agent_state === "working") counts.working += 1;
     else if (visual.group === "assigned") counts.assigned += 1;
     else if (visual.group === "done") counts.done += 1;
   }

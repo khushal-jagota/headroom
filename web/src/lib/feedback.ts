@@ -112,7 +112,7 @@ export function feedbackRelativeTime(value: number, now = new Date()): string {
   return shortMonthDayLabel(date);
 }
 
-export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisualState {
+export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisualState | null {
   return workItemActivityMarkPresentation(workItemActivityMark(ticket)).state;
 }
 
