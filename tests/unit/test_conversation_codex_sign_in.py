@@ -620,6 +620,221 @@ def test_a_child_that_exits_mid_session_ends_it_without_calling_it_a_failure(
         _run(exercise)
 
 
+# --- one delivered batch holding two events ----------------------------------------------
+#
+# A child exiting and a completion arriving are delivered by two independent tasks inside
+# the client: the process watcher does not wait for the stdout reader. So both can land
+# before the consumer looks, and the consumer then holds a batch of two. Provoking that
+# order against a real child is a race, and a race is not a regression — so these drive the
+# service through its own client seam, which is what makes the ordering exact.
+
+
+class _ClientThatDeliversWhatATestSays:
+    """A codex app-server client that answers the three calls and nothing else.
+
+    Used only where the ordering under test cannot be produced deterministically on a real
+    wire. Every other exercise in this file uses a real child process.
+    """
+
+    def __init__(self, *, handler: Any, description: str, consumed_notifications: Any) -> None:
+        self.handler = handler
+        self.description = description
+        self.is_alive = True
+        self.stopped = False
+
+    async def start(self, *, argv: Any, environment: Any, working_directory: Any) -> None:
+        return
+
+    async def request(self, method: str, params: Any = None) -> Any:
+        if method == "initialize":
+            return {}
+        if method == "account/login/start":
+            return {
+                "type": "chatgptDeviceCode",
+                "loginId": "login-1",
+                "verificationUrl": "https://auth.openai.com/codex/device",
+                "userCode": "BATCH-CODE",
+            }
+        if method == "account/login/cancel":
+            return {"status": "canceled"}
+        raise AssertionError(f"this client was asked for {method}")
+
+    async def notify(self, method: str, params: Any = None) -> None:
+        return
+
+    async def stop(self) -> None:
+        self.is_alive = False
+        self.stopped = True
+
+
+def _completion(*, success: bool, login_id: str = "login-1") -> Any:
+    from planner.conversation.backends.codex_app_server import (
+        login_bindings_gen as login_bindings,
+    )
+
+    return login_bindings.AccountLoginCompletedNotification(
+        loginId=login_id, success=success, error=None, onboardingEntrypoint=None
+    )
+
+
+@contextmanager
+def _service_over_a_test_client(
+    home: Path,
+) -> Iterator[tuple[CodexSignInService, list[_ClientThatDeliversWhatATestSays]]]:
+    made: list[_ClientThatDeliversWhatATestSays] = []
+
+    def factory(**keywords: Any) -> Any:
+        client = _ClientThatDeliversWhatATestSays(**keywords)
+        made.append(client)
+        return client
+
+    async def resolve_argv() -> Sequence[str] | None:
+        return ("this-client-never-spawns",)
+
+    with _codex_home(home):
+        yield (
+            CodexSignInService(
+                resolve_argv=resolve_argv,
+                bounds=SignInBounds(child_startup_seconds=15.0, session_seconds=600.0),
+                read_login=read_stored_codex_login,
+                now=lambda: datetime(2026, 10, 16, tzinfo=UTC),
+                client_factory=factory,
+            ),
+            made,
+        )
+
+
+async def _deliver_together(client: Any, *events: Any) -> None:
+    """Hand several events over with no suspension between them.
+
+    Both handler calls only append and set a flag, so awaiting them does not yield to the
+    event loop. That is what puts every event into one batch for the consumer.
+    """
+    for event in events:
+        if event is None:
+            await client.handler.on_child_ended()
+        else:
+            await client.handler.on_notification("account/login/completed", event)
+
+
+def test_a_child_ending_and_a_matching_success_in_one_batch_is_a_success(
+    tmp_path: Path,
+) -> None:
+    """The ordering this test exists for.
+
+    The consumer takes a batch of [child ended, success]. An earlier version handled the
+    batch item by item: the child ending settled the session to ``ended`` while the success
+    was still only in the consumer's hands, so the settle drained nothing and the success
+    had nowhere to go. The credential is real here, so the honest answer is ``confirmed``.
+    """
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    with _service_over_a_test_client(home) as (service, made):
+
+        async def exercise() -> None:
+            started = await service.start()
+            assert started.user_code == "BATCH-CODE"
+            # The browser step landed, and then the child went away.
+            _write_login(home, last_refresh="after")
+            await _deliver_together(made[0], None, _completion(success=True))
+            await _until_terminal(service)
+            settled = service.read()
+            assert settled is not None
+            assert settled.state is SignInState.confirmed
+            assert settled.account_label == "owner@example.invalid"
+
+        _run(exercise)
+
+
+def test_a_success_then_a_child_ending_in_one_batch_is_also_a_success(
+    tmp_path: Path,
+) -> None:
+    """The same batch the other way round. Neither order may lose the success."""
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    with _service_over_a_test_client(home) as (service, made):
+
+        async def exercise() -> None:
+            await service.start()
+            _write_login(home, last_refresh="after")
+            await _deliver_together(made[0], _completion(success=True), None)
+            await _until_terminal(service)
+            settled = service.read()
+            assert settled is not None
+            assert settled.state is SignInState.confirmed
+
+        _run(exercise)
+
+
+def test_a_foreign_success_beside_a_child_ending_in_one_batch_is_dropped(
+    tmp_path: Path,
+) -> None:
+    """Aggregating a batch did not weaken correlation inside it.
+
+    The success in the batch belongs to another login id. It must be dropped, so the child
+    ending is the only evidence left and the session ends rather than claiming a sign-in
+    somebody else's completion reported.
+    """
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    with _service_over_a_test_client(home) as (service, made):
+
+        async def exercise() -> None:
+            await service.start()
+            _write_login(home, last_refresh="after")
+            await _deliver_together(
+                made[0], None, _completion(success=True, login_id="some-other-login")
+            )
+            await _until_terminal(service)
+            settled = service.read()
+            assert settled is not None
+            assert settled.state is SignInState.ended
+            assert settled.detail is not None
+            assert "stopped before it finished" in settled.detail
+
+        _run(exercise)
+
+
+def test_a_known_success_is_not_overwritten_by_a_later_failure_in_one_batch(
+    tmp_path: Path,
+) -> None:
+    """A success and a failure for one login id means the child said both."""
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    with _service_over_a_test_client(home) as (service, made):
+
+        async def exercise() -> None:
+            await service.start()
+            _write_login(home, last_refresh="after")
+            await _deliver_together(
+                made[0], _completion(success=True), _completion(success=False)
+            )
+            await _until_terminal(service)
+            settled = service.read()
+            assert settled is not None
+            assert settled.state is SignInState.confirmed
+
+        _run(exercise)
+
+
+def test_a_child_ending_alone_in_a_batch_still_ends_the_sign_in(tmp_path: Path) -> None:
+    """The ordinary case, so the aggregation did not make a lone ending a no-op."""
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    with _service_over_a_test_client(home) as (service, made):
+
+        async def exercise() -> None:
+            await service.start()
+            await _deliver_together(made[0], None)
+            await _until_terminal(service)
+            settled = service.read()
+            assert settled is not None
+            assert settled.state is SignInState.ended
+            assert made[0].stopped
+
+        _run(exercise)
+
+
 # --- stale ids and replaced sessions ------------------------------------------------------
 
 

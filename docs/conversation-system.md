@@ -707,10 +707,19 @@ ever cleared by hand: a rejection is scoped to its generation and lapses on its 
 clearing one would be Panels asserting the thing it just failed to confirm.
 
 A completion can arrive in the same instant as a cancel, delivered while the cancel is
-already settling. So settling drains what the child has already said before it reads the
-login: the child is stopped, anything queued for this sign-in is taken in, and only then
-is the credential read. A success that landed during a cancel, or during shutdown, is
-reported as the sign-in it was rather than lost.
+already settling. So settling takes in what the child has already said before it reads the
+login: the child is stopped, every delivered event belonging to this sign-in is taken in,
+and only then is the credential read. A success that landed during a cancel, or during
+shutdown, is reported as the sign-in it was rather than lost.
+
+The same rule holds inside a single batch of events. A child exiting and a completion
+arriving are delivered by two independent tasks, so both can land before anything looks —
+and deciding on the first of them would settle the sign-in while the second was still
+unread. So all the evidence in hand is taken in first, and only then is the terminal state
+decided once. A completion is read before a child exiting whichever order they arrived in:
+the exit says only that the child is gone, while a completion is codex's own account of how
+the sign-in went. Throughout, a completion carrying another sign-in's id is dropped rather
+than absorbed, and a reported success is never overwritten by a later reported failure.
 
 **One sign-in at a time, and nothing kept.** There is at most one pending sign-in per
 backend. Pressing Sign in twice hands back the one already running rather than minting a

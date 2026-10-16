@@ -394,39 +394,48 @@ class CodexSignInService:
                     # The session this belonged to has been replaced. Old news gets
                     # nothing back, so it cannot clear or rewrite what replaced it.
                     return
-                for said in self._take_what_is_delivered(current):
-                    if said.child_ended:
-                        await self._take_the_child_ending(current)
-                    elif said.completion is not None:
-                        await self._take_a_completion(current, said.completion)
+                # Everything in hand is taken in *before* anything is decided. Handling a
+                # batch item by item would settle on the first terminal one while later
+                # items were still only in this loop's hands — and a batch of
+                # [child ended, success] would then report ended and leave the success
+                # with nowhere to go. A child exiting and a completion arriving are
+                # independent events on independent tasks, so they genuinely arrive
+                # together.
+                self._absorb_delivered_evidence(
+                    current, self._take_what_is_delivered(current)
+                )
+                if current.state.is_terminal:
+                    await self._read_the_account_label_again(current)
+                    return
+                await self._decide_from_the_evidence(current)
                 if current.state.is_terminal:
                     return
 
-    async def _take_a_completion(
-        self, session: _Session, notification: login_bindings.AccountLoginCompletedNotification
-    ) -> None:
-        if notification.loginId is not None and notification.loginId != session.login_id:
-            LOGGER.warning(
-                "codex sign-in: dropped a %s for a login id this session does not own",
-                COMPLETED_NOTIFICATION,
-            )
-            return
-        session.completion = notification
-        if session.state.is_terminal:
-            # The session already ended. The completion is still evidence that a
-            # credential may have landed, so the account label is read again rather than
-            # ignored, but nothing about the terminal state is rewritten.
-            session.account_label = self._read_the_login().account_label
-            return
-        await self._settle(session, success_was_reported=notification.success)
+    async def _decide_from_the_evidence(self, session: _Session) -> None:
+        """Settle, if what has been taken in means this sign-in is over.
 
-    async def _take_the_child_ending(self, session: _Session) -> None:
-        if session.state.is_terminal:
+        A completion is read before a child ending, whichever order they arrived in. The
+        child exiting says only that the child is gone, while a completion is codex's own
+        account of how the sign-in went — so a child that reported success and then exited
+        is a success, not an ending.
+        """
+        completion = session.completion
+        if completion is not None:
+            await self._settle(session, success_was_reported=completion.success)
             return
-        session.child_ended = True
-        # A child can die after writing a credential, so its exit is not read as a
-        # failure. It ends the session and the login is read.
-        await self._settle(session, success_was_reported=False)
+        if session.child_ended:
+            # A child can die after writing a credential, so its exit is not read as a
+            # failure. It ends the session and the login is read.
+            await self._settle(session, success_was_reported=False)
+
+    async def _read_the_account_label_again(self, session: _Session) -> None:
+        """Evidence arriving after the end still updates what the account is called.
+
+        The terminal state itself is never rewritten. But a completion that lands after a
+        session ended is still a sign a credential may have been written, so the label is
+        re-read rather than left stale.
+        """
+        session.account_label = self._read_the_login().account_label
 
     # --- ending -------------------------------------------------------------------------
 
@@ -496,23 +505,19 @@ class CodexSignInService:
         session.arrived.clear()
         return taken
 
-    def _take_in_what_was_already_delivered(self, session: _Session) -> None:
-        """Take in what the child said that nobody has acted on yet.
+    def _absorb_delivered_evidence(
+        self, session: _Session, said_by_the_child: list[_FromTheChild]
+    ) -> None:
+        """Fold what the child said into the session, deciding nothing.
 
-        The consumer is stopped by now, so this is the last chance anything delivered has
-        to be read — including an event the consumer had already been woken for. Nothing
-        was removed outside the lock, so there is nothing for its cancellation to have
-        destroyed.
+        Correlation lives here: a completion carrying another session's login id is
+        dropped rather than absorbed.
 
-        Correlation is unchanged: a completion carrying another session's login id is
-        dropped here exactly as the consumer would have dropped it.
-
-        A reported success outranks a reported failure among what is taken in. Two
-        completions for one login id means the child said both, and a success is the one
-        that implies a credential may have been written — so it is the one that must not be
-        the dropped one.
+        A reported success outranks a reported failure. Two completions for one login id
+        means the child said both, and a success is the one that implies a credential may
+        have been written — so it is the one that must not be the dropped one.
         """
-        for said in self._take_what_is_delivered(session):
+        for said in said_by_the_child:
             if said.child_ended:
                 session.child_ended = True
                 continue
@@ -530,6 +535,17 @@ class CodexSignInService:
             if held is not None and held.success and not completion.success:
                 continue
             session.completion = completion
+
+    def _take_in_what_was_already_delivered(self, session: _Session) -> None:
+        """The last look before a terminal decision.
+
+        The consumer is stopped by now, so this is the final chance anything delivered has
+        to be read. Nothing was removed outside the lock, so its cancellation destroyed
+        nothing — but the consumer may have been holding a batch, and ``_settle`` is also
+        reached from that consumer, so the batch it is holding has already been absorbed
+        into the session before this runs.
+        """
+        self._absorb_delivered_evidence(session, self._take_what_is_delivered(session))
 
     def _judge_a_reported_success(
         self, session: _Session, reading: StoredCodexLogin
