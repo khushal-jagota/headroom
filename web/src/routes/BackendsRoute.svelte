@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import UsageRings from "../components/conversation/UsageRings.svelte";
   import { backendIdentityNote, type BackendIdentityNote } from "../lib/conversation/backendIdentity";
   import {
@@ -8,6 +8,10 @@
     signInIsPending,
     signInOutcome
   } from "../lib/conversation/backendSignIn";
+  import {
+    BackendSignInSession,
+    type SignInPageState
+  } from "../lib/conversation/backendSignInSession";
   import {
     loadBackendPageSnapshots,
     refreshBackendSnapshots
@@ -20,7 +24,6 @@
     startBackendSignIn,
     setBackendModelEnabled,
     updateBackend,
-    type BackendSignIn,
     type BackendSnapshot,
     type BackendUpdateResult,
     type ConversationBackendKey
@@ -35,85 +38,22 @@
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
   let savingModels = $state<Record<string, boolean>>({});
   let modelErrors = $state<Record<string, string | null>>({});
-  let signIns = $state<Partial<Record<ConversationBackendKey, BackendSignIn>>>({});
-  let signInBusy = $state<Partial<Record<ConversationBackendKey, boolean>>>({});
-  let signInErrors = $state<Partial<Record<ConversationBackendKey, string | null>>>({});
-  // One timer per pending sign-in. Nothing about a sign-in is persisted, so the only way
-  // to learn that one finished while nobody pressed anything is to ask again.
-  let signInWatchers: Partial<Record<ConversationBackendKey, ReturnType<typeof setTimeout>>> = {};
-  const SIGN_IN_POLL_MS = 2000;
-
-  async function startSignIn(backendKey: ConversationBackendKey): Promise<void> {
-    if (signInBusy[backendKey]) return;
-    signInBusy = { ...signInBusy, [backendKey]: true };
-    signInErrors = { ...signInErrors, [backendKey]: null };
-    try {
-      const answer = await startBackendSignIn(backendKey);
-      signIns = { ...signIns, [backendKey]: answer.sign_in };
-      watchSignIn(backendKey);
-    } catch (problem) {
-      signInErrors = { ...signInErrors, [backendKey]: sentenceFor(problem) };
-    } finally {
-      signInBusy = { ...signInBusy, [backendKey]: false };
+  // Only codex can be signed in, so there is one session controller rather than a map.
+  const SIGN_IN_BACKEND: ConversationBackendKey = "codex";
+  let signInState = $state<SignInPageState>({ signIn: null, busy: false, error: null });
+  const signInSession = new BackendSignInSession(
+    {
+      start: startBackendSignIn,
+      read: readBackendSignIn,
+      cancel: cancelBackendSignIn,
+      reloadCards: () => loadBackends(),
+      setTimer: (run, ms) => setTimeout(run, ms),
+      clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>)
+    },
+    (next) => {
+      signInState = next;
     }
-  }
-
-  async function cancelSignIn(backendKey: ConversationBackendKey): Promise<void> {
-    const pending = signIns[backendKey];
-    if (!pending || signInBusy[backendKey]) return;
-    signInBusy = { ...signInBusy, [backendKey]: true };
-    try {
-      const answer = await cancelBackendSignIn(backendKey, pending.session_id);
-      signIns = { ...signIns, [backendKey]: answer.sign_in };
-    } catch (problem) {
-      // A refused cancel means this session is not the one in force any more, so what
-      // the server has is the answer rather than what this page was holding.
-      signInErrors = { ...signInErrors, [backendKey]: sentenceFor(problem) };
-      await readSignIn(backendKey);
-    } finally {
-      stopWatching(backendKey);
-      signInBusy = { ...signInBusy, [backendKey]: false };
-      await loadBackends();
-    }
-  }
-
-  async function readSignIn(backendKey: ConversationBackendKey): Promise<void> {
-    try {
-      const answer = await readBackendSignIn(backendKey);
-      if (answer.sign_in === null) {
-        const { [backendKey]: _gone, ...rest } = signIns;
-        signIns = rest;
-        return;
-      }
-      signIns = { ...signIns, [backendKey]: answer.sign_in };
-    } catch {
-      // A reading that did not arrive is not news about the sign-in. The next tick asks
-      // again, and the page keeps showing what it last knew.
-    }
-  }
-
-  function watchSignIn(backendKey: ConversationBackendKey): void {
-    stopWatching(backendKey);
-    if (!signInIsPending(signIns[backendKey] ?? null)) return;
-    signInWatchers[backendKey] = setTimeout(() => {
-      void (async () => {
-        await readSignIn(backendKey);
-        if (signInIsPending(signIns[backendKey] ?? null)) {
-          watchSignIn(backendKey);
-          return;
-        }
-        // It settled on its own. The card is re-read because a confirmed sign-in changes
-        // what the identity says.
-        await loadBackends();
-      })();
-    }, SIGN_IN_POLL_MS);
-  }
-
-  function stopWatching(backendKey: ConversationBackendKey): void {
-    const timer = signInWatchers[backendKey];
-    if (timer !== undefined) clearTimeout(timer);
-    delete signInWatchers[backendKey];
-  }
+  );
 
   function sentenceFor(problem: unknown): string {
     if (problem instanceof ConversationWireError) return problem.message;
@@ -228,7 +168,16 @@
     return snapshot.cached_usage?.windows.some((window) => window.model_id === modelId) ?? false;
   }
 
-  onMount(() => void loadBackends());
+  onMount(() => {
+    void loadBackends();
+    // Nothing about a sign-in is persisted, so a page that has just opened or reconnected
+    // has to ask whether one is already running.
+    void signInSession.enter(SIGN_IN_BACKEND);
+  });
+
+  // Leaving the screen stops the asking and nothing else. Cancelling here would end a
+  // sign-in somebody is in the middle of finishing on their phone.
+  onDestroy(() => signInSession.leave());
 </script>
 
 <section class="backends-page" data-screen="backends">
@@ -302,7 +251,7 @@
             </span>
           </div>
           {#if backendCanBeSignedIn(snapshot)}
-            {@const signIn = signIns[snapshot.backend_key] ?? null}
+            {@const signIn = signInState.signIn}
             {@const outcome = signInOutcome(signIn)}
             <div class="sign-in" data-backend-sign-in={snapshot.backend_key}>
               {#if signInIsPending(signIn) && signIn}
@@ -322,8 +271,8 @@
                 </p>
                 <button
                   class="sign-in-action"
-                  disabled={signInBusy[snapshot.backend_key]}
-                  onclick={() => void cancelSignIn(snapshot.backend_key)}
+                  disabled={signInState.busy}
+                  onclick={() => void signInSession.cancel(snapshot.backend_key)}
                   data-backend-sign-in-cancel={snapshot.backend_key}
                 >Cancel sign-in</button>
               {:else}
@@ -333,16 +282,16 @@
                 {/if}
                 <button
                   class="sign-in-action"
-                  disabled={signInBusy[snapshot.backend_key]}
-                  onclick={() => void startSignIn(snapshot.backend_key)}
+                  disabled={signInState.busy}
+                  onclick={() => void signInSession.start(snapshot.backend_key)}
                   data-backend-sign-in-start={snapshot.backend_key}
-                >{signInBusy[snapshot.backend_key] ? "Starting…" : "Sign in"}</button>
+                >{signInState.busy ? "Starting…" : "Sign in"}</button>
               {/if}
               {#if outcome}
                 <p class="sign-in-outcome" data-backend-sign-in-outcome>{outcome}</p>
               {/if}
-              {#if signInErrors[snapshot.backend_key]}
-                <p class="error" role="alert">{signInErrors[snapshot.backend_key]}</p>
+              {#if signInState.error}
+                <p class="error" role="alert">{signInState.error}</p>
               {/if}
             </div>
           {/if}

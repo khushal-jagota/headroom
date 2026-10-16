@@ -175,6 +175,10 @@ class _Session:
     inbox: asyncio.Queue[_FromTheChild] = field(default_factory=asyncio.Queue)
     completion: login_bindings.AccountLoginCompletedNotification | None = None
     child_ended: bool = False
+    # Set by the reaper before it settles. The wording used to infer this by comparing a
+    # clock against the deadline, which is a second source of truth for something one
+    # line already knows.
+    reaped: bool = False
     reaper: asyncio.Task[None] | None = None
     consumer: asyncio.Task[None] | None = None
 
@@ -256,14 +260,22 @@ class CodexSignInService:
             return await self._settle(session, success_was_reported=False)
 
     async def shutdown(self) -> None:
-        """Stop any child this process owns. Called when the server goes down."""
+        """Stop any child this process owns. Called when the server goes down.
+
+        A pending session is settled rather than abandoned. The process is going away
+        either way, but a sign-in that succeeded in the same moment the server stopped
+        still wrote a credential, and settling is what reads it instead of guessing.
+        """
         async with self._lock:
             session = self._session
             if session is None:
                 return
-            self._stop_reaper(session)
-            self._stop_consumer(session)
-            await self._stop_child(session)
+            if session.state.is_terminal:
+                self._stop_reaper(session)
+                self._stop_consumer(session)
+                await self._stop_child(session)
+                return
+            await self._settle(session, success_was_reported=False)
 
     # --- starting -----------------------------------------------------------------------
 
@@ -416,6 +428,7 @@ class CodexSignInService:
             session = self._current(sequence)
             if session is None or session.state.is_terminal:
                 return
+            session.reaped = True
             await self._ask_to_cancel(session)
             await self._settle(session, success_was_reported=False)
 
@@ -434,14 +447,21 @@ class CodexSignInService:
             LOGGER.info("codex sign-in: the cancel did not answer: %s", would_not_answer)
 
     async def _settle(self, session: _Session, *, success_was_reported: bool) -> CodexSignIn:
-        """Stop the child, then read the login, then say what the session was.
+        """Settle the child, take in what it already said, then read the login.
 
-        The reading is the last thing, after the child is gone, because a login being
-        written while it is read is the one way this could report a half-written file.
+        The order is the whole correctness of this function.
+
+        The child is stopped first, so nothing can still be writing the login file. Then
+        the inbox is drained, because a completion delivered while this caller held the
+        lock is sitting in a queue whose consumer has just been stopped — and dropping it
+        would throw away the one piece of evidence that a credential landed. A success that
+        arrives in the same instant as a cancel is the case that makes this necessary. The
+        reading is last, so what it reads is settled.
         """
         self._stop_reaper(session)
         self._stop_consumer(session)
         await self._stop_child(session)
+        self._take_in_what_was_already_delivered(session)
         reported_success = success_was_reported or bool(
             session.completion is not None and session.completion.success
         )
@@ -453,6 +473,41 @@ class CodexSignInService:
             session.detail = self._why_it_ended(session)
         session.account_label = reading.account_label
         return session.view()
+
+    def _take_in_what_was_already_delivered(self, session: _Session) -> None:
+        """Drain the inbox, keeping what this session owns.
+
+        The consumer is gone by now, so this is the last chance anything queued has to be
+        read. Correlation is unchanged: a completion carrying another session's login id is
+        dropped here exactly as the consumer would have dropped it.
+
+        A reported success outranks a reported failure among what is drained. Two
+        completions for one login id means the child said both, and a success is the one
+        that implies a credential may have been written — so it is the one that must not be
+        the dropped one.
+        """
+        while True:
+            try:
+                said = session.inbox.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            if said.child_ended:
+                session.child_ended = True
+                continue
+            completion = said.completion
+            if completion is None:  # pragma: no cover - one of the two is always set
+                continue
+            if completion.loginId is not None and completion.loginId != session.login_id:
+                LOGGER.warning(
+                    "codex sign-in: dropped a queued %s for a login id this session "
+                    "does not own",
+                    COMPLETED_NOTIFICATION,
+                )
+                continue
+            held = session.completion
+            if held is not None and held.success and not completion.success:
+                continue
+            session.completion = completion
 
     def _judge_a_reported_success(
         self, session: _Session, reading: StoredCodexLogin
@@ -488,16 +543,26 @@ class CodexSignInService:
                 "Codex reported a sign-in, but the credential now saved is one codex "
                 "already refused.",
             )
+        if reading.access_token_has_expired(now=self._now()):
+            # The identity card calls an expired access token ``unknown`` rather than
+            # signed in, because confirming it would mean spending a refresh nobody has
+            # tried. A sign-in must not claim more than the card will: a credential that
+            # arrives already expired is new, and still not shown to work.
+            return (
+                SignInState.unconfirmed,
+                "Codex reported a sign-in, but the credential now saved has already "
+                "expired, so Panels cannot confirm it works.",
+            )
         return (SignInState.confirmed, "Signed in.")
 
     def _why_it_ended(self, session: _Session) -> str:
         completion = session.completion
         if completion is not None and completion.error:
             return f"The sign-in ended: {completion.error}"
+        if session.reaped:
+            return "Panels stopped showing the code after its own time limit."
         if session.child_ended:
             return "The sign-in ended because codex stopped before it finished."
-        if self._now() >= session.deadline_at:
-            return "Panels stopped showing the code after its own time limit."
         return "The sign-in ended."
 
     # --- the small shared pieces --------------------------------------------------------

@@ -162,3 +162,36 @@ describe("signInOutcome", () => {
     ).toBe("Panels stopped showing the code after its own time limit.");
   });
 });
+
+describe("signInCaveat with turns in flight", () => {
+  it("warns an unauthenticated card when a turn is running against it", () => {
+    // The approved condition is a usable account OR turns in flight. A dead-looking
+    // account with a running turn still has a turn that may have to be retried.
+    const caveat = signInCaveat(snapshot(), { turnsInFlight: true });
+
+    expect(caveat).toContain("new credential");
+    expect(caveat).toContain("retried");
+  });
+
+  it("still says nothing for an unauthenticated card with nothing running", () => {
+    expect(signInCaveat(snapshot(), { turnsInFlight: false })).toBeNull();
+  });
+
+  it("warns a usable account whether or not a turn is running", () => {
+    const usable = snapshot({
+      identity: {
+        status: "authenticated",
+        account_label: "owner@example.com",
+        detail: null,
+        login_command: "codex login"
+      }
+    });
+
+    expect(signInCaveat(usable, { turnsInFlight: false })).not.toBeNull();
+    expect(signInCaveat(usable, { turnsInFlight: true })).not.toBeNull();
+  });
+
+  it("offers no caveat for a backend that cannot be signed in, running turn or not", () => {
+    expect(signInCaveat(snapshot({ backend_key: "claude" }), { turnsInFlight: true })).toBeNull();
+  });
+});

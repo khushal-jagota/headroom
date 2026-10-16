@@ -27,16 +27,40 @@ export function backendCanBeSignedIn(snapshot: BackendSnapshot): boolean {
   );
 }
 
+/** What else the page knows that bears on whether to warn. */
+export type SignInSurroundings = {
+  /**
+   * Whether a turn is running on this backend right now.
+   *
+   * This is an input rather than something read off the snapshot because the snapshot
+   * does not carry it. `is_running` is answered per conversation, and nothing enumerates
+   * a backend's conversations, so the Backends page cannot supply it today and passes
+   * false. The condition is implemented in full here regardless: narrowing the rule to
+   * what one caller can currently feed it would hide the gap rather than state it.
+   */
+  turnsInFlight: boolean;
+};
+
 /**
  * The caveat to show before a sign-in starts, or null when there is nothing to lose.
  *
+ * The rule is **a usable account, or turns in flight**. Either one means somebody has
+ * something a new credential could disturb.
+ *
  * An `authenticated` card is a login Panels believes works. An `unknown` one is a login
- * nobody has tested, which may well still work — so both get the caveat. Only an
- * `unauthenticated` card is known to be unusable, and that one gets none.
+ * nobody has tested, which may well still work — so both are usable for this purpose.
+ * An `unauthenticated` card is known to be unusable, so on its own it gets no caveat:
+ * there is nothing to lose, and a warning there would be noise in front of the one action
+ * that fixes it. But a turn running against even a dead-looking account is still a turn
+ * that may have to be retried, and that is worth saying.
  */
-export function signInCaveat(snapshot: BackendSnapshot): string | null {
+export function signInCaveat(
+  snapshot: BackendSnapshot,
+  surroundings: SignInSurroundings = { turnsInFlight: false }
+): string | null {
   if (!backendCanBeSignedIn(snapshot)) return null;
-  if (snapshot.identity?.status === "unauthenticated") return null;
+  const accountIsUsable = snapshot.identity?.status !== "unauthenticated";
+  if (!accountIsUsable && !surroundings.turnsInFlight) return null;
   return (
     "Signing in writes a new credential for this account. A turn already running may" +
     " have to be retried."

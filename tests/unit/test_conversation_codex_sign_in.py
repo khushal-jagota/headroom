@@ -20,6 +20,7 @@ import json
 import os
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,13 @@ def _claims(payload: dict[str, Any]) -> str:
     return f"eyJhbGciOiJub25lIn0.{encoded}.c2lnbmF0dXJl"
 
 
-def _write_login(home: Path, *, account_id: str = "account-1", last_refresh: str) -> None:
+def _write_login(
+    home: Path,
+    *,
+    account_id: str = "account-1",
+    last_refresh: str,
+    access_token_expires_at: int = 4102444800,
+) -> None:
     """A saved codex login, invented here. Nothing in it has ever been a real token."""
     home.mkdir(parents=True, exist_ok=True)
     (home / "auth.json").write_text(
@@ -62,7 +69,7 @@ def _write_login(home: Path, *, account_id: str = "account-1", last_refresh: str
             {
                 "tokens": {
                     "id_token": _claims({"email": "owner@example.invalid"}),
-                    "access_token": _claims({"exp": 4102444800}),
+                    "access_token": _claims({"exp": access_token_expires_at}),
                     "refresh_token": f"synthetic-refresh-{last_refresh}",
                     "account_id": account_id,
                 },
@@ -114,12 +121,14 @@ def _service(
     *,
     rejection: RememberedCodexLoginRejection | None = None,
     bounds: SignInBounds | None = None,
+    now: Callable[[], datetime] | None = None,
 ) -> CodexSignInService:
     return CodexSignInService(
         resolve_argv=resolve_argv,
         remembered_login_rejection=rejection,
         bounds=bounds or SignInBounds(child_startup_seconds=15.0, session_seconds=600.0),
         read_login=read_stored_codex_login,
+        now=now or (lambda: datetime(2026, 10, 16, tzinfo=UTC)),
     )
 
 
@@ -289,6 +298,87 @@ def test_a_confirmed_sign_in_never_clears_a_rejection_by_hand(tmp_path: Path) ->
         _run(exercise)
 
 
+def test_a_success_whose_new_credential_is_already_expired_is_unconfirmed(
+    tmp_path: Path,
+) -> None:
+    """A new credential that cannot be shown to work is not a sign-in.
+
+    The clock is held still, and the credential written by the browser step carries an
+    expiry in the past. It is genuinely a different generation, so the generation check
+    alone would call this signed in. The card would call the same login ``unknown``, and a
+    sign-in must not claim more than the card will.
+    """
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    frozen = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
+    script = {"complete_after_start_response": {"success": True}}
+    with _codex_home(home), _scripted_sign_in(tmp_path, script) as resolve_argv:
+        service = _service(resolve_argv, now=lambda: frozen)
+
+        async def exercise() -> None:
+            await service.start()
+            _write_login(home, last_refresh="after", access_token_expires_at=1)
+            await _until_terminal(service)
+            settled = service.read()
+            assert settled is not None
+            assert settled.state is SignInState.unconfirmed
+            assert settled.detail is not None
+            assert "already" in settled.detail
+            assert "expired" in settled.detail
+
+        _run(exercise)
+
+
+def test_the_sign_in_and_the_identity_card_agree_about_an_expired_credential(
+    tmp_path: Path,
+) -> None:
+    """Two readers of one file, and neither is allowed to say signed in.
+
+    The sign-in refuses to confirm a credential that arrives already expired. The card
+    reads the same file and answers ``unknown`` with its own reason. Both are asserted
+    here because the defect this covers was the sign-in claiming more than the card will.
+    """
+    from planner.conversation.snapshot import (
+        BackendIdentityStatus,
+        CodexLoginStanding,
+        CommandOutcome,
+        _IdentityRequest,
+        _read_codex_identity,
+    )
+
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    frozen = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
+    script = {"complete_after_start_response": {"success": True}}
+    with _codex_home(home), _scripted_sign_in(tmp_path, script) as resolve_argv:
+        service = _service(resolve_argv, now=lambda: frozen)
+
+        async def exercise() -> None:
+            await service.start()
+            _write_login(home, last_refresh="after", access_token_expires_at=1)
+            await _until_terminal(service)
+
+        _run(exercise)
+
+    settled = service.read()
+    assert settled is not None
+    card = _read_codex_identity(
+        _IdentityRequest(
+            outcome=CommandOutcome(
+                exit_code=0, standard_output="Logged in using ChatGPT", standard_error=""
+            ),
+            codex_login=CodexLoginStanding(
+                stored=read_stored_codex_login(home), rejected=False
+            ),
+            now=frozen,
+        )
+    )
+
+    # The same file, read two ways, and the two readings agree.
+    assert settled.state is SignInState.unconfirmed
+    assert card.status is BackendIdentityStatus.unknown
+
+
 # --- ordering -----------------------------------------------------------------------------
 
 
@@ -334,10 +424,15 @@ def test_a_cancel_that_wins_the_race_still_reads_the_login(tmp_path: Path) -> No
         _run(exercise)
 
 
-def test_a_completion_after_a_cancel_does_not_rewrite_the_terminal_state(
-    tmp_path: Path,
-) -> None:
-    """A late success is still read, and still does not resurrect a session that ended."""
+def test_a_success_delivered_while_a_cancel_is_settling_is_not_lost(tmp_path: Path) -> None:
+    """The defect this test used to accept.
+
+    The child answers the cancel and then reports success, so the completion is delivered
+    while ``cancel`` owns the service lock and the consumer that would have read it has
+    just been stopped. An earlier version dropped it and reported ``ended``, throwing away
+    the one piece of evidence that a credential had been written. The credential is real
+    here — a new generation is on disk — so the honest answer is ``confirmed``.
+    """
     home = tmp_path / "home"
     _write_login(home, last_refresh="before")
     script = {"complete_after_cancel": {"success": True}}
@@ -346,12 +441,60 @@ def test_a_completion_after_a_cancel_does_not_rewrite_the_terminal_state(
 
         async def exercise() -> None:
             started = await service.start()
+            # The browser step landed in the same instant as the cancel.
+            _write_login(home, last_refresh="after")
             settled = await service.cancel(started.session_id)
+            if settled.state is SignInState.ended:
+                # The completion may still be in flight when cancel returns. It must
+                # arrive, and it must be taken in.
+                await asyncio.sleep(0.6)
+                settled = service.read() or settled
+            assert settled.state is SignInState.confirmed
+            assert settled.account_label == "owner@example.invalid"
+
+        _run(exercise)
+
+
+def test_a_success_delivered_while_the_server_shuts_down_is_not_lost(tmp_path: Path) -> None:
+    """Shutdown settles rather than abandons, for the same reason cancel does."""
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    script = {"complete_after_start_response": {"success": True}}
+    with _codex_home(home), _scripted_sign_in(tmp_path, script) as resolve_argv:
+        service = _service(resolve_argv)
+
+        async def exercise() -> None:
+            await service.start()
+            _write_login(home, last_refresh="after")
+            await service.shutdown()
+            settled = service.read()
+            assert settled is not None
+            assert settled.state is SignInState.confirmed
+
+        _run(exercise)
+
+
+def test_a_queued_completion_for_another_session_is_still_dropped(tmp_path: Path) -> None:
+    """Draining the inbox does not weaken correlation.
+
+    The child reports success under a login id this session does not own, delivered in the
+    same window the drain covers. It must be dropped exactly as the consumer would drop
+    it, so a foreign completion cannot confirm somebody else's sign-in.
+    """
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    script = {"complete_after_cancel": {"success": True, "login_id": "some-other-login"}}
+    with _codex_home(home), _scripted_sign_in(tmp_path, script) as resolve_argv:
+        service = _service(resolve_argv)
+
+        async def exercise() -> None:
+            started = await service.start()
+            _write_login(home, last_refresh="after")
+            await service.cancel(started.session_id)
+            await asyncio.sleep(0.6)
+            settled = service.read()
+            assert settled is not None
             assert settled.state is SignInState.ended
-            await asyncio.sleep(0.4)
-            after = service.read()
-            assert after is not None
-            assert after.state is SignInState.ended
 
         _run(exercise)
 

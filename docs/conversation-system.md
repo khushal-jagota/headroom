@@ -667,8 +667,21 @@ Panels does not claim anything about it.
 
 **What it warns you about, and when.** An account that still works, or one with turns in
 flight, is told before the sign-in starts that it writes a new credential and that a
-running turn may have to be retried. An account that already cannot authenticate has
-nothing to lose and gets no caveat.
+running turn may have to be retried. An account that already cannot authenticate, with
+nothing running against it, has nothing to lose and gets no caveat.
+
+The turns-in-flight half of that rule is implemented but not yet fed by this page. Whether
+a turn is running is answered per conversation, and nothing lists a backend's
+conversations, so the Backends page passes "nothing running" today. The caveat therefore
+appears for a usable account and not yet for a dead account with a live turn. Closing that
+gap means a way to ask whether any conversation on a backend is running.
+
+**Opening the page finds what is already there.** Nothing about a sign-in is persisted, so
+a page that has just opened or reconnected asks whether one is running and shows the same
+URL and code if so. Leaving the page stops the asking and nothing else — closing a screen
+never cancels a sign-in, because the point of a device code is finishing it elsewhere. If
+the server no longer has a sign-in the page was watching, the page says it ended rather
+than keeping a code nobody will honour on screen.
 
 **Nothing is inferred.** A cancel answering `canceled`, a cancel answering `notFound`, a
 deadline passing and the child exiting all say what Panels did. None of them is evidence
@@ -677,11 +690,20 @@ So every way a sign-in can end does the same three things: settle the child, tak
 completion that already arrived, then re-read the saved login last.
 
 **Success is a completion and a reading that agrees.** Codex reporting success is not
-enough. The saved login must then be readable and hold a credential generation different
-from the one the sign-in started on, with no remembered rejection against it. When those
-disagree the card says **unconfirmed** — not signed in, and not failed. No rejection is
+enough. The saved login must then be readable, hold a credential generation different from
+the one the sign-in started on, carry no remembered rejection, and have an access token
+that has not already expired. That last condition is what keeps the sign-in and the
+identity card saying the same thing: the card calls an expired token `unknown` rather than
+signed in, and a sign-in must not claim more than the card will. When any of them
+disagrees the card says **unconfirmed** — not signed in, and not failed. No rejection is
 ever cleared by hand: a rejection is scoped to its generation and lapses on its own, so
 clearing one would be Panels asserting the thing it just failed to confirm.
+
+A completion can arrive in the same instant as a cancel, delivered while the cancel is
+already settling. So settling drains what the child has already said before it reads the
+login: the child is stopped, anything queued for this sign-in is taken in, and only then
+is the credential read. A success that landed during a cancel, or during shutdown, is
+reported as the sign-in it was rather than lost.
 
 **One sign-in at a time, and nothing kept.** There is at most one pending sign-in per
 backend. Pressing Sign in twice hands back the one already running rather than minting a
