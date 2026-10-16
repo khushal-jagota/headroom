@@ -293,7 +293,8 @@
                 value={item.body}
                 markdown
                 multiline
-                placeholder="Write the shared brief for this outcome…"
+                ariaLabel="Orchestrator recap"
+                placeholder="Write a concise recap for this orchestrator…"
                 onSave={(value) => saveItem("body", value)}
               />
             </ClampedText>

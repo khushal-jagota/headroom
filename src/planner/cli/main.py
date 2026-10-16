@@ -20,6 +20,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import click
 
@@ -2180,17 +2181,56 @@ def sprint_item_artifact() -> None:
 @json_option
 def sprint_item_artifact_list(item_id: str, as_json: bool) -> None:
     data = http.send("GET", f"/api/items/{item_id}/workspace", as_json=as_json)
-    prefix = f"{_ARTIFACTS_DIRECTORY}/"
-    artifacts = sorted(
-        str(entry["path"])[len(prefix) :]
-        for entry in data["artifacts"]
-        if str(entry["path"]).startswith(prefix)
-    )
+    artifacts = sorted(_artifact_openable_paths(data["artifacts"]))
     http.emit(
         {"sprint_item_id": item_id, "artifacts": artifacts},
         as_json,
         _lines(artifacts, str),
     )
+
+
+def _artifact_openable_paths(entries: list[dict[str, Any]]) -> list[str]:
+    """Flatten the workspace's folded entries, which omit an index's supporting files."""
+    prefix = f"{_ARTIFACTS_DIRECTORY}/"
+    paths = []
+    for entry in entries:
+        opens = entry["opens"]
+        if isinstance(opens, str) and opens.startswith(prefix):
+            paths.append(opens[len(prefix) :])
+        paths.extend(_artifact_openable_paths(entry["children"]))
+    return paths
+
+
+def _artifact_url(item_id: str, artifact_path: str) -> str:
+    return f"/files/sprint-items/{item_id}/{_ARTIFACTS_DIRECTORY}/{quote(artifact_path, safe='/')}"
+
+
+@sprint_item_artifact.command("read")
+@click.argument("item_id")
+@click.argument("artifact_path")
+@json_option
+def sprint_item_artifact_read(item_id: str, artifact_path: str, as_json: bool) -> None:
+    content = http.send_text(
+        "GET",
+        _artifact_url(item_id, artifact_path),
+        as_json=as_json,
+    )
+    if as_json:
+        http.emit(
+            {"sprint_item_id": item_id, "path": artifact_path, "content": content},
+            as_json,
+            content,
+        )
+    sys.stdout.write(content)
+
+
+def _read_artifact_source(spec: str, as_json: bool) -> str:
+    """Keep the note's exact text, including CRLF and its final newline, if any."""
+    try:
+        raw = sys.stdin.buffer.read() if spec == "-" else Path(spec).read_bytes()
+        return raw.decode("utf-8")
+    except (OSError, UnicodeError):
+        http.fail_validation(f"cannot read UTF-8 body file: {spec}", as_json)
 
 
 @sprint_item_artifact.command("write")
@@ -2203,9 +2243,9 @@ def sprint_item_artifact_write(
 ) -> None:
     data = http.send(
         "PUT",
-        f"/files/sprint-items/{item_id}/{_ARTIFACTS_DIRECTORY}/{artifact_path}",
+        _artifact_url(item_id, artifact_path),
         as_json=as_json,
-        json_body={"content": _read_source(body_file, as_json)},
+        json_body={"content": _read_artifact_source(body_file, as_json)},
     )
     http.emit(data, as_json, data["url"])
 
@@ -2217,7 +2257,7 @@ def sprint_item_artifact_write(
 def sprint_item_artifact_delete(item_id: str, artifact_path: str, as_json: bool) -> None:
     data = http.send(
         "DELETE",
-        f"/files/sprint-items/{item_id}/{_ARTIFACTS_DIRECTORY}/{artifact_path}",
+        _artifact_url(item_id, artifact_path),
         as_json=as_json,
     )
     http.emit(data, as_json, f"{artifact_path} deleted")
@@ -2589,7 +2629,10 @@ _PUBLIC_COMMAND_HELP = {
         "item",
         "workspace",
     ): "Read one Sprint Item, its artifacts, and child Tickets.",
-    ("sprint", "item", "artifact", "list"): "List one Sprint Item's artifacts.",
+    ("sprint", "item", "artifact", "list"): (
+        "List openable artifact paths from the workspace. Index folders hide supporting files."
+    ),
+    ("sprint", "item", "artifact", "read"): "Read one Sprint Item artifact as exact text.",
     ("sprint", "item", "artifact", "write"): "Write one Sprint Item artifact.",
     ("sprint", "item", "artifact", "delete"): "Delete one Sprint Item artifact.",
 }
