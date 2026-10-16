@@ -148,10 +148,10 @@ TICKET = {
   "id": "review-voice", "title": "Review voice", "worker_type": "coding",
   "employee_backend": "codex", "employee_launch_model": None,
   "employee_launch_reasoning_effort": None, "employee_configuration_editable": True,
-  "stage": "needs_implementation", "ceiling": "done",
+  "stage": "needs_implementation", "ceiling": "done", "ceiling_holder": {"kind": "owner", "id": "owner"},
   "priority": "P2",
   "resolved_priority_anchors": {"sprint_item": None, "project": None},
-  "ticket_status": "awaiting_approval", "conversation_id": None,
+  "ticket_status": "awaiting_approval", "conversation_id": "worker-session",
   "conversation_history": [],
   "guidance": "", "field_values": {},
   "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1}
@@ -204,8 +204,9 @@ with sync_playwright() as playwright:
     assert page.locator("[data-voice-record]").count() == 0
     page.close()
 
-    # Proposal revision voice is available on desktop without a conversation link.
+    # Proposal revision voice is available inside the shared Send it back action.
     page = open_page("?supported=1&mode=review")
+    page.locator("[data-send-back]").click()
     page.locator("[data-review-revision-input]").wait_for(state="visible")
     assert page.locator("[data-review-revision] [data-voice-record]").is_visible()
     page.locator("[data-review-revision] [data-voice-record]").click()
