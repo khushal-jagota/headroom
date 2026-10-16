@@ -33,6 +33,7 @@ from planner.conversation.backends.codex_app_server.auth_failure import (
     read_a_failed_turn,
 )
 from planner.conversation.backends.codex_app_server.client import (
+    CodexChildWouldNotStart,
     CodexLoginIsDuplicated,
     child_environment,
 )
@@ -601,3 +602,22 @@ def test_a_turn_that_works_on_a_new_credential_does_not_vouch_for_the_old_one(
     assert not remembered.applies_to(
         CodexLoginGeneration(account_id=ACCOUNT_ID, last_refresh="2026-10-17T09:00:00Z")
     )
+
+
+def test_a_refused_duplicate_is_reported_as_a_child_that_would_not_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A misconfiguration must reach the person as a failed start, not as a crash.
+
+    Every caller of this door already has words for a child that would not spawn. A
+    refusal that sat outside that family would escape them all and surface as an
+    unhandled error, which is the opposite of the point of this ticket.
+    """
+    fake_user_home = tmp_path / "user"
+    _write_login(fake_user_home / ".codex", refresh_token="the-one-token")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_user_home))
+    copied = tmp_path / "scratch"
+    _write_login(copied, refresh_token="the-one-token")
+
+    with pytest.raises(CodexChildWouldNotStart):
+        child_environment(overrides=(("CODEX_HOME", str(copied)),))

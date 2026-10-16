@@ -121,8 +121,12 @@ class CodexRequestRejected(CodexAppServerError):
         self.data = data
 
 
-class CodexLoginIsDuplicated(CodexAppServerError):
-    """A codex child was about to run on a copy of the live login, and will not."""
+class CodexLoginIsDuplicated(CodexChildWouldNotStart):
+    """A codex child was about to run on a copy of the live login, and will not.
+
+    A reason the child would not start, so every caller that already reports a failed
+    spawn reports this one too, in its own words rather than as an unhandled error.
+    """
 
 
 class CodexServerMessageHandler(Protocol):
