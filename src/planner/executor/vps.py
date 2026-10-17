@@ -41,6 +41,7 @@ from planner.executor.contracts import (
     ExecutorHealth,
     ExecutorIdentity,
     FileChunk,
+    FileChunkAcknowledgment,
     FileManifest,
     FilePublicationRequest,
     FileScope,
@@ -55,7 +56,13 @@ from planner.executor.contracts import (
 from planner.executor.mutations import write_ticket_mutation
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
 from planner.executor.store import ExecutorStore
-from planner.executor.wire import parse_identity, read_frame, write_frame
+from planner.executor.wire import (
+    FileChunkAcknowledgmentRefused,
+    parse_identity,
+    read_frame,
+    validate_file_chunk_ack,
+    write_frame,
+)
 
 
 def now_ms() -> int:
@@ -224,9 +231,8 @@ class ExecutorEndpoint:
                             "ascii"
                         ),
                     )
-                    await self._send(
-                        WireMessage(WireMessageKind.file_chunk, str(uuid4()), _object(chunk))
-                    )
+                    response = await self._request(WireMessageKind.file_chunk, _object(chunk))
+                    validate_file_chunk_ack(response, chunk)
                 response = await self._request(WireMessageKind.file_complete, _object(manifest))
                 if response.kind is not WireMessageKind.file_accepted:
                     raise ValueError("Mac did not confirm complete input bytes")
@@ -242,10 +248,19 @@ class ExecutorEndpoint:
         try:
             if self.ready and self.writer is not None:
                 try:
-                    await self._transfer_command_inputs(command)
-                    await self._send(
-                        WireMessage(WireMessageKind.command, command.command_id, _object(command))
-                    )
+                    try:
+                        await self._transfer_command_inputs(command)
+                    except FileChunkAcknowledgmentRefused:
+                        # Keep the original waiting caller and stable command. A
+                        # new connection retries its inputs before native dispatch.
+                        if self.writer is not None:
+                            self.writer.close()
+                    else:
+                        await self._send(
+                            WireMessage(
+                                WireMessageKind.command, command.command_id, _object(command)
+                            )
+                        )
                 except (OSError, ConnectionError):
                     pass  # The exact command remains pending across a link loss.
             return await asyncio.shield(future)
@@ -862,7 +877,12 @@ class ExecutorEndpoint:
                 raise ValueError("file chunk has no authorized assignment")
             self._assignment(self._file_assignments[chunk.publication_id])
             self.file_receiver.write_chunk(chunk, identity=identity)
-            return {}, WireMessageKind.file_chunk
+            acknowledgment = FileChunkAcknowledgment(
+                chunk.publication_id,
+                chunk.offset,
+                len(base64.b64decode(chunk.content_base64, validate=True)),
+            )
+            return _object(acknowledgment), WireMessageKind.file_chunk_ack
         publication = TypeAdapter(FilePublicationRequest).validate_python(message.payload)
         self._authorize_file(publication)
         manifest = publication.manifest

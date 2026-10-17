@@ -23,7 +23,7 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 2. Earlier peers refuse work before replay. The
+The wire protocol is version 3. Earlier peers refuse work before replay. The
 journal format remains version 1 because its stored envelopes retain the same
 interpretation. Wire compatibility and journal compatibility are separate checks.
 
@@ -61,6 +61,15 @@ captures immutable bytes. The receiver checks the assigned child, owner, path,
 length, and digest, then publishes a complete file from quarantine. A dependent
 row cannot commit first. A replay of an old publication cannot overwrite a newer
 file at the same URL.
+
+Both transfer directions use a distinct typed chunk acknowledgment. The sender
+checks its publication identity, offset, and byte count before the next chunk.
+An empty, malformed, or mismatched acknowledgment stops the transfer. A chunk
+acknowledgment confirms the chunk write only. Full length and digest checks and
+complete publication acceptance still precede any dependent row or child command.
+An invalid input acknowledgment closes the link and retains the original command
+and caller for reconnect. It does not report failure and later dispatch abandoned
+work.
 
 Files and database rows have different commit boundaries. Complete orphan bytes
 after a crash can finish their original publication. Partial bytes stay outside

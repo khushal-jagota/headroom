@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import logging
 import os
@@ -38,6 +39,7 @@ from planner.executor.contracts import (
     ExecutorHealth,
     ExecutorIdentity,
     FileChunk,
+    FileChunkAcknowledgment,
     FileManifest,
     FileSnapshot,
     IpcOperation,
@@ -64,6 +66,7 @@ from planner.executor.wire import (
     parse_identity,
     read_frame,
     read_typed_frame,
+    validate_file_chunk_ack,
 )
 
 
@@ -191,6 +194,7 @@ class MacExecutor:
             if not self._handshake_accepted and message.kind in (
                 WireMessageKind.file_manifest,
                 WireMessageKind.file_chunk,
+                WireMessageKind.file_chunk_ack,
                 WireMessageKind.file_complete,
                 WireMessageKind.command,
                 WireMessageKind.command_outcome_ack,
@@ -200,7 +204,20 @@ class MacExecutor:
                 self.inputs.begin(TypeAdapter(FileManifest).validate_python(message.payload))
                 await self._send(WireMessage(WireMessageKind.file_manifest, message.request_id, {}))
             elif message.kind == WireMessageKind.file_chunk:
-                self.inputs.chunk(TypeAdapter(FileChunk).validate_python(message.payload))
+                chunk = TypeAdapter(FileChunk).validate_python(message.payload)
+                self.inputs.chunk(chunk)
+                acknowledgment = FileChunkAcknowledgment(
+                    chunk.publication_id,
+                    chunk.offset,
+                    len(base64.b64decode(chunk.content_base64, validate=True)),
+                )
+                await self._send(
+                    WireMessage(
+                        WireMessageKind.file_chunk_ack,
+                        message.request_id,
+                        as_object(acknowledgment),
+                    )
+                )
             elif message.kind == WireMessageKind.file_complete:
                 manifest = TypeAdapter(FileManifest).validate_python(message.payload)
                 self.inputs.complete(manifest)
@@ -271,13 +288,8 @@ class MacExecutor:
             response = await self._request(WireMessageKind.file_manifest, publication)
             if response.kind != WireMessageKind.file_accepted:
                 for chunk in file_chunks(snapshot):
-                    await self._send(
-                        WireMessage(
-                            WireMessageKind.file_chunk,
-                            snapshot.manifest.publication_id,
-                            as_object(chunk),
-                        )
-                    )
+                    response = await self._request(WireMessageKind.file_chunk, as_object(chunk))
+                    validate_file_chunk_ack(response, chunk)
                 await self._request(WireMessageKind.file_complete, publication)
         response = await self._request(WireMessageKind.envelope, as_object(envelope))
         receipt = TypeAdapter(AcceptanceReceipt).validate_python(response.payload)
