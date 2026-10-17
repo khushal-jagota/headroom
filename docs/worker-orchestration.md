@@ -124,14 +124,36 @@ one that fills its context. Either way the conversation the worker was reading g
 shorter and nothing in it says so. The conversation record keeps the boundary, so Panels
 is the only side that can report it.
 
-A boundary counts as answered once Panels has sent a worker-step message after it. That
-is how the same boundary is never reported twice, and it needs no second record of its
-own. The boundary is read at two moments:
+A later recorded worker-step prompt or memory notice prompt answers the boundary.
+An authorization reservation alone does not answer it. Panels checks the boundary at two moments:
 
 - A step falls due. The wake leads with the notice, and the Stage instruction follows.
 - A step is already in flight — the Ticket's worker-step claim is out. The notice is sent
   straight away, because a worker part-way through a step is not waiting for a wake, and
   most compactions are never followed by another one.
+
+Before an automatic mid-step notice, Panels commits one reservation for the Worker,
+conversation, and original compaction event. Only the reservation winner can send.
+Acquisition or commit failure sends nothing. Later polls cannot reuse that permission,
+even after refusal, uncertainty, cancellation, a crash, or queue loss. Removal or promotion
+of a held message does not restore permission. A distinct event retains separate eligibility.
+
+This policy accepts a missed notice in exchange for no automatic duplicate attempt.
+A reservation proves consumed permission only. Actual attempts, admission, receipts,
+and answered boundaries remain separate facts. An uncertain result proves neither delivery
+nor a running turn. The current fresh queue path cannot return ordinary uncertainty.
+
+At cutover, existing unresolved boundaries receive durable holds before automatic
+processing starts. Missing event history requires a conversation hold, which also blocks
+later events. Holds invent no historical attempt or delivery and do not expire automatically.
+
+The optional Ticket inspection part reports reservations, holds, original conversations,
+and available evidence references. It excludes prompt text and inferred delivery facts.
+Inspection changes nothing. An acknowledgment records review only. Neither permits a
+retry or releases consumed permission. Explicit recovery requires separate supervisor or
+owner authorization and a separate message identity. It preserves the original reservation
+and uncertainty. Unknown admission does not establish safe redelivery. There is no new
+recovery interface or automatic retry queue.
 
 _Code path:_ `src/planner/runtime/worker_memory.py`.
 

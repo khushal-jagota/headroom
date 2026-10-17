@@ -25,7 +25,8 @@ REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger a current build holds: the baseline plus what the
 # revisions after it add.
-CURRENT_SCHEMA_OBJECT_COUNT = 63
+# Existing 63 objects plus four memory notice objects and ten executor objects.
+CURRENT_SCHEMA_OBJECT_COUNT = 77
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -81,20 +82,8 @@ def _revision(conn: sqlite3.Connection) -> str:
 
 def _head_revision() -> str:
     """The revision this build finishes at, which moves as revisions are added."""
-    versions = db_module.MIGRATIONS_DIRECTORY / "versions"
-    down_revisions = {
-        line.split("=", 1)[1].strip().strip("\"'")
-        for path in versions.glob("*.py")
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.startswith("down_revision = ")
-    }
-    heads = {
-        line.split("=", 1)[1].strip().strip("\"'")
-        for path in versions.glob("*.py")
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.startswith("revision = ")
-    } - down_revisions
-    (head,) = heads
+    head = ScriptDirectory(str(db_module.MIGRATIONS_DIRECTORY)).get_current_head()
+    assert head is not None
     return head
 
 

@@ -146,6 +146,11 @@ class _World:
                 ),
             )
 
+            conn.execute(
+                "INSERT INTO conversation_events VALUES (?, ?, 'context_compacted', '{}', 0)",
+                (conversation_id, compacted_through + 1),
+            )
+
     def remove_from_today(self, ticket_id: str) -> None:
         with self.connect() as conn:
             conn.execute(
@@ -969,7 +974,7 @@ def test_a_notice_still_queued_behind_a_busy_worker_is_not_sent_again(world: _Wo
     try:
         assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
         assert _waited_for(lambda: len(world.held_prompts("conv-busy")) == 1)
-        assert readiness_loop.tell_every_worker_that_lost_its_memory() == [ticket_id]
+        assert readiness_loop.tell_every_worker_that_lost_its_memory() == []
         # The second pass finds its own notice waiting and sends nothing.
         sleep(0.2)
     finally:

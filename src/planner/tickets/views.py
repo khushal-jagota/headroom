@@ -17,7 +17,7 @@ from planner.files.logic.listing import entries_as_json, fold_directory
 from planner.files.logic.paths import ticket_files_root
 from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
-from planner.runtime import conversation_start
+from planner.runtime import conversation_start, worker_memory
 from planner.sprints import data as sprints_data
 from planner.sprints import views as sprints_views
 from planner.tickets import data as tickets_data
@@ -399,6 +399,9 @@ def _ticket_detail_rows(conn: sqlite3.Connection, ticket: Ticket, now: int) -> J
             "blocked": blocker_summary.blocked,
             "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(ticket),
+            "memory_notice_inspection": worker_memory.inspect_memory_notices(
+                conn, ticket_id
+            ).model_dump(mode="json"),
             "conversation_history": [
                 {
                     "conversation_id": str(row["conversation_id"]),
