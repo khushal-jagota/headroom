@@ -2,6 +2,8 @@
 
 The material risk is that commit invalidation precedes settled runtime state,
 or a consumer substitutes approval/child facts for its own conversation.
+The owner requires one visible indicator: message takes precedence over work;
+a read must reveal the spinner while the same actual work continues.
 Neither a component test nor an API-only test exercises that complete boundary.
 """
 from __future__ import annotations
@@ -24,7 +26,7 @@ from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerH
 from planner.core.db import connect
 from planner.worker_types.configuration import load_worker_runtime_definitions
 
-EVIDENCE = REPO_ROOT / "data/verification/conversation-signals/final-40bfb962"
+EVIDENCE = REPO_ROOT / "data/verification/conversation-signals/message-precedence-revision"
 
 
 @pytest.fixture
@@ -94,7 +96,8 @@ def _post(server: ServerHandle, path: str, body: dict[str, object] | None = None
 
 
 def _marks(root: Locator, working: bool, message: bool) -> None:
-    for kind, present in (("working", working), ("message", message)):
+    # Arguments are independent backend facts; presentation has one winner.
+    for kind, present in (("working", working and not message), ("message", message)):
         expect(root.locator(f'[data-conversation-signal="{kind}"]')).to_have_count(
             int(present), timeout=WAIT_MS,
         )
@@ -256,6 +259,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
             "through_sequence": view["latest_sequence"],
         })
         _marks(row, True, False)
+        _capture(page, row, conversation, "row", "read-reveals-working", inventory, evidence)
         _post(server, f"/api/test/signals/{conversation}/finish")
         _marks(row, False, False)
         # A popup reads the same exact conversation without marking it read.
@@ -295,7 +299,18 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
         _marks(popup_signal, True, True)
         page.screenshot(path=str(evidence / f"{conversation}-popup.png"), full_page=True)
-        # Hold the real acknowledgement briefly to observe simultaneous page marks;
+        # Reading reveals work in this same continuously open popup; it cannot
+        # require another hover or a fresh identity lookup from navigation.
+        popup_working_view = api.get(server, f"/api/conversation/conversations/{conversation}")
+        assert popup_working_view["is_running"] is True
+        _post(server, f"/api/conversation/conversations/{conversation}/owner-read", {
+            "through_sequence": popup_working_view["latest_sequence"],
+        })
+        _marks(popup_signal, True, False)
+        _capture(page, popup, conversation, "popup", "read-reveals-working", inventory, evidence)
+        _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
+        _marks(popup_signal, True, True)
+        # Hold the real acknowledgement briefly to observe message precedence;
         # then forward that exact browser request to the real owner-read endpoint.
         pending_reads: list[Route] = []
 
@@ -315,7 +330,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         _capture(page, pane, conversation, "page-mark-area", "working-message", inventory, evidence)
         page.screenshot(path=str(evidence / f"{conversation}-page.png"), full_page=True)
         # The read request is still held: ending work must preserve the message dot
-        # on the mounted page, and starting real work restores only the spinner.
+        # on the mounted page. Starting work keeps that dot until read.
         _post(server, f"/api/test/signals/{conversation}/finish")
         _marks(pane_signal, False, True)
         _capture(page, pane, conversation, "page-mark-area", "message-only", inventory, evidence)
@@ -344,6 +359,8 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         page.unroute(read_pattern, defer_read)
         _marks(pane_signal, True, False)
         _capture(page, pane, conversation, "page-mark-area", "working-only", inventory, evidence)
+        _capture(page, pane, conversation, "page-mark-area", "read-reveals-working",
+                 inventory, evidence)
         _marks(row, True, False)
         _post(server, f"/api/test/signals/{conversation}/finish")
         _marks(pane_signal, False, False)
@@ -410,10 +427,15 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
             for suffix in ("working-message", "popup", "page")
         ],
         "coverage": {
-            "rows": ["quiet", "working-only", "message-only", "working-message"],
-            "popup": ["working-message", "message-only", "quiet", "working-only"],
-            "page": ["working-message", "message-only", "working-only", "quiet"],
+            "rows": ["quiet", "working-only", "message-only", "working-message",
+                     "read-reveals-working"],
+            "popup": ["working-message", "message-only", "quiet", "working-only",
+                      "read-reveals-working"],
+            "page": ["working-message", "message-only", "working-only", "quiet",
+                     "read-reveals-working"],
         },
+        "presentation": "Message is the sole visible mark when both backend facts are true.",
+        "read_transition": "Each role and surface reveals working after read, before turn end.",
         "popup_freshness": "One continuously open popup per role; no hover re-entry.",
         "limits": "Scripted backend wire; no production provider call or deployment proof.",
     }, indent=2))
@@ -422,7 +444,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
 
 
 @pytest.mark.parametrize("layout", ["desktop", "compact"])
-def test_unobscured_simultaneous_page_marks(
+def test_unobscured_message_precedence_pages(
     signal_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -488,7 +510,8 @@ def test_unobscured_simultaneous_page_marks(
         _marks(signal, True, True)
         page.mouse.move(1400 if layout == "desktop" else 540, 350)
         expect(page.locator('[data-rail-hover-panel][aria-hidden="false"]')).to_have_count(0)
-        _capture(page, pane, conversation, "page-mark-area", "unobscured-both", inventory, evidence)
+        _capture(page, pane, conversation, "page-mark-area", "unobscured-message-precedence",
+                 inventory, evidence)
         page.screenshot(path=str(evidence / f"{conversation}-unobscured-page.png"), full_page=True)
         _post(server, f"/api/test/signals/{conversation}/finish")
     for read_route in list(reads):
@@ -496,7 +519,7 @@ def test_unobscured_simultaneous_page_marks(
     page.unroute(pattern, hold_read)
     (evidence / "supplemental-inventory.json").write_text(json.dumps({
         "captures": inventory, "layout": layout,
-        "purpose": "Unobscured simultaneous page marks; supplemental to transition matrix.",
+        "purpose": "Unobscured message precedence during work; supplements transition matrix.",
         "backend": "Controlled adapter over real conversation core; no provider execution.",
     }, indent=2))
     (server.db_path.parent / "complete.json").write_text(json.dumps({"layout": layout}))
