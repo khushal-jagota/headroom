@@ -41,6 +41,33 @@ class BackgroundLoops:
         self._stop_waking_on_change = stop_waking_on_change
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._stopped = False
+        self._started = False
+
+    def start(self, tick_seconds: int) -> None:
+        """Admit polling only after publication startup has committed its epoch."""
+        if self._started or self._stopped:
+            raise RuntimeError("background loops cannot start twice or after stop")
+        self._started = True
+        for loop in (
+            self.scheduled_ticket_loop,
+            self.worker_step_readiness_loop,
+            self.notification_loop,
+            self.manager_wake_loop,
+        ):
+            if loop is not None:
+                loop.start(tick_seconds)
+
+        def wake_reconcilers() -> None:
+            for loop in (
+                self.worker_step_readiness_loop,
+                self.notification_loop,
+                self.manager_wake_loop,
+            ):
+                if loop is not None:
+                    loop.wake()
+
+        if self._lock_path is not None:
+            self._stop_waking_on_change = change_signal.subscribe(wake_reconcilers)
 
     async def stop(self, *, deadline: float | None = None) -> None:
         """Stop listening, stop polling, let the steps in flight land, release the lock.
@@ -86,7 +113,7 @@ class BackgroundLoops:
 _active: BackgroundLoops | None = None
 
 
-def start_background_loops(
+def prepare_background_loops(
     config: Config,
     clock: Clock,
     *,
@@ -112,13 +139,9 @@ def start_background_loops(
     stop_waking_on_change: Callable[[], None] | None = None
 
     if not config.dispatch_enabled:
-        _LOGGER.info(
-            "Background scheduling and dispatch disabled (dispatch_enabled=false)"
-        )
+        _LOGGER.info("Background scheduling and dispatch disabled (dispatch_enabled=false)")
     elif not ensure_machine_lock(config.dispatcher_lock_path):
-        _LOGGER.info(
-            "Background loops not started: another process holds the polling lock"
-        )
+        _LOGGER.info("Background loops not started: another process holds the polling lock")
     else:
         candidate_loop: WorkerStepReadinessLoop | None = None
         candidate_schedule_loop: ScheduledTicketLoop | None = None
@@ -153,17 +176,6 @@ def start_background_loops(
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
             candidate_notification_loop.reconcile_imported_state()
-            candidate_schedule_loop.start(config.tick_seconds)
-            candidate_loop.start(config.tick_seconds)
-            candidate_notification_loop.start(config.tick_seconds)
-            candidate_manager_wake_loop.start(config.tick_seconds)
-
-            def wake_reconcilers() -> None:
-                candidate_loop.wake()
-                candidate_notification_loop.wake()
-                candidate_manager_wake_loop.wake()
-
-            candidate_unsubscribe = change_signal.subscribe(wake_reconcilers)
         except Exception:
             _LOGGER.exception("Background loops failed to start")
             if candidate_unsubscribe is not None:
@@ -172,31 +184,24 @@ def start_background_loops(
                 try:
                     candidate_loop.stop()
                 except Exception:
-                    _LOGGER.exception(
-                        "partially started worker-step readiness loop failed to stop"
-                    )
+                    _LOGGER.exception("partially started worker-step readiness loop failed to stop")
             if candidate_schedule_loop is not None:
                 try:
                     candidate_schedule_loop.stop()
                 except Exception:
-                    _LOGGER.exception(
-                        "partially started scheduled Ticket loop failed to stop"
-                    )
+                    _LOGGER.exception("partially started scheduled Ticket loop failed to stop")
             if candidate_notification_loop is not None:
                 try:
                     candidate_notification_loop.stop()
                 except Exception:
-                    _LOGGER.exception(
-                        "partially started notification loop failed to stop"
-                    )
+                    _LOGGER.exception("partially started notification loop failed to stop")
             if candidate_manager_wake_loop is not None:
                 try:
                     candidate_manager_wake_loop.stop()
                 except Exception:
-                    _LOGGER.exception(
-                        "partially started manager wake loop failed to stop"
-                    )
+                    _LOGGER.exception("partially started manager wake loop failed to stop")
             release_machine_lock(config.dispatcher_lock_path)
+            raise
         else:
             worker_step_readiness_loop = candidate_loop
             scheduled_ticket_loop = candidate_schedule_loop
@@ -215,4 +220,53 @@ def start_background_loops(
         manager_wake_loop=manager_wake_loop,
     )
     _active = loops
+    return loops
+
+
+def start_background_loops(
+    config: Config,
+    clock: Clock,
+    *,
+    conversation_system: ConversationSystem,
+    asyncio_loop: asyncio.AbstractEventLoop,
+) -> BackgroundLoops:
+    """Retain legacy best-effort admission for callers without publication.
+
+    The HTTP server deliberately calls prepare/start separately: publication must
+    fail closed when reconciliation fails. Legacy callers keep their inert result.
+    """
+    global _active
+    if _active is not None:
+        raise RuntimeError("background loops already running")
+    loops: BackgroundLoops | None = None
+    try:
+        loops = prepare_background_loops(
+            config,
+            clock,
+            conversation_system=conversation_system,
+            asyncio_loop=asyncio_loop,
+        )
+        loops.start(config.tick_seconds)
+    except Exception:
+        _LOGGER.exception("Background loops failed to start")
+        if loops is not None:
+            # Preparation cleans up its own failure. Once it returned, partial
+            # admission belongs to this legacy synchronous caller instead.
+            for candidate in (
+                loops.worker_step_readiness_loop,
+                loops.scheduled_ticket_loop,
+                loops.notification_loop,
+                loops.manager_wake_loop,
+            ):
+                if candidate is not None:
+                    try:
+                        candidate.stop()
+                    except Exception:
+                        _LOGGER.exception("partially started background loop failed to stop")
+            if loops._stop_waking_on_change is not None:
+                loops._stop_waking_on_change()
+            if loops._lock_path is not None:
+                release_machine_lock(loops._lock_path)
+        loops = BackgroundLoops(shutdown_grace_seconds=float(config.shutdown_grace_seconds))
+        _active = loops
     return loops

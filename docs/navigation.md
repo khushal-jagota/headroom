@@ -8,7 +8,7 @@ Signal compatibility remains unsatisfied. This contract omits public activity, u
 
 Revisions are canonical decimal strings. A scope identifies one workspace. An epoch identifies projection continuity. A snapshot contains records and matching continuity. A batch names its base and result revision and contains complete upserts and deletion keys. Aliases share a conversation identity and do not multiply distinct conversation totals.
 
-No transport, consumer cutover, public receipt change, automatic resend, queue replay, or provider recovery behavior belongs to this foundation.
+The delivery layer exposes this foundation through snapshots and resumable events. Browser adoption remains separate. No public receipt change, automatic resend, queue replay, or provider recovery behavior belongs to this foundation.
 
 NO PUSH AND NO MERGE until the owner inspects and explicitly decides. No deployment or push-triggered CI is authorized.
 
@@ -48,7 +48,7 @@ Address IDs are canonical JSON arrays of owner kind, owner ID, and conversation 
 
 `navigation.journal(conn, epoch, after_revision, limit)` returns the same continuity plus complete batches and `has_more`. Limits range from 1 to 1,000 batches. Each batch contains scope, schema version, semantics, epoch, `base_revision`, resulting `revision`, typed upserts, and typed deletion keys. Revisions use exact canonical decimal strings. A relevant transaction creates one batch even when the public delta is empty. Unrelated transactions create none.
 
-A changed epoch, future cursor, or journal gap raises `HistoryUnavailable`. Malformed decimal cursors raise `ValueError`. Batches remain durable when the wake signal is lost. This module supplies no retention scheduler, transport, browser publication, startup admission, or cross-epoch command certification.
+A changed epoch, future cursor, or journal gap raises `HistoryUnavailable`. Malformed decimal cursors raise `ValueError`. Batches remain durable when the wake signal is lost. The delivery layer below owns retention, transport, startup admission, and command certification. Browser publication remains separate.
 
 ## Isolation and evidence
 
@@ -81,3 +81,47 @@ The latest-turn partial index covers conversation identity, descending turn numb
 The original migration explicitly creates schema 1 and uses a private, frozen conversation list helper. Current typed snapshot and journal reads reject schema 1. The additive schema 2 migration installs both indexes, changes metadata, and rebuilds records atomically. It replaces the epoch and journal while preserving workspace scope. A failed upgrade restores the original schema version, epoch, records, and journal. A second current-schema open does not replace continuity.
 
 Synthetic proof adds 1,000 and 10,000 irrelevant settled turn, request, and attempt facts while preserving the same latest turn and unresolved facts. Sequence and read finalization each use 1,025 SQLite VM instructions at both sizes. Lifecycle finalization uses 1,011 at both sizes. Each full conversation record is 448 bytes. The lifecycle source write occurs before this VM measurement. A separate fixture preserves all 5,001 unknown outcomes in the exact count. Its summary uses 250 bytes and 45,173 VM instructions, versus 173 with the small unresolved set. These observations prove the stated projection boundary only.
+
+## Resumable delivery
+
+A subscriber first obtains one complete snapshot. It then requests every committed revision after that snapshot. Each event contains one whole transaction, including deletions. The subscriber receives either the next complete revision or an explicit instruction to replace its snapshot. It never silently skips missing history.
+
+```text
+source transaction -> navigation records + journal + commit witness
+                              |
+                       successful commit
+                              |
+                    snapshot / complete events
+                              |
+                    future browser publication
+```
+
+The snapshot and event endpoints share the existing workspace ingress boundary. Cursors carry workspace identity, schema, semantics, epoch, and exact decimal revision. The server checks continuity before duplicate or future-revision decisions. Periodic journal reads recover missed process signals and quiet commits. Database reads end before a network wait.
+
+The event stream limits each frame and the complete prefetched page. It closes a connection whose writes exceed the send deadline. An indivisible batch that exceeds the frame limit requires a replacement snapshot. Snapshots use a separate path without that frame limit, so the same large change cannot trap the subscriber in repeated resets.
+
+Retention periodically prunes complete journal prefixes and records their replay floor. Its count and byte settings are maintenance targets, not instantaneous limits between maintenance cycles. Ingest during that interval adds to the high-water mark. An expired cursor requires a new snapshot. No subscriber depends on a process signal for correctness.
+
+Code paths: `navigation/api.py`, `navigation/delivery.py`, `navigation/delivery_contracts.py`, `navigation/retention.py`, and `navigation/configuration.py`.
+
+## Startup continuity
+
+One real conversation runtime holds the exclusive database lease. It reconciles lost capabilities before the server prepares its other reconciliation work. The server then commits one fresh navigation epoch before it admits requests or starts background loops. A second runtime cannot rotate that epoch. Ordinary database connections do not allocate startup epochs.
+
+Restart, rebuild, and incompatible schema invalidate previous continuity. Restore requires a stopped runtime and a fresh startup. A copied epoch or a numerically larger client revision never establishes continuity after an older backup returns. Shutdown closes navigation streams before it releases runtime ownership.
+
+Code paths: `core/server.py`, `core/loops.py`, `conversation/system.py`, and `conversation/storage.py`.
+
+## Command visibility
+
+Relevant successful commands add fence metadata in response headers. Existing bodies, statuses, authorization, and receipts retain their meanings. A fence describes committed navigation history. It does not prove provider acceptance or browser display.
+
+Random witnesses commit atomically with relevant source changes. The generic commit boundary reports them only after the outer commit succeeds. Command capture includes explicitly awaited conversation tasks and threads. Detached background work does not enter another command's fence. Failed observation preserves the successful command result and leaves visibility unknown.
+
+A replacement snapshot can certify every witness from an issued fence in the same read transaction as its records. The witnesses survive epoch resets and rebuilds. If a backup loses one, certification remains unknown even if new writes reach a larger revision. Later writes can replace a command's value. Certification proves inclusion of committed history, not that the value remains unchanged.
+
+Capture, response metadata, proof requests, and witness retention are bounded. Missing, expired, or incomplete evidence never becomes a certified no-op. Unknown visibility never triggers an automatic resend. The future browser owner must observe published state before it resolves visibility.
+
+Code paths: `navigation/proof.py`, `navigation/proof_contracts.py`, `navigation/commands.py`, `navigation/middleware.py`, `core/commit_capture.py`, and `core/commit_observers.py`.
+
+_Last verified: 2026-10-17._

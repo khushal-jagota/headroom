@@ -48,6 +48,9 @@ from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
+from planner.navigation import data as navigation_data
+from planner.navigation.delivery import create_delivery_runtime
+from planner.navigation.middleware import NavigationCommandFenceMiddleware
 from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
@@ -165,6 +168,7 @@ def create_app(
             remembered_codex_login_rejection=remembered_codex_login_rejection,
         )
         lifecycle_observer: asyncio.Task[None] | None = None
+        loops: Any = None
         try:
             audit_conn = conn_factory()
             try:
@@ -182,41 +186,63 @@ def create_app(
                 if conversation_system_for_test is None
                 else conversation_system_for_test
             )
-            await conversation.system.start_idle_child_janitor()
-
-            lifecycle_observer = asyncio.create_task(
-                observe_path_changes(deployment_lifecycle_path, change_signal.emit)
-            )
-            loops: Any = None
             if not config.test_mode:
-                from planner.core.loops import start_background_loops
+                from planner.core.loops import prepare_background_loops
 
-                loops = start_background_loops(
-                    config,
-                    clock,
+                loops = prepare_background_loops(
+                    config, clock,
                     conversation_system=app.state.conversation_system,
                     asyncio_loop=asyncio.get_running_loop(),
                 )
+
+            # The real runtime already reconciled under its exclusive lease, even
+            # when tests inject a conversation facade. No schema open grants this.
+            conversation.system.require_runtime_ownership()
+            publication_conn = conn_factory()
             try:
-                yield
+                publication_conn.execute("BEGIN IMMEDIATE")
+                navigation_data.reset_epoch(publication_conn)
+                publication_conn.commit()
+            except BaseException:
+                publication_conn.rollback()
+                raise
             finally:
-                deadline = _monotonic() + float(config.shutdown_grace_seconds)
-                if loops is not None:
-                    await _stop_runtime_with_deadline(loops, deadline)
+                publication_conn.close()
+            await navigation_delivery.start()
+            await conversation.system.start_idle_child_janitor()
+            lifecycle_observer = asyncio.create_task(
+                observe_path_changes(deployment_lifecycle_path, change_signal.emit)
+            )
+            if loops is not None:
+                loops.start(config.tick_seconds)
+            yield
 
         finally:
             app.state.conversation = None
             try:
-                if lifecycle_observer is not None:
-                    lifecycle_observer.cancel()
-                    try:
-                        await lifecycle_observer
-                    except asyncio.CancelledError:
-                        pass
+                try:
+                    await navigation_delivery.close()
+                finally:
+                    if loops is not None:
+                        deadline = _monotonic() + float(config.shutdown_grace_seconds)
+                        await _stop_runtime_with_deadline(loops, deadline)
             finally:
-                await conversation.shutdown()
+                try:
+                    if lifecycle_observer is not None:
+                        lifecycle_observer.cancel()
+                        try:
+                            await lifecycle_observer
+                        except asyncio.CancelledError:
+                            pass
+                finally:
+                    await conversation.shutdown()
 
+    navigation_delivery = create_delivery_runtime(config.db_path)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
+    app.add_middleware(
+        NavigationCommandFenceMiddleware, conn_factory=conn_factory, db_path=config.db_path,
+    )
+    app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
     app.state.config = config
@@ -266,6 +292,7 @@ def create_app(
         membership_router,
     ):
         include_router(domain_router, prefix="/api")
+    include_router(navigation_delivery.router)
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
 

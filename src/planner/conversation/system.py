@@ -139,6 +139,7 @@ from planner.conversation.storage import (
     ConversationStore,
     StoredConversationEvent,
 )
+from planner.core.commit_capture import register_capture_task
 from planner.core.contracts import Principal, PrincipalKind
 
 LOGGER = logging.getLogger("planner.conversation")
@@ -2562,6 +2563,7 @@ class SqliteProcessConversationSystem:
         if asyncio.current_task() in state.settlement_tasks:
             return await operation
         task = asyncio.create_task(operation)
+        register_capture_task(task)
         state.settlement_tasks.add(task)
         task.add_done_callback(state.settlement_tasks.discard)
         return await asyncio.shield(task)
@@ -3566,6 +3568,10 @@ class SqliteProcessConversationSystem:
             await self._drain_held_prompts(state)
 
     # --- shared internals ---------------------------------------------------------------
+
+    def require_runtime_ownership(self) -> None:
+        """Authorize publication using the reconciled runtime's exclusive live lease."""
+        self._require_runtime_ownership()
 
     def _require_runtime_ownership(self) -> None:
         if self._shutting_down or self._runtime_ownership.closed:

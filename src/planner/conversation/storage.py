@@ -65,6 +65,7 @@ from planner.conversation.lifecycle_storage import (
     participate,
     read_facts,
 )
+from planner.core.commit_capture import register_capture_task, run_in_capture_thread
 from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import commit_without_change_signal, connect
@@ -384,7 +385,7 @@ class ConversationStore:
         async def finish() -> T:
             while True:
                 try:
-                    return await asyncio.to_thread(operation, *args)
+                    return await run_in_capture_thread(operation, *args)
                 except sqlite3.OperationalError as error:
                     code = getattr(error, "sqlite_errorcode", None)
                     if code is None or code & 0xFF != sqlite3.SQLITE_BUSY:
@@ -392,6 +393,7 @@ class ConversationStore:
                     await asyncio.sleep(CONVERSATION_WRITE_LOCK_RETRY_SECONDS)
 
         task = asyncio.create_task(finish())
+        register_capture_task(task)
         self._write_operations.add(task)
         task.add_done_callback(self._write_operations.discard)
         return await asyncio.shield(task)

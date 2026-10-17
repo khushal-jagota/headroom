@@ -13,11 +13,14 @@ class TransactionParticipant(Protocol):
 
 def finalize(
     connection: sqlite3.Connection, participants: tuple[TransactionParticipant, ...]
-) -> None:
+) -> tuple[object, ...]:
     """Run participants on the source connection without asynchronous work."""
+    results: list[object] = []
     for participant in participants:
         result = participant(connection)
         if inspect.isawaitable(result):
             if inspect.iscoroutine(result):
                 result.close()
             raise TypeError("transaction participants must be synchronous")
+        results.append(result)
+    return tuple(results)
