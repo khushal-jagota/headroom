@@ -3738,6 +3738,8 @@ class SqliteProcessConversationSystem:
         answers that fast is answering the newest turn, not a dead one. What is refused is
         a token this conversation has left behind.
         """
+        if self._shutting_down or self._runtime_ownership.closed:
+            return False
         running = state.running_turn
         if running is not None and running.token == turn_token:
             return True

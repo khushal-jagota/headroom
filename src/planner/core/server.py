@@ -206,13 +206,15 @@ def create_app(
 
         finally:
             app.state.conversation = None
-            if lifecycle_observer is not None:
-                lifecycle_observer.cancel()
-                try:
-                    await lifecycle_observer
-                except asyncio.CancelledError:
-                    pass
-            await conversation.shutdown()
+            try:
+                if lifecycle_observer is not None:
+                    lifecycle_observer.cancel()
+                    try:
+                        await lifecycle_observer
+                    except asyncio.CancelledError:
+                        pass
+            finally:
+                await conversation.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     app.add_middleware(ConversationSendBodyLimitMiddleware)
