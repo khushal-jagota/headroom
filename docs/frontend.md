@@ -497,7 +497,8 @@ The Worker page uses the same ceiling/reviewer control while running or waiting.
 A pending proposal no longer locks its stage half. The compact panel shows only the existing ceiling/reviewer rail and choices. Approval uses the visible
 proposal revision as an atomic freshness check. A changed or rerouted proposal must
 be read again before approval. Existing CLI accept callers remain compatible.
-User-owned stages still require explicit review, even below the ceiling.
+Historical pending proposals still require an explicit decision, including those below
+the ceiling. New answers settle below the ceiling regardless of Stage ownership.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each
