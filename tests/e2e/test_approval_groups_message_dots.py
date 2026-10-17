@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 from playwright.sync_api import BrowserContext, Page, Route, expect
 from playwright.sync_api import Error as PlaywrightError
+from tests.e2e.approval_message_diagnostics import ApprovalMessageDiagnostics
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_ticket_conversation_shared_behaviors import _append_rows
 
@@ -150,12 +151,15 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     )
 
     context = context_factory()
+    diagnostics = ApprovalMessageDiagnostics(context, server, EVIDENCE)
     pending_events: list[tuple[Route, str]] = []
     pending_workspace: list[tuple[Route, str]] = []
 
     def delay_transcript(route: Route) -> None:
         response = route.fetch()
-        pending_events.append((route, response.text()))
+        body = response.text()
+        pending_events.append((route, body))
+        diagnostics.record("transcript-held", url=route.request.url, body=body)
 
     try:
         context.route("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
@@ -178,7 +182,9 @@ def test_approval_membership_and_each_workers_durable_message_dot(
 
         def delay_workspace(route: Route) -> None:
             response = route.fetch()
-            pending_workspace.append((route, response.text()))
+            body = response.text()
+            pending_workspace.append((route, body))
+            diagnostics.record("workspace-held", url=route.request.url, body=body)
             page.evaluate("() => { window.__proofWorkspaceHeld = true; }")
 
         workspace_pattern = f"**/api/items/{item['id']}/workspace"
@@ -189,6 +195,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             ticket["title"]
         )
         for route, body in pending_workspace:
+            diagnostics.record("workspace-release", url=route.request.url, body=body)
             route.fulfill(status=200, content_type="application/json", body=body)
         pending_workspace.clear()
         context.unroute(workspace_pattern, delay_workspace)
@@ -221,6 +228,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         assert pending_events
         assert _read_position(server, "dot-ticket") == 0
         for route, body in pending_events:
+            diagnostics.record("transcript-release", url=route.request.url, body=body)
             route.fulfill(status=200, content_type="application/json", body=body)
         pending_events.clear()
         context.unroute("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
@@ -295,6 +303,12 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             0, timeout=WAIT_MS
         )
         assert _read_position(server, "dot-chief") == 1
+    except BaseException as error:
+        try:
+            diagnostics.capture_failure(context, error)
+        except Exception as collector_error:
+            print(f"Failure evidence collector failed: {collector_error!r}")
+        raise
     finally:
         # Failed assertions must not strand intercepted requests during context teardown.
         for route, body in (*pending_events, *pending_workspace):

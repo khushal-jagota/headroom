@@ -26,6 +26,7 @@ def schedule_json(
     occurrences: list[ScheduledTicketOccurrence] | None = None,
 ) -> JsonDict:
     result: JsonDict = {
+        "locale": schedule.template.locale,
         "id": schedule.id,
         "enabled": schedule.enabled,
         "cadence": schedule.cadence.value,

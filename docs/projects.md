@@ -35,8 +35,9 @@ A Ticket has an effective Project and an optional Sprint. When it names a Sprint
 the Item owns its Project classification. Moving a Sprint Item changes each child Ticket's
 effective Project and updates schedule templates, without changing any Sprint placement.
 
-The Workspace board groups Tickets by their effective Project. Tickets without one appear
-under `No project`.
+Workspace groups Tickets by their assigned Chief or ordinary orchestrator. Project facts
+remain visible on individual Ticket and orchestrator pages as text. The removed global
+Workers page no longer supplies a project-filtered list.
 
 ## Surfaces
 
@@ -54,7 +55,7 @@ under `No project`.
   values with project names as labels.
 
 _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
-`src/planner/tickets/views.py`, `web/src/routes/BacklogRoute.svelte`,
+`src/planner/tickets/views.py`,
 `web/src/routes/IdeasRoute.svelte`, `web/src/routes/TicketRoute.svelte`,
 `web/src/routes/BoardRoute.svelte`.
 

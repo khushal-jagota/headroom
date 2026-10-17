@@ -199,11 +199,12 @@ with sync_playwright() as playwright:
     screenshot_dir = os.environ.get("SCHEDULED_TASKS_SCREENSHOT_DIR")
     page.goto(sys.argv[1] + "#/scheduled-tasks", wait_until="networkidle")
     page.locator('section[data-screen="scheduled-tasks"]').wait_for()
-    page.locator('[data-screen="more"]').click()
-    scheduled_tasks_link = page.locator('a[data-screen="scheduled-tasks"].active')
-    scheduled_tasks_link.wait_for()
-    assert scheduled_tasks_link.inner_text() == "Scheduled tasks"
-    page.keyboard.press("Escape")
+    page.wait_for_function("window.location.hash === '#/settings/scheduled-tasks'")
+    settings_navigation = page.get_by_role("navigation", name="Settings", exact=True)
+    scheduled_tasks_link = settings_navigation.get_by_role("link", name="Scheduled tasks", exact=True)
+    assert scheduled_tasks_link.get_attribute("href") == "#/settings/scheduled-tasks"
+    assert scheduled_tasks_link.get_attribute("aria-current") == "page"
+    assert settings_navigation.locator('a[aria-current="page"]').count() == 1
     if screenshot_dir:
         page.screenshot(path=os.path.join(screenshot_dir, "scheduled-tasks-list-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 390, "height": 844})
