@@ -10,6 +10,7 @@
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { resourceStateForQueries } from "../lib/resourceStateForQueries";
+  import type { ConfigSelection } from "../lib/shellRouting";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
   import { errorMessage, labelize } from "../lib/ui";
   import type {
@@ -21,8 +22,6 @@
     WorkerManagementSettings,
     WorkerTypeRecord
   } from "../lib/types";
-
-  type RoleKind = "index" | "agent" | "skill" | "worker";
 
   const roleSkillProfiles: Record<string, {
     label: string;
@@ -47,7 +46,7 @@
     }
   };
 
-  let { roleKind, roleId }: { roleKind: RoleKind; roleId?: string } = $props();
+  let { roleKind, roleId, baseHref = "#/settings/config" }: ConfigSelection & { baseHref?: string } = $props();
   const stableRoleKind = untrack(() => roleKind);
   const stableRoleId = untrack(() => roleId || null);
 
@@ -234,7 +233,7 @@
             <div class="agents-destination-list">
               <a
                 class="agents-destination"
-                href="#/settings/config/chief-of-staff"
+                href={`${baseHref}/chief-of-staff`}
                 data-agent-destination
               >
                 <span class="agents-destination-copy">
@@ -250,7 +249,7 @@
               {#if supervisorSkill}
                 <a
                   class="agents-destination"
-                  href="#/settings/config/sprint-item-supervisor"
+                  href={`${baseHref}/sprint-item-supervisor`}
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
@@ -267,7 +266,7 @@
               {#if sharedWorkerSkill}
                 <a
                   class="agents-destination"
-                  href="#/settings/config/worker-skill"
+                  href={`${baseHref}/worker-skill`}
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
@@ -290,7 +289,7 @@
                 {@const manifest = indexedWorkerTypes.get(item.worker_type)}
                 <a
                   class="agents-destination"
-                  href={`#/settings/config/workers/${encodeURIComponent(item.worker_type)}`}
+                  href={`${baseHref}/workers/${encodeURIComponent(item.worker_type)}`}
                   data-worker-destination
                 >
                   <span class="agents-destination-copy">
@@ -313,7 +312,7 @@
     </div>
   {:else if stableRoleKind === "agent"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href="#/settings/config" data-agents-back>← Back to Config</a>
+      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
       <ResourceState
         error={workers.error}
         loading={workers.isFetching}
@@ -355,7 +354,7 @@
     </div>
   {:else if stableRoleKind === "skill"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href="#/settings/config" data-agents-back>← Back to Config</a>
+      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
       <ResourceState
         error={skillsHome.error}
         loading={skillsHome.isFetching}
@@ -392,7 +391,7 @@
     </div>
   {:else}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href="#/settings/config" data-agents-back>← Back to Config</a>
+      <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
       <ResourceState
         error={worker.error}
         loading={worker.isFetching}

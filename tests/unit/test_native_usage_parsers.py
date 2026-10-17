@@ -430,8 +430,9 @@ def test_legacy_missing_cache_category_preserves_known_inclusive_input() -> None
 
     assert len(parsed.records) == 1
     assert parsed.records[0].tokens.input_tokens == 100
-    assert parsed.records[0].tokens.uncached_input_tokens is None
-    assert parsed.records[0].tokens.cached_input_tokens is None
+    assert parsed.records[0].tokens.uncached_input_tokens == 100
+    assert parsed.records[0].tokens.cached_input_tokens == 0
+    assert parsed.records[0].tokens.cache_creation_tokens == 0
 
 
 def test_claude_normalizes_separate_input_categories_and_keeps_reasoning_subset() -> None:
@@ -678,3 +679,35 @@ def test_malformed_relevant_lines_survive_projection_as_content_free_issues() ->
     assert parse_codex([line]).issues == parse_codex([projection]).issues
     assert parse_claude(['{"type":"assistant","usage":']).issues
     assert project_usage_line("claude", "not a relevant JSON line") is None
+
+
+@pytest.mark.parametrize("cache_write", [None, "invalid", -1])
+def test_explicit_invalid_cache_write_remains_unknown(cache_write: object) -> None:
+    usage = _usage()
+    usage["cache_write_input_tokens"] = cache_write
+    record = parse_codex([_meta(), _context(), _modern(usage=usage)]).records[0]
+    assert record.tokens.cache_creation_tokens is None
+    assert record.tokens.uncached_input_tokens is None
+
+
+def test_omitted_codex_cache_write_matches_t3_uncached_input_and_price() -> None:
+    from planner.conversation.usage.logic.pricing import parse_rate_table, price_usage
+
+    usage = _usage()
+    usage.pop("cache_write_input_tokens")
+    record = parse_codex([_meta(), _context(), _modern(usage=usage)]).records[0]
+    assert record.tokens.cache_creation_tokens == 0
+    assert record.tokens.uncached_input_tokens == 70
+    table = parse_rate_table(
+        {
+            "gpt-6.1-sol": {
+                "input_cost_per_token": 1e-6,
+                "output_cost_per_token": 2e-6,
+                "cache_read_input_token_cost": 0.1e-6,
+            }
+        }
+    )
+    price = price_usage(table, record)
+    assert price.cost_source == "model_priced"
+    assert price.cost_usd == pytest.approx(70e-6 + 30 * 0.1e-6 + 20 * 2e-6)
+    assert record.tokens.reasoning_tokens == 5

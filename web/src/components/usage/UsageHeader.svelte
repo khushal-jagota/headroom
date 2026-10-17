@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { UsageDays } from "../../lib/conversation/recordedUsageWire";
-  import { USAGE_PERIODS, providerLabel, type UsageMetric } from "./usagePresentation";
-  let { metric, days, providerKeys, selectedProviders, busy, onMetric, onDays, onProviders, onRefresh }: {
-    metric: UsageMetric; days: UsageDays; providerKeys: readonly string[];
+  import { USAGE_PERIODS, providerLabel } from "./usagePresentation";
+  import { usageTabHref, type UsageTab } from "../../lib/usageAddress";
+  let { tab, days, providerKeys, selectedProviders, busy, onDays, onProviders, onRefresh }: {
+    tab: UsageTab; days: UsageDays; providerKeys: readonly string[];
     selectedProviders: readonly string[]; busy: boolean;
-    onMetric: (metric: UsageMetric) => void; onDays: (days: UsageDays) => void;
+    onDays: (days: UsageDays) => void;
     onProviders: (providers: string[]) => void; onRefresh: () => void;
   } = $props();
   function toggle(provider: string, checked: boolean): void {
@@ -13,8 +14,10 @@
 </script>
 <header class="usage-header">
   <div class="breadcrumbs">
-    <h1>Usage</h1><span class="slash" aria-hidden="true">/</span>
-    {#if metric !== "limits"}<span class="source">Local CLI sources</span><span class="slash" aria-hidden="true">/</span>{/if}
+    <h1>Usage</h1>
+    {#if tab !== "config"}
+    <span class="slash" aria-hidden="true">/</span>
+    {#if tab !== "limits"}<span class="source">Local CLI sources</span><span class="slash" aria-hidden="true">/</span>{/if}
     <details class="provider-filter">
       <summary>{selectedProviders.length === providerKeys.length ? "All backends" : `${selectedProviders.length} backends`} <span aria-hidden="true">⌄</span></summary>
       <div class="provider-popup">
@@ -24,23 +27,25 @@
         {#if !providerKeys.length}<span>No backends reported</span>{/if}
       </div>
     </details>
+    {/if}
   </div>
   <div class="toolbar">
-    <nav class="segmented metrics" aria-label="Usage metric">
-      {#each ["tokens", "cost", "limits"] as value}
-        <button aria-pressed={metric === value} onclick={() => onMetric(value as UsageMetric)}>{providerLabel(value)}</button>
+    <nav class="segmented metrics" aria-label="Usage tabs">
+      {#each ["tokens", "cost", "limits", "config"] as value}
+        <a href={usageTabHref(value as UsageTab)} aria-current={tab === value ? "page" : undefined}>{providerLabel(value)}</a>
       {/each}
-      <a href="#/settings/config">Config <span aria-hidden="true">↗</span></a>
     </nav>
+    {#if tab !== "config"}
     <div class="segmented periods" role="group" aria-label="Usage period">
       {#each USAGE_PERIODS as period}
-        <button aria-pressed={days === period.days} disabled={metric === "limits"} onclick={() => onDays(period.days)}>{period.label}</button>
+        <button aria-pressed={days === period.days} disabled={tab === "limits"} onclick={() => onDays(period.days)}>{period.label}</button>
       {/each}
     </div>
-    <select class="mobile-period" aria-label="Usage period" value={days} disabled={metric === "limits"} onchange={event => onDays(Number(event.currentTarget.value) as UsageDays)}>
+    <select class="mobile-period" aria-label="Usage period" value={days} disabled={tab === "limits"} onchange={event => onDays(Number(event.currentTarget.value) as UsageDays)}>
       {#each USAGE_PERIODS as period}<option value={period.days}>{period.label}</option>{/each}
     </select>
     <button class="refresh" aria-label="Refresh usage and allowances" aria-busy={busy} disabled={busy} onclick={onRefresh} data-backends-refresh title="Refresh local CLI records and provider allowances">{busy ? "…" : "↻"}</button>
+    {/if}
   </div>
 </header>
 <style>
@@ -53,7 +58,7 @@
   button:disabled,select:disabled { cursor:default; opacity:.5; }
   .segmented { display:flex; align-items:center; gap:var(--border-strong); padding:var(--border-strong); background:var(--surface-recessed); border-radius:var(--radius-md); }
   .segmented button,.segmented a { text-decoration:none; padding:var(--space-1) var(--space-2); white-space:nowrap; border-radius:var(--radius-sm); }
-  .segmented [aria-pressed="true"] { background:var(--surface-2); color:var(--text-strong); }
+  .segmented [aria-pressed="true"],.segmented [aria-current="page"] { background:var(--surface-2); color:var(--text-strong); }
   .segmented button:hover,.segmented a:hover,.refresh:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .refresh { width:var(--space-6); height:var(--space-6); font-size:var(--type-lg); border-radius:var(--radius-sm); flex:none; }
   .provider-filter { position:relative; font-size:var(--type-sm); }
@@ -65,5 +70,5 @@
   .mobile-period { display:none; background:none; border:0; }
   :is(button,a,summary,select,input):focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:var(--space-1); }
   @media(max-width:1100px) { .periods { display:none; }.mobile-period { display:block; max-width:calc(var(--space-7) + var(--space-2)); } }
-  @media(max-width:760px) { .usage-header { flex-wrap:wrap; gap:var(--space-3); }.breadcrumbs { width:100%; gap:var(--space-2); }.toolbar { width:100%; gap:var(--space-2); }.metrics { flex:1; justify-content:space-between; }.metrics button,.metrics a { padding:var(--space-1) var(--space-2); } }
+  @media(max-width:760px) { .usage-header { flex-wrap:wrap; gap:var(--space-3); }.breadcrumbs { width:100%; gap:var(--space-2); }.toolbar { width:100%; gap:var(--space-2); }.metrics { flex:1; justify-content:space-between; }.metrics a { padding:var(--space-1) var(--space-2); } }
 </style>

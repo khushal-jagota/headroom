@@ -889,11 +889,32 @@ CLI activity outside Panels. They do not describe a complete account bill or all
 history. Hermes has no source for these historical charts.
 
 Opening the page, changing its period, or receiving a change signal reads stored usage.
-Only an explicit Refresh imports native files. The read has limits on age, file count,
-file and total size, line size, and elapsed time. A limit or unreadable source marks
-coverage partial and leaves earlier stored records available. Native files remain
-read-only. Panels stores usage fields and their origin, without prompts, tool content,
-or credentials.
+Only an explicit Refresh imports native files. Each request reads at most 256 MiB
+and cooperatively yields during source reads or parsing after 15 seconds or 2,000 file
+visits. Loading stored snapshots, merging records, serialization, and price refresh
+occur outside that deadline. It is not a hard HTTP response timeout.
+The next request resumes the stored
+queue. Small slices alternate providers and files. Large files and large JSON lines
+remain eligible. The streaming reader discards message and tool bodies as it reads.
+Its checkpoints contain syntax and selected usage fields. Complete block checks detect
+interior rewrites before a candidate replaces verified records. Source changes restart
+that candidate and preserve earlier records. Native files remain read-only.
+
+The queue covers source files modified within 90 days. Directory discovery has a
+100,000-entry and request-time limit. An unreadable or bounded inventory reports partial
+coverage. Progress describes this finite local read, not complete account history.
+SQLite commits the cursor and data together, so a restart resumes the same work.
+Append-only growth preserves the frozen prefix and its read progress. Every metadata
+generation change restarts block verification. A file that changes before every request
+needs a quiet verification window before its candidate enters the totals. Other files
+continue fairly, and its earlier verified records remain visible with partial coverage.
+A verified prefix can enter stored totals before its file finishes. An observed unread
+tail stays in the queue, and its byte count extends the progress total. Files first
+found during a pass wait for the next finite pass. Known pending files keep coverage
+partial and `more_work` true until a later request reads them.
+The same rule covers a completed member whose identity, size, or metadata changes in
+the latest inventory. Progress counts that file once and defers its new version to the
+next pass. Ready means that this latest bounded inventory has no known unvisited work.
 
 Copied records count once across files. Codex counts each stable completed response
 identity once. It keeps the response's original thread and session, even when another
@@ -905,9 +926,28 @@ Claude uses message and request identities. Overlapping or conflicting identitie
 remain excluded with partial coverage. Conversation events and allowance snapshots do
 not become extra chart records.
 
-Missing token counts and USD amounts remain unknown. A valid zero remains zero. A total
-with an unknown contributing value remains unknown. Cost uses only USD that a native
-record states, without model rate estimates.
+Missing required token counts remain unknown. As in T3 Code, an omitted optional Codex
+cache category means zero. An explicit null or invalid category remains unknown.
+The producer reports cache categories separately within inclusive input. A missing
+reasoning breakdown remains unknown and never adds another charge to output.
+A valid zero remains zero. Token totals with an
+unknown contributing value remain unknown. Cost follows T3 Code's price calculation.
+It uses source-reported USD when present. Otherwise it prices uncached input, cache reads,
+cache writes and output from the stored LiteLLM table. Reasoning remains part of output.
+Published fast and ultrafast rates apply to the recorded service tier. A tier without
+published rates uses its standard rates, as in T3 Code.
+
+The full external price document and fetch time remain in SQLite. Summary reads never
+fetch prices. Explicit Refresh can update the table, with T3's 60-second refresh floor,
+24-hour ordinary cache lifetime, a 10-second request timeout and a 16 MiB response bound.
+An unavailable source leaves the stored table available. Unknown model rates remain
+unpriced. Exact names and unambiguous aliases match the table. Bare family names do not
+select an invented generation.
+
+Known cost subtotals remain visible with an Unpriced record count. The data contract
+keeps table-calculated and source-reported USD separate. This value does not establish
+actual account charges. Cost categories, cache savings and speed premiums use the same
+price rules as T3 Code. A source-reported total scales the category split proportionally.
 
 Input already includes cache tokens, and output includes reasoning tokens. Neither
 subset is added twice. Charts show observed periods and leave unrecorded intervals as gaps.

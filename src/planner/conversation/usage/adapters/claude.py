@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from typing import Any
 
 from ..contracts import ParsedUsage, UsageRecord, UsageTokens
 from .shared import (
@@ -18,20 +19,26 @@ from .shared import (
 )
 
 
-def parse_claude(lines: Iterable[str]) -> ParsedUsage:
-    records = Records()
-    issues: list[str] = []
-    for envelope in projected_records("claude", lines):
+class ClaudeUsageParser:
+    def __init__(self, saved: dict[str, Any] | None = None) -> None:
+        saved = saved or {}
+        self.records = Records.restore(saved.get("records", {}))
+        self.issues: list[str] = saved.get("issues", [])
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {"records": self.records.checkpoint(), "issues": self.issues}
+
+    def feed(self, envelope: dict[str, object]) -> None:
         if envelope.get("type") == "usage_parse_error":
-            issue(issues, "A native Claude usage line is malformed.")
-            continue
+            issue(self.issues, "A native Claude usage line is malformed.")
+            return
         message = object_dict(envelope.get("message"))
         message_id = text(message.get("id"))
         request_id = text(envelope.get("requestId"))
         occurred_at = timestamp(envelope.get("timestamp"))
         if (message_id is None and request_id is None) or occurred_at is None:
-            issue(issues, "Claude usage lacks valid identity or timestamp.")
-            continue
+            issue(self.issues, "Claude usage lacks valid identity or timestamp.")
+            return
         usage = object_dict(message.get("usage"))
         uncached = token_count(usage.get("input_tokens"))
         cached = token_count(usage.get("cache_read_input_tokens"))
@@ -45,10 +52,10 @@ def parse_claude(lines: Iterable[str]) -> ParsedUsage:
         details = object_dict(usage.get("output_tokens_details"))
         reasoning = token_count(details.get("thinking_tokens"))
         if reasoning is not None and output is not None and reasoning > output:
-            issue(issues, "Claude reasoning exceeds output.")
+            issue(self.issues, "Claude reasoning exceeds output.")
             reasoning = None
         key = json.dumps([message_id, request_id], separators=(",", ":"))
-        records.add(
+        self.records.add(
             UsageRecord(
                 provider="claude",
                 record_key="claude:message:" + key,
@@ -65,13 +72,23 @@ def parse_claude(lines: Iterable[str]) -> ParsedUsage:
                     "usage": usage,
                     "costUSD": usd(envelope.get("costUSD")),
                 },
+                speed="fast" if usage.get("speed") == "fast" else "standard",
             )
         )
-    for diagnostic in records.issues:
-        issue(issues, diagnostic)
-    return ParsedUsage(
-        records=tuple(records.values.values()),
-        issues=tuple(issues),
-        duplicates=records.duplicates,
-        conflicted_record_keys=tuple(sorted(records.conflicts)),
-    )
+
+    def finish(self) -> ParsedUsage:
+        for diagnostic in self.records.issues:
+            issue(self.issues, diagnostic)
+        return ParsedUsage(
+            records=tuple(self.records.values.values()),
+            issues=tuple(self.issues),
+            duplicates=self.records.duplicates,
+            conflicted_record_keys=tuple(sorted(self.records.conflicts)),
+        )
+
+
+def parse_claude(lines: Iterable[str]) -> ParsedUsage:
+    parser = ClaudeUsageParser()
+    for envelope in projected_records("claude", lines):
+        parser.feed(envelope)
+    return parser.finish()

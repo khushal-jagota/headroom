@@ -1,12 +1,16 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import UsageHeader from "../components/usage/UsageHeader.svelte";
   import AllowanceWindows from "../components/usage/AllowanceWindows.svelte";
   import RecordedUsage from "../components/usage/RecordedUsage.svelte";
+  import ConfigRoute from "./ConfigRoute.svelte";
+  import type { ConfigSelection } from "../lib/shellRouting";
+  import type { UsageTab } from "../lib/usageAddress";
+  import { usageBackends } from "../components/usage/usageProviders";
   import { refreshRecordedUsage, type UsageDays, type UsageProvider, type UsageSummary } from "../lib/conversation/recordedUsageWire";
-  import { timestampLabel, type UsageMetric } from "../components/usage/usagePresentation";
+  import { timestampLabel } from "../components/usage/usagePresentation";
   import UsageRings from "../components/conversation/UsageRings.svelte";
   import { backendIdentityNote, type BackendIdentityNote } from "../lib/conversation/backendIdentity";
   import {
@@ -37,13 +41,18 @@
     type ConversationBackendKey
   } from "../lib/conversation/wire";
 
-  let metric = $state<UsageMetric>("limits");
+  let { tab = "limits", roleKind = "index", roleId }: {
+    tab?: UsageTab;
+    roleKind?: ConfigSelection["roleKind"];
+    roleId?: string;
+  } = $props();
+  let metric = $derived(tab === "config" ? "limits" : tab);
   let days = $state<UsageDays>(1);
   let providerSelection = $state<string[] | null>(null);
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const queryClient = useQueryClient();
   const recorded = createQuery(() => ({
-    ...queries.recordedUsage(days, timezone), enabled: metric !== "limits", retry: false
+    ...queries.recordedUsage(days, timezone), enabled: tab === "tokens" || tab === "cost", retry: false
   }));
   let lastUsage = $state<UsageSummary | null>(null);
   $effect(() => { if (recorded.data) lastUsage = recorded.data; });
@@ -51,12 +60,13 @@
   let nativeRefreshError = $state<string | null>(null);
   let allowanceNow = $state(Date.now());
   let backends = $state<BackendSnapshot[]>([]);
+  let supportedBackends = $derived(usageBackends(backends));
   let providerKeys = $derived(metric === "limits"
-    ? backends.map(backend => backend.backend_key)
+    ? supportedBackends.map(backend => backend.backend_key)
     : [...new Set([...(summary?.sources.map(source => source.provider) ?? []), ...(summary?.providers.map(row => row.provider) ?? [])])]);
   let selectedProviders = $derived(providerSelection === null ? providerKeys : providerKeys.filter(provider => providerSelection?.includes(provider)));
   let recordedProviders = $derived(selectedProviders.filter((provider): provider is UsageProvider => provider === "codex" || provider === "claude"));
-  let visibleBackends = $derived(backends.filter(backend => selectedProviders.includes(backend.backend_key)));
+  let visibleBackends = $derived(supportedBackends.filter(backend => selectedProviders.includes(backend.backend_key)));
   let loading = $state(true);
   let refreshing = $state(false);
   let error = $state<string | null>(null);
@@ -190,23 +200,33 @@
     return snapshot.cached_usage?.windows.some((window) => window.model_id === modelId) ?? false;
   }
 
-  onMount(() => {
-    void loadBackends();
-    // Nothing about a sign-in is persisted, so a page that has just opened or reconnected
-    // has to ask whether one is already running.
+  let mounted = $state(false);
+  let limitsLoaded = false;
+  onMount(() => { mounted = true; });
+  $effect(() => {
+    if (!mounted || tab !== "limits") return;
+    if (!limitsLoaded) {
+      limitsLoaded = true;
+      void loadBackends();
+    }
+    // An initial Config visit does not read backend metadata. The first Limits visit
+    // still reads cached facts. Every Limits entry resumes any existing sign-in.
     void signInSession.enter(SIGN_IN_BACKEND);
+    // Leaving Limits stops polling without cancelling a device sign-in on the server.
+    return () => signInSession.leave();
   });
-
-  // Leaving the screen stops the asking and nothing else. Cancelling here would end a
-  // sign-in somebody is in the middle of finishing on their phone.
-  onDestroy(() => signInSession.leave());
 </script>
 
 <section class="backends-page" data-screen="backends">
-  <UsageHeader {metric} {days} {providerKeys} {selectedProviders} busy={refreshing}
-    onMetric={value => metric = value} onDays={value => days = value}
+  <UsageHeader {tab} {days} {providerKeys} {selectedProviders} busy={refreshing}
+    onDays={value => days = value}
     onProviders={value => providerSelection = value} onRefresh={() => void runRefresh()} />
 
+  {#if tab === "config"}
+    {#key `${roleKind}/${roleId ?? ""}`}
+      <ConfigRoute {roleKind} {roleId} baseHref="#/backends/config" />
+    {/key}
+  {:else}
   {#if nativeRefreshError}<p class="error" role="alert">Local usage: {nativeRefreshError}</p>{/if}
   {#if metric !== "limits"}
     {#if recorded.error}<p class="error" role="alert">Local usage: {sentenceFor(recorded.error)}{summary ? " The previous reading remains below." : ""}</p>{/if}
@@ -219,7 +239,7 @@
 
   {#if loading}
     <p class="quiet-line">Loading backends…</p>
-  {:else if backends.length === 0}
+  {:else if supportedBackends.length === 0}
     <p class="quiet-line">No backends were reported.</p>
   {:else}
     <div class="rows">
@@ -359,6 +379,7 @@
     </div>
     {#if !visibleBackends.length}<p class="quiet-line">Select a backend to view its allowances.</p>{/if}
     <p class="note">Stored allowances · refresh reads local CLI records and provider allowances.</p>
+  {/if}
   {/if}
   {/if}
 </section>

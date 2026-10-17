@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from typing import Any
 
-from ..contracts import ParsedUsage, UsageRecord, UsageTokens
+from ..contracts import ParsedUsage, UsageRecord, UsageSpeed, UsageTokens
 from .shared import Records, issue, object_dict, projected_records, text, timestamp, token_count
 
 
 def _tokens(usage: dict[str, object], issues: list[str]) -> UsageTokens:
     inclusive = token_count(usage.get("input_tokens"))
-    cached = token_count(usage.get("cached_input_tokens"))
-    creation = token_count(usage.get("cache_write_input_tokens"))
+    # T3's Codex reader treats omitted optional cache categories as zero. An
+    # explicit null/invalid counter is still unknown, as are required counters.
+    cached = token_count(usage.get("cached_input_tokens", 0))
+    creation = token_count(usage.get("cache_write_input_tokens", 0))
     output = token_count(usage.get("output_tokens"))
     reasoning = token_count(usage.get("reasoning_output_tokens"))
     uncached = None
@@ -42,6 +45,7 @@ class _LegacyState:
     forked: bool = False
     epoch: int = 0
     previous: dict[str, object] | None = None
+    speed: UsageSpeed = "standard"
 
 
 def _forked(payload: dict[str, object]) -> bool:
@@ -149,61 +153,90 @@ def _legacy_record(
         tokens=tokens,
         reported_cost_usd=None,
         raw_usage={"last_token_usage": last, "total_token_usage": cumulative},
+        speed=state.speed,
     ), False
 
 
-def parse_codex(lines: Iterable[str]) -> ParsedUsage:
-    """Count each native response once; never add its legacy representation."""
-    modern = Records()
-    legacy = Records()
-    state = _LegacyState()
-    issues: list[str] = []
-    legacy_issues: list[str] = []
-    legacy_signatures: set[str] = set()
-    model: str | None = None
-    turn_models: dict[str, str] = {}
-    modern_threads: set[str] = set()
-    saw_modern = False
-    saw_legacy_usage = False
-    for record in projected_records("codex", lines):
+class CodexUsageParser:
+    """The native reducer, with usage-only state between bounded projection batches."""
+
+    def __init__(self, saved: dict[str, Any] | None = None) -> None:
+        saved = saved or {}
+        self.modern = Records.restore(saved.get("modern", {}))
+        self.legacy = Records.restore(saved.get("legacy", {}))
+        self.state = _LegacyState(**saved.get("state", {}))
+        self.issues: list[str] = saved.get("issues", [])
+        self.legacy_issues: list[str] = saved.get("legacy_issues", [])
+        self.legacy_signatures = set(saved.get("legacy_signatures", []))
+        self.model: str | None = saved.get("model")
+        self.turn_models: dict[str, str] = saved.get("turn_models", {})
+        self.modern_threads = set(saved.get("modern_threads", []))
+        self.saw_modern: bool = saved.get("saw_modern", False)
+        self.saw_legacy_usage: bool = saved.get("saw_legacy_usage", False)
+
+    def checkpoint(self) -> dict[str, Any]:
+        return {
+            "modern": self.modern.checkpoint(),
+            "legacy": self.legacy.checkpoint(),
+            "state": asdict(self.state),
+            "issues": self.issues,
+            "legacy_issues": self.legacy_issues,
+            "legacy_signatures": sorted(self.legacy_signatures),
+            "model": self.model,
+            "turn_models": self.turn_models,
+            "modern_threads": sorted(self.modern_threads),
+            "saw_modern": self.saw_modern,
+            "saw_legacy_usage": self.saw_legacy_usage,
+        }
+
+    def feed(self, record: dict[str, object]) -> None:
         kind = record.get("type")
         payload = object_dict(record.get("payload"))
         if kind == "usage_parse_error":
-            issue(issues, "A native Codex usage line is malformed.")
-        elif kind == "session_meta" and not state.saw_meta:
-            state.saw_meta = True
-            state.thread_id = text(payload.get("id"))
-            state.session_id = text(payload.get("session_id"))
-            state.forked = _forked(payload)
+            issue(self.issues, "A native Codex usage line is malformed.")
+        elif kind == "session_meta" and not self.state.saw_meta:
+            self.state.saw_meta = True
+            self.state.thread_id = text(payload.get("id"))
+            self.state.session_id = text(payload.get("session_id"))
+            self.state.forked = _forked(payload)
         elif kind == "turn_context":
-            model = text(payload.get("model"))
+            self.model = text(payload.get("model"))
             turn_id = text(payload.get("turn_id"))
-            if turn_id is not None and model is not None:
-                turn_models[turn_id] = model
+            if turn_id is not None and self.model is not None:
+                self.turn_models[turn_id] = self.model
+        elif payload.get("type") == "thread_settings_applied":
+            tier = object_dict(payload.get("thread_settings")).get("service_tier")
+            self.state.speed = (
+                "fast"
+                if tier in ("priority", "fast")
+                else "ultrafast"
+                if tier == "ultrafast"
+                else "standard"
+            )
         elif kind == "token_usage_record":
-            saw_modern = True
+            self.saw_modern = True
             thread_id = text(payload.get("thread_id"))
             if thread_id is not None:
-                modern_threads.add(thread_id)
+                self.modern_threads.add(thread_id)
             else:
-                issue(issues, "A Codex response has no original thread identity.")
-                if state.thread_id is not None:
-                    modern_threads.add(state.thread_id)
+                issue(self.issues, "A Codex response has no original thread identity.")
+                if self.state.thread_id is not None:
+                    self.modern_threads.add(self.state.thread_id)
                 # A response without its original thread cannot establish
                 # cross-file precedence over legacy consumption. Exclude this
                 # ambiguous record, and all legacy candidates in this span.
-                continue
+                return
             response_id = text(payload.get("response_id"))
             occurred_at = timestamp(record.get("timestamp"))
             if response_id is None or occurred_at is None:
-                issue(issues, "A Codex response lacks valid identity or timestamp.")
-                continue
+                issue(self.issues, "A Codex response lacks valid identity or timestamp.")
+                return
             usage = object_dict(payload.get("usage"))
             turn_id = text(payload.get("turn_id"))
-            response_model = turn_models.get(turn_id) if turn_id is not None else None
+            response_model = self.turn_models.get(turn_id) if turn_id is not None else None
             if response_model is None:
-                issue(issues, "A Codex response has no verified model for its native turn.")
-            modern.add(
+                issue(self.issues, "A Codex response has no verified model for its native turn.")
+            self.modern.add(
                 UsageRecord(
                     provider="codex",
                     record_key="codex:response:" + response_id,
@@ -212,59 +245,72 @@ def parse_codex(lines: Iterable[str]) -> ParsedUsage:
                     model=response_model,
                     thread_id=thread_id,
                     session_id=text(payload.get("session_id")),
-                    tokens=_tokens(usage, issues),
+                    tokens=_tokens(usage, self.issues),
                     reported_cost_usd=None,
                     raw_usage=payload,
+                    speed=self.state.speed,
                 )
             )
         elif payload.get("type") == "token_count":
             info = object_dict(payload.get("info"))
             last = object_dict(info.get("last_token_usage"))
             cumulative = object_dict(info.get("total_token_usage"))
-            saw_legacy_usage = saw_legacy_usage or bool(last or cumulative)
+            self.saw_legacy_usage = self.saw_legacy_usage or bool(last or cumulative)
             if _required(last) not in (None, (0, 0)) and _required(cumulative) is not None:
-                legacy_signatures.add(json.dumps([last, cumulative], sort_keys=True))
+                self.legacy_signatures.add(json.dumps([last, cumulative], sort_keys=True))
             candidate, duplicate = _legacy_record(
                 payload,
                 timestamp(record.get("timestamp")),
-                model,
-                state,
-                legacy_issues,
+                self.model,
+                self.state,
+                self.legacy_issues,
             )
-            legacy.duplicates += int(duplicate)
+            self.legacy.duplicates += int(duplicate)
             if candidate is not None:
-                legacy.add(candidate)
-    records = list(modern.values.values())
-    if saw_modern:
-        # Legacy records lack response IDs, so unmatched emissions cannot prove
-        # an extra response in a mixed/upgrade span. Storage extends this rule
-        # across files using modern_threads.
-        matching_responses = {
-            json.dumps(
-                [
-                    item.raw_usage.get("usage"),
-                    item.raw_usage.get("thread_token_usage"),
-                ],
-                sort_keys=True,
-            )
-            for item in modern.values.values()
-        }
-        if legacy_signatures - matching_responses:
-            issue(issues, "Mixed Codex history has an uncertain legacy-only prefix.")
-    else:
-        records.extend(legacy.values.values())
-        if saw_legacy_usage:
-            issue(issues, "Legacy Codex usage has limited producer provenance.")
-        for message in (*legacy_issues, *legacy.issues):
-            issue(issues, message)
-    for message in modern.issues:
-        issue(issues, message)
-    return ParsedUsage(
-        records=tuple(records),
-        modern_threads=tuple(sorted(modern_threads)),
-        issues=tuple(issues),
-        duplicates=modern.duplicates + legacy.duplicates,
-        conflicted_record_keys=tuple(
-            sorted(modern.conflicts | (legacy.conflicts if not saw_modern else set()))
-        ),
-    )
+                self.legacy.add(candidate)
+
+    def finish(self) -> ParsedUsage:
+        records = list(self.modern.values.values())
+        if self.saw_modern:
+            # Legacy records lack response IDs, so unmatched emissions cannot prove
+            # an extra response in a mixed/upgrade span. Storage extends this rule
+            # across files using modern_threads.
+            matching_responses = {
+                json.dumps(
+                    [
+                        item.raw_usage.get("usage"),
+                        item.raw_usage.get("thread_token_usage"),
+                    ],
+                    sort_keys=True,
+                )
+                for item in self.modern.values.values()
+            }
+            if self.legacy_signatures - matching_responses:
+                issue(self.issues, "Mixed Codex history has an uncertain legacy-only prefix.")
+        else:
+            records.extend(self.legacy.values.values())
+            if self.saw_legacy_usage:
+                issue(self.issues, "Legacy Codex usage has limited producer provenance.")
+            for message in (*self.legacy_issues, *self.legacy.issues):
+                issue(self.issues, message)
+        for message in self.modern.issues:
+            issue(self.issues, message)
+        return ParsedUsage(
+            records=tuple(records),
+            modern_threads=tuple(sorted(self.modern_threads)),
+            issues=tuple(self.issues),
+            duplicates=self.modern.duplicates + self.legacy.duplicates,
+            conflicted_record_keys=tuple(
+                sorted(
+                    self.modern.conflicts
+                    | (self.legacy.conflicts if not self.saw_modern else set())
+                )
+            ),
+        )
+
+
+def parse_codex(lines: Iterable[str]) -> ParsedUsage:
+    parser = CodexUsageParser()
+    for record in projected_records("codex", lines):
+        parser.feed(record)
+    return parser.finish()

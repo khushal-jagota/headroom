@@ -24,6 +24,7 @@ from planner.conversation.contracts import ConversationSystem
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
 from planner.conversation.usage.api import router as recorded_usage_router
+from planner.conversation.usage.pricing import UsagePricingService
 from planner.conversation.usage.service import RecordedUsageService
 from planner.core import change_signal
 from planner.core.clock import Clock
@@ -222,7 +223,11 @@ def create_app(
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
-    app.state.recorded_usage = RecordedUsageService(conn_factory, now=clock.now)
+    app.state.recorded_usage = RecordedUsageService(
+        conn_factory,
+        now=clock.now,
+        pricing=UsagePricingService(conn_factory, now=clock.now),
+    )
     app.state.conversation = None
     # The conversation system is the running one, so it belongs to the lifespan that
     # starts and stops it. Outside that window there is none.

@@ -7,10 +7,14 @@ import { remainingPercent } from "../src/lib/conversation/usagePresentation";
 import RecordedUsage from "../src/components/usage/RecordedUsage.svelte";
 import AllowanceWindows from "../src/components/usage/AllowanceWindows.svelte";
 import UsageHeader from "../src/components/usage/UsageHeader.svelte";
+import { usageBackends } from "../src/components/usage/usageProviders";
 
 function metrics(overrides:Partial<UsageMetrics>={}):UsageMetrics {
   return { input_tokens:100,uncached_input_tokens:40,cached_input_tokens:50,cache_creation_tokens:10,
     output_tokens:20,reasoning_tokens:5,total_tokens:120,reported_cost_usd:null,
+    cost_usd:null,estimated_cost_usd:null,provider_reported_cost_usd:null,
+    category_cost_usd:null,speed_cost_usd:null,cache_savings_usd:null,speed_premium_usd:null,
+    unpriced_records:1,model_priced_records:0,provider_reported_records:0,
     record_count:1,session_count:1,unknown_records:0,unknown_cost_records:1,...overrides };
 }
 const codex:ProviderUsageMetrics={...metrics(),provider:"codex"};
@@ -20,8 +24,9 @@ function period(hour:number,providers:ProviderUsageMetrics[]=[codex]):PeriodUsag
 }
 function summary(overrides:Partial<UsageSummary>={}):UsageSummary {
   return {scope:"local_cli",days:1,timezone:"UTC",since:"2026-10-15T22:00:00Z",until:"2026-10-16T22:00:00Z",observed_at:"2026-10-16T12:00:00Z",
+    pricing:{status:"unavailable",source:"https://example.test/prices",fetched_at:null,known_models:0},
     totals:combineMetrics([codex,claude]),providers:[codex,claude],models:[{...codex,model:"model-a"},{...claude,model:null}],
-    periods:[period(10),period(12,[claude])],sources:[{provider:"codex",state:"partial",observed_at:"2026-10-16T12:00:00Z",files_scanned:2,record_count:1,issues:["Read limit reached"],duplicates:1}],...overrides};
+    periods:[period(10),period(12,[claude])],sources:[{provider:"codex",state:"partial",observed_at:"2026-10-16T12:00:00Z",files_scanned:2,record_count:1,issues:["Read limit reached"],duplicates:1,progress:null}],...overrides};
 }
 
 describe("recorded usage unknown values and filters",()=>{
@@ -83,18 +88,19 @@ describe("observed-only usage chart",()=>{
     expect(chartSegments([period(10),period(11,[]),period(12),period(13,[unknown]),period(14)],"codex","tokens").map(segment=>segment.map(point=>point.index))).toEqual([[0],[2],[4]]);
   });
   it("keeps a reported zero and excludes unknown costs",()=>{
-    const known={...codex,reported_cost_usd:0};
+    const known={...codex,reported_cost_usd:0,cost_usd:0};
     expect(chartSegments([period(10,[known]),period(11)],"codex","cost").map(segment=>segment.map(point=>point.value))).toEqual([[0]]);
   });
 });
 
 describe("usage surfaces",()=>{
-  it("shows recorded local scope, source coverage and nullable costs without an estimate",()=>{
+  it("keeps unknown prices unavailable and exposes source coverage",()=>{
     const body=render(RecordedUsage,{props:{summary:summary(),providers:["codex","claude"],metric:"cost"}}).body;
     expect(body).toContain("includes activity outside Panels");
     expect(body).toContain("partial source coverage");
     expect(body).toContain("Read limit reached");
     expect(body).toContain("No recorded cost values");
+    expect(body).toContain("Unpriced");
     expect(body).not.toContain("$0.00");
     expect(body).not.toContain("API estimate");
   });
@@ -118,11 +124,33 @@ describe("usage surfaces",()=>{
     expect(remainingPercent(130)).toBe(0);
     expect(remainingPercent(32)).toBe(68);
   });
-  it("keeps Config as canonical navigation and includes every approved period",()=>{
-    const body=render(UsageHeader,{props:{metric:"limits",days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onMetric:()=>{},onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
-    expect(body).toContain('href="#/settings/config"');
+  it("keeps Config inside the Usage tab strip and includes every approved period",()=>{
+    const body=render(UsageHeader,{props:{tab:"limits",days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
+    expect(body).toContain('href="#/backends/config"');
+    expect(body).not.toContain('href="#/settings/config"');
     for(const label of ["24h","7d","30d","90d"])expect(body).toContain(label);
+    expect(body).toMatch(/href="#\/backends\/limits"[^>]*aria-current="page"/);
     expect(body).toContain('aria-pressed="true"');
+  });
+  it("keeps the Config tab active without usage-only controls or an external marker",()=>{
+    const body=render(UsageHeader,{props:{tab:"config",days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
+    expect(body).toMatch(/href="#\/backends\/config"[^>]*aria-current="page"/);
+    for(const value of ["tokens","cost","limits"])expect(body).toContain(`href="#/backends/${value}"`);
+    expect(body).not.toContain("Usage period");
+    expect(body).not.toContain("provider-filter");
+    expect(body).not.toContain("data-backends-refresh");
+    expect(body).not.toContain("↗");
+  });
+  it("excludes Hermes from the Usage provider, allowance, and model collections",()=>{
+    const all=[{backend_key:"hermes",available_models:["hermes-model"]},{backend_key:"codex",available_models:["codex-model"]},{backend_key:"claude",available_models:["claude-model"]}];
+    const visible=usageBackends(all);
+    expect(visible).toEqual([all[1],all[2]]);
+    const keys=visible.map(backend=>backend.backend_key);
+    const body=render(UsageHeader,{props:{tab:"limits",days:1,providerKeys:keys,selectedProviders:keys,busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
+    expect(body).toContain("Codex");
+    expect(body).toContain("Claude");
+    expect(body).not.toContain("Hermes");
+    expect(all).toHaveLength(3);
   });
 });
 

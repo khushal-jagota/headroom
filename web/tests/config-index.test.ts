@@ -3,17 +3,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkerTypeManifest, WorkerTypesResponse } from "../src/lib/lifecycle";
 import type { SkillsHomeResponse, WorkersResponse } from "../src/lib/types";
 import ConfigRoute from "../src/routes/ConfigRoute.svelte";
+import BackendsRoute from "../src/routes/BackendsRoute.svelte";
 
 const reads = vi.hoisted(() => new Map<string, {
   data?: unknown;
   error: unknown;
   isFetching: boolean;
 }>());
+const queryEnabled = vi.hoisted(() => new Map<string, boolean | undefined>());
 
 vi.mock("@tanstack/svelte-query", async (importOriginal) => ({
   ...await importOriginal<typeof import("@tanstack/svelte-query")>(),
-  createQuery: (options: () => { queryKey: readonly unknown[] }) =>
-    reads.get(JSON.stringify(options().queryKey)) ?? { error: null, isFetching: false }
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+  createQuery: (options: () => { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    const query = options();
+    queryEnabled.set(String(query.queryKey[0]), query.enabled);
+    return reads.get(JSON.stringify(query.queryKey)) ?? { error: null, isFetching: false };
+  }
 }));
 
 const defaults = {
@@ -72,11 +78,40 @@ function index(): string {
 
 beforeEach(() => {
   reads.clear();
+  queryEnabled.clear();
   reads.set('["workers"]', { data: workers, error: null, isFetching: false });
   reads.set('["skills-home"]', { data: skills, error: null, isFetching: false });
 });
 
 describe("Config destinations", () => {
+  it("retains the Usage header and routes Config destinations inside its actual tab", () => {
+    setManifests({ worker_types: [manifest("coding", ["brief", "done"])] });
+    const markup = render(BackendsRoute, { props: { tab: "config" } }).body;
+    expect(markup).toContain("Usage</h1>");
+    expect(markup).toMatch(/href="#\/backends\/config"[^>]*aria-current="page"/);
+    for (const suffix of ["chief-of-staff", "sprint-item-supervisor", "worker-skill", "workers/coding"]) {
+      expect(markup).toContain(`href="#/backends/config/${suffix}"`);
+    }
+    expect(markup).toContain('data-screen="config"');
+    expect(markup).not.toContain("data-settings");
+    expect(markup).not.toContain('href="#/settings/config');
+    expect(markup).not.toContain("data-backends-refresh");
+    expect(queryEnabled.get("recorded-usage")).toBe(false);
+  });
+
+  it.each([
+    { roleKind: "agent" as const, roleId: "chief_of_staff" },
+    { roleKind: "skill" as const, roleId: "panels-worker" },
+    { roleKind: "skill" as const, roleId: "panels-sprint-item-supervisor" },
+    { roleKind: "worker" as const, roleId: "coding" }
+  ])("retains the Usage tab strip and back link on Config $roleId details", (selection) => {
+    const markup = render(BackendsRoute, { props: { tab: "config", ...selection } }).body;
+    expect(markup).toMatch(/href="#\/backends\/config"[^>]*aria-current="page"/);
+    expect(markup).toMatch(/href="#\/backends\/config"[^>]*data-agents-back/);
+    expect(markup).not.toContain('href="#/settings/config');
+    expect(markup).not.toContain("data-settings");
+  });
+
   it("shows the actual served Stage count, including terminal Stages, and preserves Settings detail links", () => {
     setManifests({ worker_types: [manifest("coding", ["brief", "review", "done"]), manifest("research", ["done"])] });
     const markup = index();

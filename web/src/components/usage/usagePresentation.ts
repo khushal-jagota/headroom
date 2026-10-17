@@ -21,7 +21,7 @@ export function formatCost(value: number | null): string {
   }).format(value);
 }
 export const metricValue = (metrics: UsageMetrics, metric: "tokens" | "cost"): number | null =>
-  metric === "tokens" ? metrics.total_tokens : metrics.reported_cost_usd;
+  metric === "tokens" ? metrics.total_tokens : metrics.cost_usd;
 
 const nullableKeys = [
   "input_tokens", "uncached_input_tokens", "cached_input_tokens", "cache_creation_tokens",
@@ -33,17 +33,40 @@ export function combineMetrics(rows: readonly UsageMetrics[]): UsageMetrics {
     input_tokens: null, uncached_input_tokens: null, cached_input_tokens: null,
     cache_creation_tokens: null, output_tokens: null, reasoning_tokens: null,
     total_tokens: null, reported_cost_usd: null, session_count: null,
-    record_count: 0, unknown_records: 0, unknown_cost_records: 0
+    cost_usd: null, estimated_cost_usd: null, provider_reported_cost_usd: null,
+    category_cost_usd: null, speed_cost_usd: null, cache_savings_usd: null,
+    speed_premium_usd: null, unpriced_records: 0, model_priced_records: 0,
+    provider_reported_records: 0, record_count: 0, unknown_records: 0, unknown_cost_records: 0
   };
   for (const key of nullableKeys) {
     if (rows.length && rows.every(row => row[key] !== null)) {
       result[key] = rows.reduce((sum, row) => sum + (row[key] as number), 0);
     }
   }
+  for (const key of ["cost_usd", "estimated_cost_usd", "provider_reported_cost_usd", "cache_savings_usd", "speed_premium_usd"] as const) {
+    const known = rows.flatMap(row => row[key] === null ? [] : [row[key] as number]);
+    result[key] = known.length ? known.reduce((sum, value) => sum + value, 0) : null;
+  }
+  const categories = rows.flatMap(row => row.category_cost_usd === null ? [] : [row.category_cost_usd]);
+  if (categories.length) result.category_cost_usd = {
+    input: categories.reduce((sum, row) => sum + row.input, 0),
+    cache_read: categories.reduce((sum, row) => sum + row.cache_read, 0),
+    cache_write: categories.reduce((sum, row) => sum + row.cache_write, 0),
+    output: categories.reduce((sum, row) => sum + row.output, 0)
+  };
+  const speeds = rows.flatMap(row => row.speed_cost_usd === null ? [] : [row.speed_cost_usd]);
+  if (speeds.length) result.speed_cost_usd = {
+    standard: speeds.reduce((sum, row) => sum + row.standard, 0),
+    fast: speeds.reduce((sum, row) => sum + row.fast, 0),
+    ultrafast: speeds.reduce((sum, row) => sum + row.ultrafast, 0)
+  };
   for (const row of rows) {
     result.record_count += row.record_count;
     result.unknown_records += row.unknown_records;
     result.unknown_cost_records += row.unknown_cost_records;
+    result.unpriced_records += row.unpriced_records;
+    result.model_priced_records += row.model_priced_records;
+    result.provider_reported_records += row.provider_reported_records;
   }
   return result;
 }
@@ -99,6 +122,25 @@ export function tokenSegments(metrics: UsageMetrics): Array<{ label: string; val
   if (metrics.total_tokens === null || categories.some(row => row.value === null)) return [];
   const known = categories as Array<{ label: string; value: number; color: string }>;
   return known.reduce((sum, row) => sum + row.value, 0) === metrics.total_tokens ? known : [];
+}
+export function costSegments(metrics: UsageMetrics): Array<{ label: string; value: number; color: string }> {
+  const cost = metrics.category_cost_usd;
+  if (!cost) return [];
+  return [
+    { label: "Input", value: cost.input, color: "var(--text-default)" },
+    { label: "Cached input", value: cost.cache_read, color: "var(--text-faintest)" },
+    { label: "Cache write", value: cost.cache_write, color: "var(--text-muted)" },
+    { label: "Output", value: cost.output, color: "var(--text-strong)" }
+  ];
+}
+export function speedCostSegments(metrics: UsageMetrics): Array<{ label: string; value: number; color: string }> {
+  const cost = metrics.speed_cost_usd;
+  if (!cost || cost.fast + cost.ultrafast <= 0) return [];
+  return [
+    { label: "Standard", value: cost.standard, color: "var(--text-faintest)" },
+    { label: "Fast", value: cost.fast, color: "var(--text-default)" },
+    { label: "Ultrafast", value: cost.ultrafast, color: "var(--text-strong)" }
+  ];
 }
 export function timestampLabel(value: string | null, timezone?: string): string {
   if (!value || !Number.isFinite(Date.parse(value))) return "Unavailable";

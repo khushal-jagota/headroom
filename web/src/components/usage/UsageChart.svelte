@@ -34,7 +34,7 @@
   }
 </script>
 <div class="chart-shell" data-recorded-usage-chart>
-  <div class="chart-head"><span>{summary.days === 1 ? "Hourly" : "Daily"} {metric === "tokens" ? "processed tokens" : "reported cost"}</span><span>{summary.timezone}</span></div>
+  <div class="chart-head"><span>{summary.days === 1 ? "Hourly" : "Daily"} {metric === "tokens" ? "processed tokens" : "cost"}</span><span>{summary.timezone}</span></div>
   {#if series.some(s=>s.segments.length)}
     <div class="chart-wrap">
       <div class="chart-y" aria-hidden="true">{#each ticks as tick}<span style:top={`${y(tick)/260*100}%`}>{format(tick)}</span>{/each}</div>

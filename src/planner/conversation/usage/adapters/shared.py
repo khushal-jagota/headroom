@@ -85,7 +85,13 @@ def project_usage_line(provider: UsageProvider, line: str) -> str | None:
     Invalid scalar counters become null, never strings or fabricated zero values.
     """
     markers = (
-        ('"token_usage_record"', '"token_count"', '"turn_context"', '"session_meta"')
+        (
+            '"token_usage_record"',
+            '"token_count"',
+            '"turn_context"',
+            '"session_meta"',
+            '"thread_settings_applied"',
+        )
         if provider == "codex"
         else ('"usage"',)
     )
@@ -111,6 +117,8 @@ def project_usage_line(provider: UsageProvider, line: str) -> str | None:
         selected.update(_selected(record, ("requestId", "sessionId")))
         usage = _counters(message.get("usage"))
         raw_usage = object_dict(message.get("usage"))
+        if usage is not None and "speed" in raw_usage:
+            usage["speed"] = "fast" if raw_usage["speed"] == "fast" else "standard"
         if usage is not None and "output_tokens_details" in raw_usage:
             details = object_dict(raw_usage["output_tokens_details"])
             usage["output_tokens_details"] = {
@@ -138,6 +146,16 @@ def project_usage_line(provider: UsageProvider, line: str) -> str | None:
                 }
         elif kind == "turn_context":
             projected = _selected(payload, ("model", "turn_id"))
+        elif payload.get("type") == "thread_settings_applied":
+            tier = object_dict(payload.get("thread_settings")).get("service_tier")
+            projected = {
+                "type": "thread_settings_applied",
+                "thread_settings": {
+                    "service_tier": (
+                        tier if tier in ("priority", "fast", "ultrafast") else "standard"
+                    )
+                },
+            }
         elif kind == "token_usage_record":
             projected = _selected(
                 payload, ("thread_id", "turn_id", "session_id", "root_turn_id", "response_id")
@@ -190,6 +208,29 @@ class Records:
                 self._register_aliases(key, text(identity[0]), text(identity[1]))
         if self.conflicts:
             issue(self.issues, "Previously conflicting usage identities remain excluded.")
+
+    def checkpoint(self) -> dict[str, object]:
+        from ..codec import record_json
+
+        return {
+            "records": [record_json(record) for record in self.values.values()],
+            "conflicts": sorted(self.conflicts),
+            "duplicates": self.duplicates,
+            "issues": self.issues,
+        }
+
+    @classmethod
+    def restore(cls, saved: dict[str, object]) -> Records:
+        from typing import cast
+
+        from ..codec import _record
+
+        records = cls(cast(list[str], saved.get("conflicts", [])))
+        for value in cast(list[dict[str, object]], saved.get("records", [])):
+            records.add(_record(value))
+        records.duplicates = int(str(saved.get("duplicates", 0)))
+        records.issues = list(cast(list[str], saved.get("issues", [])))
+        return records
 
     def _register_aliases(
         self,
@@ -246,6 +287,7 @@ class Records:
             previous.tokens == record.tokens
             and previous.reported_cost_usd == record.reported_cost_usd
             and previous.model == record.model
+            and previous.speed == record.speed
         )
         if record.provider == "codex":
             same = (

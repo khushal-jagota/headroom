@@ -1,10 +1,14 @@
 # Third-party notices
 
-## T3 Code Usage interface
+## T3 Code Usage interface and price calculation
 
-The Usage header, provider allowance cards, recorded usage composition, and chart presentation adapt T3 Code.
+The Usage header, provider allowance cards, recorded usage composition, chart presentation,
+and model price calculation adapt T3 Code.
 
 Source: https://github.com/pingdotgg/t3code/tree/e58a4857130a93cc58b45dd6ebee14cf08df04ec/apps/web/src/components/usage
+
+Price calculation source:
+https://github.com/pingdotgg/t3code/blob/e58a4857130a93cc58b45dd6ebee14cf08df04ec/apps/server/src/usage/usagePricing.ts
 
 The integration uses Panels tokens and data contracts.
 
