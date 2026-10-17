@@ -19,6 +19,7 @@
   let filter = $state<OrchestratorChildFilter>("active");
   let offset = $state(0);
   let groupOpen = $state<Record<string, boolean>>({});
+  let groupRoot = $state<HTMLElement | null>(null);
   const filters: { value: OrchestratorChildFilter; label: string }[] = [
     { value: "active", label: "Active" }, { value: "backlogged", label: "Backlogged" },
     { value: "done", label: "Done" }, { value: "retired", label: "Cancelled" }
@@ -41,12 +42,17 @@
     }
   });
   function chooseFilter(value: string): void {
+    // Native toggle events are queued. Save the DOM choice before filtering removes it.
+    for (const group of groupRoot?.querySelectorAll<HTMLDetailsElement>("details[data-workspace-group]") ?? []) {
+      const key = group.dataset.workspaceGroup;
+      if (key) groupOpen[key] = group.open;
+    }
     filter = value as OrchestratorChildFilter;
     offset = 0;
   }
 </script>
 
-<section class="orchestrator-children" aria-label="Workers" data-orchestrator-children={scope}>
+<section bind:this={groupRoot} class="orchestrator-children" aria-label="Workers" data-orchestrator-children={scope}>
   <label class="child-filter">Workers
     <select value={filter} onchange={(event) => chooseFilter(event.currentTarget.value)} aria-label="Worker state">
       {#each filters as option}<option value={option.value}>{option.label}</option>{/each}
