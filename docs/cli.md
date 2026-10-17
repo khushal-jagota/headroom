@@ -38,6 +38,19 @@ worker-self route. It includes the Worker type and specialist identity. A named 
 the ordinary Ticket record route. Neither form reads conversation history. Use `ticket
 history` when that record is necessary.
 
+Select `memory_notice_inspection` to inspect automatic memory notice reservations,
+cutover holds, and available evidence references, including former conversations:
+
+```sh
+panels ticket show t_example memory_notice_inspection --json
+panels worker my-ticket memory_notice_inspection --json
+```
+
+This read uses ordinary Ticket read authority. It includes no prompt text and changes
+no record. A reservation records consumed permission, not an attempt or delivery. See
+[Worker memory notices](worker-orchestration.md#telling-a-worker-it-lost-its-memory)
+for the omission tradeoff and recovery limits.
+
 List commands return bounded summaries. `ticket list`, `sprint list`, `sprint item list`,
 and `project list` use pages of 30 by default. Every result reports omissions and the
 next offset. Ticket list no longer filters live work by Day or Sprint.
