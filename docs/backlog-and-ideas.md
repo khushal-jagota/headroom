@@ -10,25 +10,20 @@ Idea: remembered possibility
 
 ## Workers and explicit backlog
 
-The Workers view retains the historical `#/backlog` address. It lists bounded Ticket
-summaries in P0–P3 groups. Ticket state selects active, backlogged, outside backlog,
-or retired Tickets. A separate filter selects Worker type. Retired discovery requests
-the canonical terminal Stage explicitly and remains paginated.
-Each row opens the canonical Ticket in Workspace. Backlogged rows display their state.
-Pages show their range and navigation controls.
+The standalone Workers page is removed. Its former `#/backlog` address redirects to
+Workspace, including old project-filtered links. There is no global project/type list
+or browser New Ticket form. API and CLI creation remain available. A request to Chief
+still follows the ordinary Ticket workflow.
+
+Chief shows only its own children beside its conversation. Ordinary orchestrators retain
+their own children, including settled work. Scoped filters expose active, backlogged,
+completed, and retired Tickets. Chief results remain bounded and paginated. Each row
+opens the existing individual Ticket. Review and direct-message discovery remain separate.
 
 Backlog ticket on the Ticket page prevents automatic progression. Resume ticket restores
 ordinary readiness checks. Messages, proposals, approvals, assignment, history, and
 artifacts remain available. A delivered turn continues. Parent Settle remains independent.
 Backlog no longer means an unscheduled Ticket or an assignment change.
-
-A faint "+ New ticket" sits at the top, closed and out of the way. It opens a compact
-form for title, kickoff context, Worker type, Project, priority, and optional deadline.
-The form creates an ordinary Ticket assigned to Chief. It does not implicitly defer
-the Ticket. Priority uses the
-Project default unless you choose one. Its Worker and
-Project choices come from the same server catalogs used elsewhere, so it does not
-carry its own list or creation rules.
 
 ## Ideas
 
@@ -40,8 +35,8 @@ ideas.
 Below, the ideas are listed newest first. An idea with no note is one line. An idea
 with a note gets a small arrow that opens its detail.
 
-_Code paths:_ `web/src/routes/BacklogRoute.svelte`,
-`web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Sprint Items hold shared context independently of Sprint commitments. Sprint Items and ideas
+_Code paths:_ `web/src/components/ChiefConversation.svelte`,
+`web/src/components/SprintItemWorkspace.svelte`, `web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Sprint Items hold shared context independently of Sprint commitments. Sprint Items and ideas
 live in `src/planner/sprints/`.
 
 ## Handoffs

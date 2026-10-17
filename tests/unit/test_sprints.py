@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from sqlite3 import Connection
-from threading import Barrier
 
 import pytest
 
@@ -12,12 +10,10 @@ from planner.core import authority
 from planner.core.authctx import _classify
 from planner.core.authority import require_above
 from planner.core.clock import TestClock
-from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints.data import (
     create_sprint,
     read_sprint,
-    update_sprint,
 )
 
 _EMPTY_CODING_FIELDS = "{}"
@@ -78,69 +74,6 @@ def test_a20_sprint_overlap(tmp_db: Connection, fake_clock: TestClock) -> None:
 # --- supplementary sprints-domain tests (no fence anchor) -------------------------
 
 
-def test_compound_sprint_updates_serialize_overlap_validation_with_the_write(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
-    first = create_sprint(
-        tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-05", clock=fake_clock
-    )
-    second = create_sprint(
-        tmp_db, name="B", date_start="2026-07-16", date_end="2026-07-20", clock=fake_clock
-    )
-    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    start_together = Barrier(2)
-
-    def attempt(sprint_id: str, date_start: str, date_end: str) -> str:
-        conn = connect(db_path)
-        try:
-            start_together.wait()
-            try:
-                update_sprint(
-                    conn,
-                    sprint_id,
-                    text_edits={},
-                    set_dates=True,
-                    date_start=date_start,
-                    date_end=date_end,
-                    clock=fake_clock,
-                )
-            except PlannerError as exc:
-                assert exc.code is ErrorCode.sprint_overlap
-                return "overlap"
-            return "updated"
-        finally:
-            conn.close()
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = (
-            executor.submit(attempt, first.id, "2026-07-01", "2026-07-12"),
-            executor.submit(attempt, second.id, "2026-07-10", "2026-07-20"),
-        )
-        results = sorted(future.result() for future in futures)
-
-    assert results == ["overlap", "updated"]
-    ranges = {
-        first.id: (
-            read_sprint(tmp_db, first.id).date_start,
-            read_sprint(tmp_db, first.id).date_end,
-        ),
-        second.id: (
-            read_sprint(tmp_db, second.id).date_start,
-            read_sprint(tmp_db, second.id).date_end,
-        ),
-    }
-    assert ranges in (
-        {
-            first.id: ("2026-07-01", "2026-07-12"),
-            second.id: ("2026-07-16", "2026-07-20"),
-        },
-        {
-            first.id: ("2026-07-01", "2026-07-05"),
-            second.id: ("2026-07-10", "2026-07-20"),
-        },
-    )
-
-
 def test_historical_planning_worker_cannot_write_a_sprint(
     tmp_db: Connection, fake_clock: TestClock
 ) -> None:
@@ -154,19 +87,19 @@ def test_historical_planning_worker_cannot_write_a_sprint(
     )
     ctx = _classify("worker", "t_planning_sprint")
     before = read_sprint(tmp_db, sprint.id)
+    sprint_count = tmp_db.execute("SELECT COUNT(*) FROM sprints").fetchone()[0]
     with pytest.raises(PlannerError) as refused:
-        update_sprint(
+        create_sprint(
             tmp_db,
-            sprint.id,
-            text_edits={"primary_bet": "Replacement"},
-            set_dates=False,
-            date_start=None,
-            date_end=None,
+            name="Unauthorized new Sprint",
+            date_start="2026-08-01",
+            date_end="2026-08-14",
             clock=fake_clock,
             admit=lambda: require_above(tmp_db, ctx.principal, authority.plan("sprint")),
         )
     assert refused.value.code is ErrorCode.agent_forbidden
     assert read_sprint(tmp_db, sprint.id) == before
+    assert tmp_db.execute("SELECT COUNT(*) FROM sprints").fetchone()[0] == sprint_count
     assert (
         tmp_db.execute("SELECT 1 FROM tickets WHERE id='t_planning_sprint'").fetchone() is not None
     )

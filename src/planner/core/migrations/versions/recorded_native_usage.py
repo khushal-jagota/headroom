@@ -7,7 +7,7 @@ Revises: disable_retired_worker_schedules
 from alembic import op
 
 revision = "recorded_native_usage"
-down_revision = "disable_retired_worker_schedules"
+down_revision = "scheduled_ticket_locale"
 branch_labels = None
 depends_on = None
 

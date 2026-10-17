@@ -19,6 +19,38 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Exercising permission requests
+
+Real work always runs with full access. There is no selectable ask posture on a
+Ticket, Worker type, creation input, or owner control.
+
+An opt-in test starts conversations directly through the real conversation HTTP
+routes and overrides the native backend mappings inside that test process only.
+Codex uses untrusted approval, the user reviewer, and workspace write on both the
+thread and turn. Claude uses default permission mode with the existing callback.
+Hermes uses default ACP edit approval with YOLO disabled. The exercise observes
+and asserts the settings sent to each real backend; an allowed action alone does
+not prove that the override worked.
+
+Separate allow and deny cases request a harmless unique file action. Each waits
+with the real backend request open and checks repeatedly that no answer or file
+has appeared, then answers through Panels and checks the actual file outcome.
+The request stays visible in conversation text and reaches the existing
+`awaiting_answer` attention state. It has no conversation or work item attention
+dot: those dots mean an unread reply. The earlier inherited claim that an ask had
+its own white mark was false; visible request and attention state coverage replace
+that check.
+
+Run `tests/integration/test_conversation_real_provider_permissions.py` with
+`PANELS_REAL_PERMISSION_TESTS=1`, an absolute `PANELS_PERMISSION_EVIDENCE_ROOT`,
+and the relevant `PANELS_REAL_HERMES_HOME_TEMPLATE` or
+`PANELS_REAL_CLAUDE_CONFIG_TEMPLATE`. These calls use real accounts and model
+usage. The tests save selected request, wait, answer, native configuration,
+version, source revision and file outcome receipts, including partial receipts
+when a case fails. They keep Codex on its existing credential home. Other homes
+isolate test configuration while sharing any rotating credential file instead of
+copying a login grant. These tests do not claim connection-drop recovery coverage.
+
 ## The notebook
 
 Every conversation owns an append-only run of numbered rows in the database —
@@ -756,10 +788,41 @@ the credential itself rather than the whole file, because a copy with edited acc
 fields still rotates the same token. An unreadable login cannot be shown to be a copy, so
 it is allowed and logged. The guarantee covers the codex children Panels launches — the
 app-server child, the usage read, and the model catalogue read. A check in the test suite
-looks for the shape of the mistake in repository code — a module that both names a login
-file and copies files — which is how the two opt-in real-provider suites that were still
-copying the login were found. It is a scan for a known shape, not a proof that no copy can
-be written.
+looks for supported copy and hardlink calls whose source or destination names `auth.json`,
+including simple earlier assignments in the same scope. It deliberately misses whole-home
+copies and other documented routes. It is a scan for a known shape, not a proof that no
+copy can be written.
+
+The source tripwire `python scripts/check_agent_home_copies.py` reports copies whose
+destination becomes a selected Hermes, Codex, or Claude home. `--json` produces counts
+and findings; an accusation makes the command exit with status 1.
+
+The root must contain all four searched directories: `src`, `tests`, `scripts`, and
+`ops`. A missing directory produces an error with the resolved root and status 2,
+without a clean finding summary.
+
+Configuration copies of `config.yaml` and `.env` beside a link to the same source's canonical `auth.json` are
+reported as dismissals, not silently excluded. External `.env` contents remain
+unverified. Literal `settings.json` to the same filename is treated as configuration,
+without a dismissal finding; this does not verify its external contents or exempt
+arbitrary filenames.
+
+This is a bounded Python AST check. It follows simple local aliases, literal filename
+loops, imports, direct environment assignments and `setenv` calls within a lexical scope.
+It evaluates proven literal filename equality branches and separates opposite `if`
+branches. It does not infer relationships across functions.
+It does not analyze shell commands, helper returns, object attributes, arbitrary containers,
+conditional alias merges, byte transfers, or runtime paths. Synthetic credential writes
+and skill symlinks are not copies. Reviewers must inspect those omitted routes themselves.
+A clean result does not certify safety.
+
+This standalone command is invoked explicitly, rather than enforced in CI while a known
+copy remains. The inventory revision reports one accusation for the steering harness
+copying Claude credentials and two Hermes configuration dismissals, exiting with status 1.
+An in-memory simulation of the approved repair links only `.credentials.json` and retains
+the `settings.json` copy: the expected output is zero accusations, two dismissals, and
+status 0. That result verifies the checked source pattern; it does not certify credential
+safety, external configuration contents, or the omitted copy routes.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
@@ -954,16 +1017,23 @@ where a steer is proved to cross into a live turn.
 
 That fourth exercise asks for more before it will start. It refuses a dirty tree, so
 `git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs two credential
-directories, because it gives hermes and claude a private home rather than borrowing
-yours:
+into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs these source directories
+for the isolated test homes:
 
-- `PANELS_REAL_HERMES_HOME_TEMPLATE` — a copy of `~/.hermes`.
-- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — a directory holding `.credentials.json` and
-  `settings.json`.
+- `PANELS_REAL_HERMES_HOME_TEMPLATE` — the canonical Hermes home itself, normally
+  `~/.hermes`. Do not make a copy. The harness copies `config.yaml` and `.env`
+  into an isolated home and symlinks `auth.json` back to this source. This requires
+  the canonical home: a symlink into a copied home still separates rotating auth
+  from the real login.
+- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — the canonical Claude home itself, normally
+  `~/.claude`. Do not make a copy. The harness copies optional `settings.json`
+  into an isolated home and symlinks optional `.credentials.json` back to this source.
+  A symlink into a copied home still separates rotating credentials from the real login.
+  The copied settings must contain no secrets.
 
-You build those two yourself. Nothing in the repository makes them for you, and a stale
-copy fails as a login problem rather than as a missing file.
+If you followed the old instructions, switch both variables to their canonical homes
+and remove the obsolete copies. Neither source requires a directory that you prepare
+by hand.
 
 Codex is the exception, and deliberately. It keeps one account in one file and refreshes
 that file in whichever home it is pointed at, so a private copy takes the new token with

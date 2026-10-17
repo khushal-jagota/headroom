@@ -87,16 +87,6 @@ class CreateItemBody(TypedDict, total=False):  # POST /items
     priority: str | None  # Priority value; default P3
 
 
-class CreateSprintBody(TypedDict, total=False):  # POST /sprints
-    name: str  # default ""
-    date_start: str  # ISO date; required (default "" is rejected)
-    date_end: str  # ISO date; required (default "" is rejected)
-    primary_bet: str  # default ""
-    kickoff: str  # default ""
-    checkpoint: str  # default ""
-    review: str  # default ""
-
-
 class CreateIdeaBody(TypedDict, total=False):  # POST /ideas
     title: str  # route requires it non-empty
     body: str  # default ""
@@ -115,12 +105,6 @@ class Idea:  # §3.5
     updated_at: int
 
 
-@dataclass(frozen=True)
-class SprintOutcomeCommitment:
-    sprint_id: str
-    outcome_id: str
-
-
 class SprintSummary(TypedDict):
     id: str
     name: str
@@ -135,18 +119,6 @@ class SprintWireBody(SprintSummary):
     review: str
     created_at: int
     updated_at: int
-
-
-class CarryOutcomeBody(TypedDict):
-    target_sprint_id: str
-    ticket_ids: list[str]
-
-
-class CarryOutcomeResult(TypedDict):
-    source_sprint_id: str
-    target_sprint_id: str
-    outcome_id: str
-    ticket_ids: list[str]
 
 
 class OutcomeSummary(TypedDict):

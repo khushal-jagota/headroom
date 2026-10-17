@@ -12,6 +12,7 @@
    */
   import { createQuery } from "@tanstack/svelte-query";
   import ErrorLine from "./ErrorLine.svelte";
+  import OrchestratorChildren from "./OrchestratorChildren.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
@@ -59,6 +60,9 @@
   });
 </script>
 
+<div class="chief-workspace">
+  <div class="chief-workers"><OrchestratorChildren principal={{ kind: "chief", id: "chief" }} /></div>
+  <div class="chief-conversation">
 {#if currentConversation.error}
   <div class="chief-conversation-resource" data-chief-conversation-error>
     <ErrorLine error={currentConversation.error} />
@@ -87,3 +91,11 @@
     onNewConversation={newConversation}
   />
 {/if}
+
+  </div>
+</div>
+<style>
+  .chief-workspace { display:flex; flex-direction:column; width:100%; min-height:0; }
+  .chief-workers { padding:var(--space-5); max-height:45%; overflow:auto; flex:none; }
+  .chief-conversation { display:flex; flex:1; min-height:0; }
+</style>

@@ -6,6 +6,8 @@ import type { UsageDays, UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BoardResponse,
+  OrchestratorPrincipal,
+  OrchestratorChildFilter,
   CurrentSprintResponse,
   DayResponse,
   DeploymentStatus,
@@ -17,7 +19,6 @@ import type {
   SkillsHomeResponse,
   SprintsResponse,
   SprintItemsResponse,
-  SprintItemSummariesResponse,
   SprintItemWorkspace,
   SprintTrackingBody,
   TicketDetail,
@@ -55,15 +56,10 @@ export const queries = {
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
-  backlogTicketSummaries: (offset: number, limit = 30, projectId = "", isBacklogged: boolean | null = null, workerType = "", retired = false) =>
+  orchestratorTicketSummaries: (principal: OrchestratorPrincipal, filter: OrchestratorChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
-      ["tickets", "backlog", { limit, offset, projectId, isBacklogged, workerType, retired }],
-      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${isBacklogged === null ? "" : `&is_backlogged=${isBacklogged}`}${workerType ? `&worker_type=${encodeURIComponent(workerType)}` : ""}${retired ? "&include_terminal=true&stage=cancelled" : ""}`
-    ),
-  outcomeSummaries: (offset: number, limit = 30, projectId = "", search = "") =>
-    jsonQuery<SprintItemSummariesResponse>(
-      ["outcomes", { limit, offset, projectId, search }],
-      `/api/items?detail=summary&limit=${limit}&offset=${offset}${projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""}${search ? `&search=${encodeURIComponent(search)}` : ""}`
+      ["tickets", "orchestrator", { principal, filter, offset, limit }],
+      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&orchestrator_kind=${principal.kind}${principal.kind === "sprint_item" ? `&orchestrator_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : filter === "retired" ? "&include_terminal=true&stage=cancelled" : ""}`
     ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   feedback: () => jsonQuery<FeedbackResponse>(["feedback"], "/api/feedback"),

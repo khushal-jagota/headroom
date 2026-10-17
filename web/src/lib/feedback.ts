@@ -55,6 +55,7 @@ const SCREEN_LABELS: Record<string, string> = {
   ideas: "Ideas",
   feedback: "Feedback",
   config: "Config",
+  settings: "Settings",
   backends: "Backends",
   notifications: "Notifications",
   "scheduled-tasks": "Scheduled tasks",
@@ -76,6 +77,10 @@ export function feedbackPageContext(hash: string, detailTitle = ""): FeedbackPag
   const screen = segments[0] || "day";
   const title = detailTitle.trim();
 
+  if (screen === "settings") {
+    const section = segments[1] || "config";
+    return { address, label: `Settings · ${SCREEN_LABELS[section] || decoded(section)}` };
+  }
   if (screen === "workspace") {
     if (segments[1] === "item" && segments.length === 3) {
       return { address, label: title ? `Sprint Item · ${title}` : "Sprint Item" };
