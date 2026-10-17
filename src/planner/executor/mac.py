@@ -328,12 +328,18 @@ class MacExecutor:
         )
         self.state = ConnectionState.reconciling
         self._handshake_accepted = False
-        process = await asyncio.create_subprocess_exec(
-            *self.ssh_argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *self.ssh_argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except OSError:
+            self.state = ConnectionState.disconnected
+            if self.lost_at_ms is None:
+                self.lost_at_ms = now_ms()
+            raise
         self._writer = process
         assert process.stdout is not None
         reader_task = asyncio.create_task(self._read_loop(process.stdout))
@@ -349,6 +355,9 @@ class MacExecutor:
             await self._reconcile()
             await self._replay()
             await self._request(WireMessageKind.reconciliation_ready, as_object(self.identity))
+            # This is the current outage marker, not a historical loss timestamp.
+            # Clear it only after this generation finishes reconciliation.
+            self.lost_at_ms = None
             self.state = ConnectionState.ready
             while not self._stop.is_set():
                 await self._replay()
@@ -367,7 +376,8 @@ class MacExecutor:
         finally:
             self._handshake_accepted = False
             self.state = ConnectionState.disconnected
-            self.lost_at_ms = now_ms()
+            if self.lost_at_ms is None:
+                self.lost_at_ms = now_ms()
             self._writer = None
             for future in self._pending.values():
                 if not future.done():
