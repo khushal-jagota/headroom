@@ -24,6 +24,9 @@ def check_spool_compatibility(root: Path, expected_format: int) -> None:
     ``root`` is the stable persistent PLAN_EXECUTOR_ROOT shared across packages.
     This observation performs no writes and cannot replace a fresh, identity-bound
     quiesce-and-exit before update or rollback. Unknown existing state is preserved.
+    Filesystem inspection can also raise OSError (including directory/read races or
+    permission failures). Consumers must refuse on both ValueError and OSError;
+    neither exception is a compatible/empty result. Malformed metadata raises ValueError.
     """
     if root.is_symlink() or (root.exists() and not root.is_dir()):
         raise ValueError("executor root is not a regular directory")
