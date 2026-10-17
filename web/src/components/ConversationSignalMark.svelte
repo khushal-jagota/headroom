@@ -21,11 +21,10 @@
     data-conversation-id={conversationId ?? undefined}
     {...rest}
   >
-    {#if signal.working}
-      <StageMark state="current-running" aria-label="Working" data-conversation-signal="working" />
-    {/if}
     {#if signal.message_for_owner}
       <StageMark state="current-awaiting-approval" aria-label="Unread message" data-conversation-signal="message" />
+    {:else if signal.working}
+      <StageMark state="current-running" aria-label="Working" data-conversation-signal="working" />
     {/if}
   </span>
 {/if}

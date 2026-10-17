@@ -123,6 +123,10 @@ conversation. `working` means that its runtime is running. `message_for_owner` m
 an explicit `message_to_owner` row is newer than the owner read position. Both can be true
 at once. A conversation with neither fact exposes two false values.
 
+Each conversation shows one indicator: an unread message dot takes precedence over the
+working spinner. Reading the latest message reveals the spinner if work is still running.
+This presentation does not change either fact or the shell's actual-work count.
+
 A turn ending stops work and creates no message mark. Pending approvals, permission asks,
 Ticket stages, and child activity do not define either mark. Child totals remain separate
 from the supervisor's own conversation signal. Existing answer, approval, error, and
