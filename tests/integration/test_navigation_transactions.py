@@ -9,6 +9,7 @@ import pytest
 from planner.core.db import connect, create_schema
 from planner.navigation import journal, rebuild, snapshot
 from planner.navigation.contracts import HistoryUnavailable, NavigationRecord
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 def database(tmp_path: Path) -> sqlite3.Connection:
@@ -395,7 +396,12 @@ def test_synthetic_old_head_migration_backfills_and_failure_rolls_back(
         "latest_agent_activity_sequence": 0,
         "latest_agent_activity_at": None,
         "error_acknowledged_through_sequence": 0,
-        "lifecycle": [],
+        "lifecycle_summary": {
+            "latest_turn": None,
+            "turn_status_counts": {"intent": 0, "running": 0},
+            "request_status_counts": {"pending": 0, "answering": 0},
+            "attempt_status_counts": {"intent": 0, "unknown": 0},
+        },
     }
     assert actual["totals", "workspace"] == {"child_count": 0, "distinct_conversation_count": 0}
     before = snapshot(conn)
@@ -494,7 +500,7 @@ def test_lifecycle_upsert_and_repeated_updates_capture_one_dirty_key(tmp_path: P
     actual = snapshot(conn)
     assert int(actual["revision"]) == int(baseline["revision"]) + 1
     conversation = next(r for r in actual["records"] if r["kind"] == "conversation")
-    assert conversation["value"]["lifecycle"][0]["status"] == "unknown"
+    assert conversation["value"]["lifecycle_summary"]["attempt_status_counts"]["unknown"] == 1
     assert conversation["value"]["latest_sequence"] == 2
     conn.close()
 
@@ -535,10 +541,11 @@ def test_project_rename_and_private_timestamps_avoid_ticket_roots(
     derived: list[tuple[str, str]] = []
 
     def capture(
-        connection: sqlite3.Connection, root: tuple[str, str]
+        connection: sqlite3.Connection, root: tuple[str, str],
+        definitions: dict[str, WorkerTypeDefinition] | None = None,
     ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
         derived.append(root)
-        return original(connection, root)
+        return original(connection, root, definitions)
 
     monkeypatch.setattr(navigation_data, "_derive", capture)
     baseline = snapshot(conn)
@@ -579,10 +586,11 @@ def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
     derived: list[tuple[str, str]] = []
 
     def capture(
-        connection: sqlite3.Connection, root: tuple[str, str]
+        connection: sqlite3.Connection, root: tuple[str, str],
+        definitions: dict[str, WorkerTypeDefinition] | None = None,
     ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
         derived.append(root)
-        return original(connection, root)
+        return original(connection, root, definitions)
 
     monkeypatch.setattr(navigation_data, "_derive", capture)
     definition = json.loads(

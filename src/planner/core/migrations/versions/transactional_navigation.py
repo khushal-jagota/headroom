@@ -14,7 +14,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    create_schema(cast(sqlite3.Connection, op.get_bind().connection.driver_connection))
+    create_schema(
+        cast(sqlite3.Connection, op.get_bind().connection.driver_connection), schema_version=1
+    )
 
 
 def downgrade() -> None:

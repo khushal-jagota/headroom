@@ -1,11 +1,11 @@
-"""Generic navigation v1. Signal-derived semantics remain explicitly unsupported."""
+"""Generic navigation v2. Signal-derived semantics remain explicitly unsupported."""
 
 from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-SCHEMA_VERSION = 1
-SUPPORTED_SEMANTICS = "generic-source-facts-v1"
+SCHEMA_VERSION = 2
+SUPPORTED_SEMANTICS = "generic-source-facts-v2"
 RecordKind = Literal[
     "ticket", "orchestrator", "chief", "conversation", "address", "totals", "project"
 ]
@@ -54,13 +54,32 @@ class ChiefValue(TypedDict):
     conversation_id: str | None
 
 
-class LifecycleValue(TypedDict):
-    kind: str
+class RawTurnValue(TypedDict):
     identity: str
     turn_number: int
-    operation: str
     status: str
-    provider_identity: str | None
+
+
+class TurnStatusCounts(TypedDict):
+    intent: int
+    running: int
+
+
+class RequestStatusCounts(TypedDict):
+    pending: int
+    answering: int
+
+
+class AttemptStatusCounts(TypedDict):
+    intent: int
+    unknown: int
+
+
+class LifecycleSummary(TypedDict):
+    latest_turn: RawTurnValue | None
+    turn_status_counts: TurnStatusCounts
+    request_status_counts: RequestStatusCounts
+    attempt_status_counts: AttemptStatusCounts
 
 
 class ConversationValue(TypedDict):
@@ -69,7 +88,7 @@ class ConversationValue(TypedDict):
     latest_agent_activity_sequence: int
     latest_agent_activity_at: int | None
     error_acknowledged_through_sequence: int
-    lifecycle: list[LifecycleValue]
+    lifecycle_summary: LifecycleSummary
 
 
 class AddressValue(TypedDict):
@@ -147,7 +166,7 @@ type NavigationRecord = (
 class Continuity(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["generic-source-facts-v1"]
+    semantics: Literal["generic-source-facts-v2"]
     epoch: str
     revision: str
 
@@ -159,7 +178,7 @@ class Snapshot(Continuity):
 class RevisionBatch(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["generic-source-facts-v1"]
+    semantics: Literal["generic-source-facts-v2"]
     epoch: str
     base_revision: str
     revision: str

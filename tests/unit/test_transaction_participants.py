@@ -13,6 +13,7 @@ import uvicorn
 
 from planner.core import change_signal
 from planner.core.db import ChangeSignallingConnection, commit_without_change_signal, connect
+from planner.navigation.contracts import SCHEMA_VERSION
 
 
 @pytest.fixture
@@ -344,6 +345,8 @@ def test_application_bootstrap_does_not_enclose_schema_migration(
     server.run.assert_called_once()
     db = connect(str(db_path))
     try:
-        assert db.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 1
+        assert (
+            db.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == SCHEMA_VERSION
+        )
     finally:
         db.close()

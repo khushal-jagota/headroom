@@ -19,9 +19,12 @@ from planner.navigation.contracts import (
     Snapshot,
     parse_revision,
 )
+from planner.navigation.legacy_v1 import lifecycle_payload
+from planner.navigation.lifecycle_summary import INDEXES, read_summary
 from planner.navigation.schema import SCHEMA
 from planner.tickets.contracts import WorkerStepClaim
 from planner.tickets.derivation import StoredTicketFacts, derive_ticket_status
+from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.store import definition_from_json
 
 type Key = tuple[str, str]
@@ -70,15 +73,17 @@ def attach(conn: sqlite3.Connection) -> None:
     conn.create_function("navigation_transaction_active", 0, lambda: int(conn.in_transaction))
 
 
-def create_schema(conn: sqlite3.Connection) -> None:
+def create_schema(conn: sqlite3.Connection, *, schema_version: int = SCHEMA_VERSION) -> None:
     if not conn.in_transaction:
         raise RuntimeError("navigation schema requires a transaction")
+    if schema_version not in (1, SCHEMA_VERSION):
+        raise ValueError("unsupported navigation schema version")
     attach(conn)
     for statement in SCHEMA:
         conn.execute(statement)
     conn.execute(
         "INSERT INTO navigation_meta VALUES(1,?,?,?,0)",
-        (str(uuid.uuid4()), SCHEMA_VERSION, str(uuid.uuid4())),
+        (str(uuid.uuid4()), schema_version, str(uuid.uuid4())),
     )
     for table, (column, update_columns) in SOURCES.items():
         for operation in ("INSERT", "UPDATE", "DELETE"):
@@ -110,6 +115,20 @@ def create_schema(conn: sqlite3.Connection) -> None:
                 + capture
                 + " END"
             )
+    if schema_version == SCHEMA_VERSION:
+        for statement in INDEXES:
+            conn.execute(statement)
+    rebuild(conn)
+
+
+def upgrade_compact_lifecycle(conn: sqlite3.Connection) -> None:
+    if not conn.in_transaction:
+        raise RuntimeError("navigation upgrade requires a transaction")
+    if conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] != 1:
+        raise RuntimeError("compact lifecycle upgrade requires navigation schema 1")
+    for statement in INDEXES:
+        conn.execute(statement)
+    conn.execute("UPDATE navigation_meta SET schema_version=?", (SCHEMA_VERSION,))
     rebuild(conn)
 
 
@@ -210,7 +229,11 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
     return roots
 
 
-def _derive(conn: sqlite3.Connection, root: Key) -> tuple[list[NavigationRecord], set[Key]]:
+def _derive(
+    conn: sqlite3.Connection,
+    root: Key,
+    definitions: dict[str, WorkerTypeDefinition] | None = None,
+) -> tuple[list[NavigationRecord], set[Key]]:
     kind, identity = root
     deps: set[Key] = set()
     records: list[NavigationRecord] = []
@@ -257,12 +280,16 @@ def _derive(conn: sqlite3.Connection, root: Key) -> tuple[list[NavigationRecord]
                 live,
             )
         )
-        definition_row = conn.execute(
-            "SELECT definition_json FROM worker_types WHERE worker_type=?", (t["worker_type"],)
-        ).fetchone()
-        if definition_row is None:
-            raise RuntimeError("navigation Ticket names a missing Worker type")
-        definition = definition_from_json(str(definition_row[0]))
+        definition = None if definitions is None else definitions.get(t["worker_type"])
+        if definition is None:
+            definition_row = conn.execute(
+                "SELECT definition_json FROM worker_types WHERE worker_type=?", (t["worker_type"],)
+            ).fetchone()
+            if definition_row is None:
+                raise RuntimeError("navigation Ticket names a missing Worker type")
+            definition = definition_from_json(str(definition_row[0]))
+            if definitions is not None:
+                definitions[t["worker_type"]] = definition
         stage = definition.stage_definition(t["stage"])
         proposal = None if t["pending_proposal"] is None else json.loads(t["pending_proposal"])
         value = {
@@ -349,12 +376,11 @@ def _derive(conn: sqlite3.Connection, root: Key) -> tuple[list[NavigationRecord]
             (identity,),
         ).fetchone()
         value["error_acknowledged_through_sequence"] = 0 if ack is None else ack[0]
-        value["lifecycle"] = rows(
-            conn,
-            "SELECT kind,identity,turn_number,operation,status,provider_identity "
-            "FROM conversation_lifecycle_facts WHERE conversation_id=? ORDER BY kind,identity",
-            (identity,),
-        )
+        version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+        if version == 1:
+            value["lifecycle"] = lifecycle_payload(conn, identity)
+        else:
+            value["lifecycle_summary"] = read_summary(conn, identity)
         records.append(_record(kind, identity, value))
         addresses: dict[Key, dict[str, Any]] = {}
         for t in rows(
@@ -474,13 +500,27 @@ def _derive(conn: sqlite3.Connection, root: Key) -> tuple[list[NavigationRecord]
 
 
 def _put_root(
-    conn: sqlite3.Connection, root: Key
+    conn: sqlite3.Connection,
+    root: Key,
+    *,
+    derived: tuple[list[NavigationRecord], set[Key]] | None = None,
+    definitions: dict[str, WorkerTypeDefinition] | None = None,
 ) -> tuple[list[NavigationRecord], list[RecordKey]]:
-    new, deps = _derive(conn, root)
-    previous = {
+    new, deps = _derive(conn, root, definitions) if derived is None else derived
+    previous_values = {
+        (str(r[0]), str(r[1])): r[2]
+        for r in conn.execute(
+            "SELECT owned.kind,owned.id,record.value FROM navigation_root_records owned "
+            "LEFT JOIN navigation_records record ON record.kind=owned.kind AND record.id=owned.id "
+            "WHERE owned.root_kind=? AND owned.root_id=?",
+            root,
+        )
+    }
+    previous = set(previous_values)
+    previous_deps = {
         (str(r[0]), str(r[1]))
         for r in conn.execute(
-            "SELECT kind,id FROM navigation_root_records WHERE root_kind=? AND root_id=?", root
+            "SELECT source_kind,source_id FROM navigation_dependencies WHERE kind=? AND id=?", root
         )
     }
     current = {(r["kind"], r["id"]) for r in new}
@@ -492,35 +532,44 @@ def _put_root(
     for record in new:
         key = (record["kind"], record["id"])
         body = _json(record["value"])
-        old = conn.execute(
-            "SELECT value FROM navigation_records WHERE kind=? AND id=?", key
-        ).fetchone()
-        if old is None or old[0] != body:
+        if previous_values.get(key) != body:
             conn.execute(
                 "INSERT INTO navigation_records VALUES(?,?,?) "
                 "ON CONFLICT(kind,id) DO UPDATE SET value=excluded.value",
                 (*key, body),
             )
             changed.append(record)
-    conn.execute("DELETE FROM navigation_root_records WHERE root_kind=? AND root_id=?", root)
-    conn.executemany(
-        "INSERT INTO navigation_root_records VALUES(?,?,?,?)",
-        [(*root, *key) for key in sorted(current)],
-    )
-    conn.execute("DELETE FROM navigation_dependencies WHERE kind=? AND id=?", root)
-    conn.executemany(
-        "INSERT INTO navigation_dependencies VALUES(?,?,?,?)",
-        [(*dep, *root) for dep in sorted(deps)],
-    )
+    if previous - current:
+        conn.executemany(
+            "DELETE FROM navigation_root_records WHERE root_kind=? AND root_id=? "
+            "AND kind=? AND id=?",
+            [(*root, *key) for key in sorted(previous - current)],
+        )
+    if current - previous:
+        conn.executemany(
+            "INSERT INTO navigation_root_records VALUES(?,?,?,?)",
+            [(*root, *key) for key in sorted(current - previous)],
+        )
+    if previous_deps - deps:
+        conn.executemany(
+            "DELETE FROM navigation_dependencies WHERE source_kind=? AND source_id=? "
+            "AND kind=? AND id=?",
+            [(*dep, *root) for dep in sorted(previous_deps - deps)],
+        )
+    if deps - previous_deps:
+        conn.executemany(
+            "INSERT INTO navigation_dependencies VALUES(?,?,?,?)",
+            [(*dep, *root) for dep in sorted(deps - previous_deps)],
+        )
     return changed, deleted
 
 
-def _continuity(conn: sqlite3.Connection) -> Continuity:
+def _continuity(conn: sqlite3.Connection) -> dict[str, Any]:
     row = rows(conn, "SELECT * FROM navigation_meta WHERE singleton=1")[0]
     return {
         "scope": row["scope"],
         "schema_version": row["schema_version"],
-        "semantics": "generic-source-facts-v1",
+        "semantics": f"generic-source-facts-v{row['schema_version']}",
         "epoch": row["epoch"],
         "revision": str(row["revision"]),
     }
@@ -538,6 +587,8 @@ def finalize(conn: sqlite3.Connection) -> None:
     for source in dirty:
         roots.update(_root_dependencies(conn, source))
         roots.update(_new_roots(conn, *source))
+    definitions: dict[str, WorkerTypeDefinition] = {}
+    derived: dict[Key, tuple[list[NavigationRecord], set[Key]]] = {}
     # Every touched conversation can change memberships or counts. Previous address
     # parents survive in the projection until all affected roots are derived.
     for root in list(roots):
@@ -556,7 +607,8 @@ def finalize(conn: sqlite3.Connection) -> None:
                 )
                 if parent[0] in ("chief", "orchestrator"):
                     roots.add(("totals", ":".join(str(part) for part in parent)))
-            new, _ = _derive(conn, root)
+            derived[root] = _derive(conn, root, definitions)
+            new, _ = derived[root]
             for rec in new:
                 if rec["kind"] == "address":
                     a = rec["value"]
@@ -571,12 +623,12 @@ def finalize(conn: sqlite3.Connection) -> None:
     upserts: list[NavigationRecord] = []
     deletes: list[RecordKey] = []
     for root in sorted(roots, key=lambda key: (key[0] == "totals", key)):
-        changed, removed = _put_root(conn, root)
+        changed, removed = _put_root(conn, root, derived=derived.get(root), definitions=definitions)
         upserts.extend(changed)
         deletes.extend(removed)
     continuity = _continuity(conn)
     base = parse_revision(continuity["revision"])
-    batch: RevisionBatch = {
+    batch = {
         **continuity,
         "base_revision": str(base),
         "revision": str(base + 1),
@@ -588,14 +640,19 @@ def finalize(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM navigation_dirty")
 
 
-def reset_epoch(conn: sqlite3.Connection) -> Continuity:
+def _replace_epoch(conn: sqlite3.Connection) -> None:
     if not conn.in_transaction:
         raise RuntimeError("navigation epoch reset requires a transaction")
     conn.execute("DELETE FROM navigation_journal")
     conn.execute(
         "UPDATE navigation_meta SET epoch=?,revision=0 WHERE singleton=1", (str(uuid.uuid4()),)
     )
-    return _continuity(conn)
+
+
+def reset_epoch(conn: sqlite3.Connection) -> Continuity:
+    _require_current_schema(conn)
+    _replace_epoch(conn)
+    return cast(Continuity, _continuity(conn))
 
 
 def rebuild(conn: sqlite3.Connection) -> None:
@@ -620,12 +677,20 @@ def rebuild(conn: sqlite3.Connection) -> None:
             roots.add((kind, identity))
             if kind == "orchestrator":
                 roots.add(("totals", "orchestrator:" + identity))
+    definitions: dict[str, WorkerTypeDefinition] = {}
     for root in sorted(roots, key=lambda key: (key[0] == "totals", key)):
-        _put_root(conn, root)
-    reset_epoch(conn)
+        _put_root(conn, root, definitions=definitions)
+    _replace_epoch(conn)
+
+
+def _require_current_schema(conn: sqlite3.Connection) -> None:
+    version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+    if version != SCHEMA_VERSION:
+        raise RuntimeError("navigation public reads require the current schema")
 
 
 def _require_clean_read(conn: sqlite3.Connection) -> None:
+    _require_current_schema(conn)
     if conn.execute("SELECT 1 FROM navigation_dirty LIMIT 1").fetchone():
         raise RuntimeError("navigation read requires a transaction with no pending source writes")
 
@@ -636,7 +701,7 @@ def snapshot(conn: sqlite3.Connection) -> Snapshot:
         conn.execute("BEGIN")
     try:
         _require_clean_read(conn)
-        continuity = _continuity(conn)
+        continuity = cast(Continuity, _continuity(conn))
         records = [
             cast(
                 NavigationRecord,
@@ -661,7 +726,7 @@ def journal(
         conn.execute("BEGIN")
     try:
         _require_clean_read(conn)
-        continuity = _continuity(conn)
+        continuity = cast(Continuity, _continuity(conn))
         current = parse_revision(continuity["revision"])
         if continuity["epoch"] != epoch or after > current:
             raise HistoryUnavailable("navigation cursor does not match current continuity")
