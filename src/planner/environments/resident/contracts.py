@@ -154,3 +154,12 @@ class ResidentDeploymentRecord:
     version: int
     deployment_id: str
     result: TwoHostDeploymentResult
+
+
+@dataclass(frozen=True)
+class VpsExecutorLaunchConfiguration:
+    """Explicit stable launch settings, applied after the ambient scrub."""
+
+    mode: Literal["local", "remote"]
+    socket_path: Path | None = None
+    version: int = 1

@@ -35,6 +35,12 @@ def _parser() -> argparse.ArgumentParser:
     report.add_argument("--path", type=Path, required=True)
     report.add_argument("--deployment-id", required=True)
     report.add_argument("--requested-sha", type=_revision, required=True)
+    configure = commands.add_parser(
+        "configure-vps-launch", help="Write explicit VPS launch settings"
+    )
+    configure.add_argument("--path", type=Path, required=True)
+    configure.add_argument("--mode", choices=["local", "remote"], required=True)
+    configure.add_argument("--socket", type=Path)
     spec = commands.add_parser(
         "package-spec", help="Resolve pinned executor closure at requested SHA"
     )
@@ -85,6 +91,16 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     try:
+        if arguments.command == "configure-vps-launch":
+            from planner.environments.resident.contracts import VpsExecutorLaunchConfiguration
+            from planner.environments.resident.vps_launch import write_vps_launch
+
+            write_vps_launch(
+                arguments.path,
+                VpsExecutorLaunchConfiguration(arguments.mode, arguments.socket),
+            )
+            print(json.dumps({"disposition": "prepared", "mode": arguments.mode}))
+            return 0
         if arguments.command == "package-spec":
             from planner.environments.resident.driver import write_package_spec
 

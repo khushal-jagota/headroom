@@ -216,6 +216,20 @@ both observed hosts under the deployment identity. Both observed revisions must 
 the request before aggregate success. One successful host stays installed after its
 peer fails. A later explicit deployment retries the request.
 
+The managed VPS launcher reads `current/data/executor-launch.json`. This bounded,
+owner-only file accepts only version, mode, and socket fields. Missing configuration
+means the existing local default. Malformed or unauthorized explicit configuration
+fails. The launcher first scrubs the ambient environment, then applies only the
+validated `PLAN_EXECUTOR_MODE` and optional `PLAN_EXECUTOR_VPS_SOCKET` values. Ambient
+executor flags cannot enable the endpoint.
+
+The workflow prepares the desired settings in runner-temporary storage. The VPS
+deployment transaction applies them after service stop and restores the prior bytes
+or absence before fallback restart. Opt-out changes a stale remote selection to local.
+An absent local configuration leaves an unchanged deployment on its existing fast
+path. The SSH relay receives an explicit deployed executable and `--socket-path`
+equal to the server setting, independent of SSH environment propagation.
+
 An SSH failure before remote invocation leaves the existing installation untouched.
 A timeout or lost SSH connection after invocation leaves the remote outcome unknown.
 The report keeps the requested revision unverified and never infers cancellation or
