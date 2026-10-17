@@ -8,7 +8,7 @@ import pytest
 
 from planner.core.db import connect, create_schema
 from planner.navigation import journal, rebuild, snapshot
-from planner.navigation.contracts import HistoryUnavailable
+from planner.navigation.contracts import HistoryUnavailable, NavigationRecord
 
 
 def database(tmp_path: Path) -> sqlite3.Connection:
@@ -517,4 +517,88 @@ def test_replace_unique_collision_deletes_old_identity(tmp_path: Path) -> None:
     delta = journal(conn, baseline["epoch"], baseline["revision"])["batches"][0]
     assert {"kind": "project", "id": "old"} in delta["deletes"]
     assert actual["totals", "workspace"] == {"child_count": 0, "distinct_conversation_count": 0}
+    conn.close()
+
+
+def test_project_rename_and_private_timestamps_avoid_ticket_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.navigation import data as navigation_data
+
+    conn = database(tmp_path)
+    conn.execute("BEGIN")
+    add_parent(conn, "a")
+    for index in range(5):
+        add_ticket(conn, f"t{index}", "a")
+    conn.commit()
+    original = navigation_data._derive
+    derived: list[tuple[str, str]] = []
+
+    def capture(
+        connection: sqlite3.Connection, root: tuple[str, str]
+    ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
+        derived.append(root)
+        return original(connection, root)
+
+    monkeypatch.setattr(navigation_data, "_derive", capture)
+    baseline = snapshot(conn)
+    conn.execute("UPDATE projects SET name='Renamed Synthetic' WHERE id='project_panels'")
+    assert derived == [("project", "project_panels")]
+    assert values(conn)["project", "project_panels"]["name"] == "Renamed Synthetic"
+    assert len(journal(conn, baseline["epoch"], baseline["revision"])["batches"][0]["upserts"]) == 1
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM navigation_dependencies "
+            "WHERE source_kind='projects' AND kind='ticket'"
+        ).fetchone()[0]
+        == 0
+    )
+    derived.clear()
+    baseline = snapshot(conn)
+    conn.execute("UPDATE projects SET updated_at=updated_at+1 WHERE id='project_panels'")
+    conn.execute("UPDATE worker_types SET updated_at=updated_at+1 WHERE worker_type='coding'")
+    conn.execute("UPDATE chief_settings SET employee_launch_model='private-change'")
+    assert derived == []
+    assert snapshot(conn) == baseline
+    conn.close()
+
+
+def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from planner.navigation import data as navigation_data
+
+    conn = database(tmp_path)
+    conn.execute("BEGIN")
+    add_ticket(conn, "first")
+    add_ticket(conn, "second")
+    conn.commit()
+    original = navigation_data._derive
+    derived: list[tuple[str, str]] = []
+
+    def capture(
+        connection: sqlite3.Connection, root: tuple[str, str]
+    ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
+        derived.append(root)
+        return original(connection, root)
+
+    monkeypatch.setattr(navigation_data, "_derive", capture)
+    definition = json.loads(
+        conn.execute(
+            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
+        ).fetchone()[0]
+    )
+    next(stage for stage in definition["stages"] if stage["id"] == "needs_implementation")[
+        "ownership_mode"
+    ] = "user"
+    conn.execute(
+        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+        (json.dumps(definition),),
+    )
+    assert sorted(derived) == [("ticket", "first"), ("ticket", "second")]
+    actual = values(conn)
+    assert actual["ticket", "first"]["stage_ownership"] == "user"
+    assert actual["ticket", "second"]["stage_ownership"] == "user"
     conn.close()

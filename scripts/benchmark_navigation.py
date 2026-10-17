@@ -13,6 +13,7 @@ import hashlib
 import importlib
 import json
 import os
+import signal
 import sqlite3
 import statistics
 import subprocess
@@ -122,6 +123,10 @@ def seed(db: Path) -> dict[str, Any]:
     )
     conn.execute("BEGIN IMMEDIATE")
     try:
+        conn.execute(
+            "INSERT INTO projects(id,name,created_at,updated_at) "
+            "VALUES('project_benchmark_second','Synthetic second project',1,1)"
+        )
         for i in range(100):
             parent = f"si_benchmark_{i:04d}"
             conversation = f"benchmark_parent_{i:04d}"
@@ -307,6 +312,30 @@ def mutate(conn: sqlite3.Connection, index: int) -> None:
     conn.execute("COMMIT")
 
 
+def mutate_fanout(conn: sqlite3.Connection, index: int) -> None:
+    """Rare true fanout, separate from the representative mixed workload."""
+    conn.execute("BEGIN IMMEDIATE")
+    if index == 0:
+        conn.execute(
+            "UPDATE sprint_items SET project_id='project_benchmark_second' "
+            "WHERE id='si_benchmark_0000'"
+        )
+    else:
+        row = conn.execute(
+            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
+        ).fetchone()
+        definition = json.loads(row[0])
+        stage = next(
+            item for item in definition["stages"] if item["id"] == "needs_success_condition"
+        )
+        stage["ownership_mode"] = "user"
+        conn.execute(
+            "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+            (json.dumps(definition),),
+        )
+    conn.commit()
+
+
 def runtime_provenance() -> dict[str, str]:
     import planner
 
@@ -379,7 +408,7 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
 
         setattr(module, function_name, timed_finalizer)
     workers = int(args.case[-1]) if args.case.startswith("writers") else 1
-    count = 20 if args.case == "burst" else 80
+    count = 2 if args.case == "fanout" else 20 if args.case == "burst" else 80
     interval_ns = 10_000_000 if args.case == "burst" else 0
     origin = time.perf_counter_ns() + 5_000_000
     results: list[dict[str, Any]] = []
@@ -398,7 +427,10 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
         start = time.perf_counter_ns()
         failure = None
         try:
-            mutate(connection, index)
+            if args.case == "fanout":
+                mutate_fanout(connection, index)
+            else:
+                mutate(connection, index)
         except Exception as error:
             failure = f"{type(error).__name__}: {error}"
             if connection.in_transaction:
@@ -406,7 +438,7 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
         end = time.perf_counter_ns()
         return {
             "index": index,
-            "operation": index % 8,
+            "operation": index + 8 if args.case == "fanout" else index % 8,
             "offer_ns": offer - origin,
             "start_ns": start - origin,
             "end_ns": end - origin,
@@ -476,6 +508,13 @@ def controller(args: argparse.Namespace) -> None:
             "database-root must be a dedicated isolated directory outside live runtime"
         )
     root.mkdir(parents=True, exist_ok=True)
+    stop_requested = False
+
+    def request_stop(_signal: int, _frame: Any) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+
+    signal.signal(signal.SIGUSR1, request_stop)
     baseline = args.baseline.resolve()
     candidate = args.candidate.resolve()
     harness = Path(__file__).resolve()
@@ -538,11 +577,14 @@ def controller(args: argparse.Namespace) -> None:
             )
             pairs = [("updates", i) for i in range(args.trials)]
             pairs += [("cold", i) for i in range(args.cold_pairs)]
-            pairs += [(case, i) for case in ("burst", "writers2", "writers4") for i in range(3)]
+            pairs += [
+                (case, i) for case in ("burst", "writers2", "writers4", "fanout") for i in range(3)
+            ]
             for ordinal, (case, pair) in enumerate(pairs):
                 order = [("baseline", baseline), ("candidate", candidate)]
                 if ordinal % 2:
                     order.reverse()
+                pair_digests: dict[str, str] = {}
                 for label, tree in order:
                     directory = run_root / f"{case}-{pair}-{label}"
                     result = invoke(
@@ -550,6 +592,7 @@ def controller(args: argparse.Namespace) -> None:
                     )
                     if result["initial_source_digest"] != seed_result["fixture_source_digest"]:
                         raise RuntimeError(f"source fixture mismatch for {label} {case} {pair}")
+                    pair_digests[label] = result["final_source_digest"]
                     result.update(
                         type="trial", label=label, case=case, pair=pair, order=ordinal % 2
                     )
@@ -566,6 +609,12 @@ def controller(args: argparse.Namespace) -> None:
                         file=sys.stderr,
                         flush=True,
                     )
+                    if stop_requested:
+                        emit({"type": "stopped", "case": case, "pair": pair, "label": label})
+                        print("Graceful stop after completed trial", file=sys.stderr, flush=True)
+                        return
+                if not case.startswith("writers") and len(set(pair_digests.values())) != 1:
+                    raise RuntimeError(f"final source mismatch for {case} pair {pair}")
 
 
 if __name__ == "__main__":

@@ -30,9 +30,9 @@ type Key = tuple[str, str]
 SOURCES: dict[str, tuple[str, str | None]] = {
     "tickets": ("id", None),
     "sprint_items": ("id", None),
-    "projects": ("id", None),
-    "worker_types": ("worker_type", None),
-    "chief_settings": ("employee_id", None),
+    "projects": ("id", "id,name,priority"),
+    "worker_types": ("worker_type", "worker_type,definition_json"),
+    "chief_settings": ("employee_id", "employee_id,label"),
     "agents": ("agent_key", None),
     "ticket_conversations": ("conversation_id", None),
     "ticket_blocks": ("blocked_ticket_id", None),
@@ -184,18 +184,13 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
             ("sprint_item_supervisor_" + identity,),
         ):
             roots.add(("conversation", str(row[0])))
-    elif table in ("projects", "worker_types"):
-        if table == "projects":
-            roots.add(("project", identity))
-            ids = conn.execute(
-                "SELECT t.id FROM tickets t LEFT JOIN sprint_items i ON i.id=t.sprint_item_id "
-                "WHERE COALESCE(i.project_id,t.project_id)=?",
-                (identity,),
-            )
-        else:
-            ids = conn.execute("SELECT id FROM tickets WHERE worker_type=?", (identity,))
-        for row in ids.fetchall():
-            roots.update(_new_roots(conn, "tickets", str(row[0])))
+    elif table == "projects":
+        roots.add(("project", identity))
+    elif table == "worker_types":
+        roots.update(
+            ("ticket", str(row[0]))
+            for row in conn.execute("SELECT id FROM tickets WHERE worker_type=?", (identity,))
+        )
     elif table == "chief_settings":
         roots.add(("chief", "chief"))
     elif table == "agents":
@@ -230,7 +225,7 @@ def _derive(conn: sqlite3.Connection, root: Key) -> tuple[list[NavigationRecord]
         if not found:
             return [], deps
         t = found[0]
-        deps.update({("worker_types", t["worker_type"]), ("projects", str(t["effective_project"]))})
+        deps.add(("worker_types", t["worker_type"]))
         if t["sprint_item_id"]:
             deps.add(("sprint_items", t["sprint_item_id"]))
         blockers = rows(
