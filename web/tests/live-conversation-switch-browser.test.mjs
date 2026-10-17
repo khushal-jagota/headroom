@@ -84,6 +84,15 @@ Object.defineProperty(document, "visibilityState", { get: () => visible ? "visib
   document.dispatchEvent(new Event("visibilitychange"));
   window.dispatchEvent(new Event(focused ? "focus" : "blur"));
 };
+const heldReads = new Map<number, { resolve: (accepted: number) => void; reject: () => void }>();
+const holdSequences = new Set<number>();
+(globalThis as any).__holdRead = (sequence: number) => holdSequences.add(sequence);
+(globalThis as any).__finishRead = (sequence: number, succeeded = true) => {
+  const pending = heldReads.get(sequence)!;
+  if (succeeded) pending.resolve(sequence);
+  else pending.reject();
+  heldReads.delete(sequence);
+};
 let delayNextRead = false;
 let releaseRead: (() => void) | null = null;
 (globalThis as any).__delayNextRead = () => delayNextRead = true;
@@ -108,6 +117,16 @@ const recordedBRows: unknown[] = [];
       delayNextRead = false;
       await new Promise<void>((resolve) => releaseRead = resolve);
     }
+    if (holdSequences.delete(body.through_sequence)) {
+      try {
+        await new Promise<number>((resolve, reject) => heldReads.set(body.through_sequence,
+          { resolve, reject: () => reject(new Error("read refused")) }));
+      } catch {
+        return Response.json({ detail: "read refused" }, { status: 503 });
+      }
+    }
+    const snapshot = snapshots[ownerReadMatch[1]];
+    snapshot.owner_read_through_sequence = Math.max(snapshot.owner_read_through_sequence, body.through_sequence);
     return Response.json({ owner_read_through_sequence: body.through_sequence });
   }
   const eventsMatch = url.match(/conversations\/(conversation-[ab])\/events\?after=\d+$/);
@@ -162,6 +181,13 @@ class FakeEventSource {
 };
 
 async function start(): Promise<void> {
+  const { queryClient } = await import("../src/lib/queryClient");
+  (globalThis as any).__readRefreshes = 0;
+  const invalidate = queryClient.invalidateQueries.bind(queryClient);
+  queryClient.invalidateQueries = (...args) => {
+    (globalThis as any).__readRefreshes += 1;
+    return invalidate(...args);
+  };
   const { mount } = await import("svelte");
   const { default: Host } = await import("./${hostPath.split("/").at(-1)}");
   mount(Host, { target: document.getElementById("app")! });
@@ -346,6 +372,68 @@ with sync_playwright() as playwright:
     assert page.evaluate("window.__ownerReads.at(-1).sequence") == 9
     page.evaluate("window.__setConversationState('opened')")
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 10")
+
+    page.wait_for_function("window.__readRefreshes === 7")
+
+    def emit_tool(sequence):
+        page.evaluate("""sequence => window.__emitConversationRow('conversation-b', {
+          conversation_id: 'conversation-b', sequence, kind: 'tool_call_started',
+          payload: { tool_call_id: 'tool-' + sequence, title: 'Tool ' + sequence,
+            tool_kind: 'read', detail: null }, created_at: sequence
+        })""", sequence)
+
+    # A newer acknowledgment can cover the same message first. The late older response
+    # neither repeats invalidation nor moves the accepted position backward.
+    page.evaluate("window.__holdRead(11); window.__holdRead(12)")
+    emit_message(11)
+    page.wait_for_function("window.__ownerReads.at(-1).sequence === 11")
+    emit_tool(12)
+    page.wait_for_function("window.__ownerReads.at(-1).sequence === 12")
+    assert page.evaluate("window.__readRefreshes") == 7
+    page.evaluate("window.__finishRead(12)")
+    page.wait_for_function("window.__readRefreshes === 8")
+    page.evaluate("window.__finishRead(11)")
+    page.wait_for_timeout(100)
+    assert page.evaluate("window.__readRefreshes") == 8
+    assert page.evaluate("window.__ownerReads.filter(r => r.sequence === 12).length") == 1
+    emit_tool(13)
+    page.wait_for_function("window.__ownerReads.at(-1).sequence === 13")
+    page.wait_for_timeout(100)
+    assert page.evaluate("window.__readRefreshes") == 8
+
+    # A failed earlier request must not suppress refresh when the overlapping request
+    # succeeds, or erase that newer request's pending marker.
+    page.evaluate("window.__holdRead(14); window.__holdRead(15)")
+    emit_message(14)
+    page.wait_for_function("window.__ownerReads.at(-1).sequence === 14")
+    emit_tool(15)
+    page.wait_for_function("window.__ownerReads.at(-1).sequence === 15")
+    page.evaluate("window.__finishRead(14, false)")
+    page.wait_for_timeout(100)
+    assert page.evaluate("window.__readRefreshes") == 8
+    page.evaluate("window.__setAttention(true,true)")
+    page.wait_for_timeout(100)
+    assert page.evaluate("window.__ownerReads.filter(r => r.sequence === 15).length") == 1
+    page.evaluate("window.__finishRead(15)")
+    page.wait_for_function("window.__readRefreshes === 9")
+
+    # A successful response still refreshes canonical mounted queries after switching.
+    # It does not write B's watermark into A or assume a reply-required dot cleared.
+    page.evaluate("window.__holdRead(16)")
+    emit_message(16)
+    page.wait_for_function("window.__ownerReads.at(-1).sequence === 16")
+    page.evaluate("window.__switchConversation('conversation-a')")
+    page.wait_for_timeout(100)
+    page.evaluate("window.__finishRead(16)")
+    page.wait_for_function("window.__readRefreshes === 10")
+    page.evaluate("""window.__emitConversationRow('conversation-a', {
+      conversation_id: 'conversation-a', sequence: 1, kind: 'message_to_owner',
+      payload: {text: 'A first message', sender_label: 'Ticket A',
+        sender: {kind: 'ticket', id: 'a'}, recipient: {kind: 'owner', id: 'owner'}},
+      created_at: 1
+    })""")
+    page.wait_for_function("window.__ownerReads.at(-1).conversationId === 'conversation-a' && window.__ownerReads.at(-1).sequence === 1")
+    page.wait_for_function("window.__readRefreshes === 11")
 
     page.reload(wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
