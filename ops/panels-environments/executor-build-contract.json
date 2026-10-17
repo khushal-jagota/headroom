@@ -77,5 +77,12 @@
   "review": "/files/tickets/t_t77znn6k/artifacts/executor-review.txt",
   "answer_contract": "permission choices and complete user_input maps share one durable VPS ask record, exact callback kind/child/turn/ID, immutable first choice, application acknowledgment, and reconnect reconciliation",
   "held_content": "canonical pending conversation content and original queued receipt commit atomically; original target/order restore; promotion/discard consume; interrupted dispatch retains bytes as uncertainty without native replay; no reconstruction of previously lost volatile content",
-  "imported_source_revision": "583cfccf631699fe2b610b98c97df9d86e58c8dc"
+  "imported_source_revision": "583cfccf631699fe2b610b98c97df9d86e58c8dc",
+  "synthetic_evidence_revision": "95af473d2250d8136f2e298b528b7c2c6a9bef35",
+  "reviewed_readiness_correction": {
+    "revision": "583cfccf631699fe2b610b98c97df9d86e58c8dc",
+    "parent": "745676d601d3b3e962adfee3746465a68bb0f5b4",
+    "scope": "current outage clears only after current-generation reconciliation; failed reconnects retain outage onset",
+    "resident_evidence": "/files/tickets/t_j1wkk0p7/evidence/readiness-correction/"
+  }
 }
