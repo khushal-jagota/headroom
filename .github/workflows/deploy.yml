@@ -28,7 +28,14 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: Require a wired driver for explicitly configured two-host deployment
+        if: vars.PANELS_RESIDENT_DEPLOY_ENABLED == 'true'
+        run: |
+          python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python 3.12 or newer is required"'
+          PYTHONPATH="$GITHUB_WORKSPACE/src" python3 -m planner.environments.resident.cli preflight \
+            --requested-sha "$PANELS_REQUESTED_SHA"
       - name: Start deployment lifecycle
+        id: lifecycle-start
         run: |
           current_record="$(
             python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" read \
@@ -113,7 +120,7 @@ jobs:
           git worktree remove --force "$PANELS_CANDIDATE_SOURCE" || rm -rf -- "$PANELS_CANDIDATE_SOURCE"
           rm -rf -- "$PANELS_CANDIDATE_APP" "$PANELS_DEPLOY_VENV"
       - name: Finalize deployment lifecycle
-        if: always()
+        if: always() && steps.lifecycle-start.outcome == 'success'
         env:
           PANELS_PRIOR_JOB_STATUS: ${{ job.status }}
         run: |

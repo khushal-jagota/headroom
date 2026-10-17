@@ -161,6 +161,57 @@ The operator must establish the single-user filesystem layout, user units, runne
 persistent paths before enabling automatic deployment. Repository deployment does not
 perform that host setup or change the existing Tailscale Serve route.
 
+## Mac executor preparation and deployment boundaries
+
+The resident tooling under `environments/resident` prepares an executor-only source
+package and renders a dedicated LaunchAgent. It does not install or start the service.
+It consumes the shared executor contracts rather than a second wire schema.
+
+The proposed code location is `~/Deployments/PanelsExecutor/current/app`. The executor
+data root remains `~/Library/Application Support/Panels/executor`, selected through
+`PLAN_EXECUTOR_ROOT`. Its `spool/`, `artifacts/tickets/`, `logs/`, and `run/` remain in
+place during code replacement. Each Worker receives its own `PLAN_TICKET_FILES_DIR`
+from the executor. The account's ordinary HOME and provider homes remain unchanged.
+
+Source packaging requires an explicit executor source/dependency closure for an exact
+Git revision. It never substitutes the full server package. Native runtimes live at
+permanent versioned paths outside replaceable code. A native builder must build there
+and bind the runtime to the package and dependency identities. A VPS virtualenv cannot
+serve as a Mac runtime. Synthetic builder checks do not establish native Mac readiness.
+
+The update transaction consumes executor health and quiescence through adapter
+contracts. Quiescence requests identify the expected executor incarnation, connection
+generation, and process ID. Cutover requires a matching receipt, zero retained work,
+and committed exit. Pending callbacks, uncertain operations, and unsent entries defer
+replacement. A failed candidate requires its own fresh matching receipt before rollback.
+An incompatible prior package cannot mutate or migrate the persistent spool.
+
+Two-host coordination records each host's requested revision, observed revision, and
+outcome under one deployment identity. Both hosts must report the requested revision
+before the aggregate result succeeds. An unreachable Mac retains its existing code and
+leaves the requested revision unverified. A later explicit deployment retries the
+request. A successful host update remains in place after its peer fails.
+
+The production resident driver remains unavailable until the executor source closure,
+native preparation, and enforced owner-only control adapter are connected and checked.
+Shared type definitions alone do not establish process fencing. Preparation and
+synthetic adapter checks authorize no host access, account change, or deployment.
+
+The offline entrypoint is `python -m planner.environments.resident.cli`. Its
+`source-build` command takes `--source-root`, `--manifest`, `--requested-sha`, and
+`--candidate-app`. Its `verify-report` command takes `--path`, `--deployment-id`, and
+`--requested-sha`. Report verification checks recorded evidence and contacts no host.
+`preflight --requested-sha <full-sha>` returns deferred with exit code 3 while the
+production driver is absent. The workflow invokes that check before any VPS change
+only when `PANELS_RESIDENT_DEPLOY_ENABLED` is explicitly `true`. Without that variable,
+the existing VPS deployment path remains in use. This opt-in guard does not ship the
+executor or enable a two-host rollout.
+
+The real LaunchAgent's credential access before and after interaction and keychain
+unlock remains unproved. Unattended reboot recovery also remains unresolved. A GUI
+service target, Terminal result, or SSH result does not discharge those acceptance
+tests. The full unattended outcome remains required.
+
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 `src/planner/environments/deployment.py`,
 `src/planner/environments/deployment_lifecycle.py`,
