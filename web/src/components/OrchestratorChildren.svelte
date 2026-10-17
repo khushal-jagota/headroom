@@ -21,7 +21,7 @@
   let groupOpen = $state<Record<string, boolean>>({});
   const filters: { value: OrchestratorChildFilter; label: string }[] = [
     { value: "active", label: "Active" }, { value: "backlogged", label: "Backlogged" },
-    { value: "done", label: "Done" }, { value: "retired", label: "Retired" }
+    { value: "done", label: "Done" }, { value: "retired", label: "Cancelled" }
   ];
   const children = createQuery(() => ({
     ...queries.orchestratorTicketSummaries(principal, filter, offset),
