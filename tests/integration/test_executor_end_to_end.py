@@ -57,8 +57,11 @@ from planner.executor.contracts import (
     AskReachability,
     AskReference,
     ChildReference,
+    CommandDisposition,
     ConnectionState,
     EnvelopeKind,
+    JsonObject,
+    QueuedEnvelope,
     WireMessage,
     WireMessageKind,
 )
@@ -1175,5 +1178,190 @@ def test_production_relay_exits_when_peer_ends_while_stdin_stays_open(
             if peer is not None:
                 peer.close()
             listener.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("invalid_ack", ["empty", "mismatched"])
+def test_artifact_chunk_ack_must_validate_before_publication_and_backend_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
+) -> None:
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            reject = True
+            rejected = asyncio.Event()
+            completed = 0
+            send = harness.endpoint._send
+            replay = harness.mac._replay_envelope
+
+            async def corrupt_ack(message: WireMessage) -> None:
+                if reject and message.kind is WireMessageKind.file_chunk_ack:
+                    payload = {} if invalid_ack == "empty" else dict(message.payload)
+                    if invalid_ack == "mismatched":
+                        payload["offset"] = -1
+                    message = WireMessage(message.kind, message.request_id, payload)
+                await send(message)
+
+            async def observe_rejection(envelope: QueuedEnvelope) -> None:
+                try:
+                    await replay(envelope)
+                except ValueError:
+                    rejected.set()
+                    raise
+
+            request = harness.mac._request
+
+            async def count_completions(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+                nonlocal completed
+                if kind is WireMessageKind.file_complete:
+                    completed += 1
+                return await request(kind, payload)
+
+            monkeypatch.setattr(harness.endpoint, "_send", corrupt_ack)
+            monkeypatch.setattr(harness.mac, "_replay_envelope", observe_rejection)
+            monkeypatch.setattr(harness.mac, "_request", count_completions)
+            artifact = harness.mac.paths.artifacts / "t_scripted" / "typed-ack.bin"
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            contents = bytes(range(256)) * 2000
+            artifact.write_bytes(contents)
+            assert harness.native.sink is not None and harness.native.turn is not None
+            await harness.native.sink.tool_call_finished(
+                harness.native.turn,
+                tool_call_id="typed_ack",
+                tool_call_status=ToolCallStatus.completed,
+                detail="The file needs a valid chunk acknowledgment.",
+            )
+            await asyncio.wait_for(rejected.wait(), 8)
+            target = tmp_path / "vps/files/tickets/t_scripted/typed-ack.bin"
+            assert not target.exists()
+            assert harness.events("tool_call_finished") == 0
+            assert completed == 0
+            assert any(
+                row.kind is EnvelopeKind.backend_event for row in harness.mac.spool.pending()
+            )
+            assert artifact.read_bytes() == contents
+            reject = False
+            await eventually(
+                lambda: harness.events("tool_call_finished") == 1,
+                "Corrected artifact acknowledgment did not allow the dependent event",
+            )
+            assert target.read_bytes() == contents
+            await eventually(
+                lambda: not harness.mac.spool.pending(), "Artifact receipt did not drain"
+            )
+        finally:
+            await harness.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("invalid_ack", ["empty", "mismatched"])
+def test_input_chunk_ack_must_validate_before_completion_or_command_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
+) -> None:
+    from planner.conversation.message_content import MessageFile
+    from planner.executor.codec import encode_value
+    from planner.executor.contracts import ChildCommand, ChildOperation
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        caller = None
+        try:
+            reject = True
+            rejected = asyncio.Event()
+            completions = 0
+            commands = 0
+            send = harness.mac._send
+            request = harness.endpoint._request
+            endpoint_send = harness.endpoint._send
+
+            async def corrupt_ack(message: WireMessage) -> None:
+                if reject and message.kind is WireMessageKind.file_chunk_ack:
+                    payload = {} if invalid_ack == "empty" else dict(message.payload)
+                    if invalid_ack == "mismatched":
+                        payload["byte_count"] = -1
+                    message = WireMessage(message.kind, message.request_id, payload)
+                    rejected.set()
+                await send(message)
+
+            async def count_completions(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+                nonlocal completions
+                if kind is WireMessageKind.file_complete:
+                    completions += 1
+                return await request(kind, payload)
+
+            async def count_commands(message: WireMessage) -> None:
+                nonlocal commands
+                if message.kind is WireMessageKind.command:
+                    commands += 1
+                await endpoint_send(message)
+
+            monkeypatch.setattr(harness.mac, "_send", corrupt_ack)
+            monkeypatch.setattr(harness.endpoint, "_request", count_completions)
+            monkeypatch.setattr(harness.endpoint, "_send", count_commands)
+            contents = bytes(range(256)) * 3000
+            kept = await harness.endpoint.runtime.message_files.keep(
+                "c_scripted", contents, media_type="application/octet-stream"
+            )
+            command = ChildCommand(
+                "input_ack_barrier",
+                harness.ask.child,
+                ChildOperation.write_prompt,
+                harness.native.turn,
+                {
+                    "content": encode_value(
+                        (
+                            MessageFile(
+                                kept.stored_file_id,
+                                "application/octet-stream",
+                                "input.bin",
+                                len(contents),
+                            ),
+                        )
+                    ),
+                    "sender_content": encode_value(text_message_content("Inspect the bytes")),
+                    "sender_label": "Test",
+                    "mode": "queue",
+                },
+            )
+            target = (
+                harness.mac.paths.root
+                / "artifacts/files/conversations/c_scripted"
+                / kept.stored_file_id
+            )
+            generation = harness.mac.identity.connection_generation
+            harness.native.required_input_path = target
+            harness.native.required_input_contents = contents
+            caller = asyncio.create_task(harness.endpoint.send_command(command))
+            await asyncio.wait_for(rejected.wait(), 8)
+            await eventually(
+                lambda: harness.mac.identity.connection_generation > generation,
+                "Invalid input acknowledgment did not reconnect",
+            )
+            assert not caller.done()
+            pending = harness.endpoint.pending_commands[command.command_id]
+            assert pending[0] == command and not pending[1].done()
+            assert completions == 0 and commands == 0
+            assert harness.native.prompt_count == 1
+            assert not target.exists()
+            assert (
+                await harness.endpoint.runtime.message_files.read("c_scripted", kept.stored_file_id)
+                == contents
+            )
+            reject = False
+            outcome = await asyncio.wait_for(asyncio.shield(caller), 8)
+            assert outcome.command_id == command.command_id
+            assert outcome.disposition is CommandDisposition.succeeded
+            assert target.read_bytes() == contents
+            assert completions == 1 and commands == 1
+            assert harness.native.prompt_count == 2
+            assert command.command_id not in harness.endpoint.pending_commands
+
+        finally:
+            if caller is not None and not caller.done():
+                caller.cancel()
+                await asyncio.gather(caller, return_exceptions=True)
+            await harness.close()
 
     asyncio.run(run())

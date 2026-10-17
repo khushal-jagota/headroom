@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-PROTOCOL_VERSION: Final = 2
+PROTOCOL_VERSION: Final = 3
 SPOOL_FORMAT_VERSION: Final = 1
 MAX_ENVELOPE_BYTES: Final = 1024 * 1024
 FILE_CHUNK_BYTES: Final = 256 * 1024

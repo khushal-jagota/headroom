@@ -176,6 +176,15 @@ class FileChunk:
     content_base64: str
 
 
+@dataclass(frozen=True, slots=True)
+class FileChunkAcknowledgment:
+    """The receiver wrote this exact chunk; full publication acceptance is separate."""
+
+    publication_id: str
+    offset: int
+    byte_count: int
+
+
 class EnvelopeKind(StrEnum):
     backend_event = "backend_event"
     cli_write = "cli_write"
@@ -382,6 +391,7 @@ class WireMessageKind(StrEnum):
     receipt = "receipt"
     file_manifest = "file_manifest"
     file_chunk = "file_chunk"
+    file_chunk_ack = "file_chunk_ack"
     file_complete = "file_complete"
     file_accepted = "file_accepted"
     file_pending = "file_pending"
