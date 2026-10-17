@@ -452,6 +452,13 @@ hand-rolling the same shapes per screen. Each does one job:
   Its delivery control defaults to Steer and also offers Queue and Send now. A held row
   names why Panels queued a steer fallback.
 
+  The textarea grows with its content. Its height stops at the smaller of 44% of the
+  conversation pane or 12 lines, rounded down to whole lines, then scrolls internally.
+  Pending pictures and files share one horizontal strip in attachment order. Pictures
+  show thumbnails; files show their type, name, and size. The footer keeps one row at
+  phone widths, with a truncated model name and equal-height controls. Stop keeps its
+  transparent background and error-colored outline. Send is the only filled control.
+
   The pane's options menu, under the `⋯` control in its head, holds New conversation and,
   for a screen that keeps earlier conversations, the picker that opens one. Nothing is
   drawn above the card for either. A screen with no earlier conversation shows no picker,

@@ -30,7 +30,7 @@ textarea {
 .file-preview-document-body,
 .chat-thread,
 .chat-menu,
-.chat-image-previews,
+.chat-attachments,
 .board-workspace-left,
 .ticket-doc,
 .sprint-item-doc {
@@ -47,8 +47,8 @@ textarea {
 .chat-thread::-webkit-scrollbar-corner,
 .chat-menu::-webkit-scrollbar-track,
 .chat-menu::-webkit-scrollbar-corner,
-.chat-image-previews::-webkit-scrollbar-track,
-.chat-image-previews::-webkit-scrollbar-corner,
+.chat-attachments::-webkit-scrollbar-track,
+.chat-attachments::-webkit-scrollbar-corner,
 .board-workspace-left::-webkit-scrollbar-track,
 .board-workspace-left::-webkit-scrollbar-corner,
 .ticket-doc::-webkit-scrollbar-track,
@@ -60,7 +60,7 @@ textarea {
 .file-preview-document-body::-webkit-scrollbar-thumb,
 .chat-thread::-webkit-scrollbar-thumb,
 .chat-menu::-webkit-scrollbar-thumb,
-.chat-image-previews::-webkit-scrollbar-thumb,
+.chat-attachments::-webkit-scrollbar-thumb,
 .board-workspace-left::-webkit-scrollbar-thumb,
 .ticket-doc::-webkit-scrollbar-thumb {
   background: var(--border-color);
@@ -72,7 +72,7 @@ textarea {
   .file-preview-document-body,
   .chat-thread,
   .chat-menu,
-  .chat-image-previews,
+  .chat-attachments,
   .board-workspace-left,
   .ticket-doc {
     scrollbar-color: transparent transparent;
@@ -90,9 +90,9 @@ textarea {
   .chat-menu:hover,
   .chat-menu:focus-within,
   .chat-menu:active,
-  .chat-image-previews:hover,
-  .chat-image-previews:focus-within,
-  .chat-image-previews:active,
+  .chat-attachments:hover,
+  .chat-attachments:focus-within,
+  .chat-attachments:active,
   .board-workspace-left:hover,
   .board-workspace-left:focus-within,
   .board-workspace-left:active,
@@ -106,7 +106,7 @@ textarea {
   .file-preview-document-body::-webkit-scrollbar-thumb,
   .chat-thread::-webkit-scrollbar-thumb,
   .chat-menu::-webkit-scrollbar-thumb,
-  .chat-image-previews::-webkit-scrollbar-thumb,
+  .chat-attachments::-webkit-scrollbar-thumb,
   .board-workspace-left::-webkit-scrollbar-thumb,
   .ticket-doc::-webkit-scrollbar-thumb {
     background: transparent;
@@ -124,9 +124,9 @@ textarea {
   .chat-menu:hover::-webkit-scrollbar-thumb,
   .chat-menu:focus-within::-webkit-scrollbar-thumb,
   .chat-menu:active::-webkit-scrollbar-thumb,
-  .chat-image-previews:hover::-webkit-scrollbar-thumb,
-  .chat-image-previews:focus-within::-webkit-scrollbar-thumb,
-  .chat-image-previews:active::-webkit-scrollbar-thumb,
+  .chat-attachments:hover::-webkit-scrollbar-thumb,
+  .chat-attachments:focus-within::-webkit-scrollbar-thumb,
+  .chat-attachments:active::-webkit-scrollbar-thumb,
   .board-workspace-left:hover::-webkit-scrollbar-thumb,
   .board-workspace-left:focus-within::-webkit-scrollbar-thumb,
   .board-workspace-left:active::-webkit-scrollbar-thumb,
@@ -142,7 +142,7 @@ textarea {
   .file-preview-document-body,
   .chat-thread,
   .chat-menu,
-  .chat-image-previews,
+  .chat-attachments,
   .board-workspace-left,
   .ticket-doc {
     scrollbar-color: auto;
@@ -156,8 +156,8 @@ textarea {
   .chat-thread::-webkit-scrollbar-corner,
   .chat-menu::-webkit-scrollbar-track,
   .chat-menu::-webkit-scrollbar-corner,
-  .chat-image-previews::-webkit-scrollbar-track,
-  .chat-image-previews::-webkit-scrollbar-corner,
+  .chat-attachments::-webkit-scrollbar-track,
+  .chat-attachments::-webkit-scrollbar-corner,
   .board-workspace-left::-webkit-scrollbar-track,
   .board-workspace-left::-webkit-scrollbar-corner,
   .ticket-doc::-webkit-scrollbar-track,
@@ -169,7 +169,7 @@ textarea {
   .file-preview-document-body::-webkit-scrollbar-thumb,
   .chat-thread::-webkit-scrollbar-thumb,
   .chat-menu::-webkit-scrollbar-thumb,
-  .chat-image-previews::-webkit-scrollbar-thumb,
+  .chat-attachments::-webkit-scrollbar-thumb,
   .board-workspace-left::-webkit-scrollbar-thumb,
   .ticket-doc::-webkit-scrollbar-thumb {
     background: CanvasText;
@@ -2250,50 +2250,64 @@ button.list-row:hover .list-row-title {
   text-overflow: ellipsis;
 }
 
-.chat-image-previews {
+/* The composer also renders on its own (for example, a voice response). Its control
+ * measures inherit a host's custom values and otherwise keep the conversation defaults. */
+[data-conversation-composer] {
+  --composer-target: var(--conversation-target, 32px);
+  --composer-glyph: var(--conversation-glyph, 22px);
+}
+
+/* Pending attachments share one horizontal strip and a common tile height. */
+.chat-attachments {
   display: flex;
   gap: var(--space-2);
   overflow-x: auto;
-  padding: 2px 0 var(--space-2);
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--space-2) var(--space-1) var(--space-2);
+  scrollbar-width: thin;
 }
-.chat-image-preview {
+.chat-att {
   position: relative;
-  flex: 0 0 62px;
-  width: 62px;
+  flex: none;
   height: 52px;
+  min-width: 0;
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-md);
   background: var(--surface-2);
 }
-.chat-image-preview img {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-  border-radius: calc(var(--radius-md) - 1px);
+.chat-att.img { width: 62px; }
+.chat-att.img img {
+  width: 100%; height: 100%; display: block; object-fit: cover;
+  border-radius: calc(var(--radius-md) - var(--border-hairline));
 }
-.chat-image-remove {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: 50%;
-  background: var(--surface-2);
-  color: var(--text-strong);
-  cursor: pointer;
-  font-size: var(--type-md);
-  line-height: 1;
+.chat-att.file {
+  display: flex; align-items: center; gap: var(--space-2); max-width: 190px;
+  padding-inline: var(--space-2); background: var(--surface-recessed);
 }
-.chat-image-remove:hover {
-  border-color: var(--accent-error);
-  background-image: var(--interaction-hover);
+.chat-att-kind {
+  flex: none; display: grid; place-items: center; width: 26px; height: 26px;
+  border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--type-xs); letter-spacing: var(--tracking-mono);
 }
-.chat-image-remove:disabled { opacity: 0.5; cursor: default; }
+.chat-att-words { min-width: 0; display: grid; gap: 1px; }
+.chat-att-name {
+  color: var(--text-strong); font-size: var(--type-xs); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-att-meta {
+  color: var(--text-faint); font-family: var(--font-mono); font-size: var(--type-xs);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-att-x {
+  position: absolute; top: -5px; right: -5px; width: 18px; height: 18px;
+  display: grid; place-items: center; padding: 0;
+  border: var(--border-hairline) solid var(--border-color); border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--text-strong); cursor: pointer;
+  font-size: var(--type-md); line-height: 1;
+}
+.chat-att-x:hover { border-color: var(--accent-error); background-image: var(--interaction-hover); }
+.chat-att-x:disabled { opacity: 0.5; cursor: default; }
 .chat-drop-label {
   position: absolute;
   inset: var(--space-2);
@@ -2322,8 +2336,9 @@ button.list-row:hover .list-row-title {
   font-size: max(var(--type-md), var(--type-input));
   line-height: 1.55;
   outline: none;
-  min-height: 44px;
-  max-height: 140px;
+  min-height: 0;
+  padding: 0;
+  overflow-y: hidden;
   display: block;
 }
 .chat-ta::placeholder { color: var(--text-faintest); }
@@ -2355,23 +2370,25 @@ button.list-row:hover .list-row-title {
 /* A target a finger can find: the conversation's own control size, not the app's
  * smallest icon. The glyph inside grows with it. */
 .chat-image {
-  width: var(--conversation-target);
-  height: var(--conversation-target);
+  width: var(--composer-target);
+  height: var(--composer-target);
   display: grid;
   place-items: center;
   background: none;
   border: none;
   color: var(--text-faintest);
   cursor: pointer;
-  padding: var(--space-1);
+  padding: 0;
+  flex: none;
   border-radius: var(--radius-md);
 }
 .chat-image:hover { color: var(--text-strong); background-image: var(--interaction-hover); }
 .chat-image.on { color: var(--accent-bright); background: var(--surface-recessed); }
 .chat-image:disabled { opacity: 0.5; cursor: default; }
 .chat-image svg {
-  width: var(--conversation-glyph);
-  height: var(--conversation-glyph);
+  display: block;
+  width: var(--composer-glyph);
+  height: var(--composer-glyph);
   fill: none;
   stroke: currentColor;
   stroke-width: 1.35;
@@ -2384,20 +2401,29 @@ button.list-row:hover .list-row-title {
  * rather than in the picker itself: the same picker draws the Ceiling control on a page
  * this Ticket does not touch. */
 /* The run chips, as the design draws them: the card's own step, the interface face rather
- * than the machine one, and quiet until they are pointed at. Written against the pane so it
+ * than the machine one, and quiet until they are pointed at. Written against the composer so it
  * outranks the picker's own scoped rule, and kept to the composer foot because the same
  * picker draws the Ceiling control on a screen this Ticket does not touch. */
-[data-conversation-pane] .chat-foot .listbox-picker-trigger {
-  min-height: var(--conversation-target);
+[data-conversation-composer] .chat-foot .listbox-picker-trigger {
+  height: var(--composer-target);
+  min-height: var(--composer-target);
+  padding-block: 0;
   font-family: var(--font-ui);
   font-size: var(--type-sm);
   color: var(--text-faint);
   padding-inline: var(--space-3);
 }
-[data-conversation-pane] .chat-foot .listbox-picker-trigger:hover {
+[data-conversation-composer] .chat-foot .listbox-picker-trigger:hover {
   color: var(--text-strong);
 }
+[data-conversation-composer] .chat-foot .listbox-picker-chevron,
+[data-conversation-composer] .chat-foot .listbox-picker-chevron-drawn { display: none; }
+[data-conversation-composer] { container-type: inline-size; }
+@container (max-width: 430px) {
+  [data-conversation-composer] .chat-foot .listbox-picker-trigger { padding-inline: var(--space-2); }
+}
 .chat-submit {
+  flex: none;
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -2405,8 +2431,10 @@ button.list-row:hover .list-row-title {
   min-width: 0;
 }
 .chat-send {
-  width: var(--conversation-target); height: var(--conversation-target);
-  border: none;
+  width: var(--composer-target); height: var(--composer-target);
+  flex: none;
+  padding: 0;
+  border: var(--border-hairline) solid transparent;
   border-radius: var(--radius-md);
   background: var(--surface-2);
   color: var(--text-faintest);
@@ -2417,8 +2445,9 @@ button.list-row:hover .list-row-title {
   transition: background var(--motion-base) var(--motion-ease), color var(--motion-base) var(--motion-ease);
 }
 .chat-send svg {
-  width: var(--conversation-glyph);
-  height: var(--conversation-glyph);
+  display: block;
+  width: var(--composer-glyph);
+  height: var(--composer-glyph);
   fill: none;
   stroke: currentColor;
   stroke-width: 1.7;
@@ -2431,16 +2460,13 @@ button.list-row:hover .list-row-title {
   border: var(--border-hairline) solid var(--accent-error);
   color: var(--accent-error);
 }
-/* Stopping is a solid, not an outline: the one mark on this card that is filled, so it
- * cannot be mistaken for the arrow beside it. It takes the same box as every other glyph,
- * and its square fills half of that box — so it paints a little under the stroked icons
- * beside it, which is what a filled shape needs to weigh the same. Sizing the box instead
- * of the square is what left this one painting seven pixels inside a 32px control. */
+/* A filled square paints at half the stroked glyph's size. */
 .chat-send .chat-send-fill {
-  width: var(--conversation-glyph);
-  height: var(--conversation-glyph);
-  fill: currentColor;
-  stroke: none;
+  width: calc(var(--composer-glyph) / 2);
+  height: calc(var(--composer-glyph) / 2);
+  border-radius: 2px;
+  background: currentColor;
+  display: block;
 }
 .chat-send:disabled { opacity: 0.5; cursor: default; }
 
