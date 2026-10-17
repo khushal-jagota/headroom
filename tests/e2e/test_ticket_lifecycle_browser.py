@@ -14,9 +14,10 @@ from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
-from tests.e2e.test_approval_groups_message_dots import _conversation
+from tests.e2e.test_approval_groups_message_dots import _conversation, _message
 from tests.e2e.test_orchestrator_rail import rail_server  # noqa: F401
 from tests.e2e.test_retired_page_interiors import _propose
+from tests.support.principals import ticket_principal
 
 
 def _screenshot(page: Page, evidence: Path, name: str) -> None:
@@ -85,6 +86,8 @@ def test_ticket_backlog_resume_cancelled_history_and_settled_discovery(
             ("synthetic-lifecycle-conversation", ticket_id),
         )
 
+    transcript = "Retained conversation evidence remains readable after cancellation."
+    _message(server, "synthetic-lifecycle-conversation", ticket_principal(ticket_id), transcript)
     path = f"/api/tickets?detail=full&id={ticket_id}"
     before = api.get(server, path)
     page = open_page(
@@ -206,6 +209,13 @@ def test_ticket_backlog_resume_cancelled_history_and_settled_discovery(
     _screenshot(page, evidence, "ticket-cancelled-history-compact.png")
     page.set_viewport_size({"width": 1440, "height": 1100})
     _screenshot(page, evidence, "ticket-cancelled-history-desktop.png")
+    page.locator("[data-conversation-rest-bar]").click()
+    page.locator('[data-conversation-lens-choice="full"]').click()
+    expect(page.get_by_text(transcript, exact=True)).to_be_visible()
+    for width, label in ((1440, "desktop"), (560, "compact")):
+        page.set_viewport_size({"width": width, "height": 1100})
+        expect(page.get_by_text(transcript, exact=True)).to_be_visible()
+        _screenshot(page, evidence, f"ticket-cancelled-conversation-{label}.png")
     with sqlite3.connect(server.db_path) as conn:
         stored = conn.execute(
             "SELECT stage,is_backlogged,conversation_id FROM tickets WHERE id=?", (ticket_id,)
@@ -260,6 +270,7 @@ def test_ticket_backlog_resume_cancelled_history_and_settled_discovery(
                 "stage_before": before["stage"],
                 "cancelled_stage": retired["stage"],
                 "preserved_pending_proposal": provenance["original_pending_proposal_json"],
+                "conversation_read": transcript,
                 "isolation": (
                     "temporary rail-proof.db with deterministic conversation adapter, "
                     "no provider calls"
