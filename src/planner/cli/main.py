@@ -295,6 +295,7 @@ def _ticket_record(
         "sprint_item_id",
         "effective_sprint_id",
         "ceiling",
+        "ceiling_holder",
     )
     header = {key: data[key] for key in header_keys if key in data}
     manifest = _worker_type(str(data["worker_type"]), True)
