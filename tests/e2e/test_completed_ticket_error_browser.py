@@ -221,6 +221,7 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
             f'[data-sprint-item-workspace="{item["id"]}"]',
         )
         pane = item_page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
+        pane.get_by_label("Worker state").select_option("done")
         done_group = pane.locator('[data-workspace-group="done"]')
         if done_group.get_attribute("open") is None:
             done_group.locator("summary").click(timeout=WAIT_MS)
@@ -240,6 +241,7 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
                 == 0
             )
         if index == 1:
+            pane.get_by_label("Worker state").select_option("active")
             error_group = pane.locator('[data-workspace-group="errored"]')
             if error_group.get_attribute("open") is None:
                 error_group.locator("summary").click(timeout=WAIT_MS)

@@ -12,9 +12,9 @@ import {
 } from "../../src/lib/lifecycle";
 import { sprintTicketCondition } from "../../src/lib/sprintPresentation";
 import {
-  TICKET_STATUS_GROUPS,
-  ticketStatusGroupKey
-} from "../../src/lib/ticketStatusGroups";
+  WORK_ITEM_TICKET_GROUPS,
+  workItemTicketGroupKey
+} from "../../src/lib/workItemPresentation";
 import type { AgentState, BoardCard, DayTicket, Principal, TicketDetail } from "../../src/lib/types";
 import type { FieldStageVisualState } from "../../src/lib/ui";
 import { workspaceGroups } from "../../src/lib/workspaceRail";
@@ -182,8 +182,8 @@ export function sprintItemWord(facts: TicketFacts): string {
 
 /** The heading the Ticket sits under on the Sprint Item page. */
 export function sprintItemHeading(facts: TicketFacts): string {
-  const key = ticketStatusGroupKey(facts);
-  return TICKET_STATUS_GROUPS.find((group) => group.key === key)?.label ?? key;
+  const key = workItemTicketGroupKey({ id: "", title: "", priority: "P3", ...facts });
+  return WORK_ITEM_TICKET_GROUPS.find((group) => group.key === key)?.label ?? key;
 }
 
 /** The state label beside the Ticket in the Feedback inbox. */

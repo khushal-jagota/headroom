@@ -6,7 +6,7 @@ import json
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Final, cast
+from typing import cast
 
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -50,19 +50,6 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
         raise
     else:
         conn.execute("COMMIT")
-
-
-# The one schedule this build ships. A Sprint's Checkpoint is due on its fourth day,
-# whether or not anyone remembers it.
-CHECKPOINT_SCHEDULE_ID: Final = "schedule_weekly_sprint_checkpoint"
-CHECKPOINT_KICKOFF_NOTE: Final = (
-    "Review the sprint so far and decide what to adjust for the remaining days."
-)
-
-
-def seed_shipped_schedules(conn: sqlite3.Connection) -> None:
-    """Planning schedules are retired. New installations receive no recurring reviews."""
-    return
 
 
 def _blocked_by_from_json(raw: object) -> tuple[str, ...]:

@@ -225,7 +225,7 @@
             <div class="agents-destination-list">
               <a
                 class="agents-destination"
-                href="#/config/chief-of-staff"
+                href="#/settings/config/chief-of-staff"
                 data-agent-destination
               >
                 <span class="agents-destination-copy">
@@ -241,7 +241,7 @@
               {#if supervisorSkill}
                 <a
                   class="agents-destination"
-                  href="#/config/sprint-item-supervisor"
+                  href="#/settings/config/sprint-item-supervisor"
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
@@ -258,7 +258,7 @@
               {#if sharedWorkerSkill}
                 <a
                   class="agents-destination"
-                  href="#/config/worker-skill"
+                  href="#/settings/config/worker-skill"
                   data-agent-destination
                 >
                   <span class="agents-destination-copy">
@@ -279,7 +279,7 @@
               {#each sortedWorkers as item}
                 <a
                   class="agents-destination"
-                  href={`#/config/workers/${encodeURIComponent(item.worker_type)}`}
+                  href={`#/settings/config/workers/${encodeURIComponent(item.worker_type)}`}
                   data-worker-destination
                 >
                   <span class="agents-destination-copy">
@@ -298,7 +298,7 @@
     </div>
   {:else if stableRoleKind === "agent"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href="#/config" data-agents-back>← Back to Config</a>
+      <a class="agents-back" href="#/settings/config" data-agents-back>← Back to Config</a>
       <ResourceState
         error={workers.error}
         loading={workers.isFetching}
@@ -340,7 +340,7 @@
     </div>
   {:else if stableRoleKind === "skill"}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href="#/config" data-agents-back>← Back to Config</a>
+      <a class="agents-back" href="#/settings/config" data-agents-back>← Back to Config</a>
       <ResourceState
         error={skillsHome.error}
         loading={skillsHome.isFetching}
@@ -377,7 +377,7 @@
     </div>
   {:else}
     <div class="agents-page agents-page--detail">
-      <a class="agents-back" href="#/config" data-agents-back>← Back to Config</a>
+      <a class="agents-back" href="#/settings/config" data-agents-back>← Back to Config</a>
       <ResourceState
         error={worker.error}
         loading={worker.isFetching}

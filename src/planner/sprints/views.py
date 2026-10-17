@@ -130,6 +130,7 @@ def item_tickets(
                 "project_id": r["effective_project_id"],
                 "sprint_item_id": r["sprint_item_id"],
                 "stage": stage,
+                "is_backlogged": bool(r["is_backlogged"]),
                 "priority": str(r["priority"]),
                 "activity_at": int(r["updated_at"]),
                 "conversation_id": r["conversation_id"],

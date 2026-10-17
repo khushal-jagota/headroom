@@ -535,20 +535,56 @@ def test_a_foreign_success_delivered_in_that_same_window_is_dropped(
 
 
 def test_a_success_delivered_while_the_server_shuts_down_is_not_lost(tmp_path: Path) -> None:
-    """Shutdown settles rather than abandons, for the same reason cancel does."""
+    """Shutdown drains an already delivered success before the consumer can take it."""
     home = tmp_path / "home"
     _write_login(home, last_refresh="before")
-    script = {"complete_after_start_response": {"success": True}}
-    with _codex_home(home), _scripted_sign_in(tmp_path, script) as resolve_argv:
-        service = _service(resolve_argv)
+    with _service_over_a_test_client(home) as (service, made):
 
         async def exercise() -> None:
             await service.start()
             _write_login(home, last_refresh="after")
+            # A start response does not guarantee that a later wire notification arrived.
+            # Deliver without yielding, so shutdown must drain the pending inbox itself.
+            await _deliver_together(made[0], _completion(success=True))
+            pending = service.read()
+            assert pending is not None
+            assert pending.state is SignInState.pending
             await service.shutdown()
             settled = service.read()
             assert settled is not None
             assert settled.state is SignInState.confirmed
+            assert made[0].stopped
+
+        _run(exercise)
+
+
+def test_a_success_not_delivered_before_shutdown_cannot_confirm_it(tmp_path: Path) -> None:
+    """A changed login alone, or a completion after shutdown, is not a reported success."""
+    home = tmp_path / "home"
+    _write_login(home, last_refresh="before")
+    with _service_over_a_test_client(home) as (service, made):
+
+        async def exercise() -> None:
+            await service.start()
+            _write_login(home, last_refresh="after")
+            release_completion = asyncio.Event()
+            reader_waiting = asyncio.Event()
+
+            async def deliver_after_shutdown() -> None:
+                reader_waiting.set()
+                await release_completion.wait()
+                await _deliver_together(made[0], _completion(success=True))
+
+            reader = asyncio.create_task(deliver_after_shutdown())
+            await reader_waiting.wait()
+            await service.shutdown()
+            settled = service.read()
+            assert settled is not None
+            assert settled.state is SignInState.ended
+            assert made[0].stopped
+            release_completion.set()
+            await reader
+            assert service.read() == settled
 
         _run(exercise)
 

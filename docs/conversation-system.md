@@ -990,14 +990,15 @@ for the isolated test homes:
   into an isolated home and symlinks `auth.json` back to this source. This requires
   the canonical home: a symlink into a copied home still separates rotating auth
   from the real login.
-- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — a directory holding `.credentials.json` and
-  `settings.json`.
+- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — the canonical Claude home itself, normally
+  `~/.claude`. Do not make a copy. The harness copies optional `settings.json`
+  into an isolated home and symlinks optional `.credentials.json` back to this source.
+  A symlink into a copied home still separates rotating credentials from the real login.
+  The copied settings must contain no secrets.
 
-If you followed the old instructions, switch the variable to your canonical Hermes
-home and remove the obsolete copied home.
-
-Prepare the Claude source directory yourself. Nothing in the repository creates it,
-and a stale credential copy fails as a login problem rather than as a missing file.
+If you followed the old instructions, switch both variables to their canonical homes
+and remove the obsolete copies. Neither source requires a directory that you prepare
+by hand.
 
 Codex is the exception, and deliberately. It keeps one account in one file and refreshes
 that file in whichever home it is pointed at, so a private copy takes the new token with

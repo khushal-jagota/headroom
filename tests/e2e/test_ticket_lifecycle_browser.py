@@ -124,16 +124,15 @@ def test_ticket_backlog_resume_retirement_and_settled_discovery(
     page.set_viewport_size({"width": 560, "height": 1100})
     _screenshot(page, "ticket-backlogged-compact.png")
     page.goto(server.base + "/#/backlog")
-    state_filter = page.get_by_label("Ticket state", exact=True)
-    with page.expect_response(
-        lambda response: (
-            "/api/tickets?detail=summary" in response.url and "is_backlogged=true" in response.url
-        )
-    ) as filtered:
-        state_filter.select_option("backlogged")
-    assert filtered.value.ok
-    expect(page.locator(f'[data-backlog-tickets] [data-ticket-id="{ticket_id}"]')).to_be_visible()
-    expect(page.locator("[data-backlogged-label]")).to_have_text("Backlogged")
+    page.wait_for_function("location.hash === '#/workspace'", timeout=WAIT_MS)
+    expect(page.locator("[data-backlog-tickets]")).to_have_count(0)
+    page.goto(server.base + f"/#/workspace/item/{item['id']}")
+    children = page.locator(f'[data-orchestrator-children="sprint_item:{item["id"]}"]')
+    state_filter = children.get_by_label("Worker state", exact=True)
+    state_filter.select_option("backlogged")
+    deferred_row = children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')
+    expect(deferred_row).to_be_visible()
+    expect(deferred_row).to_contain_text(ticket["title"])
     for width, label in ((1440, "desktop"), (560, "compact")):
         page.set_viewport_size({"width": width, "height": 1100})
         _screenshot(page, f"backlog-filter-list-{label}.png")
@@ -198,20 +197,21 @@ def test_ticket_backlog_resume_retirement_and_settled_discovery(
     assert stored == ("cancelled", 0, "synthetic-lifecycle-conversation")
 
     page.goto(server.base + "/#/backlog")
-    state_filter = page.get_by_label("Ticket state", exact=True)
-    expect(page.locator(f'[data-backlog-tickets] [data-ticket-id="{ticket_id}"]')).to_have_count(0)
-    with page.expect_response(
-        lambda response: (
-            "/api/tickets?detail=summary" in response.url
-            and "include_terminal=true" in response.url
-            and "stage=cancelled" in response.url
-        )
-    ) as filtered:
-        state_filter.select_option("retired")
-    assert filtered.value.ok
-    retired_row = page.locator(f'[data-backlog-tickets] [data-ticket-id="{ticket_id}"]')
+    page.wait_for_function("location.hash === '#/workspace'", timeout=WAIT_MS)
+    page.goto(server.base + f"/#/workspace/item/{item['id']}")
+    children = page.locator(f'[data-orchestrator-children="sprint_item:{item["id"]}"]')
+    state_filter = children.get_by_label("Worker state", exact=True)
+    expect(state_filter).to_have_value("active")
+    expect(children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')).to_have_count(0)
+    state_filter.select_option("retired")
+    retired_group = children.locator('[data-workspace-group="cancelled"]')
+    expect(retired_group).to_be_attached()
+    if not retired_group.evaluate("element => element.open"):
+        retired_group.locator(":scope > summary").click()
+    retired_row = retired_group.locator(f'[data-sprint-ticket-id="{ticket_id}"]')
     expect(retired_row).to_be_visible()
-    expect(retired_row.locator("[data-retired-label]")).to_have_text("Retired without success")
+    expect(retired_group.locator("[data-group-count]")).to_have_text("1")
+    expect(retired_row).to_have_attribute("href", f"#/workspace/item/{item['id']}/{ticket_id}")
     for width, label in ((1440, "desktop"), (560, "compact")):
         page.set_viewport_size({"width": width, "height": 1100})
         _screenshot(page, f"retired-filter-list-{label}.png")

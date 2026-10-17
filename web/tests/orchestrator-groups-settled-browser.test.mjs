@@ -49,7 +49,7 @@ def ticket(id, parent="si_focus", **overrides):
         stage_label="Implementation", gating_field="implementation", gating_field_label="Implementation",
         is_done=False, blocked=False, conversation_id="conv-" + id, waiting_to_closeout=False,
         sprint_item_id=parent, sprint_item_title=parent, sprint_item_priority="P2",
-        day_ids=[], sprint_id=None, sprint_name=None, **quiet)
+        day_ids=[], sprint_id=None, sprint_name=None, is_backlogged=False, **quiet)
     row.update(overrides)
     return row
 
@@ -96,6 +96,9 @@ def respond(route):
     elif path == "conversation/backends": result = dict(backends=[])
     elif path == "chief/conversation": result = dict(conversation_id=None)
     elif path.endswith("start-values"): result = dict(backends=[], current=None)
+    elif path == "tickets" and "detail=summary" in route.request.url:
+        result = dict(tickets=[], page=dict(match_count=0, return_count=0, limit=30, offset=0,
+            omitted_before=0, omitted_after=0, complete=True, next_offset=None))
     elif path == "tickets":
         route.fulfill(status=404, content_type="application/json", body='{"detail":"Ticket not found"}')
         return
@@ -124,34 +127,74 @@ with sync_playwright() as p:
     page.route("**/api/**", respond)
     page.goto(sys.argv[1] + "#/workspace/item/si_focus")
     expect(page.locator('[data-workspace-group="agent"]')).to_be_visible()
+    # Sample actual transition frames: pointer exit must never reveal an accent border.
+    selected = page.locator('[data-sprint-item="si_focus"]')
+    selected.hover()
+    page.wait_for_timeout(180)
+    hovered_border = selected.evaluate("n => getComputedStyle(n).borderTopColor")
+    page.mouse.move(1430, 10)
+    border_frames = selected.evaluate("""n => new Promise(resolve => {
+      const frames = [];
+      function sample() {
+        const style = getComputedStyle(n);
+        frames.push({border: style.borderTopColor, focused: n.matches(':focus-within'), hovered: n.matches(':hover')});
+        if (frames.length < 18) requestAnimationFrame(sample); else resolve(frames);
+      }
+      requestAnimationFrame(sample);
+    })""")
+    print("Selected card pointer-exit borders:", json.dumps(dict(hover=hovered_border, frames=border_frames)))
+    colors = selected.evaluate("""n => {
+      const probe = document.createElement('span'); n.append(probe);
+      probe.style.borderColor = 'var(--accent-bright)'; const accent = getComputedStyle(probe).borderTopColor;
+      probe.style.borderColor = 'var(--border-color)'; const neutral = getComputedStyle(probe).borderTopColor;
+      probe.remove(); return {accent, neutral};
+    }""")
+    assert all(frame["border"] != colors["accent"] for frame in border_frames), border_frames
+    assert border_frames[-1]["border"] == colors["neutral"], border_frames[-1]
+    selected.locator('.item-head').click()
+    page.mouse.move(1430, 10)
+    assert selected.evaluate("n => getComputedStyle(n).borderTopColor") != colors["accent"]
+    selected.locator('.item-head').blur()
+    selected.locator('.item-head').focus()
+    page.keyboard.press("Tab")
+    focused = page.locator(":focus")
+    assert focused.evaluate("n => getComputedStyle(n).outlineStyle") != "none"
+    page.keyboard.press("Shift+Tab")
+    assert selected.locator('.item-head').evaluate("n => n.matches(':focus-visible')")
+    assert selected.locator('.item-head').evaluate("n => getComputedStyle(n).outlineStyle") != "none"
     unfinished = ["awaiting_approval", "awaiting_answer", "assigned", "errored", "empty", "blocked", "agent"]
     for key in unfinished:
         assert opened(page, key), key + " unfinished group did not open by default"
     for key in ["done", "cancelled"]:
-        assert not opened(page, key), key + " terminal group opened by default"
-    for key in unfinished + ["done", "cancelled"]:
+        expect(page.locator('[data-workspace-group="' + key + '"]')).to_have_count(0)
+    for key in unfinished:
         count = page.locator('[data-workspace-group="' + key + '"] summary .sprint-workspace-count')
         expect(count).to_have_text("1")
         expect(count).to_be_visible()
-    # The rounded Worker header suppresses only its unread suffix. Real row facts survive.
-    for id in ["t_agent", "t_done"]:
+    # Real row facts survive, including on the separately accessible Done filter.
+    for state, id in [("active", "t_agent"), ("done", "t_done")]:
+        page.get_by_label("Worker state").select_option(state)
         row = page.locator('[data-sprint-ticket-id="' + id + '"]')
         expect(row).to_have_attribute("data-workspace-mark", "reply")
         expect(row.locator('.stage-mark[aria-label="Unread reply"]')).to_have_count(1)
         expect(row).to_have_attribute("href", "#/workspace/item/si_focus/" + id)
+    for state, key in [("done", "done"), ("retired", "cancelled")]:
+        page.get_by_label("Worker state").select_option(state)
+        assert not opened(page, key), key + " terminal group opened by default"
+        page.locator('[data-workspace-group="' + key + '"] summary').click()
+    page.get_by_label("Worker state").select_option("active")
     expect(page.locator('[data-sprint-ticket-id="t_yours"] .stage-mark')).to_have_count(0)
     screenshot(page, "worker-groups-defaults")
 
-    # Reader choices survive a changed API response and ordinary query invalidation.
+    # Reader choices survive refreshes and filter changes without changing row facts.
     page.locator('[data-workspace-group="agent"] summary').click()
-    page.locator('[data-workspace-group="done"] summary').click()
-    page.locator('[data-workspace-group="cancelled"] summary').click()
     focus_tickets[6]["title"] = "Updated Worker title"
     page.evaluate("window.__refresh()")
     expect(page.locator('[data-sprint-ticket-id="t_agent"] .ticket-row-title')).to_have_text("Updated Worker title")
     assert not opened(page, "agent")
-    assert opened(page, "done") and opened(page, "cancelled")
-    for key in ["done", "cancelled", "assigned"]:
+    for state, key in [("done", "done"), ("retired", "cancelled"), ("active", "assigned")]:
+        page.get_by_label("Worker state").select_option(state)
+        assert opened(page, key)
         count = page.locator('[data-workspace-group="' + key + '"] summary .sprint-workspace-count')
         expect(count).to_have_text("1")
         expect(count).to_be_visible()
@@ -175,9 +218,9 @@ with sync_playwright() as p:
         expect(page.locator("[data-settled-item]")).to_have_count(0)
         footer = page.get_by_role("navigation", name="Workspace utilities")
         expect(footer).to_be_in_viewport()
-        config = footer.get_by_role("link", name="Config", exact=True)
+        config = footer.get_by_role("link", name="Settings", exact=True)
         backends = footer.get_by_role("link", name="Usage and Backends", exact=True)
-        expect(config).to_have_attribute("href", "#/config")
+        expect(config).to_have_attribute("href", "#/settings")
         expect(backends).to_have_attribute("href", "#/backends")
         expect(head).to_have_text("Settled (24)")
         expect(head.locator("svg[aria-hidden=true]")).to_have_count(1)
@@ -224,7 +267,7 @@ with sync_playwright() as p:
         # Footer links remain keyboard accessible and retain actual navigation targets.
         config.focus()
         page.keyboard.press("Enter")
-        page.wait_for_function("location.hash === '#/config'")
+        page.wait_for_function("location.hash === '#/settings'")
         backends.click()
         page.wait_for_function("location.hash === '#/backends'")
         page.evaluate("location.hash = '#/workspace?view=items'")
