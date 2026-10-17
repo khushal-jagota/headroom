@@ -54,7 +54,7 @@
     <div class="chart-x"><span>{rows[0]?.label}</span><span>{rows.length>1 ? rows.at(-1)?.label : ""}</span></div>
     {#if inspected}
       <div class="inspection" aria-live="polite"><span>{timestampLabel(inspected.start,summary.timezone)}</span>{#each providers as provider}{@const entry=inspected.providers.find(row=>row.provider===provider)}<span>{providerLabel(provider)} <strong>{entry ? format(metricValue(entry,metric)) : "—"}</strong></span>{/each}</div>
-    {:else}<p class="chart-note">Observed periods only · gaps have no recorded values</p>{/if}
+    {/if}
   {:else}<div class="chart-empty">No recorded {metric === "tokens" ? "token values" : "cost values"}</div>{/if}
 </div>
 <style>
@@ -63,6 +63,6 @@
   .plot { display:block; min-width:0; width:100%; height:224px; padding:0; border:0; border-radius:var(--radius-sm); color:inherit; background:none; cursor:crosshair; }.plot:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:var(--space-1); }
   svg { display:block; width:100%; height:100%; overflow:visible; }.grid { stroke:var(--border-color); stroke-width:1; vector-effect:non-scaling-stroke; }
   .chart-x { display:flex; justify-content:space-between; gap:var(--space-3); padding-left:calc(var(--space-7) + var(--space-2)); margin-top:var(--space-2); color:var(--text-faintest); font-size:var(--type-xs); }.chart-x span:last-child { text-align:right; }
-  .inspection { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:var(--space-3); margin-top:var(--space-3); font-size:var(--type-xs); color:var(--text-faint); }.inspection strong { color:var(--text-default); font-weight:500; font-variant-numeric:tabular-nums; }.chart-note { margin:var(--space-3) 0 0; text-align:right; font-size:var(--type-xs); color:var(--text-faintest); }.chart-empty { min-height:224px; display:grid; place-items:center; color:var(--text-faintest); font-size:var(--type-sm); }
+  .inspection { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:var(--space-3); margin-top:var(--space-3); font-size:var(--type-xs); color:var(--text-faint); }.inspection strong { color:var(--text-default); font-weight:500; font-variant-numeric:tabular-nums; }.chart-empty { min-height:224px; display:grid; place-items:center; color:var(--text-faintest); font-size:var(--type-sm); }
   @media(max-width:580px) { .plot,.chart-empty { height:200px; }.chart-head { flex-wrap:wrap; }.inspection { justify-content:flex-start; } }
 </style>

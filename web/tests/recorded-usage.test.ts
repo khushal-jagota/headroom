@@ -97,7 +97,7 @@ describe("usage surfaces",()=>{
   it("keeps unknown prices unavailable and exposes source coverage",()=>{
     const body=render(RecordedUsage,{props:{summary:summary(),providers:["codex","claude"],metric:"cost"}}).body;
     expect(body).toContain("includes activity outside Panels");
-    expect(body).toContain("partial source coverage");
+    expect(body).toContain("partial history");
     expect(body).toContain("Read limit reached");
     expect(body).toContain("No recorded cost values");
     expect(body).toContain("Unpriced");

@@ -240,9 +240,6 @@
                   <span class="agents-destination-name" data-destination-name>
                     {workers.data.chief_of_staff.label}
                   </span>
-                  <span class="agents-destination-description" data-destination-description>
-                    Launch defaults and role skill
-                  </span>
                 </span>
                 <span class="agents-destination-arrow" aria-hidden="true">→</span>
               </a>
@@ -256,9 +253,6 @@
                     <span class="agents-destination-name" data-destination-name>
                       Sprint Item supervisor
                     </span>
-                    <span class="agents-destination-description" data-destination-description>
-                      Role skill
-                    </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>
                 </a>
@@ -271,9 +265,6 @@
                 >
                   <span class="agents-destination-copy">
                     <span class="agents-destination-name" data-destination-name>Worker skill</span>
-                    <span class="agents-destination-description" data-destination-description>
-                      Shared role skill
-                    </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>
                 </a>

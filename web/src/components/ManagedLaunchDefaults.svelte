@@ -20,10 +20,8 @@
 <section class="worker-launch-defaults" data-launch-defaults data-launch-label={label}>
   <header class="worker-launch-defaults-head">
     <h2>{label} launch defaults</h2>
-    <span class="worker-launch-defaults-note">applies to future launches</span>
   </header>
   <div class="worker-launch-defaults-controls">
-    <span class="worker-launch-defaults-key">launches on</span>
     <UnifiedModelPicker
       view={editor.picker}
       bind:snapshots={editor.backends}
@@ -44,7 +42,7 @@
 
 <style>
   .worker-launch-defaults-controls { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .worker-launch-defaults-key, .worker-launch-defaults-state {
+  .worker-launch-defaults-state {
     color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs);
   }
 </style>

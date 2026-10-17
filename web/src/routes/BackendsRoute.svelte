@@ -378,7 +378,6 @@
       {/each}
     </div>
     {#if !visibleBackends.length}<p class="quiet-line">Select a backend to view its allowances.</p>{/if}
-    <p class="note">Stored allowances · refresh reads local CLI records and provider allowances.</p>
   {/if}
   {/if}
   {/if}
@@ -421,10 +420,9 @@
   .model-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent-bright); cursor: pointer; }
   .model-rings { display: flex; justify-content: flex-end; min-width: 2.75rem; }
   .model-error { grid-column: 1 / -1; color: var(--accent-error); font-size: var(--type-xs); }
-  .empty-models, .result, .note, .quiet-line, .error { margin: var(--space-3) 0; color: var(--text-faintest); font-size: var(--type-xs); }
+  .empty-models, .result, .quiet-line, .error { margin: var(--space-3) 0; color: var(--text-faintest); font-size: var(--type-xs); }
   .result { padding-inline: var(--space-3); }
   .result.failed, .error { color: var(--accent-error); }
-  .note { margin-top: var(--space-5); }
   @media (max-width: 720px) {
     .rowgrid { grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); }
     .subject { gap: var(--space-2); }

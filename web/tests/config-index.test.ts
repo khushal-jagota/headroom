@@ -119,8 +119,6 @@ describe("Config destinations", () => {
     expect(markup).toMatch(/1\s+Stage\b/);
     expect(markup).toContain('href="#/settings/config/workers/coding"');
     expect(markup).toContain('href="#/settings/config/worker-skill"');
-    expect(markup).toContain("Launch defaults and role skill");
-    expect(markup).toContain("Shared role skill");
     expect(markup).not.toContain("Long shared skill description");
   });
 

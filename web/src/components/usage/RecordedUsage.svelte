@@ -29,7 +29,7 @@
   function exact(value:number|null):string { return value===null?"Unavailable":value.toLocaleString(); }
 </script>
 <section class="recorded-usage" data-recorded-usage data-usage-metric={metric}>
-  <div class="source-line"><span>Local CLI sources · includes activity outside Panels</span><span>{timestampLabel(summary.since,summary.timezone)} – {timestampLabel(summary.until,summary.timezone)}</span></div>
+  <div class="source-line"><span>{timestampLabel(summary.since,summary.timezone)} – {timestampLabel(summary.until,summary.timezone)}</span></div>
   <section class="usage-top">
     <div class="totals">
       <div><div class="total-figure" title={exact(metricValue(totals,metric))} data-usage-total>{format(metricValue(totals,metric))}</div><p class="total-caption">{metric==="tokens"?"processed tokens":"cost"} · {totals.session_count??"—"} sessions</p>{#if metric==="cost"&&totals.unpriced_records}<p class="unpriced" data-unpriced-records>Unpriced · {totals.unpriced_records.toLocaleString()} {totals.unpriced_records===1?"record":"records"}</p>{/if}</div>
@@ -37,7 +37,7 @@
         {@const value=metricValue(row,metric)}{@const percent=share(value)}
         <div class="provider-summary">
           <div class="provider-total"><span><span class="mark" aria-hidden="true">{row.provider==="codex"?"‹›":"✳"}</span>{providerLabel(row.provider)}</span><strong title={exact(value)}>{format(value)}</strong></div>
-          <p>{percent===null?"Share unavailable":`${percent.toFixed(1)}% of recorded ${metric}`} · {row.session_count??"—"} {row.session_count===1?"session":"sessions"}</p>
+          <p>{percent===null?"Share unavailable":`${percent.toFixed(1)}%`} · {row.session_count??"—"} {row.session_count===1?"session":"sessions"}</p>
           {#if percent!==null}<div class="share-bar" class:claude={row.provider==="claude"}><span style:width={`${percent}%`}></span></div>{/if}
         </div>
       {/each}
@@ -45,9 +45,9 @@
     <UsageChart {summary} {providers} {metric}/>
   </section>
   <details class="coverage" data-usage-coverage>
-    <summary>{totals.record_count.toLocaleString()} recorded {totals.record_count===1?"record":"records"}{incompleteSources.length?" · partial source coverage":""}{totals.unknown_records?` · ${totals.unknown_records} with unknown tokens`:""}{metric==="cost"&&totals.unpriced_records?` · ${totals.unpriced_records} unpriced`:""} <span aria-hidden="true">⌄</span></summary>
+    <summary>{totals.record_count.toLocaleString()} {totals.record_count===1?"record":"records"}{incompleteSources.length?" · partial history":""}{totals.unknown_records?` · ${totals.unknown_records} with unknown tokens`:""} <span aria-hidden="true">⌄</span></summary>
     <div class="coverage-body">
-      <p>Bounded local records. Account coverage is unknown.</p>
+      <p>Local CLI history includes activity outside Panels. Account coverage is unknown.</p>
       {#each sources as source (source.provider)}
         <section><h3>{providerLabel(source.provider)} · {source.state}</h3><p>{source.record_count.toLocaleString()} records · {source.progress?`${source.progress.files_completed.toLocaleString()}/${source.progress.files_total.toLocaleString()} files${source.progress.more_work?" · more to read":""}`:`${source.files_scanned.toLocaleString()} files`} · observed {timestampLabel(source.observed_at,summary.timezone)}</p>{#if source.issues.length}<ul>{#each source.issues as issue}<li>{issue}</li>{/each}</ul>{/if}</section>
       {/each}
@@ -102,7 +102,6 @@
       </dl><p>¹ Reasoning is part of output.</p></section>
     {/if}
   </section>
-  <footer>Stored records · observed {timestampLabel(summary.observed_at,summary.timezone)}</footer>
 </section>
 <style>
   .unpriced { margin:var(--space-2) 0 0; color:var(--text-faint); font-size:var(--type-xs); }
@@ -116,7 +115,6 @@
   .breakdown { margin-top:var(--space-6); }.breakdown>header { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); margin-bottom:var(--space-3); }.segmented { display:flex; gap:var(--border-strong); padding:var(--border-strong); border-radius:var(--radius-md); background:var(--surface-recessed); }.segmented button { border:0; background:none; border-radius:var(--radius-sm); color:var(--text-faint); font:inherit; font-size:var(--type-xs); padding:var(--space-1) var(--space-3); cursor:pointer; }.segmented [aria-pressed="true"] { background:var(--surface-2); color:var(--text-strong); }
   table { width:100%; border-collapse:collapse; font-size:var(--type-sm); }th { text-align:right; font-size:var(--type-xs); font-weight:400; color:var(--text-faintest); padding:var(--space-2) 0 var(--space-2) var(--space-5); border-bottom:var(--border-hairline) solid var(--border-color); white-space:nowrap; }td { text-align:right; padding:var(--space-4) 0 var(--space-4) var(--space-5); border-bottom:var(--border-hairline) solid var(--border-color); font-variant-numeric:tabular-nums; color:var(--text-faint); white-space:nowrap; vertical-align:top; }th:first-child,td:first-child { padding-left:0; text-align:left; color:var(--text-faintest); font-size:var(--type-xs); }th:nth-child(2),td:nth-child(2) { text-align:left; padding-left:var(--space-3); width:100%; white-space:normal; }.time-table :is(th,td):not(:first-child) { text-align:right; width:auto; }.model-button { display:flex; align-items:center; gap:var(--space-2); max-width:100%; padding:0; border:0; background:none; color:var(--text-default); font:inherit; text-align:left; overflow-wrap:anywhere; cursor:pointer; }.model-button .mark { flex:none; }.model-button:hover { color:var(--text-strong); }.empty { padding:var(--space-5) 0; text-align:left; white-space:normal; }
   .model-details { margin-top:var(--space-3); padding:var(--space-4); background:var(--surface-recessed); border:var(--border-hairline) solid var(--border-color); border-radius:var(--radius-md); font-size:var(--type-xs); }.model-details h3 { font-size:var(--type-sm); font-weight:500; margin:0 0 var(--space-3); overflow-wrap:anywhere; }.model-details dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-2) var(--space-5); margin:0; }.model-details dl>div { display:flex; justify-content:space-between; gap:var(--space-2); }.model-details dt { color:var(--text-faint); }.model-details dd { margin:0; font-variant-numeric:tabular-nums; }.model-details p { margin:var(--space-3) 0 0; color:var(--text-faintest); }
-  footer { margin-top:var(--space-6); padding-top:var(--space-4); border-top:var(--border-hairline) solid var(--border-color); color:var(--text-faintest); font-size:var(--type-xs); }
   :is(button,summary):focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:var(--space-1); }
   @media(max-width:1000px) { .usage-top { grid-template-columns:14rem minmax(0,1fr); } }
   @media(max-width:760px) { .source-line { flex-direction:column; gap:var(--space-1); }.source-line span:last-child { text-align:left; }.usage-top { grid-template-columns:1fr; gap:var(--space-6); }.totals { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-4); }.totals>div:first-child { grid-column:1/-1; }.type-legend { gap:var(--space-2) var(--space-4); } }
