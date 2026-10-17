@@ -107,10 +107,7 @@ def svelte_index_html(app_sha: str | None = None) -> str:
             "web/dist is missing; run npm --prefix web run build."
             "</div></body></html>"
         )
-    identity = (
-        '<meta name="panels-app-sha" '
-        f'content="{html.escape(app_sha or "", quote=True)}">'
-    )
+    identity = f'<meta name="panels-app-sha" content="{html.escape(app_sha or "", quote=True)}">'
     return document.replace("</head>", f"{identity}</head>", 1)
 
 
@@ -144,6 +141,13 @@ def create_app(
 
         audit_conn = conn_factory()
         try:
+            # A previous server's observation cannot authorize this process's
+            # Mac admission. The next authenticated reconciliation restores it.
+            audit_conn.execute(
+                "UPDATE executor_connections SET "
+                "active=0,connection_state='disconnected',lost_at_ms=? WHERE active=1",
+                (int(__import__("time").time() * 1000),),
+            )
             tickets_data.audit_ticket_registry_integrity(audit_conn)
             reconcile_managed_skill_versions(audit_conn)
             reconcile_provisional_worker_step_bindings(audit_conn)
@@ -161,25 +165,43 @@ def create_app(
         remembered_codex_login_rejection = DurableCodexLoginRejection(
             config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
         )
+        executor_endpoint = None
+        backend_factories = production_backend_child_factories(
+            panels_server_url=f"http://{HOST}:{config.port}",
+            remembered_codex_login_rejection=remembered_codex_login_rejection,
+        )
+        if os.environ.get("PLAN_EXECUTOR_MODE") == "remote":
+            from planner.executor.vps import ExecutorEndpoint
+
+            executor_endpoint = ExecutorEndpoint(config.db_path, clock)
+            from planner.executor.routing import LocaleBackendChildFactory
+
+            backend_factories = {
+                key: LocaleBackendChildFactory(config.db_path, local, executor_endpoint.factory)
+                for key, local in backend_factories.items()
+            }
         conversation = build_conversation_runtime(
             db_path=config.db_path,
             db_busy_timeout_ms=config.db_busy_timeout_ms,
             sse_heartbeat_ms=config.sse_heartbeat_ms,
-            backend_child_factories=production_backend_child_factories(
-                # Where this server is answering, so the `panels` CLI in an agent's shell
-                # can reach it. Read from the running config rather than stored with a
-                # conversation, so a conversation resumed after a restart reaches the
-                # server that resumed it.
-                panels_server_url=f"http://{HOST}:{config.port}",
-                remembered_codex_login_rejection=remembered_codex_login_rejection,
-            ),
+            backend_child_factories=backend_factories,
             remembered_codex_login_rejection=remembered_codex_login_rejection,
         )
+        if executor_endpoint is not None:
+            executor_endpoint.runtime = conversation
+            executor_endpoint.app = app
+            from dataclasses import replace
+
+            conversation = replace(conversation, executor_endpoint=executor_endpoint)
+            executor_endpoint.runtime = conversation
+            await executor_endpoint.start()
+        app.state.executor_endpoint = executor_endpoint
         app.state.conversation = conversation
         # A test that drives workers wants a conversation system it can hold still, so it
         # passes one in. Nothing else does: production always runs the real one.
         app.state.conversation_system = (
-            conversation.system if conversation_system_for_test is None
+            conversation.system
+            if conversation_system_for_test is None
             else conversation_system_for_test
         )
         await conversation.system.start_idle_child_janitor()
@@ -212,6 +234,8 @@ def create_app(
                     pass
                 finally:
                     app.state.conversation = None
+                    if executor_endpoint is not None:
+                        await executor_endpoint.close()
                     await conversation.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
@@ -235,8 +259,7 @@ def create_app(
         )
     )
     deployment_lifecycle_path = (
-        Path(config.db_path).expanduser().resolve(strict=False).parent
-        / "deployment-lifecycle.json"
+        Path(config.db_path).expanduser().resolve(strict=False).parent / "deployment-lifecycle.json"
     )
     deployment_lifecycle_store = DeploymentLifecycleStore(deployment_lifecycle_path)
 
@@ -267,11 +290,34 @@ def create_app(
         include_router(domain_router, prefix="/api")
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
+
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:
         return {
             "test_mode": config.test_mode,
             "app_sha": config.app_sha,
+        }
+
+    @app.get("/api/executor/health")
+    async def executor_health() -> dict[str, object]:
+        endpoint = getattr(app.state, "executor_endpoint", None)
+        if endpoint is None:
+            return {
+                "mode": "local",
+                "connection_state": "disconnected",
+                "reconciliation_ready": False,
+            }
+        return {
+            "mode": "remote",
+            "identity": None
+            if endpoint.identity is None
+            else __import__("dataclasses").asdict(endpoint.identity),
+            "connection_state": "ready"
+            if endpoint.ready
+            else "disconnected"
+            if endpoint.writer is None
+            else "reconciling",
+            "reconciliation_ready": endpoint.ready,
         }
 
     @app.get("/api/health")
@@ -296,16 +342,12 @@ def create_app(
 
     @app.get("/api/deployment-status")
     async def deployment_status() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha
-        )
+        projection = await asyncio.to_thread(deployment_lifecycle_store.project, config.app_sha)
         return projection.to_public_dict()
 
     @app.get("/api/vps-status-summary")
     async def vps_status_summary() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha
-        )
+        projection = await asyncio.to_thread(deployment_lifecycle_store.project, config.app_sha)
         summary = await asyncio.to_thread(
             configured_vps_status_summary_collector,
             config,
@@ -321,9 +363,7 @@ def create_app(
             registry.supported_worker_types() if supported else registry.registered_worker_types()
         )
         return {
-            "worker_types": [
-                registry.manifest(worker_type) for worker_type in worker_type_ids
-            ],
+            "worker_types": [registry.manifest(worker_type) for worker_type in worker_type_ids],
         }
 
     @app.get("/api/changes")

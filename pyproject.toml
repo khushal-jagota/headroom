@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-panels = "planner.cli.main:main"
+panels = "planner.executor.entrypoint:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -146,6 +146,7 @@ class ConversationRuntime:
     database_path: str
     sse_heartbeat_ms: int
     backend_state: BackendStateStore | None = None
+    executor_endpoint: Any = None
     # Absent when this process has no backend that can start a sign-in. The routes say
     # so rather than pretending the affordance exists.
     codex_sign_in: CodexSignInService | None = None
@@ -740,9 +741,16 @@ async def answer_permission_ask(
     since ended — so it is a false rather than an error.
     """
     _require_mutable_conversation(runtime, conversation_id)
-    landed = await runtime.system.answer_permission_ask(
-        conversation_id, body.ask_id, body.option_id
-    )
+    if runtime.executor_endpoint is not None and runtime.executor_endpoint.owns_conversation(
+        conversation_id
+    ):
+        landed = await runtime.executor_endpoint.answer_permission(
+            conversation_id, body.ask_id, body.option_id
+        )
+    else:
+        landed = await runtime.system.answer_permission_ask(
+            conversation_id, body.ask_id, body.option_id
+        )
     return {"landed": landed}
 
 
@@ -1020,6 +1028,11 @@ async def _pending_permission_ask(
         if isinstance(payload, PermissionAskedEventPayload) and payload.ask_id in waiting:
             return {
                 "ask_id": payload.ask_id,
+                **(
+                    runtime.executor_endpoint.ask_status(conversation_id, payload.ask_id)
+                    if runtime.executor_endpoint is not None
+                    else {}
+                ),
                 "title": payload.title,
                 "detail": payload.detail,
                 "options": [
