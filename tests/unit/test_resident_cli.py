@@ -24,7 +24,7 @@ def test_preflight_defers_before_any_deployment(capsys: pytest.CaptureFixture[st
     output = json.loads(capsys.readouterr().out)
     assert output["disposition"] == "deferred"
     assert output["requested_revision"] == SHA
-    assert "No production resident deployment driver" in output["detail"]
+    assert "Explicit executor artifact" in output["detail"]
 
 
 def test_preflight_rejects_abbreviated_revision() -> None:

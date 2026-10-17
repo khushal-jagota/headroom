@@ -47,8 +47,6 @@ def _relative(value: str) -> PurePosixPath:
         or any(ord(char) < 32 for char in value)
     ):
         raise ResidentError(f"unsafe package path: {value!r}")
-    if value in {"src/planner/core/server.py", "src/planner/cli/main.py"}:
-        raise ResidentError("local server entrypoints do not belong to executor packages")
     return path
 
 
@@ -67,6 +65,10 @@ def validate_package(package: ResidentPackage) -> None:
     closure = package.closure
     if not closure.files or len(set(closure.files)) != len(closure.files):
         raise ResidentError("executor source allowlist is missing or repeated")
+    if {"src/planner/core/server.py", "src/planner/cli/main.py"} & set(
+        closure.files
+    ) and closure.entrypoint_module != "planner.executor.entrypoint":
+        raise ResidentError("full planner source requires the agreed offline executor entrypoint")
     for item in closure.files:
         _relative(item)
         if item in _GENERATED or item == MANIFEST_NAME:
@@ -334,6 +336,14 @@ def _bootstrap_text(prepared: PreparedResidentPackage) -> str:
     return (
         "import runpy, sys\nfrom pathlib import Path\n"
         "sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))\n"
+        "if sys.argv[1:2] == ['serve']:\n"
+        "    raise SystemExit('resident package cannot run the local Panels server')\n"
+        "if sys.argv[1:3] == ['executor', 'run']:\n"
+        "    if any(arg == '--application-revision' or arg.startswith('--application-revision=') "
+        "for arg in sys.argv[3:]):\n"
+        "        raise SystemExit('application revision is owned by the installed package')\n"
+        "    sys.argv.extend(['--application-revision', "
+        f"{prepared.package.application_revision!r}])\n"
         f"runpy.run_module({prepared.package.closure.entrypoint_module!r}, run_name='__main__')\n"
     )
 
@@ -341,8 +351,22 @@ def _bootstrap_text(prepared: PreparedResidentPackage) -> str:
 def _launcher_text(prepared: PreparedResidentPackage) -> str:
     import shlex
 
+    backend = ""
+    if prepared.package.closure.node_package_roots:
+        claude = prepared.runtime / (
+            "node/agent_backends/node_modules/@anthropic-ai/claude-code/bin/claude.exe"
+        )
+        backend = (
+            "export PLAN_CLAUDE_EXECUTABLE="
+            + shlex.quote(str(claude))
+            + "\n"
+            + "export PATH="
+            + shlex.quote(str(prepared.runtime / "bin"))
+            + ':"$PATH"\n'
+        )
     return (
         "#!/bin/sh\n"
+        + backend
         + "exec "
         + shlex.quote(str(prepared.runtime / "bin/python"))
         + ' -I -B "$(dirname "$0")/../executor-bootstrap.py" "$@"\n'

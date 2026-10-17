@@ -82,9 +82,24 @@ def test_launcher_uses_isolated_committed_source_and_preserves_home(tmp_path: Pa
         check=True,
     )
     assert json.loads(result.stdout) == {
-        "argv": ["executor", "run"],
+        "argv": ["executor", "run", "--application-revision", sha],
         "home": str(home),
         "source": "committed",
     }
 
+    for arguments in (
+        ["serve"],
+        ["executor", "run", "--application-revision", sha],
+        ["executor", "run", "--application-revision=" + sha],
+    ):
+        refused = subprocess.run(
+            [str(app / "bin/panels"), *arguments],
+            cwd=unrelated,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert refused.returncode != 0
+        assert not refused.stdout
     validate_runtime(prepared)  # Execution leaves the declared source tree unchanged.

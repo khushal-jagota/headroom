@@ -1,0 +1,17 @@
+{
+  "source_revision": "b6feb7e0202ff94588e47d5086e3cfdaf49d5559",
+  "entry_module": "planner.executor.entrypoint:main",
+  "package_inputs": [
+    "pyproject.toml",
+    "requirements.txt",
+    "src/planner (entire Python package and declared package-data)",
+    "agent_backends/package.json",
+    "agent_backends/package-lock.json"
+  ],
+  "native_dependencies": {
+    "python": ">=3.12; install pinned requirements on target architecture",
+    "node": ">=22 if bundled Claude CLI is installed via locked agent_backends package",
+    "backend_executables": "native installed Codex on PATH; Claude uses bundled managed executable or PLAN_CLAUDE_EXECUTABLE override"
+  },
+  "imported_source_revision": "b9139849192c40a39215f7792bc70d097e2eb9a3"
+}

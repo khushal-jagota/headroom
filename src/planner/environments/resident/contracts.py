@@ -99,10 +99,22 @@ class ResidentService(Protocol):
 
 
 @dataclass(frozen=True)
+class ExecutorLaunchOptions:
+    """Explicit transport arguments for the installed executor command."""
+
+    ssh_host: str
+    application_revision: str
+    panels_server_url: str
+    remote_command: str = "panels executor relay"
+    backend_path: str | None = None
+
+
+@dataclass(frozen=True)
 class ServiceConfiguration:
     paths: ResidentPaths
     user_id: int
     label: str = "com.panels.executor"
+    launch: ExecutorLaunchOptions | None = None
 
 
 @dataclass(frozen=True)

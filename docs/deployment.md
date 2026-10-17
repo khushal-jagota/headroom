@@ -161,56 +161,72 @@ The operator must establish the single-user filesystem layout, user units, runne
 persistent paths before enabling automatic deployment. Repository deployment does not
 perform that host setup or change the existing Tailscale Serve route.
 
-## Mac executor preparation and deployment boundaries
+## Mac executor deployment
 
-The resident tooling under `environments/resident` prepares an executor-only source
-package and renders a dedicated LaunchAgent. It does not install or start the service.
-It consumes the shared executor contracts rather than a second wire schema.
+`python -m planner.environments.resident.cli` supplies the production source-build,
+native preparation, owner-only activation, and pinned-host delivery commands. These
+commands change a host only after explicit invocation. Code review does not authorize
+their live use.
 
-The proposed code location is `~/Deployments/PanelsExecutor/current/app`. The executor
-data root remains `~/Library/Application Support/Panels/executor`, selected through
-`PLAN_EXECUTOR_ROOT`. Its `spool/`, `artifacts/tickets/`, `logs/`, and `run/` remain in
-place during code replacement. Each Worker receives its own `PLAN_TICKET_FILES_DIR`
-from the executor. The account's ordinary HOME and provider homes remain unchanged.
+The code location is `~/Deployments/PanelsExecutor/current/app`. The stable data root
+is `~/Library/Application Support/Panels/executor`, selected by `PLAN_EXECUTOR_ROOT`.
+Its spool, artifacts, logs, and IPC socket remain outside replaceable code. The account
+HOME and provider homes remain unchanged. Worker shells find the installed `panels`
+wrapper through a stable app path.
 
-Source packaging requires an explicit executor source/dependency closure for an exact
-Git revision. It never substitutes the full server package. Native runtimes live at
-permanent versioned paths outside replaceable code. A native builder must build there
-and bind the runtime to the package and dependency identities. A VPS virtualenv cannot
-serve as a Mac runtime. Synthetic builder checks do not establish native Mac readiness.
+`package-spec` expands the executor-owned build contract from the requested Git
+revision. The checked contract records the original executor commit and its local
+import provenance. Its explicit closure contains the full planner Python package,
+declared package data, Python pins, and backend npm locks. This source closure supports
+the executor and Worker CLI. No local Panels database or web build is installed. The
+light executor entrypoint runs the service; the generated wrapper rejects `serve`.
 
-The update transaction consumes executor health and quiescence through adapter
-contracts. Quiescence requests identify the expected executor incarnation, connection
-generation, and process ID. Cutover requires a matching receipt, zero retained work,
-and committed exit. Pending callbacks, uncertain operations, and unsent entries defer
-replacement. A failed candidate requires its own fresh matching receipt before rollback.
-An incompatible prior package cannot mutate or migrate the persistent spool.
+Native Python and Node probes must match the requested Mac architecture and versions.
+The builder creates Python and native backend dependencies directly at a permanent
+versioned runtime path. It never copies a VPS environment. The package launcher maps
+the managed Claude executable to that runtime and injects its own exact source revision.
+The registered LaunchAgent therefore keeps stable arguments across code updates.
 
-Two-host coordination records each host's requested revision, observed revision, and
-outcome under one deployment identity. Both hosts must report the requested revision
-before the aggregate result succeeds. An unreachable Mac retains its existing code and
-leaves the requested revision unverified. A later explicit deployment retries the
-request. A successful host update remains in place after its peer fails.
+The dedicated GUI LaunchAgent uses `KeepAlive={SuccessfulExit:false}`. An abnormal
+exit requests restart. A successful intentional maintenance exit stays stopped unless
+another demand starts the job. The generated job has no additional automatic demand
+triggers beyond its initial RunAtLoad. This design follows Apple's
+[launchd property-list documentation](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5).
+It does not prove behavior on the target Mac.
 
-The production resident driver remains unavailable until the executor source closure,
-native preparation, and enforced owner-only control adapter are connected and checked.
-Shared type definitions alone do not establish process fencing. Preparation and
-synthetic adapter checks authorize no host access, account change, or deployment.
+Before quiescence, the service records the expected launchd PID and run count. The
+owner-only IPC request names the full executor identity and PID. Cutover requires a
+matching zero-work receipt, committed exit, unchanged run count, no live PID, and status
+zero. A replacement process or missing evidence refuses cutover. The adapter never
+kills or boots out a replacement. It checks executor-owned spool compatibility again
+after exit and before source mutation. Rollback requires a separate fresh candidate
+receipt and another stable-boundary compatibility check.
 
-The offline entrypoint is `python -m planner.environments.resident.cli`. Its
-`source-build` command takes `--source-root`, `--manifest`, `--requested-sha`, and
-`--candidate-app`. Its `verify-report` command takes `--path`, `--deployment-id`, and
-`--requested-sha`. Report verification checks recorded evidence and contacts no host.
-`preflight --requested-sha <full-sha>` returns deferred with exit code 3 while the
-production driver is absent. The workflow invokes that check before any VPS change
-only when `PANELS_RESIDENT_DEPLOY_ENABLED` is explicitly `true`. Without that variable,
-the existing VPS deployment path remains in use. This opt-in guard does not ship the
-executor or enable a two-host rollout.
+`deploy-local` prepares a committed source package on the native host. `deploy-remote`
+streams exact source and separate deployment tooling through SSH with an explicit
+identity and pinned known_hosts. Native preparation needs no preexisting Mac Panels
+installation or Git checkout. The remote code performs the native build, then uses its
+new interpreter for the owner-only control path. An interrupted first install can
+resume only under the recorded same-package intent and positive safety checks.
 
-The real LaunchAgent's credential access before and after interaction and keychain
-unlock remains unproved. Unattended reboot recovery also remains unresolved. A GUI
-service target, Terminal result, or SSH result does not discharge those acceptance
-tests. The full unattended outcome remains required.
+The workflow enables this path only when `PANELS_RESIDENT_DEPLOY_ENABLED=true` and
+all explicit Mac, interpreter, backend, and transport configuration passes preflight.
+Without opt-in, the existing VPS workflow remains unchanged. The resident step records
+both observed hosts under the deployment identity. Both observed revisions must match
+the request before aggregate success. One successful host stays installed after its
+peer fails. A later explicit deployment retries the request.
+
+An SSH failure before remote invocation leaves the existing installation untouched.
+A timeout or lost SSH connection after invocation leaves the remote outcome unknown.
+The report keeps the requested revision unverified and never infers cancellation or
+retention of the old version. It queues no automatic deployment retry. `verify-report`
+checks the recorded identity, revisions, and outcomes without host contact.
+
+Native builder, IPC, transfer, service, and restart-race checks use synthetic fixtures
+and local processes until a live test is separately authorized. Installed-agent
+credential access before and after interaction/keychain unlock, sleep recovery,
+unattended reboot, and the VPS-after-Mac grant check remain unproved. The full
+unattended outcome remains required.
 
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 `src/planner/environments/deployment.py`,

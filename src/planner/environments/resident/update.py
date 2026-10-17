@@ -164,6 +164,10 @@ def update_resident(
             service.stop(receipt)
             stopped = True
             observed = None
+            if any(
+                control.compatible(item.package) != "compatible" for item in (candidate, previous)
+            ):
+                raise ResidentError("Compatibility changed at the stable exit boundary; no cutover")
             backup = paths.app.parent / f"previous-{uuid4().hex}"
             failed = paths.app.parent / f"failed-{uuid4().hex}"
             try:
@@ -228,6 +232,10 @@ def update_resident(
                     validate_package(replace(previous, app=backup))
                     service.stop(candidate_receipt)
                     observed = None
+                    if control.compatible(previous.package) != "compatible":
+                        raise ResidentError(
+                            f"{exc}; stable-exit rollback compatibility unproved; backup: {backup}"
+                        ) from exc
                     _rename(paths.app, failed)
                     _rename(backup, paths.app)
                 elif backup.exists() and not paths.app.exists():

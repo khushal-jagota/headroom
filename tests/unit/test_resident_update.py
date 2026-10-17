@@ -453,3 +453,32 @@ def test_failure_after_candidate_rename_still_requires_own_quiescence(
     assert not service.started
     assert (paths.app / "source").read_text() == "new"
     assert next(paths.app.parent.glob("previous-*/source")).read_text() == "old"
+
+
+@pytest.mark.parametrize("during_rollback", [False, True])
+def test_stable_exit_rechecks_compatibility_before_source_mutation(
+    packages: tuple[ResidentPaths, PreparedResidentPackage, PreparedResidentPackage],
+    during_rollback: bool,
+) -> None:
+    paths, candidate, previous = packages
+    bad = health(NEW, "new", ready=False)
+    observations: list[ExecutorHealth | None] = (
+        [health(OLD, "old"), bad, bad] if during_rollback else [health(OLD, "old")]
+    )
+    control = Control(observations, [READY, READY] if during_rollback else [READY])
+
+    class ChangingService(Service):
+        def stop(self, expected: QuiescenceReceipt) -> None:
+            super().stop(expected)
+            if len(self.stopped) == (2 if during_rollback else 1):
+                control.compatibility = "incompatible"
+
+    service = ChangingService()
+    result = update_resident(
+        paths, candidate, previous, control=control, service=service,
+        validate_package=validate, now_ms=lambda: 100,
+    )
+    assert result.disposition == "failed" and not result.rolled_back
+    assert (paths.app / "source").read_text() == ("new" if during_rollback else "old")
+    assert len(service.started) == (1 if during_rollback else 0)
+    assert (paths.executor_root / "pending-ask").read_text() == "retain"

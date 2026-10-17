@@ -15,10 +15,16 @@ def test_agent_uses_account_home_gui_and_stable_data_with_spaces(tmp_path: Path)
     configuration = ServiceConfiguration(paths, 501)
     plist = plistlib.loads(render_launch_agent(configuration))
     assert plist["ProgramArguments"] == [str(paths.app / "bin/panels"), "executor", "run"]
-    assert plist["EnvironmentVariables"] == {
-        "HOME": str(home),
-        "PLAN_EXECUTOR_ROOT": str(home / "Library/Application Support/Panels/executor"),
+    assert plist["EnvironmentVariables"]["HOME"] == str(home)
+    assert plist["EnvironmentVariables"]["PLAN_EXECUTOR_ROOT"] == str(
+        home / "Library/Application Support/Panels/executor"
+    )
+    assert plist["EnvironmentVariables"]["PATH"].split(":")[0] == str(paths.app / "bin")
+    assert plist["KeepAlive"] == {"SuccessfulExit": False}
+    automatic_triggers = {
+        "WatchPaths", "QueueDirectories", "StartInterval", "StartCalendarInterval"
     }
+    assert not automatic_triggers & set(plist)
     assert plist["LimitLoadToSessionType"] == "Aqua"
     commands = launchctl_install_commands(
         configuration, home / "Library/LaunchAgents/com.panels.executor.plist"
