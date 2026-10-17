@@ -147,22 +147,16 @@ def test_a_ticket_at_its_ceiling_is_still_started_to_propose(
     try:
         ticket = _ticket(conn, worker_type=worker_type, ceiling=ceiling)
         if worker_type == "new_worker":
-            tickets_data.file_current_proposal(
+            ticket = tickets_data.file_current_proposal(
                 conn,
                 ticket.id,
                 body="purpose_and_boundaries",
                 principal=ticket_principal(ticket.id),
                 now=3,
             )
-            ticket = tickets_data.accept_proposal(
-                conn,
-                ticket.id,
-                field="purpose_and_boundaries",
-                principal=OWNER_PRINCIPAL,
-                now=4,
-                next_ceiling=ceiling,
-                next_holder=OWNER_PRINCIPAL,
-            )
+            # The shared answer is below scope, so ownership adds no approval stop.
+            assert ticket.pending_proposal is None
+            assert ticket.field_values["purpose_and_boundaries"] == "purpose_and_boundaries"
             assert ticket.stage == "needs_stages"
         assert _ready(conn, ticket) is True
     finally:

@@ -65,8 +65,7 @@ def decide_file_proposal(
     parks until somebody decides it. A ceiling is the only thing that makes a proposal, so
     every proposal in the system is one a person is going to look at.
 
-    A user-owned Stage parks whatever the ceiling says. Its worker is there to talk, not
-    to settle the Stage on its own.
+    Stage ownership governs collaboration and automatic openers, not proposal parking.
     """
     admission.validate_body(body, "proposal body")
     field = worker_type_definition.gating_field(ticket.stage)
