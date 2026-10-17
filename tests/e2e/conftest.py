@@ -143,6 +143,14 @@ def _start_server(
             else trusted_ingress_env
         )
 
+    # Hooks are dormant unless the exact proof activates its runtime scope marker.
+    # Install at the ordinary startup boundary; never restart/reset a server for tracing.
+    env["PANELS_E2E_OWNER_READ_TRACE"] = str(srvdir / "owner-read-trace.jsonl")
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (
+        str(REPO_ROOT / "tests/e2e/approval_message_trace"), str(REPO_ROOT),
+        env.get("PYTHONPATH", ""),
+    )))
+
     log = log_path.open("wb")
     try:
         proc = subprocess.Popen(

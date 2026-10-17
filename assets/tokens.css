@@ -1,43 +1,33 @@
 /* The single token file. The app's entire personality is tunable here — no other
  * file hardcodes a colour, radius, duration, spacing step, border width, size, or
- * font. Stage-5 values: restrained warm-dark surfaces, one deliberate slate-blue
+ * font. Near black values: restrained neutral-dark surfaces, one deliberate slate-blue
  * brand accent meaning "needs the human", a closed five-size type scale. No new
  * categories without evidence of need (PRINCIPLES.md, SPEC §10). */
 
 :root {
-  /* Surfaces — two general neutral planes, one deliberately recessed plane, and
-   * the cool near-black ink band used by conversations and human-input cards. */
-  --surface-1: #1b1917;
-  --surface-2: #24211b;
-  --surface-recessed: #141210;
+  /* Surfaces — two general neutral planes and one deliberately recessed plane.
+   * Ink remains for knockout marks and the retired Day card. */
+  --surface-1: #151515;
+  --surface-2: #1c1c1c;
+  --surface-recessed: #111111;
   --surface-ink: #111318;
 
   /* Relative effects. Hover is an image layer over an element's own surface;
    * scrim dims everything behind an open layer. They are intentionally not a
    * symmetric light/dark pair. */
   --interaction-hover: linear-gradient(
-    rgb(230 210 175 / 5%),
-    rgb(230 210 175 / 5%)
+    rgb(255 255 255 / 5%),
+    rgb(255 255 255 / 5%)
   );
   --scrim: rgb(10 9 8 / 55%);
 
-  /* Text tokens — descending emphasis.
-   *
-   * Warm rather than neutral: every step keeps more red than blue, so the scale reads as
-   * ink on paper rather than white on grey.
-   *
-   * The bottom three were raised because the bottom of this scale carries most of the
-   * interface — faintest is the most-used token in the codebase — and it used to sit at
-   * 2.9 against the base surface, under the floor for text of any size. Everything on the
-   * scale now clears the body-text floor, and the steps between them are near enough to
-   * even that the quiet end reads as quiet rather than as unfinished.
-   *
-   * Against --surface-1: 15.5, 12.3, 9.8, 7.3, 5.4 to one. */
-  --text-strong: #f4f1ea;
-  --text-default: #dcd8cf;
-  --text-muted: #c5c1b7;
-  --text-faint: #aba79d;
-  --text-faintest: #938f85;
+  /* Text tokens — descending neutral emphasis. Every step clears the
+   * body-text contrast floor against all three neutral surfaces. */
+  --text-strong: #f2f2f2;
+  --text-default: #d8d8d8;
+  --text-muted: #bfbfbf;
+  --text-faint: #a6a6a6;
+  --text-faintest: #8e8e8e;
 
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
@@ -118,7 +108,7 @@
   /* Borders — widths plus the hairline seam colour */
   --border-hairline: 1px;
   --border-strong: 2px;
-  --border-color: rgba(230, 210, 175, 0.11);
+  --border-color: rgba(255, 255, 255, 0.10);
   --shadow-float: 0 var(--space-2) var(--space-5) rgb(10 9 8 / 45%);
 
   /* Type — two font stacks plus the closed sans size scale */

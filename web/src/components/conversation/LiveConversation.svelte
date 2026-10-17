@@ -38,8 +38,10 @@
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import {
     eligibleOwnerReadSequence,
+    ownerReadCoversNewMessage,
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
+  import { queryClient } from "../../lib/queryClient";
   import { connectionStatus } from "../../lib/changeStream";
   import {
     afterTheRecordHasBeenRead,
@@ -208,6 +210,7 @@
   ));
   let ask = $derived(liveAskFrom(visibleRows));
   let userInput = $derived(liveUserInputFrom(visibleRows));
+  const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
     void attentionPulse;
@@ -230,18 +233,33 @@
           && eligibleSequence <= advancingRead.sequence)
       ) return;
       const reading = view;
-      advancingRead = {
+      const deliveredEvents = feed.events;
+      const request = {
         conversationId: reading.conversation_id,
         sequence: eligibleSequence
       };
+      advancingRead = request;
       void advanceOwnerRead(reading.conversation_id, eligibleSequence)
         .then((advanced) => {
+          const previouslyReadThrough = Math.max(
+            reading.owner_read_through_sequence,
+            refreshedReadThrough.get(reading.conversation_id) ?? 0
+          );
+          if (ownerReadCoversNewMessage(deliveredEvents, previouslyReadThrough, advanced)) {
+            refreshedReadThrough.set(reading.conversation_id, advanced);
+            // The server accepted this read. Ask mounted queries for current truth,
+            // even if the owner switched conversations while the request was pending.
+            void queryClient.invalidateQueries();
+          }
           if (view?.conversation_id === reading.conversation_id) {
-            view = { ...view, owner_read_through_sequence: advanced };
+            view = {
+              ...view,
+              owner_read_through_sequence: Math.max(view.owner_read_through_sequence, advanced)
+            };
           }
         })
         .catch(() => {
-          if (advancingRead?.conversationId === reading.conversation_id) {
+          if (advancingRead === request) {
             advancingRead = null;
           }
         });
