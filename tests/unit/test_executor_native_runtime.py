@@ -1119,3 +1119,106 @@ def test_controlled_stop_wakes_pending_handshake_without_peer_response(tmp_path:
             executor.spool.close()
 
     asyncio.run(run())
+
+
+def test_current_loss_survives_failed_reconnect_and_clears_only_when_reconciled_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import itertools
+    import sys
+
+    from planner.executor import mac as mac_module
+    from planner.executor.contracts import ConnectionState
+    from planner.executor.wire import ProtocolRefused
+
+    peer = """
+import json, pathlib, struct, sys, time
+mode, marker = sys.argv[1], pathlib.Path(sys.argv[2])
+def read():
+    header = sys.stdin.buffer.read(4)
+    if not header:
+        sys.exit(0)
+    return json.loads(sys.stdin.buffer.read(struct.unpack('!I', header)[0]))
+def send(kind, request, payload):
+    body = json.dumps(dict(kind=kind, request_id=request['request_id'], payload=payload)).encode()
+    sys.stdout.buffer.write(struct.pack('!I', len(body)) + body)
+    sys.stdout.buffer.flush()
+hello = read()
+identity = hello['payload']['identity']
+if mode == 'refuse':
+    identity['protocol_version'] = 1
+send('hello_accepted', hello, identity)
+if mode == 'refuse':
+    time.sleep(30)
+while True:
+    message = read()
+    if marker.exists():
+        sys.exit(0)
+    if message['kind'] == 'reconcile_inventory':
+        result = dict(identity=identity, receipts=[], answers=[], ask_evidence=[],
+                      acknowledged_command_ids=[])
+        send('reconcile_result', message, result)
+    elif message['kind'] == 'reconciliation_ready':
+        send('reconciliation_ready', message, dict(ready=True))
+"""
+
+    async def run() -> None:
+        ticks = itertools.count(1000)
+        monkeypatch.setattr(mac_module, "now_ms", lambda: next(ticks))
+        monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.01)
+        marker = tmp_path / "drop-link"
+        executor = MacExecutor(
+            paths=ExecutorPaths(tmp_path / "executor"),
+            revision="a" * 40,
+            ssh_argv=(sys.executable, "-c", peer, "accept", str(marker)),
+            panels_server_url="http://unused",
+        )
+        tasks: list[asyncio.Task[None]] = []
+
+        async def ready() -> None:
+            while executor.state != ConnectionState.ready:
+                await asyncio.sleep(0.001)
+
+        try:
+            first = asyncio.create_task(executor._connected())
+            tasks.append(first)
+            await asyncio.wait_for(ready(), 2)
+            assert executor.health().lost_at_ms is None
+            first_generation = executor.identity.connection_generation
+            marker.touch()
+            with pytest.raises(asyncio.IncompleteReadError):
+                await asyncio.wait_for(first, 2)
+            loss = executor.health().lost_at_ms
+            assert loss is not None
+            assert executor.health().connection_state == ConnectionState.disconnected
+            executor.ssh_argv = (sys.executable, "-c", peer, "refuse", str(marker))
+            with pytest.raises(ProtocolRefused):
+                await executor._connected()
+            assert executor.health().lost_at_ms == loss
+            assert executor.identity.connection_generation > first_generation
+            executor.ssh_argv = (str(tmp_path / "missing-ssh-executable"),)
+            with pytest.raises(FileNotFoundError):
+                await executor._connected()
+            assert executor.health().lost_at_ms == loss
+            assert executor.health().connection_state == ConnectionState.disconnected
+            marker.unlink()
+            executor.ssh_argv = (sys.executable, "-c", peer, "accept", str(marker))
+            recovered = asyncio.create_task(executor._connected())
+            tasks.append(recovered)
+            await asyncio.wait_for(ready(), 2)
+            health = executor.health()
+            assert health.connection_state == ConnectionState.ready
+            assert health.reconciliation_ready
+            assert health.identity.connection_generation == first_generation + 3
+            assert health.lost_at_ms is None
+            executor._stop.set()
+            await asyncio.wait_for(recovered, 2)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            executor.spool.close()
+
+    asyncio.run(run())
