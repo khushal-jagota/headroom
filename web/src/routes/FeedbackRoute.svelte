@@ -5,7 +5,6 @@
   import {
     feedbackRelativeTime,
     feedbackPageHref,
-    feedbackTicketStageState,
     feedbackTicketStateLabel,
     type FeedbackNote
   } from "../lib/feedback";
@@ -14,7 +13,7 @@
   import ResourceState from "../components/ResourceState.svelte";
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
-  import StageMark from "../components/StageMark.svelte";
+  import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
 
   let { onDismissed }: { onDismissed: (noteId: string) => void } = $props();
   const feedback = createQuery(() => queries.feedback());
@@ -120,10 +119,7 @@
               <section class="fb-group" data-feedback-group={group.ticket?.id || "dismissed"}>
                 <div class="fb-group-head">
                   {#if group.ticket}
-                    {@const messageState = feedbackTicketStageState(group.ticket)}
-                    {#if messageState}
-                      <StageMark state={messageState} aria-label="Unread reply" />
-                    {/if}
+                    <ConversationSignalMark signal={group.ticket.conversation_signal} conversationId={group.ticket.conversation_id} />
                     <a href={`#/workspace/${encodeURIComponent(group.ticket.id)}`}>{group.ticket.title}</a>
                     <span class="fb-group-state">{feedbackTicketStateLabel(group.ticket)} · {group.notes.length} {group.notes.length === 1 ? "note" : "notes"}</span>
                   {:else}

@@ -715,10 +715,4 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
 def review_view(
     conn: sqlite3.Connection,
 ) -> JsonDict:
-    running_workers = conn.execute(
-        "SELECT COUNT(*) AS count FROM tickets WHERE worker_step_claim = 'out'"
-    ).fetchone()
-    return {
-        "items": _review_items(conn),
-        "running_worker_count": int(running_workers["count"] if running_workers is not None else 0),
-    }
+    return {"items": _review_items(conn)}

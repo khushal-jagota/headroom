@@ -4,7 +4,6 @@
   import { filterOrchestratorChildren } from "../lib/orchestratorChildren";
   import { orchestratorPageGroups } from "../lib/orchestratorPage";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
-  import { workItemActivityMark, workItemActivityMarkPresentation } from "../lib/workItemPresentation";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import type { OrchestratorPrincipal, OrchestratorChildFilter, SprintItemWorkspaceTicket } from "../lib/types";
   import Disclosure from "./Disclosure.svelte";
@@ -23,7 +22,7 @@
   let groupRoot = $state<HTMLElement | null>(null);
   const filters: { value: OrchestratorChildFilter; label: string }[] = [
     { value: "active", label: "Active" }, { value: "backlogged", label: "Backlogged" },
-    { value: "done", label: "Done" }, { value: "retired", label: "Retired" }
+    { value: "done", label: "Done" }, { value: "retired", label: "Cancelled" }
   ];
   const children = createQuery(() => ({
     ...queries.orchestratorTicketSummaries(principal, filter, offset),
@@ -71,16 +70,13 @@
         {/snippet}
         <div class="sprint-workspace-status-body">
           {#each group.tickets as ticket (ticket.id)}
-            {@const mark = workItemActivityMark(ticket)}
-            {@const presentation = workItemActivityMarkPresentation(mark)}
-            <SprintTicketRow priority={null} title={ticket.title} state={presentation.state} ariaLabel={presentation.ariaLabel}
+            <SprintTicketRow priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
               quiet={ticket.stage === "done" || ticket.stage === "cancelled"}
               href={workspaceAddress(principal.kind === "sprint_item"
                 ? { kind: "ticket", id: ticket.id, openedFromItemId: principal.id } : { kind: "ticket", id: ticket.id })}
-              data-sprint-ticket-id={ticket.id} data-ticket-state={presentation.state} data-workspace-mark={mark ?? "none"}
+              data-sprint-ticket-id={ticket.id}
               onmouseenter={(event: MouseEvent) => onHover(event.currentTarget as HTMLElement, ticket.id)} onmouseleave={onLeave}
-              onfocus={(event: FocusEvent) => onHover(event.currentTarget as HTMLElement, ticket.id)} onblur={onLeave}
-              stageMarkAttributes={{ "data-workspace-mark": mark ?? "none" }} />
+              onfocus={(event: FocusEvent) => onHover(event.currentTarget as HTMLElement, ticket.id)} onblur={onLeave} />
           {/each}
         </div>
       </Disclosure>

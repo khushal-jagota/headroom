@@ -31,8 +31,8 @@ from tests.support.real_permission_mapping import (
 from planner.conversation.api import ConversationRuntime, build_conversation_runtime, router
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.production_backends import production_backend_child_factories
+from planner.conversation.signals import read_conversation_signals
 from planner.core.db import connect, create_schema
-from planner.work_attention import _conversation_attention
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS = {"codex": "gpt-5.6-luna", "claude": "haiku", "hermes": "openai-codex:gpt-6-astra"}
@@ -161,11 +161,11 @@ async def _exercise(
                 and event["payload"]["title"]
                 for event in events
             )
-            attention = await _conversation_attention(
+            attention = await read_conversation_signals(
                 runtime.system, runtime.store, {conversation_id}
             )
-            assert attention[conversation_id][1] is True
-            receipts["awaiting_answer_before"] = attention[conversation_id][1]
+            assert attention[conversation_id].awaiting_answer is True
+            receipts["awaiting_answer_before"] = attention[conversation_id].awaiting_answer
             # A bounded interval proves the request remains open without silently answering.
             before = asyncio.get_running_loop().time()
             samples = 0
@@ -195,11 +195,11 @@ async def _exercise(
             answered = [event for event in events if event["kind"] == "permission_answered"]
             assert len(answered) == 1 and answered[0]["payload"] == answer
             assert len([event for event in events if event["kind"] == "permission_asked"]) == 1
-            attention = await _conversation_attention(
+            attention = await read_conversation_signals(
                 runtime.system, runtime.store, {conversation_id}
             )
-            assert attention[conversation_id][1] is False
-            receipts["awaiting_answer_after"] = attention[conversation_id][1]
+            assert attention[conversation_id].awaiting_answer is False
+            receipts["awaiting_answer_after"] = attention[conversation_id].awaiting_answer
             if decision == "allow":
                 assert target.read_text() == nonce
             else:

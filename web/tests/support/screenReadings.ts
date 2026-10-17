@@ -1,9 +1,11 @@
+import { conversationSignalReading } from "./conversationSignalReading";
+import type { ConversationSignal } from "../../src/lib/conversationSignal";
 // One Ticket, read by every screen that says whose it is and whether a worker has it.
 //
 // Each helper returns the words or the mark a reader actually sees, so a test here
 // fails when a screen changes what it says — not when a function is renamed.
 import { dayActionTiles, dayVisualTicket } from "../../src/lib/dayPresentation";
-import { feedbackTicketStageState, feedbackTicketStateLabel } from "../../src/lib/feedback";
+import { feedbackTicketStateLabel } from "../../src/lib/feedback";
 import {
   buildLifecycle,
   fieldStageVisualStateFor,
@@ -20,6 +22,7 @@ import type { FieldStageVisualState } from "../../src/lib/ui";
 import { workspaceGroups } from "../../src/lib/workspaceRail";
 
 export type TicketFacts = {
+  conversation_signal?: ConversationSignal;
   stage: string;
   ticket_status: string;
   gating_field: string;
@@ -203,18 +206,7 @@ export function feedbackLabel(facts: TicketFacts): string {
 }
 
 export function feedbackMark(facts: TicketFacts): FieldStageVisualState | null {
-  return feedbackTicketStageState({
-    id: "t_reading",
-    title: "One Ticket",
-    stage: facts.stage,
-    ticket_status: facts.ticket_status,
-    awaiting_reply: facts.awaiting_reply,
-    awaiting_answer: facts.awaiting_answer,
-    awaiting_approval: facts.awaiting_approval,
-    awaiting_agent_approval: facts.awaiting_agent_approval,
-    assigned: facts.assigned,
-    agent_state: facts.agent_state
-  });
+  return conversationSignalReading(facts).includes('data-conversation-signal="message"') ? "current-awaiting-approval" : null;
 }
 
 /** The tiles Home shows for a Day holding this one Ticket, as "Label count". */
@@ -226,7 +218,7 @@ export function homeTiles(facts: TicketFacts): string[] {
 
 /** What Home's dot for this Ticket is announced as. */
 export function homeDotLabel(facts: TicketFacts): string {
-  return dayVisualTicket(dayTicket(facts)).ariaLabel;
+  return conversationSignalReading(facts).includes('data-conversation-signal="message"') ? "Unread message" : "";
 }
 
 /** The mark on the Ticket's own page, against the field its Stage is gated on. */

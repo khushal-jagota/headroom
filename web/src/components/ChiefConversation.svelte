@@ -11,6 +11,7 @@
    * Chief conversation while the route owns roster selection and responsive navigation.
    */
   import { createQuery } from "@tanstack/svelte-query";
+  import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import OrchestratorChildren from "./OrchestratorChildren.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
@@ -25,6 +26,7 @@
 
   let conversationId = $state<string | null>(null);
   let backends = $state<readonly BackendSnapshot[]>([]);
+  const workers = createQuery(() => queries.workers());
   const currentConversation = createQuery(() => queries.chiefConversation());
   // What a conversation for the Chief would start on. It is a query rather than a read on
   // arrival because the owner changes it on the Config screen, and this must not go on
@@ -61,6 +63,9 @@
 </script>
 
 <div class="chief-workspace">
+  {#if workers.data?.chief_of_staff.conversation_signal?.working || workers.data?.chief_of_staff.conversation_signal?.message_for_owner}
+    <div class="chief-signal"><ConversationSignalMark signal={workers.data?.chief_of_staff.conversation_signal} conversationId={workers.data?.chief_of_staff.conversation_id} /></div>
+  {/if}
   <div class="chief-workers"><OrchestratorChildren principal={{ kind: "chief", id: "chief" }} /></div>
   <div class="chief-conversation">
 {#if currentConversation.error}
@@ -95,6 +100,7 @@
   </div>
 </div>
 <style>
+  .chief-signal { padding:var(--space-3) var(--space-5) 0; }
   .chief-workspace { display:flex; flex-direction:column; width:100%; min-height:0; }
   .chief-workers { padding:var(--space-5); max-height:45%; overflow:auto; flex:none; }
   .chief-conversation { display:flex; flex:1; min-height:0; }

@@ -79,12 +79,12 @@ proposed), then **Consequences** (only the applicable merge, deploy, follow-up, 
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
 what moves the ticket one stage forward. **done** records successful completion.
-Retirement records a separate non-success ending, `cancelled`, outside the Stage ladder
-and ceiling choices.
+Historical cancelled Tickets retain a separate non-success ending, `cancelled`, outside
+the Stage ladder and ceiling choices. Retire is no longer a Ticket action.
 Stages advance through approval or direct completion of a current user-owned gate;
 there is no arbitrary Stage jump.
 
-## Backlog, resume, and retirement
+## Backlog, resume, and cancelled history
 
 Explicit backlog prevents the next automatic Worker step. It preserves the current
 Stage, proposal, approval holder, assignment, history, conversations, and artifacts.
@@ -95,19 +95,19 @@ Resume clears only backlog state. The ordinary readiness and approval rules stil
 apply. A ceiling controls whether a result parks for approval. It does not prevent
 the Worker from preparing that result.
 
-The Ticket page provides Backlog ticket, Resume ticket, and Retire ticket controls.
-Retirement requires a reason and ends the Ticket without a success claim. The original
-record, proposal, approval holder, revision feedback, actor, and time remain in retirement
-provenance. The Steps section retains historical proposal evidence. Retirement removes
-the live approval obligation and follows the existing terminal blocker rules.
+The Ticket page provides Backlog ticket and Resume ticket controls. Each transition has
+one writer. An optional stored-record hash precondition refuses stale requests inside
+the write transaction. The browser sends that precondition automatically.
 
-Retirement refuses unresolved claims, live or held conversation work, and unresolved
-manager delivery ownership. It does not silently reset or interrupt that work. A repeated
-successful retirement returns the original result. It creates no second transition.
+Historical cancelled Tickets retain their records, conversations, artifacts, and
+retirement provenance. That provenance preserves the original record, proposal, approval
+holder, revision feedback, actor, and time. The Steps section retains historical proposal
+evidence. Direct record reads and bounded lists with `stage=cancelled` and
+`include_terminal=true` retain access to that history.
 
-The supported actions share one writer per transition. An optional stored-record hash
-precondition refuses stale requests inside the write transaction. The browser sends that
-precondition automatically. Agents can use it for reviewed manifest application.
+Cancelled Tickets remain terminal. Their historical proposals cannot receive actionable
+approvals, and normal readiness does not start another Worker step. Historical reads do
+not provide a cancellation action or another way to end current work.
 
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -221,7 +221,8 @@ Worker type definition is the sole authority. Terminal Tickets have no current o
 - **User-owned** Stages get one automatic opening turn when the Stage becomes ready, then
   rest at `empty`. A durable opener fact belongs to that Stage entry, and readiness
   checks it before dispatch. The user and worker carry the Stage forward in the same
-  Ticket conversation. A real proposal always parks for approval, whatever the ceiling.
+  Ticket conversation. A filed answer settles below the ceiling and parks for approval
+  at or beyond it.
   The user can also fill the unset current field through the gate completion operation.
   Panels stores that value and advances exactly one Stage. Leaving the Stage clears the
   opener fact.
@@ -302,12 +303,13 @@ every move, whether or not a proposal is parked right now: a wrong address is wr
 anything arrives at it. A holder that still stands above the moved Ticket keeps the
 ceiling. A Ticket that was already stranded stays as it is until something moves it.
 
-Below the ceiling, a worker-owned Stage's answer settles the field and the ticket
+Below the ceiling, any Stage's answer settles the field and the ticket
 advances, and no proposal is recorded at all. At the ceiling it files a proposal, and the
 ticket parks. So every proposal in the system is one somebody is going to look at. The
 ceiling says nothing about who owns a Stage: user-owned Stages still do not
-dispatch automatically after their opening turn. They rest at `empty` with their opener fact,
-and their answer always parks.
+dispatch automatically after their opening turn. They rest at `empty` with their opener fact
+until the user and worker continue the discussion. Stage ownership does not add an
+approval stop.
 New tickets start leashed right at
 the **Brief**: the ceiling is `needs_brief` for every Worker type, so nothing advances past
 the human-approved intake until the human raises the ceiling — review before agents
@@ -375,8 +377,8 @@ context. The parked stage is editable. An explicit raise beyond both the saved
 ceiling and the pending stage approves through atomic Accept. Same/lower scope
 preserves the proposal, including a user-owned proposal already below a higher
 ceiling. Reviewer-only changes reroute without approval. Direct Approve remains an
-explicit approval for such user-owned proposals. Future user-owned answers still
-park for explicit review.
+explicit approval for such historical proposals. New answers follow the ceiling alone,
+including answers to user-owned Stages.
 
 The acceptance request can include `expected_proposal_revision`. The server checks
 that revision inside the existing transaction before settlement. A stale visible
@@ -388,7 +390,7 @@ is introduced.
 `No further` remains an onward acceptance choice: it accepts the present answer and
 sets the ceiling to the next stage. It does not pause the next Worker turn. Current
 scope edits use actual lifecycle stages. The existing readiness, authority, blocker,
-claim, and user-owned review rules continue unchanged.
+claim, and user-owned collaboration rules continue unchanged.
 
 Review's oldest-first walk shows owner-addressed proposals independently of Today.
 A proposal addressed to an ordinary orchestrator or Chief creates a durable notice

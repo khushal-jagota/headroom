@@ -3,16 +3,11 @@ import type {
   BoardCard,
   BoardSprintItem,
   Priority,
-  WorkAttention
 } from "./types";
 import {
   WORK_ITEM_ATTENTION_GROUP_KEYS,
-  workItemActivityMark,
-  workItemActivityMarkPresentation,
   workItemTicketGroupKey,
   workItemTicketGroups,
-  type WorkItemActivityMark,
-  type WorkItemActivityMarkPresentation,
   type WorkItemTicketFacts
 } from "./workItemPresentation";
 
@@ -23,15 +18,13 @@ export type WorkspaceTicketGroup = {
   cards: WorkItemTicketFacts[];
 };
 
-export type WorkspaceRowMark = WorkItemActivityMark;
-export type WorkspaceRowMarkPresentation = WorkItemActivityMarkPresentation;
-
 export type WorkspaceRailItem = {
   id: string;
   title: string;
   priority: Priority;
   createdAt: number;
-  mark: WorkspaceRowMark;
+  conversationSignal: BoardSprintItem["conversation_signal"];
+  conversationId: string | null;
   groups: WorkspaceTicketGroup[];
   rested: boolean;
   settled: boolean;
@@ -52,15 +45,6 @@ export type WorkspaceRail = {
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
 
 export const workspaceCardGroupKey = workItemTicketGroupKey;
-export const workspaceTicketRowMark = workItemActivityMark;
-export const workspaceRowMarkPresentation = workItemActivityMarkPresentation;
-
-export function workspaceSprintItemRowMark(
-  item: WorkAttention
-): WorkspaceRowMark {
-  return workItemActivityMark(item);
-}
-
 function priorityRank(priority: Priority): number {
   return PRIORITY_ORDER.indexOf(priority);
 }
@@ -95,11 +79,6 @@ export function workspaceHoverGroups(cards: readonly WorkItemTicketFacts[]): Wor
   return railGroups(cards.filter((card) => card.stage !== "done" && card.ticket_status !== "cancelled"));
 }
 
-/** Only an unread reply marks a row. An answer request remains a separate group fact. */
-export function workspaceWorkerRowMarks(ticket: WorkAttention): { reply: boolean; answer: boolean } {
-  return { reply: ticket.awaiting_reply, answer: false };
-}
-
 export type WorkspaceWorkerStage = { id: string; label: string; state: "done" | "now" | "todo" };
 
 export function workspaceWorkerStages(
@@ -125,7 +104,8 @@ export function buildWorkspaceRail(
     title: item.title,
     priority: item.priority,
     createdAt: item.created_at,
-    mark: workspaceSprintItemRowMark(item),
+    conversationSignal: item.conversation_signal,
+    conversationId: item.conversation_id,
     groups: workspaceAttentionGroups(item.tickets.filter((ticket) => ticket.ticket_status !== "cancelled")),
     hoverGroups: workspaceHoverGroups(item.tickets),
     tickets: item.tickets,

@@ -97,7 +97,7 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.logic import admission
-from planner.work_attention import add_work_attention
+from planner.work_attention import add_work_attention, read_running_conversation_count
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
@@ -1440,8 +1440,18 @@ async def board(
 
 
 @router.get("/review")
-async def review(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
-    return tickets_views.review_view(conn)
+async def review(
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
+    response = tickets_views.review_view(conn)
+    response["running_worker_count"] = await read_running_conversation_count(
+        conn, conversations, conversation_record
+    )
+    return response
 
 
 def _record_precondition(body: dict[str, Any]) -> str | None:
@@ -1479,39 +1489,6 @@ async def resume_ticket(
         expected_record_sha256=_record_precondition(body),
     )
     return _ticket_detail(conn, ticket_id, clk.now_unix())
-
-
-@router.post("/tickets/{ticket_id}/retire")
-async def retire_ticket(
-    ticket_id: str,
-    body: dict[str, Any],
-    conn: DbConn,
-    ctx: Ctx,
-    clk: Clk,
-    conversations: Conversations,
-) -> JsonDict:
-    require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    reason = body.get("reason")
-    if not isinstance(reason, str) or not reason.strip():
-        raise PlannerError(ErrorCode.validation, "retirement requires a reason")
-    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        if ticket.stage != "cancelled" and ticket.conversation_id is not None:
-            if await conversations.is_running(
-                ticket.conversation_id
-            ) or await conversations.held_prompts(ticket.conversation_id):
-                raise PlannerError(
-                    ErrorCode.already_running, "the Ticket conversation still owns traffic"
-                )
-        tickets_data.retire_ticket(
-            conn,
-            ticket_id,
-            reason=reason,
-            principal=ctx.principal,
-            now=clk.now_unix(),
-            expected_record_sha256=_record_precondition(body),
-        )
-        return _ticket_detail(conn, ticket_id, clk.now_unix())
 
 
 @router.post("/tickets/{ticket_id}/move")

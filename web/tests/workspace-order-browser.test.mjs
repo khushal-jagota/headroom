@@ -208,11 +208,13 @@ with sync_playwright() as p:
     summary = board["sprint_items"][0]
     summary["tickets"] = [old]
     summary["awaiting_reply"] = True
+    summary["conversation_signal"] = dict(working=False, message_for_owner=True)
     page.evaluate("window.__refresh()")
-    expect(page.locator('[data-sprint-item="si_old"] .item-head .stage-mark')).to_have_attribute("data-workspace-mark", "reply")
+    expect(page.locator('[data-sprint-item="si_old"] .item-head .stage-mark')).to_have_attribute("data-conversation-signal", "message")
     expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, ["si_peer", "si_old", "si_newer"])
     summary["awaiting_reply"] = False
+    summary["conversation_signal"] = dict(working=False, message_for_owner=False)
     page.evaluate("window.__refresh()")
     expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, ["si_peer", "si_old", "si_newer"])
