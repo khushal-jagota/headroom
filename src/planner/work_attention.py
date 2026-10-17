@@ -16,7 +16,29 @@ from planner.tickets import derivation
 from planner.tickets.contracts import StageOwnershipMode, TicketStatus, WorkAttention
 from planner.tickets.derivation import AgentState, TicketFacts
 from planner.tickets.logic import machine
+from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import configured_worker_type_registry
+
+
+async def read_running_conversation_count(
+    conn: sqlite3.Connection,
+    conversation_system: ConversationSystem,
+    conversation_record: ConversationStore,
+) -> int:
+    """Count each current Worker, supervisor or Chief conversation's work once."""
+    rows = conn.execute(
+        "SELECT conversation_id FROM tickets WHERE conversation_id IS NOT NULL "
+        "UNION SELECT conversation_id FROM agents WHERE agent_key = ? "
+        "AND conversation_id IS NOT NULL "
+        "UNION SELECT a.conversation_id FROM sprint_items si JOIN agents a "
+        "ON a.agent_key = 'sprint_item_supervisor_' || si.id "
+        "WHERE a.conversation_id IS NOT NULL",
+        (CHIEF_SETTINGS_KEY,),
+    ).fetchall()
+    conversations = await read_conversation_signals(
+        conversation_system, conversation_record, {str(row["conversation_id"]) for row in rows}
+    )
+    return sum(conversation.signal["working"] for conversation in conversations.values())
 
 
 # A parked proposal is split by who holds its ceiling, and the split is the projection's

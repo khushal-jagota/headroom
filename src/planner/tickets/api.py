@@ -97,7 +97,7 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.logic import admission
-from planner.work_attention import add_work_attention
+from planner.work_attention import add_work_attention, read_running_conversation_count
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
@@ -1440,8 +1440,18 @@ async def board(
 
 
 @router.get("/review")
-async def review(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
-    return tickets_views.review_view(conn)
+async def review(
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
+    response = tickets_views.review_view(conn)
+    response["running_worker_count"] = await read_running_conversation_count(
+        conn, conversations, conversation_record
+    )
+    return response
 
 
 def _record_precondition(body: dict[str, Any]) -> str | None:

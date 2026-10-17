@@ -13,15 +13,16 @@ from tests.support.retired_workers import seed_historical_worker_type
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationAttentionFacts, ConversationStore
 from planner.core.clock import RealClock
+from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.db import connect, create_schema
 from planner.days.data import add_day_ticket
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
-from planner.tickets.api import add_conversation_row_signals
+from planner.tickets.api import add_conversation_row_signals, review
 from planner.tickets.contracts import TITLE_MAX_CHARS
-from planner.tickets.views import board_view
-from planner.work_attention import add_work_attention
+from planner.tickets.views import board_view, review_view
+from planner.work_attention import add_work_attention, read_running_conversation_count
 from planner.worker_settings.api import add_agent_conversation_signals
 
 
@@ -38,6 +39,73 @@ class _ConversationFacts:
 
     async def has_pending_user_input(self, conversation_id: str) -> bool:
         return False
+
+
+def test_shell_count_tracks_distinct_actual_work_across_all_roles(
+    tmp_path: Path, cfg: Config
+) -> None:
+    db_path = tmp_path / "shell-count.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    item = sprints_data.create_item(
+        conn, title="Settled supervisor", project_id="project_vylo", clock=RealClock()
+    )
+    tickets = [
+        tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title=title,
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+        )
+        for title in ("Cancelled worker", "Duplicate association", "Claim only")
+    ]
+    ids = {"worker", "supervisor", "chief", "unknown", "stale"}
+    conn.executemany(
+        "INSERT INTO conversations "
+        "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+        "VALUES (?, 'codex', '/tmp', 'full', 0, 1)",
+        [(conversation_id,) for conversation_id in ids],
+    )
+    conn.executemany(
+        "UPDATE tickets SET conversation_id = 'worker', stage = 'cancelled' WHERE id = ?",
+        [(ticket.id,) for ticket in tickets[:2]],
+    )
+    conn.execute("UPDATE tickets SET worker_step_claim = 'out' WHERE id = ?", (tickets[2].id,))
+    conn.execute("UPDATE sprint_items SET settled = 1 WHERE id = ?", (item.id,))
+    conn.executemany(
+        "INSERT INTO agents(agent_key, conversation_id) VALUES (?, ?) "
+        "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id",
+        [
+            (item.supervisor_agent_key, "supervisor"),
+            ("chief_of_staff", "chief"),
+            ("unregistered_agent", "unknown"),
+            ("sprint_item_supervisor_missing_item", "stale"),
+        ],
+    )
+    conn.commit()
+    runtime = _ConversationFacts(running_ids={"unknown", "stale"})
+    system = cast(ConversationSystem, runtime)
+    record = ConversationStore(str(db_path))
+
+    def count() -> int:
+        return asyncio.run(read_running_conversation_count(conn, system, record))
+
+    assert count() == 0  # A claim and unrelated agents never mean current role work.
+    for role in ("worker", "supervisor", "chief"):
+        runtime.running_ids = {role}
+        assert count() == 1
+        runtime.running_ids = set()
+        assert count() == 0
+    runtime.running_ids = ids
+    assert count() == 3
+    response = asyncio.run(review(conn, cfg, RealClock(), system, record))
+    assert response == {"items": review_view(conn)["items"], "running_worker_count": 3}
+    # Different roles that resolve to the same conversation also count once.
+    conn.execute("UPDATE agents SET conversation_id = 'worker' WHERE agent_key = 'chief_of_staff'")
+    assert count() == 2
+    conn.close()
 
 
 def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(

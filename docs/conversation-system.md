@@ -136,6 +136,12 @@ end. This publication follows the runtime state transition, so a query cannot re
 answer from before the prompt or ending commit settled. The event stream carries no
 payload. Mounted queries fetch the canonical conversation signal again.
 
+The shell's working count sums that same working fact across Worker, supervisor, and
+Chief conversations. Each conversation counts once, even when multiple records refer to
+it. Settled supervisors and cancelled Workers still count when their conversations run.
+Worker-step claims do not define this count. Its existing query uses the same change
+stream refresh as the individual marks.
+
 ## What a message is
 
 A message is not a piece of text. It is a run of pieces, in the order they were
