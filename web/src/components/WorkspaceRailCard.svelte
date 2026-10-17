@@ -43,6 +43,6 @@
   .chief .item-head { align-items:center; margin-top:0; gap:10px; }
   .chief .item-title { font-size:18px; }
   .chief-icon { flex:none; width:26px; height:26px; border-radius:var(--radius-sm); object-fit:cover; }
-  .bucket :global(.worker-row.ticket-row--active) { background:var(--surface-recessed); color:var(--text-strong); }
+  .bucket :global(.worker-row.ticket-row--active) { background:var(--surface-2); color:var(--text-strong); }
   button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
 </style>
