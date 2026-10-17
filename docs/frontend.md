@@ -144,10 +144,11 @@ One screen per part of the system:
 
   Steps and Artifacts are closed bands below the live card. Steps retain their circular progress marks. Each step opens its own
   text. Future stages, guidance, and a separate historical record do not appear.
-  Cancelled planning work retains truthful historical content without actionable
+  Cancelled work retains truthful historical content without actionable
   approval controls. Artifacts remain accessible even when no inline link exists,
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
+  Backlog and Resume remain the deferral controls. There is no Retire control.
 - **Orchestrator** — project and parent navigation, title, recap, and a Settle control
   above closed Worker bands. Worker rows show title and an exact-conversation dot.
   Hover or keyboard focus reuses the rail's stage panel. Groups keep the shared names
@@ -159,7 +160,7 @@ One screen per part of the system:
 - **Historical Sprint** — retained dated links and documents remain readable. These
   screens do not supply planning or change Worker continuation. See `sprints.md`.
 - **Chief children** — the existing Chief workspace provides a scoped, bounded child
-  section with active, backlogged, completed, and retired views. It reuses the child
+  section with Active, Backlogged, Done, and Cancelled views. It reuses the child
   groups and rows. Ordinary orchestrators retain their own scoped children and filters.
   The standalone Workers page is removed. Former `#/backlog` addresses redirect to
   Workspace. Project facts remain text. The browser New Ticket form and global

@@ -18,22 +18,25 @@ describe("explicit ticket lifecycle controls", () => {
   it("offers deferral independently of unscheduled placement", () => {
     const markup = controls(ticket({ sprint_id: null, sprint_item_id: null }));
     expect(markup).toContain("Backlog ticket");
-    expect(markup).toContain("Ticket actions");
-    expect(markup).toContain("<details");
-    expect(markup).toContain("Retire ticket");
+    expect(markup).not.toContain("Ticket actions");
+    expect(markup).not.toContain("<details");
+    expect(markup).not.toContain("Retire ticket");
+    expect(markup).not.toContain("data-retirement-input");
     expect(markup).not.toContain("Resume ticket");
   });
 
   it("offers resume and preserves the contact and approval explanation", () => {
     const markup = controls(ticket({ is_backlogged: true, sprint_id: "scheduled" }));
     expect(markup).toContain("Resume ticket");
+    expect(markup).not.toContain("Retire ticket");
+    expect(markup).not.toContain("Ticket actions");
     expect(markup).toContain("Automatic work is paused. Messages and approvals remain available.");
   });
 
-  it("shows escaped retirement reason and no lifecycle action on a retired ticket", () => {
+  it("shows escaped historical reason and no lifecycle action on a cancelled ticket", () => {
     const value = ticket({ stage: "cancelled", field_values: { retirement: JSON.stringify({ reason: "Obsolete <script>" }) } });
     const markup = controls(value, true);
-    expect(markup).toContain("Retired without success");
+    expect(markup).toContain("Cancelled");
     expect(markup).toContain("Obsolete &lt;script>");
     expect(markup).not.toContain("data-ticket-backlog-action");
     expect(markup).not.toContain("data-ticket-retire-action");

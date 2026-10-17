@@ -1428,7 +1428,7 @@ def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) 
     "--include-terminal",
     is_flag=True,
     default=False,
-    help="Include done Tickets.",
+    help="Include done and historical cancelled Tickets.",
 )
 @click.option("--search", default=None, help="Case-insensitive Ticket text search.")
 @click.option("--project", default=None, help="Only show project name.")

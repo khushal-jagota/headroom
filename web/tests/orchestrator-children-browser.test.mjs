@@ -77,7 +77,7 @@ with sync_playwright() as p:
     expect(page.get_by_label("Worker state")).to_have_value("active")
     expect(page.locator('[data-sprint-ticket-id]')).to_have_count(2)
     expect(page.get_by_role("link",name="item-quiet",exact=True)).to_have_attribute("href","#/workspace/item/item%20one/item-quiet")
-    page.get_by_label("Worker state").select_option("retired")
+    page.get_by_label("Worker state").select_option(label="Cancelled")
     expect(page.locator('[data-sprint-ticket-id]')).to_have_count(1)
     page.get_by_label("Worker state").select_option("done")
     expect(page.get_by_text("No Workers",exact=True)).to_be_visible()

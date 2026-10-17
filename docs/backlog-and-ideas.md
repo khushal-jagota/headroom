@@ -16,9 +16,11 @@ or browser New Ticket form. API and CLI creation remain available. A request to 
 still follows the ordinary Ticket workflow.
 
 Chief shows only its own children beside its conversation. Ordinary orchestrators retain
-their own children, including settled work. Scoped filters expose active, backlogged,
-completed, and retired Tickets. Chief results remain bounded and paginated. Each row
+their own children, including settled work. Scoped filters provide Active, Backlogged,
+Done, and Cancelled views. Chief results remain bounded and paginated. Each row
 opens the existing individual Ticket. Review and direct-message discovery remain separate.
+The Cancelled view reads existing terminal history, with retained proposals, provenance,
+conversations, and artifacts. It does not offer an action to cancel current work.
 
 Backlog ticket on the Ticket page prevents automatic progression. Resume ticket restores
 ordinary readiness checks. Messages, proposals, approvals, assignment, history, and
