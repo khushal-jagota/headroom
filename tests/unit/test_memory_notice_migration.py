@@ -62,7 +62,7 @@ def test_cutover_holds_known_events_missing_events_and_former_links(tmp_path: Pa
     with connect(path) as conn:
         create_schema(conn)
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
-            "merge_executor_memory_notice"
+            ScriptDirectory(str(db.MIGRATIONS_DIRECTORY)).get_current_head()
         )
         assert conn.execute("SELECT * FROM executor_connections").fetchall() == []
         rows = conn.execute(
@@ -146,7 +146,7 @@ def test_combined_migration_upgrades_either_reviewed_head_without_losing_rows(
     with connect(path) as conn:
         create_schema(conn)
         assert conn.execute("SELECT version_num FROM alembic_version").fetchall()[0][0] == (
-            "merge_executor_memory_notice"
+            ScriptDirectory(str(db.MIGRATIONS_DIRECTORY)).get_current_head()
         )
         assert dict(conn.execute("SELECT * FROM tickets WHERE id='t_preserved'").fetchone()) == (
             ticket_before
@@ -178,3 +178,67 @@ def test_combined_migration_upgrades_either_reviewed_head_without_losing_rows(
             assert [
                 tuple(row) for row in conn.execute("SELECT * FROM worker_memory_notice_holds")
             ] == [("t_preserved", "preserved", None, 2, "legacy_unresolved_boundary")]
+
+
+@pytest.mark.parametrize(
+    "previous_head",
+    ["merge_executor_memory_notice", "native_usage_prices", "scheduled_ticket_locale"],
+)
+def test_native_usage_merge_preserves_branch_rows_and_reopens(
+    tmp_path: Path, previous_head: str
+) -> None:
+    path = _database_at_revision(tmp_path, previous_head)
+    preserved_tables = ["tickets", "conversations", "conversation_events"]
+    with connect(path) as conn:
+        _make_conversation(conn, "preserved", compacted=7)
+        _add_ticket(conn, "t_preserved", claim="out", conversation_id="preserved")
+        if previous_head == "merge_executor_memory_notice":
+            conn.execute("INSERT INTO executor_connections VALUES ('retained',1,'{}','lost',1,1,0)")
+            conn.execute(
+                "INSERT INTO worker_memory_notice_reservations VALUES "
+                "('t_preserved','preserved',8,'retained-message',1)"
+            )
+            conn.execute(
+                "INSERT INTO worker_memory_notice_holds VALUES "
+                "('t_preserved','preserved',NULL,2,'legacy_unresolved_boundary')"
+            )
+            preserved_tables += [
+                "executor_connections",
+                "worker_memory_notice_reservations",
+                "worker_memory_notice_holds",
+            ]
+        elif previous_head == "native_usage_prices":
+            conn.execute("INSERT INTO native_usage_sources VALUES ('claude','source','{ }')")
+            conn.execute("INSERT INTO native_usage_files VALUES ('claude','source','file','{  }')")
+            conn.execute(
+                "INSERT INTO native_usage_prices VALUES (1,'retained','2026-10-18','{   }')"
+            )
+            preserved_tables += [
+                "native_usage_sources",
+                "native_usage_files",
+                "native_usage_prices",
+            ]
+        before = {
+            table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            for table in preserved_tables
+        }
+    for _ in range(2):
+        with connect(path) as conn:
+            create_schema(conn)
+            assert [tuple(row) for row in conn.execute("SELECT * FROM alembic_version")] == [
+                ("merge_resident_native_usage",)
+            ]
+            for table, rows in before.items():
+                assert [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")] == rows
+            if previous_head != "merge_executor_memory_notice":
+                assert [
+                    tuple(row)
+                    for row in conn.execute(
+                        "SELECT ticket_id,conversation_id,context_compacted_sequence "
+                        "FROM worker_memory_notice_holds"
+                    )
+                ] == [("t_preserved", "preserved", 8)]
+            if previous_head != "native_usage_prices":
+                for table in ("native_usage_sources", "native_usage_files", "native_usage_prices"):
+                    assert conn.execute(f"SELECT * FROM {table}").fetchall() == []
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
