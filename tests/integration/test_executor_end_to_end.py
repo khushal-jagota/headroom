@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import socket
+import struct
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -65,26 +67,17 @@ from planner.executor.publication import PublicationReceiver
 from planner.executor.runtime import NativeChildRegistry
 from planner.executor.vps import ExecutorEndpoint
 
-# This relay transports bytes only, like the resident's SSH stdio relay. It is a
-# separate process, so EOF and a lost acknowledgment exercise the actual framing.
-RELAY = """
-import os, socket, sys, threading
-connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-connection.connect(sys.argv[1])
-def receive():
-    while True:
-        data = connection.recv(65536)
-        if not data:
-            os._exit(0)
-        sys.stdout.buffer.write(data)
-        sys.stdout.buffer.flush()
-threading.Thread(target=receive, daemon=True).start()
-while True:
-    data = os.read(0, 65536)
-    if not data:
-        break
-    connection.sendall(data)
-"""
+
+def production_relay_argv(socket_path: Path) -> tuple[str, ...]:
+    return (
+        sys.executable,
+        "-m",
+        "planner.executor.entrypoint",
+        "executor",
+        "relay",
+        "--socket-path",
+        str(socket_path),
+    )
 
 
 class ScriptedNativeChild:
@@ -342,7 +335,7 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
     mac = MacExecutor(
         paths=ExecutorPaths(root / "mac"),
         revision="a" * 40,
-        ssh_argv=(sys.executable, "-c", RELAY, str(socket_path)),
+        ssh_argv=production_relay_argv(socket_path),
         panels_server_url="http://unused",
     )
 
@@ -822,7 +815,7 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
         mac = MacExecutor(
             paths=ExecutorPaths(tmp_path / "mac"),
             revision="a" * 40,
-            ssh_argv=(sys.executable, "-c", RELAY, str(socket_path)),
+            ssh_argv=production_relay_argv(socket_path),
             panels_server_url="http://unused",
         )
         task = asyncio.create_task(mac.run())
@@ -1122,5 +1115,65 @@ def test_vps_refuses_protocol_one_before_replay_without_fencing_current_peer(
             connection.close()
         finally:
             await harness.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("termination", ["eof", "reset"])
+def test_production_relay_exits_when_peer_ends_while_stdin_stays_open(
+    tmp_path: Path, termination: str
+) -> None:
+    async def run() -> None:
+        socket_path = tmp_path / "relay.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(socket_path))
+        listener.listen()
+        listener.setblocking(False)
+        process = await asyncio.create_subprocess_exec(
+            *production_relay_argv(socket_path),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        peer: socket.socket | None = None
+        try:
+            loop = asyncio.get_running_loop()
+            peer, _ = await asyncio.wait_for(loop.sock_accept(listener), 2)
+            assert peer is not None
+            assert process.stdin is not None
+            assert not process.stdin.is_closing()
+            if termination == "reset":
+                # Leave bytes unread at the Unix peer, so its abrupt close causes
+                # ECONNRESET in the production relay's socket receive task.
+                process.stdin.write(b"leave these peer bytes unread")
+                await process.stdin.drain()
+                assert await asyncio.wait_for(loop.sock_recv(peer, 1), 2) == b"l"
+                peer.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            else:
+                await loop.sock_sendall(peer, b"production relay output")
+            # Deliberately keep the subprocess stdin writer open. Input EOF must
+            # not be what lets either peer-termination case finish.
+            assert not process.stdin.is_closing()
+            peer.close()
+            peer = None
+            returncode = await asyncio.wait_for(process.wait(), 2)
+            assert process.stdout is not None and process.stderr is not None
+            stdout, stderr = await asyncio.gather(process.stdout.read(), process.stderr.read())
+            if termination == "eof":
+                assert returncode == 0
+                assert stdout == b"production relay output"
+                assert stderr == b""
+            else:
+                assert returncode != 0
+                assert b"ConnectionResetError" in stderr
+        finally:
+            if process.stdin is not None:
+                process.stdin.close()
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+            if peer is not None:
+                peer.close()
+            listener.close()
 
     asyncio.run(run())
