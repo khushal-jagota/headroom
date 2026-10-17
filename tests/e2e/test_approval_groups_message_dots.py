@@ -162,7 +162,9 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         diagnostics.record("transcript-held", url=route.request.url, body=body)
 
     try:
+        diagnostics.record("transcript-route-install-start")
         context.route("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
+        diagnostics.record("transcript-route-install-return")
         page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
         left = page.locator(f'[data-sprint-item="{item["id"]}"]')
         owner_row = left.locator(f'[data-ticket-id="{ticket["id"]}"]')
@@ -188,7 +190,9 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             page.evaluate("() => { window.__proofWorkspaceHeld = true; }")
 
         workspace_pattern = f"**/api/items/{item['id']}/workspace"
+        diagnostics.record("workspace-route-install-start")
         context.route(workspace_pattern, delay_workspace)
+        diagnostics.record("workspace-route-install-return")
         left.locator(".item-head").click(timeout=WAIT_MS)
         page.wait_for_function("() => window.__proofWorkspaceHeld === true", timeout=WAIT_MS)
         expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(
@@ -198,7 +202,9 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             diagnostics.record("workspace-release", url=route.request.url, body=body)
             route.fulfill(status=200, content_type="application/json", body=body)
         pending_workspace.clear()
+        diagnostics.record("workspace-route-remove-start")
         context.unroute(workspace_pattern, delay_workspace)
+        diagnostics.record("workspace-route-remove-return")
         right = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
         expect(right.locator('[data-workspace-group="awaiting_approval"]')).to_contain_text(
             ticket["title"]
@@ -231,7 +237,9 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             diagnostics.record("transcript-release", url=route.request.url, body=body)
             route.fulfill(status=200, content_type="application/json", body=body)
         pending_events.clear()
+        diagnostics.record("transcript-route-remove-start")
         context.unroute("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
+        diagnostics.record("transcript-route-remove-return")
         page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
         expect(page.get_by_text("Child direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
         expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
@@ -310,6 +318,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             print(f"Failure evidence collector failed: {collector_error!r}")
         raise
     finally:
+        diagnostics.persist_and_close(context)
         # Failed assertions must not strand intercepted requests during context teardown.
         for route, body in (*pending_events, *pending_workspace):
             try:

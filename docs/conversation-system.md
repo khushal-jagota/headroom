@@ -779,24 +779,52 @@ regenerating everything together would change twenty-two definitions the thread 
 core depends on, and the login closure shares none of them — the generator refuses to run
 if the two bundles ever reach the same definition.
 
-### One home for the codex login
+### One home and one credential per agent
 
-Panels runs one codex account, so the login is one file holding one rotating refresh
-token. Codex refreshes that token in whichever home it is pointed at and writes the new
-one there. A second home holding a copy of the file is therefore a credential with two
-owners: the copy takes the rotation, the original keeps a token the server has already
-spent, and everything using the original fails.
+Each real agent identity has one canonical home and one canonical credential file.
+A rotating refresh token must have one owner: refreshing a copied login in a second
+home can leave the original holding a spent token. Hardlinks are unsafe too: they
+share a file only until a refresh replaces the canonical path by rename.
 
-So Panels refuses to start a codex child whose `CODEX_HOME` holds the same credential as
-the real home. A scratch home with its own login, or with none, is fine. The comparison is
-the credential itself rather than the whole file, because a copy with edited account
-fields still rotates the same token. An unreadable login cannot be shown to be a copy, so
-it is allowed and logged. The guarantee covers the codex children Panels launches — the
-app-server child, the usage read, and the model catalogue read. A check in the test suite
-looks for supported copy and hardlink calls whose source or destination names `auth.json`,
-including simple earlier assignments in the same scope. It deliberately misses whole-home
-copies and other documented routes. It is a scan for a known shape, not a proof that no
-copy can be written.
+Synthetic homes with invented credentials are fine. Tests can also copy configuration
+files while symlinking the credential path to the canonical file. That link follows
+the current credential rather than keeping a second copy. Copying a whole real home
+or a credential first is still unsafe.
+
+**The existing checks cover only part of this rule.** Before launching a Codex child,
+Panels compares its home with the home selected by the server's own environment.
+The same resolved home is allowed. For different homes, a shared refresh token or
+API key causes refusal, even if account metadata differs. An absent or different
+credential is allowed; an unreadable credential is allowed with a warning. The guard
+covers Panels' app-server, usage and model catalogue children, not Hermes, Claude,
+arbitrary shell launches, or copies elsewhere. It also refuses a different Codex home
+whose credential is a symlink to the same login, so Codex tests use the real home.
+
+The repository test inspects Python under `src`, `tests`, `scripts` and `ops`. It
+catches supported copy and hardlink calls when a path names `auth.json` or
+`LOGIN_FILE_NAME`, including import aliases and earlier simple assignments in the
+same scope. Unparseable files fail. It does not trace helper results, attributes,
+containers, assignments across scopes or branches, unpacked arguments, byte transfers,
+or shell copies. It does not recognize Claude's credential filename. Whole-home
+copies naming no credential also pass. A green run proves only that this bounded
+tripwire found no supported pattern.
+
+Matching a copied directory to an agent's later home still cannot establish whether
+its credentials are real: external environment inputs decide what a template contains.
+General coverage would require tracing helpers, branches, filesystem operations and
+launch paths. The bounded checks do not provide that general guarantee; review
+must enforce the invariant.
+
+The steering harness now follows the permission harness's canonical-credential pattern.
+Hermes copies only `config.yaml` and `.env`, and symlinks `auth.json` to the source home.
+Claude copies optional `settings.json`, and symlinks optional `.credentials.json` to its
+source home. Codex continues to use its real home because a copied login loses refresh
+rotation. The former whole-home Hermes copy and Claude credential copy are resolved.
+The current helper explains why credentials stay canonical.
+
+Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
+`tests/unit/test_no_codex_credential_copies.py`,
+`tests/integration/test_conversation_real_provider_{steering,permissions}.py`.
 
 The source tripwire `python scripts/check_agent_home_copies.py` reports copies whose
 destination becomes a selected Hermes, Codex, or Claude home. `--json` produces counts
@@ -821,13 +849,10 @@ conditional alias merges, byte transfers, or runtime paths. Synthetic credential
 and skill symlinks are not copies. Reviewers must inspect those omitted routes themselves.
 A clean result does not certify safety.
 
-This standalone command is invoked explicitly, rather than enforced in CI while a known
-copy remains. The inventory revision reports one accusation for the steering harness
-copying Claude credentials and two Hermes configuration dismissals, exiting with status 1.
-An in-memory simulation of the approved repair links only `.credentials.json` and retains
-the `settings.json` copy: the expected output is zero accusations, two dismissals, and
-status 0. That result verifies the checked source pattern; it does not certify credential
-safety, external configuration contents, or the omitted copy routes.
+This standalone command is invoked explicitly rather than enforced in CI. Against the
+current source, it reports zero accusations and two Hermes configuration dismissals,
+exiting with status 0. That result verifies the checked source pattern; it does not
+certify credential safety, external configuration contents, or the omitted copy routes.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
@@ -1075,4 +1100,4 @@ steer into a turn that was genuinely running, on a receipt from the provider pro
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-21._
+_Last verified: 2026-10-17._
