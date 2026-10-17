@@ -284,6 +284,11 @@ conversation path, creating it when any send needs one. Every mode starts a turn
 recipient is idle. Agent keys remain a private resolution detail. The command adds no
 second transport, queue, or conversation record.
 
+Existing ordinary orchestrator supervisors can address each other through this same
+Send Message path. Both Sprint Items must exist. This grants no authority over the
+recipient's record or Workers. Worker messages and help-recipient overrides retain
+their existing chain boundary.
+
 Every employee-authored send carries canonical sender and recipient principals derived
 from the authenticated request. Panels records that address on every durable outcome,
 including held, refused, uncertain, and discarded prompts. Browser-supplied display

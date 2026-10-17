@@ -139,6 +139,10 @@ again.
 `orchestrator create/list/show/set/workspace` keeps the existing Item identity and
 conversation. `sprint item` remains an alias. Artifact operations keep their existing
 managed roots. `send-message --sprint-item` keeps its stable recipient address.
+Existing ordinary orchestrator supervisors can use it to coordinate with one another.
+The permission sends a message; approvals, ceilings, assignments, and other writes
+keep their existing authority requirements. Workers cannot use it to address an
+unrelated supervisor.
 
 `ticket assign <ticket> --chief` assigns to Chief. `--orchestrator <item>` assigns to
 an ordinary orchestrator. Structured create and edit use the same explicit `orchestrator`
