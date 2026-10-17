@@ -2,20 +2,43 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sqlite3
 from collections.abc import Iterable
 
-from planner.conversation.contracts import ConversationSystem
-from planner.conversation.storage import ConversationAttentionFacts, ConversationStore
+from planner.conversation.contracts import ConversationAttention, ConversationSystem
+from planner.conversation.logic.signals import conversation_signal
+from planner.conversation.signals import read_conversation_signals
+from planner.conversation.storage import ConversationStore
 from planner.core import ticket_blocks
 from planner.core.contracts import OWNER_PRINCIPAL, JsonDict
 from planner.tickets import derivation
 from planner.tickets.contracts import StageOwnershipMode, TicketStatus, WorkAttention
 from planner.tickets.derivation import AgentState, TicketFacts
 from planner.tickets.logic import machine
+from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import configured_worker_type_registry
+
+
+async def read_running_conversation_count(
+    conn: sqlite3.Connection,
+    conversation_system: ConversationSystem,
+    conversation_record: ConversationStore,
+) -> int:
+    """Count each current Worker, supervisor or Chief conversation's work once."""
+    rows = conn.execute(
+        "SELECT conversation_id FROM tickets WHERE conversation_id IS NOT NULL "
+        "UNION SELECT conversation_id FROM agents WHERE agent_key = ? "
+        "AND conversation_id IS NOT NULL "
+        "UNION SELECT a.conversation_id FROM sprint_items si JOIN agents a "
+        "ON a.agent_key = 'sprint_item_supervisor_' || si.id "
+        "WHERE a.conversation_id IS NOT NULL",
+        (CHIEF_SETTINGS_KEY,),
+    ).fetchall()
+    conversations = await read_conversation_signals(
+        conversation_system, conversation_record, {str(row["conversation_id"]) for row in rows}
+    )
+    return sum(conversation.signal["working"] for conversation in conversations.values())
 
 
 # A parked proposal is split by who holds its ceiling, and the split is the projection's
@@ -35,48 +58,6 @@ def _empty_attention() -> WorkAttention:
     }
 
 
-async def _conversation_attention(
-    conversation_system: ConversationSystem,
-    conversation_record: ConversationStore,
-    conversation_ids: set[str],
-) -> dict[str, tuple[bool, bool, bool, bool]]:
-    """An unread message, a waiting ask, a running turn, and a turn that failed.
-
-    The message and the ask are two facts and stay two facts. Held as one, a screen
-    could only say one word for both, and the word it said was the wrong one whenever
-    the agent was waiting on an answer rather than on a reply.
-    """
-    durable = await conversation_record.attention_facts(conversation_ids)
-
-    async def one(conversation_id: str) -> tuple[str, bool, bool, bool, bool]:
-        running, permission, question = await asyncio.gather(
-            conversation_system.is_running(conversation_id),
-            conversation_system.has_pending_permission_ask(conversation_id),
-            conversation_system.has_pending_user_input(conversation_id),
-        )
-        fact = durable.get(conversation_id, ConversationAttentionFacts(False, False))
-        return (
-            conversation_id,
-            fact.unread_message_to_owner,
-            permission or question,
-            running,
-            fact.last_turn_failed,
-        )
-
-    return {
-        conversation_id: (awaiting_reply, awaiting_answer, running, last_turn_failed)
-        for (
-            conversation_id,
-            awaiting_reply,
-            awaiting_answer,
-            running,
-            last_turn_failed,
-        ) in await asyncio.gather(
-            *(one(conversation_id) for conversation_id in conversation_ids)
-        )
-    }
-
-
 def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sqlite3.Row]:
     if not ticket_ids:
         return {}
@@ -92,7 +73,7 @@ def _ticket_rows(conn: sqlite3.Connection, ticket_ids: set[str]) -> dict[str, sq
 
 def _ticket_attention(
     row: sqlite3.Row,
-    conversation: tuple[bool, bool, bool, bool] | None,
+    conversation: ConversationAttention | None,
     *,
     facts: TicketFacts,
 ) -> WorkAttention:
@@ -104,12 +85,15 @@ def _ticket_attention(
     parked = facts.ticket_status is TicketStatus.awaiting_approval
     awaiting_approval = parked and owner_holds_ceiling
     awaiting_agent_approval = parked and not owner_holds_ceiling
-    awaiting_reply, awaiting_answer, running, last_turn_failed = conversation or (
-        False,
-        False,
-        False,
-        False,
+    signal = (
+        conversation.signal
+        if conversation
+        else conversation_signal(is_running=False, unread_message_to_owner=False)
     )
+    awaiting_reply = signal["message_for_owner"]
+    awaiting_answer = conversation.awaiting_answer if conversation else False
+    running = signal["working"]
+    last_turn_failed = conversation.last_turn_failed if conversation else False
     assigned = ticket_assignment_from_values(
         stage=str(row["stage"]),
         worker_type=str(row["worker_type"]),
@@ -214,7 +198,7 @@ async def add_work_attention(
         for row in stored_tickets.values()
         if row["conversation_id"] is not None
     } | set(item_conversations.values())
-    conversations = await _conversation_attention(
+    conversations = await read_conversation_signals(
         conversation_system, conversation_record, conversation_ids
     )
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
@@ -234,17 +218,28 @@ async def add_work_attention(
     }
     for row in ticket_rows:
         row.update(ticket_attention.get(str(row["id"]), _empty_attention()))
+        stored = stored_tickets.get(str(row["id"]))
+        conversation = conversations.get(str(stored["conversation_id"])) if stored else None
+        row["conversation_signal"] = (
+            conversation.signal
+            if conversation
+            else conversation_signal(is_running=False, unread_message_to_owner=False)
+        )
     for row in item_rows:
         item_id = str(row["id"])
         own_conversation = conversations.get(item_conversations.get(item_id, ""))
-        awaiting_reply, awaiting_answer, running, failed = own_conversation or (
-            False,
-            False,
-            False,
-            False,
+        signal = (
+            own_conversation.signal
+            if own_conversation
+            else conversation_signal(is_running=False, unread_message_to_owner=False)
         )
+        awaiting_reply = signal["message_for_owner"]
+        awaiting_answer = own_conversation.awaiting_answer if own_conversation else False
+        running = signal["working"]
+        failed = own_conversation.last_turn_failed if own_conversation else False
         row.update(
             {
+                "conversation_signal": signal,
                 "awaiting_reply": awaiting_reply,
                 "awaiting_answer": awaiting_answer,
                 "awaiting_approval": False,

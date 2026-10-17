@@ -236,7 +236,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     ).to_have_count(0)
     expect(card.locator(".orchestrator-eyebrow")).to_contain_text("Rail proof")
     expect(left.locator(f'[data-sprint-item="{empty["id"]}"]')).to_be_visible()
-    expect(row.get_by_role("img", name="Unread reply")).to_be_visible(timeout=WAIT_MS)
+    expect(row.get_by_role("img", name="Unread message")).to_be_visible(timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
     question_row = card.get_by_role(
@@ -299,7 +299,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
             conn.execute("SELECT settled FROM sprint_items WHERE id=?", (item["id"],)).fetchone()[0]
             == 0
         )
-    expect(row.get_by_role("img", name="Unread reply")).to_be_visible()
+    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(EVIDENCE / "rail-1440.png"), full_page=True)
     _message(server, "rail-chief", CHIEF_PRINCIPAL, "Chief own direct message")
@@ -312,13 +312,13 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     page.reload()
     expect(card.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_be_visible(timeout=WAIT_MS)
-    expect(row.get_by_role("img", name="Unread reply")).to_be_visible()
+    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
     api.direct_post(
         server, "/api/conversation/conversations/rail-chief/owner-read", {"through_sequence": 1}
     )
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0, timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_be_visible()
-    expect(row.get_by_role("img", name="Unread reply")).to_be_visible()
+    expect(row.get_by_role("img", name="Unread message")).to_be_visible()
     page.screenshot(path=str(EVIDENCE / "own-conversation-marks.png"), full_page=True)
     shutil.copyfile(server.log_path, EVIDENCE / "isolated-server.log")
 
@@ -523,7 +523,7 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
     }
     for row in rows.values():
         expect(row).to_be_visible()
-        expect(row.get_by_role("img", name="Unread reply")).to_have_count(1)
+        expect(row.get_by_role("img", name="Unread message")).to_have_count(1)
     expect(first_parent.locator("[data-workspace-messages] .bucket-label")).to_have_text("Messages")
     expect(quiet_parent.locator("[data-workspace-messages] .bucket-label")).to_have_text("Messages")
     expect(left.locator(".message-context")).to_have_count(0)
@@ -554,7 +554,7 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
     expect(page_group).to_have_attribute("open", "")
     terminal_row = page_group.locator(f'[data-sprint-ticket-id="{children[0]["id"]}"]')
     expect(terminal_row).to_be_visible()
-    expect(terminal_row.get_by_role("img", name="Unread reply")).to_have_count(1)
+    expect(terminal_row.get_by_role("img", name="Unread message")).to_have_count(1)
     page_group.locator(":scope > summary").click()
     artifacts = EVIDENCE.parent / "settled-messages"
     artifacts.mkdir(parents=True, exist_ok=True)
@@ -609,8 +609,8 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
     settled_head.focus()
     page.keyboard.press("Enter")
     expect(rows["settled-child-one"]).to_be_visible()
-    expect(rows["settled-child-one"].get_by_role("img", name="Unread reply")).to_have_count(1)
-    expect(terminal_row.get_by_role("img", name="Unread reply")).to_have_count(1)
+    expect(rows["settled-child-one"].get_by_role("img", name="Unread message")).to_have_count(1)
+    expect(terminal_row.get_by_role("img", name="Unread message")).to_have_count(1)
     expect(page_group.locator("[data-group-count]")).to_have_text("1")
     expect(page_group.locator("[data-group-count]")).to_be_visible()
     page.screenshot(path=str(artifacts / "later-message-without-reopen.png"), full_page=True)
@@ -641,7 +641,7 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
         f'.orchestrator-card.chief [data-ticket-id="{chief_child["id"]}"]'
     )
     expect(chief_child_row).to_be_visible(timeout=WAIT_MS)
-    expect(chief_child_row.get_by_role("img", name="Unread reply")).to_have_count(1)
+    expect(chief_child_row.get_by_role("img", name="Unread message")).to_have_count(1)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
     chief_child_row.click()
     expect(

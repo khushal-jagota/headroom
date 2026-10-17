@@ -6,7 +6,7 @@ you.**
 Every operation has exactly one address. Khushal, the Chief, a Sprint Item and a Ticket's
 Worker all call the same route for the same thing, and who you are decides whether you
 are admitted. There is no second address for an agent, and no list of principal kinds
-anywhere that says who is allowed through a particular door.
+in the general authority rule that says who is allowed through a particular door.
 
 ## Position
 
@@ -36,6 +36,15 @@ and Chief's global reach does not substitute for assignment.
 
 Settlement is the owner-controlled action for an ordinary orchestrator. Chief cannot
 settle. This one owner control does not replace the ordinary authority rule elsewhere.
+
+## Speaking between supervisors
+
+Existing ordinary orchestrator supervisors may send messages to one another through
+`panels send-message --sprint-item ITEM_ID`. This permission is only for speaking. It
+does not put either supervisor above the other or above the other's Workers. Approvals,
+ceiling changes, assignments, and other writes still ask the ordinary authority rule.
+Workers may speak to their own orchestrator and principals above them. They cannot use
+Send Message or a help-recipient override to reach an unrelated supervisor.
 
 ## Your own record is not authority
 

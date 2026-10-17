@@ -11,6 +11,8 @@ from fastapi import APIRouter, Depends
 
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
+from planner.conversation.logic.signals import conversation_signal
+from planner.conversation.signals import read_conversation_signals
 from planner.conversation.storage import ConversationStore
 from planner.core.authctx import RequestContext, request_context
 from planner.core.authority import owner_only, require_above
@@ -143,28 +145,22 @@ async def add_agent_conversation_signals(
     owner_read_through = await conversation_record.owner_read_through_sequences(
         conversation_ids.values()
     )
-    attention = await conversation_record.attention_facts(conversation_ids.values())
+    attention = await read_conversation_signals(
+        conversation_system, conversation_record, conversation_ids.values()
+    )
     for agent in agents:
         conversation_id = conversation_ids.get(str(agent["employee_id"]))
         agent["conversation_id"] = conversation_id
-        agent["awaiting_reply"] = (
-            attention[conversation_id].unread_message_to_owner
-            if conversation_id in attention
-            else False
+        facts = attention.get(conversation_id) if conversation_id is not None else None
+        signal = (
+            facts.signal
+            if facts
+            else conversation_signal(is_running=False, unread_message_to_owner=False)
         )
-        agent["agent_working"] = (
-            await conversation_system.is_running(conversation_id)
-            if conversation_id is not None
-            else False
-        )
-        agent["needs_me"] = (
-            (
-                await conversation_system.has_pending_permission_ask(conversation_id)
-                or await conversation_system.has_pending_user_input(conversation_id)
-            )
-            if conversation_id is not None
-            else False
-        )
+        agent["conversation_signal"] = signal
+        agent["awaiting_reply"] = signal["message_for_owner"]
+        agent["agent_working"] = signal["working"]
+        agent["needs_me"] = facts.awaiting_answer if facts else False
         agent["latest_turn_ended_sequence"] = (
             latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
         )

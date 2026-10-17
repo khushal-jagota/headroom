@@ -16,7 +16,7 @@
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import PriorityTile from "../components/PriorityTile.svelte";
   import ResourceState from "../components/ResourceState.svelte";
-  import StageMark from "../components/StageMark.svelte";
+  import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
 
   let {
     sub = "tracking",
@@ -87,11 +87,8 @@
       class:sprint-ticket-row--settled={ticket.stage === "done"}
       href={workspaceAddress({ kind: "ticket", id: ticket.id })}
       data-sprint-ticket-id={ticket.id}
-      data-ticket-state={condition.mark}
     >
-      {#if condition.mark}
-        <StageMark state={condition.mark} aria-label="Unread reply" />
-      {/if}
+      <ConversationSignalMark signal={ticket.conversation_signal} conversationId={ticket.conversation_id} />
       <span class="list-row-title">{ticket.title}</span>
       <span class="sprint-ticket-state">
         <span class="sprint-ticket-priority">{ticket.priority}</span>{#if ticket.stage !== "done"} · {condition.word}{/if}

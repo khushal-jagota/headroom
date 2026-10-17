@@ -1376,27 +1376,6 @@ def ticket_resume(ticket_id: str | None, expected_record_sha256: str | None, as_
     http.emit(data, as_json, "Ticket resumed.")
 
 
-@ticket.command("retire")
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--reason", required=True, help="Why this Ticket ends without success.")
-@click.option(
-    "--expected-record-sha256", default=None, help="Refuse if this stored record changed."
-)
-@json_option
-def ticket_retire(
-    ticket_id: str | None, reason: str, expected_record_sha256: str | None, as_json: bool
-) -> None:
-    """Retire a Ticket without declaring completion."""
-    tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send(
-        "POST",
-        f"/api/tickets/{tid}/retire",
-        as_json=as_json,
-        json_body=_drop_none({"reason": reason, "expected_record_sha256": expected_record_sha256}),
-    )
-    http.emit(data, as_json, "Ticket retired.")
-
-
 @ticket.command("delete")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option(
@@ -1449,7 +1428,7 @@ def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) 
     "--include-terminal",
     is_flag=True,
     default=False,
-    help="Include done Tickets.",
+    help="Include done and historical cancelled Tickets.",
 )
 @click.option("--search", default=None, help="Case-insensitive Ticket text search.")
 @click.option("--project", default=None, help="Only show project name.")

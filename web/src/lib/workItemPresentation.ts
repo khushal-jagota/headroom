@@ -1,9 +1,8 @@
-import type { FieldStageVisualState } from "./ui";
 import type { Priority, WorkAttention } from "./types";
-import { conversationSignalPresentation } from "./conversationSignalPresentation";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type WorkItemTicketFacts = WorkAttention & {
+  conversation_signal?: import("./conversationSignal").ConversationSignal;
   id: string;
   title: string;
   priority: Priority;
@@ -53,13 +52,6 @@ export const WORK_ITEM_TICKET_GROUPS: readonly WorkItemTicketGroupDefinition[] =
   { key: "done", label: "Done", quiet: true }
 ] as const;
 
-export type WorkItemActivityMark = "reply" | null;
-
-export type WorkItemActivityMarkPresentation = {
-  state: FieldStageVisualState | null;
-  ariaLabel: string;
-};
-
 export type WorkItemTicketGroup<T extends WorkItemTicketFacts> =
   WorkItemTicketGroupDefinition & { tickets: T[] };
 
@@ -75,22 +67,6 @@ export function workItemTicketGroupKey(
   if (ticket.ticket_status === "blocked") return "blocked";
   if (ticket.stage === "done") return "done";
   return "empty";
-}
-
-export function workItemActivityMark(
-  facts: Pick<
-    WorkAttention,
-    "awaiting_approval" | "awaiting_answer" | "awaiting_reply" | "agent_state"
-  >
-): WorkItemActivityMark {
-  return conversationSignalPresentation(facts) ? "reply" : null;
-}
-
-export function workItemActivityMarkPresentation(
-  mark: WorkItemActivityMark
-): WorkItemActivityMarkPresentation {
-  return conversationSignalPresentation({ awaiting_reply: mark === "reply" })
-    ?? { state: null, ariaLabel: "" };
 }
 
 export function workItemTicketOrder(

@@ -90,11 +90,13 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
         "awaiting_agent_approval": False,
         "assigned": False,
         "agent_state": "idle",
+        "conversation_signal": {"working": False, "message_for_owner": False},
     }
     mutable = {
         "awaiting_reply": False,
         "assigned": True,
         "agent_state": "working",
+        "conversation_signal": {"working": True, "message_for_owner": False},
     }
 
     def attention() -> JsonObject:
@@ -207,7 +209,8 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
     assigned_group.locator(":scope > summary").click()
     for row in (left_ticket, right_ticket):
         row.wait_for(timeout=WAIT_MS)
-        assert row.get_attribute("data-workspace-mark") == "none"
+        expect(row.locator('[data-conversation-signal="working"]')).to_have_count(1)
+        expect(row.locator('[data-conversation-signal="message"]')).to_have_count(0)
     assert left_item.locator('[data-bucket-key="assigned"]').count() == 1
     assert right_item.locator('[data-workspace-group="assigned"]').count() == 1
     # Child work never supplies a dot on the supervisor conversation.
@@ -219,7 +222,12 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
     assigned_group.locator(":scope > summary").click()
     expect(assigned_group).not_to_have_attribute("open", "")
     before = int(page.evaluate("() => window.__plannerDebug.flushes"))
-    mutable.update(awaiting_answer=True, awaiting_reply=True, agent_state="working")
+    mutable.update(
+        awaiting_answer=True,
+        awaiting_reply=True,
+        agent_state="working",
+        conversation_signal={"working": True, "message_for_owner": True},
+    )
     api.direct_patch(server, f"/api/tickets/{ticket['id']}", {"title": "Signal mirror refresh"})
     page.wait_for_function(
         "previous => window.__plannerDebug.flushes > previous",
@@ -232,18 +240,21 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
     expect(answer_group.locator("[data-group-count]")).to_be_visible()
     for row in (left_ticket, right_ticket):
         row.wait_for(timeout=WAIT_MS)
-        expect(row).to_have_attribute(
-            "data-workspace-mark",
-            "reply",
-            timeout=WAIT_MS,
+        expect(row.locator('[data-conversation-signal="message"]')).to_have_count(
+            1, timeout=WAIT_MS
         )
+        expect(row.locator('[data-conversation-signal="working"]')).to_have_count(0)
     assert left_item.locator(".item-head .stage-mark").count() == 0
     assert right_item.locator(".sprint-workspace-title-mark").count() == 0
     assert left_item.locator('[data-bucket-key="awaiting_answer"]').count() == 1
     assert right_item.locator('[data-workspace-group="awaiting_answer"]').count() == 1
 
     before = int(page.evaluate("() => window.__plannerDebug.flushes"))
-    mutable.update(awaiting_answer=False, agent_state="idle")
+    mutable.update(
+        awaiting_answer=False,
+        agent_state="idle",
+        conversation_signal={"working": False, "message_for_owner": True},
+    )
     api.direct_patch(
         server,
         f"/api/tickets/{ticket['id']}",
@@ -258,17 +269,47 @@ def test_workspace_rail_and_item_detail_share_one_live_snapshot(
     assigned_group.locator(":scope > summary").click()
     expect(assigned_group).to_have_attribute("open", "")
     for row in (left_ticket, right_ticket):
-        expect(row).to_have_attribute(
-            "data-workspace-mark",
-            "reply",
-            timeout=WAIT_MS,
+        expect(row.locator('[data-conversation-signal="message"]')).to_have_count(
+            1, timeout=WAIT_MS
         )
+        expect(row.locator('[data-conversation-signal="working"]')).to_have_count(0)
 
     page.reload()
     expect(assigned_group).to_have_attribute("open", "")
     right_ticket.wait_for(timeout=WAIT_MS)
-    assert left_ticket.get_attribute("data-workspace-mark") == "reply"
-    assert right_ticket.get_attribute("data-workspace-mark") == "reply"
+    for row in (left_ticket, right_ticket):
+        expect(row.locator('[data-conversation-signal="message"]')).to_have_count(1)
+        expect(row.locator('[data-conversation-signal="working"]')).to_have_count(0)
+    # A canonical unread message masks the spinner. A read clears only the message
+    # fact, so the same ongoing work appears in both mounted projections.
+    before = int(page.evaluate("() => window.__plannerDebug.flushes"))
+    mutable.update(
+        agent_state="working",
+        conversation_signal={"working": True, "message_for_owner": True},
+    )
+    api.direct_patch(server, f"/api/tickets/{ticket['id']}", {"title": "Message masks work"})
+    page.wait_for_function(
+        "previous => window.__plannerDebug.flushes > previous",
+        arg=before,
+        timeout=WAIT_MS,
+    )
+    for row in (left_ticket, right_ticket):
+        expect(row.locator('[data-conversation-signal="message"]')).to_have_count(1)
+        expect(row.locator('[data-conversation-signal="working"]')).to_have_count(0)
+    before = int(page.evaluate("() => window.__plannerDebug.flushes"))
+    mutable.update(
+        awaiting_reply=False,
+        conversation_signal={"working": True, "message_for_owner": False},
+    )
+    api.direct_patch(server, f"/api/tickets/{ticket['id']}", {"title": "Read reveals ongoing work"})
+    page.wait_for_function(
+        "previous => window.__plannerDebug.flushes > previous",
+        arg=before,
+        timeout=WAIT_MS,
+    )
+    for row in (left_ticket, right_ticket):
+        expect(row.locator('[data-conversation-signal="message"]')).to_have_count(0)
+        expect(row.locator('[data-conversation-signal="working"]')).to_have_count(1)
     if evidence_path := os.environ.get("PANELS_E2E_EVIDENCE_PATH"):
         page.screenshot(path=evidence_path, full_page=True)
 

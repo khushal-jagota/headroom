@@ -96,6 +96,7 @@ def test_capture_list_use_dismiss_reopen_and_ticket_deletion(
         "title": "Improve the workspace",
         "stage": "needs_brief",
         "ticket_status": "awaiting_approval",
+        "conversation_signal": {"working": False, "message_for_owner": False},
         "awaiting_reply": False,
         "awaiting_answer": False,
         "awaiting_approval": True,

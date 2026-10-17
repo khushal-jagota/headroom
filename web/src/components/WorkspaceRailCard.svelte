@@ -1,13 +1,13 @@
 <script lang="ts">
   import type { WorkspaceTicketGroup } from "../lib/workspaceRail";
-  import { workspaceTicketRowMark, workspaceRowMarkPresentation } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
-  import StageMark from "./StageMark.svelte";
+  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import type { ConversationSignal } from "../lib/conversationSignal";
   import SprintTicketRow from "./SprintTicketRow.svelte";
   import OrchestratorEyebrow from "./OrchestratorEyebrow.svelte";
   import chiefProfile from "../assets/chief-of-staff-profile.webp";
-  let { id, title, project = null, chief = false, ownUnread = false, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
-    id: string; title: string; project?: string | null; chief?: boolean; ownUnread?: boolean; selected: boolean;
+  let { id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+    id: string; title: string; project?: string | null; chief?: boolean; signal?: ConversationSignal; conversationId?: string | null; selected: boolean;
     selectedTicketId: string | null; groups: WorkspaceTicketGroup[]; busy?: boolean;
     onSelect: () => void; onTicket: (id: string) => void; onSettle: () => void;
     onHover: (target: HTMLElement) => void; onWorkerHover: (target: HTMLElement, ticket: WorkItemTicketFacts) => void; onLeave: () => void;
@@ -19,16 +19,14 @@
     <button type="button" class="item-head" onclick={onSelect} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onfocus={(event) => onHover(event.currentTarget)} onblur={onLeave}>
       {#if chief}<img src={chiefProfile} class="chief-icon" alt="" />{/if}
       <span class="item-title">{title}</span>
-      {#if ownUnread}<StageMark state="current-awaiting-approval" aria-label="Unread reply" data-workspace-mark="reply" />{/if}
+      <ConversationSignalMark {signal} {conversationId} />
     </button>
   </div>
   {#each groups as group (group.key)}
     <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key}>
       <div class="bucket-label">{group.label}</div>
       {#each group.cards as ticket (ticket.id)}
-        {@const mark = workspaceTicketRowMark(ticket)}
-        {@const presentation = workspaceRowMarkPresentation(mark)}
-        <SprintTicketRow priority={null} title={ticket.title} state={presentation.state} ariaLabel={presentation.ariaLabel} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} data-workspace-mark={mark ?? "none"} aria-current={ticket.id === selectedTicketId ? "page" : undefined} onclick={() => onTicket(ticket.id)} onmouseenter={(event: MouseEvent) => {event.stopPropagation(); onWorkerHover(event.currentTarget as HTMLElement, ticket);}} onmouseleave={onLeave} onfocus={(event: FocusEvent) => onWorkerHover(event.currentTarget as HTMLElement, ticket)} onblur={onLeave} stageMarkAttributes={{ "data-workspace-mark": mark ?? "none" }} />
+        <SprintTicketRow priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} onclick={() => onTicket(ticket.id)} onmouseenter={(event: MouseEvent) => {event.stopPropagation(); onWorkerHover(event.currentTarget as HTMLElement, ticket);}} onmouseleave={onLeave} onfocus={(event: FocusEvent) => onWorkerHover(event.currentTarget as HTMLElement, ticket)} onblur={onLeave} />
       {/each}
     </div>
   {/each}

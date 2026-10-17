@@ -1,13 +1,12 @@
-import type { FieldStageVisualState } from "./ui";
 import type { Priority, ProjectSummary, SprintOutcomeGroup } from "./types";
 import {
   WORK_ITEM_TICKET_GROUPS,
-  workItemActivityMark,
-  workItemActivityMarkPresentation,
   workItemTicketGroupKey
 } from "./workItemPresentation";
 
 export type SprintTicket = {
+  conversation_signal?: import("./conversationSignal").ConversationSignal;
+  conversation_id?: string | null;
   id: string;
   title: string;
   stage: string;
@@ -31,7 +30,6 @@ export type SprintProjectGroup = {
 };
 
 export type SprintTicketCondition = {
-  mark: FieldStageVisualState | null;
   word: string;
 };
 
@@ -40,6 +38,7 @@ export type SprintTicketCondition = {
 // name a Ticket's condition the same way. A filed proposal is not one of them: a
 // The shared projection is authoritative even while a proposal stays filed.
 export type TicketConditionFacts = {
+  conversation_signal?: import("./conversationSignal").ConversationSignal;
   stage: string;
   ticket_status: string;
   waiting_to_closeout?: boolean;
@@ -115,10 +114,9 @@ function rankPriority(priority: Priority | null | undefined): number {
 
 export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicketCondition {
   const projected = presentationTicket(ticket);
-  const mark = workItemActivityMarkPresentation(workItemActivityMark(projected)).state;
   const key = workItemTicketGroupKey(projected);
   const label = WORK_ITEM_TICKET_GROUPS.find((group) => group.key === key)?.label ?? key;
-  return { mark, word: label.toLocaleLowerCase() };
+  return { word: label.toLocaleLowerCase() };
 }
 
 function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTicket[] {
