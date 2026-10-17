@@ -1,3 +1,4 @@
+import type { ConversationSignal } from "./conversationSignal";
 export type AnyRecord = Record<string, any>;
 
 export type DeploymentStatusState =
@@ -90,7 +91,8 @@ export type ListPageFacts = {
 };
 
 export type TicketSummary = WorkAttention & {
-  is_backlogged?: boolean;
+  is_backlogged: boolean;
+  waiting_to_closeout: boolean;
   orchestrator?: Principal;
   id: string;
   title: string;
@@ -202,6 +204,9 @@ export type Principal = {
   id: string;
 };
 
+export type OrchestratorPrincipal = Principal & { kind: "chief" | "sprint_item" };
+export type OrchestratorChildFilter = "active" | "backlogged" | "done" | "retired";
+
 export type BlockedByTicket = {
   ticket_id: string;
   title: string;
@@ -261,6 +266,7 @@ export type WorkersResponse = {
 };
 
 export type ChiefManagementSettings = {
+  conversation_signal?: ConversationSignal;
   employee_id: string;
   label: string;
   skill: ManagedSkill;
@@ -304,6 +310,7 @@ export type TicketConversationHistoryEntry = {
 };
 
 export type TicketDetail = {
+  conversation_signal?: ConversationSignal;
   is_backlogged?: boolean;
   record_sha256?: string;
   artifacts?: SprintItemArtifact[];
@@ -414,6 +421,8 @@ export type CarryOutcomeResult = {
 };
 
 export type SprintItemWorkspaceTicket = WorkAttention & {
+  conversation_signal?: ConversationSignal;
+  is_backlogged: boolean;
   conversation_id?: string | null;
   id: string;
   title: string;
@@ -432,6 +441,7 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
 };
 
 export type SprintItemWorkspace = SprintItemSummary & {
+  conversation_signal?: ConversationSignal;
   body: string;
   priority: Priority;
   supervisor: {
@@ -483,6 +493,7 @@ export type BoardResponse = {
 // A Sprint Item's own identity and its supervisor's conversation. No card answers for
 // the Item's own worker, so the mark on an Item title comes from here.
 export type BoardSprintItem = {
+  conversation_signal?: ConversationSignal;
   settled?: boolean;
   project_id?: string;
   project?: string;
@@ -502,6 +513,7 @@ export type BoardSprintItem = {
 };
 
 export type BoardCard = WorkAttention & {
+  conversation_signal?: ConversationSignal;
   orchestrator?: Principal;
   id: string;
   title: string;
@@ -530,6 +542,7 @@ export type BoardCard = WorkAttention & {
 };
 
 export type DayTicket = AnyRecord & {
+  conversation_signal?: ConversationSignal;
   id: string;
   title: string;
   stage: string;
@@ -581,6 +594,7 @@ export type NotificationSettingsResponse = {
 
 // One row names one durable unread conversation, independent of settlement.
 export type WorkspaceMessageConversation = {
+  conversationSignal?: ConversationSignal;
   kind: "chief" | "sprint_item" | "ticket";
   id: string;
   title: string;

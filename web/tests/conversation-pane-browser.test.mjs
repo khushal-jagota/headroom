@@ -51,6 +51,7 @@ try {
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
   let composerDisabled = $state(false);
+  let ask = $state<any>(null);
 
   // Enough command entries to fill the menu, and enough shared letters to narrow it.
   const composerCatalog = [
@@ -224,6 +225,16 @@ try {
   (window as any).__showRunningAndNeedsYou = () => {
     ownerReadThroughSequence = 3_000;
     running = true;
+    (window as any).__permissionAnswers = [];
+    ask = {
+      askId: "ask-mark",
+      title: "may I run this",
+      detail: "Write the permission exercise file",
+      options: [
+        { option_id: "allow-file", label: "Allow once", option_kind: "allow_once" },
+        { option_id: "deny-file", label: "Deny once", option_kind: "reject_once" }
+      ]
+    };
     rows = [
       {
         key: "mark-ask",
@@ -243,6 +254,7 @@ try {
   (window as any).__showOrdinaryOutputOnly = () => {
     ownerReadThroughSequence = 3_000;
     running = false;
+    ask = null;
     rows = [
       {
         key: "chatter",
@@ -406,6 +418,11 @@ try {
         {rows}
         {visibleRows}
         {running}
+        {ask}
+        onAnswer={(optionId: string) => {
+          (window as any).__permissionAnswers.push({ askId: ask.askId, optionId });
+          ask = null;
+        }}
         {ownerReadThroughSequence}
         {heldPromptRows}
         {supportsSteer}
@@ -1027,6 +1044,24 @@ with sync_playwright() as playwright:
     )
     assert marks.evaluate_all("els => els.map(e => e.dataset.conversationMark)") == ["running"]
     assert page.locator("[data-conversation-rest-line]").inner_text() != ""
+    request = page.locator('[data-conversation-ask="ask-mark"]')
+    request.wait_for(state="visible")
+    assert "may I run this" in request.inner_text()
+    assert "Write the permission exercise file" in request.inner_text()
+    assert page.evaluate("window.__permissionAnswers") == []
+
+    # The actual pane sends the backend's exact option id only after an explicit answer.
+    # Backend waiting and file outcomes are exercised separately against real adapters.
+    for option_id in ["allow-file", "deny-file"]:
+        page.evaluate("window.__showRunningAndNeedsYou()")
+        page.locator(f'[data-conversation-ask-action="{option_id}"]').click()
+        page.wait_for_selector('[data-conversation-ask="ask-mark"]', state="detached")
+        assert page.evaluate("window.__permissionAnswers") == [
+            {"askId": "ask-mark", "optionId": option_id}
+        ]
+
+    page.keyboard.press("Escape")
+    state(page, "rest")
 
     # Ordinary output past the read position is not a reply anybody is owed.
     page.evaluate("window.__showOrdinaryOutputOnly()")

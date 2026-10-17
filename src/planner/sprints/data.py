@@ -8,7 +8,6 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import date
 from typing import NamedTuple, cast
 
 from planner.conversation.contracts import ConversationBackendKey
@@ -212,131 +211,6 @@ def update_sprint_field(
         conn.execute(
             f"UPDATE sprints SET {field} = ?, updated_at = ? WHERE id = ?",
             (value, now, sprint_id),
-        )
-    return _load_sprint(conn, sprint_id)
-
-
-def update_sprint(
-    conn: sqlite3.Connection,
-    sprint_id: str,
-    *,
-    text_edits: dict[str, str],
-    set_dates: bool,
-    date_start: str | None,
-    date_end: str | None,
-    clock: Clock,
-    admit: Callable[[], None] | None = None,
-) -> Sprint:
-    """Validate and apply one compound Sprint patch under one write lock."""
-    invalid_fields = sorted(set(text_edits) - _SPRINT_TEXT_FIELDS)
-    if invalid_fields:
-        raise PlannerError(
-            ErrorCode.validation,
-            "field is not an editable sprint text field",
-            {"field": invalid_fields[0]},
-        )
-    now = clock.now_unix()
-    with _tx(conn):
-        if admit is not None:
-            admit()
-        sprint = _load_sprint(conn, sprint_id)
-        new_start = date_start if date_start is not None else sprint.date_start
-        new_end = date_end if date_end is not None else sprint.date_end
-        if set_dates:
-            for label, value in (("date_start", new_start), ("date_end", new_end)):
-                try:
-                    date.fromisoformat(value)
-                except ValueError as exc:
-                    raise PlannerError(
-                        ErrorCode.validation, f"invalid {label}", {label: value}
-                    ) from exc
-            if new_start > new_end:
-                raise PlannerError(
-                    ErrorCode.validation,
-                    "date_start must not be after date_end",
-                    {"date_start": new_start, "date_end": new_end},
-                )
-            others = [
-                DateRange(
-                    id=str(row["id"]),
-                    date_start=str(row["date_start"]),
-                    date_end=str(row["date_end"]),
-                )
-                for row in conn.execute(
-                    "SELECT id, date_start, date_end FROM sprints WHERE id != ?",
-                    (sprint_id,),
-                )
-            ]
-            conflict = find_overlap(new_start, new_end, others)
-            if conflict is not None:
-                raise PlannerError(
-                    ErrorCode.sprint_overlap,
-                    "sprint dates overlap",
-                    {
-                        "conflict_id": conflict,
-                        "date_start": new_start,
-                        "date_end": new_end,
-                    },
-                )
-
-        assignments = list(text_edits)
-        values: list[str | int] = [text_edits[field] for field in assignments]
-        if set_dates:
-            assignments.extend(("date_start", "date_end"))
-            values.extend((new_start, new_end))
-        if assignments:
-            set_clause = ", ".join(f"{field} = ?" for field in assignments)
-            conn.execute(
-                f"UPDATE sprints SET {set_clause}, updated_at = ? WHERE id = ?",
-                (*values, now, sprint_id),
-            )
-    return _load_sprint(conn, sprint_id)
-
-
-def set_sprint_dates(
-    conn: sqlite3.Connection,
-    sprint_id: str,
-    *,
-    date_start: str | None,
-    date_end: str | None,
-    clock: Clock,
-) -> Sprint:
-    sprint = _load_sprint(conn, sprint_id)
-    new_start = date_start if date_start is not None else sprint.date_start
-    new_end = date_end if date_end is not None else sprint.date_end
-    for label, value in (("date_start", new_start), ("date_end", new_end)):
-        try:
-            date.fromisoformat(value)
-        except ValueError as exc:
-            raise PlannerError(ErrorCode.validation, f"invalid {label}", {label: value}) from exc
-    if new_start > new_end:
-        raise PlannerError(
-            ErrorCode.validation,
-            "date_start must not be after date_end",
-            {"date_start": new_start, "date_end": new_end},
-        )
-    others = [
-        DateRange(
-            id=str(r["id"]),
-            date_start=str(r["date_start"]),
-            date_end=str(r["date_end"]),
-        )
-        for r in conn.execute(
-            "SELECT id, date_start, date_end FROM sprints WHERE id != ?", (sprint_id,)
-        ).fetchall()
-    ]
-    conflict = find_overlap(new_start, new_end, others)
-    if conflict is not None:
-        raise PlannerError(
-            ErrorCode.sprint_overlap,
-            "sprint dates overlap",
-            {"conflict_id": conflict, "date_start": new_start, "date_end": new_end},
-        )
-    now = clock.now_unix()
-    with _tx(conn):
-        conn.execute(
-            "UPDATE sprints SET date_start = ?, date_end = ?, updated_at = ? WHERE id = ?",
-            (new_start, new_end, now, sprint_id),
         )
     return _load_sprint(conn, sprint_id)
 

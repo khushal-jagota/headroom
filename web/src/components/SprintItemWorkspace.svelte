@@ -1,18 +1,12 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount, onDestroy } from "svelte";
-  import { workspaceUnreadConversationCount } from "../lib/workspaceMessageDiscovery";
   import { mutateJson } from "../lib/mutate";
-  import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
-  import { orchestratorPageGroups } from "../lib/orchestratorPage";
+  import OrchestratorChildren from "./OrchestratorChildren.svelte";
   import { createRailHoverController } from "../lib/workspaceRailInteraction";
   import WorkspaceRailHover from "./WorkspaceRailHover.svelte";
   import type { SprintItemWorkspaceTicket } from "../lib/types";
-  import {
-    workItemActivityMark,
-    workItemActivityMarkPresentation
-  } from "../lib/workItemPresentation";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {
     readBackends,
@@ -24,7 +18,7 @@
   import InlineEdit from "./InlineEdit.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
-  import StageMark from "./StageMark.svelte";
+  import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import ArtifactsBand from "./ArtifactsBand.svelte";
   import ArtifactPreview from "./ArtifactPreview.svelte";
   import {
@@ -73,13 +67,13 @@
   let conversationState = $state<ConversationState>("rest");
   let backends = $state<readonly BackendSnapshot[]>([]);
 
-  let groups = $derived(orchestratorPageGroups(workspace.data?.tickets ?? []));
   let hoverTarget = $state<HTMLElement | null>(null);
-  let hoverWorker = $state<SprintItemWorkspaceTicket | null>(null);
+  let hoverWorkerId = $state<string | null>(null);
+  let hoverWorker = $derived(workspace.data?.tickets.find((ticket) => ticket.id === hoverWorkerId) ?? null);
   let hoverVisible = $state(false);
   let hoverInstant = $state(false);
   const hover = createRailHoverController<{target:HTMLElement; ticket:SprintItemWorkspaceTicket}>((value, instant) => {
-    hoverTarget = value.target; hoverWorker = value.ticket;
+    hoverTarget = value.target; hoverWorkerId = value.ticket.id;
     hoverVisible = true; hoverInstant = instant;
   }, () => hoverVisible = false);
   onDestroy(() => hover.dispose());
@@ -191,47 +185,6 @@
 
 <svelte:window onkeydown={closeFileOnEscape} />
 
-{#snippet statusGroups()}
-  {#each groups as group (group.key)}
-    <details
-      class="sprint-workspace-status"
-      data-workspace-group={group.key}
-    >
-      <summary>
-        <span class="sprint-workspace-status-label">{group.label}</span>
-        <span class="sprint-workspace-count" data-group-unread-count>{group.tickets.length}{workspaceUnreadConversationCount(group.tickets) ? ` · ${workspaceUnreadConversationCount(group.tickets)} unread` : ""}</span>
-        <span class="sprint-workspace-chevron" aria-hidden="true"></span>
-      </summary>
-      <div class="sprint-workspace-status-body">
-        {#each group.tickets as ticket (ticket.id)}
-          {@const mark = workItemActivityMark(ticket)}
-          {@const presentation = workItemActivityMarkPresentation(mark)}
-          <a
-            class="ticket-row"
-            class:ticket-row--quiet={ticket.stage === "done"}
-            href={workspaceAddress({ kind: "ticket", id: ticket.id, openedFromItemId: itemId })}
-            data-sprint-ticket-id={ticket.id}
-            data-ticket-state={presentation.state}
-            data-workspace-mark={mark ?? "none"}
-            onmouseenter={(event) => hoverRow(event.currentTarget, ticket)}
-            onmouseleave={() => hover.leave()}
-            onfocus={(event) => hoverRow(event.currentTarget, ticket)}
-            onblur={() => hover.leave()}
-          >
-            <span class="ticket-row-title">{ticket.title}</span>
-            {#if presentation.state}
-              <StageMark state={presentation.state} aria-label={presentation.ariaLabel} />
-            {/if}
-          </a>
-        {/each}
-      </div>
-    </details>
-  {/each}
-  {#if !groups.length}
-    <div class="sprint-workspace-empty">No Workers</div>
-  {/if}
-{/snippet}
-
 <div
   class="sprint-item-page"
   data-sprint-item-workspace={itemId}
@@ -250,12 +203,10 @@
     >
       {#if workspace.data}
         {@const item = workspace.data}
-        {@const itemMark = workItemActivityMark(item)}
-        {@const itemMarkPresentation = workItemActivityMarkPresentation(itemMark)}
         <div class="sprint-item-column">
           <header class="sprint-workspace-head">
             <div class="page-eyebrow">
-              <a href={item.project_id ? `#/backlog?project=${encodeURIComponent(item.project_id)}` : "#/backlog"}>{item.project}</a>
+              <span>{item.project}</span>
               {#if backHref !== null}<span aria-hidden="true">/</span><a href={backHref} aria-label={`Back to ${sprintName}`}>↖</a>{/if}
               <button type="button" class="page-settle" disabled={settleBusy} onclick={() => void setSettled(!(item.settled ?? false))} aria-label={`${item.settled ? "Reopen" : "Settle"} ${item.title}`}>
                 <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>{item.settled ? "Reopen" : "Settle"}
@@ -268,15 +219,7 @@
                 placeholder="(untitled Outcome)"
                 onSave={(value) => saveItem("title", value)}
               />
-              {#if itemMarkPresentation.state}
-                <StageMark
-                  state={itemMarkPresentation.state}
-                  class="sprint-workspace-title-mark"
-                  data-workspace-mark={itemMark ?? "none"}
-                  aria-hidden={itemMark === null ? "true" : undefined}
-                  aria-label={itemMarkPresentation.ariaLabel}
-                />
-              {/if}
+              <ConversationSignalMark signal={item.conversation_signal} conversationId={item.supervisor.conversation_id} class="sprint-workspace-title-mark" />
             </h1>
             <ClampedText
               class="sprint-workspace-brief"
@@ -288,14 +231,19 @@
                 value={item.body}
                 markdown
                 multiline
-                placeholder="Write the shared brief for this outcome…"
+                ariaLabel="Orchestrator recap"
+                placeholder="Write a concise recap for this orchestrator…"
                 onSave={(value) => saveItem("body", value)}
               />
             </ClampedText>
           </header>
 
           <section class="orchestrator-workers" aria-label="Workers">
-            {@render statusGroups()}
+            <OrchestratorChildren principal={{ kind: "sprint_item", id: itemId }} tickets={item.tickets}
+              onHover={(element, id) => {
+                const ticket = item.tickets.find((candidate) => candidate.id === id);
+                if (ticket) hoverRow(element, ticket);
+              }} onLeave={() => hover.leave()} />
           </section>
           <div class="orchestrator-artifacts"><ArtifactsBand items={artifactRows} /></div>
         </div>
@@ -333,7 +281,7 @@
   </div>
 </div>
 
-<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={hoverWorker?.stage === "cancelled" ? "Cancelled Worker" : "Worker"} worker={hoverWorker?.stage === "cancelled" ? null : hoverWorker} cards={[]} rail={hoverTarget} />
+<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={hoverWorker?.stage === "cancelled" ? "Cancelled Worker" : "Worker"} worker={hoverWorker} cards={[]} rail={hoverTarget} />
 <style>
   .sprint-item-doc { scrollbar-gutter:auto; }
   .sprint-item-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; width:min(100%, 768px); max-width:768px; margin-inline:auto; padding-inline:var(--space-5); }
@@ -348,19 +296,6 @@
   .sprint-workspace-title { font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-0.014em; margin-top:var(--space-3); overflow-wrap:anywhere; }
   .sprint-workspace-head :global(.sprint-workspace-brief) { font-family:var(--font-ui); font-size:17px; line-height:1.6; margin-top:var(--space-3); max-width:66ch; }
   .orchestrator-workers { margin-top:var(--space-5); }
-  .sprint-workspace-status + .sprint-workspace-status { margin-top:0; }
-  .sprint-workspace-status > summary { display:flex; align-items:center; gap:var(--space-3); padding:7px var(--space-3); margin:0; font-family:var(--font-ui); line-height:1.6; letter-spacing:normal; border:0; border-radius:var(--radius-md); background:var(--surface-2); font-size:13px; font-weight:600; color:var(--text-faint); list-style:none; }
-  .sprint-workspace-status > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .sprint-workspace-status-label { font-size:13px; text-transform:none; letter-spacing:normal; color:inherit; }
-  .sprint-workspace-count { margin-left:auto; font-size:13px; font-weight:400; color:var(--text-faintest); }
-  .sprint-workspace-chevron { display:none; }
-  .sprint-workspace-status[open] > summary > .sprint-workspace-count { display:block; }
-  .sprint-workspace-status:not([open]) > summary { padding-bottom:7px; }
-  .sprint-workspace-status-body { padding:var(--space-1) 0; }
-  .sprint-item-column .ticket-row { width:100%; margin:0; padding:7px var(--space-3); gap:var(--space-3); border-radius:var(--radius-md); font-size:15px; line-height:1.6; align-items:center; color:var(--text-muted); }
-  .sprint-item-column .ticket-row:hover, .sprint-item-column .ticket-row:focus-visible { color:var(--text-strong); }
-  .sprint-item-column .ticket-row-title { flex:1; min-width:0; display:block; overflow:visible; white-space:normal; overflow-wrap:anywhere; line-height:inherit; line-clamp:unset; -webkit-line-clamp:unset; -webkit-box-orient:initial; }
-  .orchestrator-workers :global(.stage-mark) { width:7px; height:7px; }
   .orchestrator-artifacts { margin-top:var(--space-5); }
-  a:focus-visible, button:focus-visible, summary:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+  a:focus-visible, button:focus-visible, .orchestrator-workers :global(summary:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
 </style>

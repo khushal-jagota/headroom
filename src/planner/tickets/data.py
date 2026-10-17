@@ -39,6 +39,7 @@ from planner.tickets.contracts import (
     NextCeiling,
     PendingTicketProposal,
     ProjectPriorityAnchor,
+    ResolvedTicketCreationContext,
     ResolvedTicketPriorityAnchors,
     SprintItemPriorityAnchor,
     StageOwnershipMode,
@@ -46,8 +47,10 @@ from planner.tickets.contracts import (
     TicketDeletion,
     TicketEdit,
     TicketFieldValues,
+    TicketLocale,
     WorkerStepClaim,
 )
+from planner.tickets.locale_configuration import require_locale_backend_compatibility
 from planner.tickets.logic import (
     admission,
     employee_configuration,
@@ -57,8 +60,10 @@ from planner.tickets.logic import (
     resolution,
 )
 from planner.tickets.logic.decisions import Decision
+from planner.tickets.logic.locale import require_ticket_locale, resolve_ticket_locale
 from planner.worker_settings.service import (
     read_worker_launch_defaults_for_ticket_creation,
+    read_worker_requires_macos,
 )
 from planner.worker_types.configuration import (
     ConfiguredWorkerRuntimeDefinitions,
@@ -264,12 +269,13 @@ def _created_ticket_priority(
     return Priority.P3
 
 
-def validate_ticket_creation_context(
+def resolve_ticket_creation_context(
     conn: sqlite3.Connection,
     *,
     title: str,
     title_max_chars: int,
     worker_type: str,
+    locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     project_id: str | None = None,
@@ -278,8 +284,8 @@ def validate_ticket_creation_context(
     sprint_item_id: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
-) -> None:
-    """Validate a future ordinary Ticket without creating one."""
+) -> ResolvedTicketCreationContext:
+    """Resolve and validate every ordinary Ticket creation path before insertion."""
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
@@ -318,6 +324,23 @@ def validate_ticket_creation_context(
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
+    project = (
+        conn.execute("SELECT requires_macos FROM projects WHERE id=?", (project_id,)).fetchone()
+        if project_id is not None
+        else None
+    )
+    resolved_locale = resolve_ticket_locale(
+        locale,
+        project_requires_macos=bool(project["requires_macos"]) if project is not None else False,
+        worker_requires_macos=read_worker_requires_macos(conn, worker_type),
+    )
+    require_locale_backend_compatibility(resolved_locale, launch_configuration.employee_backend)
+    return ResolvedTicketCreationContext(resolved_locale, launch_configuration, project_id)
+
+
+# Existing callers that validate a future Ticket use the same resolution as insertion.
+validate_ticket_creation_context = resolve_ticket_creation_context
+
 
 def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     worker_type = str(row["worker_type"])
@@ -325,6 +348,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     stage = str(row["stage"])
     worker_type_definition.validate_ticket_position(stage, str(row["ceiling"]))
     return Ticket(
+        locale=TicketLocale(row["locale"]),
         is_backlogged=bool(row["is_backlogged"]),
         id=row["id"],
         title=row["title"],
@@ -889,6 +913,7 @@ def create_ticket(
     sprint_item_id: str | None = None,
     orchestrator_kind: str | None = None,
     worker_type: str,
+    locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
@@ -907,31 +932,30 @@ def create_ticket(
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
     worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
-    launch_defaults = read_worker_launch_defaults_for_ticket_creation(
-        runtime_definitions.worker_type_registry, worker_type
-    )
-    launch_configuration = employee_configuration.launch_configuration_for_a_new_ticket(
-        default_backend=launch_defaults.employee_backend,
-        default_model=launch_defaults.employee_launch_model,
-        default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
-        employee_backend=require_conversation_backend_key(
-            employee_backend if employee_backend is not None else launch_defaults.employee_backend
-        ),
-        employee_launch_model=employee_launch_model,
-    )
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
     ticket_id = new_id(ID_PREFIXES["ticket"])
     # A creator can open a Ticket for somebody else to hold without holding anything
     # first. Unstated, the creator holds it, which is the ordinary case.
     ceiling_holder = principal if stated_holder is None else stated_holder
-    assert launch_configuration.employee_launch_model is not None
     with _txn(conn):
-        require_enabled_model(
+        creation_context = resolve_ticket_creation_context(
             conn,
-            require_conversation_backend_key(launch_configuration.employee_backend),
-            launch_configuration.employee_launch_model,
+            title=title,
+            title_max_chars=title_max_chars,
+            worker_type=worker_type,
+            employee_backend=employee_backend,
+            employee_launch_model=employee_launch_model,
+            locale=locale,
+            project_id=project_id,
+            sprint_id=sprint_id,
+            deadline=deadline,
+            sprint_item_id=sprint_item_id,
+            blocked_by_ticket_ids=blocked_by_ticket_ids,
+            worker_runtime_definitions=runtime_definitions,
         )
+        launch_configuration = creation_context.launch_configuration
+        project_id = creation_context.project_id
         _validate_ceiling_holder(conn, ceiling_holder, ticket_id=ticket_id)
         # The one rule, asked here where the write happens, exactly as edit_ticket asks
         # it. Making a Ticket acts on nothing that exists, so nothing refuses that. The
@@ -944,20 +968,6 @@ def create_ticket(
             authority.require_above_a_ticket_being_created(
                 conn, principal, ticket_id=ticket_id, parent_outcome_id=sprint_item_id
             )
-        if sprint_item_id is not None and project_id is None:
-            item = conn.execute(
-                "SELECT project_id FROM sprint_items WHERE id = ?",
-                (sprint_item_id,),
-            ).fetchone()
-            if item is not None:
-                project_id = str(item["project_id"])
-        _validate_ticket_creation_placement(
-            conn,
-            project_id=project_id,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
-            blocked_by_ticket_ids=blocked_by_ticket_ids,
-        )
         priority_anchors = _resolve_priority_anchors(
             conn, project_id=project_id, sprint_item_id=sprint_item_id
         )
@@ -993,9 +1003,9 @@ def create_ticket(
             "project_id, sprint_id, sprint_item_id, orchestrator_kind, "
             "recap, ceiling, ceiling_holder, "
             "conversation_id, field_values, pending_proposal, pending_proposal_revision, "
-            "created_at, updated_at) "
+            "created_at, updated_at, locale) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
-            "?, ?, ?, ?, ?)",
+            "?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -1017,6 +1027,7 @@ def create_ticket(
                 int(initial_proposal is not None),
                 now,
                 now,
+                creation_context.locale.value,
             ),
         )
         wake_target = _proposal_wake_target(conn, initial_proposal_route)
@@ -1160,21 +1171,6 @@ def forget_user_stage_opener(
             "DELETE FROM ticket_paired_stage_openers WHERE ticket_id = ? AND stage = ?",
             (ticket_id, stage),
         )
-
-
-def clear_ticket_error_for_restart(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    now: int,
-) -> Ticket:
-    """Clear an error only through the explicit restart path."""
-    with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.worker_step_claim is not WorkerStepClaim.errored:
-            return ticket
-        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.none, now)
-        return _load_ticket_for_write(conn, ticket_id)
 
 
 def release_worker_step_claim(
@@ -1837,12 +1833,9 @@ def edit_ticket(
         updated = _load_ticket_for_write(conn, ticket_id)
         if proposal_readdressed:
             assert proposal_revision is not None
-            route = proposal_routing.route_proposal(
-                stage=updated.stage,
-                ceiling=updated.ceiling,
-                holder=updated.ceiling_holder,
-                worker_type_definition=worker_type_definition,
-            )
+            # A parked proposal remains pending even when it predates the current
+            # ceiling policy. Changing its reviewer must still deliver a notice.
+            route = proposal_routing.route_to_holder(updated.ceiling_holder)
             wake_target = _proposal_wake_target(conn, route)
             if wake_target is not None and updated.pending_proposal is not None:
                 manager_wakes_data.create_proposal_wake(
@@ -1990,72 +1983,26 @@ def set_ticket_backlog(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def retire_ticket(
+def move_ticket_locale(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    reason: str,
+    locale: TicketLocale,
     principal: Principal,
     now: int,
     expected_record_sha256: str | None = None,
 ) -> Ticket:
-    """Retire work atomically after its runtime owner refuses any live delivery."""
-    from planner.tickets.logic.retirement import retirement_values
-
+    """Canonical locale-only writer; runtime owns exclusion against conversation admission."""
     with _txn(conn):
         authority.require_above(conn, principal, authority.ticket(ticket_id))
-        ticket, definition = _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
-        if ticket.stage == "cancelled":
-            return ticket
+        ticket = _load_ticket_for_write(conn, ticket_id)
         _require_record_sha256(conn, ticket_id, expected_record_sha256)
-        if definition.is_terminal(ticket.stage):
-            raise PlannerError(ErrorCode.validation, "completed Tickets cannot be retired")
+        locale = require_ticket_locale(locale)
+        require_locale_backend_compatibility(locale, ticket.employee_backend)
         if ticket.worker_step_claim is not WorkerStepClaim.none:
             raise PlannerError(
-                ErrorCode.validation, "the worker-step claim needs verified runtime reconciliation"
+                ErrorCode.validation, "the Ticket has an outstanding worker-step claim"
             )
-        active_delivery = conn.execute(
-            "SELECT 1 FROM manager_wake_batches b WHERE b.status IN "
-            "('pending','offering','dispatching','accepted','uncertain') AND "
-            "((b.target_kind='ticket' AND b.target_id=?) OR EXISTS "
-            "(SELECT 1 FROM manager_wake_batch_members m JOIN manager_wakes w ON w.id=m.wake_id "
-            "WHERE m.batch_id=b.id AND w.ticket_id=?)) LIMIT 1",
-            (ticket_id, ticket_id),
-        ).fetchone()
-        if active_delivery:
-            raise PlannerError(
-                ErrorCode.validation, "the Ticket still has unresolved delivery ownership"
-            )
-        original = dict(conn.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
-        feedback = conn.execute(
-            "SELECT * FROM ticket_revision_feedback WHERE ticket_id=?", (ticket_id,)
-        ).fetchone()
-        values = retirement_values(
-            original,
-            reason=reason,
-            principal=principal,
-            now=now,
-            revision_feedback=dict(feedback) if feedback is not None else None,
-        )
-        conn.execute(
-            "UPDATE tickets SET stage='cancelled',pending_proposal=NULL,"
-            "pending_proposal_revision=pending_proposal_revision+1,field_values=?,"
-            "updated_at=? WHERE id=?",
-            (fields_codec.values_to_json(values), now, ticket_id),
-        )
-        revision_feedback.discard(conn, ticket_id)
-        conn.execute(
-            "UPDATE manager_wakes SET closed_at=? WHERE ticket_id=? AND closed_at IS NULL",
-            (now, ticket_id),
-        )
-        conn.execute(
-            "UPDATE notification_attention_state SET active=0 WHERE subject_kind='ticket' "
-            "AND subject_id=? AND notification_type IN ('awaiting_approval','assigned','errored')",
-            (ticket_id,),
-        )
-        conn.execute(
-            "UPDATE notification_attention_edges SET decided=1 WHERE subject_kind='ticket' "
-            "AND subject_id=? AND notification_type IN ('awaiting_approval','assigned','errored')",
-            (ticket_id,),
-        )
+        if ticket.locale != locale:
+            conn.execute("UPDATE tickets SET locale=? WHERE id=?", (locale.value, ticket_id))
         return _load_ticket_for_write(conn, ticket_id)

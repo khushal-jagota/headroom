@@ -15,6 +15,7 @@
   } from "../lib/lifecycle";
   import { holderLabelFor } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
+  import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
@@ -360,13 +361,9 @@
       <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
         <header class="ticket-head">
           <div class="worker-eyebrow" data-ticket-identity>
-            <a href={detail.project_id ? `#/backlog?project=${encodeURIComponent(detail.project_id)}` : "#/backlog"} data-project-fact>{detail.project || "No project"}</a>
+            <span data-project-fact>{detail.project || "No project"}</span>
             <span aria-hidden="true">·</span>
-            <a href={detail.orchestrator?.kind === "chief" || !detail.sprint_item_id
-              ? workspaceAddress({ kind: "chief" })
-              : workspaceAddress({ kind: "item", id: detail.sprint_item_id })} data-parent-link>
-              {detail.orchestrator?.kind === "chief" || !detail.sprint_item_id ? "Chief" : "Orchestrator"}
-            </a>
+            <span data-ticket-type>{conversationWorkerTypeLabel(detail)}</span>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title" data-feedback-page-title>
@@ -375,6 +372,7 @@
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               />
+              <ConversationSignalMark signal={detail.conversation_signal} conversationId={detail.conversation_id} />
             </div>
             <ClampedText
               contentKey={detail.recap}
@@ -429,7 +427,7 @@
             {@const completedFields = history.completed}
             {@const occurredFields = history.fields}
             {#if detail.stage !== "cancelled" && currentField}
-              <section class="worker-live-card" data-worker-live-card>
+              <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
                     <WorkerProposalCard proposal={detail.pending_proposal} lifecycle={lc} stage={detail.stage}
@@ -451,9 +449,9 @@
                   {/if}
                   {#if detail.assigned}
                     <TicketStageSection name={currentField} value={detail.field_values[currentField] ?? ""} lifecycle={lc}
-                      stageState={fieldStageVisualStateFor(lc, detail, currentField)} ticketStage={detail.stage} ceiling={detail.ceiling}
-                      sprintItem={ticketSprintItem} variant="review" editableCurrentValue={true}
-                      onAccept={(payload) => acceptField(currentField, payload)} onCompleteGate={(raw) => completeGate(currentField, raw)} />
+                      stageState={fieldStageVisualStateFor(lc, detail, currentField)} ticketStage={detail.stage}
+                      variant="review" editableCurrentValue={true}
+                      onCompleteGate={(raw) => completeGate(currentField, raw)} />
                   {/if}
                   {#if detail.employee_configuration_editable}{@render kickoffContextRow()}{/if}
                 {/if}
@@ -467,13 +465,13 @@
                     {@const stageState = detail.stage === "cancelled" ? (completedFields.includes(name) ? "completed" : "current-waiting") : fieldStageVisualStateFor(lc, detail, name)}
                     <TicketStageSection {name} value={detail.stage === "cancelled" && history.historicalProposal?.field === name
                       ? `${detail.field_values[name] || ""}\n\nHistorical proposal (not approved):\n\n${history.historicalProposal.body}`
-                      : detail.field_values[name] ?? ""} pendingProposal={null}
-                      {stageState} lifecycle={lc} ticketStage={detail.stage} ceiling={detail.ceiling} sprintItem={ticketSprintItem}
+                      : detail.field_values[name] ?? ""}
+                      {stageState} lifecycle={lc} ticketStage={detail.stage}
                       emptyText={emptyTicketFieldText} editableValue={detail.stage !== "cancelled"}
                       editableCurrentValue={false} readerLeftItOpen={readerStageFolds.get(name) ?? false}
                       onReaderToggle={(open) => readerStageFolds.set(name, open)}
                       runLabel={name === currentField ? currentStageRunLabel(detail) : null}
-                      onAccept={(payload) => acceptField(name,payload)} onSaveValue={(raw) => saveValue(name,raw)}
+                      onSaveValue={(raw) => saveValue(name,raw)}
                       onCompleteGate={(raw) => completeGate(name,raw)} />
                   {/each}
                 </div>
@@ -524,14 +522,13 @@
   .ticket-doc { scrollbar-gutter:auto; }
   .ticket-head { padding-top:48px; }
   .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
-  .worker-eyebrow a { color:inherit; text-decoration:none; }
-  .worker-eyebrow a:hover { color:var(--text-strong); }
   .ticket-title-row { display:block; margin-top:var(--space-3); }
-  .ticket-title { font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
+  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
   .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
   .ticket-head :global([data-recap]) { margin-top:var(--space-3); max-width:66ch; font-family:var(--font-ui); font-size:17px; line-height:1.6; color:var(--text-faint); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
-  .worker-live-card { margin-top:var(--space-6); padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
+  .worker-current { margin-top:var(--space-6); }
+  .worker-live-card { padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }
   .worker-live-card h2 { margin:var(--space-2) 0 0; letter-spacing:-.006em; font-size:20px; font-weight:600; line-height:1.35; color:var(--text-strong); }
   .worker-ceiling-line { margin-top:var(--space-3); }
   .worker-ceiling-line :global([data-scope-ceiling]) { font-family:var(--font-ui); font-size:15px; line-height:1.3; color:var(--text-muted); padding:10px var(--space-3); margin-inline:calc(-1 * var(--space-3)); border:0; border-radius:var(--radius-sm); background:transparent; box-shadow:none; text-align:left; }
@@ -548,5 +545,4 @@
   .worker-step-rows :global(.disclosure--stage > .disclosure-summary:hover) { background-image:var(--interaction-hover); color:var(--text-strong); }
   .worker-step-rows :global(.disclosure--stage > .disclosure-body) { padding:var(--space-2) var(--space-2) var(--space-5); font-family:var(--font-ui); font-size:15px; color:var(--text-faint); }
   .worker-step-rows :global(.disclosure-stage-name) { text-transform:none; font-size:15px; letter-spacing:normal; }
-  .worker-step-rows :global(.stage-mark) { border-radius:1px; }
 </style>

@@ -21,9 +21,8 @@ let serverProcess;
 for (const fileName of ["WorkerConfigurationSetup.svelte", "ManagedLaunchDefaults.svelte"]) {
   const source = await readFile(new URL(`../src/components/${fileName}`, import.meta.url), "utf8");
   assert.match(source, /UnifiedModelPicker/, fileName);
-  assert.match(source, /resolveModelPicker/, fileName);
-  assert.match(source, /readBackends/, fileName);
-  assert.match(source, /bind:snapshots=\{backends\}/, fileName);
+  assert.match(source, /createEmployeeConfigurationEditor/, fileName);
+  assert.match(source, /bind:snapshots=\{editor.backends\}/, fileName);
   assert.doesNotMatch(source, /<select/, fileName);
 }
 
@@ -60,6 +59,7 @@ try {
   let holdNextTicketSave = false;
   let releaseTicketSave: (() => void) | null = null;
   let holdNextDefaultSave = false;
+  let rejectNextDefaultSave = false;
   let releaseDefaultSave: (() => void) | null = null;
   const ticketSaves: EmployeeConfigurationSnapshot[] = [];
   const defaultSaves: EmployeeConfigurationSnapshot[] = [];
@@ -80,6 +80,10 @@ try {
   }
   async function saveDefaults(next: EmployeeConfigurationSnapshot): Promise<EmployeeConfigurationSnapshot> {
     defaultSaves.push(structuredClone(next));
+    if (rejectNextDefaultSave) {
+      rejectNextDefaultSave = false;
+      throw new Error("Default save was refused.");
+    }
     if (holdNextDefaultSave) {
       holdNextDefaultSave = false;
       await new Promise<void>((resolve) => (releaseDefaultSave = resolve));
@@ -99,6 +103,8 @@ try {
   (window as any).__ticketSaves = () => ticketSaves;
   (window as any).__defaultSaves = () => defaultSaves;
   (window as any).__showDefaults = () => (showDefaults = true);
+  (window as any).__hideDefaults = () => (showDefaults = false);
+  (window as any).__rejectNextDefaultSave = () => (rejectNextDefaultSave = true);
   (window as any).__rejectNextTicketSave = () => (rejectNextTicketSave = true);
   (window as any).__holdNextTicketSave = () => (holdNextTicketSave = true);
   (window as any).__releaseTicketSave = () => releaseTicketSave?.();
@@ -328,6 +334,30 @@ with sync_playwright() as p:
     assert default_picker.locator("[data-conversation-picker-panel]").get_attribute("aria-busy") == "true"
     page.evaluate("window.__releaseDefaultSave()")
     page.wait_for_function("!document.querySelector('[data-launch-defaults] [data-conversation-picker-trigger]').disabled")
+    # The same controller rolls back a failed defaults save without affecting Ticket setup.
+    page.evaluate("window.__rejectNextDefaultSave()")
+    default_picker.locator('[data-conversation-backend="codex"]').click()
+    page.wait_for_selector("[data-launch-defaults-error]")
+    assert "Claude A" in default_picker.locator("[data-conversation-picker-trigger]").inner_text()
+    assert "Claude A" in trigger.inner_text()
+    assert "Default save was refused." in defaults.inner_text()
+
+    # Dispose a pending catalogue read, then mount a fresh independent editor.
+    page.evaluate("window.__hideDefaults()")
+    page.wait_for_selector("[data-launch-defaults]", state="detached")
+    old_request = page.evaluate("window.__requestCount()")
+    page.evaluate("window.__showDefaults()")
+    page.wait_for_function("count => window.__requestCount() === count + 1", arg=old_request)
+    page.evaluate("window.__hideDefaults()")
+    page.wait_for_selector("[data-launch-defaults]", state="detached")
+    new_request = page.evaluate("window.__requestCount()")
+    page.evaluate("window.__showDefaults()")
+    page.wait_for_function("count => window.__requestCount() === count + 1", arg=new_request)
+    page.evaluate("([index, payload]) => window.__respond(index, payload)", [new_request, machine])
+    page.wait_for_function("!document.querySelector('[data-launch-defaults] .worker-launch-defaults-state')")
+    page.evaluate("index => window.__reject(index)", old_request)
+    assert "server could not be reached" not in defaults.inner_text()
+    assert "Claude A" in default_picker.locator("[data-conversation-picker-trigger]").inner_text()
     browser.close()
 
 print("unified persisted picker assertions passed")

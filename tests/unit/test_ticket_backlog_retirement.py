@@ -1,4 +1,4 @@
-"""Explicit deferral preserves work; retirement preserves its full provenance."""
+"""Explicit deferral preserves work; cancelled records remain read-only history."""
 
 import json
 from sqlite3 import Connection
@@ -29,17 +29,6 @@ def create(conn: Connection) -> str:
 def backlog(conn: Connection, tid: str, value: bool = True) -> Ticket:
     return data.set_ticket_backlog(
         conn, tid, is_backlogged=value, principal=OWNER_PRINCIPAL, now=20
-    )
-
-
-def retire(conn: Connection, tid: str, *, expected_record_sha256: str | None = None) -> Ticket:
-    return data.retire_ticket(
-        conn,
-        tid,
-        reason="Superseded",
-        principal=OWNER_PRINCIPAL,
-        now=30,
-        expected_record_sha256=expected_record_sha256,
     )
 
 
@@ -81,20 +70,32 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
     deferred_again = backlog(tmp_db, tid)
     assert deferred_again.worker_step_claim is WorkerStepClaim.out
     assert deferred_again.worker_step_claim_revision == claimed.worker_step_claim_revision
-    with pytest.raises(PlannerError, match="reconciliation"):
-        retire(tmp_db, tid)
 
 
-def test_retirement_preserves_full_record_and_refuses_stale_decisions(tmp_db: Connection) -> None:
+def test_cancelled_history_preserves_provenance_and_refuses_gate_actions(
+    tmp_db: Connection,
+) -> None:
     tid = create(tmp_db)
     original = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone())
-    retired = retire(tmp_db, tid)
-    assert retired.stage == "cancelled" and retired.pending_proposal is None
-    provenance = json.loads(retired.field_values["retirement"])
-    assert provenance["original_record"] == original
-    assert provenance["original_pending_proposal_json"] == original["pending_proposal"]
-    assert provenance["retired_by"] == {"kind": "owner", "id": "owner"}
-    assert retire(tmp_db, tid) == retired
+    provenance = {
+        "reason": "Historical disposition",
+        "original_record": original,
+        "original_stage": original["stage"],
+        "original_pending_proposal_json": original["pending_proposal"],
+        "retired_by": {"kind": "owner", "id": "owner"},
+    }
+    values = json.loads(original["field_values"])
+    values["retirement"] = json.dumps(provenance)
+    # Synthetic historical state, never a callable cancellation path.
+    tmp_db.execute(
+        "UPDATE tickets SET stage='cancelled',pending_proposal=NULL,field_values=? WHERE id=?",
+        (json.dumps(values), tid),
+    )
+    tmp_db.commit()
+    historical = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone())
+    detail = views.ticket_detail(tmp_db, tid, 31)
+    assert detail["stage"] == "cancelled"
+    assert json.loads(detail["field_values"]["retirement"]) == provenance
     with pytest.raises(PlannerError):
         data.accept_proposal(
             tmp_db,
@@ -110,6 +111,7 @@ def test_retirement_preserves_full_record_and_refuses_stale_decisions(tmp_db: Co
         data.reject_proposal(tmp_db, tid, principal=OWNER_PRINCIPAL, now=31, message=None)
     with pytest.raises(PlannerError):
         backlog(tmp_db, tid, False)
+    assert dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone()) == historical
     definition = configured_worker_type_registry().require("coding")
     assert definition.is_terminal("cancelled")
     assert "cancelled" not in definition.stage_ids()
@@ -124,7 +126,14 @@ def test_hash_guard_detects_same_second_changes_and_authority_is_unchanged(
     tmp_db.execute("UPDATE tickets SET title='Changed in same second' WHERE id=?", (tid,))
     tmp_db.commit()
     with pytest.raises(PlannerError, match="changed"):
-        retire(tmp_db, tid, expected_record_sha256=snapshot["record_sha256"])
+        data.set_ticket_backlog(
+            tmp_db,
+            tid,
+            is_backlogged=True,
+            principal=OWNER_PRINCIPAL,
+            now=20,
+            expected_record_sha256=snapshot["record_sha256"],
+        )
     with pytest.raises(PlannerError):
         data.set_ticket_backlog(
             tmp_db, tid, is_backlogged=True, principal=ticket_principal(tid), now=20
@@ -150,42 +159,6 @@ def test_bounded_summary_can_filter_deferral_without_conflating_placement(
     assert page.rows[0]["id"] == deferred and page.rows[0]["is_backlogged"] is True
     assert data.read_ticket(tmp_db, active).sprint_id is None
     assert data.read_ticket(tmp_db, active).is_backlogged is False
-
-
-def test_retirement_refuses_unresolved_manager_delivery_atomically(tmp_db: Connection) -> None:
-    tid = create(tmp_db)
-    tmp_db.execute(
-        "INSERT INTO manager_wake_batches(sender_message_id,message,status,created_at,updated_at,"
-        "target_kind,target_id) VALUES ('m_retire','Pending notice','uncertain',10,10,'ticket',?)",
-        (tid,),
-    )
-    tmp_db.commit()
-    before = data.ticket_record_sha256(tmp_db, tid)
-    with pytest.raises(PlannerError, match="ownership"):
-        retire(tmp_db, tid)
-    assert data.ticket_record_sha256(tmp_db, tid) == before
-    tmp_db.execute("UPDATE manager_wake_batches SET status='refused'")
-    tmp_db.commit()
-    assert retire(tmp_db, tid).stage == "cancelled"
-
-
-def test_retirement_preserves_and_clears_revision_feedback(tmp_db: Connection) -> None:
-    from planner.tickets import revision_feedback
-
-    tid = create(tmp_db)
-    revision_feedback.set_feedback(
-        tmp_db, tid, stage="needs_brief", sender=OWNER_PRINCIPAL, message="Rework first", now=11
-    )
-    tmp_db.commit()
-    retired = retire(tmp_db, tid)
-    provenance = json.loads(retired.field_values["retirement"])
-    assert "Rework first" in provenance["original_revision_feedback"]["feedback_json"]
-    assert (
-        tmp_db.execute(
-            "SELECT 1 FROM ticket_revision_feedback WHERE ticket_id=?", (tid,)
-        ).fetchone()
-        is None
-    )
 
 
 def test_backlog_does_not_release_occupied_closeout_lane(tmp_db: Connection) -> None:

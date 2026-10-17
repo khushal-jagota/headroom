@@ -97,7 +97,7 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.logic import admission
-from planner.work_attention import add_work_attention
+from planner.work_attention import add_work_attention, read_running_conversation_count
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
@@ -352,6 +352,10 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         ceiling=body_opt_str(raw, "ceiling"),
         ceiling_holder=raw.get("ceiling_holder"),
     )
+    if "locale" in raw:
+        from planner.tickets.logic.locale import require_ticket_locale
+
+        body["locale"] = require_ticket_locale(raw["locale"]).value
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
     if "employee_launch_model" in raw:
@@ -496,6 +500,7 @@ async def create_ticket(
         ),
         orchestrator_kind=orchestrator.kind.value,
         worker_type=body["worker_type"],
+        locale=body.get("locale"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
@@ -529,6 +534,8 @@ async def read_tickets(
     project_id: str | None = None,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
+    orchestrator_kind: str | None = None,
+    orchestrator_id: str | None = None,
     day: str | None = None,
     limit: int | None = None,
     offset: int | None = None,
@@ -548,6 +555,8 @@ async def read_tickets(
         "project_id": project_id,
         "sprint_id": sprint_id,
         "sprint_item_id": sprint_item_id,
+        "orchestrator_kind": orchestrator_kind,
+        "orchestrator_id": orchestrator_id,
         "day": day,
         "limit": limit,
         "offset": offset,
@@ -571,6 +580,8 @@ async def read_tickets(
         reject_parameters(
             "detail=full",
             {
+                "orchestrator_kind": orchestrator_kind,
+                "orchestrator_id": orchestrator_id,
                 "is_backlogged": is_backlogged,
                 "worker_type": worker_type,
                 "exclude_stage": exclude_stage,
@@ -598,6 +609,19 @@ async def read_tickets(
         )
         await add_work_attention(conn, conversations, conversation_record, tickets=rows)
         return {"tickets": rows}
+
+    orchestrator = None
+    if orchestrator_kind is not None or orchestrator_id is not None:
+        orchestrator = _parse_orchestrator(
+            {
+                "kind": orchestrator_kind,
+                "id": (
+                    "chief"
+                    if orchestrator_kind == "chief" and orchestrator_id is None
+                    else orchestrator_id
+                ),
+            }
+        )
 
     included_stages = tuple(stage or ())
     registry = configured_worker_type_registry()
@@ -627,6 +651,7 @@ async def read_tickets(
             offset=0 if offset is None else offset,
         ),
         filters=TicketListFilters(
+            orchestrator=orchestrator,
             stages=included_stages,
             excluded_stages=tuple(exclude_stage or ()),
             ticket_statuses=statuses,
@@ -1415,8 +1440,18 @@ async def board(
 
 
 @router.get("/review")
-async def review(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
-    return tickets_views.review_view(conn)
+async def review(
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
+    response = tickets_views.review_view(conn)
+    response["running_worker_count"] = await read_running_conversation_count(
+        conn, conversations, conversation_record
+    )
+    return response
 
 
 def _record_precondition(body: dict[str, Any]) -> str | None:
@@ -1456,34 +1491,29 @@ async def resume_ticket(
     return _ticket_detail(conn, ticket_id, clk.now_unix())
 
 
-@router.post("/tickets/{ticket_id}/retire")
-async def retire_ticket(
+@router.post("/tickets/{ticket_id}/move")
+async def move_ticket_locale(
     ticket_id: str,
-    body: dict[str, Any],
+    raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
+    from planner.tickets.locale_move import move_ticket_locale as move
+    from planner.tickets.logic.locale import require_ticket_locale
+
     require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    reason = body.get("reason")
-    if not isinstance(reason, str) or not reason.strip():
-        raise PlannerError(ErrorCode.validation, "retirement requires a reason")
-    async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        if ticket.stage != "cancelled" and ticket.conversation_id is not None:
-            if await conversations.is_running(
-                ticket.conversation_id
-            ) or await conversations.held_prompts(ticket.conversation_id):
-                raise PlannerError(
-                    ErrorCode.already_running, "the Ticket conversation still owns traffic"
-                )
-        tickets_data.retire_ticket(
-            conn,
-            ticket_id,
-            reason=reason,
-            principal=ctx.principal,
-            now=clk.now_unix(),
-            expected_record_sha256=_record_precondition(body),
-        )
-        return _ticket_detail(conn, ticket_id, clk.now_unix())
+    if "locale" not in raw or set(raw) - {"locale", "expected_record_sha256"}:
+        raise PlannerError(ErrorCode.validation, "move requires a locale", {})
+    now = clk.now_unix()
+    ticket = await move(
+        conversations,
+        conn,
+        ticket_id,
+        locale=require_ticket_locale(raw["locale"]),
+        principal=ctx.principal,
+        now=now,
+        expected_record_sha256=_record_precondition(raw),
+    )
+    return tickets_views.ticket_json(ticket, now)

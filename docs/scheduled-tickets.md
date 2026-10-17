@@ -11,7 +11,7 @@ schedule → current local minute → ordinary Ticket + occurrence receipt
 
 New schedules use the `daily` cadence. Their template holds the title, Worker type,
 Brief context, priority, deadline, Project, explicit orchestrator assignment, launch
-choice, and blockers. An assignment is either Chief or one ordinary orchestrator.
+choice, resolved execution locale, and blockers. An assignment is either Chief or one ordinary orchestrator.
 The canonical wire field is `orchestrator`, with `kind` and `id`.
 
 Sprint placement, Sprint cadences, and planning Worker templates are retired. The
@@ -43,6 +43,13 @@ The old cadence and placement enum values remain readable for historical configu
 and receipts. Historical Sprint placement columns do not affect new Ticket placement.
 Calendar schedules cannot be reenabled through the live API. Useful ordinary schedules
 can still be edited or disabled. There is no schedule deletion operation.
+
+The template resolves its locale when created and stores that value. Each occurrence
+passes the stored locale explicitly, so later Project or Worker requirements do not
+change its execution machine. An unrelated schedule edit preserves the stored locale.
+Use `--locale` at creation or `panels schedule set <schedule> locale --value vps|macos`
+to choose it explicitly. Ticket creation applies the same compatibility checks.
+See [Ticket locale rules](tickets-and-gates.md#execution-locale).
 
 The CLI uses `panels schedule create/list/show/set`. The schedule API uses
 `/api/schedules`. Final frontend changes follow the approved design handoff.

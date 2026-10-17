@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { BoardCard, BoardSprintItem, SprintItemWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
-import { buildWorkspaceRail, workspaceWorkerRowMarks, workspaceWorkerStages } from "../src/lib/workspaceRail";
+import { buildWorkspaceRail, workspaceWorkerStages } from "../src/lib/workspaceRail";
 
 const quiet = {
   awaiting_reply: false, awaiting_answer: false, awaiting_approval: false,
   awaiting_agent_approval: false, assigned: false, agent_state: "idle" as const
 };
 const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & SprintItemWorkspaceTicket => ({
-  id, title: id, priority: "P2", activity_at: 0, stage: "needs_implementation",
+  id, title: id, is_backlogged:false, priority: "P2", activity_at: 0, stage: "needs_implementation",
   ticket_status: "agent", worker_type: "coding", sprint_item_id: null,
   day_ids: [], sprint_id: null, sprint_name: null,
   ...quiet, ...values
@@ -44,19 +44,17 @@ describe("orchestrator rail projection", () => {
     expect(rail.items[0].groups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["complete-child"]);
     expect(rail.items[0].hoverGroups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["complete-child", "agent-child"]);
     expect(rail.items[0].tickets).toHaveLength(4);
-    expect(rail.items[0].mark).toBeNull();
+    expect(rail.items[0].conversationSignal).toBeUndefined();
   });
 
   it("preserves priority order and exact direct-conversation message marks", () => {
     const rail = buildWorkspaceRail([], [
       item("newer", { created_at: 20 }), item("older", { created_at: 10 }),
-      item("urgent", { priority: "P0", awaiting_reply: true }),
+      item("urgent", { priority: "P0", awaiting_reply: true, conversation_signal: {working:true,message_for_owner:true} }),
       item("children-message", { ticket_rollup: { ...quiet, awaiting_reply: true } })
     ]);
     expect(rail.items.map((row) => row.id)).toEqual(["urgent", "children-message", "older", "newer"]);
-    expect(rail.items.map((row) => row.mark)).toEqual(["reply", null, null, null]);
-    expect(workspaceWorkerRowMarks({ ...quiet, awaiting_answer: true })).toEqual({ reply: false, answer: false });
-    expect(workspaceWorkerRowMarks({ ...quiet, awaiting_answer: true, awaiting_approval: true, awaiting_reply: true })).toEqual({ reply: true, answer: false });
+    expect(rail.items.map((row) => row.conversationSignal)).toEqual([{working:true,message_for_owner:true}, undefined, undefined, undefined]);
   });
 
   it("derives stages from the served Worker manifest without a fabricated fallback", () => {

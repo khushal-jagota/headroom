@@ -7,12 +7,25 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal, Required, TypedDict
 
+from planner.conversation.contracts import ConversationSignal
 from planner.core.contracts import JsonDict, Principal, Priority
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
 # `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
 # single enforcement source the write paths pass to admission.validate_title.
 TITLE_MAX_CHARS: Final = 200
+
+
+class TicketLocale(StrEnum):
+    vps = "vps"
+    macos = "macos"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedTicketCreationContext:
+    locale: TicketLocale
+    launch_configuration: EmployeeLaunchConfiguration
+    project_id: str | None
 
 
 class StageOwnershipMode(StrEnum):
@@ -107,6 +120,8 @@ class BoardCardSource(TypedDict):
 class BoardCard(BoardCardSource, WorkAttention):
     """The complete Ticket projection returned to the Workspace rail."""
 
+    conversation_signal: ConversationSignal
+
 
 class BoardSprintItemSource(TypedDict):
     """A represented Sprint Item and its complete children before live attention.
@@ -129,11 +144,13 @@ class BoardSprintItemSource(TypedDict):
 class BoardSprintItem(BoardSprintItemSource, WorkAttention):
     """The complete Sprint Item projection returned to the Workspace rail."""
 
+    conversation_signal: ConversationSignal
     ticket_rollup: WorkAttention
 
 
 @dataclass(frozen=True, slots=True)
 class TicketListFilters:
+    orchestrator: Principal | None = None
     stages: tuple[str, ...] = ()
     excluded_stages: tuple[str, ...] = ()
     ticket_statuses: tuple[TicketStatus, ...] = ()
@@ -176,6 +193,7 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # Ticket to run on unless the creator names one.
     employee_backend: str
     employee_launch_model: str
+    locale: str
     title: str  # default ""
     kickoff_note: str  # default ""; proposed intake context / user guidance
     priority: str | None  # Explicit Priority value; omission resolves from placement
@@ -292,6 +310,7 @@ class Ticket:  # §3.3 — column names match exactly
     updated_at: int
     # Monotonic proposal identity. Proposal timestamps have whole-second precision, so
     # readers use this when they must distinguish a replacement filed in the same second.
+    locale: TicketLocale = field(default=TicketLocale.vps, kw_only=True)
     is_backlogged: bool = field(default=False, kw_only=True)
     pending_proposal_revision: int = field(default=0, kw_only=True)
 

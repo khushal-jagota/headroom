@@ -11,11 +11,11 @@ import { scratchDirectory } from "./support/scratch.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
-const outputDirectory = await mkdtemp(join(tmpdir(), "panels-backlog-ideas-"));
+const outputDirectory = await mkdtemp(join(tmpdir(), "panels-ideas-shell-"));
 const scratchRoot = await scratchDirectory();
-const hostPath = join(scratchRoot, `backlog-ideas-host-${process.pid}.svelte`);
-const mainPath = join(scratchRoot, `backlog-ideas-main-${process.pid}.ts`);
-const indexPath = join(scratchRoot, `backlog-ideas-index-${process.pid}.html`);
+const hostPath = join(scratchRoot, `ideas-shell-host-${process.pid}.svelte`);
+const mainPath = join(scratchRoot, `ideas-shell-main-${process.pid}.ts`);
+const indexPath = join(scratchRoot, `ideas-shell-index-${process.pid}.html`);
 let serverProcess;
 
 try {
@@ -23,21 +23,6 @@ try {
 <script lang="ts">
   import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
 
-  const ticket = (id: string, priority = "P3") => ({
-    id,
-    title: "Ticket " + id,
-    worker_type: "coding",
-    stage: "needs_plan",
-    ticket_status: "empty",
-    priority,
-    project_id: "project_vylo",
-    project: "Vylo",
-    sprint_item_id: null,
-    sprint_item: null,
-    sprint_id: null,
-    effective_sprint_id: null,
-    recap_preview: "A bounded recap for " + id
-  });
   const item = (id: string) => ({
     id,
     title: "Brief " + id,
@@ -48,10 +33,6 @@ try {
     project: "Tribe",
     sprint_id: null
   });
-  let backlogTickets = Array.from({ length: 30 }, (_, index) =>
-    ticket("ticket_" + index, index === 0 ? "P0" : "P3")
-  );
-  const firstItemPage = Array.from({ length: 30 }, (_, index) => item("item_" + index));
   const finalItem = item("item_offboard");
   let ideas: any[] = [];
   const projects = [
@@ -106,32 +87,6 @@ try {
         ]
       });
     }
-    if (path === "/api/tickets?detail=summary&limit=30&offset=0") {
-      return json({
-        tickets: backlogTickets,
-        page: page(backlogTickets.length, backlogTickets.length + 1, 0)
-      });
-    }
-    if (path === "/api/tickets?detail=summary&limit=30&offset=30") {
-      return json({ tickets: [ticket("ticket_last", "P1")], page: page(1, backlogTickets.length + 1, 30) });
-    }
-    if (path === "/api/items?detail=summary&limit=30&offset=0") {
-      return json({ items: firstItemPage, page: page(30, 31, 0) });
-    }
-    if (path === "/api/items?detail=summary&limit=30&offset=30") {
-      return json({ items: [finalItem], page: page(1, 31, 30) });
-    }
-    if (path === "/api/tickets" && method === "POST") {
-      const project = projects.find((entry) => entry.id === body.project_id);
-      const created = {
-        ...ticket("ticket_created", body.priority),
-        title: body.title,
-        project_id: body.project_id,
-        project: project?.name ?? null
-      };
-      backlogTickets = [created, ...backlogTickets].slice(0, 30);
-      return json(created);
-    }
     if (path === "/api/board") {
       return json({ columns: [], sprint_items: [] });
     }
@@ -140,6 +95,7 @@ try {
         workers: [],
         chief_of_staff: {
           label: "Chief of Staff",
+          skill: { description: "Chief role", markdown_body: "# Chief" },
           conversation_id: null,
           needs_me: false,
           agent_working: false,
@@ -189,6 +145,10 @@ try {
     if (path === "/api/conversation/backends") {
       return json({ backends: [] });
     }
+    if (path === "/api/feedback/count") return json({ open_count: 3 });
+    if (path === "/api/skills") return json({ skills: [] });
+    if (path === "/api/schedules") return json({ schedules: [] });
+    if (path === "/api/notifications/settings") return json({ subjects: [], vapid_public_key: "" });
     if (path === "/api/ideas" && method === "GET") return json({ ideas });
     if (path === "/api/ideas" && method === "POST") {
       const project = projects.find((entry) => entry.id === body.project_id);
@@ -250,82 +210,65 @@ mount(Host, { target: document.getElementById("app")! });
 
   const browserScript = String.raw`
 from playwright.sync_api import sync_playwright
-import sys
+import sys, os, pathlib
+
+def screenshot(page, name):
+    directory = os.environ.get("PANELS_UI_PROOF_DIR")
+    if directory:
+        pathlib.Path(directory).mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(pathlib.Path(directory) / (name + ".png")), full_page=True)
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     page = browser.new_page()
-    page.goto(sys.argv[1] + "#/backlog", wait_until="networkidle")
-    page.locator('section[data-screen="backlog"]').wait_for()
+    page.goto(sys.argv[1] + "#/backlog?project=project_vylo", wait_until="networkidle")
+    page.locator('section[data-screen="workspace"]').wait_for()
+    assert page.evaluate("window.location.hash") == "#/workspace"
+    assert page.locator('[data-create="ticket"], [data-backlog-tickets], [data-outcome-picker]').count() == 0
 
-    assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "1–30 of 31"
-    assert not any("/api/items" in request["path"] for request in page.evaluate("window.__requests()"))
-    assert page.locator('[data-backlog-outcomes], [data-outcome-picker]').count() == 0
-    assert page.locator('[data-backlog-tickets] > .section-heading').count() == 0
-    first_ticket = page.locator('[data-ticket-id="ticket_0"]')
-    assert first_ticket.get_attribute("href") == "#/workspace/ticket_0"
-    assert first_ticket.locator('.list-row-title').inner_text() == 'Ticket ticket_0'
-    assert "A bounded recap for ticket_0" not in first_ticket.inner_text()
-    assert first_ticket.locator('.chip').count() == 1
-    assert first_ticket.locator('.chip--project').count() == 1
-    assert first_ticket.locator('.chip--project').inner_text() == 'Vylo'
-
-    # Each bounded list moves by its own page facts.
-    page.locator('[data-pagination="tickets"] button', has_text="Next").click()
-    page.locator('[data-ticket-id="ticket_last"]').wait_for()
-    assert page.locator('[data-pagination="tickets"] [data-page-range]').inner_text() == "31–31 of 31"
-    page.locator('[data-pagination="tickets"] button', has_text="Previous").click()
-    page.locator('[data-ticket-id="ticket_0"]').wait_for()
-
-    # The dormant compose writes an ordinary explicitly unscheduled Ticket through
-    # the real mutation/query invalidation path.
-    page.locator('[data-create="ticket"] > summary').click()
-    assert page.locator('[data-create="ticket"] [data-input="worker-type"]').input_value() == "coding"
-    priority_control = page.locator('[data-create="ticket"] [data-seg="priority"]')
-    assert priority_control.locator('[data-value=""]').get_attribute("aria-pressed") == "true"
-
-    page.locator('[data-create="ticket"] [data-input="title"]').fill("Wire the audit log")
-    page.locator('[data-create="ticket"] [data-input="kickoff-note"]').fill("Keep the receipts.")
-    page.locator('[data-create="ticket"] [data-seg="project"] [data-value="project_tribe"]').click()
-    page.locator('[data-create="ticket"] [data-seg="priority"] [data-value="P1"]').click()
-    assert priority_control.locator('[data-value="P1"]').get_attribute("aria-pressed") == "true"
-    assert priority_control.locator('[data-value="P3"]').get_attribute("aria-pressed") == "false"
-    # Creation names who is asked at the ceiling. Unchanged it is "User"; a Ticket made
-    # for somebody else says so here, and the creator does not have to hold it first.
-    holder_select = page.locator('[data-create="ticket"] [data-input="ceiling-holder"]')
-    assert holder_select.input_value() == "owner"
-    assert [option.inner_text() for option in holder_select.locator("option").all()] == ["User", "Chief"]
-    holder_select.select_option("chief")
-    page.locator('[data-create="ticket"] [data-commit]').click()
-    created = page.locator('[data-ticket-id="ticket_created"]')
-    created.wait_for()
-    assert "Wire the audit log" in created.inner_text()
-    assert "Tribe" in created.inner_text()
-    create_request = page.evaluate("""() => window.__requests().find(
-      request => request.path === "/api/tickets" && request.method === "POST"
-    )""")
-    assert create_request["body"] == {
-        "worker_type": "coding",
-        "title": "Wire the audit log",
-        "kickoff_note": "Keep the receipts.",
-        "project_id": "project_tribe",
-        "priority": "P1",
-        "orchestrator": {"kind": "chief", "id": "chief"},
-        "ceiling_holder": {"kind": "chief", "id": "chief"},
-    }
-    assert not any("/api/items" in request["path"] for request in page.evaluate("window.__requests()"))
-    page.locator('[data-create="ticket"] > summary').click()
-    def assert_backlog_layout(width):
+    # The footer and compact fallback expose each utility exactly once.
+    for width, selected in [(1280, False), (390, False), (390, True)]:
         page.set_viewport_size({"width": width, "height": 900})
-        page.wait_for_timeout(50)
-        assert page.evaluate("""() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) <= window.innerWidth + 1""")
-        row = page.locator('[data-ticket-id="ticket_0"]')
-        title_box = row.locator('.list-row-title').bounding_box()
-        chip_box = row.locator('.chip--project').bounding_box()
-        assert title_box and chip_box
-        assert title_box['x'] + title_box['width'] <= chip_box['x'] + 1
-    assert_backlog_layout(1280)
-    assert_backlog_layout(390)
+        page.evaluate("window.location.hash = " + ("'#/workspace/item/item_offboard'" if selected else "'#/workspace'"))
+        page.locator('section[data-screen="workspace"]').wait_for()
+        more = page.get_by_role("button", name="More", exact=False)
+        menu_visible = more.is_visible()
+        if menu_visible: more.click()
+        for label in ["Settings", "Ideas", "Feedback", "Usage and Backends"]:
+            assert page.get_by_role("link", name=label, exact=True).count() == 1, (width, selected, label)
+        screenshot(page, "shell-utilities-" + str(width) + ("-selected" if selected else "-rail"))
+        if menu_visible:
+            page.keyboard.press("Escape")
+            assert more.evaluate("n => n === document.activeElement")
+
+    # Config detail keys must remount its initial-prop snapshot on in-shell changes.
+    for old, canonical, kind, ident in [
+        ("#/config/worker-skill", "#/settings/config/worker-skill", "skill", "panels-worker"),
+        ("#/agents/workers/coding", "#/settings/config/workers/coding", "worker", "coding"),
+        ("#/config/sprint-item-supervisor", "#/settings/config/sprint-item-supervisor", "skill", "panels-sprint-item-supervisor"),
+        ("#/workers/type%2Fwith%20space", "#/settings/config/workers/type%2Fwith%20space", "worker", "type/with space")
+    ]:
+        page.evaluate("hash => window.location.hash = hash", old)
+        page.wait_for_function("hash => window.location.hash === hash", arg=canonical)
+        page.locator('[data-screen="config"][data-role-kind="' + kind + '"][data-role-id="' + ident + '"]').wait_for()
+    for old, canonical, screen in [
+        ("#/scheduled-tasks", "#/settings/scheduled-tasks", "scheduled-tasks"),
+        ("#/notifications", "#/settings/notifications", "notifications")
+    ]:
+        page.evaluate("hash => window.location.hash = hash", old)
+        page.wait_for_function("hash => window.location.hash === hash", arg=canonical)
+        page.locator('[data-screen="' + screen + '"]').wait_for()
+        assert page.get_by_role("navigation", name="Settings", exact=True).count() == 1
+        for width in [390, 1280]:
+            page.set_viewport_size({"width": width, "height": 900})
+            screenshot(page, "settings-" + screen + "-" + str(width))
+    page.evaluate("window.location.hash = '#/settings/config'")
+    page.locator('[data-screen="config"][data-role-kind="index"]').wait_for()
+    for width in [390, 1280]:
+        page.set_viewport_size({"width": width, "height": 900})
+        screenshot(page, "settings-config-" + str(width))
+    page.evaluate("window.location.hash = '#/settings/config/unknown/detail'")
+    page.get_by_text("no such screen", exact=True).wait_for()
     page.set_viewport_size({"width": 1280, "height": 900})
 
     # A canonical direct Item address survives the empty board response and mounts
@@ -375,7 +318,7 @@ with sync_playwright() as playwright:
     assert page.locator('[data-ideas] div.list-row[data-idea-id]').count() == 1
     browser.close()
 
-print("backlog and ideas component assertions passed")
+print("ideas and shell component assertions passed")
 `;
   const probe = spawn(
     join(repositoryRoot, ".venv", "bin", "python"),
@@ -387,7 +330,7 @@ print("backlog and ideas component assertions passed")
   probe.stderr.on("data", (chunk) => { output += chunk; });
   const exitCode = await new Promise((resolve) => probe.on("close", resolve));
   assert.equal(exitCode, 0, output);
-  assert.match(output, /backlog and ideas component assertions passed/);
+  assert.match(output, /ideas and shell component assertions passed/);
 } finally {
   serverProcess?.kill();
   await rm(hostPath, { force: true });
@@ -420,4 +363,4 @@ async function waitUntilReady(url) {
   throw new Error(`component runtime server did not become ready: ${url}`);
 }
 
-console.log("backlog-ideas.test.mjs: all assertions passed");
+console.log("ideas-shell.test.mjs: all assertions passed");

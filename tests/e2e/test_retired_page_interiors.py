@@ -14,16 +14,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
-from playwright.sync_api import BrowserContext, Page, Route, expect
+from playwright.sync_api import BrowserContext, Page, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_approval_groups_message_dots import _conversation
 from tests.e2e.test_orchestrator_rail import rail_server  # noqa: F401
 
 # pytest resolves this explicitly imported fixture by name.
-
-EVIDENCE = Path(
-    "/home/vps/Deployments/Panels/current/data/files/tickets/t_9fh1vzxc/artifacts/page-interiors"
-)
 
 
 def _propose(server: ServerHandle, ticket_id: str, body: str) -> None:
@@ -54,12 +50,14 @@ def _measure(page: Page, selector: str) -> JsonObject:
 
 def test_page_approval_revision_artifacts_and_responsive_layout(
     rail_server: ServerHandle,  # noqa: F811
+    tmp_path: Path,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
 ) -> None:
     server = rail_server
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
+    evidence = tmp_path / "page-interiors"
+    evidence.mkdir(parents=True, exist_ok=True)
     project = api.direct_post(server, "/api/projects", {"name": "Page proof", "priority": "P1"})
     item = api.direct_post(
         server,
@@ -153,7 +151,7 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
         page.set_viewport_size({"width": width, "height": 1100})
         pending_type.append(
             worker.evaluate("""element => {
-          const scope = getComputedStyle(element.querySelector('[data-pending-ceiling] button'));
+          const scope = getComputedStyle(element.querySelector('[data-reviewer-heading]'));
           return {width: innerWidth,
           body: getComputedStyle(element.querySelector('.proposal-prose p')).fontSize,
           label: getComputedStyle(element.querySelector('[data-stage-fold-open]')).fontSize,
@@ -163,7 +161,7 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
           scopeShadow: scope.boxShadow};
         }""")
         )
-        page.screenshot(path=str(EVIDENCE / f"worker-pending-{width}.png"), full_page=True)
+        page.screenshot(path=str(evidence / f"worker-pending-{width}.png"), full_page=True)
     page.set_viewport_size({"width": 1440, "height": 1100})
     # The page offers one approval action. Opening it alone cannot mutate the stage.
     with page.expect_response(
@@ -249,7 +247,7 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
     for width in (1440, 1024, 820, 560):
         page.set_viewport_size({"width": width, "height": 1100})
         measurements.append({"surface": "worker", **_measure(page, '[data-screen="ticket"]')})
-        page.screenshot(path=str(EVIDENCE / f"worker-{width}.png"), full_page=True)
+        page.screenshot(path=str(evidence / f"worker-{width}.png"), full_page=True)
     page.goto(server.base + f"/#/workspace/item/{item['id']}")
     pane_selector = f'[data-sprint-item-workspace="{item["id"]}"]'
     pane = page.locator(pane_selector)
@@ -259,13 +257,17 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
     for width in (1440, 1024, 820, 560):
         page.set_viewport_size({"width": width, "height": 1100})
         measurements.append({"surface": "orchestrator", **_measure(page, pane_selector)})
-        page.screenshot(path=str(EVIDENCE / f"orchestrator-{width}.png"), full_page=True)
-    pane.locator(".page-eyebrow a").first.click()
-    expect(page.locator('[data-screen="backlog"]')).to_be_visible()
-    expect(page.locator(f'[data-ticket-id="{ticket_id}"]')).to_be_visible()
-    expect(page.locator(f'[data-ticket-id="{unrelated["id"]}"]')).to_have_count(0)
-    page.get_by_role("link", name="All Workers", exact=True).click()
-    expect(page.locator(f'[data-ticket-id="{unrelated["id"]}"]')).to_be_visible()
+        page.screenshot(path=str(evidence / f"orchestrator-{width}.png"), full_page=True)
+    # The project remains a fact after the standalone Workers page is removed.
+    expect(pane.locator(".page-eyebrow > span").first).to_have_text("Page proof")
+    expect(pane.locator('a[href*="#/backlog"]')).to_have_count(0)
+    children = pane.locator(f'[data-orchestrator-children="sprint_item:{item["id"]}"]')
+    expect(children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')).to_be_visible()
+    expect(children.locator(f'[data-sprint-ticket-id="{unrelated["id"]}"]')).to_have_count(0)
+    page.goto(server.base + "/#/workspace/chief-of-staff")
+    chief_children = page.locator('[data-orchestrator-children="chief:chief"]')
+    expect(chief_children.locator(f'[data-sprint-ticket-id="{unrelated["id"]}"]')).to_be_visible()
+    expect(chief_children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')).to_have_count(0)
     assert all(row["body"] == "15px" and row["label"] == "13px" for row in pending_type), (
         pending_type
     )
@@ -293,7 +295,7 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
     ), measurements
     assert len([request for request in requests if request["url"].endswith("/accept/brief")]) == 1
     assert len([request for request in requests if request["url"].endswith("/reject")]) == 1
-    (EVIDENCE / "connected-browser.json").write_text(
+    (evidence / "connected-browser.json").write_text(
         json.dumps(
             {
                 "measurements": measurements,
@@ -318,177 +320,4 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
         )
     )
 
-    shutil.copyfile(server.log_path, EVIDENCE / "isolated-server.log")
-
-
-def test_waiting_ceiling_previews_reroute_raise_and_rejects_stale_revision(
-    rail_server: ServerHandle,  # noqa: F811
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    api: ApiHelper,
-) -> None:
-    """A ceiling draft cannot silently approve a different visible proposal.
-
-    This uses the real accept writer. A scheduling barrier lets an authenticated
-    Worker replace its proposal after the owner commits the visible draft but before
-    the HTTP writer sees it. The stale request must leave the new proposal untouched.
-    """
-    server = rail_server
-    project = api.direct_post(server, "/api/projects", {"name": "Ceiling proof", "priority": "P2"})
-    item = api.direct_post(
-        server,
-        "/api/items",
-        {
-            "title": "Review the explicit ceiling contract",
-            "project_id": project["id"],
-        },
-    )
-    ticket = api.direct_post(
-        server,
-        "/api/tickets",
-        {
-            "title": "Preview each waiting ceiling effect",
-            "worker_type": "coding",
-            "kickoff_note": "The brief is agreed.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
-        },
-    )
-    ticket_id = str(ticket["id"])
-    api.direct_post(
-        server,
-        f"/api/tickets/{ticket_id}/accept/brief",
-        {
-            "next_ceiling": "needs_success_condition",
-            "next_holder": {"kind": "owner", "id": "owner"},
-        },
-    )
-    _propose(server, ticket_id, "The visible proposal requires explicit approval.")
-    page = open_page(
-        context_factory(),
-        server,
-        f"#/workspace/item/{item['id']}/{ticket_id}",
-        "[data-worker-live-card]",
-    )
-    page.set_default_timeout(WAIT_MS)
-    page.set_viewport_size({"width": 1440, "height": 1100})
-    worker = page.locator('[data-screen="ticket"]')
-    control = worker.locator("[data-reviewer-control] [data-scope-ceiling]")
-    before = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
-    original = before["pending_proposal"]
-    assert original is not None
-    revision = original["revision"]
-    control.click()
-    panel = page.locator("[data-ceiling-picker-panel]:visible")
-    expect(panel.locator('[data-ceiling-part="ceiling"]')).not_to_be_disabled()
-    expect(panel.locator("[data-ceiling-effect]")).to_contain_text("Nothing is approved")
-    expect(panel.locator('[data-ceiling-picker-choice="needs_plan"]')).to_contain_text("approves")
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(EVIDENCE / "waiting-ceiling-stage-options.png"), full_page=True)
-    panel.locator('[data-ceiling-picker-choice="needs_success_condition"]').click()
-    panel.locator('[data-scope-holder="owner"]').click()
-    expect(panel).to_have_count(0)
-    unchanged = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
-    assert unchanged["stage"] == before["stage"]
-    assert unchanged["pending_proposal"]["body"] == original["body"]
-    assert unchanged["pending_proposal"]["revision"] == revision
-    # Choosing only the reviewer reroutes, without accepting the proposal.
-    control.click()
-    panel = page.locator("[data-ceiling-picker-panel]:visible")
-    panel.locator('[data-ceiling-part="holder"]').click()
-    page.keyboard.press("o")
-    expect(panel.locator("[data-ceiling-effect]")).to_contain_text("Sends this")
-    expect(panel.locator("[data-ceiling-effect]")).to_contain_text("Orchestrator")
-    expect(panel.locator("[data-ceiling-effect]")).to_contain_text("Nothing is approved")
-    before_commit = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
-    assert before_commit["ceiling_holder"] == {"kind": "owner", "id": "owner"}
-    assert before_commit["pending_proposal"]["revision"] == revision
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(EVIDENCE / "waiting-ceiling-reroute-preview.png"), full_page=True)
-    with page.expect_response(
-        lambda response: (
-            response.request.method == "PATCH" and response.url.endswith(f"/tickets/{ticket_id}")
-        )
-    ) as rerouted_response:
-        page.keyboard.press("Enter")
-    assert rerouted_response.value.ok, rerouted_response.value.text()
-    rerouted = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
-    assert rerouted["ceiling_holder"] == {"kind": "sprint_item", "id": item["id"]}
-    assert rerouted["stage"] == before["stage"]
-    assert rerouted["ceiling"] == before["ceiling"]
-    for field in ("body", "field", "created_at"):
-        assert rerouted["pending_proposal"][field] == original[field]
-    assert rerouted["pending_proposal"]["revision"] > revision
-    expect(control).to_contain_text("Orchestrator")
-    visible_revision = rerouted["pending_proposal"]["revision"]
-    stale_payloads: list[JsonObject] = []
-    newer_body = "This newer authenticated Worker proposal must stay pending."
-
-    def replace_before_accept(route: Route) -> None:
-        payload = route.request.post_data_json
-        assert isinstance(payload, dict)
-        stale_payloads.append(payload)
-        _propose(server, ticket_id, newer_body)
-        route.continue_()
-
-    accept_url = f"**/api/tickets/{ticket_id}/accept/success_condition"
-    page.route(accept_url, replace_before_accept, times=1)
-    control.click()
-    panel = page.locator("[data-ceiling-picker-panel]:visible")
-    panel.locator('[data-ceiling-picker-choice="needs_plan"]').click()
-    expect(panel.locator("[data-ceiling-effect]")).to_contain_text("Approves this")
-    expect(panel.locator("[data-ceiling-effect]")).to_contain_text("Plan")
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(EVIDENCE / "waiting-ceiling-approval-preview.png"), full_page=True)
-    with page.expect_response(
-        lambda response: (
-            response.request.method == "POST"
-            and response.url.endswith(f"/{ticket_id}/accept/success_condition")
-        )
-    ) as stale_response:
-        panel.locator('[data-scope-holder="owner"]').click()
-    assert not stale_response.value.ok
-    assert stale_payloads[0]["expected_proposal_revision"] == visible_revision
-    after_stale = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
-    assert after_stale["stage"] == before["stage"]
-    assert after_stale["ceiling"] == before["ceiling"]
-    assert after_stale["ceiling_holder"] == rerouted["ceiling_holder"]
-    assert after_stale["pending_proposal"]["body"] == newer_body
-    assert not after_stale["field_values"].get("success_condition")
-    # The refreshed visible proposal can be approved with its own revision.
-    expect(worker.locator(".proposal-prose")).to_contain_text(newer_body)
-    control.click()
-    panel = page.locator("[data-ceiling-picker-panel]:visible")
-    panel.locator('[data-ceiling-picker-choice="needs_plan"]').click()
-    with page.expect_response(
-        lambda response: (
-            response.request.method == "POST"
-            and response.url.endswith(f"/{ticket_id}/accept/success_condition")
-        )
-    ) as accepted:
-        panel.locator('[data-scope-holder="owner"]').click()
-    assert accepted.value.ok, accepted.value.text()
-    final = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
-    assert final["stage"] == "needs_what_changes"
-    assert final["ceiling"] == "needs_plan"
-    assert final["ceiling_holder"] == {"kind": "owner", "id": "owner"}
-    assert final["pending_proposal"] is None
-    assert final["field_values"]["success_condition"] == newer_body
-    expect(worker).to_have_attribute("data-stage", "needs_what_changes")
-    (EVIDENCE / "waiting-ceiling-browser.json").write_text(
-        json.dumps(
-            {
-                "initial_revision": revision,
-                "rerouted_revision": visible_revision,
-                "stale_request": stale_payloads[0],
-                "stale_response": stale_response.value.json(),
-                "new_revision": after_stale["pending_proposal"]["revision"],
-                "final_stage": final["stage"],
-                "final_ceiling": final["ceiling"],
-                "continuation_limit": (
-                    "No background worker in this browser fixture; actual post-raise "
-                    "continuation requires separate runtime evidence."
-                ),
-            },
-            indent=2,
-        )
-    )
+    shutil.copyfile(server.log_path, evidence / "isolated-server.log")

@@ -6,7 +6,7 @@ import json
 import sqlite3
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Final, cast
+from typing import cast
 
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -19,11 +19,13 @@ from planner.scheduled_tickets.contracts import (
     ScheduledTicketSchedule,
     ScheduledTicketTemplate,
 )
+from planner.tickets.contracts import TicketLocale
 
 _SCHEDULE_COLUMNS = (
     "id, enabled, cadence, local_time, title, worker_type, kickoff_note, priority, "
     "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
-    "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, created_at, updated_at"
+    "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, locale, "
+    "created_at, updated_at"
 )
 
 
@@ -50,19 +52,6 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
         conn.execute("COMMIT")
 
 
-# The one schedule this build ships. A Sprint's Checkpoint is due on its fourth day,
-# whether or not anyone remembers it.
-CHECKPOINT_SCHEDULE_ID: Final = "schedule_weekly_sprint_checkpoint"
-CHECKPOINT_KICKOFF_NOTE: Final = (
-    "Review the sprint so far and decide what to adjust for the remaining days."
-)
-
-
-def seed_shipped_schedules(conn: sqlite3.Connection) -> None:
-    """Planning schedules are retired. New installations receive no recurring reviews."""
-    return
-
-
 def _blocked_by_from_json(raw: object) -> tuple[str, ...]:
     try:
         payload = json.loads(str(raw))
@@ -81,6 +70,7 @@ def _row_to_schedule(row: sqlite3.Row) -> ScheduledTicketSchedule:
         local_time=str(row["local_time"]),
         template=ScheduledTicketTemplate(
             orchestrator_kind=str(row["orchestrator_kind"]),
+            locale=TicketLocale(str(row["locale"])),
             title=str(row["title"]),
             worker_type=str(row["worker_type"]),
             kickoff_note=str(row["kickoff_note"]),
@@ -130,9 +120,9 @@ def create_schedule(
             "INSERT INTO scheduled_ticket_schedules ("
             "id, enabled, cadence, local_time, title, worker_type, kickoff_note, priority, "
             "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
-            "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, "
+            "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, locale, "
             "created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 schedule_id,
                 int(enabled),
@@ -151,6 +141,7 @@ def create_schedule(
                 template.employee_launch_model,
                 json.dumps(list(template.blocked_by_ticket_ids)),
                 template.orchestrator_kind,
+                template.locale.value if template.locale is not None else TicketLocale.vps.value,
                 now,
                 now,
             ),
@@ -193,6 +184,7 @@ def read_schedule(conn: sqlite3.Connection, schedule_id: str) -> ScheduledTicket
 
 _UPDATABLE_COLUMNS = frozenset(
     {
+        "locale",
         "enabled",
         "cadence",
         "local_time",

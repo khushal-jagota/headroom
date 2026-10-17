@@ -1,4 +1,4 @@
-import { stageLabelFor, type Lifecycle } from "./lifecycle";
+import { type Lifecycle } from "./lifecycle";
 
 export type PendingCeilingIntent = "scope" | "approve";
 
@@ -13,15 +13,4 @@ export function pendingCeilingApproves(
   const waiting = lifecycle.stageOrder.indexOf(pendingStage);
   if (selected < 0 || waiting < 0 || selected <= waiting) return false;
   return intent === "approve" || (ceilingTouched && selected > lifecycle.stageOrder.indexOf(savedCeiling ?? ""));
-}
-
-export function pendingCeilingEffect(
-  lifecycle: Lifecycle | null, pendingStage: string, pendingLabel: string,
-  savedCeiling: string | null, selectedCeiling: string | null, ceilingTouched: boolean,
-  intent: PendingCeilingIntent, reviewerChanged: boolean, reviewerLabel: string
-): { approves: boolean; text: string } {
-  const approves = pendingCeilingApproves(lifecycle,pendingStage,savedCeiling,selectedCeiling,ceilingTouched,intent);
-  if (approves) return { approves, text:`Approves this ${pendingLabel} proposal and carries on to ${stageLabelFor(lifecycle,selectedCeiling ?? "")}.` };
-  if (reviewerChanged) return { approves, text:`Sends this ${pendingLabel} proposal to ${reviewerLabel}. Nothing is approved.` };
-  return { approves, text:`Nothing is approved while the ceiling stays at ${stageLabelFor(lifecycle,selectedCeiling ?? pendingStage)}.` };
 }

@@ -18,22 +18,25 @@ describe("explicit ticket lifecycle controls", () => {
   it("offers deferral independently of unscheduled placement", () => {
     const markup = controls(ticket({ sprint_id: null, sprint_item_id: null }));
     expect(markup).toContain("Backlog ticket");
-    expect(markup).toContain("Ticket actions");
-    expect(markup).toContain("<details");
-    expect(markup).toContain("Retire ticket");
+    expect(markup).not.toContain("Ticket actions");
+    expect(markup).not.toContain("<details");
+    expect(markup).not.toContain("Retire ticket");
+    expect(markup).not.toContain("data-retirement-input");
     expect(markup).not.toContain("Resume ticket");
   });
 
   it("offers resume and preserves the contact and approval explanation", () => {
     const markup = controls(ticket({ is_backlogged: true, sprint_id: "scheduled" }));
     expect(markup).toContain("Resume ticket");
+    expect(markup).not.toContain("Retire ticket");
+    expect(markup).not.toContain("Ticket actions");
     expect(markup).toContain("Automatic work is paused. Messages and approvals remain available.");
   });
 
-  it("shows escaped retirement reason and no lifecycle action on a retired ticket", () => {
+  it("shows escaped historical reason and no lifecycle action on a cancelled ticket", () => {
     const value = ticket({ stage: "cancelled", field_values: { retirement: JSON.stringify({ reason: "Obsolete <script>" }) } });
     const markup = controls(value, true);
-    expect(markup).toContain("Retired without success");
+    expect(markup).toContain("Cancelled");
     expect(markup).toContain("Obsolete &lt;script>");
     expect(markup).not.toContain("data-ticket-backlog-action");
     expect(markup).not.toContain("data-ticket-retire-action");
@@ -46,23 +49,28 @@ describe("explicit ticket lifecycle controls", () => {
   });
 });
 
-describe("bounded ticket discovery", () => {
-  it("sends server filters and page bounds rather than filtering one loaded page", async () => {
+describe("bounded orchestrator ticket discovery", () => {
+  it("isolates ownership, filter and page bounds in the query and request", async () => {
     const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response('{"tickets":[],"page":{}}', { status: 200 })));
     vi.stubGlobal("fetch", fetcher);
-    const query = queries.backlogTicketSummaries(30, 30, "project one", true, "planning_day");
-    if (typeof query.queryFn !== "function") throw new Error("Expected fetch function");
-    await query.queryFn({ signal: new AbortController().signal } as never);
-    expect(fetcher.mock.calls[0][0]).toBe("/api/tickets?detail=summary&limit=30&offset=30&project_id=project%20one&is_backlogged=true&worker_type=planning_day");
-    expect(queries.backlogTicketSummaries(0).queryKey).not.toEqual(query.queryKey);
-    const outside = queries.backlogTicketSummaries(0, 30, "", false);
-    if (typeof outside.queryFn !== "function") throw new Error("Expected fetch function");
-    await outside.queryFn({ signal: new AbortController().signal } as never);
-    expect(fetcher.mock.calls[1][0]).toContain("is_backlogged=false");
-    const retired = queries.backlogTicketSummaries(0, 30, "", null, "", true);
-    if (typeof retired.queryFn !== "function") throw new Error("Expected fetch function");
-    await retired.queryFn({ signal: new AbortController().signal } as never);
-    expect(fetcher.mock.calls[2][0]).toBe("/api/tickets?detail=summary&limit=30&offset=0&include_terminal=true&stage=cancelled");
-    expect(retired.queryKey).not.toEqual(queries.backlogTicketSummaries(0).queryKey);
+    try {
+      const chief = { kind: "chief", id: "chief" } as const;
+      const item = { kind: "sprint_item", id: "item one" } as const;
+      for (const [principal, filter, offset, suffix] of [
+        [chief, "active", 0, "&orchestrator_kind=chief"],
+        [item, "backlogged", 30, "&orchestrator_kind=sprint_item&orchestrator_id=item%20one&is_backlogged=true"],
+        [chief, "done", 0, "&orchestrator_kind=chief&include_terminal=true&stage=done"],
+        [chief, "retired", 0, "&orchestrator_kind=chief&include_terminal=true&stage=cancelled"]
+      ] as const) {
+        const query = queries.orchestratorTicketSummaries(principal, filter, offset);
+        if (typeof query.queryFn !== "function") throw new Error("Expected fetch function");
+        await query.queryFn({ signal: new AbortController().signal } as never);
+        expect(fetcher.mock.calls.at(-1)?.[0]).toBe(`/api/tickets?detail=summary&limit=30&offset=${offset}${suffix}`);
+      }
+      const key = queries.orchestratorTicketSummaries(chief, "active", 0).queryKey;
+      for (const query of [queries.orchestratorTicketSummaries(item, "active", 0), queries.orchestratorTicketSummaries(chief, "backlogged", 0), queries.orchestratorTicketSummaries(chief, "active", 30), queries.orchestratorTicketSummaries(chief, "active", 0, 15)]) {
+        expect(query.queryKey).not.toEqual(key);
+      }
+    } finally { vi.unstubAllGlobals(); }
   });
 });

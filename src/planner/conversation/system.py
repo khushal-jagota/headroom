@@ -134,6 +134,7 @@ from planner.conversation.storage import (
     ConversationStore,
     StoredConversationEvent,
 )
+from planner.core import change_signal
 from planner.core.contracts import Principal, PrincipalKind
 
 LOGGER = logging.getLogger("planner.conversation")
@@ -372,6 +373,28 @@ class SqliteProcessConversationSystem:
         self._idle_child_janitor: asyncio.Task[None] | None = None
 
     # --- the contract -------------------------------------------------------------------
+
+    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            operation()
+            return True
+        if state.lock.locked():
+            return False
+        async with state.lock:
+            if (
+                state.phase is not _ConversationPhase.idle
+                or state.reserved_turn is not None
+                or state.running_turn is not None
+                or state.held_prompts
+                or state.admitted_sender_messages
+                or state.sender_messages_being_delivered
+                or state.steer_settlements
+                or any(not task.done() for task in state.settlement_tasks)
+            ):
+                return False
+            operation()
+            return True
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation. Writing its row is the first thing that happens.
@@ -2273,6 +2296,10 @@ class SqliteProcessConversationSystem:
                     automatic_notice=reservation.automatic_notice,
                 )
                 self._set_phase(state, _ConversationPhase.running)
+                # The prompt commit can announce before this process-owned state is
+                # visible. Publish again after the runtime transition, so a reader of
+                # that earlier announcement cannot keep an idle answer indefinitely.
+                change_signal.emit()
                 return True
             finally:
                 if state.phase is not _ConversationPhase.starting:
@@ -2711,6 +2738,9 @@ class SqliteProcessConversationSystem:
                     state.record.latest_agent_activity_sequence
                 ),
             )
+        # The ending commit precedes clearing the live turn. Announce the runtime
+        # transition only after its state and committed record agree.
+        change_signal.emit()
         return ended
 
     # --- the child ----------------------------------------------------------------------
