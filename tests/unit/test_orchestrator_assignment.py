@@ -47,7 +47,7 @@ def _ticket(
         worker_type=worker_type,
         sprint_item_id=sprint_item_id,
         stated_holder=stated_holder,
-        kickoff_note="An agreed brief.",
+        brief="An agreed brief.",
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,

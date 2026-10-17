@@ -59,7 +59,7 @@ def _item_and_ticket(conn: Connection, clock: FakeClock) -> tuple[str, str]:
         now=clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         sprint_item_id=item.id,
         stated_ceiling="needs_success_condition",
     )
@@ -110,7 +110,7 @@ def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
             now=2,
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="coding",
-            kickoff_note="Start",
+            brief="Start",
             stated_ceiling="needs_success_condition",
         ).id
     tmp_db.execute(
@@ -138,7 +138,7 @@ def test_owner_held_and_unattached_failures_create_no_agent_notice(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     _current_ticket_conversation(tmp_db, ticket.id, "conv-owner")
@@ -190,7 +190,7 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     ).id
     if target_kind == "ticket":
@@ -201,7 +201,7 @@ def test_failure_notices_use_the_chief_and_ticket_conversation_doors(
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="coding",
-            kickoff_note="Start",
+            brief="Start",
             stated_ceiling="needs_success_condition",
         ).id
     assert target_id is not None
@@ -247,7 +247,7 @@ def test_deleted_ticket_recipient_closes_its_undeliverable_notice(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     target = tickets_data.create_ticket(
@@ -257,7 +257,7 @@ def test_deleted_ticket_recipient_closes_its_undeliverable_notice(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     wake_data.create_turn_failure_wake(
@@ -302,7 +302,7 @@ def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     target = tickets_data.create_ticket(
@@ -312,7 +312,7 @@ def test_ticket_reset_between_resolution_and_link_lock_uses_the_new_door(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     _current_ticket_conversation(tmp_db, target.id, "conv-before-reset")
@@ -366,7 +366,7 @@ def test_busy_ticket_target_releases_batch_and_restart_recovery_is_target_agnost
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     target = tickets_data.create_ticket(
@@ -376,7 +376,7 @@ def test_busy_ticket_target_releases_batch_and_restart_recovery_is_target_agnost
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     _current_ticket_conversation(tmp_db, target.id, "conv-busy-ticket")
@@ -512,7 +512,7 @@ def test_owner_routed_proposal_does_not_create_a_manager_wake(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     tickets_data.file_current_proposal(
@@ -535,7 +535,7 @@ def test_selected_auto_accept_route_controls_persistence(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     monkeypatch.setattr(
@@ -597,7 +597,7 @@ def test_selected_item_manager_route_readdresses_before_persistence(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         sprint_item_id=item.id,
         stated_ceiling="needs_success_condition",
     )
@@ -693,7 +693,7 @@ def test_readdressing_to_any_item_creates_a_manager_wake(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         stated_ceiling="needs_success_condition",
     )
     tickets_data.file_current_proposal(
@@ -771,7 +771,7 @@ def test_manager_routed_kickoff_proposal_creates_its_wake_with_ticket(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Review this kickoff",
+        brief="Review this kickoff",
         sprint_item_id=item.id,
         stated_ceiling="needs_brief",
     )
@@ -802,7 +802,7 @@ def test_selected_kickoff_route_controls_the_created_ticket_destination(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Review this kickoff",
+        brief="Review this kickoff",
         sprint_item_id=item.id,
         stated_ceiling="needs_brief",
     )
@@ -1076,7 +1076,7 @@ def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batc
         now=6,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Start",
+        brief="Start",
         sprint_item_id=item_id,
         stated_ceiling="needs_success_condition",
     )
@@ -1328,7 +1328,7 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
         ticket = tickets_data.create_ticket(
             tmp_db, title="Chief kickoff review", principal=OWNER_PRINCIPAL,
             now=10, title_max_chars=TITLE_MAX_CHARS, worker_type="coding",
-            kickoff_note="Chief must see this canonical proposal", sprint_item_id=item_id,
+            brief="Chief must see this canonical proposal", sprint_item_id=item_id,
             stated_holder=CHIEF_PRINCIPAL,
         )
         ticket_id = ticket.id

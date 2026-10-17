@@ -88,7 +88,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
                 "title": title,
                 "worker_type": "coding",
                 "orchestrator": {"kind": "sprint_item", "id": item["id"]},
-                "kickoff_note": "The brief is agreed.",
+                "brief": "The brief is agreed.",
             },
         )
         api.direct_post(
@@ -116,7 +116,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             "title": "User-owned Feedback",
             "worker_type": "initiative_review",
             "orchestrator": {"kind": "sprint_item", "id": item["id"]},
-            "kickoff_note": "Review is ready.",
+            "brief": "Review is ready.",
         },
     )
     with sqlite3.connect(server.db_path) as conn:

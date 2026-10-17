@@ -464,7 +464,7 @@ def _load_ticket_for_write(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
 
 
 def _seed_kickoff(
-    kickoff_note: str | None,
+    brief: str | None,
     principal: Principal,
     now: int,
     *,
@@ -482,21 +482,21 @@ def _seed_kickoff(
     if not worker_type_definition.has_field(BRIEF_FIELD_ID):
         return stage, {}, None
     # A Ticket created without a Brief leaves the worker-owned Kickoff ready to start. The
-    # HTTP door defaults an absent kickoff_note to "", and a form leaves "" behind when its
+    # HTTP door defaults an absent brief to "", and a form leaves "" behind when its
     # field is untouched, so a blank Brief is the ordinary way to say nothing was written —
     # not a Brief whose text happens to be empty. Diverting it here is what stops an empty
     # proposal parking for a decision with nothing in it.
-    if kickoff_note is None or not kickoff_note.strip():
+    if brief is None or not brief.strip():
         return stage, {}, None
     # A stated ceiling past kickoff settles the kickoff on the spot: below the ceiling a
     # worker-owned Stage writes its field and moves on, and creation is that write.
     target = worker_type_definition.advance_target(stage) if settle else None
     if target is not None:
-        return target, {BRIEF_FIELD_ID: kickoff_note}, None
+        return target, {BRIEF_FIELD_ID: brief}, None
     return (
         stage,
         {},
-        PendingTicketProposal(BRIEF_FIELD_ID, kickoff_note, principal_legacy_actor(principal), now),
+        PendingTicketProposal(BRIEF_FIELD_ID, brief, principal_legacy_actor(principal), now),
     )
 
 
@@ -905,7 +905,7 @@ def create_ticket(
     principal: Principal,
     now: int,
     title_max_chars: int,
-    kickoff_note: str | None = "",
+    brief: str | None = "",
     project_id: str | None = None,
     sprint_id: str | None = None,
     priority: Priority | None = None,
@@ -985,7 +985,7 @@ def create_ticket(
         )
         routed_holder = proposal_routing.parked_destination(initial_proposal_route)
         stage, initial_values, initial_proposal = _seed_kickoff(
-            kickoff_note,
+            brief,
             principal,
             now,
             stage=initial_stage,

@@ -100,9 +100,7 @@ def test_retire_route_is_absent_and_preserves_records(tmp_path: Path, stage: str
                 json={
                     "worker_type": "coding",
                     "title": "Preserved record",
-                    "kickoff_note": "Agreed brief",
-                    "stage": "cancelled",
-                    "field_values": {"retirement": "Untrusted creation value"},
+                    "brief": "Agreed brief",
                 },
             ).json()
             tid = ticket["id"]

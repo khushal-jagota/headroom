@@ -51,7 +51,7 @@ def _create_ticket(
     body: dict[str, Any] = {
         "worker_type": "coding",
         "title": title,
-        "kickoff_note": "Agreed brief.",
+        "brief": "Agreed brief.",
     }
     if sprint_item_id is not None:
         body["orchestrator"] = {"kind": "sprint_item", "id": sprint_item_id}

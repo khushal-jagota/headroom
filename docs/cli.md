@@ -73,15 +73,20 @@ panels ticket create --input-json - <<'JSON'
   "worker_type": "coding",
   "project_id": "project_panels",
   "orchestrator": {"kind": "chief", "id": "chief"},
-  "kickoff_note": "Faithful intake context"
+  "brief": "Faithful intake context"
 }
 JSON
 ```
 
 `title` and `worker_type` are required. Existing optional keys cover launch overrides,
-priority, deadline, canonical placement IDs, blockers, kickoff, ceiling, and ceiling
+priority, deadline, canonical placement IDs, blockers, Brief, ceiling, and ceiling
 holder. Hidden legacy flags remain callable during migration. A call cannot mix those
 flags with `--input-json`.
+
+Create rejects unknown JSON keys before it creates anything. The validation error
+identifies the offending key. Use `brief` for the Brief text. The old `kickoff_note`
+JSON key and unsupported launch options such as `employee_launch_reasoning_effort`
+produce an error. Hidden legacy `--kickoff-note` flags send the text as `brief`.
 
 `ticket edit` sends one JSON object to the existing Ticket PATCH route. One request can
 change one or more fields that the route already accepts.

@@ -53,7 +53,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
             "title": "Restore the compact approval card",
             "worker_type": "coding",
             "project_id": project["id"],
-            "kickoff_note": "The brief is agreed.",
+            "brief": "The brief is agreed.",
             "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )

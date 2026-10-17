@@ -55,7 +55,7 @@ def _create(conn: Connection, now: int) -> str:
         principal=OWNER_PRINCIPAL,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note="Agreed brief.",
+        brief="Agreed brief.",
     ).id
 
 

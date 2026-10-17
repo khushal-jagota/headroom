@@ -88,7 +88,7 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
         json={
             "worker_type": "coding",
             "title": "Supervisor review",
-            "kickoff_note": "Start here.",
+            "brief": "Start here.",
             "orchestrator": {"kind": "sprint_item", "id": item_id},
             "ceiling": "needs_success_condition",
         },
@@ -226,7 +226,7 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
             json={
                 "worker_type": "coding",
                 "title": "Current child",
-                "kickoff_note": "Start.",
+                "brief": "Start.",
                 "orchestrator": {"kind": "sprint_item", "id": item["id"]},
             },
         ).json()
@@ -281,7 +281,7 @@ def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path)
             json={
                 "worker_type": "coding",
                 "title": "Current child",
-                "kickoff_note": "Start.",
+                "brief": "Start.",
                 "orchestrator": {"kind": "sprint_item", "id": own["id"]},
             },
         ).json()
@@ -486,7 +486,7 @@ def test_restart_rearms_only_the_legacy_idle_revision_shape(tmp_path: Path) -> N
                 conn,
                 worker_type="coding",
                 title=title,
-                kickoff_note="Start here.",
+                brief="Start here.",
                 principal=OWNER_PRINCIPAL,
                 now=1,
                 title_max_chars=200,
@@ -574,7 +574,7 @@ def test_legacy_recovery_does_not_trust_stale_running_bookkeeping(tmp_path: Path
             conn,
             worker_type="coding",
             title="Stale running revision",
-            kickoff_note="Start here.",
+            brief="Start here.",
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
@@ -659,7 +659,7 @@ def test_legacy_recovery_refuses_a_launch_override_before_mutation(tmp_path: Pat
             conn,
             worker_type="coding",
             title="Legacy override refusal",
-            kickoff_note="Start here.",
+            brief="Start here.",
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
@@ -870,7 +870,7 @@ def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the I
         json={
             "worker_type": "coding",
             "title": title,
-            "kickoff_note": "Do the work.",
+            "brief": "Do the work.",
             "orchestrator": {"kind": "sprint_item", "id": item_id},
         },
     )
@@ -932,7 +932,7 @@ def _stranded_child(
         json={
             "worker_type": worker_type,
             "title": "Stranded child",
-            "kickoff_note": "Start here.",
+            "brief": "Start here.",
             "orchestrator": {"kind": "sprint_item", "id": item_id},
         },
     ).json()
@@ -1050,7 +1050,7 @@ def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
             json={
                 "worker_type": "coding",
                 "title": "Child",
-                "kickoff_note": "Start.",
+                "brief": "Start.",
                 "orchestrator": {"kind": "sprint_item", "id": own["id"]},
             },
         ).json()
@@ -1087,13 +1087,13 @@ def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -
             json={
                 "worker_type": "coding",
                 "title": "Mine",
-                "kickoff_note": "Start.",
+                "brief": "Start.",
                 "orchestrator": {"kind": "sprint_item", "id": own["id"]},
             },
         ).json()
         stranger = client.post(
             "/api/tickets",
-            json={"worker_type": "coding", "title": "Stranger", "kickoff_note": "Start."},
+            json={"worker_type": "coding", "title": "Stranger", "brief": "Start."},
         ).json()
         itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
         into_a_stranger = client.post(

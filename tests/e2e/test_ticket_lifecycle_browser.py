@@ -51,7 +51,7 @@ def test_ticket_backlog_resume_cancelled_history_and_settled_discovery(
         {
             "title": "Synthetic ticket with retained evidence",
             "worker_type": "coding",
-            "kickoff_note": "A synthetic brief for browser verification.",
+            "brief": "A synthetic brief for browser verification.",
             "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )

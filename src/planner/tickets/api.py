@@ -339,10 +339,13 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         raise PlannerError(
             ErrorCode.validation, "use orchestrator assignment instead of calendar placement"
         )
+    for key in raw:
+        if key not in CreateTicketBody.__annotations__:
+            raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
         title=body_str(raw, "title"),
-        kickoff_note=body_str(raw, "kickoff_note"),
+        brief=body_str(raw, "brief"),
         priority=body_opt_str(raw, "priority"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
@@ -491,7 +494,7 @@ async def create_ticket(
         principal=ctx.principal,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note=body["kickoff_note"],
+        brief=body["brief"],
         project_id=project.id if project is not None else None,
         priority=priority,
         deadline=body["deadline"],

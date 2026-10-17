@@ -46,7 +46,7 @@ def _probe_ticket(conn: sqlite3.Connection, stage: str) -> str:
         conn,
         worker_type="probe",
         title="A Ticket in flight",
-        kickoff_note="Kickoff",
+        brief="Kickoff",
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=200,
