@@ -14,6 +14,8 @@ from uuid import uuid4
 from pydantic import TypeAdapter
 
 from planner.conversation.backends.contracts import TurnToken
+from planner.conversation.events import UserInputAnswer, UserInputQuestion
+from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
@@ -22,6 +24,7 @@ from planner.executor.contracts import (
     AnswerActionTiming,
     AnswerApplication,
     AskEvidence,
+    AskKind,
     AskReachability,
     AskReference,
     AuthorizedAction,
@@ -304,7 +307,11 @@ class ExecutorStore:
     def publish_ask_in_transaction(
         connection: sqlite3.Connection, ask: AskReference, option_ids: tuple[str, ...], now_ms: int
     ) -> None:
-        if ask.turn.conversation_id != ask.child.conversation_id or not option_ids:
+        if (
+            ask.kind is not AskKind.permission
+            or ask.turn.conversation_id != ask.child.conversation_id
+            or not option_ids
+        ):
             raise _invalid("Ask identity or options are invalid")
         previous = connection.execute(
             "SELECT option_ids_json FROM executor_asks WHERE ask_key=?", (_ask_key(ask),)
@@ -404,11 +411,16 @@ class ExecutorStore:
             _parse(AskReference, row["reference_json"]),
             row["option_id"],
             row["accepted_at_vps_ms"],
+            TypeAdapter(tuple[UserInputAnswer, ...]).validate_json(row["user_input_answers_json"])
+            if row["user_input_answers_json"] is not None
+            else None,
         )
 
     def choose_answer(
         self, ask: AskReference, option_id: str, generation: int, now_ms: int
     ) -> DurableAnswer:
+        if ask.kind is not AskKind.permission:
+            raise _invalid("Permission selection requires a permission ask")
         with self._transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM executor_asks WHERE ask_key=?", (_ask_key(ask),)
@@ -765,3 +777,95 @@ class ExecutorStore:
                     "UPDATE executor_asks SET reachability=?,observed_at_ms=? WHERE ask_key=?",
                     (AskReachability.callback_gone.value, now_ms, row["ask_key"]),
                 )
+
+    def publish_user_input_request(
+        self, ask: AskReference, questions: tuple[UserInputQuestion, ...], now_ms: int
+    ) -> None:
+        with self._transaction() as connection:
+            self.publish_user_input_request_in_transaction(connection, ask, questions, now_ms)
+
+    @staticmethod
+    def publish_user_input_request_in_transaction(
+        connection: sqlite3.Connection,
+        ask: AskReference,
+        questions: tuple[UserInputQuestion, ...],
+        now_ms: int,
+    ) -> None:
+        question_ids = [question.question_id for question in questions]
+        if (
+            ask.kind is not AskKind.user_input
+            or ask.turn.conversation_id != ask.child.conversation_id
+            or not question_ids
+            or any(not question_id.strip() for question_id in question_ids)
+            or len(set(question_ids)) != len(question_ids)
+        ):
+            raise _invalid("User input identity or original questions are invalid")
+        original = _json([asdict(question) for question in questions])
+        row = connection.execute(
+            "SELECT questions_json FROM executor_asks WHERE ask_key=?", (_ask_key(ask),)
+        ).fetchone()
+        if row is not None:
+            if row[0] != original:
+                raise _invalid("User input questions conflict with original request")
+            return
+        connection.execute(
+            "INSERT INTO executor_asks "
+            "(ask_key,reference_json,option_ids_json,ask_kind,questions_json,executor_incarnation,"
+            "child_id,conversation_id,connection_generation,reachability,observed_at_ms) "
+            "VALUES (?,?,?,?,?,?,?, ?,0,?,?)",
+            (
+                _ask_key(ask),
+                _record(ask),
+                "[]",
+                AskKind.user_input.value,
+                original,
+                ask.child.executor_incarnation,
+                ask.child.child_id,
+                ask.child.conversation_id,
+                AskReachability.uncertain.value,
+                now_ms,
+            ),
+        )
+
+    def choose_user_input_answer(
+        self, ask: AskReference, answers: tuple[UserInputAnswer, ...], generation: int, now_ms: int
+    ) -> DurableAnswer:
+        if ask.kind is not AskKind.user_input:
+            raise _invalid("User input selection requires a question request")
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM executor_asks WHERE ask_key=?", (_ask_key(ask),)
+            ).fetchone()
+            if row is None:
+                raise _invalid("Unknown user input request")
+            questions = TypeAdapter(tuple[UserInputQuestion, ...]).validate_json(
+                row["questions_json"]
+            )
+            normalized = ordered_user_input_answers(questions, answers)
+            if normalized is None:
+                raise _invalid("User input requires a valid complete answer map")
+            answer_json = _json([asdict(answer) for answer in normalized])
+            if row["answer_id"] is not None:
+                if row["user_input_answers_json"] != answer_json:
+                    raise _invalid("User input choice is already recorded")
+                return self._answer(row)
+            current = connection.execute(
+                "SELECT * FROM executor_connections WHERE active=1"
+            ).fetchone()
+            if (
+                current is None
+                or current["connection_state"] != ConnectionState.ready.value
+                or current["executor_incarnation"] != ask.child.executor_incarnation
+                or current["connection_generation"] != generation
+                or row["connection_generation"] != generation
+                or row["reachability"] != AskReachability.reachable.value
+            ):
+                raise _invalid("Current callback reachability is unconfirmed")
+            answer = DurableAnswer(str(uuid4()), ask, None, now_ms, normalized)
+            connection.execute(
+                "UPDATE executor_asks SET answer_id=?,user_input_answers_json=?,"
+                "accepted_at_vps_ms=? "
+                "WHERE ask_key=?",
+                (answer.answer_id, answer_json, now_ms, _ask_key(ask)),
+            )
+            return answer

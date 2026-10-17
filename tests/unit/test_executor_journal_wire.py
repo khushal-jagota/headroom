@@ -8,10 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from planner.executor.configuration import PROTOCOL_VERSION
 from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,
     FileScope,
+    JsonObject,
     ReceiptDisposition,
     WireMessage,
     WireMessageKind,
@@ -136,7 +138,7 @@ def test_strict_identity_refuses_coercion_unknown_fields_and_short_sha() -> None
     from planner.executor.wire import parse_identity
 
     valid: dict[str, object] = {
-        "protocol_version": 1,
+        "protocol_version": PROTOCOL_VERSION,
         "spool_format_version": 1,
         "application_revision": "a" * 40,
         "executor_incarnation": str(uuid4()),
@@ -218,3 +220,65 @@ def test_oversized_envelope_never_becomes_a_queued_poison_entry(tmp_path: Path) 
     first = spool.mint_envelope(conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={})
     assert first.sequence == 1
     spool.close()
+
+
+def test_input_full_retry_discards_partial_quarantine_without_publishing_it(tmp_path: Path) -> None:
+    from planner.executor.files import IncomingFiles
+
+    source = tmp_path / "source"
+    source.mkdir()
+    contents = b"binary\x00\xff" * 60_000
+    (source / "file").write_bytes(contents)
+    snapshot = snapshot_file(
+        root=source, relative_path="file", scope=FileScope.conversation, owner_id="c_one"
+    )
+    receiver = IncomingFiles(tmp_path / "managed", tmp_path / "quarantine")
+    chunks = file_chunks(snapshot)
+    assert len(chunks) > 1
+    receiver.begin(snapshot.manifest)
+    receiver.chunk(chunks[0])
+    assert not (tmp_path / "managed" / "conversations" / "c_one" / "file").exists()
+    # The link drops. The same publication restarts at offset zero on reconnect.
+    receiver.begin(snapshot.manifest)
+    for chunk in chunks:
+        receiver.chunk(chunk)
+    target = receiver.complete(snapshot.manifest)
+    assert target.read_bytes() == contents
+
+
+def test_version_one_permission_spool_payload_reads_unchanged_under_new_protocol(
+    tmp_path: Path,
+) -> None:
+    from uuid import uuid4
+
+    from pydantic import TypeAdapter
+
+    from planner.executor.contracts import AnswerApplication, AskKind
+
+    spool = FilesystemSpool(tmp_path / "spool")
+    # Exact old payload shape: no AskReference.kind field, spool format stays 1.
+    payload: JsonObject = {
+        "answer_id": "legacy-answer",
+        "applied_at_mac_ms": 10,
+        "ask": {
+            "child": {
+                "executor_incarnation": str(uuid4()),
+                "child_id": str(uuid4()),
+                "conversation_id": "c_one",
+            },
+            "turn": {"conversation_id": "c_one", "turn_number": 1},
+            "ask_id": "ask",
+        },
+    }
+    row = spool.mint_envelope(
+        conversation_id="c_one", kind=EnvelopeKind.answer_application, payload=payload
+    )
+    entry = tmp_path / "spool" / "entries" / row.submission_id / "envelope.json"
+    before = entry.read_bytes()
+    spool.close()
+    reopened = FilesystemSpool(tmp_path / "spool")
+    assert reopened.pending() == (row,)
+    parsed = TypeAdapter(AnswerApplication).validate_python(reopened.pending()[0].payload)
+    assert parsed.ask.kind == AskKind.permission
+    assert entry.read_bytes() == before
+    reopened.close()

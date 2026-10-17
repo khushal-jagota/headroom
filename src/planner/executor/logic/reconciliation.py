@@ -2,6 +2,7 @@
 
 from planner.executor.contracts import (
     AnswerActionTiming,
+    AskKind,
     AskReachability,
     AskReference,
     AuthorizedAction,
@@ -17,7 +18,12 @@ def callback_reachability(
     child = next((entry for entry in children if entry.child == ask.child), None)
     if child is None:
         return AskReachability.child_gone
-    if child.active_turn == ask.turn and ask in child.pending_asks:
+    callback_exists = (
+        ask.ask_id in child.pending_user_input_ids
+        if ask.kind is AskKind.user_input
+        else ask in child.pending_asks
+    )
+    if child.active_turn == ask.turn and callback_exists:
         return AskReachability.reachable
     return AskReachability.callback_gone
 

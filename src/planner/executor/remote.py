@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -93,11 +94,19 @@ class RemoteBackendChild:
     async def start(
         self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
     ) -> None:
-        await self._call(
-            ChildOperation.start,
-            resolved_start=resolved_start,
-            vendor_session_cursor=vendor_session_cursor,
-        )
+        arguments: dict[str, Any] = {
+            "resolved_start": resolved_start,
+            "vendor_session_cursor": vendor_session_cursor,
+        }
+        try:
+            relative = resolved_start.workspace_folder.resolve().relative_to(Path.home().resolve())
+        except ValueError:
+            pass
+        else:
+            arguments["workspace_home_relative"] = (
+                "" if relative == Path(".") else relative.as_posix()
+            )
+        await self._call(ChildOperation.start, **arguments)
 
     async def write_prompt(
         self,

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-PROTOCOL_VERSION: Final = 1
+PROTOCOL_VERSION: Final = 2
 SPOOL_FORMAT_VERSION: Final = 1
 MAX_ENVELOPE_BYTES: Final = 1024 * 1024
 FILE_CHUNK_BYTES: Final = 256 * 1024
@@ -51,9 +51,13 @@ class ExecutorPaths:
 def executor_paths() -> ExecutorPaths:
     """Resolve paths without creating, reading, or migrating the spool."""
     configured = os.environ.get(EXECUTOR_ROOT_ENV, "").strip()
-    root = Path(configured).expanduser() if configured else (
-        Path.home() / "Library" / "Application Support" / "Panels" / "executor"
+    root = (
+        Path(configured).expanduser()
+        if configured
+        else (Path.home() / "Library" / "Application Support" / "Panels" / "executor")
     )
     return ExecutorPaths(root=root.resolve())
+
+
 EXECUTOR_CHILD_ID_ENV: Final = "PLAN_EXECUTOR_CHILD_ID"
 EXECUTOR_CAPABILITY_ENV: Final = "PLAN_EXECUTOR_CAPABILITY"

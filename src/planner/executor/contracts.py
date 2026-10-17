@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Protocol
 
 from planner.conversation.backends.contracts import TurnToken
+from planner.conversation.events import UserInputAnswer
 
 # Payloads carry existing domain types as JSON; operation-specific codecs validate
 # exact fields before dispatch. Credentials and arbitrary caller headers never travel.
@@ -67,11 +68,17 @@ class ChildReference:
     conversation_id: str
 
 
+class AskKind(StrEnum):
+    permission = "permission"
+    user_input = "user_input"
+
+
 @dataclass(frozen=True, slots=True)
 class AskReference:
     child: ChildReference
     turn: TurnToken
     ask_id: str
+    kind: AskKind = AskKind.permission
 
 
 class AskReachability(StrEnum):
@@ -97,8 +104,9 @@ class AskEvidence:
 class DurableAnswer:
     answer_id: str
     ask: AskReference
-    option_id: str
+    option_id: str | None
     accepted_at_vps_ms: int
+    user_input_answers: tuple[UserInputAnswer, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

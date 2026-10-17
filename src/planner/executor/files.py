@@ -135,8 +135,9 @@ class IncomingFiles:
             raise ValueError("conflicting input manifest")
         self.quarantine.mkdir(parents=True, exist_ok=True, mode=0o700)
         target = self.quarantine / manifest.publication_id
-        if previous is None:
-            target.write_bytes(b"")
+        # A repeated manifest begins a full retry from offset zero. The sender
+        # serializes transfers; partial bytes from an earlier link are not resumable.
+        target.write_bytes(b"")
         self._manifests[manifest.publication_id] = manifest
 
     def chunk(self, chunk: FileChunk) -> None:

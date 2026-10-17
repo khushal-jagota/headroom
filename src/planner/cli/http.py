@@ -228,4 +228,6 @@ def _executor_send(
         sys.exit(3)
     if response.error is not None:
         _fail_response(httpx.Response(400), {"error": response.error}, as_json)
+    if response.result is not None and "error" in response.result:
+        _fail_response(httpx.Response(400), response.result, as_json)
     return response.result

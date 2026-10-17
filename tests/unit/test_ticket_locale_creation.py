@@ -109,7 +109,13 @@ def test_inherited_project_resolves_before_locale(
 
 
 @pytest.mark.parametrize("locale", ["macos", "wrong", "", 12])
-def test_refused_creation_is_atomic(tmp_db: Connection, locale: object) -> None:
+def test_refused_creation_is_atomic(
+    tmp_db: Connection, locale: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # This case exercises unavailable compatibility, independent of proven defaults.
+    monkeypatch.setitem(
+        locale_configuration.LOCALE_SUPPORTED_BACKENDS, TicketLocale.macos, frozenset()
+    )
     before = tuple(tmp_db.iterdump())
     with pytest.raises(PlannerError) as error:
         data.create_ticket(
@@ -172,7 +178,9 @@ def test_locale_migration_preserves_entire_existing_rows(
     (tree / "versions").mkdir(parents=True)
     shutil.copy(original / "env.py", tree / "env.py")
     for path in (original / "versions").glob("*.py"):
-        if path.name not in {"ticket_locale.py", "scheduled_ticket_locale.py"}:
+        if path.name not in {
+            "ticket_locale.py", "scheduled_ticket_locale.py", "executor_authoritative_acceptance.py"
+        }:
             shutil.copy(path, tree / "versions" / path.name)
     conn = db.connect(str(tmp_path / "old.db"))
     monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", tree)

@@ -40,6 +40,7 @@ from planner.conversation.events import (
     AutomaticCompactionResult,
     ConversationEventKind,
     ConversationEventPayload,
+    ExplicitReplyMissingEventPayload,
     MessageToOwnerEventPayload,
     ModelChangedEventPayload,
     PromptDeliveryRefusedEventPayload,
@@ -273,6 +274,7 @@ class ConversationStore:
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
         owner_read_through_sequence: int | None = None,
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
         return await self._write(
@@ -282,6 +284,7 @@ class ConversationStore:
             agent_activity,
             automatic_compaction_confirmed,
             owner_read_through_sequence,
+            executor_turn,
         )
 
     async def mark_held_sender_messages_leaving_queue(
@@ -360,6 +363,7 @@ class ConversationStore:
         automatic_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool = False,
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Atomically append silence markers followed by their turn ending."""
         return await self._write(
@@ -370,6 +374,7 @@ class ConversationStore:
             automatic_compaction_confirmed,
             automatic_compaction_result,
             create_failure_notice,
+            executor_turn,
         )
 
     async def advance_owner_read_through_sequence(
@@ -664,6 +669,7 @@ class ConversationStore:
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
         owner_read_through_sequence: int | None,
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> StoredConversationEvent:
         conn = self._connect()
         try:
@@ -701,6 +707,8 @@ class ConversationStore:
                 occurred_at=stored.created_at,
             )
             capture_conversation_attention(conn, conversation_id, stored.created_at, result)
+            if executor_turn is not None:
+                self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
             _commit_appended_rows(conn, (payload,))
         except BaseException:
             if conn.in_transaction:
@@ -800,6 +808,7 @@ class ConversationStore:
         automatic_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool,
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         conn = self._connect()
         try:
@@ -845,6 +854,21 @@ class ConversationStore:
                 occurred_at=ended.created_at,
             )
             capture_conversation_attention(conn, conversation_id, ended.created_at, result)
+            if executor_turn is not None:
+                self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
+                child = json.loads(executor_turn[0])
+                turn = json.loads(executor_turn[1])
+                conn.execute(
+                    "UPDATE executor_asks SET reachability='callback_gone' "
+                    "WHERE conversation_id=? AND child_id=? AND executor_incarnation=? "
+                    "AND json_extract(reference_json,'$.turn.turn_number')=?",
+                    (
+                        conversation_id,
+                        child["child_id"],
+                        child["executor_incarnation"],
+                        turn["turn_number"],
+                    ),
+                )
             _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
@@ -897,6 +921,22 @@ class ConversationStore:
         together is numbered consecutively with no gap for anyone else to write into: the
         transaction is immediate, so a second writer is waiting for this one's lock.
         """
+        # Another destination can commit actual reply credit while this source
+        # prepared its ending. Canonical credit wins over a stale RAM snapshot.
+        if any(isinstance(payload, ExplicitReplyMissingEventPayload) for payload in payloads):
+            runtime = conn.execute(
+                "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            if runtime is not None:
+                recipients = json.loads(runtime[0])["explicit_reply_recipients"]
+                payloads = tuple(
+                    payload
+                    for payload in payloads
+                    if not isinstance(payload, ExplicitReplyMissingEventPayload)
+                    or {"kind": payload.prompt_sender.kind.value, "id": payload.prompt_sender.id}
+                    not in recipients
+                )
         created_at = self._integer_now()
         row = conn.execute(
             "SELECT latest_sequence FROM conversations WHERE conversation_id = ?",
@@ -919,6 +959,12 @@ class ConversationStore:
                     created_at,
                 ),
             )
+            from planner.executor.native_messages import record_native_message_event_in_transaction
+
+            record_native_message_event_in_transaction(conn, conversation_id, payload)
+            from planner.executor.native_messages import consume_native_held_prompt_in_transaction
+
+            consume_native_held_prompt_in_transaction(conn, conversation_id, payload)
             written.append(
                 StoredConversationEvent(
                     conversation_id=conversation_id,
@@ -1151,6 +1197,23 @@ class ConversationStore:
     def save_executor_turn_in_transaction(
         conn: sqlite3.Connection, conversation_id: str, metadata: tuple[str, str, str]
     ) -> None:
+        previous = conn.execute(
+            "SELECT child_json,turn_json,runtime_json FROM executor_core_turns "
+            "WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
+        if (
+            previous is not None
+            and json.loads(previous[0]) == json.loads(metadata[0])
+            and json.loads(previous[1]) == json.loads(metadata[1])
+        ):
+            current = json.loads(metadata[2])
+            committed = json.loads(previous[2])
+            recipients = current["explicit_reply_recipients"]
+            for recipient in committed["explicit_reply_recipients"]:
+                if recipient not in recipients:
+                    recipients.append(recipient)
+            metadata = (metadata[0], metadata[1], json.dumps(current))
         conn.execute(
             "INSERT INTO "
             "executor_core_turns(conversation_id,child_json,turn_json,runtime_json) "
@@ -1158,6 +1221,159 @@ class ConversationStore:
             "child_json=excluded.child_json,turn_json=excluded.turn_json,runtime_json=excluded.runtime_json",
             (conversation_id, *metadata),
         )
+
+    @staticmethod
+    def credit_executor_reply_in_transaction(
+        conn: sqlite3.Connection, turn: Any, recipient: Principal
+    ) -> None:
+        row = conn.execute(
+            "SELECT turn_json,runtime_json FROM executor_core_turns WHERE conversation_id=?",
+            (turn.conversation_id,),
+        ).fetchone()
+        if row is None:
+            return
+        token = json.loads(str(row[0]))
+        if (
+            token.get("turn_number") != turn.turn_number
+            or token.get("conversation_id") != turn.conversation_id
+        ):
+            return
+        runtime = json.loads(str(row[1]))
+        principal = {"kind": recipient.kind.value, "id": recipient.id}
+        recipients = runtime["explicit_reply_recipients"]
+        if principal not in recipients:
+            recipients.append(principal)
+            conn.execute(
+                "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                (json.dumps(runtime), turn.conversation_id),
+            )
+
+    async def save_executor_turn(
+        self, conversation_id: str, metadata: tuple[str, str, str]
+    ) -> None:
+        def write() -> None:
+            conn = self._connect()
+            try:
+                with conn:
+                    self.save_executor_turn_in_transaction(conn, conversation_id, metadata)
+            finally:
+                conn.close()
+
+        await self._write(write)
+
+    async def executor_held_targets(self) -> tuple[str, ...]:
+        def read() -> tuple[str, ...]:
+            conn = self._connect()
+            try:
+                return tuple(
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT DISTINCT held_target_conversation_id FROM executor_native_messages "
+                        "WHERE held_state IN ('pending','dispatching') "
+                        "ORDER BY held_target_conversation_id"
+                    )
+                )
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(read)
+
+    async def read_executor_held_prompts(self, conversation_id: str) -> tuple[tuple[str, str], ...]:
+        def read() -> tuple[tuple[str, str], ...]:
+            conn = self._connect()
+            try:
+                return tuple(
+                    (str(row[0]), str(row[1]))
+                    for row in conn.execute(
+                        "SELECT held_prompt_json,held_state FROM executor_native_messages WHERE "
+                        "held_target_conversation_id=? AND held_state IN "
+                        "('pending','dispatching') ORDER BY held_admission_order",
+                        (conversation_id,),
+                    )
+                )
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(read)
+
+    async def mark_executor_held_dispatching(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> bool:
+        return await self._write(
+            self._mark_executor_held_dispatching_sync, conversation_id, sender_message_ids
+        )
+
+    def _mark_executor_held_dispatching_sync(
+        self, conversation_id: str, sender_message_ids: tuple[str, ...]
+    ) -> bool:
+        changed = False
+        conn = self._connect()
+        try:
+            with conn:
+                for sender_id in sender_message_ids:
+                    if conn.execute(
+                        "SELECT 1 FROM executor_native_messages WHERE "
+                        "held_target_conversation_id=? AND submission_id=? "
+                        "AND held_state='pending'",
+                        (conversation_id, sender_id),
+                    ).fetchone() is None:
+                        continue
+                    cursor = conn.execute(
+                        "UPDATE executor_native_messages SET held_state='dispatching' WHERE "
+                        "held_target_conversation_id=? AND submission_id=? "
+                        "AND held_state='pending'",
+                        (conversation_id, sender_id),
+                    )
+                    changed = changed or cursor.rowcount > 0
+            return changed
+        finally:
+            conn.close()
+
+    def requeue_executor_held_prompt(self, conversation_id: str, held: object) -> None:
+        """Persist a known non-delivery before its replacement enters the held line."""
+        from planner.executor.codec import encode_value
+
+        encoded = encode_value(held)
+        assert isinstance(encoded, dict)
+        conn = self._connect()
+        try:
+            with conn:
+                rows = conn.execute(
+                    "SELECT * FROM executor_native_messages WHERE "
+                    "held_target_conversation_id=? AND submission_id=? "
+                    "AND held_state='dispatching'",
+                    (conversation_id, encoded.get("sender_message_id")),
+                ).fetchall()
+                for row in rows:
+                    original = json.loads(row["held_prompt_json"])
+                    if any(
+                        original[key] != encoded[key]
+                        for key in (
+                            "content",
+                            "sender_label",
+                            "sender",
+                            "recipient",
+                        )
+                    ):
+                        raise ValueError("requeued held identity or bytes changed")
+                    order = conn.execute(
+                        "SELECT COALESCE(MAX(held_admission_order),0)+1 FROM "
+                        "executor_native_messages WHERE held_target_conversation_id=?",
+                        (conversation_id,),
+                    ).fetchone()[0]
+                    conn.execute(
+                        "UPDATE executor_native_messages SET held_prompt_json=?,"
+                        "held_admission_order=?,held_state='pending' WHERE "
+                        "sender_id=? AND submission_id=?",
+                        (
+                            json.dumps(encoded, sort_keys=True, separators=(",", ":")),
+                            order,
+                            row["sender_id"],
+                            row["submission_id"],
+                        ),
+                    )
+        finally:
+            conn.close()
 
     async def read_executor_turn(self, conversation_id: str) -> tuple[str, str, str] | None:
         def read() -> tuple[str, str, str] | None:

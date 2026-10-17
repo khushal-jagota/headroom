@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import stat
 from pathlib import Path
 from uuid import UUID
 
@@ -28,7 +29,8 @@ def check_spool_compatibility(root: Path, expected_format: int) -> None:
     permission failures). Consumers must refuse on both ValueError and OSError;
     neither exception is a compatible/empty result. Malformed metadata raises ValueError.
     """
-    if root.is_symlink() or (root.exists() and not root.is_dir()):
+    root_mode = _mode_if_present(root)
+    if root_mode is not None and not stat.S_ISDIR(root_mode):
         raise ValueError("executor root is not a regular directory")
     _check_spool_directory(root / "spool", expected_format)
 
@@ -39,15 +41,17 @@ def _check_spool_directory(spool: Path, expected_format: int) -> None:
         raise ValueError("expected spool format must be a positive integer")
     if expected_format != SPOOL_FORMAT_VERSION:
         raise ValueError("expected spool format is unsupported by this reader")
-    if spool.is_symlink() or (spool.exists() and not spool.is_dir()):
-        raise ValueError("unknown existing spool path")
-    if not spool.exists():
+    spool_mode = _mode_if_present(spool)
+    if spool_mode is None:
         return
+    if not stat.S_ISDIR(spool_mode):
+        raise ValueError("unknown existing spool path")
     paths = tuple(spool.iterdir())
     if not paths:
         return
     metadata = spool / "metadata.json"
-    if metadata.is_symlink() or not metadata.is_file():
+    metadata_mode = _mode_if_present(metadata)
+    if metadata_mode is None or not stat.S_ISREG(metadata_mode):
         raise ValueError("unknown spool: versioned metadata is missing")
     try:
         data = json.loads(metadata.read_bytes())
@@ -86,25 +90,36 @@ def _check_spool_directory(spool: Path, expected_format: int) -> None:
         ):
             raise ValueError("corrupt spool submission identity")
     for path in paths:
-        if path.is_symlink():
+        path_mode = path.lstat().st_mode
+        if stat.S_ISLNK(path_mode):
             raise ValueError("unknown symlink in spool")
         if path.name in ("metadata.json", "lock"):
-            if not path.is_file():
+            if not stat.S_ISREG(path_mode):
                 raise ValueError("unknown spool metadata path")
         elif path.name == "entries":
-            if not path.is_dir():
+            if not stat.S_ISDIR(path_mode):
                 raise ValueError("unknown spool entries path")
             _check_entries(path, sender)
         elif path.name.startswith(".metadata-"):
-            if not path.is_file():
+            if not stat.S_ISREG(path_mode):
                 raise ValueError("unknown interrupted metadata path")
         elif path.name.startswith((".incomplete-", ".acknowledged-")):
-            if not path.is_dir():
+            if not stat.S_ISDIR(path_mode):
                 raise ValueError("unknown interrupted journal path")
         else:
             raise ValueError("unknown existing spool content")
-    if not (spool / "entries").is_dir():
+    entries_mode = _mode_if_present(spool / "entries")
+    if entries_mode is None or not stat.S_ISDIR(entries_mode):
         raise ValueError("corrupt spool: entries directory missing")
+
+
+def _mode_if_present(path: Path) -> int | None:
+    # Path.exists/is_dir/is_file suppress all OSError on newer Python releases.
+    # Only an actual absent path is a successful empty-state observation here.
+    try:
+        return path.lstat().st_mode
+    except FileNotFoundError:
+        return None
 
 
 def _safe_id(value: object) -> bool:
@@ -113,10 +128,10 @@ def _safe_id(value: object) -> bool:
 
 def _check_entries(entries: Path, sender: str) -> None:
     for entry in entries.iterdir():
-        if entry.is_symlink() or not entry.is_dir() or not _safe_id(entry.name):
+        if not stat.S_ISDIR(entry.lstat().st_mode) or not _safe_id(entry.name):
             raise ValueError("unknown published spool entry")
         metadata = entry / "envelope.json"
-        if metadata.is_symlink() or not metadata.is_file():
+        if not stat.S_ISREG(metadata.lstat().st_mode):
             raise ValueError("corrupt published spool entry")
         try:
             envelope = TypeAdapter(QueuedEnvelope).validate_json(metadata.read_bytes(), strict=True)
@@ -130,5 +145,5 @@ def _check_entries(entries: Path, sender: str) -> None:
         if {path.name for path in entry.iterdir()} != names:
             raise ValueError("unknown published entry content")
         for path in entry.iterdir():
-            if path.is_symlink() or not path.is_file():
+            if not stat.S_ISREG(path.lstat().st_mode):
                 raise ValueError("unknown published entry path")

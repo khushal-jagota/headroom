@@ -1220,6 +1220,7 @@ def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
                 "sender": None,
                 "recipient": None,
                 "queue_reason": "requested",
+                "delivery_uncertain": False,
             }
 
             promoted = await client.post(
