@@ -1833,12 +1833,9 @@ def edit_ticket(
         updated = _load_ticket_for_write(conn, ticket_id)
         if proposal_readdressed:
             assert proposal_revision is not None
-            route = proposal_routing.route_proposal(
-                stage=updated.stage,
-                ceiling=updated.ceiling,
-                holder=updated.ceiling_holder,
-                worker_type_definition=worker_type_definition,
-            )
+            # A parked proposal remains pending even when it predates the current
+            # ceiling policy. Changing its reviewer must still deliver a notice.
+            route = proposal_routing.route_to_holder(updated.ceiling_holder)
             wake_target = _proposal_wake_target(conn, route)
             if wake_target is not None and updated.pending_proposal is not None:
                 manager_wakes_data.create_proposal_wake(
