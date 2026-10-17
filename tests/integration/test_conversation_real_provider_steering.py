@@ -566,7 +566,13 @@ def _prepare_isolated_provider_home(
     if backend_key is ConversationBackendKey.hermes:
         source = _required_template(HERMES_HOME_TEMPLATE_ENVIRONMENT_NAME)
         destination = runtime_root / "hermes-home"
-        shutil.copytree(source, destination)
+        destination.mkdir()
+        # Isolate configuration, but keep rotating auth in the canonical source home.
+        for name in ("config.yaml", ".env"):
+            if (source / name).exists():
+                shutil.copy2(source / name, destination / name)
+        if (source / "auth.json").exists():
+            (destination / "auth.json").symlink_to(source / "auth.json")
         monkeypatch.setenv("PLAN_HERMES_HOME", str(destination))
         return
     if backend_key is ConversationBackendKey.codex:
@@ -578,10 +584,12 @@ def _prepare_isolated_provider_home(
     source = _required_template(CLAUDE_CONFIG_TEMPLATE_ENVIRONMENT_NAME)
     destination = runtime_root / "claude-config"
     destination.mkdir()
-    for name in (".credentials.json", "settings.json"):
-        candidate = source / name
-        if candidate.exists():
-            shutil.copy2(candidate, destination / name)
+    if (source / "settings.json").exists():
+        shutil.copy2(source / "settings.json", destination / "settings.json")
+    # Keep rotating credentials in the canonical home. A symlink follows atomic
+    # replacement there, while a copy or hardlink keeps the old credential.
+    if (source / ".credentials.json").exists():
+        (destination / ".credentials.json").symlink_to(source / ".credentials.json")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(destination))
 
 
