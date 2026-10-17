@@ -8,13 +8,13 @@ describe("exact conversation signal marks", () => {
     { working: true, message_for_owner: false },
     { working: false, message_for_owner: true },
     { working: true, message_for_owner: true }
-  ])("renders the independent facts %j", (signal) => {
+  ])("shows one mark with message precedence %j", (signal) => {
     const html = render(ConversationSignalMark, {
       props: { signal, conversationId: "conversation-exact" }
     }).body;
-    expect(html.includes('data-conversation-signal="working"')).toBe(signal.working);
+    expect(html.includes('data-conversation-signal="working"')).toBe(signal.working && !signal.message_for_owner);
     expect(html.includes('data-conversation-signal="message"')).toBe(signal.message_for_owner);
-    expect(html.includes('stage-mark--current-running')).toBe(signal.working);
+    expect(html.includes('stage-mark--current-running')).toBe(signal.working && !signal.message_for_owner);
     expect(html.includes('stage-mark--current-awaiting-approval')).toBe(signal.message_for_owner);
     if (signal.working || signal.message_for_owner) {
       expect(html).toContain('data-conversation-id="conversation-exact"');
@@ -36,7 +36,7 @@ describe("shared conversation signal consumers", () => {
     { working: true, message_for_owner: false },
     { working: false, message_for_owner: true },
     { working: true, message_for_owner: true }
-  ])("keeps both canonical marks in Worker and supervisor rows: %j", (signal) => {
+  ])("uses message precedence in Worker and supervisor rows: %j", (signal) => {
     const worker = render(SprintTicketRow, { props: {
       priority: null, title: "Worker", signal, conversationId: "worker-exact"
     } }).body;
@@ -46,7 +46,7 @@ describe("shared conversation signal consumers", () => {
       onTicket: () => {}, onSettle: () => {}, onHover: () => {}, onWorkerHover: () => {}, onLeave: () => {}
     } }).body;
     for (const html of [worker, supervisor]) {
-      expect(html.includes('data-conversation-signal="working"')).toBe(signal.working);
+      expect(html.includes('data-conversation-signal="working"')).toBe(signal.working && !signal.message_for_owner);
       expect(html.includes('data-conversation-signal="message"')).toBe(signal.message_for_owner);
     }
   });
@@ -63,7 +63,7 @@ describe("shared conversation signal consumers", () => {
       onHover: () => {}, onWorkerHover: () => {}, onLeave: () => {}
     } }).body;
     expect(html).toContain('data-conversation-id="child-exact"');
-    expect(html.match(/data-conversation-signal="working"/g)).toHaveLength(1);
+    expect(html).not.toContain('data-conversation-signal="working"');
     expect(html.match(/data-conversation-signal="message"/g)).toHaveLength(1);
   });
 });
