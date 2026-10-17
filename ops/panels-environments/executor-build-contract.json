@@ -1,5 +1,5 @@
 {
-  "source_revision": "95af473d2250d8136f2e298b528b7c2c6a9bef35",
+  "source_revision": "583cfccf631699fe2b610b98c97df9d86e58c8dc",
   "source_repository": "/home/vps/projects/panels/repository",
   "source_worktree": "/home/vps/projects/panels/repository-worktrees/t_t77znn6k-executor",
   "publication": "local commit only; no push or staging integration",
@@ -77,5 +77,5 @@
   "review": "/files/tickets/t_t77znn6k/artifacts/executor-review.txt",
   "answer_contract": "permission choices and complete user_input maps share one durable VPS ask record, exact callback kind/child/turn/ID, immutable first choice, application acknowledgment, and reconnect reconciliation",
   "held_content": "canonical pending conversation content and original queued receipt commit atomically; original target/order restore; promotion/discard consume; interrupted dispatch retains bytes as uncertainty without native replay; no reconstruction of previously lost volatile content",
-  "imported_source_revision": "bfd25a0acc1b30a9e8e31c809c232727fc612cc4"
+  "imported_source_revision": "583cfccf631699fe2b610b98c97df9d86e58c8dc"
 }

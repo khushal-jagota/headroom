@@ -385,8 +385,8 @@ def write_package_spec(
     # The handoff is immutable. Later executor contracts require explicit review,
     # rather than silently changing source or dependency scope through a manifest.
     if (
-        contract.get("source_revision") != "95af473d2250d8136f2e298b528b7c2c6a9bef35"
-        or contract.get("imported_source_revision") != "bfd25a0acc1b30a9e8e31c809c232727fc612cc4"
+        contract.get("source_revision") != "583cfccf631699fe2b610b98c97df9d86e58c8dc"
+        or contract.get("imported_source_revision") != "583cfccf631699fe2b610b98c97df9d86e58c8dc"
         or contract.get("entry_module") != "planner.executor.entrypoint:main"
         or contract.get("package_inputs")
         != [
