@@ -25,6 +25,7 @@ from planner.executor.contracts import (
     WireMessageKind,
 )
 from planner.executor.files import fsync_directory, safe_component
+from planner.executor.preflight import _check_spool_directory
 from planner.executor.wire import encode_frame
 
 
@@ -65,15 +66,18 @@ class FilesystemSpool:
     def __init__(self, root: Path) -> None:
         self.root = root
         self._lock = threading.RLock()
-        metadata = root / "metadata.json"
-        if (
-            metadata.exists()
-            and json.loads(metadata.read_bytes())["format"] != SPOOL_FORMAT_VERSION
-        ):
-            raise ValueError("incompatible spool; preserved without mutation")
+        _check_spool_directory(root, SPOOL_FORMAT_VERSION)
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._process_lock = (root / "lock").open("a+b")
         fcntl.flock(self._process_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Recheck existing versioned state under the lifetime lock. A fresh lock-only
+        # directory is our bootstrap and has no authored work to inspect yet.
+        if (root / "metadata.json").exists():
+            try:
+                _check_spool_directory(root, SPOOL_FORMAT_VERSION)
+            except Exception:
+                self.close()
+                raise
         self._entries = root / "entries"
         self._entries.mkdir(exist_ok=True, mode=0o700)
         metadata = root / "metadata.json"
