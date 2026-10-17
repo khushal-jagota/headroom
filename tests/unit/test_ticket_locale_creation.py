@@ -165,15 +165,19 @@ def test_locale_migration_preserves_entire_existing_rows(
 ) -> None:
     import shutil
 
+    from alembic.script import ScriptDirectory
+
     from planner.core import db
 
     original = db.MIGRATIONS_DIRECTORY
     tree = tmp_path / "predecessor-migrations"
     (tree / "versions").mkdir(parents=True)
     shutil.copy(original / "env.py", tree / "env.py")
-    for path in (original / "versions").glob("*.py"):
-        if path.name not in {"ticket_locale.py", "scheduled_ticket_locale.py"}:
-            shutil.copy(path, tree / "versions" / path.name)
+    # Select the predecessor chain so later migrations stay outside this old schema.
+    for revision in ScriptDirectory(str(original)).walk_revisions(
+        base="base", head="disable_retired_worker_schedules"
+    ):
+        shutil.copy(revision.path, tree / "versions" / Path(revision.path).name)
     conn = db.connect(str(tmp_path / "old.db"))
     monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", tree)
     db.create_schema(conn)
