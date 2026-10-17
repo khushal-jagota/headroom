@@ -602,3 +602,72 @@ def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
     assert actual["ticket", "first"]["stage_ownership"] == "user"
     assert actual["ticket", "second"]["stage_ownership"] == "user"
     conn.close()
+
+
+def test_isolated_old_head_restore_discards_later_fixture_commit(tmp_path: Path) -> None:
+    """Fixture restoration discards later writes, not lossless production rollback."""
+    from contextlib import closing
+
+    from alembic import command
+
+    from planner.core.db import _alembic_config, _migration_engine
+
+    source_path = tmp_path / "before-upgrade.db"
+    backup_path = tmp_path / "consistent-backup.db"
+    restored_path = tmp_path / "restored-old-head.db"
+    engine = _migration_engine(str(source_path), 1000)
+    with engine.begin() as connection:
+        command.upgrade(_alembic_config(connection), "durable_conversation_facts")
+        connection.exec_driver_sql(
+            "INSERT INTO projects(id,name,created_at,updated_at) "
+            "VALUES('fixture-project','Before upgrade',0,0)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
+            "created_at,latest_sequence,owner_read_through_sequence) "
+            "VALUES('fixture-conversation','codex','/synthetic','full',0,11,3)"
+        )
+    engine.dispose()
+    # Only this synthetic source is opened, with explicit SQLite read-only mode.
+    with closing(sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True)) as source:
+        with closing(sqlite3.connect(backup_path)) as backup:
+            source.backup(backup)
+    candidate = connect(str(source_path))
+    create_schema(candidate)
+    candidate.execute("BEGIN")
+    candidate.execute("UPDATE projects SET name='Later fixture commit' WHERE id='fixture-project'")
+    candidate.execute(
+        "UPDATE conversations SET latest_sequence=19 WHERE conversation_id='fixture-conversation'"
+    )
+    candidate.commit()
+    assert values(candidate)["project", "fixture-project"]["name"] == "Later fixture commit"
+    candidate.close()
+    # Restore to another isolated target after every candidate runtime handle closes.
+    with closing(sqlite3.connect(backup_path.as_uri() + "?mode=ro", uri=True)) as backup:
+        with closing(sqlite3.connect(restored_path)) as restored:
+            backup.backup(restored)
+    old_head_engine = _migration_engine(str(restored_path), 1000)
+    with old_head_engine.begin() as connection:
+        command.upgrade(_alembic_config(connection), "durable_conversation_facts")
+        assert (
+            connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
+            == "durable_conversation_facts"
+        )
+        assert (
+            connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'navigation_%'"
+            ).scalar()
+            == 0
+        )
+        assert (
+            connection.exec_driver_sql(
+                "SELECT name FROM projects WHERE id='fixture-project'"
+            ).scalar()
+            == "Before upgrade"
+        )
+        assert connection.exec_driver_sql(
+            "SELECT latest_sequence,owner_read_through_sequence FROM conversations "
+            "WHERE conversation_id='fixture-conversation'"
+        ).one() == (11, 3)
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall() == []
+    old_head_engine.dispose()
