@@ -183,6 +183,7 @@ textarea {
 }
 
 .shell-nav {
+  background: var(--surface-recessed);
   position: relative;
   z-index: 11;
   display: flex;
@@ -3052,6 +3053,7 @@ select {
  * same --board-workspace-rail-pad-x inner inset, so all rail text shares one left
  * edge. Vertical rhythm follows the mockup's roster: rows touch, groups separate. */
 .board-workspace-left {
+  background: var(--surface-recessed);
   min-width: 0;
   overflow: auto;
   padding: var(--space-4) var(--page-gutter) var(--space-7);
@@ -3137,7 +3139,7 @@ select {
 
 .board-workspace-right--chief {
   padding: var(--space-5) var(--space-6);
-  background: var(--surface-recessed);
+  background: var(--surface-1);
 }
 
 /* The way back to the rail. Below 960px the rail is hidden, so the Ticket pane
@@ -3458,7 +3460,7 @@ select {
  * one accent stays reserved for "needs the human". */
 .ticket-row--active,
 .ticket-row--active:hover {
-  background: var(--surface-recessed);
+  background: var(--surface-2);
   color: var(--text-strong);
 }
 
@@ -4118,7 +4120,7 @@ select {
    * rest, so this colour is the bar at rest and the bar's head once it is opened up. It is
    * the page's own plane, not the ink one: the design separates the card from the page with
    * a hairline and the recessed well beneath it, not with a second colour. Drawing it in ink
-   * put a cool rectangle on a warm page, which is the colour difference the owner reported. */
+   * put a different colour on the page, which is the difference the owner reported. */
   background: var(--surface-1);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-lg);
