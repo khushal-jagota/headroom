@@ -1,6 +1,16 @@
 {
-  "source_revision": "b6feb7e0202ff94588e47d5086e3cfdaf49d5559",
+  "source_revision": "95af473d2250d8136f2e298b528b7c2c6a9bef35",
+  "source_repository": "/home/vps/projects/panels/repository",
+  "source_worktree": "/home/vps/projects/panels/repository-worktrees/t_t77znn6k-executor",
+  "publication": "local commit only; no push or staging integration",
   "entry_module": "planner.executor.entrypoint:main",
+  "offline_command": [
+    "python",
+    "-m",
+    "planner.executor.entrypoint",
+    "executor",
+    "--help"
+  ],
   "package_inputs": [
     "pyproject.toml",
     "requirements.txt",
@@ -13,5 +23,59 @@
     "node": ">=22 if bundled Claude CLI is installed via locked agent_backends package",
     "backend_executables": "native installed Codex on PATH; Claude uses bundled managed executable or PLAN_CLAUDE_EXECUTABLE override"
   },
-  "imported_source_revision": "b9139849192c40a39215f7792bc70d097e2eb9a3"
+  "excluded": [
+    "data/",
+    "web/dist/",
+    "VPS .venv",
+    "VPS node_modules",
+    "credential or provider-home copies"
+  ],
+  "layout": {
+    "replaceable_code": "$HOME/Deployments/PanelsExecutor/current/app",
+    "persistent_root": "$HOME/Library/Application Support/Panels/executor",
+    "data_env": "PLAN_EXECUTOR_ROOT",
+    "ipc": "PLAN_EXECUTOR_ROOT/run/executor.sock (owner-only)"
+  },
+  "control_contract": {
+    "health": "panels executor health -> ExecutorHealth JSON",
+    "quiesce": "panels executor quiesce --expected-incarnation UUID --expected-generation N --expected-revision FULL_SHA --expected-pid PID --exit-when-ready",
+    "receipt": "QuiescenceReceipt; inspect .quiescence.ready and .exit_committed",
+    "identity_fence": "expected full identity/PID checked before admission changes and again after awaited drain",
+    "successful_exit": "committed controlled exit returns normal status 0",
+    "resident_policy": "KeepAlive={SuccessfulExit:false}; resident waits matching PID exit and refuses any replacement PID, never kills or bootouts a replacement",
+    "rollback": "failed candidate needs fresh candidate-specific health and quiescence; earlier exit receipt grants no authority over replacement"
+  },
+  "synthetic_evidence": {
+    "unit": "675 passed, 2 warnings in 121.05s (0:02:01)",
+    "integration": "17 passed in 14.77s",
+    "ruff": "All checks passed!",
+    "mypy": "Success: no issues found in 40 source files"
+  },
+  "gate": "reviewed local source only; separate exact-head publication/integration clearance; no installed-session, physical launchd, account, reboot, network, or real-provider action proof",
+  "protocol_version": 2,
+  "spool_format_version": 1,
+  "source_baseline": "05accc7f72075348ea0be80a9f082099fae0f048",
+  "source_diff": "/files/tickets/t_t77znn6k/artifacts/executor-source.patch",
+  "preflight": {
+    "import": "planner.executor.preflight.check_spool_compatibility",
+    "signature": "(root: Path, expected_format: int) -> None",
+    "root": "stable PLAN_EXECUTOR_ROOT, not root/spool",
+    "refusal": "ValueError or OSError; no writes, lock, migration, or journal construction",
+    "authorization": "compatibility observation only; fresh identity-bound quiescence remains required"
+  },
+  "vps_launcher": {
+    "enable": "PLAN_EXECUTOR_MODE=remote",
+    "socket": "PLAN_EXECUTOR_VPS_SOCKET or database-parent/executor.sock",
+    "boundary": "Supply explicit values after managed PLAN_* environment scrub; ambient values do not enable installed VPS endpoint."
+  },
+  "synthetic_evidence_links": {
+    "unit": "/files/tickets/t_t77znn6k/artifacts/executor-unit-check.txt",
+    "integration": "/files/tickets/t_t77znn6k/artifacts/executor-integration-check.txt",
+    "ruff": "/files/tickets/t_t77znn6k/artifacts/executor-ruff-check.txt",
+    "mypy": "/files/tickets/t_t77znn6k/artifacts/executor-mypy-check.txt"
+  },
+  "review": "/files/tickets/t_t77znn6k/artifacts/executor-review.txt",
+  "answer_contract": "permission choices and complete user_input maps share one durable VPS ask record, exact callback kind/child/turn/ID, immutable first choice, application acknowledgment, and reconnect reconciliation",
+  "held_content": "canonical pending conversation content and original queued receipt commit atomically; original target/order restore; promotion/discard consume; interrupted dispatch retains bytes as uncertainty without native replay; no reconstruction of previously lost volatile content",
+  "imported_source_revision": "bfd25a0acc1b30a9e8e31c809c232727fc612cc4"
 }

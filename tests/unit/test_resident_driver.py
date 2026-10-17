@@ -262,6 +262,8 @@ def test_production_package_spec_uses_exact_pinned_source_without_builds(tmp_pat
     )
     package = json.loads(output.read_bytes())
     assert package["application_revision"] == revision
+    assert package["protocol_version"] == PROTOCOL_VERSION
+    assert package["spool_format_version"] == SPOOL_FORMAT_VERSION
     closure = package["closure"]
     assert closure["entrypoint_module"] == "planner.executor.entrypoint"
     assert "src/planner/executor/preflight.py" in closure["files"]
