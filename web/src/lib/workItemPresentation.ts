@@ -10,6 +10,7 @@ export type WorkItemTicketFacts = WorkAttention & {
   worker_type?: string;
   conversation_id?: string | null;
   ticket_status: string;
+  is_backlogged?: boolean;
   waiting_to_closeout?: boolean;
   gating_field?: string | null;
   activity_at?: number;
@@ -21,6 +22,7 @@ export type WorkItemTicketGroupKey =
   | "assigned"
   | "awaiting_reply"
   | "errored"
+  | "backlog"
   | "agent"
   | "waiting_to_closeout"
   | "status_awaiting_approval"
@@ -40,6 +42,7 @@ export const WORK_ITEM_TICKET_GROUPS: readonly WorkItemTicketGroupDefinition[] =
   { key: "assigned", label: "Yours", quiet: false },
   { key: "awaiting_reply", label: "Messages", quiet: false },
   { key: "errored", label: "Errored", quiet: false },
+  { key: "backlog", label: "Backlog", quiet: false },
   { key: "agent", label: "Agent", quiet: false },
   { key: "waiting_to_closeout", label: "Waiting on Consequences", quiet: true },
   {
@@ -58,6 +61,7 @@ export type WorkItemTicketGroup<T extends WorkItemTicketFacts> =
 export function workItemTicketGroupKey(
   ticket: WorkItemTicketFacts
 ): WorkItemTicketGroupKey {
+  if (ticket.is_backlogged) return "backlog";
   const attention = primaryWorkAttention(ticket);
   if (attention !== null) return attention;
   if (ticket.agent_state === "errored") return "errored";

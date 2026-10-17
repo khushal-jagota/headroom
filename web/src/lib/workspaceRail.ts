@@ -55,7 +55,7 @@ function railGroups(
 ): WorkspaceTicketGroup[] {
   const groups = workItemTicketGroups(
     cards,
-    attentionOnly ? WORK_ITEM_ATTENTION_GROUP_KEYS : undefined
+    attentionOnly ? [...WORK_ITEM_ATTENTION_GROUP_KEYS, "backlog"] : undefined
   );
   return groups.map((group) => ({
     key: group.key,

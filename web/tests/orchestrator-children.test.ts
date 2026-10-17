@@ -11,6 +11,19 @@ const child = (id: string, stage: string, is_backlogged = false): SprintItemWork
 });
 
 describe("orchestrator child discovery", () => {
+  it("keeps terminal backlog in existing history filters without widening active discovery", () => {
+    const rows = [child("active", "needs_implementation", true), child("done", "done", true),
+      child("cancelled", "cancelled", true)];
+    const expected: Record<OrchestratorChildFilter, string[]> = {
+      active:["active"], backlogged:["active"], done:["done"], retired:["cancelled"]
+    };
+    for (const filter of Object.keys(expected) as OrchestratorChildFilter[]) {
+      const groups = orchestratorPageGroups(filterOrchestratorChildren(rows, filter));
+      expect(groups.map((group) => group.key)).toEqual(["backlog"]);
+      expect(groups.flatMap((group) => group.tickets.map((row) => row.id))).toEqual(expected[filter]);
+    }
+  });
+
   it("retains quiet active children and exposes deferred, completed and retired children separately", () => {
     const rows = [child("quiet", "needs_implementation"), child("deferred", "needs_brief", true),
       child("done", "done"), child("retired", "cancelled")];

@@ -47,6 +47,24 @@ describe("orchestrator rail projection", () => {
     expect(rail.items[0].conversationSignal).toBeUndefined();
   });
 
+  it("shows Backlog once in Chief and ordinary attention rails with existing terminal boundaries", () => {
+    const rows = [card("approval", { is_backlogged:true, awaiting_approval:true }),
+      card("done", { is_backlogged:true, stage:"done", ticket_status:"empty" }),
+      card("cancelled-status", { is_backlogged:true, stage:"cancelled", ticket_status:"cancelled" }),
+      card("cancelled-stage", { is_backlogged:true, stage:"cancelled", ticket_status:"empty" })];
+    const rail = buildWorkspaceRail(rows, [item("ordinary", { tickets:rows })]);
+    for (const groups of [rail.chiefGroups, rail.items[0].groups]) {
+      expect(groups.map((group) => [group.key, group.defaultCollapsed])).toEqual([["backlog",false]]);
+      expect(groups[0].cards.map((row) => row.id)).toEqual(["approval", "cancelled-stage", "done"]);
+      expect(groups[0].cards[0]).toBe(rows[0]);
+    }
+    // Hover retains its existing stage=done/status=cancelled exclusions.
+    for (const groups of [rail.chiefHoverGroups, rail.items[0].hoverGroups]) {
+      expect(groups[0].cards.map((row) => row.id)).toEqual(["approval", "cancelled-stage"]);
+    }
+    expect(rail.items[0].tickets).toEqual(rows);
+  });
+
   it("preserves priority order and exact direct-conversation message marks", () => {
     const rail = buildWorkspaceRail([], [
       item("newer", { created_at: 20 }), item("older", { created_at: 10 }),

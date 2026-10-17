@@ -55,12 +55,12 @@ const address = { selection: { kind: "none" as const }, view: "items" as const, 
   assert.ok(address && typeof address === "object");
 
   const script = String.raw`
-import json, sys
+import json, os, pathlib, sys
 from playwright.sync_api import sync_playwright, expect
 
 def card(ticket_id, item_id, item_title, **values):
     row = {
-        "id": ticket_id, "title": ticket_id, "priority": "P1", "deadline": None,
+        "id": ticket_id, "title": ticket_id, "is_backlogged": False, "priority": "P1", "deadline": None,
         "project_id": None, "project": None, "group_project_id": None, "group_project": None,
         "activity_at": 0, "has_pending_proposal": False, "ticket_status": "empty",
         "worker_type": "coding", "employee_backend": "codex", "stage": "needs_implementation",
@@ -94,6 +94,9 @@ board = {
         # A broken worker still holding a proposal for him. It is his to approve, and the
         # Item at rest keeps the three groups, so it belongs under Needs your approval.
         card("t_broken", "si_needs_him", "Needs him", awaiting_approval=True, agent_state="errored"),
+        card("t_backlog_owner", "si_needs_him", "Needs him", title="Review saved workspace changes", is_backlogged=True, awaiting_approval=True),
+        card("t_backlog_supervisor", "si_needs_him", "Needs him", title="Prepare the next workspace pass", is_backlogged=True, awaiting_agent_approval=True),
+        card("t_chief_backlog", None, None, title="Revisit workspace navigation", is_backlogged=True, awaiting_approval=True),
         card("t_quiet", "si_quiet", "Quiet", agent_state="working"),
     ]}],
     "sprint_items": [item("si_needs_him"), item("si_quiet")],
@@ -128,16 +131,16 @@ with sync_playwright() as p:
     assert page.locator('[data-sprint-item] [aria-current="page"]').count() == 0
     assert page.locator(".orchestrator-card.selected").count() == 0
 
-    # Exactly the four groups. A broken worker does not open a fifth one here. An answer
+    # Existing attention groups plus Backlog. A broken worker does not open a fifth one here. An answer
     # he owes sits under the decision he owes and above the Stage that is merely his.
     headers = needs_him.locator("[data-bucket-key]")
-    expect(headers).to_have_count(4)
-    assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(4)] == [
-        "awaiting_approval", "awaiting_answer", "assigned", "awaiting_reply"
+    expect(headers).to_have_count(5)
+    assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(5)] == [
+        "awaiting_approval", "awaiting_answer", "assigned", "awaiting_reply", "backlog"
     ]
     assert [
-        headers.nth(i).locator(".bucket-label").text_content() for i in range(4)
-    ] == ["Needs your approval", "Needs your answer", "Yours", "Messages"]
+        headers.nth(i).locator(".bucket-label").text_content() for i in range(5)
+    ] == ["Needs your approval", "Needs your answer", "Yours", "Messages", "Backlog"]
 
     # The rows are there too, one Ticket under one header.
     for ticket_id, key in [
@@ -146,6 +149,8 @@ with sync_playwright() as p:
         ("t_assigned", "assigned"),
         ("t_message", "awaiting_reply"),
         ("t_answer", "awaiting_answer"),
+        ("t_backlog_owner", "backlog"),
+        ("t_backlog_supervisor", "backlog"),
     ]:
         row = needs_him.locator('[data-ticket-id="' + ticket_id + '"]')
         expect(row).to_have_count(1)
@@ -185,12 +190,41 @@ with sync_playwright() as p:
     page.evaluate("window.__refresh()")
     expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
 
+    # Chief and ordinary rows use the same plain Backlog presentation. Proposal
+    # ownership survives in the fixture; it must not create duplicate approval rows.
+    chief_card = page.locator(".orchestrator-card.chief")
+    expect(chief_card.locator('[data-bucket-key="backlog"] .bucket-label')).to_have_text("Backlog")
+    expect(chief_card.locator('[data-ticket-id="t_chief_backlog"]')).to_have_count(1)
+    for ticket_id in ["t_backlog_owner", "t_backlog_supervisor"]:
+        row = needs_him.locator('[data-ticket-id="'+ticket_id+'"]')
+        assert row.get_attribute("class").split() == needs_him.locator('[data-ticket-id="t_approval"]').get_attribute("class").split()
+        assert row.inner_text() == next(r["title"] for r in board["columns"][0]["cards"] if r["id"] == ticket_id)
+    owner = next(r for r in board["columns"][0]["cards"] if r["id"] == "t_backlog_owner")
+    owner["is_backlogged"] = False
+    page.evaluate("window.__refresh()")
+    expect(needs_him.locator('[data-bucket-key="awaiting_approval"] [data-ticket-id="t_backlog_owner"]')).to_have_count(1)
+    assert owner["awaiting_approval"] is True
+    owner["is_backlogged"] = True
+    page.evaluate("window.__refresh()")
+    expect(needs_him.locator('[data-bucket-key="backlog"] [data-ticket-id="t_backlog_owner"]')).to_have_count(1)
+    needs_him.locator('[data-ticket-id="t_backlog_owner"]').click()
+    expect(page).to_have_url(sys.argv[1] + "#/workspace/item/si_needs_him/t_backlog_owner")
+
+    output = os.environ.get("PANELS_UI_PROOF_DIR")
+    if output:
+        folder = pathlib.Path(output); folder.mkdir(parents=True, exist_ok=True)
+        for label, width in [("desktop", 1280), ("compact", 720)]:
+            page.set_viewport_size(dict(width=width, height=1000))
+            expect(needs_him.locator('[data-bucket-key="backlog"]')).to_be_visible()
+            page.screenshot(path=str(folder/("backlog-rail-"+label+".png")), full_page=True)
+        (folder/"backlog-rail-dom.html").write_text(page.content())
+
     # Selection is the card. No count line stands in for the groups any more.
     assert page.locator(".board-workspace-item-line").count() == 0
     browser.close()
 `;
   const child = spawn(
-    join(root, "..", ".venv", "bin", "python"),
+    process.env.PANELS_TEST_PYTHON || join(root, "..", ".venv", "bin", "python"),
     ["-c", script, `http://127.0.0.1:${address.port}/.test-scratch/${stem}.html`],
     { stdio: "inherit" }
   );

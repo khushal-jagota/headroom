@@ -33,6 +33,18 @@ describe("explicit ticket lifecycle controls", () => {
     expect(markup).toContain("Automatic work is paused. Messages and approvals remain available.");
   });
 
+  it("keeps resume available alongside owner and supervisor proposal facts", () => {
+    for (const review of [{ awaiting_approval:true }, { awaiting_agent_approval:true }]) {
+      const value = ticket({ is_backlogged:true, ...review,
+        pending_proposal:{ field:"implementation", body:"Retained proposal", proposed_by:"worker", created_at:1, revision:3 } });
+      expect(controls(value)).toContain("Resume ticket");
+      expect(value.pending_proposal?.revision).toBe(3);
+    }
+    for (const stage of ["done", "cancelled"]) {
+      expect(controls(ticket({ stage, is_backlogged:true }), true)).not.toContain("data-ticket-backlog-action");
+    }
+  });
+
   it("shows escaped historical reason and no lifecycle action on a cancelled ticket", () => {
     const value = ticket({ stage: "cancelled", field_values: { retirement: JSON.stringify({ reason: "Obsolete <script>" }) } });
     const markup = controls(value, true);

@@ -14,7 +14,9 @@ import {
   type WorkItemTicketFacts
 } from "../src/lib/workItemPresentation";
 import { buildWorkspaceRail } from "../src/lib/workspaceRail";
-import { dayVisualTicket } from "../src/lib/dayPresentation";
+import { sprintTicketCondition } from "../src/lib/sprintPresentation";
+import { workspaceHeading, sprintItemHeading, sprintItemWord, ticketFacts } from "./support/screenReadings";
+import { dayActionTiles, dayVisualTicket } from "../src/lib/dayPresentation";
 import { feedbackTicketStateLabel } from "../src/lib/feedback";
 import type { DayTicket } from "../src/lib/types";
 
@@ -128,6 +130,46 @@ describe("the shared Item and Ticket presentation", () => {
     [{ stage: "done" }, "done"]
   ] as const)("classifies %o as %s", (values, expected) => {
     expect(workItemTicketGroupKey(ticket("state", values))).toBe(expected);
+  });
+
+  it.each([
+    { awaiting_approval: true, has_pending_proposal: true },
+    { awaiting_agent_approval: true, has_pending_proposal: true },
+    { awaiting_answer: true }, { assigned: true }, { awaiting_reply: true },
+    { agent_state: "errored" }, { agent_state: "working" },
+    { waiting_to_closeout: true }, { ticket_status: "blocked" },
+    { stage: "done" }, { stage: "cancelled", ticket_status: "cancelled" }
+  ] as const)("gives supplied backlogged work one group while preserving %o", (facts) => {
+    const row = ticket("backlogged", { ...facts, is_backlogged: true });
+    const original = { ...row };
+    const groups = workItemTicketGroups([row]);
+    expect(groups.map((group) => group.key)).toEqual(["backlog"]);
+    expect(groups[0].tickets).toEqual([original]);
+    expect(groups[0].tickets[0]).toBe(row);
+    expect(groups[0].quiet).toBe(false);
+    expect(sprintTicketCondition(row).word).toBe("backlog");
+    expect(workItemTicketGroupKey({ ...row, is_backlogged: false }))
+      .toBe(workItemTicketGroupKey(ticket(row.id, facts)));
+  });
+
+  it("forwards explicit backlog through each shared screen adapter", () => {
+    const facts = ticketFacts({ is_backlogged: true, awaiting_approval: true });
+    expect(workspaceHeading(facts)).toBe("Backlog");
+    expect(sprintItemHeading(facts)).toBe("Backlog");
+    expect(sprintItemWord(facts)).toBe("backlog");
+    const { is_backlogged: _, ...legacy } = ticket("legacy", { awaiting_approval: true });
+    expect(workItemTicketGroupKey(legacy)).toBe("awaiting_approval");
+  });
+
+  it("preserves historical Day counts and Feedback labels with raw backlog facts", () => {
+    const rows = [ticket("review", { is_backlogged: true, awaiting_approval: true }),
+      ticket("done", { is_backlogged: true, stage: "done" })];
+    const visuals = rows.map((row) => dayVisualTicket(row as unknown as DayTicket));
+    expect(visuals.map((visual) => visual.group)).toEqual(["awaiting_approval", "done"]);
+    expect(dayActionTiles(visuals).map(({ key, count }) => [key, count]))
+      .toEqual([["review", 1], ["done", 1]]);
+    expect(rows.map(feedbackTicketStateLabel)).toEqual(["Needs your approval", "Done"]);
+    expect(rows.map((row) => workItemTicketGroupKey(row))).toEqual(["backlog", "backlog"]);
   });
 
   it("uses projected completion and failure facts in the Item, rail, Day, and Feedback", () => {
@@ -286,6 +328,7 @@ describe("the shared Item and Ticket presentation", () => {
       "assigned",
       "awaiting_reply",
       "errored",
+      "backlog",
       "agent",
       "waiting_to_closeout",
       "status_awaiting_approval",

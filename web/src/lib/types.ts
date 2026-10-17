@@ -383,6 +383,7 @@ export type SprintWireBody = {
 export type CurrentSprint = SprintWireBody;
 
 export type SprintTicketSummary = WorkAttention & {
+  is_backlogged?: boolean;
   id: string;
   title: string;
   stage: string;
@@ -513,6 +514,7 @@ export type BoardSprintItem = {
 };
 
 export type BoardCard = WorkAttention & {
+  is_backlogged?: boolean;
   conversation_signal?: ConversationSignal;
   orchestrator?: Principal;
   id: string;

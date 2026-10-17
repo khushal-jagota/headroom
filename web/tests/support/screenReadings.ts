@@ -25,6 +25,7 @@ export type TicketFacts = {
   conversation_signal?: ConversationSignal;
   stage: string;
   ticket_status: string;
+  is_backlogged?: boolean;
   gating_field: string;
   awaiting_reply: boolean;
   awaiting_answer: boolean;
@@ -103,6 +104,7 @@ function boardCard(facts: TicketFacts): BoardCard {
     activity_at: 1,
     has_pending_proposal: facts.ticket_status === "awaiting_approval",
     ticket_status: facts.ticket_status,
+    is_backlogged: facts.is_backlogged,
     worker_type: "coding",
     employee_backend: "claude",
     stage: facts.stage,

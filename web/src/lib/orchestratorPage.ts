@@ -8,8 +8,8 @@ export function orchestratorPageGroups<T extends WorkItemTicketFacts>(tickets: r
     {key:"cancelled", label:"Cancelled", quiet:true}];
   return definitions.flatMap((definition) => {
     const rows = tickets.filter((ticket) => {
-      const key = ticket.stage === "cancelled" ? "cancelled"
-        : workItemTicketGroupKey({...ticket, awaiting_reply:false});
+      const sharedKey = workItemTicketGroupKey({...ticket, awaiting_reply:false});
+      const key = ticket.stage === "cancelled" && sharedKey !== "backlog" ? "cancelled" : sharedKey;
       return key === definition.key;
     }).sort(workItemTicketOrder);
     return rows.length ? [{...definition, tickets:rows}] : [];

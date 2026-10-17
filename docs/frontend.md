@@ -40,8 +40,8 @@ One screen per part of the system:
   Existing orchestrators start active. Settlement does not change Worker eligibility.
 
   Each active card shows the existing attention groups: Needs your approval, Needs your
-  answer, Yours, Messages, then Errored. The shared rule gives each Worker its first
-  applicable group. Holder-aware approval and the existing priority/creation ordering
+  answer, Yours, Messages, then Errored, followed by Backlog. Backlog takes precedence
+  for backlogged Workers. The shared rule gives other Workers their first applicable group. Holder-aware approval and the existing priority/creation ordering
   remain. Priority is not displayed in the rail. Quiet children remain in the
   orchestrator workspace and hover details. Empty orchestrators remain visible.
 
@@ -62,6 +62,14 @@ One screen per part of the system:
   upward within half the space above those controls. Its header stays visible while
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
+
+  Backlogged Tickets use one Backlog header after the attention headers and before Agent.
+  This rule applies to every backlogged Ticket supplied to the shared presentation,
+  including terminal history. Backlog uses normal rows and starts open. It does not
+  add review badges or explanations. Approval, reviewer, message, and readiness facts
+  remain independent. Resume restores ordinary classification and readiness checks.
+  The existing rail and history filters still determine which Tickets reach each view.
+  Historical Day counts and Feedback labels keep their separate rules.
 
   Unfinished groups on the orchestrator page start open. Done and Cancelled start closed.
   Manual choices survive ordinary data refreshes in that page, including a group that

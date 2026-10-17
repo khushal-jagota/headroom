@@ -27,6 +27,18 @@ ordinary readiness checks. Messages, proposals, approvals, assignment, history, 
 artifacts remain available. A delivered turn continues. Parent Settle remains independent.
 Backlog no longer means an unscheduled Ticket or an assignment change.
 
+Workspace groups every supplied backlogged Ticket under Backlog, including rows in
+Done and Cancelled history. The header follows the attention headers. A Ticket cannot
+also appear under an approval header in the same grouped list. Backlog uses normal
+rows, without extra review badges or explanations. Its header starts open and retains
+manual fold choices during page refreshes, like other unfinished groups.
+
+The existing discovery filters remain intact. Active and Backlogged exclude terminal
+Tickets. Done and Cancelled expose their respective terminal history. The rail excludes
+cancelled status, and hover excludes Done and cancelled status. Exact unread conversation
+discovery remains independent of these grouped lists. Historical Day counts and Feedback
+labels keep their separate rules.
+
 ## Ideas
 
 The opposite: its whole job is to catch a thought before you lose it, so the box to

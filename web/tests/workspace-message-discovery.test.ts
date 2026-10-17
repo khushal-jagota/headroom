@@ -32,6 +32,20 @@ describe("exact unread conversation discovery", () => {
     expect(workspaceSettledUnreadCount(rows)).toBe(3);
   });
 
+  it("discovers backlogged messages independently of their single presentation group", () => {
+    const rows = [card("owner", { is_backlogged:true, awaiting_reply:true, awaiting_approval:true }),
+      card("supervisor", { is_backlogged:true, awaiting_reply:true, awaiting_agent_approval:true }),
+      card("done", { is_backlogged:true, awaiting_reply:true, stage:"done" }),
+      card("cancelled", { is_backlogged:true, awaiting_reply:true, stage:"cancelled", ticket_status:"cancelled" })];
+    const parent = item("ordinary", { tickets:rows });
+    expect(buildWorkspaceRail(rows, [parent]).items[0].groups.map((group) => group.key)).toEqual(["backlog"]);
+    expect(workspaceMessageConversations(rows, [parent]).map((row) => row.id))
+      .toEqual(["owner", "supervisor", "done", "cancelled"]);
+    expect(workspaceUnreadConversationCount(rows)).toBe(4);
+    expect(workspaceMessageConversations(rows.map((row) => ({ ...row, awaiting_reply:false })), []))
+      .toEqual([]);
+  });
+
   it("never invents unread from ask, approval, child rollups, error or incomplete conversation identity", () => {
     const rows = workspaceMessageConversations([
       card("ask", {awaiting_answer:true}), card("approval", {awaiting_approval:true}),
