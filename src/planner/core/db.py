@@ -15,9 +15,11 @@ The schema itself is not written here. It lives in the migration history under
 
 from __future__ import annotations
 
+import re
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal, Self, TypeVar, overload
 
 from alembic import command
 from alembic.config import Config
@@ -26,6 +28,7 @@ from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.engine import URL
 
 from planner.core import change_signal
+from planner.core.transaction_participants import TransactionParticipant, finalize
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
 BASELINE_REVISION: Final = "baseline_2026_09"
@@ -100,68 +103,263 @@ PRE_COLLAPSE_HEAD_SCHEMA_OBJECT_NAMES: Final = frozenset(
 )
 
 
-def _statement_commits(sql: str) -> bool:
-    """Whether this statement is the one that ends a transaction by keeping its work.
+_CONTROL_TOKEN = re.compile(
+    r"\s+|--[^\n]*(?:\n|$)|/\*.*?\*/|"
+    r"\"(?:\"\"|[^\"])*\"|'(?:''|[^'])*'|`(?:``|[^`])*`|\[[^]]*\]|[\w$]+|[^\s;]",
+    re.DOTALL,
+)
+_CursorT = TypeVar("_CursorT", bound=sqlite3.Cursor)
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
-    Transactions here always end with a literal ``COMMIT``; a ``ROLLBACK`` throws the
-    work away and must stay silent.
-    """
-    return sql.strip().lower().startswith("commit")
+
+def _control_words(sql: str) -> list[str]:
+    """Read transaction control only. Never classify domain writes from SQL text."""
+    words = []
+    for match in _CONTROL_TOKEN.finditer(sql):
+        token = match.group()
+        if token.isspace() or token == "\ufeff" or token.startswith(("--", "/*")):
+            continue
+        if token[0] in {'"', "'", "`", "["}:
+            quote = token[0]
+            token = token[1:-1].replace(quote * 2, quote)
+        words.append(token.translate(_ASCII_LOWER))
+        if len(words) == 1 and words[0] not in {"savepoint", "release", "rollback"}:
+            return words
+        if len(words) == 5:
+            break
+    return words
+
+
+class ParticipatingCursor(sqlite3.Cursor):
+    """Use the connection boundary even for callers that retain a cursor."""
+
+    def execute(self, sql: str, parameters: Any = (), /) -> Self:
+        connection = self.connection
+        assert isinstance(connection, ChangeSignallingConnection)
+        connection._execute(self, sql, parameters)
+        return self
+
+    def executemany(self, sql: str, parameters: Any, /) -> Self:
+        connection = self.connection
+        assert isinstance(connection, ChangeSignallingConnection)
+        owns_transaction = not connection.in_transaction
+        if owns_transaction:
+            connection.execute("BEGIN")
+        try:
+            sqlite3.Cursor.executemany(self, sql, parameters)
+            if owns_transaction:
+                connection.commit()
+            return self
+        except BaseException:
+            if owns_transaction:
+                connection.rollback()
+            elif not connection.in_transaction:
+                connection._clear_transaction()
+            raise
+
+    def executescript(self, sql_script: str, /) -> sqlite3.Cursor:
+        # Match sqlite3's initial implicit commit through the managed boundary.
+        # Never call its native script runner: transaction statements inside that
+        # runner bypass the Python connection/cursor overrides.
+        if self.connection.in_transaction:
+            self.connection.commit()
+        start = 0
+        for index, character in enumerate(sql_script):
+            if character == ";" and sqlite3.complete_statement(sql_script[start : index + 1]):
+                self.execute(sql_script[start : index + 1])
+                start = index + 1
+        tail = sql_script[start:]
+        if _control_words(tail):
+            self.execute(tail)
+        return self
 
 
 class ChangeSignallingConnection(sqlite3.Connection):
-    """A connection that announces the writes it commits, once each.
+    """Finalize participants before commit, then announce committed writes.
 
-    This is the door writers already go through, so no writer has to remember to
-    announce anything. A write commits in one of two ways here, and both are watched:
-
-    - inside a transaction the caller opened, when the closing ``COMMIT`` runs;
-    - on its own. These connections leave transaction control to the caller, so a
-      statement run with nothing open commits the moment it returns. Whether it was
-      really a write is the row count: a statement that leaves the stored rows exactly
-      as they were — a read, an update that matched nothing, a schema change — says
-      nothing, because there is nothing for a reader to come back for.
-
-    The announcement happens after the statement returns, when the write lock is
-    already released and the new rows are readable. A rollback, or a commit that
-    fails, announces nothing. A committed transaction that changed no rows — a
-    reconciliation pass that found nothing to do — also announces nothing: several
-    background loops open a transaction on every pass and are themselves woken by
-    this signal, so an empty commit that announced would wake the loop that made it
-    and the tick would collapse into a busy-spin.
-
-    A caller that knows no reader is waiting for its rows closes its transaction with
-    ``commit_without_change_signal``, which goes around this and stays quiet.
+    Standalone SQL mutation operations run inside explicit transactions. This
+    class classifies SQL operations only; domains determine relevant source rows.
+    Base-class transaction calls bypass this protocol and are unsupported.
+    DML RETURNING requires an explicit transaction and consumed result rows before
+    commit. A standalone unconsumed result fails and rolls back its source write.
     """
 
-    # Rows changed when the currently open transaction began; None when no
-    # transaction is open or it was opened outside this method (then a commit
-    # announces, conservatively).
-    _rows_changed_at_transaction_start: int | None = None
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._participants: tuple[TransactionParticipant, ...] = ()
+        self._finalizing = False
+        self._rows_changed_at_transaction_start: int | None = None
+        self._savepoints: list[str] = []
+        self._savepoint_transaction = False
+        self._contexts: list[str | None] = []
+        self._context_sequence = 0
+
+    @overload
+    def cursor(self, factory: None = None) -> sqlite3.Cursor: ...
+
+    @overload
+    def cursor(self, factory: Callable[[sqlite3.Connection], _CursorT]) -> _CursorT: ...
+
+    def cursor(self, factory: Any = None) -> Any:
+        if factory is not None and factory is not ParticipatingCursor:
+            raise sqlite3.NotSupportedError("custom cursors bypass transaction participation")
+        return super().cursor(ParticipatingCursor)
 
     def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
-        had_open_transaction = self.in_transaction
-        rows_changed_before = self.total_changes
-        cursor = super().execute(sql, parameters)
+        return self.cursor().execute(sql, parameters)
+
+    def executemany(self, sql: str, parameters: Any, /) -> sqlite3.Cursor:
+        return self.cursor().executemany(sql, parameters)
+
+    def executescript(self, sql_script: str, /) -> sqlite3.Cursor:
+        return self.cursor().executescript(sql_script)
+
+    def _execute(self, cursor: sqlite3.Cursor, sql: str, parameters: Any) -> sqlite3.Cursor:
+        words = _control_words(sql)
+        operation = words[0] if words else ""
+        if not self.in_transaction and operation in {
+            "insert",
+            "update",
+            "delete",
+            "replace",
+            "with",
+        }:
+            self.execute("BEGIN")
+            try:
+                result = self._execute(cursor, sql, parameters)
+                self.commit()
+                return result
+            except BaseException:
+                self.rollback()
+                raise
+        if self._finalizing and operation in {
+            "begin",
+            "commit",
+            "end",
+            "savepoint",
+            "release",
+            "rollback",
+        }:
+            raise RuntimeError("transaction participants cannot control transactions")
+        had_transaction = self.in_transaction
+        before = self.total_changes
+        release_index: int | None = None
+        if operation == "release" and len(words) > 1:
+            name = words[2] if words[1] == "savepoint" and len(words) > 2 else words[1]
+            release_index = next(
+                (
+                    index
+                    for index in range(len(self._savepoints) - 1, -1, -1)
+                    if self._savepoints[index] == name
+                ),
+                None,
+            )
+        commits = operation in {"commit", "end"} or (
+            operation == "release" and release_index == 0 and self._savepoint_transaction
+        )
+        if commits and had_transaction:
+            self._before_commit()
+        try:
+            result = sqlite3.Cursor.execute(cursor, sql, parameters)
+        except BaseException:
+            if commits and had_transaction:
+                self.rollback()
+            elif had_transaction and not self.in_transaction:
+                self._clear_transaction()
+            raise
+        if operation == "savepoint" and len(words) > 1:
+            if not had_transaction:
+                self._savepoint_transaction = True
+            self._savepoints.append(words[1])
+        elif operation == "release" and release_index is not None:
+            del self._savepoints[release_index:]
+        elif operation == "rollback" and "to" in words:
+            index = words.index("to") + 1
+            if index < len(words) and words[index] == "savepoint":
+                index += 1
+            if index < len(words):
+                matches = [i for i, name in enumerate(self._savepoints) if name == words[index]]
+                if matches:
+                    del self._savepoints[matches[-1] + 1 :]
         if self.in_transaction:
-            if not had_open_transaction:
-                self._rows_changed_at_transaction_start = rows_changed_before
-            return cursor
-        if had_open_transaction:
-            if _statement_commits(sql) and self._open_transaction_wrote():
+            if not had_transaction:
+                self._rows_changed_at_transaction_start = before
+        elif had_transaction:
+            wrote = self._open_transaction_wrote()
+            self._clear_transaction()
+            if commits and wrote:
                 change_signal.emit()
-            self._rows_changed_at_transaction_start = None
-        elif self.total_changes != rows_changed_before:
+        elif self.total_changes != before:
             change_signal.emit()
-        return cursor
+        return result
+
+    def _before_commit(self) -> None:
+        if self._finalizing:
+            raise RuntimeError("transaction participants cannot commit")
+        self._finalizing = True
+        try:
+            finalize(self, self._participants)
+        except BaseException:
+            self._rollback_failed()
+            raise
+        finally:
+            self._finalizing = False
+
+    def _commit(self, *, announce: bool) -> None:
+        had_transaction = self.in_transaction
+        if had_transaction:
+            self._before_commit()
+        wrote = self._open_transaction_wrote()
+        try:
+            super().commit()
+        except BaseException:
+            self.rollback()
+            raise
+        self._clear_transaction()
+        if announce and had_transaction and wrote:
+            change_signal.emit()
 
     def commit(self) -> None:
-        had_open_transaction = self.in_transaction
-        wrote = self._open_transaction_wrote()
-        super().commit()
+        self._commit(announce=True)
+
+    def rollback(self) -> None:
+        if self._finalizing:
+            raise RuntimeError("transaction participants cannot control transactions")
+        self._rollback_failed()
+
+    def _rollback_failed(self) -> None:
+        super().rollback()
+        self._clear_transaction()
+
+    def __enter__(self) -> Self:
+        if self.in_transaction:
+            self._context_sequence += 1
+            name = f"managed_context_{self._context_sequence}"
+            self.execute(f"SAVEPOINT {name}")
+        else:
+            name = None
+            self.execute("BEGIN")
+        self._contexts.append(name)
+        return self
+
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Literal[False]:
+        name = self._contexts.pop()
+        if not self.in_transaction:
+            return False
+        if name is not None:
+            if exc_type is not None:
+                self.execute(f"ROLLBACK TO {name}")
+            self.execute(f"RELEASE {name}")
+        elif exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        return False
+
+    def _clear_transaction(self) -> None:
         self._rows_changed_at_transaction_start = None
-        if had_open_transaction and wrote:
-            change_signal.emit()
+        self._savepoints.clear()
+        self._savepoint_transaction = False
 
     def _open_transaction_wrote(self) -> bool:
         baseline = self._rows_changed_at_transaction_start
@@ -180,7 +378,10 @@ def commit_without_change_signal(conn: sqlite3.Connection) -> None:
     Staying quiet is decided at the write, one commit at a time. Anything that might have
     a reader commits normally.
     """
-    sqlite3.Connection.execute(conn, "COMMIT")
+    if isinstance(conn, ChangeSignallingConnection):
+        conn._commit(announce=False)
+    else:
+        conn.execute("COMMIT")
 
 
 def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
@@ -194,6 +395,9 @@ def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+    from planner.database_modules import attach
+
+    conn._participants = attach(conn)
     return conn
 
 
@@ -218,7 +422,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
             "run on their own connection and would wait on this one's lock"
         )
     _upgrade_to_current_schema(_main_database_path(conn), _busy_timeout_ms(conn))
-    projects_data.seed_default_projects(conn)
+    with conn:
+        projects_data.seed_default_projects(conn)
     # Migration-unit fixtures deliberately replace the tree with a historical
     # subset. Seed the current subsystem only when that tree actually installed it.
     notification_schema_exists = conn.execute(

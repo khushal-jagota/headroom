@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
@@ -128,7 +129,7 @@ def test_catalog_keeps_historical_manifests_but_omits_them_from_supported_config
     tmp_path: Path,
 ) -> None:
     db = tmp_path / "catalog.db"
-    with connect(str(db)) as conn:
+    with closing(connect(str(db))) as conn:
         create_schema(conn)
         _install_history(conn)
     cfg = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db)})

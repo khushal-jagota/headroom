@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 from tests.support.worker_skill_proof_acp_agent import (
@@ -62,7 +63,7 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
         database_parent = runtime_root / "state"
         database_parent.mkdir(parents=True, exist_ok=True)
         # Opening a database writes the managed skills home it is seeded with.
-        with connect(str(database_parent / "planner.db")) as seed:
+        with closing(connect(str(database_parent / "planner.db"))) as seed:
             create_schema(seed)
         provision_planner_home_skills(
             hermes_home,

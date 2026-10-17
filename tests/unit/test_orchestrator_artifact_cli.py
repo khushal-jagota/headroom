@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,7 +31,7 @@ def artifact_cli(
             monkeypatch.delenv(key)
     db_path = tmp_path / "data" / "planning.db"
     db_path.parent.mkdir()
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         create_schema(conn)
     config = load_config(
         path=None,

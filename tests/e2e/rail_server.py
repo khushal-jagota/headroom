@@ -7,6 +7,7 @@ pending question to exercise ask-only presentation without invoking an agent bac
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import uvicorn
@@ -61,7 +62,7 @@ def main() -> None:
     config = load_config("config.yaml")
     assert config.test_mode
     assert Path(config.db_path).name == "rail-proof.db"
-    with connect(config.db_path) as bootstrap:
+    with closing(connect(config.db_path)) as bootstrap:
         create_schema(bootstrap)
 
     def conn_factory() -> sqlite3.Connection:

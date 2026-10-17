@@ -385,7 +385,7 @@ def test_migration_preserves_historical_receipts_without_invented_capability(
     create_schema(conn)
     assert (
         conn.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        == "durable_conversation_facts"
+        == "transactional_navigation"
     )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(

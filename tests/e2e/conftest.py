@@ -21,6 +21,7 @@ import sqlite3
 import subprocess
 import time
 from collections.abc import Callable, Iterator, Mapping
+from contextlib import closing
 from pathlib import Path
 
 import httpx
@@ -114,7 +115,7 @@ def _start_server(
     if seed_db is not None:
         from planner.core.db import connect, create_schema
 
-        with connect(str(db_path)) as bootstrap:
+        with closing(connect(str(db_path))) as bootstrap:
             create_schema(bootstrap)
         seed_db(db_path)
 
@@ -297,7 +298,7 @@ def _reset_database(db_path: Path) -> None:
 
     # create_schema is also the one canonical seed door, so the shared server begins
     # each test with the same default projects as a newly booted server.
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         create_schema(conn)
 
 

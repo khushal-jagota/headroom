@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -54,7 +55,7 @@ def cli_app(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[tuple[ServerHandle, Callable[..., JsonObject], ApiHelper]]:
     db_path = tmp_path / "cli-verbs.db"
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         create_schema(conn)
         # The probe Worker type is stored like any other, so the server reads it from here.
         seed_probe_worker_type(conn)

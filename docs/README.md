@@ -46,6 +46,8 @@ path. The supervisor reads canonical Item and Ticket state before it acts on a n
 
 ## The systems
 
+[Navigation transactions](navigation.md) describe derived records, durable revisions, and the generic-only compatibility boundary.
+
 **The full-system view**
 
 - **Systems** (`systems.md`) — the cold-start map: the record, ticket gate,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+from contextlib import closing
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -85,7 +86,7 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "api.db"
-    with connect(str(db_path)) as bootstrap:
+    with closing(connect(str(db_path))) as bootstrap:
         create_schema(bootstrap)
     cfg = load_config(
         path=None,
@@ -618,7 +619,7 @@ def test_conversation_binding_and_unbinding_capture_existing_attention(tmp_path:
 
 def test_failed_notification_delivery_retains_one_edge_and_retry(tmp_path: Path) -> None:
     db_path = tmp_path / "failed-delivery.db"
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         create_schema(conn)
         notifications_data.get_or_create_web_push_identity(conn, 1)
         _subscribe(conn)

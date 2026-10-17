@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 
 import click
@@ -118,7 +119,7 @@ def test_the_report_is_served_rather_than_read_as_a_skill_named_stale(tmp_path: 
     from planner.core.server import create_app
 
     db_path = tmp_path / "reported.db"
-    with connect(str(db_path)) as boot:
+    with closing(connect(str(db_path))) as boot:
         create_schema(boot)
     config = load_config(
         path=None,

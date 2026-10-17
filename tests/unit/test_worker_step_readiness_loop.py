@@ -12,6 +12,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
@@ -71,7 +72,7 @@ class _World:
 
     def __init__(self, tmp_path: Path) -> None:
         self.db_path = str(tmp_path / "readiness-loop.db")
-        with connect(self.db_path) as conn:
+        with closing(connect(self.db_path)) as conn:
             create_schema(conn)
         self.clock = TestClock(FIXED_NOW)
         self.conversations = InMemoryConversationSystem()
@@ -385,7 +386,7 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
     assert ticket.ticket_status is TicketStatus.errored
     assert world.conversations.backend_prompt_writes("conv-uncertain") == ()
     assert world.skill_bindings() == []
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
         uncertain_restart = asyncio.run(
             worker_restart.restart_worker(
@@ -455,7 +456,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
     async def unexpected_start() -> WorkerStepStartResult:
         raise AssertionError("a moved Ticket must not start another worker step")
 
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         with pytest.raises(PlannerError) as raised:
             asyncio.run(
                 worker_restart.restart_worker(
@@ -516,7 +517,7 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
     async def unexpected_start() -> WorkerStepStartResult:
         raise AssertionError("a moved Ticket must not start another worker step")
 
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         with pytest.raises(PlannerError) as raised:
             asyncio.run(
                 worker_restart.restart_worker(
@@ -558,7 +559,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
         async def unexpected_restart_start() -> WorkerStepStartResult:
             raise AssertionError("a moved restart must not start another worker step")
 
-        with world.connect() as restart_conn:
+        with closing(world.connect()) as restart_conn:
             restart_task = asyncio.create_task(
                 worker_restart.restart_worker(
                     cast(ConversationSystem, pausing),

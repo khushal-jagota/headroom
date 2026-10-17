@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from types import FrameType
 
@@ -36,7 +37,7 @@ def run_application_process() -> None:
     config = load_config(os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")))
     os.makedirs(os.path.dirname(config.db_path) or ".", exist_ok=True)
     os.makedirs(config.logs_dir, exist_ok=True)
-    with connect(config.db_path, config.db_busy_timeout_ms) as bootstrap:
+    with closing(connect(config.db_path, config.db_busy_timeout_ms)) as bootstrap:
         create_schema(bootstrap)
 
     clock = build_clock(config)

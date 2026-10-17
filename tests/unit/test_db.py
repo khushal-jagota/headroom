@@ -25,7 +25,7 @@ REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger a current build holds: the baseline plus what the
 # revisions after it add.
-CURRENT_SCHEMA_OBJECT_COUNT = 64
+CURRENT_SCHEMA_OBJECT_COUNT = 110
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"

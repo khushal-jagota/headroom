@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,7 @@ def test_historical_sprint_documents_preserve_content_and_refuse_writes(
         "checkpoint": "A revised plan.",
         "review": "A learned lesson.",
     }
-    with connect(str(path)) as conn:
+    with closing(connect(str(path))) as conn:
         create_schema(conn)
         sprint = data.create_sprint(
             conn,

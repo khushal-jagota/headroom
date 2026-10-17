@@ -757,6 +757,7 @@ async def start_agent_conversation(
             access=values.access,
         )
     )
+    missing_supervisor = False
     with conn:
         if required_sprint_item_id is None:
             conn.execute(
@@ -773,13 +774,16 @@ async def start_agent_conversation(
                 "AND 'sprint_item_supervisor_' || id=agents.agent_key)",
                 (conversation_id, agent_key, required_sprint_item_id),
             )
-            if linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None:
-                await system.kill(conversation_id)
-                raise PlannerError(
-                    ErrorCode.not_found,
-                    "Sprint Item supervisor no longer exists",
-                    {"sprint_item_id": required_sprint_item_id},
-                )
+            missing_supervisor = (
+                linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None
+            )
+    if missing_supervisor:
+        await system.kill(conversation_id)
+        raise PlannerError(
+            ErrorCode.not_found,
+            "Sprint Item supervisor no longer exists",
+            {"sprint_item_id": required_sprint_item_id},
+        )
     now_in = read_agent_conversation(conn, agent_key) or conversation_id
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
 
