@@ -33,7 +33,8 @@ def _historical_definitions(db: Path) -> None:
                 (skill, f"---\nname: {skill}\ndescription: Historical fixture\n---\n"),
             )
             conn.execute(
-                "INSERT OR REPLACE INTO worker_types VALUES (?,?,?,0)",
+                "INSERT OR REPLACE INTO worker_types "
+                "(worker_type, position, definition_json, updated_at) VALUES (?,?,?,0)",
                 (definition["worker_type"], position, json.dumps(definition)),
             )
 

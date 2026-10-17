@@ -352,6 +352,10 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         ceiling=body_opt_str(raw, "ceiling"),
         ceiling_holder=raw.get("ceiling_holder"),
     )
+    if "locale" in raw:
+        from planner.tickets.logic.locale import require_ticket_locale
+
+        body["locale"] = require_ticket_locale(raw["locale"]).value
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
     if "employee_launch_model" in raw:
@@ -496,6 +500,7 @@ async def create_ticket(
         ),
         orchestrator_kind=orchestrator.kind.value,
         worker_type=body["worker_type"],
+        locale=body.get("locale"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
@@ -1487,3 +1492,31 @@ async def retire_ticket(
             expected_record_sha256=_record_precondition(body),
         )
         return _ticket_detail(conn, ticket_id, clk.now_unix())
+
+
+@router.post("/tickets/{ticket_id}/move")
+async def move_ticket_locale(
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    from planner.tickets.locale_move import move_ticket_locale as move
+    from planner.tickets.logic.locale import require_ticket_locale
+
+    require_above(conn, ctx.principal, authority.ticket(ticket_id))
+    if "locale" not in raw or set(raw) - {"locale", "expected_record_sha256"}:
+        raise PlannerError(ErrorCode.validation, "move requires a locale", {})
+    now = clk.now_unix()
+    ticket = await move(
+        conversations,
+        conn,
+        ticket_id,
+        locale=require_ticket_locale(raw["locale"]),
+        principal=ctx.principal,
+        now=now,
+        expected_record_sha256=_record_precondition(raw),
+    )
+    return tickets_views.ticket_json(ticket, now)

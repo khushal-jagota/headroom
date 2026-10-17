@@ -447,6 +447,15 @@ class ConversationSystem(Protocol):
     locking, so all four are awaited.
     """
 
+    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
+        """Run a synchronous canonical write under the conversation admission lock.
+
+        Refuse immediately when any turn, held prompt, or delivery is outstanding.
+        The callback must do no backend I/O and cannot await. A missing conversation
+        counts as idle; callers serialize its association when creating or unlinking it.
+        """
+        ...
+
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation named by the request's conversation id.
 
