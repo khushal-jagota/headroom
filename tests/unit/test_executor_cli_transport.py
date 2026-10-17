@@ -47,7 +47,11 @@ def test_durable_authority_refusal_preserves_cli_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(tmp_path))
-    refusal = {"code": "agent_forbidden", "message": "another Ticket's record", "detail": {}}
+    refusal: JsonObject = {
+        "code": "agent_forbidden",
+        "message": "another Ticket's record",
+        "detail": {},
+    }
     monkeypatch.setattr(
         "planner.executor.ipc_client.request",
         lambda operation, payload: IpcResponse("request", None, refusal),
@@ -57,7 +61,7 @@ def test_durable_authority_refusal_preserves_cli_error(
     assert stopped.value.code == 1
 
 
-def test_text_read_uses_live_executor_ipc(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_text_read_uses_live_executor_ipc(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PLAN_EXECUTOR_ROOT", str(tmp_path))
 
     def read(operation: IpcOperation, payload: JsonObject) -> IpcResponse:
