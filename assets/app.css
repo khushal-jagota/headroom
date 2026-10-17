@@ -183,6 +183,7 @@ textarea {
 }
 
 .shell-nav {
+  background: var(--surface-recessed);
   position: relative;
   z-index: 11;
   display: flex;
@@ -612,12 +613,7 @@ textarea {
   }
 }
 
-.sprint-outcome-actions,
-.outcome-picker-filters,
-.outcome-picker-pages { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
-.outcome-picker { padding: var(--space-4); background: var(--surface-2); border-radius: var(--radius-sm); }
-.outcome-picker-list, .sprint-outcome-block { display: grid; gap: var(--space-1); }
-.outcome-picker-row { width: 100%; border: 0; color: inherit; text-align: left; cursor: pointer; }
+.sprint-outcome-block { display: grid; gap: var(--space-1); }
 .sprint-outcome-block { padding-block: var(--space-2); }
 .ticket-row-backlog { margin-left: auto; padding-left: var(--space-2); color: var(--text-faintest); font-size: var(--type-sm); }
 
@@ -3057,6 +3053,7 @@ select {
  * same --board-workspace-rail-pad-x inner inset, so all rail text shares one left
  * edge. Vertical rhythm follows the mockup's roster: rows touch, groups separate. */
 .board-workspace-left {
+  background: var(--surface-recessed);
   min-width: 0;
   overflow: auto;
   padding: var(--space-4) var(--page-gutter) var(--space-7);
@@ -3142,7 +3139,7 @@ select {
 
 .board-workspace-right--chief {
   padding: var(--space-5) var(--space-6);
-  background: var(--surface-recessed);
+  background: var(--surface-1);
 }
 
 /* The way back to the rail. Below 960px the rail is hidden, so the Ticket pane
@@ -3463,7 +3460,7 @@ select {
  * one accent stays reserved for "needs the human". */
 .ticket-row--active,
 .ticket-row--active:hover {
-  background: var(--surface-recessed);
+  background: var(--surface-2);
   color: var(--text-strong);
 }
 
@@ -4123,7 +4120,7 @@ select {
    * rest, so this colour is the bar at rest and the bar's head once it is opened up. It is
    * the page's own plane, not the ink one: the design separates the card from the page with
    * a hairline and the recessed well beneath it, not with a second colour. Drawing it in ink
-   * put a cool rectangle on a warm page, which is the colour difference the owner reported. */
+   * put a different colour on the page, which is the difference the owner reported. */
   background: var(--surface-1);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-lg);
@@ -5557,33 +5554,9 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   }
 }
 
-/* --- Backlog screen (redesign) ------------------------------------------- */
-/* Scan unscheduled work by priority, then add to it. A centered index column —
-   header → dormant compose → priority groups of
-   flat, navigable rows. Scoped to [data-screen="backlog"]; reuses the shared .chip and
-   the transparent .in caret idiom. Values via tokens.css, except the reading measure. */
-
-[data-screen="backlog"] .doc {
-  width: 100%;
-}
-
-[data-screen="backlog"] .screen-header,
-[data-screen="backlog"] .col {
-  max-width: var(--measure-index);                 /* the index reading measure */
-  margin: 0 auto;
-}
-
-[data-screen="backlog"] .screen-header {
-  padding: var(--space-5) var(--space-4) var(--space-4);
-}
-
-[data-screen="backlog"] .col {
-  padding: 0 var(--space-4) var(--space-page-tail);  /* the read's generous tail (matches Day) */
-}
-
 /* header title (serif — the screen speaking) + a static count pill */
-[data-screen="backlog"] .screen-header-title,
-[data-screen="ideas"] .screen-header-title {
+[data-screen="ideas"] .screen-header-title,
+[data-screen="feedback"] .screen-header-title {
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
@@ -5592,112 +5565,18 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   color: var(--text-strong);
 }
 
-[data-screen="backlog"] .screen-header-meta,
-[data-screen="ideas"] .screen-header-meta {
+[data-screen="ideas"] .screen-header-meta,
+[data-screen="feedback"] .screen-header-meta {
   padding-top: var(--space-1);
 }
 
-[data-screen="backlog"] .screen-header .pill,
 [data-screen="ideas"] .screen-header .pill {
   cursor: default;
 }
 
-[data-screen="backlog"] .screen-header .pill:hover,
 [data-screen="ideas"] .screen-header .pill:hover {
   color: var(--text-muted);
 }
-
-/* compose — dormant at rest; a quiet affordance that opens the labeled form */
-[data-screen="backlog"] .disclosure--make {
-  border-bottom: var(--border-hairline) solid var(--border-color);
-}
-
-[data-screen="backlog"] .disclosure--make > .disclosure-summary {
-  gap: var(--space-2);
-  padding: var(--space-4) 0;
-  font-size: var(--type-sm);
-  color: var(--text-faint);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="backlog"] .disclosure--make > .disclosure-summary:hover {
-  color: var(--text-default);
-}
-
-[data-screen="backlog"] .disclosure--make .plus {
-  width: var(--space-3);
-  text-align: center;
-  color: var(--text-faintest);
-  transition: transform var(--motion-fast) var(--motion-ease),
-    color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="backlog"] .disclosure--make[open] > .disclosure-summary {
-  color: var(--text-muted);
-}
-
-[data-screen="backlog"] .disclosure--make[open] > .disclosure-summary .plus {
-  transform: rotate(45deg);       /* + becomes × when open */
-}
-
-/* the make form is the ideas capture idiom: unboxed serif inputs, then one foot row
- * of controls (project · priority · due · commit). */
-[data-screen="backlog"] .form {
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-3) 0 var(--space-6);
-}
-
-[data-screen="backlog"] .form .foot {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-5);
-  flex-wrap: wrap;
-}
-
-[data-screen="backlog"] .form .foot .spacer {
-  flex: 1;
-}
-
-/* who holds the new Ticket's ceiling — the leash's own quiet "then <who>" wording,
- * sat on the create row beside the other choices. */
-[data-screen="backlog"] .form .foot .in-holder {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-faint);
-  font-size: var(--type-sm);
-}
-
-[data-screen="backlog"] .form .foot .in-holder-word {
-  color: var(--text-faintest);
-}
-
-/* priority group — a whisper label + rhythm (the Sprint status-group treatment) */
-[data-screen="backlog"] .grp {
-  margin-top: var(--space-6);
-}
-
-[data-screen="backlog"] .grp > .section-heading {
-  padding: var(--space-1) 0;
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--text-faintest);
-}
-
-[data-screen="backlog"] .grp > .section-heading .section-heading-label {
-  display: inline-flex;
-}
-
-[data-screen="backlog"] .grp > .section-heading .section-heading-count {
-  color: var(--text-faintest);
-}
-
-/* item row — flat + navigable, divided by seams; hover lifts the title only */
-
 
 /* --- Ideas screen (redesign) --------------------------------------------- */
 /* Capture with least friction, then browse the pile. The compose is the hero
@@ -5705,21 +5584,26 @@ details:not([open]) > summary > .sprint-workspace-chevron {
    the pile is newest-first, bodies DISCLOSE, title-only ideas are flat. Scoped to
    [data-screen="ideas"]; body renders via the shared markdown block. */
 
-[data-screen="ideas"] .doc {
+[data-screen="ideas"] .doc,
+[data-screen="feedback"] .doc {
   width: 100%;
 }
 
 [data-screen="ideas"] .screen-header,
-[data-screen="ideas"] .col {
+[data-screen="ideas"] .col,
+[data-screen="feedback"] .screen-header,
+[data-screen="feedback"] .col {
   max-width: var(--measure-read);                 /* a tight read+capture measure (matches Day) */
   margin: 0 auto;
 }
 
-[data-screen="ideas"] .screen-header {
+[data-screen="ideas"] .screen-header,
+[data-screen="feedback"] .screen-header {
   padding: var(--space-5) var(--space-4) var(--space-4);
 }
 
-[data-screen="ideas"] .col {
+[data-screen="ideas"] .col,
+[data-screen="feedback"] .col {
   padding: 0 var(--space-4) var(--space-page-tail);
 }
 
@@ -6213,28 +6097,9 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   overflow-wrap: anywhere;
 }
 
-[data-screen="backlog"] .in.title-in {
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-xl);
-  font-weight: 500;
-  color: var(--text-strong);
-}
-
-[data-screen="backlog"] .in.detail-in {
-  margin-top: var(--space-3);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
-  color: var(--text-muted);
-}
-
 /* the deadline is a fact, not prose — a small sans field in the foot row */
-[data-screen="backlog"] .in.due-in {
-  width: 170px;
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-}
 
-[data-screen="backlog"] .seg,
+
 [data-screen="ideas"] .seg,
 [data-screen="feedback"] .seg {
   display: flex;
@@ -6242,7 +6107,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   flex-wrap: wrap;
 }
 
-[data-screen="backlog"] .opt,
 [data-screen="ideas"] .opt,
 [data-screen="feedback"] .opt {
   padding: var(--space-1) var(--space-3);
@@ -6257,13 +6121,11 @@ details:not([open]) > summary > .sprint-workspace-chevron {
     background var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="backlog"] .opt:hover,
 [data-screen="ideas"] .opt:hover,
 [data-screen="feedback"] .opt:hover {
   color: var(--text-default);
 }
 
-[data-screen="backlog"] .opt[aria-pressed="true"],
 [data-screen="ideas"] .opt[aria-pressed="true"],
 [data-screen="feedback"] .opt[aria-pressed="true"] {
   color: var(--text-strong);
@@ -6271,7 +6133,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 }
 
 /* Commit — the one solid brand-accent action on the capture, the mockup's .commit. */
-[data-screen="backlog"] [data-commit].button,
 [data-screen="ideas"] [data-commit].button {
   background: var(--accent-bright);
   color: var(--surface-ink);
@@ -6282,7 +6143,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   transition: background var(--motion-base) var(--motion-ease);
 }
 
-[data-screen="backlog"] [data-commit].button:hover:not(:disabled),
 [data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
   filter: brightness(1.08);
 }
@@ -6632,37 +6492,6 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   cursor: pointer;
 }
 
-[data-screen="feedback"] .doc {
-  width: 100%;
-}
-
-[data-screen="feedback"] .screen-header,
-[data-screen="feedback"] .col {
-  max-width: var(--measure-read);
-  margin: 0 auto;
-}
-
-[data-screen="feedback"] .screen-header {
-  padding: var(--space-5) var(--space-4) var(--space-4);
-}
-
-[data-screen="feedback"] .col {
-  padding: 0 var(--space-4) var(--space-page-tail);
-}
-
-[data-screen="feedback"] .screen-header-title {
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-display);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
-  line-height: 1.26;
-}
-
-[data-screen="feedback"] .screen-header-meta {
-  padding-top: var(--space-1);
-}
-
 .fb-lede {
   margin: 0 0 var(--space-3);
   color: var(--text-faintest);
@@ -6866,3 +6695,13 @@ details:not([open]) > summary > .sprint-workspace-chevron {
     max-width: calc(100vw - var(--space-5));
   }
 }
+
+/* Workspace ticket buckets share row geometry across buttons and message links. */
+.workspace-ticket-bucket { margin-top:var(--space-4); }
+.workspace-ticket-bucket .bucket-label { font-size:10.5px; line-height:normal; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); padding-bottom:6px; margin-bottom:var(--space-1); border-bottom:var(--border-hairline) solid var(--border-color); }
+.workspace-ticket-bucket .worker-row { width:100%; display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket a.worker-row { text-decoration:none; }
+.workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
+.workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
+.workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.workspace-ticket-bucket .worker-row .stage-mark { justify-self:end; margin-left:0; margin-right:0; }

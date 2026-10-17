@@ -10,7 +10,7 @@ export type ConnectionStatus = "connected" | "reconnecting";
 // Commits inside one fixed window collapse into one round of refetches. A working agent
 // commits in bursts of dozens, and each round asks the server for everything on screen
 // again. The first commit starts the deadline so a sustained stream cannot keep the visible
-// screen stale. A board-level fact landing a second and a half later is not perceptible.
+// screen stale. Confirmed browser actions can refresh immediately without this delay.
 export const INVALIDATE_DEBOUNCE_MS = 1_500;
 
 export const connectionStatus = writable<ConnectionStatus>("reconnecting");

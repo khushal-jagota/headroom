@@ -27,13 +27,14 @@ Synthetic homes are allowed. Configuration-only copies with a symlink to the
 canonical credential keep one owner; whole real-home or credential copies do not.
 The Codex runtime guard separately rejects matching credentials in a different
 home for children Panels launches, allowing unreadable credentials with a warning.
-It does not protect Hermes or Claude. No general detector is promised here.
+It does not protect Hermes or Claude. The separate bounded source detector in
+scripts/check_agent_home_copies.py relates supported copies to selected agent homes,
+but cannot prove external credential provenance or safety on its omitted routes.
 
-docs/conversation-system.md names the live violation at
-tests/integration/test_conversation_real_provider_steering.py:569 and its contrast
-with the nearby Codex avoidance comment and the safe Hermes permission harness.
-Ticket t_yhf49qxd, "Stop the steering harness copying a real agent home", owns
-removal of that violation. Check that Ticket for the fix's status.
+The steering harness now copies Hermes configuration while symlinking canonical
+auth.json, and copies Claude settings while symlinking canonical .credentials.json.
+Codex uses its real home. The former whole-home and credential copies are removed;
+docs/conversation-system.md describes the current checks and their remaining limits.
 This tripwire has no new exemption.
 
 Other blind spots

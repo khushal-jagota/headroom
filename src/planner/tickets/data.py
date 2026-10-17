@@ -1173,21 +1173,6 @@ def forget_user_stage_opener(
         )
 
 
-def clear_ticket_error_for_restart(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    now: int,
-) -> Ticket:
-    """Clear an error only through the explicit restart path."""
-    with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.worker_step_claim is not WorkerStepClaim.errored:
-            return ticket
-        _write_worker_step_claim(conn, ticket_id, WorkerStepClaim.none, now)
-        return _load_ticket_for_write(conn, ticket_id)
-
-
 def release_worker_step_claim(
     conn: sqlite3.Connection,
     ticket_id: str,

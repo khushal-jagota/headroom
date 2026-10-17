@@ -1,3 +1,4 @@
+import type { ConversationEvent } from "./wire";
 import type { ConversationState } from "./conversationState";
 
 export type OwnerReadSnapshot = {
@@ -73,4 +74,18 @@ export function watchOwnerReadAttention(
     windowTarget.removeEventListener("focus", publishCurrentAttention);
     windowTarget.removeEventListener("blur", publishCurrentAttention);
   };
+}
+
+/** A confirmed read merits an immediate canonical refresh only when it covers an
+ * owner message not covered by the prior read/refresh. Use raw rows, not a lens.
+ * The backend keeps actual work and explicit owner-message/read facts authoritative.
+ */
+export function ownerReadCoversNewMessage(
+  events: readonly ConversationEvent[],
+  previouslyReadThrough: number,
+  acceptedReadThrough: number
+): boolean {
+  return events.some((event) => event.kind === "message_to_owner"
+    && event.sequence > previouslyReadThrough
+    && event.sequence <= acceptedReadThrough);
 }

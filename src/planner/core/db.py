@@ -208,7 +208,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     from planner.managed_skills import seed_packaged_skills, write_skill_home
     from planner.notifications import data as notifications_data
     from planner.projects import data as projects_data
-    from planner.scheduled_tickets.data import seed_shipped_schedules
     from planner.worker_types.configuration import load_worker_runtime_definitions
     from planner.worker_types.shipped import seed_chief_settings, seed_shipped_worker_types
     from planner.worker_types.store import worker_types_table_exists
@@ -240,7 +239,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
             seed_packaged_skills(conn)
             seed_shipped_worker_types(conn)
             seed_chief_settings(conn)
-            seed_shipped_schedules(conn)
             notifications_data.seed_shipped_notification_preferences(conn)
         except BaseException:
             conn.execute("ROLLBACK")

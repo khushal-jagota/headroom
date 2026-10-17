@@ -6,6 +6,7 @@ serves original stage fields while each new-work selector uses the supported lis
 The fixture restores historical definitions into an isolated database. No worker
 runs, and no legacy Ticket stage or proposal receives an action.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -19,7 +20,6 @@ from playwright.sync_api import BrowserContext, Page, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
 
 RETIRED = {"personal", "planning-day", "planning-midday-check", "planning-sprint"}
-
 
 
 def _historical_definitions(db: Path) -> None:
@@ -59,21 +59,33 @@ def test_supported_catalog_preserves_historical_connected_pages(
     )
     evidence = Path(os.environ.get("PANELS_CATALOG_EVIDENCE_DIR", str(tmp_path / "evidence")))
     evidence.mkdir(parents=True, exist_ok=True)
-    ticket = api.direct_post(server, "/api/tickets", {
-        "title": "Historical personal outcome remains reviewable",
-        "worker_type": "coding", "kickoff_note": "Original personal brief",
-        "orchestrator": {"kind": "chief", "id": "chief"},
-    })
+    ticket = api.direct_post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Historical personal outcome remains reviewable",
+            "worker_type": "coding",
+            "kickoff_note": "Original personal brief",
+            "orchestrator": {"kind": "chief", "id": "chief"},
+        },
+    )
     ticket_id = ticket["id"]
-    planning = api.direct_post(server, "/api/tickets", {
-        "title": "Historical planning review remains readable",
-        "worker_type": "coding", "kickoff_note": "Original planning review",
-        "orchestrator": {"kind": "chief", "id": "chief"},
-    })
+    planning = api.direct_post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Historical planning review remains readable",
+            "worker_type": "coding",
+            "kickoff_note": "Original planning review",
+            "orchestrator": {"kind": "chief", "id": "chief"},
+        },
+    )
     with sqlite3.connect(server.db_path) as conn:
-        proposal = json.loads(conn.execute(
-            "SELECT pending_proposal FROM tickets WHERE id=?", (ticket_id,)
-        ).fetchone()[0])
+        proposal = json.loads(
+            conn.execute(
+                "SELECT pending_proposal FROM tickets WHERE id=?", (ticket_id,)
+            ).fetchone()[0]
+        )
         proposal.update(field="outcome", body="Original personal outcome proposal")
         conn.execute(
             "UPDATE tickets SET worker_type='personal',stage='needs_outcome',"
@@ -83,9 +95,15 @@ def test_supported_catalog_preserves_historical_connected_pages(
         conn.execute(
             "UPDATE tickets SET worker_type='planning-day',stage='cancelled',"
             "ceiling='needs_review',field_values=?,pending_proposal=NULL WHERE id=?",
-            (json.dumps({
-                "review": "Original planning review", "retirement": "Reviewed disposition",
-            }), planning["id"]),
+            (
+                json.dumps(
+                    {
+                        "review": "Original planning review",
+                        "retirement": "Reviewed disposition",
+                    }
+                ),
+                planning["id"],
+            ),
         )
     page = open_page(context_factory(), server, "#/config", "[data-workers-list]")
     page.set_default_timeout(WAIT_MS)
@@ -103,7 +121,8 @@ def test_supported_catalog_preserves_historical_connected_pages(
                 )
                 expect(page.locator("[data-feedback-page-title]")).to_be_visible()
             page.screenshot(
-                path=str(evidence / f"{name}-{width}.png"), full_page=True,
+                path=str(evidence / f"{name}-{width}.png"),
+                full_page=True,
                 animations="disabled",
             )
         page.set_viewport_size({"width": 1440, "height": 1100})
@@ -113,20 +132,26 @@ def test_supported_catalog_preserves_historical_connected_pages(
     for worker_type in RETIRED:
         expect(page.locator(f'[data-worker-destination][href$="/{worker_type}"]')).to_have_count(0)
     screenshots("supported-worker-catalog")
-    page.goto(server.base + "/#/backlog")
-    page.locator('[data-create="ticket"] > summary').click()
-    creation = page.locator('[data-input="worker-type"]')
-    expect(creation.locator('option[value="coding"]')).to_have_count(1)
-    for worker_type in RETIRED:
-        expect(creation.locator(f'option[value="{worker_type}"]')).to_have_count(0)
-    historical_filter = page.get_by_role("combobox", name="Filter worker type", exact=True)
-    expect(historical_filter.locator('option[value="personal"]')).to_have_count(1)
-    ticket_choices = creation.locator("option").evaluate_all(
-        "options => options.map(option => ({value: option.value, label: option.textContent}))"
-    )
-    screenshots("supported-ticket-creation")
-    historical_filter.select_option("personal")
-    expect(page.locator(f'[data-ticket-id="{ticket_id}"]')).to_be_visible()
+    supported_catalog = api.get(server, "/api/worker-types?supported=true")["worker_types"]
+    supported_names = {entry["worker_type"] for entry in supported_catalog}
+    assert "coding" in supported_names
+    assert not RETIRED & supported_names
+    page.goto(server.base + "/#/workspace/chief-of-staff")
+    chief_children = page.locator('[data-orchestrator-children="chief:chief"]')
+    expect(chief_children.get_by_label("Worker state")).to_have_value("active")
+    personal_row = chief_children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')
+    expect(personal_row).to_be_visible()
+    expect(personal_row).to_contain_text(ticket["title"])
+    screenshots("historical-personal-discovery")
+    chief_children.get_by_label("Worker state").select_option("retired")
+    retired_group = chief_children.locator('[data-workspace-group="cancelled"]')
+    expect(retired_group).to_be_attached()
+    if not retired_group.evaluate("element => element.open"):
+        retired_group.locator(":scope > summary").click()
+    planning_row = retired_group.locator(f'[data-sprint-ticket-id="{planning["id"]}"]')
+    expect(planning_row).to_be_visible()
+    expect(planning_row).to_contain_text(planning["title"])
+    screenshots("historical-retired-discovery")
 
     page.goto(server.base + "/#/scheduled-tasks")
     page.locator("[data-create-schedule]").click()
@@ -162,7 +187,9 @@ def test_supported_catalog_preserves_historical_connected_pages(
         "data-conversation-state", "rest"
     )
     worker.locator("[data-stage-fold-open]").click()
-    worker.locator('[data-field="brief"] > summary').click()
+    brief_group = worker.locator('[data-field="brief"]')
+    if not brief_group.evaluate("element => element.open"):
+        brief_group.locator(":scope > summary").click()
     expect(worker.get_by_text("Original personal brief", exact=True)).to_be_visible()
     screenshots("historical-personal-ticket")
     page.goto(server.base + "/#/review")
@@ -181,31 +208,39 @@ def test_supported_catalog_preserves_historical_connected_pages(
     original_review = historical_planning.get_by_text("Original planning review", exact=True)
     if not original_review.is_visible():
         historical_planning.locator("[data-stage-fold-open]").first.click()
-        historical_planning.locator(
-            '[data-field="review"] > summary'
-        ).click()
+        historical_planning.locator('[data-field="review"] > summary').click()
     expect(original_review).to_be_visible()
     screenshots("historical-planning-ticket")
     assert errors == []
     after = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     assert after["worker_type"] == "personal" and after["stage"] == "needs_outcome"
     assert after["pending_proposal"]["body"] == "Original personal outcome proposal"
-    (evidence / "connected-catalog-proof.json").write_text(json.dumps({
-        "isolation": "Synthetic historical definitions and Ticket; dispatch disabled",
-        "source_build_hashes": {
-            str(path.relative_to(Path(__file__).parents[2])): hashlib.sha256(
-                path.read_bytes()
-            ).hexdigest()
-            for root in ("web/src", "web/dist")
-            for path in sorted((Path(__file__).parents[2] / root).rglob("*"))
-            if path.is_file()
-        },
-        "personal_daily_schedule": "Retired; controls disabled; no Enable or Save action",
-        "viewports": [1440, 560], "page_errors": errors,
-        "asserted_absent_from_each_creation_selector": sorted(RETIRED),
-        "ticket_creation_choices": ticket_choices, "schedule_creation_choices": schedule_choices,
-        "preserved_stage": after["stage"], "preserved_proposal": after["pending_proposal"]["field"],
-    }, indent=2))
+    (evidence / "connected-catalog-proof.json").write_text(
+        json.dumps(
+            {
+                "isolation": "Synthetic historical definitions and Ticket; dispatch disabled",
+                "source_build_hashes": {
+                    str(path.relative_to(Path(__file__).parents[2])): hashlib.sha256(
+                        path.read_bytes()
+                    ).hexdigest()
+                    for root in ("web/src", "web/dist")
+                    for path in sorted((Path(__file__).parents[2] / root).rglob("*"))
+                    if path.is_file()
+                },
+                "personal_daily_schedule": "Retired; controls disabled; no Enable or Save action",
+                "viewports": [1440, 560],
+                "page_errors": errors,
+                "asserted_absent_from_each_creation_selector": sorted(RETIRED),
+                "browser_ticket_creation": "Removed with the standalone Workers page",
+                "supported_catalog_api": supported_catalog,
+                "historical_discovery": "Chief children: Active personal and Retired planning",
+                "schedule_creation_choices": schedule_choices,
+                "preserved_stage": after["stage"],
+                "preserved_proposal": after["pending_proposal"]["field"],
+            },
+            indent=2,
+        )
+    )
 
     (evidence / "index.html").write_text(
         "<!doctype html><meta charset='utf-8'><title>Connected catalog evidence</title>"

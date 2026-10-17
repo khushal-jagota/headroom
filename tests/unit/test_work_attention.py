@@ -11,7 +11,7 @@ from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.conversation.contracts import ConversationSystem
-from planner.conversation.storage import ConversationStore
+from planner.conversation.storage import ConversationAttentionFacts, ConversationStore
 from planner.core.clock import RealClock
 from planner.core.contracts import JsonDict
 from planner.core.db import connect, create_schema
@@ -502,3 +502,65 @@ def test_completed_failure_history_does_not_poison_ticket_or_item_attention(
         "AND kind = 'turn_ended'"
     ).fetchone()["payload"] == json.dumps({"ending": "failed"})
     conn.close()
+
+
+@pytest.mark.parametrize(
+    ("events", "read_through", "acknowledged_through", "expected"),
+    [
+        ([], 0, None, (False, False)),
+        (["agent_message"], 0, None, (False, False)),
+        (["message_to_owner"], 0, None, (True, False)),
+        (["message_to_owner"], 1, None, (False, False)),
+        (["message_to_owner", "agent_message"], 1, None, (False, False)),
+        (["message_to_owner", "agent_message", "message_to_owner"], 1, None, (True, False)),
+        (["message_to_owner", "turn_ended"], 1, None, (False, True)),
+        (["turn_ended", "agent_message"], 0, None, (False, True)),
+        (["turn_ended", "prompt"], 0, None, (False, False)),
+        (["turn_ended"], 0, 1, (False, False)),
+        (["turn_ended", "message_to_owner"], 0, 1, (True, False)),
+        (["turn_ended", "turn_ended"], 0, 1, (False, True)),
+    ],
+)
+def test_attention_facts_preserve_message_and_failure_boundaries(
+    tmp_path: Path,
+    events: list[str],
+    read_through: int,
+    acknowledged_through: int | None,
+    expected: tuple[bool, bool],
+) -> None:
+    db_path = tmp_path / "attention.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    for conversation_id in ("selected", "unselected"):
+        conn.execute(
+            "INSERT INTO conversations "
+            "(conversation_id, backend_key, workspace_folder, access, latest_sequence, "
+            "owner_read_through_sequence, created_at) VALUES (?, 'codex', '/tmp', 'full', ?, ?, 1)",
+            (conversation_id, len(events), read_through),
+        )
+    conn.executemany(
+        "INSERT INTO conversation_events "
+        "(conversation_id, sequence, kind, payload, created_at) VALUES ('selected', ?, ?, ?, 1)",
+        [
+            (sequence, kind, json.dumps({"ending": "failed"}) if kind == "turn_ended" else "{}")
+            for sequence, kind in enumerate(events, start=1)
+        ],
+    )
+    # An unrequested conversation must not leak its unread message into the selected row.
+    conn.execute(
+        "INSERT INTO conversation_events "
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('unselected', 10, 'message_to_owner', '{}', 1)"
+    )
+    if acknowledged_through is not None:
+        conn.execute(
+            "INSERT INTO conversation_error_acknowledgements "
+            "(conversation_id, through_sequence) VALUES ('selected', ?)",
+            (acknowledged_through,),
+        )
+    conn.close()
+    record = ConversationStore(str(db_path))
+    assert asyncio.run(record.attention_facts(["selected", "selected", "unknown"])) == {
+        "selected": ConversationAttentionFacts(*expected)
+    }
+    assert asyncio.run(record.attention_facts([])) == {}

@@ -534,6 +534,8 @@ async def read_tickets(
     project_id: str | None = None,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
+    orchestrator_kind: str | None = None,
+    orchestrator_id: str | None = None,
     day: str | None = None,
     limit: int | None = None,
     offset: int | None = None,
@@ -553,6 +555,8 @@ async def read_tickets(
         "project_id": project_id,
         "sprint_id": sprint_id,
         "sprint_item_id": sprint_item_id,
+        "orchestrator_kind": orchestrator_kind,
+        "orchestrator_id": orchestrator_id,
         "day": day,
         "limit": limit,
         "offset": offset,
@@ -576,6 +580,8 @@ async def read_tickets(
         reject_parameters(
             "detail=full",
             {
+                "orchestrator_kind": orchestrator_kind,
+                "orchestrator_id": orchestrator_id,
                 "is_backlogged": is_backlogged,
                 "worker_type": worker_type,
                 "exclude_stage": exclude_stage,
@@ -603,6 +609,19 @@ async def read_tickets(
         )
         await add_work_attention(conn, conversations, conversation_record, tickets=rows)
         return {"tickets": rows}
+
+    orchestrator = None
+    if orchestrator_kind is not None or orchestrator_id is not None:
+        orchestrator = _parse_orchestrator(
+            {
+                "kind": orchestrator_kind,
+                "id": (
+                    "chief"
+                    if orchestrator_kind == "chief" and orchestrator_id is None
+                    else orchestrator_id
+                ),
+            }
+        )
 
     included_stages = tuple(stage or ())
     registry = configured_worker_type_registry()
@@ -632,6 +651,7 @@ async def read_tickets(
             offset=0 if offset is None else offset,
         ),
         filters=TicketListFilters(
+            orchestrator=orchestrator,
             stages=included_stages,
             excluded_stages=tuple(exclude_stage or ()),
             ticket_statuses=statuses,

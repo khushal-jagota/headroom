@@ -23,7 +23,7 @@
     </button>
   </div>
   {#each groups as group (group.key)}
-    <div class="bucket" data-bucket-key={group.key}>
+    <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key}>
       <div class="bucket-label">{group.label}</div>
       {#each group.cards as ticket (ticket.id)}
         {@const mark = workspaceTicketRowMark(ticket)}
@@ -38,18 +38,13 @@
   :global(.orchestrator-card) + .orchestrator-card { margin-top:var(--space-3); }
   .orchestrator-card:hover, .orchestrator-card:focus-within { border-color:rgb(from var(--border-color) r g b / .26); }
   .orchestrator-card:hover .item-title { color:var(--accent-needs-me); }
-  .selected { border-color:var(--accent-bright); }
+  /* Selection uses the existing surface; pointer exit must not reveal an accent edge. */
+  .selected { background:var(--surface-2); }
   .item-head { display:flex; align-items:flex-start; gap:var(--space-2); margin-top:var(--space-1); width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-title { flex:1; min-width:0; font-size:16px; font-weight:600; line-height:1.35; letter-spacing:-0.002em; color:var(--text-strong); overflow-wrap:anywhere; }
   .chief .item-head { align-items:center; margin-top:0; gap:10px; }
   .chief .item-title { font-size:18px; }
   .chief-icon { flex:none; width:26px; height:26px; border-radius:var(--radius-sm); object-fit:cover; }
-  .bucket { margin-top:var(--space-4); }
-  .bucket-label { font-size:10.5px; line-height:normal; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); padding-bottom:6px; margin-bottom:var(--space-1); border-bottom:var(--border-hairline) solid var(--border-color); }
-  .bucket :global(.worker-row) { width:100%; display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
-  .bucket :global(.worker-row:hover) { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .bucket :global(.worker-row.ticket-row--active) { background:var(--surface-recessed); color:var(--text-strong); }
-  button:focus-visible,.bucket :global(.worker-row:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
-  .bucket :global(.ticket-row-title) { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .bucket :global(.worker-row .stage-mark) { justify-self:end; margin-left:0; margin-right:0; }
+  .bucket :global(.worker-row.ticket-row--active) { background:var(--surface-2); color:var(--text-strong); }
+  button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
 </style>
