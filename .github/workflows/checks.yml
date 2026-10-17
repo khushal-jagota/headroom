@@ -71,6 +71,7 @@ jobs:
           mkdir -p "$artifact_shadow"
           bwrap --bind / / --dev-bind /dev /dev \
             --bind "$artifact_shadow" /home/vps/Deployments/Panels \
+            --bind "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE" \
             --chdir "$GITHUB_WORKSPACE" -- ./.venv/bin/pytest tests/e2e
       - name: npm run check
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
