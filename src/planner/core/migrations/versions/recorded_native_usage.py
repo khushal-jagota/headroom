@@ -1,7 +1,7 @@
 """Store usage-only native projections and verified file cursors.
 
 Revision ID: recorded_native_usage
-Revises: disable_retired_worker_schedules
+Revises: scheduled_ticket_locale
 """
 
 from alembic import op

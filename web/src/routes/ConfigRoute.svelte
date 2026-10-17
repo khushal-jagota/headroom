@@ -1,6 +1,8 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
+  import "../lib/config/config.css";
+  import ErrorLine from "../components/ErrorLine.svelte";
   import ManagedLaunchDefaults from "../components/ManagedLaunchDefaults.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import RoleSkillEditor from "../components/RoleSkillEditor.svelte";
@@ -31,14 +33,14 @@
   }> = {
     "panels-sprint-item-supervisor": {
       label: "Sprint Item supervisor",
-      fact: "Agent role skill · one identity per Sprint Item",
+      fact: "Role skill",
       descriptionAriaLabel: "Sprint Item supervisor skill description",
       bodyAriaLabel: "Sprint Item supervisor skill Markdown body",
       bodyPlaceholder: "Write the complete Sprint Item supervisor skill body..."
     },
     "panels-worker": {
       label: "Worker skill",
-      fact: "Shared role skill · no independent runtime",
+      fact: "Shared role skill",
       descriptionAriaLabel: "Worker skill description",
       bodyAriaLabel: "Worker skill Markdown body",
       bodyPlaceholder: "Write the complete shared Worker skill body..."
@@ -58,6 +60,10 @@
     ...queries.skillsHome(),
     enabled: stableRoleKind === "index" || stableRoleKind === "skill"
   }));
+  const supportedWorkerTypes = createQuery(() => ({
+    ...queries.supportedWorkerTypeManifests(),
+    enabled: stableRoleKind === "index"
+  }));
   const worker = createQuery(() => ({
     ...queries.worker(stableRoleId ?? ""),
     enabled: stableRoleKind === "worker" && stableRoleId !== null
@@ -73,6 +79,9 @@
         left.label.localeCompare(right.label, undefined, { sensitivity: "base" }) ||
         left.worker_type.localeCompare(right.worker_type)
     )
+  );
+  let indexedWorkerTypes = $derived(
+    new Map((supportedWorkerTypes.data?.worker_types || []).map((item) => [item.worker_type, item]))
   );
   let sharedWorkerSkill = $derived(indexedSkills.get("panels-worker"));
   let supervisorSkill = $derived(indexedSkills.get("panels-sprint-item-supervisor"));
@@ -217,7 +226,7 @@
       </header>
       <ResourceState
         {...resourceStateForQueries(workers, skillsHome)}
-        loadingText="Loading agents..."
+        loadingText="Loading configuration..."
       >
         {#if workers.data}
           <section class="agents-index-section" data-agents-section>
@@ -233,7 +242,7 @@
                     {workers.data.chief_of_staff.label}
                   </span>
                   <span class="agents-destination-description" data-destination-description>
-                    {workers.data.chief_of_staff.skill.description}
+                    Launch defaults and role skill
                   </span>
                 </span>
                 <span class="agents-destination-arrow" aria-hidden="true">→</span>
@@ -249,7 +258,7 @@
                       Sprint Item supervisor
                     </span>
                     <span class="agents-destination-description" data-destination-description>
-                      {supervisorSkill.description}
+                      Role skill
                     </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>
@@ -264,7 +273,7 @@
                   <span class="agents-destination-copy">
                     <span class="agents-destination-name" data-destination-name>Worker skill</span>
                     <span class="agents-destination-description" data-destination-description>
-                      {sharedWorkerSkill.description}
+                      Shared role skill
                     </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>
@@ -275,8 +284,10 @@
 
           <section class="agents-index-section" data-workers-section>
             <h2 class="agents-section-title">Workers</h2>
+            {#if supportedWorkerTypes.error}<ErrorLine error={supportedWorkerTypes.error} />{/if}
             <div class="agents-destination-list" data-workers-list>
               {#each sortedWorkers as item}
+                {@const manifest = indexedWorkerTypes.get(item.worker_type)}
                 <a
                   class="agents-destination"
                   href={`#/settings/config/workers/${encodeURIComponent(item.worker_type)}`}
@@ -285,7 +296,11 @@
                   <span class="agents-destination-copy">
                     <span class="agents-destination-name" data-destination-name>{item.label}</span>
                     <span class="agents-destination-description" data-destination-description>
-                      {indexedSkills.get(item.specialist_skill_name)?.description || ""}
+                      {#if manifest}
+                        {manifest.stages.length} {manifest.stages.length === 1 ? "Stage" : "Stages"}
+                      {:else}
+                        {supportedWorkerTypes.isFetching ? "Loading Stages…" : "Stages unavailable"}
+                      {/if}
                     </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>
@@ -311,11 +326,11 @@
             <header class="agents-detail-head">
               <h1 data-role-name>{chief.label}</h1>
               <div class="role-detail-facts">
-                <span data-role-structural-id>chief_of_staff</span>
-                <span data-role-skill-name>{chief.skill.name}</span>
+                <span class="config-identity" aria-hidden="true" data-role-structural-id>chief_of_staff</span>
+                <span class="config-identity" aria-hidden="true" data-role-skill-name>{chief.skill.name}</span>
                 <span>Agent · no ticket lifecycle</span>
               </div>
-              <p data-role-purpose>{chief.skill.description}</p>
+              <p class="config-identity" aria-hidden="true" data-role-purpose>{chief.skill.description}</p>
             </header>
 
             <ManagedLaunchDefaults
@@ -352,10 +367,10 @@
             <header class="agents-detail-head">
               <h1 data-role-name>{roleSkillProfile.label}</h1>
               <div class="role-detail-facts">
-                <span data-role-structural-id>{roleSkill.name}</span>
+                <span class="config-identity" aria-hidden="true" data-role-structural-id>{roleSkill.name}</span>
                 <span>{roleSkillProfile.fact}</span>
               </div>
-              <p data-role-purpose>{roleSkill.description}</p>
+              <p class="config-identity" aria-hidden="true" data-role-purpose>{roleSkill.description}</p>
             </header>
 
             <div
@@ -392,8 +407,8 @@
             <header class="agents-detail-head">
               <h1 data-role-name data-worker-name>{manifest.label || labelize(detail.settings.worker_type)}</h1>
               <div class="role-detail-facts">
-                <span data-worker-structural-id>{detail.settings.worker_type}</span>
-                <span data-worker-skill-name>{detail.settings.specialist_skill.name}</span>
+                <span class="config-identity" aria-hidden="true" data-worker-structural-id>{detail.settings.worker_type}</span>
+                <span class="config-identity" aria-hidden="true" data-worker-skill-name>{detail.settings.specialist_skill.name}</span>
                 <span data-worker-stage-count>{manifest.stages.length} Stages</span>
               </div>
             </header>
@@ -404,7 +419,8 @@
               onSave={(next) => saveWorkerLaunchDefaults(detail.settings, next)}
             />
 
-            <div class="worker-stage-table-shell">
+            <section class="worker-stage-table-shell" aria-labelledby="config-stages-title">
+              <header class="worker-stages-head"><h2 id="config-stages-title">Stages</h2></header>
               <table class="worker-stage-table" data-worker-stage-table>
                 <thead>
                   <tr>
@@ -418,7 +434,7 @@
                     <tr data-worker-stage-row data-stage={stage.id} data-terminal={stage.is_terminal ? "true" : "false"}>
                       <td data-stage-label>
                         <span class="worker-stage-name">{stage.label}</span>
-                        <span class="worker-stage-id">{stage.id}</span>
+                        <span class="worker-stage-id config-identity" aria-hidden="true">{stage.id}</span>
                       </td>
                       <td class="worker-stage-gated-field" data-gated-field>{gatedFieldLabel(manifest, stage.gating_field)}</td>
                       <td data-stage-owner={stage.is_terminal ? "" : stageOwnerValue(stage)}>
@@ -452,7 +468,7 @@
                   {/each}
                 </tbody>
               </table>
-            </div>
+            </section>
 
             <div data-worker-skill>
               <RoleSkillEditor

@@ -185,6 +185,16 @@ One screen per part of the system:
   Notification preferences and browser permission behavior remain. Settings does not
   change feature authority or introduce another configuration framework.
 
+  Config shares Usage's restrained rows and section spacing. Its Agents list opens
+  launch defaults and role skills. Its Workers list shows the actual number of Stages
+  from each supported manifest, in two columns on desktop and one on compact screens.
+  Usage links to Config, and the Settings navigation links back to Usage.
+
+  Config details retain the shared launch picker, per-Stage owner controls, and skill
+  editors. Owner writes remain serialized whole-record updates. Each skill field saves
+  independently, and a failed save retains its error and retry behavior. These screens
+  use the existing owner-only endpoints and preserve candidate specialist skills.
+
 The workspace keeps its resize handle within its own visual layer. Open shell menus
 cover that handle and receive pointer actions above it. The handle keeps its pointer
 and keyboard controls when unobscured.
