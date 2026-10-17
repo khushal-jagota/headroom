@@ -21,6 +21,7 @@ from planner.environments.resident.contracts import (
 from planner.environments.resident.control import OwnerExecutorControl
 from planner.environments.resident.launch_agent import render_launch_agent
 from planner.environments.resident.service import LaunchAgentService
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     ConnectionState,
     ExecutorHealth,
@@ -30,7 +31,7 @@ from planner.executor.contracts import (
     QuiesceRequest,
 )
 
-IDENTITY = ExecutorIdentity(1, "revision", 1, "first", 1)
+IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "revision", SPOOL_FORMAT_VERSION, "first", 1)
 REQUEST = QuiesceRequest(IDENTITY, 42, True)
 RECEIPT = QuiescenceReceipt(IDENTITY, 42, Quiescence(True, 0, 0, 0, 0, True), True)
 
@@ -104,7 +105,7 @@ def test_receipt_cannot_be_reused_for_rollback(tmp_path: Path) -> None:
 def test_new_candidate_needs_its_own_checkpoint(tmp_path: Path) -> None:
     adapter, commands = service(tmp_path, ["pid = 42\nruns = 3"])
     adapter.prepare_quiesce(REQUEST)
-    other = ExecutorIdentity(1, "candidate", 1, "candidate", 2)
+    other = ExecutorIdentity(PROTOCOL_VERSION, "candidate", SPOOL_FORMAT_VERSION, "candidate", 2)
     receipt = QuiescenceReceipt(other, 43, RECEIPT.quiescence, True)
     with pytest.raises(ResidentError, match="checkpoint"):
         adapter.stop(receipt)
@@ -139,8 +140,8 @@ def prepared(adapter: LaunchAgentService) -> PreparedResidentPackage:
     return PreparedResidentPackage(
         ResidentPackage(
             "a" * 40,
-            1,
-            1,
+            PROTOCOL_VERSION,
+            SPOOL_FORMAT_VERSION,
             "Darwin",
             "arm64",
             "3.12",

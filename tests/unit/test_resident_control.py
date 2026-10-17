@@ -17,6 +17,7 @@ from planner.environments.resident.contracts import (
     ResidentPackage,
 )
 from planner.environments.resident.control import OwnerExecutorControl
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     ConnectionState,
     EnvelopeKind,
@@ -32,7 +33,7 @@ from planner.executor.contracts import (
 )
 from planner.executor.journal import FilesystemSpool
 
-IDENTITY = ExecutorIdentity(1, "revision", 1, "incarnation", 2)
+IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "revision", SPOOL_FORMAT_VERSION, "incarnation", 2)
 
 
 def encoded_object(value: object) -> JsonObject:
@@ -96,7 +97,7 @@ def test_health_uses_owner_envelope_not_child_environment(
 
 @pytest.mark.parametrize("replacement", ["pid", "identity"])
 def test_quiesce_rejects_replacement_receipt(tmp_path: Path, replacement: str) -> None:
-    other = ExecutorIdentity(1, "revision", 1, "replacement", 2)
+    other = ExecutorIdentity(PROTOCOL_VERSION, "revision", SPOOL_FORMAT_VERSION, "replacement", 2)
     receipt = QuiescenceReceipt(
         other if replacement == "identity" else IDENTITY,
         43 if replacement == "pid" else 42,
@@ -136,8 +137,8 @@ def test_missing_socket_is_unavailable(tmp_path: Path) -> None:
 def package() -> ResidentPackage:
     return ResidentPackage(
         "a" * 40,
-        1,
-        1,
+        PROTOCOL_VERSION,
+        SPOOL_FORMAT_VERSION,
         "Darwin",
         "arm64",
         "3.12",
@@ -179,7 +180,7 @@ def test_default_checker_receives_executor_root_not_spool(
     root = tmp_path / "executor"
     control = OwnerExecutorControl(root / "run/executor.sock", timeout_seconds=1)
     assert control.compatible(package()) == "compatible"
-    assert calls == [(root, 1)]
+    assert calls == [(root, SPOOL_FORMAT_VERSION)]
     assert not root.exists()
 
 

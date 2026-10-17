@@ -13,6 +13,7 @@ from planner.environments.resident.contracts import (
 )
 from planner.environments.resident.logic.update import fresh_health, safe_quiescence
 from planner.environments.resident.update import _update_lock, update_resident
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     ConnectionState,
     ExecutorHealth,
@@ -29,7 +30,7 @@ READY = Quiescence(True, 0, 0, 0, 0, True)
 
 def health(revision: str, incarnation: str, *, ready: bool = True) -> ExecutorHealth:
     return ExecutorHealth(
-        ExecutorIdentity(1, revision, 1, incarnation, 1),
+        ExecutorIdentity(PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, incarnation, 1),
         123,
         ConnectionState.ready if ready else ConnectionState.reconciling,
         ready,
@@ -85,7 +86,9 @@ def packages(
     candidate_path.mkdir()
     (candidate_path / "source").write_text("new")
     closure = ExecutorSourceClosure(("main.py",), "main", "requirements.txt")
-    old = ResidentPackage(OLD, 1, 1, "Darwin", "arm64", "3.12", closure)
+    old = ResidentPackage(
+        OLD, PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, "Darwin", "arm64", "3.12", closure
+    )
     previous = PreparedResidentPackage(old, paths.app, paths.runtimes / OLD)
     candidate = PreparedResidentPackage(
         replace(old, application_revision=NEW), candidate_path, paths.runtimes / NEW
@@ -295,12 +298,18 @@ def test_health_requires_exact_fresh_reconciled_identity(mutation: str) -> None:
         elif mutation == "wrong_sha":
             identity = replace(identity, application_revision=OLD)
         elif mutation == "wrong_protocol":
-            identity = replace(identity, protocol_version=2)
+            identity = replace(identity, protocol_version=PROTOCOL_VERSION + 1)
         else:
-            identity = replace(identity, spool_format_version=2)
+            identity = replace(identity, spool_format_version=SPOOL_FORMAT_VERSION + 1)
         value = replace(value, identity=identity)
     package = ResidentPackage(
-        NEW, 1, 1, "Darwin", "arm64", "3.12", ExecutorSourceClosure((), "main", "requirements.txt")
+        NEW,
+        PROTOCOL_VERSION,
+        SPOOL_FORMAT_VERSION,
+        "Darwin",
+        "arm64",
+        "3.12",
+        ExecutorSourceClosure((), "main", "requirements.txt"),
     )
     assert not fresh_health(
         value, package, not_before_ms=100, now_ms=100, previous_incarnation="old"
@@ -475,8 +484,13 @@ def test_stable_exit_rechecks_compatibility_before_source_mutation(
 
     service = ChangingService()
     result = update_resident(
-        paths, candidate, previous, control=control, service=service,
-        validate_package=validate, now_ms=lambda: 100,
+        paths,
+        candidate,
+        previous,
+        control=control,
+        service=service,
+        validate_package=validate,
+        now_ms=lambda: 100,
     )
     assert result.disposition == "failed" and not result.rolled_back
     assert (paths.app / "source").read_text() == ("new" if during_rollback else "old")

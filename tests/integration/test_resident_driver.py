@@ -18,6 +18,7 @@ from planner.environments.resident.transport import (
     _TOOL_SHARED,
     build_delivery_archive,
 )
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 
 def test_exact_bundle_bootstraps_without_preinstalled_panels_or_hidden_checkout(
@@ -59,8 +60,8 @@ def test_exact_bundle_bootstraps_without_preinstalled_panels_or_hidden_checkout(
     ).strip()
     package = ResidentPackage(
         revision,
-        1,
-        1,
+        PROTOCOL_VERSION,
+        SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
         "3.12",

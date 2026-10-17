@@ -15,6 +15,7 @@ from planner.environments.resident.packaging import (
     validate_runtime,
 )
 from planner.environments.resident.paths import resident_paths
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 
 def test_launcher_uses_isolated_committed_source_and_preserves_home(tmp_path: Path) -> None:
@@ -49,8 +50,8 @@ def test_launcher_uses_isolated_committed_source_and_preserves_home(tmp_path: Pa
     ).strip()
     package = ResidentPackage(
         sha,
-        1,
-        1,
+        PROTOCOL_VERSION,
+        SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
         "3.12",

@@ -21,6 +21,7 @@ from planner.environments.resident.contracts import (
     ResidentPackage,
 )
 from planner.environments.resident.native_builder import NativeRuntimeBuilder, run_native_command
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 
 @dataclass
@@ -65,8 +66,8 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path, Path, ResidentPackage]:
     python.chmod(0o755)
     package = ResidentPackage(
         "a" * 40,
-        1,
-        1,
+        PROTOCOL_VERSION,
+        SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
         "3.12",

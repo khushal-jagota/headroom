@@ -18,6 +18,7 @@ from planner.environments.resident.packaging import (
     validate_runtime,
 )
 from planner.environments.resident.paths import resident_paths
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 
 def _repository(tmp_path: Path) -> tuple[Path, ResidentPackage]:
@@ -49,8 +50,8 @@ def _repository(tmp_path: Path) -> tuple[Path, ResidentPackage]:
     ).strip()
     return source, ResidentPackage(
         sha,
-        1,
-        1,
+        PROTOCOL_VERSION,
+        SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
         "3.12",

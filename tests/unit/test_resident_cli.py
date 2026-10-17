@@ -15,6 +15,7 @@ from planner.environments.resident.contracts import (
     TwoHostDeploymentResult,
 )
 from planner.environments.resident.report import write_deployment_record
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 SHA = "a" * 40
 
@@ -133,8 +134,8 @@ def test_source_build_uses_committed_bytes_and_requested_manifest(
         json.dumps(
             {
                 "application_revision": revision,
-                "protocol_version": 1,
-                "spool_format_version": 1,
+                "protocol_version": PROTOCOL_VERSION,
+                "spool_format_version": SPOOL_FORMAT_VERSION,
                 "target_os": "darwin",
                 "target_architecture": "arm64",
                 "python_version": "3.12",

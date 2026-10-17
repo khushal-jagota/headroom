@@ -21,6 +21,7 @@ from planner.environments.resident.contracts import (
     ResidentPackage,
 )
 from planner.environments.resident.native_builder import NativeRuntimeBuilder
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 SHA = "a" * 40
 
@@ -28,8 +29,8 @@ SHA = "a" * 40
 def _package() -> ResidentPackage:
     return ResidentPackage(
         SHA,
-        1,
-        1,
+        PROTOCOL_VERSION,
+        SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
         "3.12",
@@ -329,7 +330,9 @@ def test_real_adapter_wiring_retries_same_interrupted_first_install_only(
             if not started[0]:
                 return None
             return ExecutorHealth(
-                ExecutorIdentity(1, revision, 1, "fixture-incarnation", 1),
+                ExecutorIdentity(
+                    PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, "fixture-incarnation", 1
+                ),
                 123,
                 ConnectionState.ready,
                 True,
