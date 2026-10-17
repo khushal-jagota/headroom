@@ -76,6 +76,52 @@ def _ticket_record(ticket_id: str) -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize(
+    "holder",
+    [
+        {"kind": "owner", "id": "owner"},
+        {"kind": "chief", "id": "chief"},
+        {"kind": "sprint_item", "id": "si_reviewer"},
+        {"kind": "ticket", "id": "t_reviewer"},
+    ],
+)
+@pytest.mark.parametrize(
+    "command",
+    [["ticket", "show", "t_current"], ["ticket", "show"], ["worker", "my-ticket"]],
+)
+@pytest.mark.parametrize("selected", [False, True], ids=["manifest", "selected"])
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+def test_ticket_reads_expose_canonical_review_holder(
+    monkeypatch: pytest.MonkeyPatch,
+    holder: dict[str, str],
+    command: list[str],
+    selected: bool,
+    as_json: bool,
+) -> None:
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        if path == "/api/worker-types":
+            return {"worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]}
+        return {**_ticket_record("t_current"), "ceiling_holder": holder}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    args = [*command, *(["brief,guidance"] if selected else []), *(["--json"] if as_json else [])]
+    result = CliRunner().invoke(main, args, env={"PLAN_TICKET_ID": "t_current"})
+
+    assert result.exit_code == 0, result.output
+    if as_json:
+        record = json.loads(result.stdout)
+        assert record["header"]["ceiling_holder"] == holder
+        assert record["header"]["stage"] == "needs_success_condition"
+        assert record["header"]["ceiling"] == "needs_success_condition"
+        assert ("parts" if selected else "manifest") in record
+    else:
+        header = result.stdout.split("\n\n", 1)[0]
+        assert f"  ceiling_holder: {json.dumps(holder, sort_keys=True)}" in header
+        assert "  stage: needs_success_condition" in header
+        assert "  ceiling: needs_success_condition" in header
+        assert ("\nparts:" if selected else "\nmanifest:") in result.stdout
+
+
 def test_ticket_show_reads_selected_parts_from_current_worker_ticket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
