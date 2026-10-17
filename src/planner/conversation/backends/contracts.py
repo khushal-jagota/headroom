@@ -105,7 +105,9 @@ class NeedsRebind(BackendAdapterError):
 class TurnToken:
     """The core's name for one started turn.
 
-    The core mints it, hands it to the adapter with the prompt that starts the turn, and
+    The core reserves its number durably before provider I/O. Numbers never repeat
+    after restart, and historical identities never restore a process or callback.
+    The core hands it to the adapter with the prompt that starts the turn, and
     the adapter puts it on everything it later reports about that turn. It is what lets
     the core tell this turn's news from the news of a turn that has already been ended and
     replaced. A cancelled turn's late-arriving live and operational events are dropped.

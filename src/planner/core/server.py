@@ -107,10 +107,7 @@ def svelte_index_html(app_sha: str | None = None) -> str:
             "web/dist is missing; run npm --prefix web run build."
             "</div></body></html>"
         )
-    identity = (
-        '<meta name="panels-app-sha" '
-        f'content="{html.escape(app_sha or "", quote=True)}">'
-    )
+    identity = f'<meta name="panels-app-sha" content="{html.escape(app_sha or "", quote=True)}">'
     return document.replace("</head>", f"{identity}</head>", 1)
 
 
@@ -142,14 +139,6 @@ def create_app(
         Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
         from planner.tickets import data as tickets_data
 
-        audit_conn = conn_factory()
-        try:
-            tickets_data.audit_ticket_registry_integrity(audit_conn)
-            reconcile_managed_skill_versions(audit_conn)
-            reconcile_provisional_worker_step_bindings(audit_conn)
-        finally:
-            audit_conn.close()
-
         # The conversation system, built before anything that sends into one. It composes
         # the three real agents on this machine, and spawns none of them until a
         # conversation has something to send. Everything that starts or steers a worker
@@ -175,44 +164,55 @@ def create_app(
             ),
             remembered_codex_login_rejection=remembered_codex_login_rejection,
         )
-        app.state.conversation = conversation
-        # A test that drives workers wants a conversation system it can hold still, so it
-        # passes one in. Nothing else does: production always runs the real one.
-        app.state.conversation_system = (
-            conversation.system if conversation_system_for_test is None
-            else conversation_system_for_test
-        )
-        await conversation.system.start_idle_child_janitor()
-
-        lifecycle_observer = asyncio.create_task(
-            observe_path_changes(deployment_lifecycle_path, change_signal.emit)
-        )
-        loops: Any = None
-        if not config.test_mode:
-            from planner.core.loops import start_background_loops
-
-            loops = start_background_loops(
-                config,
-                clock,
-                conversation_system=app.state.conversation_system,
-                asyncio_loop=asyncio.get_running_loop(),
-            )
+        lifecycle_observer: asyncio.Task[None] | None = None
         try:
-            yield
-        finally:
-            deadline = _monotonic() + float(config.shutdown_grace_seconds)
+            audit_conn = conn_factory()
             try:
+                tickets_data.audit_ticket_registry_integrity(audit_conn)
+                reconcile_managed_skill_versions(audit_conn)
+                reconcile_provisional_worker_step_bindings(audit_conn)
+            finally:
+                audit_conn.close()
+
+            app.state.conversation = conversation
+            # A test that drives workers wants a conversation system it can hold still, so it
+            # passes one in. Nothing else does: production always runs the real one.
+            app.state.conversation_system = (
+                conversation.system
+                if conversation_system_for_test is None
+                else conversation_system_for_test
+            )
+            await conversation.system.start_idle_child_janitor()
+
+            lifecycle_observer = asyncio.create_task(
+                observe_path_changes(deployment_lifecycle_path, change_signal.emit)
+            )
+            loops: Any = None
+            if not config.test_mode:
+                from planner.core.loops import start_background_loops
+
+                loops = start_background_loops(
+                    config,
+                    clock,
+                    conversation_system=app.state.conversation_system,
+                    asyncio_loop=asyncio.get_running_loop(),
+                )
+            try:
+                yield
+            finally:
+                deadline = _monotonic() + float(config.shutdown_grace_seconds)
                 if loops is not None:
                     await _stop_runtime_with_deadline(loops, deadline)
-            finally:
+
+        finally:
+            app.state.conversation = None
+            if lifecycle_observer is not None:
                 lifecycle_observer.cancel()
                 try:
                     await lifecycle_observer
                 except asyncio.CancelledError:
                     pass
-                finally:
-                    app.state.conversation = None
-                    await conversation.shutdown()
+            await conversation.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     app.add_middleware(ConversationSendBodyLimitMiddleware)
@@ -235,8 +235,7 @@ def create_app(
         )
     )
     deployment_lifecycle_path = (
-        Path(config.db_path).expanduser().resolve(strict=False).parent
-        / "deployment-lifecycle.json"
+        Path(config.db_path).expanduser().resolve(strict=False).parent / "deployment-lifecycle.json"
     )
     deployment_lifecycle_store = DeploymentLifecycleStore(deployment_lifecycle_path)
 
@@ -267,6 +266,7 @@ def create_app(
         include_router(domain_router, prefix="/api")
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
+
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:
         return {
@@ -296,16 +296,12 @@ def create_app(
 
     @app.get("/api/deployment-status")
     async def deployment_status() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha
-        )
+        projection = await asyncio.to_thread(deployment_lifecycle_store.project, config.app_sha)
         return projection.to_public_dict()
 
     @app.get("/api/vps-status-summary")
     async def vps_status_summary() -> dict[str, object]:
-        projection = await asyncio.to_thread(
-            deployment_lifecycle_store.project, config.app_sha
-        )
+        projection = await asyncio.to_thread(deployment_lifecycle_store.project, config.app_sha)
         summary = await asyncio.to_thread(
             configured_vps_status_summary_collector,
             config,
@@ -321,9 +317,7 @@ def create_app(
             registry.supported_worker_types() if supported else registry.registered_worker_types()
         )
         return {
-            "worker_types": [
-                registry.manifest(worker_type) for worker_type in worker_type_ids
-            ],
+            "worker_types": [registry.manifest(worker_type) for worker_type in worker_type_ids],
         }
 
     @app.get("/api/changes")

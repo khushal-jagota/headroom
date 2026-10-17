@@ -14,6 +14,9 @@ shape of an event record) and the concrete database schema are deferred to the r
 build. They are deliberately absent from this module rather than sketched.
 """
 
+# Versioned durable source and transaction participation: conversation.lifecycle.
+# Its knowledge outcomes never broaden the public delivery receipt contract here.
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

@@ -22,9 +22,9 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable, Collection, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
@@ -50,6 +50,20 @@ from planner.conversation.events import (
     conversation_event_payload_from_canonical_json,
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
+)
+from planner.conversation.lifecycle import (
+    ConversationTransactionParticipant,
+    LifecycleFact,
+    LifecycleKind,
+    LifecycleOperation,
+    LifecycleStatus,
+    LifecycleTransition,
+)
+from planner.conversation.lifecycle_storage import (
+    acquire_runtime_ownership,
+    apply_facts,
+    participate,
+    read_facts,
 )
 from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
@@ -179,12 +193,136 @@ class ConversationStore:
         *,
         integer_now: Callable[[], int] = lambda: int(time.time()),
         busy_timeout_ms: int = DEFAULT_BUSY_TIMEOUT_MILLISECONDS,
+        transaction_participant: ConversationTransactionParticipant | None = None,
     ) -> None:
         self._db_path = db_path
+        self._transaction_participant = transaction_participant
         self._integer_now = integer_now
         self._busy_timeout_ms = busy_timeout_ms
         self._write_operations: set[asyncio.Task[object]] = set()
         self._recording_failures: dict[asyncio.Task[Any], tuple[str, Exception, asyncio.Event]] = {}
+
+    def claim_runtime(self) -> IO[bytes]:
+        """Exclusively reconcile lost capabilities before this runtime admits work."""
+        ownership = acquire_runtime_ownership(self._db_path)
+        try:
+            conn = self._connect()
+        except BaseException:
+            ownership.close()
+            raise
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            ids = conn.execute(
+                "SELECT DISTINCT conversation_id FROM conversation_lifecycle_facts "
+                "WHERE status IN ('intent','running','pending','answering')"
+            ).fetchall()
+            for row in ids:
+                conversation_id = str(row[0])
+                facts = tuple(
+                    replace(
+                        fact,
+                        status=(
+                            LifecycleStatus.unknown
+                            if fact.kind is LifecycleKind.attempt
+                            else LifecycleStatus.unavailable
+                        ),
+                    )
+                    for fact in read_facts(conn, conversation_id)
+                    if fact.status
+                    in (
+                        LifecycleStatus.intent,
+                        LifecycleStatus.running,
+                        LifecycleStatus.pending,
+                        LifecycleStatus.answering,
+                    )
+                )
+                apply_facts(conn, conversation_id, facts)
+                participate(
+                    conn,
+                    self._transaction_participant,
+                    LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
+                )
+            commit_without_change_signal(conn)
+        except BaseException:
+            ownership.close()
+            raise
+        finally:
+            conn.close()
+        return ownership
+
+    async def reserve_turn(self, conversation_id: str) -> int:
+        return await self._write(self._reserve_turn_sync, conversation_id)
+
+    def _reserve_turn_sync(self, conversation_id: str) -> int:
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT COALESCE(MAX(turn_number),0) FROM conversation_lifecycle_facts "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            ).fetchone()
+            turn_number = int(row[0]) + 1
+            apply_facts(
+                conn,
+                conversation_id,
+                (
+                    LifecycleFact(
+                        LifecycleKind.turn,
+                        str(turn_number),
+                        turn_number,
+                        LifecycleOperation.turn,
+                        LifecycleStatus.intent,
+                    ),
+                    LifecycleFact(
+                        LifecycleKind.attempt,
+                        f"prompt:{turn_number}",
+                        turn_number,
+                        LifecycleOperation.prompt,
+                        LifecycleStatus.intent,
+                    ),
+                ),
+            )
+            participate(
+                conn,
+                self._transaction_participant,
+                LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
+            )
+            _commit_appended_rows(conn, ())
+            return turn_number
+        finally:
+            conn.close()
+
+    async def lifecycle_facts(self, conversation_id: str) -> tuple[LifecycleFact, ...]:
+        def read() -> tuple[LifecycleFact, ...]:
+            conn = self._connect()
+            try:
+                return read_facts(conn, conversation_id)
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(read)
+
+    async def transition_lifecycle(
+        self, conversation_id: str, facts: tuple[LifecycleFact, ...]
+    ) -> None:
+        await self._write(self._transition_lifecycle_sync, conversation_id, facts)
+
+    def _transition_lifecycle_sync(
+        self, conversation_id: str, facts: tuple[LifecycleFact, ...]
+    ) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            apply_facts(conn, conversation_id, facts)
+            participate(
+                conn,
+                self._transaction_participant,
+                LifecycleTransition(conversation_id, read_facts(conn, conversation_id)),
+            )
+            _commit_appended_rows(conn, ())
+        finally:
+            conn.close()
 
     def recording_failures(self, conversation_id: str) -> tuple[Exception, ...]:
         """Actual recording errors retained for explicit persistence reconciliation."""
@@ -258,6 +396,22 @@ class ConversationStore:
         task.add_done_callback(self._write_operations.discard)
         return await asyncio.shield(task)
 
+    async def finish_writes(self) -> None:
+        """Keep ownership until every cancellation-shielded SQLite write closes."""
+        while self._write_operations:
+            tasks = tuple(self._write_operations)
+            for task in tasks:
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    # The thread still owns its transaction. Do not release the runtime
+                    # lease while a successor could reconcile ahead of that commit.
+                    continue
+                except Exception:
+                    # The operation already reported its error to its owner.
+                    continue
+            await asyncio.sleep(0)
+
     async def create_conversation(self, resolved: ResolvedConversationStart) -> ConversationRecord:
         """Write a conversation's row. Raises ``ConversationAlreadyStarted`` for a repeat."""
         return await self._write(self._create_conversation_sync, resolved)
@@ -273,6 +427,7 @@ class ConversationStore:
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
         owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
     ) -> StoredConversationEvent:
         """Write the next row of this conversation's record and return it as written."""
         return await self._write(
@@ -282,6 +437,7 @@ class ConversationStore:
             agent_activity,
             automatic_compaction_confirmed,
             owner_read_through_sequence,
+            lifecycle,
         )
 
     async def mark_held_sender_messages_leaving_queue(
@@ -360,6 +516,7 @@ class ConversationStore:
         automatic_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool = False,
+        lifecycle: tuple[LifecycleFact, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         """Atomically append silence markers followed by their turn ending."""
         return await self._write(
@@ -370,6 +527,7 @@ class ConversationStore:
             automatic_compaction_confirmed,
             automatic_compaction_result,
             create_failure_notice,
+            lifecycle,
         )
 
     async def advance_owner_read_through_sequence(
@@ -400,6 +558,7 @@ class ConversationStore:
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -427,6 +586,7 @@ class ConversationStore:
             model_change,
             extra_prompts,
             owner_read_through_sequence,
+            lifecycle,
         )
 
     async def read_events_after(
@@ -662,11 +822,12 @@ class ConversationStore:
         agent_activity: bool,
         automatic_compaction_confirmed: bool,
         owner_read_through_sequence: int | None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
     ) -> StoredConversationEvent:
         conn = self._connect()
         try:
             snapshot = self._begin_validated_attention_write(conn, conversation_id)
-            written = self._insert_rows(conn, conversation_id, (payload,))
+            written = self._insert_rows(conn, conversation_id, (payload,), lifecycle)
             stored = written[0]
             if agent_activity:
                 conn.execute(
@@ -699,6 +860,7 @@ class ConversationStore:
                 occurred_at=stored.created_at,
             )
             capture_conversation_attention(conn, conversation_id, stored.created_at, result)
+            self._participate_in_append(conn, conversation_id, written)
             _commit_appended_rows(conn, (payload,))
         except BaseException:
             if conn.in_transaction:
@@ -734,6 +896,7 @@ class ConversationStore:
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -742,7 +905,7 @@ class ConversationStore:
         conn = self._connect()
         try:
             snapshot = self._begin_validated_attention_write(conn, conversation_id)
-            written = self._insert_rows(conn, conversation_id, payloads)
+            written = self._insert_rows(conn, conversation_id, payloads, lifecycle)
             if model_change is not None:
                 conn.execute(
                     "UPDATE conversations SET model = ?, reasoning_effort = ? "
@@ -778,6 +941,7 @@ class ConversationStore:
                 occurred_at=written[-1].created_at,
             )
             capture_conversation_attention(conn, conversation_id, written[-1].created_at, result)
+            self._participate_in_append(conn, conversation_id, written)
             _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
@@ -795,11 +959,12 @@ class ConversationStore:
         automatic_compaction_confirmed: bool,
         automatic_compaction_result: AutomaticCompactionResult | None,
         create_failure_notice: bool,
+        lifecycle: tuple[LifecycleFact, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         conn = self._connect()
         try:
             snapshot = self._begin_validated_attention_write(conn, conversation_id)
-            written = self._insert_rows(conn, conversation_id, payloads)
+            written = self._insert_rows(conn, conversation_id, payloads, lifecycle)
             ended = written[-1]
             if create_failure_notice:
                 ending_payload = ended.payload
@@ -840,6 +1005,7 @@ class ConversationStore:
                 occurred_at=ended.created_at,
             )
             capture_conversation_attention(conn, conversation_id, ended.created_at, result)
+            self._participate_in_append(conn, conversation_id, written)
             _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
@@ -880,11 +1046,29 @@ class ConversationStore:
             now=now,
         )
 
+    def _participate_in_append(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        written: tuple[StoredConversationEvent, ...],
+    ) -> None:
+        """Expose the final candidate after all source effects, before the owner commits."""
+        participate(
+            conn,
+            self._transaction_participant,
+            LifecycleTransition(
+                conversation_id,
+                read_facts(conn, conversation_id),
+                tuple(event.sequence for event in written),
+            ),
+        )
+
     def _insert_rows(
         self,
         conn: sqlite3.Connection,
         conversation_id: str,
         payloads: tuple[ConversationEventPayload, ...],
+        lifecycle: tuple[LifecycleFact, ...] = (),
     ) -> tuple[StoredConversationEvent, ...]:
         """Add rows to the end of a conversation's record. A transaction must be open.
 
@@ -941,6 +1125,7 @@ class ConversationStore:
             "UPDATE conversations SET latest_sequence = ? WHERE conversation_id = ?",
             (latest_sequence + len(payloads), conversation_id),
         )
+        apply_facts(conn, conversation_id, lifecycle)
         return tuple(written)
 
     def _read_events_after_sync(

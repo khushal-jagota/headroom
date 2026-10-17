@@ -16,7 +16,7 @@ import json
 import sqlite3
 import zlib
 from collections.abc import Callable, Coroutine, Iterator, MutableMapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +71,7 @@ from planner.conversation.events import (
     AgentMessageDeltaFrame,
     AgentMessageEventPayload,
     ConversationTurnEnding,
+    PermissionAskedEventPayload,
     PermissionAskOption,
     ToolCallFinishedEventPayload,
     ToolCallStartedEventPayload,
@@ -78,6 +79,7 @@ from planner.conversation.events import (
     UserInputAnswer,
     UserInputOption,
     UserInputQuestion,
+    UserInputRequestedEventPayload,
 )
 from planner.conversation.image_validation import MAX_CONVERSATION_MESSAGE_IMAGE_BYTES
 from planner.conversation.live_tail import MAXIMUM_HELD_TAIL_ITEMS, ConversationLiveTail
@@ -411,7 +413,11 @@ class _Harness:
             ),
         )
         await self.settle()
-        return ask_id
+        return next(
+            event.payload.ask_id
+            for event in reversed(await self.store.read_events_after(conversation_id, 0))
+            if isinstance(event.payload, PermissionAskedEventPayload)
+        )
 
     async def request_user_input(self, conversation_id: str) -> BackendUserInputRequest:
         backend = self.backend(conversation_id)
@@ -443,7 +449,12 @@ class _Harness:
         )
         await backend.sink.user_input_requested(token, request)
         await self.settle()
-        return request
+        public_id = next(
+            event.payload.request_id
+            for event in reversed(await self.store.read_events_after(conversation_id, 0))
+            if isinstance(event.payload, UserInputRequestedEventPayload)
+        )
+        return replace(request, request_id=public_id)
 
     async def stream_tool_output(
         self, conversation_id: str, tool_call_id: str, detail: str
@@ -1094,6 +1105,63 @@ def test_owner_read_position_persists_and_refuses_employee_updates(
     _run(exercise)
 
 
+@pytest.mark.parametrize("request_kind", ["permission", "user-input"])
+def test_a_stale_http_answer_cannot_target_a_reused_provider_request(
+    harness: _Harness, request_kind: str
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+
+            async def ask() -> str:
+                sent = await client.post(
+                    "/api/conversation/conversations/c/send",
+                    json={
+                        "content": [{"piece": "text", "text": "work"}],
+                        "sender_label": "owner",
+                    },
+                )
+                assert sent.status_code == 200, sent.text
+                if request_kind == "permission":
+                    harness.backend("c").asks_raised = 0
+                    return await harness.raise_permission_ask("c")
+                return (await harness.request_user_input("c")).request_id
+
+            old_id = await ask()
+            await harness.complete_turn("c")
+            new_id = await ask()
+            assert old_id != new_id
+
+            async def answer(identity: str) -> httpx.Response:
+                if request_kind == "permission":
+                    body: dict[str, Any] = {"ask_id": identity, "option_id": "deny"}
+                else:
+                    body = {
+                        "request_id": identity,
+                        "answers": {
+                            "scope": {"answers": ["Backend"]},
+                            "timing": {"answers": ["Now"]},
+                        },
+                    }
+                return await client.post(
+                    f"/api/conversation/conversations/c/{request_kind}-answers", json=body
+                )
+
+            stale = await answer(old_id)
+            assert stale.status_code == 200
+            assert stale.json() == {"landed": False}
+            assert not harness.backend("c").permission_answers
+            assert not harness.backend("c").user_input_answers
+            current = await answer(new_id)
+            assert current.json() == {"landed": True}
+            if request_kind == "permission":
+                assert harness.backend("c").permission_answers == {"ask-1": "deny"}
+            else:
+                assert set(harness.backend("c").user_input_answers) == {"input-1"}
+
+    _run(exercise)
+
+
 def test_user_input_replays_after_refresh_and_posts_a_complete_answer_map(
     harness: _Harness,
 ) -> None:
@@ -1131,7 +1199,7 @@ def test_user_input_replays_after_refresh_and_posts_a_complete_answer_map(
                 },
             )
             assert response.json() == {"landed": True}
-            assert harness.backend("c").user_input_answers[request.request_id] == (
+            assert harness.backend("c").user_input_answers["input-1"] == (
                 UserInputAnswer("scope", ("Backend", "Frontend")),
                 UserInputAnswer("timing", ("Tomorrow",)),
             )
@@ -1263,7 +1331,7 @@ def test_an_answer_lands_once_and_then_has_nothing_left_to_land_on(
             )
             assert landed.status_code == 200
             assert landed.json() == {"landed": True}
-            assert harness.backend("c").permission_answers == {ask_id: "allow-once"}
+            assert harness.backend("c").permission_answers == {"ask-1": "allow-once"}
 
             again = await client.post(
                 "/api/conversation/conversations/c/permission-answers",
@@ -1276,7 +1344,7 @@ def test_an_answer_lands_once_and_then_has_nothing_left_to_land_on(
                 json={"ask_id": "no-such-ask", "option_id": "allow-once"},
             )
             assert stale.json() == {"landed": False}
-            assert harness.backend("c").permission_answers == {ask_id: "allow-once"}
+            assert harness.backend("c").permission_answers == {"ask-1": "allow-once"}
 
             view = (await client.get("/api/conversation/conversations/c")).json()
             assert view["pending_permission_ask"] is None

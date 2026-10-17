@@ -19,6 +19,50 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Durable lifecycle facts
+
+The notebook keeps completed receipts. A separate conversation-owned source keeps
+version 1 facts about turns, external attempts, and requests. These facts contain
+identities and outcomes, without message content, process handles, or callbacks.
+Turn numbers come from a database transaction and do not repeat after a restart.
+Public request IDs include that durable turn identity. A live runtime maps them to
+the provider's request IDs. An old answer cannot address a later request that reuses
+the same provider ID.
+
+Panels commits intent before a prompt, steer, answer, or cancellation reaches the
+backend. Intent proves no delivery. A prompt outcome says `started` only when the
+adapter reports a successful wire write. A steer says `injected` only when the adapter
+reports admission to its target turn. Unknown external outcomes remain `unknown`.
+The public ordinary-send API still maps `PromptWriteFailed` to refusal. That mapping
+can conceal admission uncertainty and requires a separate approved receipt change.
+The durable source does not change that public mapping or claim proven non-admission.
+
+Related lifecycle facts and notebook receipts share their existing SQLite transaction.
+Read positions, attention, notices, model changes, and skill bindings keep their existing
+rules and commit boundaries. A synchronous transaction participant receives the same
+connection and typed candidate facts before commit. It can write related records within
+that transaction. It cannot commit, await, or call a provider. Any failure rolls back
+all those writes. Settled memory and live-tail publication follow commit.
+
+An answer first reserves its request durably. Concurrent answers cannot repeat the
+callback. After a successful external write, a failed database settlement retains the
+reservation and retries only the database operation after explicit reconciliation.
+Caller cancellation does not cancel that owned settlement. A proven callback write
+failure restores the pending request only after its failure facts commit.
+
+One runtime holds an exclusive lock beside the canonical database. A second runtime
+fails before reconciliation and cannot invalidate the first runtime's live work.
+Startup converts lost turns and requests to unavailable facts and incomplete attempts
+to unknown facts before admissions, subscriptions, the janitor, or worker loops.
+It creates no provider ending, answer, or missing-reply marker. Historical notebook
+rows remain unchanged. Old databases have no recoverable live identities, so migration
+adds no invented lifecycle facts. An absent fact does not establish capability.
+
+Restart restores no queue content or callbacks. It sends no prompt or answer and resumes
+no interrupted work. Queue persistence, replay, and automatic continuation remain separate
+product decisions. The source contract lives in `conversation/lifecycle.py` and its
+transaction and terminal-transition rules live beside the conversation store.
+
 ## Exercising permission requests
 
 Real work always runs with full access. There is no selectable ask posture on a
