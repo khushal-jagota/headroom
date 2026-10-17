@@ -315,18 +315,22 @@ class Quiescence:
 
     @property
     def ready(self) -> bool:
-        return self.admission_stopped and self.idle_children_stopped and not (
-            self.active_turn_count or self.pending_callback_count
-            or self.uncertain_operation_count or self.unsent_entry_count
+        return (
+            self.admission_stopped
+            and self.idle_children_stopped
+            and not (
+                self.active_turn_count
+                or self.pending_callback_count
+                or self.uncertain_operation_count
+                or self.unsent_entry_count
+            )
         )
 
 
 class DurableSpool(Protocol):
     """Methods are synchronous; async callers use a worker thread for disk I/O."""
 
-    def enqueue(
-        self, envelope: QueuedEnvelope, snapshots: tuple[FileSnapshot, ...] = ()
-    ) -> None:
+    def enqueue(self, envelope: QueuedEnvelope, snapshots: tuple[FileSnapshot, ...] = ()) -> None:
         """Return after snapshots, metadata, publication and parent directory fsync."""
         ...
 
@@ -451,3 +455,26 @@ class AllocatingDurableSpool(DurableSpool, Protocol):
         its identical immutable envelope; conflicting content is refused.
         """
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class QuiesceRequest:
+    """Expected live identity from fresh health, checked atomically with admission stop."""
+
+    expected_identity: ExecutorIdentity
+    expected_process_id: int
+    exit_when_ready: bool
+
+
+@dataclass(frozen=True, slots=True)
+class QuiescenceReceipt:
+    """Readiness belongs only to this process/generation, never a later restart.
+
+    Resident must retain this identity through stop/exit. A failed candidate needs
+    its own fresh health and quiescence request before rollback can replace code.
+    """
+
+    identity: ExecutorIdentity
+    process_id: int
+    quiescence: Quiescence
+    exit_committed: bool
