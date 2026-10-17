@@ -209,14 +209,20 @@ describe("the shared Item and Ticket presentation", () => {
       agent_state: "working"
     });
     const reply = ticket("reply", { awaiting_reply: true, agent_state: "working", conversation_signal:{working:true,message_for_owner:true} });
-    const working = ticket("working", { assigned: true, agent_state: "working" });
+    const working = ticket("working", { assigned: true, agent_state: "working", conversation_signal:{working:true,message_for_owner:false} });
     for (const row of [approval, reply]) {
       const html = conversationSignalReading(row);
-      expect(html).toContain('data-conversation-signal="working"');
+      expect(html).not.toContain('data-conversation-signal="working"');
       expect(html).toContain('data-conversation-signal="message"');
       expect(dayVisualTicket(row as unknown as DayTicket).ticket.conversation_signal).toEqual(row.conversation_signal);
     }
-    expect(conversationSignalReading(working)).not.toContain("data-conversation-signal");
+    expect(conversationSignalReading(working)).toContain('data-conversation-signal="working"');
+    expect(conversationSignalReading(working)).not.toContain('data-conversation-signal="message"');
+    const readReply = ticket(reply.id, { ...reply, awaiting_reply:false,
+      conversation_signal:{ ...reply.conversation_signal!, message_for_owner:false } });
+    expect(readReply.conversation_signal?.working).toBe(true);
+    expect(conversationSignalReading(readReply)).toContain('data-conversation-signal="working"');
+    expect(conversationSignalReading(readReply)).not.toContain('data-conversation-signal="message"');
   });
 
   it("returns identical groups, counts, marks, and activity order for both payload shapes", () => {

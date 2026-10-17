@@ -168,7 +168,9 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
         left = page.locator(f'[data-sprint-item="{item["id"]}"]')
         owner_row = left.locator(f'[data-ticket-id="{ticket["id"]}"]')
-        expect(owner_row).to_have_attribute("data-workspace-mark", "reply", timeout=WAIT_MS)
+        expect(owner_row.locator('[data-conversation-signal="message"]')).to_have_count(
+            1, timeout=WAIT_MS
+        )
         expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(
             ticket["title"]
         )
@@ -242,14 +244,17 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         diagnostics.record("transcript-route-remove-return")
         page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
         expect(page.get_by_text("Child direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
+        expect(owner_row).to_be_visible(timeout=WAIT_MS)
+        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert _read_position(server, "dot-ticket") == 1
 
         # The read is durable across refresh. A stale acknowledgement cannot eat a newer message.
         page.goto(server.base + "/#/workspace?view=items")
         page.reload()
-        expect(page.locator(f'[data-ticket-id="{ticket["id"]}"]')).to_have_attribute(
-            "data-workspace-mark", "none", timeout=WAIT_MS
+        reloaded_owner_row = page.locator(f'[data-ticket-id="{ticket["id"]}"]')
+        expect(reloaded_owner_row).to_be_visible(timeout=WAIT_MS)
+        expect(reloaded_owner_row.locator("[data-conversation-signal]")).to_have_count(
+            0, timeout=WAIT_MS
         )
         _message(
             server,
@@ -261,9 +266,11 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             server, "/api/conversation/conversations/dot-ticket/owner-read", {"through_sequence": 1}
         )
         page.reload()
-        expect(page.locator(f'[data-ticket-id="{ticket["id"]}"]')).to_have_attribute(
-            "data-workspace-mark", "reply", timeout=WAIT_MS
-        )
+        expect(
+            page.locator(f'[data-ticket-id="{ticket["id"]}"]').locator(
+                '[data-conversation-signal="message"]'
+            )
+        ).to_have_count(1, timeout=WAIT_MS)
         assert _read_position(server, "dot-ticket") == 1
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         assert (
@@ -281,12 +288,14 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         )
         page.reload()
         expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
+        expect(owner_row).to_be_visible(timeout=WAIT_MS)
+        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         left.locator(".item-head").click(timeout=WAIT_MS)
         expect(right.locator(".sprint-workspace-title-mark")).to_be_visible(timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
-        expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
+        expect(owner_row).to_be_visible(timeout=WAIT_MS)
+        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         # Selecting the Item keeps the conversation at rest and does not claim a read.
         expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
@@ -303,7 +312,8 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         page.reload()
         expect(page.locator("[data-chief-destination] .stage-mark")).to_be_visible(timeout=WAIT_MS)
         assert left.locator(".item-head .stage-mark").count() == 0
-        expect(owner_row).to_have_attribute("data-workspace-mark", "none", timeout=WAIT_MS)
+        expect(owner_row).to_be_visible(timeout=WAIT_MS)
+        expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         page.screenshot(path=str(EVIDENCE / "chief-own-message-only.png"), full_page=True)
         page.locator("[data-chief-destination]").click(timeout=WAIT_MS)
         expect(page.get_by_text("Chief direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
