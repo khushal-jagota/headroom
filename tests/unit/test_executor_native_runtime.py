@@ -32,13 +32,14 @@ from planner.conversation.events import ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.executor.codec import encode_value
-from planner.executor.configuration import ExecutorPaths
+from planner.executor.configuration import PROTOCOL_VERSION, ExecutorPaths
 from planner.executor.contracts import (
     AuthorizedAction,
     ChildCommand,
     ChildOperation,
     ChildReference,
     CommandDisposition,
+    CommandOutcome,
     DurableAnswer,
     EnvelopeKind,
     ExecutorIdentity,
@@ -147,7 +148,7 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
         await registry.execute_command(prompt)
         assert (await registry.quiesce()).active_turn_count == 1
         artifact = tmp_path / "artifacts" / "tickets" / "t_example" / "result.bin"
-        artifact.parent.mkdir(parents=True)
+        artifact.parent.mkdir(parents=True, exist_ok=True)
         artifact.write_bytes(b"whole output")
         await native.sink.tool_call_finished(
             turn, tool_call_id="tool", tool_call_status=ToolCallStatus.completed, detail=None
@@ -158,7 +159,9 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
         await native.sink.permission_ask_raised(
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
-        identity = ExecutorIdentity(1, "a" * 40, 1, reference.executor_incarnation, 2)
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, 1, reference.executor_incarnation, 2
+        )
         ask = registry.inventory(identity).children[0].pending_asks[0]
         assert native.answers == []  # absence of an answer remains a wait
         assert (await registry.quiesce()).pending_callback_count == 1
@@ -368,9 +371,11 @@ def test_quiesce_waits_for_start_and_rechecks_stop_emitted_journal(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("wrapper", [False, True])
 def test_applied_answer_recovers_when_outcome_fsync_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    wrapper: bool,
 ) -> None:
     async def run() -> None:
         from planner.executor.contracts import FileSnapshot
@@ -417,7 +422,9 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
         await native.sink.permission_ask_raised(
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
-        identity = ExecutorIdentity(1, "a" * 40, 1, reference.executor_incarnation, 1)
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, 1, reference.executor_incarnation, 1
+        )
         ask = registry.inventory(identity).children[0].pending_asks[0]
         answer = DurableAnswer("answer", ask, "allow", 1)
         original = spool.mint_envelope
@@ -448,11 +455,27 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             )
 
         monkeypatch.setattr(spool, "mint_envelope", fail_outcome)
+        outer = ChildCommand(
+            "outer",
+            reference,
+            ChildOperation.answer_permission_ask,
+            turn,
+            {"answer": encode_value(answer)},
+        )
         with pytest.raises(OSError, match="after callback"):
-            await registry.apply_answer(answer)
+            if wrapper:
+                await registry.execute_command(outer)
+            else:
+                await registry.apply_answer(answer)
+        monkeypatch.setattr(spool, "mint_envelope", original)
         assert native.answers == [("ask", "allow")]
         assert registry.inventory(identity).children[0].pending_asks == ()
         assert not (await registry.quiesce()).ready
+        if wrapper:
+            outcome = await registry.execute_command(outer)
+            assert outcome.disposition == CommandDisposition.succeeded
+            assert outcome.result == {"applied": True}
+            assert await registry.execute_command(outer) == outcome
         recovered = await registry.apply_answer(answer)
         assert recovered is not None
         assert native.answers == [("ask", "allow")]
@@ -557,7 +580,7 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
         )
         for owner in ("t_own", "t_other"):
             root = executor.paths.artifacts / owner
-            root.mkdir(parents=True)
+            root.mkdir(parents=True, exist_ok=True)
             (root / "file").write_text(owner)
         child = executor.registry.children[reference.child_id]
         request = IpcRequest(
@@ -605,7 +628,7 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
     script = (
         "import asyncio; from pathlib import Path; "
         "from planner.executor.mac import MacExecutor; "
-        "from planner.executor.configuration import ExecutorPaths; "
+        "from planner.executor.configuration import ExecutorPaths, PROTOCOL_VERSION; "
         f"service=MacExecutor(paths=ExecutorPaths(Path({str(root)!r})),revision={'a' * 40!r},"
         "ssh_argv=('false',),panels_server_url='http://unused'); "
         "asyncio.run(service.run()); "
@@ -652,3 +675,447 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
+
+
+def test_native_start_localizes_vps_identity_and_home_relative_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def run() -> None:
+        vps_home, mac_home = tmp_path / "vps-home", tmp_path / "mac-home"
+        workspace = mac_home / "projects" / "same-checkout"
+        workspace.mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(mac_home))
+        monkeypatch.setenv("CODEX_HOME", str(mac_home / ".codex"))
+        paths = ExecutorPaths(mac_home / "executor-data")
+        spool = FilesystemSpool(paths.spool)
+        received: list[ResolvedConversationStart] = []
+        constructed: list[ResolvedConversationStart] = []
+
+        class InspectingChild(ScriptedChild):
+            async def start(
+                self,
+                resolved_start: ResolvedConversationStart,
+                *,
+                vendor_session_cursor: str | None,
+            ) -> None:
+                received.append(resolved_start)
+
+        native = InspectingChild()
+
+        def factory(
+            resolved: ResolvedConversationStart, capability: str, child: ChildReference
+        ) -> BackendChildFactory:
+            constructed.append(resolved)
+            return cast(BackendChildFactory, lambda **kwargs: native)
+
+        reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
+        registry = NativeChildRegistry(
+            incarnation=reference.executor_incarnation,
+            spool=spool,
+            factory=factory,
+            paths=paths,
+            workspace_home=mac_home,
+            message_files=ConversationMessageFiles(tmp_path / "unused"),
+        )
+        remote_identity = (
+            ("PLAN_TICKET_ID", "t_own"),
+            ("PLAN_TICKET_FILES_DIR", str(vps_home / "files" / "tickets" / "t_own")),
+            ("PLAN_EXECUTOR_ROOT", str(vps_home / "wrong-root")),
+            ("PLAN_EXECUTOR_CHILD_ID", "forged-child"),
+            ("PLAN_EXECUTOR_CAPABILITY", "forged-capability"),
+            ("HOME", str(vps_home)),
+            ("CODEX_HOME", str(vps_home / ".codex")),
+        )
+        resolved = ResolvedConversationStart(
+            "c_one",
+            ConversationBackendKey.codex,
+            "test",
+            None,
+            ConversationRoleMaterials("worker", remote_identity),
+            vps_home / "projects" / "same-checkout",
+            ConversationAccess.full,
+        )
+        from planner.executor.remote import RemoteBackendChild
+
+        forwarded: list[ChildCommand] = []
+
+        async def send(command: ChildCommand) -> CommandOutcome:
+            forwarded.append(command)
+            return await registry.execute_command(command)
+
+        # Exercise VPS encoding and Mac hydration with distinct home directories.
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: vps_home))
+        remote = RemoteBackendChild(reference, send)
+        await remote.start(resolved, vendor_session_cursor=None)
+        assert forwarded[0].arguments["workspace_home_relative"] == "projects/same-checkout"
+        assert (
+            registry.outcomes[forwarded[0].command_id].disposition == CommandDisposition.succeeded
+        )
+        assert received == constructed
+        assert received[0].workspace_folder == workspace
+        assert received[0].role_materials is not None
+        identity = dict(received[0].role_materials.identity_environment_variables)
+        assert identity["PLAN_TICKET_FILES_DIR"] == str(paths.artifacts / "t_own")
+        assert identity["PLAN_EXECUTOR_ROOT"] == str(paths.root)
+        assert identity["PLAN_EXECUTOR_CHILD_ID"] == reference.child_id
+        assert (
+            identity["PLAN_EXECUTOR_CAPABILITY"] == registry.children[reference.child_id].capability
+        )
+        assert identity["PLAN_EXECUTOR_CAPABILITY"] != "forged-capability"
+        assert "HOME" not in identity and "CODEX_HOME" not in identity
+        assert os.environ["HOME"] == str(mac_home)
+        assert os.environ["CODEX_HOME"] == str(mac_home / ".codex")
+        spool.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("relative", ["projects/missing", "../escape", "/absolute", "a\\b"])
+def test_unavailable_or_unsafe_workspace_refuses_before_native_creation(
+    tmp_path: Path,
+    relative: str,
+) -> None:
+    async def run() -> None:
+        spool = FilesystemSpool(tmp_path / "spool")
+        created: list[bool] = []
+
+        def factory(
+            resolved: ResolvedConversationStart, capability: str, child: ChildReference
+        ) -> BackendChildFactory:
+            created.append(True)
+            return cast(BackendChildFactory, lambda **kwargs: ScriptedChild())
+
+        reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
+        registry = NativeChildRegistry(
+            incarnation=reference.executor_incarnation,
+            spool=spool,
+            factory=factory,
+            workspace_home=tmp_path,
+            message_files=ConversationMessageFiles(tmp_path / "unused"),
+        )
+        resolved = ResolvedConversationStart(
+            "c_one",
+            ConversationBackendKey.codex,
+            "test",
+            None,
+            None,
+            Path("/home/vps/projects/absent"),
+            ConversationAccess.full,
+        )
+        result = await registry.execute_command(
+            ChildCommand(
+                "start",
+                reference,
+                ChildOperation.start,
+                None,
+                {"resolved_start": encode_value(resolved), "workspace_home_relative": relative},
+            )
+        )
+        assert result.disposition == CommandDisposition.refused
+        assert result.result["error_type"] == "BackendSpawnFailed"
+        assert created == []
+        assert registry.children == {}
+        spool.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", [None, "command_outcome", "answer_application"])
+def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str | None,
+) -> None:
+    from planner.conversation.backends.contracts import BackendUserInputRequest
+    from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
+    from planner.executor.contracts import AnswerApplication, AskKind, AskReference, FileSnapshot
+
+    async def run() -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+        maps: list[tuple[str, tuple[UserInputAnswer, ...]]] = []
+
+        class QuestionChild(ScriptedChild):
+            async def answer_user_input(
+                self, request_id: str, answers: tuple[UserInputAnswer, ...]
+            ) -> None:
+                maps.append((request_id, answers))
+                entered.set()
+                await release.wait()
+
+        native = QuestionChild()
+        spool = FilesystemSpool(tmp_path / "spool")
+        reference = ChildReference(str(uuid4()), str(uuid4()), "c_one")
+
+        def factory(
+            resolved: ResolvedConversationStart, capability: str, child: ChildReference
+        ) -> BackendChildFactory:
+            def create(**kwargs: object) -> BackendChild:
+                native.sink = cast(BackendEventSink, kwargs["event_sink"])
+                return cast(BackendChild, native)
+
+            return cast(BackendChildFactory, create)
+
+        registry = NativeChildRegistry(
+            incarnation=reference.executor_incarnation,
+            spool=spool,
+            factory=factory,
+            message_files=ConversationMessageFiles(tmp_path / "unused"),
+        )
+        resolved = ResolvedConversationStart(
+            "c_one",
+            ConversationBackendKey.codex,
+            "test",
+            None,
+            None,
+            tmp_path,
+            ConversationAccess.full,
+        )
+        await registry.execute_command(
+            ChildCommand(
+                "start",
+                reference,
+                ChildOperation.start,
+                None,
+                {"resolved_start": encode_value(resolved)},
+            )
+        )
+        turn = TurnToken("c_one", 1)
+        await registry.execute_command(
+            ChildCommand(
+                "prompt",
+                reference,
+                ChildOperation.write_prompt,
+                turn,
+                {
+                    "content": encode_value(text_message_content("go")),
+                    "sender_content": encode_value(text_message_content("go")),
+                    "sender_label": "Owner",
+                    "mode": PromptDeliveryMode.queue.value,
+                },
+            )
+        )
+        questions = (
+            UserInputQuestion(
+                "choice",
+                "Choice",
+                "Select one",
+                (UserInputOption("Yes", ""), UserInputOption("No", "")),
+                False,
+                False,
+            ),
+            UserInputQuestion("text", "Text", "Explain", (), False, True),
+        )
+        assert native.sink is not None
+        await native.sink.user_input_requested(turn, BackendUserInputRequest("same", questions))
+        # Provider IDs can coincide across the two ask kinds.
+        await native.sink.permission_ask_raised(
+            turn, BackendPermissionAsk("same", "Allow?", None, ())
+        )
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, 1, reference.executor_incarnation, 2
+        )
+        inventory = registry.inventory(identity).children[0]
+        assert inventory.active_turn == turn
+        assert inventory.pending_user_input_ids == ("same",)
+        ask = AskReference(reference, turn, "same", AskKind.user_input)
+        answers = (UserInputAnswer("choice", ("Yes",)), UserInputAnswer("text", ("exact text",)))
+        answer = DurableAnswer("map-answer", ask, None, 1, answers)
+        assert maps == []  # Unanswered requests remain waits, including reconnect inventory.
+        assert (await registry.quiesce()).pending_callback_count == 2
+        missing = replace(ask, child=replace(reference, child_id=str(uuid4())))
+        assert await registry.apply_answer(replace(answer, ask=missing)) is None
+        for invalid in (answers[:1], tuple(reversed(answers))):
+            with pytest.raises(ValueError, match="canonical"):
+                await registry.apply_answer(replace(answer, user_input_answers=invalid))
+        assert maps == []
+        original = spool.mint_envelope
+        failed = False
+
+        def failing(
+            *,
+            conversation_id: str,
+            kind: EnvelopeKind,
+            payload: JsonObject,
+            snapshots: tuple[FileSnapshot, ...] = (),
+            submission_id: str | None = None,
+        ) -> QueuedEnvelope:
+            nonlocal failed
+            if (
+                failure is not None
+                and kind.value == failure
+                and not failed
+                and (
+                    kind == EnvelopeKind.answer_application
+                    or payload.get("command_id") == answer.answer_id
+                )
+            ):
+                failed = True
+                raise OSError("disk failed after native map application")
+            return original(
+                conversation_id=conversation_id,
+                kind=kind,
+                payload=payload,
+                snapshots=snapshots,
+                submission_id=submission_id,
+            )
+
+        monkeypatch.setattr(spool, "mint_envelope", failing)
+        outer = ChildCommand(
+            "outer-map",
+            reference,
+            ChildOperation.answer_user_input,
+            turn,
+            {"answer": encode_value(answer)},
+        )
+        caller = asyncio.create_task(registry.execute_command(outer))
+        await entered.wait()
+        caller.cancel()  # The socket/caller disappears; native operation remains owned.
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        release.set()
+        if failure is not None:
+            with pytest.raises(OSError, match="after native"):
+                await registry.execute_command(outer)
+            monkeypatch.setattr(spool, "mint_envelope", original)
+        outcome = await registry.execute_command(outer)
+        assert outcome.disposition == CommandDisposition.succeeded
+        assert await registry.execute_command(outer) == outcome
+        assert maps == [("same", answers)]
+        inventory = registry.inventory(identity).children[0]
+        assert inventory.pending_user_input_ids == ()
+        assert inventory.pending_asks[0].kind == AskKind.permission
+        application = await registry.apply_answer(answer)
+        assert application is not None
+        assert application.ask.kind == AskKind.user_input
+        evidence = registry.outcomes[answer.answer_id].result["answer_application"]
+        assert TypeAdapter(AnswerApplication).validate_python(evidence) == application
+        with pytest.raises(ValueError, match="different recorded"):
+            await registry.apply_answer(
+                replace(answer, user_input_answers=(UserInputAnswer("choice", ("No",)), answers[1]))
+            )
+        assert maps == [("same", answers)]
+        spool.close()
+
+    asyncio.run(run())
+
+
+def test_old_peer_is_refused_before_work_or_replay_and_preserves_spool(tmp_path: Path) -> None:
+    import sys
+
+    from planner.executor.wire import ProtocolRefused
+
+    async def run() -> None:
+        peer = (
+            "import json,struct,sys,time; "
+            "n=struct.unpack('!I',sys.stdin.buffer.read(4))[0]; "
+            "hello=json.loads(sys.stdin.buffer.read(n)); "
+            "identity=hello['payload']['identity']; identity['protocol_version']=1; "
+            "reply=json.dumps({'kind':'hello_accepted','request_id':hello['request_id'],"
+            "'payload':identity}).encode(); "
+            "sys.stdout.buffer.write(struct.pack('!I',len(reply))+reply); "
+            "work=json.dumps({'kind':'command','request_id':'bad-work','payload':{}}).encode(); "
+            "sys.stdout.buffer.write(struct.pack('!I',len(work))+work); "
+            "sys.stdout.buffer.flush(); time.sleep(30)"
+        )
+        executor = MacExecutor(
+            paths=ExecutorPaths(tmp_path),
+            revision="a" * 40,
+            ssh_argv=(sys.executable, "-c", peer),
+            panels_server_url="http://unused",
+        )
+        row = executor.spool.mint_envelope(
+            conversation_id="c_one",
+            kind=EnvelopeKind.cli_write,
+            payload={"original": "must not transmit"},
+        )
+        before = {
+            path.relative_to(tmp_path).as_posix(): path.read_bytes()
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        }
+        with pytest.raises(ProtocolRefused):
+            await executor._connected()
+        assert executor._command_tasks == set()
+        assert executor.spool.pending() == (row,)
+        after = {
+            path.relative_to(tmp_path).as_posix(): path.read_bytes()
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        }
+        assert after == before
+        executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_link_cleanup_drains_paused_subprocess_stdout_before_reconnect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+
+    async def run() -> None:
+        executor = MacExecutor(
+            paths=ExecutorPaths(tmp_path),
+            revision="a" * 40,
+            ssh_argv=(
+                sys.executable,
+                "-c",
+                "import os,time; os.write(1,b'x'*(1024*1024)); time.sleep(30)",
+            ),
+            panels_server_url="http://unused",
+        )
+        readers: list[asyncio.StreamReader] = []
+
+        async def link_cut_with_buffered_bytes(reader: asyncio.StreamReader) -> None:
+            readers.append(reader)
+            # Force the exact transport state: its unread pipe crossed high-water
+            # and paused reads before the connection reader reports the loss.
+            while not getattr(reader, "_paused", False):
+                await asyncio.sleep(0)
+            raise ConnectionError("link cut with buffered output")
+
+        monkeypatch.setattr(executor, "_read_loop", link_cut_with_buffered_bytes)
+        try:
+            with pytest.raises(ConnectionError, match="buffered output"):
+                await asyncio.wait_for(executor._connected(), 2)
+            assert executor.identity.connection_generation == 1
+            assert executor._writer is None
+        finally:
+            # Also clean up a failed old implementation so the regression leaves no
+            # subprocess transport behind when it exposes the wait-without-drain bug.
+            for reader in readers:
+                await reader.read()
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_controlled_stop_wakes_pending_handshake_without_peer_response(tmp_path: Path) -> None:
+    import sys
+
+    async def run() -> None:
+        executor = MacExecutor(
+            paths=ExecutorPaths(tmp_path),
+            revision="a" * 40,
+            ssh_argv=(sys.executable, "-c", "import time; time.sleep(30)"),
+            panels_server_url="http://unused",
+        )
+        task = asyncio.create_task(executor._connected())
+        try:
+            while executor._writer is None:
+                await asyncio.sleep(0)
+            # The live peer has not answered hello. Controlled shutdown must not
+            # depend on that peer responding or closing its side of the link.
+            executor._stop.set()
+            await asyncio.wait_for(task, 1)
+            assert executor._writer is None
+            assert not executor.spool.pending()
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            executor.spool.close()
+
+    asyncio.run(run())

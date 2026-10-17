@@ -760,14 +760,18 @@ async def answer_user_input(
 ) -> dict[str, bool]:
     """Give the backend the complete answer map for one question request."""
     _require_mutable_conversation(runtime, conversation_id)
-    landed = await runtime.system.answer_user_input(
-        conversation_id,
-        body.request_id,
-        tuple(
-            UserInputAnswer(question_id=question_id, answers=tuple(answer.answers))
-            for question_id, answer in body.answers.items()
-        ),
+    answers = tuple(
+        UserInputAnswer(question_id=question_id, answers=tuple(answer.answers))
+        for question_id, answer in body.answers.items()
     )
+    if runtime.executor_endpoint is not None and runtime.executor_endpoint.owns_conversation(
+        conversation_id
+    ):
+        landed = await runtime.executor_endpoint.answer_user_input(
+            conversation_id, body.request_id, answers
+        )
+    else:
+        landed = await runtime.system.answer_user_input(conversation_id, body.request_id, answers)
     return {"landed": landed}
 
 
@@ -1002,11 +1006,17 @@ async def _conversation_view(runtime: ConversationRuntime, conversation_id: str)
                     else {"kind": held.recipient.kind.value, "id": held.recipient.id}
                 ),
                 "queue_reason": str(held.queue_reason),
+                "delivery_uncertain": held.delivery_uncertain,
             }
             for held in await runtime.system.held_prompts(conversation_id)
         ],
         "pending_permission_ask": await _pending_permission_ask(runtime, conversation_id),
         "pending_user_input": await _pending_user_input(runtime, conversation_id),
+        "executor_asks": (
+            []
+            if runtime.executor_endpoint is None
+            else runtime.executor_endpoint.conversation_asks(conversation_id)
+        ),
     }
 
 
@@ -1031,6 +1041,7 @@ async def _pending_permission_ask(
                 **(
                     runtime.executor_endpoint.ask_status(conversation_id, payload.ask_id)
                     if runtime.executor_endpoint is not None
+                    and runtime.executor_endpoint.owns_conversation(conversation_id)
                     else {}
                 ),
                 "title": payload.title,
@@ -1051,6 +1062,8 @@ async def _pending_user_input(
     runtime: ConversationRuntime, conversation_id: str
 ) -> dict[str, Any] | None:
     """The pending request, rebuilt from its durable row after a refresh."""
+    from planner.executor.contracts import AskKind
+
     waiting = await runtime.system.pending_user_input_request_ids(conversation_id)
     if not waiting:
         return None
@@ -1060,6 +1073,14 @@ async def _pending_user_input(
         if isinstance(payload, UserInputRequestedEventPayload) and payload.request_id in waiting:
             return {
                 "request_id": payload.request_id,
+                **(
+                    runtime.executor_endpoint.ask_status(
+                        conversation_id, payload.request_id, AskKind.user_input
+                    )
+                    if runtime.executor_endpoint is not None
+                    and runtime.executor_endpoint.owns_conversation(conversation_id)
+                    else {}
+                ),
                 "questions": [
                     {
                         "question_id": question.question_id,

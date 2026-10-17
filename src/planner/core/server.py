@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic as _monotonic
+from time import time as _wall_time
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request
@@ -145,8 +146,11 @@ def create_app(
             # Mac admission. The next authenticated reconciliation restores it.
             audit_conn.execute(
                 "UPDATE executor_connections SET "
-                "active=0,connection_state='disconnected',lost_at_ms=? WHERE active=1",
-                (int(__import__("time").time() * 1000),),
+                "connection_state='disconnected',lost_at_ms=? WHERE active=1",
+                (int(_wall_time() * 1000),),
+            )
+            audit_conn.execute(
+                "UPDATE executor_asks SET reachability='uncertain' WHERE applied_at_mac_ms IS NULL"
             )
             tickets_data.audit_ticket_registry_integrity(audit_conn)
             reconcile_managed_skill_versions(audit_conn)
@@ -205,6 +209,7 @@ def create_app(
             else conversation_system_for_test
         )
         await conversation.system.start_idle_child_janitor()
+        await conversation.system.resume_executor_held_prompts()
 
         lifecycle_observer = asyncio.create_task(
             observe_path_changes(deployment_lifecycle_path, change_signal.emit)
@@ -307,18 +312,7 @@ def create_app(
                 "connection_state": "disconnected",
                 "reconciliation_ready": False,
             }
-        return {
-            "mode": "remote",
-            "identity": None
-            if endpoint.identity is None
-            else __import__("dataclasses").asdict(endpoint.identity),
-            "connection_state": "ready"
-            if endpoint.ready
-            else "disconnected"
-            if endpoint.writer is None
-            else "reconciling",
-            "reconciliation_ready": endpoint.ready,
-        }
+        return {"mode": "remote", **endpoint.health()}
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:

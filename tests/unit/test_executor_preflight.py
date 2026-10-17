@@ -147,3 +147,42 @@ def test_inspection_oserror_propagates_and_preserves_existing_tree(
         with pytest.raises(OSError):
             check_spool_compatibility(root, 1)
     assert tree(root) == before
+
+
+@pytest.mark.parametrize("target", ["root", "spool", "metadata", "entry"])
+def test_permission_failure_is_never_absence_with_suppressing_path_probes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    import os
+
+    root = tmp_path / "executor"
+    spool = FilesystemSpool(root / "spool")
+    row = spool.mint_envelope(
+        conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={"bytes": "still here"}
+    )
+    spool.close()
+    before = tree(root)
+    denied = {
+        "root": root,
+        "spool": root / "spool",
+        "metadata": root / "spool" / "metadata.json",
+        "entry": root / "spool" / "entries" / row.submission_id,
+    }[target]
+    original_lstat = Path.lstat
+
+    def inaccessible(path: Path) -> os.stat_result:
+        if path == denied:
+            raise PermissionError(13, "cannot inspect existing executor state")
+        return original_lstat(path)
+
+    with monkeypatch.context() as injected:
+        # Model the newer pathlib behavior explicitly. Preflight must use direct
+        # lstat and must not mistake these suppressed errors for an absent spool.
+        for probe in ("exists", "is_dir", "is_file", "is_symlink"):
+            injected.setattr(Path, probe, lambda self: False)
+        injected.setattr(Path, "lstat", inaccessible)
+        with pytest.raises(PermissionError):
+            check_spool_compatibility(root, 1)
+    assert tree(root) == before

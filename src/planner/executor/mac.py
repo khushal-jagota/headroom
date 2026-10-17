@@ -58,7 +58,13 @@ from planner.executor.contracts import (
 from planner.executor.files import IncomingFiles, file_chunks, safe_component, snapshot_ticket
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry, now_ms
-from planner.executor.wire import encode_frame, parse_identity, read_frame, read_typed_frame
+from planner.executor.wire import (
+    ProtocolRefused,
+    encode_frame,
+    parse_identity,
+    read_frame,
+    read_typed_frame,
+)
 
 
 def as_object(value: object) -> JsonObject:
@@ -81,6 +87,7 @@ class MacExecutor:
         self.identity = ExecutorIdentity(
             PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, str(uuid4()), 0
         )
+        self._handshake_accepted = False
         self.state = ConnectionState.disconnected
         self.lost_at_ms: int | None = None
         self._writer: asyncio.StreamWriter | asyncio.subprocess.Process | None = None
@@ -181,6 +188,14 @@ class MacExecutor:
     async def _read_loop(self, reader: asyncio.StreamReader) -> None:
         while True:
             message = await read_frame(reader)
+            if not self._handshake_accepted and message.kind in (
+                WireMessageKind.file_manifest,
+                WireMessageKind.file_chunk,
+                WireMessageKind.file_complete,
+                WireMessageKind.command,
+                WireMessageKind.command_outcome_ack,
+            ):
+                raise ProtocolRefused("peer sent work before validated handshake")
             if message.kind == WireMessageKind.file_manifest:
                 self.inputs.begin(TypeAdapter(FileManifest).validate_python(message.payload))
                 await self._send(WireMessage(WireMessageKind.file_manifest, message.request_id, {}))
@@ -312,6 +327,7 @@ class MacExecutor:
             self.identity, connection_generation=self.identity.connection_generation + 1
         )
         self.state = ConnectionState.reconciling
+        self._handshake_accepted = False
         process = await asyncio.create_subprocess_exec(
             *self.ssh_argv,
             stdin=asyncio.subprocess.PIPE,
@@ -327,6 +343,7 @@ class MacExecutor:
             peer = parse_identity(response.payload)
             if peer != self.identity:
                 raise ValueError("handshake identity changed")
+            self._handshake_accepted = True
             await self._reconcile()
             await self._replay()
             await self._reconcile()
@@ -340,25 +357,33 @@ class MacExecutor:
                 await asyncio.sleep(RECONNECT_INTERVAL_SECONDS)
 
         session_task = asyncio.create_task(session())
+        stop_task = asyncio.create_task(self._stop.wait())
         try:
             done, _ = await asyncio.wait(
-                (reader_task, session_task), return_when=asyncio.FIRST_COMPLETED
+                (reader_task, session_task, stop_task), return_when=asyncio.FIRST_COMPLETED
             )
             for task in done:
                 await task
         finally:
+            self._handshake_accepted = False
             self.state = ConnectionState.disconnected
             self.lost_at_ms = now_ms()
             self._writer = None
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(ConnectionError("executor link lost"))
-            for task in (reader_task, session_task):
+            for task in (reader_task, session_task, stop_task):
                 task.cancel()
-            await asyncio.gather(reader_task, session_task, return_exceptions=True)
+            await asyncio.gather(reader_task, session_task, stop_task, return_exceptions=True)
+            if process.stdin is not None:
+                process.stdin.close()
             if process.returncode is None:
-                process.terminate()
-            await process.wait()
+                with contextlib.suppress(ProcessLookupError):
+                    process.terminate()
+            # Process.wait also waits for pipe transport closure. A canceled frame
+            # reader can leave stdout paused above its high-water mark even after
+            # the SSH/relay process exits. Drain the pipe before awaiting that exit.
+            await process.communicate()
 
     async def handle_ipc(self, request: IpcRequest) -> IpcResponse:
         try:

@@ -38,6 +38,7 @@ def _materialized_tokens(call: str) -> list[str]:
         "FIELD": field,
         "FILE": "pyproject.toml",
         "ITEM_ID": "si_example",
+        "INTEGER": "1",
         "PART_NAMES": "brief",
         "PROJECT_ID": "project_example",
         "SCHEDULE_ID": "schedule_example",

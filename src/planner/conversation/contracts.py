@@ -428,6 +428,7 @@ class HeldPrompt:
     sender: Principal | None = None
     recipient: Principal | None = None
     queue_reason: PromptQueueReason = PromptQueueReason.requested
+    delivery_uncertain: bool = False
 
 
 class ConversationAlreadyStarted(Exception):

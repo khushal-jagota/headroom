@@ -155,6 +155,9 @@ def worker_resolve(
         overrides=overrides,
         workspace_folder=_worker_workspace_folder(conn, ticket, workspace_folder),
     )
+    locale_configuration.require_locale_backend_compatibility(
+        ticket.locale, values.backend_key.value
+    )
     if ticket.employee_launch_model is None or overrides.model is not None:
         require_enabled_model(conn, values.backend_key, values.model)
     return values
