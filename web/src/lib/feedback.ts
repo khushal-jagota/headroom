@@ -1,11 +1,6 @@
 import { shortMonthDayLabel } from "./dates";
-import type { FieldStageVisualState } from "./ui";
 import type { WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
-import {
-  workItemActivityMark,
-  workItemActivityMarkPresentation
-} from "./workItemPresentation";
 
 export type FeedbackNote = {
   id: string;
@@ -20,6 +15,8 @@ export type FeedbackNote = {
 };
 
 export type FeedbackTicket = WorkAttention & {
+  conversation_signal?: import("./conversationSignal").ConversationSignal;
+  conversation_id?: string | null;
   id: string;
   title: string;
   stage: string;
@@ -115,10 +112,6 @@ export function feedbackRelativeTime(value: number, now = new Date()): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} h ago`;
   return shortMonthDayLabel(date);
-}
-
-export function feedbackTicketStageState(ticket: FeedbackTicket): FieldStageVisualState | null {
-  return workItemActivityMarkPresentation(workItemActivityMark(ticket)).state;
 }
 
 export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {

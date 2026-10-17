@@ -26,3 +26,44 @@ describe("exact conversation signal marks", () => {
     expect(html).not.toContain("data-conversation-signal");
   });
 });
+
+import SprintTicketRow from "../src/components/SprintTicketRow.svelte";
+import WorkspaceRailCard from "../src/components/WorkspaceRailCard.svelte";
+
+describe("shared conversation signal consumers", () => {
+  it.each([
+    { working: false, message_for_owner: false },
+    { working: true, message_for_owner: false },
+    { working: false, message_for_owner: true },
+    { working: true, message_for_owner: true }
+  ])("keeps both canonical marks in Worker and supervisor rows: %j", (signal) => {
+    const worker = render(SprintTicketRow, { props: {
+      priority: null, title: "Worker", signal, conversationId: "worker-exact"
+    } }).body;
+    const supervisor = render(WorkspaceRailCard, { props: {
+      id: "item", title: "Supervisor", signal, conversationId: "supervisor-exact",
+      selected: false, selectedTicketId: null, groups: [], onSelect: () => {},
+      onTicket: () => {}, onSettle: () => {}, onHover: () => {}, onWorkerHover: () => {}, onLeave: () => {}
+    } }).body;
+    for (const html of [worker, supervisor]) {
+      expect(html.includes('data-conversation-signal="working"')).toBe(signal.working);
+      expect(html.includes('data-conversation-signal="message"')).toBe(signal.message_for_owner);
+    }
+  });
+
+  it("does not let child activity supply a Chief mark", () => {
+    const html = render(WorkspaceRailCard, { props: {
+      id: "chief", title: "Chief", chief: true, selected: false, selectedTicketId: null,
+      groups: [{key:"awaiting_approval",label:"Needs your approval",defaultCollapsed:false,cards:[{
+        id:"child",title:"Child",priority:"P1",stage:"done",ticket_status:"empty",
+        awaiting_reply:false,awaiting_answer:false,awaiting_approval:true,awaiting_agent_approval:false,
+        assigned:false,agent_state:"idle",conversation_id:"child-exact",
+        conversation_signal:{working:true,message_for_owner:true}
+      }]}], onSelect: () => {}, onTicket: () => {}, onSettle: () => {},
+      onHover: () => {}, onWorkerHover: () => {}, onLeave: () => {}
+    } }).body;
+    expect(html).toContain('data-conversation-id="child-exact"');
+    expect(html.match(/data-conversation-signal="working"/g)).toHaveLength(1);
+    expect(html.match(/data-conversation-signal="message"/g)).toHaveLength(1);
+  });
+});

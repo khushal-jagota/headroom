@@ -3,14 +3,14 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
-  import { buildWorkspaceRail, type WorkspaceRailItem, type WorkspaceTicketGroup } from "../lib/workspaceRail";
+  import { buildWorkspaceRail, type WorkspaceRailItem } from "../lib/workspaceRail";
   import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
   import { whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import type { WorkspaceMessageConversation } from "../lib/types";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { workspaceChildMessageConversations, workspaceMessageConversations } from "../lib/workspaceMessageDiscovery";
-  import StageMark from "../components/StageMark.svelte";
+  import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
   import WorkspaceMessages from "../components/WorkspaceMessages.svelte";
   import ChiefConversation from "../components/ChiefConversation.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -42,11 +42,19 @@
   let hoverTarget = $state<HTMLElement | null>(null);
   let hoverTitle = $state("");
   let hoverKicker = $state("");
-  let hoverWorker = $state<WorkItemTicketFacts | null>(null);
-  let hoverGroups = $state<WorkspaceTicketGroup[] | null>(null);
-  const hover = createRailHoverController<{ target: HTMLElement; title: string; kicker: string; worker?: WorkItemTicketFacts; groups?: WorkspaceTicketGroup[] }>((value, instant) => {
+  let hoverWorkerId = $state<string | null>(null);
+  let hoverItemId = $state<string | null>(null);
+  let hoverChief = $state(false);
+  let hoverWorker = $derived(allCards.find((card) => card.id === hoverWorkerId)
+    ?? [...rail.items, ...rail.settledItems].flatMap((item) => item.tickets).find((ticket) => ticket.id === hoverWorkerId) ?? null);
+  let hoveredItem = $derived([...rail.items, ...rail.settledItems].find((item) => item.id === hoverItemId));
+  let hoverGroups = $derived(hoverChief ? rail.chiefHoverGroups : hoveredItem?.hoverGroups ?? null);
+  let hoverSignal = $derived(hoverChief ? workers.data?.chief_of_staff.conversation_signal : hoveredItem?.conversationSignal);
+  let hoverConversationId = $derived(hoverChief ? workers.data?.chief_of_staff.conversation_id : hoveredItem?.conversationId);
+  let currentHoverTitle = $derived(hoverWorker?.title ?? (hoverChief ? workers.data?.chief_of_staff.label : hoveredItem?.title) ?? hoverTitle);
+  const hover = createRailHoverController<{ target: HTMLElement; title: string; kicker: string; worker?: WorkItemTicketFacts; itemId?: string; chief?: boolean }>((value, instant) => {
     hoverTarget = value.target; hoverTitle = value.title; hoverKicker = value.kicker;
-    hoverWorker = value.worker ?? null; hoverGroups = value.groups ?? null;
+    hoverWorkerId = value.worker?.id ?? null; hoverItemId = value.itemId ?? null; hoverChief = value.chief ?? false;
     hoverInstant = instant; hoverVisible = true;
     if (instant) requestAnimationFrame(() => requestAnimationFrame(() => hoverInstant = false));
   }, () => hoverVisible = false);
@@ -93,13 +101,14 @@
   }
   function selectItem(id: string): void { window.location.hash = workspaceAddress({ kind: "item", id }); }
   function hoverItem(target: HTMLElement, item: WorkspaceRailItem): void {
-    hover.enter({ target, title:item.title, kicker:item.project ?? "Orchestrator", groups:item.hoverGroups });
+    hover.enter({ target, title:item.title, kicker:item.project ?? "Orchestrator", itemId:item.id });
   }
   function hoverWorkerRow(target: HTMLElement, worker: WorkItemTicketFacts): void {
-    if (worker.stage === "cancelled") hover.enter({target, title:worker.title, kicker:"Cancelled Worker"});
-    else hover.enter({ target, title:worker.title, kicker:"Worker", worker });
+    hover.enter({ target, title:worker.title, kicker:worker.stage === "cancelled" ? "Cancelled Worker" : "Worker", worker });
   }
   function hoverMessageRow(target: HTMLElement, message: WorkspaceMessageConversation): void {
+    if (message.kind === "chief") { hover.enter({target,title:message.title,kicker:"Chief of Staff",chief:true}); return; }
+    if (message.kind === "sprint_item") { hover.enter({target,title:message.title,kicker:"Orchestrator",itemId:message.id}); return; }
     const worker = allCards.find((card) => card.id === message.id)
       ?? rail.settledItems.flatMap((item) => item.tickets).find((ticket) => ticket.id === message.id);
     if (worker) hoverWorkerRow(target, worker);
@@ -120,9 +129,9 @@
         <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
             <div class="active-work-scroll" data-active-work-scroll onscroll={() => hover.leave()}>
-            <WorkspaceRailCard id="chief" title={workers.data?.chief_of_staff.label ?? "Chief of Staff"} chief ownUnread={workers.data?.chief_of_staff.awaiting_reply ?? false} selected={opening.chiefMarked} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target) => hover.enter({target,title:workers.data?.chief_of_staff.label ?? "Chief of Staff",kicker:"Chief of Staff",groups:rail.chiefHoverGroups})} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
+            <WorkspaceRailCard id="chief" title={workers.data?.chief_of_staff.label ?? "Chief of Staff"} chief signal={workers.data?.chief_of_staff.conversation_signal} conversationId={workers.data?.chief_of_staff.conversation_id} selected={opening.chiefMarked} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target) => hover.enter({target,title:workers.data?.chief_of_staff.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true})} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
             {#each rail.items as item (item.id)}
-              <WorkspaceRailCard id={item.id} title={item.title} project={item.project} ownUnread={item.mark === "reply"} selected={opening.markedItemId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target) => hoverItem(target,item)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
+              <WorkspaceRailCard id={item.id} title={item.title} project={item.project} signal={item.conversationSignal} conversationId={item.conversationId} selected={opening.markedItemId === item.id} selectedTicketId={opening.markedTicketId} groups={item.groups} busy={busyItem === item.id} onSelect={() => selectItem(item.id)} onTicket={(id) => selectCard(id,item.id)} onSettle={() => void settle(item,true)} onHover={(target) => hoverItem(target,item)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
             {/each}
             {#if settleError}<p role="alert">{settleError}</p>{/if}
             </div>
@@ -133,7 +142,7 @@
                 {#each rail.settledItems as item (item.id)}
                   <div class="settled-item" data-settled-item={item.id}>
                   <div class="settled-row">
-                    <button class="settled-title" type="button" onclick={() => selectItem(item.id)}><span>{item.title}</span>{#if item.mark === "reply"}<StageMark state="current-awaiting-approval" aria-label="Unread reply" data-workspace-mark="reply" />{/if}</button>
+                    <button class="settled-title" type="button" onclick={() => selectItem(item.id)} onmouseenter={(event) => hoverItem(event.currentTarget,item)} onmouseleave={() => hover.leave()} onfocus={(event) => hoverItem(event.currentTarget,item)} onblur={() => hover.leave()}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
                     <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
                   </div>
                   <WorkspaceMessages conversations={workspaceChildMessageConversations(messages, item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
@@ -196,7 +205,7 @@
   </ResourceState>
 </section>
 
-<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverTitle} kicker={hoverKicker} worker={hoverWorker} groups={hoverGroups} cards={allCards} rail={railElement} />
+<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={hoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} groups={hoverGroups} cards={allCards} rail={railElement} />
 <style>
   .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); }

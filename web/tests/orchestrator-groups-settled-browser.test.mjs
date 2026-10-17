@@ -56,8 +56,8 @@ def ticket(id, parent="si_focus", **overrides):
 focus_tickets = [ticket("t_approval", awaiting_approval=True), ticket("t_answer", awaiting_answer=True),
     ticket("t_yours", assigned=True), ticket("t_error", agent_state="errored"),
     ticket("t_empty", ticket_status=""), ticket("t_blocked", ticket_status="blocked"),
-    ticket("t_agent", awaiting_reply=True),
-    ticket("t_done", stage="done", ticket_status="", is_done=True, awaiting_reply=True),
+    ticket("t_agent", awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True)),
+    ticket("t_done", stage="done", ticket_status="", is_done=True, awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True)),
     ticket("t_cancelled", stage="cancelled", ticket_status="")]
 
 def item(id, title, rows=None, **overrides):
@@ -77,9 +77,9 @@ for i in range(24):
 for i in range(24):
     id = "si_settled_%02d" % i
     # Separate exact unread conversations on the settled orchestrator and its child.
-    rows = [ticket("t_archived_message", id, awaiting_reply=True)] if i == 0 else []
+    rows = [ticket("t_archived_message", id, awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True))] if i == 0 else []
     items.append(item(id, "Settled work %02d" % i, rows, settled=True,
-        awaiting_reply=(i == 0), conversation_id="conv-settled" if i == 0 else None))
+        conversation_signal=dict(working=False,message_for_owner=(i == 0)), awaiting_reply=(i == 0), conversation_id="conv-settled" if i == 0 else None))
 board = dict(columns=[dict(stage="needs_implementation", cards=[t for i in items for t in i["tickets"]])], sprint_items=items)
 workers = dict(chief_of_staff=dict(label="Chief of Staff", needs_me=False, awaiting_reply=False,
     agent_working=False, latest_turn_ended_sequence=0), workers=[])
@@ -175,8 +175,8 @@ with sync_playwright() as p:
     for state, id in [("active", "t_agent"), ("done", "t_done")]:
         page.get_by_label("Worker state").select_option(state)
         row = page.locator('[data-sprint-ticket-id="' + id + '"]')
-        expect(row).to_have_attribute("data-workspace-mark", "reply")
-        expect(row.locator('.stage-mark[aria-label="Unread reply"]')).to_have_count(1)
+        expect(row.locator('[data-conversation-signal="message"]')).to_have_count(1)
+        expect(row.locator('.stage-mark[aria-label="Unread message"]')).to_have_count(1)
         expect(row).to_have_attribute("href", "#/workspace/item/si_focus/" + id)
     for state, key in [("done", "done"), ("retired", "cancelled")]:
         page.get_by_label("Worker state").select_option(state)
@@ -200,6 +200,7 @@ with sync_playwright() as p:
         expect(count).to_be_visible()
     # A new unread fact must update exact row dots without a visible header suffix.
     focus_tickets[6]["awaiting_reply"] = False
+    focus_tickets[6]["conversation_signal"] = dict(working=False,message_for_owner=False)
     page.evaluate("window.__refresh()")
     expect(page.locator('[data-sprint-ticket-id="t_agent"] .stage-mark')).to_have_count(0)
     expect(page.locator('[data-workspace-group="agent"] summary .sprint-workspace-count')).to_have_text("1")
@@ -274,9 +275,9 @@ with sync_playwright() as p:
         head.click()
         body = page.locator("[data-settled-scroll]")
         body.evaluate("n => n.scrollTop = 0")
-        expect(page.locator('[data-settled-item="si_settled_00"] .settled-title .stage-mark')).to_have_attribute("aria-label", "Unread reply")
+        expect(page.locator('[data-settled-item="si_settled_00"] .settled-title .stage-mark')).to_have_attribute("aria-label", "Unread message")
         message = page.locator('[data-message-conversation="conv-t_archived_message"]')
-        expect(message.locator(".stage-mark")).to_have_attribute("aria-label", "Unread reply")
+        expect(message.locator(".stage-mark")).to_have_attribute("aria-label", "Unread message")
         expect(message).to_have_attribute("href", "#/workspace/item/si_settled_00/t_archived_message")
         # Opening the archived message keeps its exact Worker address accessible.
         message.click()

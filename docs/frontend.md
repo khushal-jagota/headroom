@@ -70,7 +70,7 @@ One screen per part of the system:
   remain independent.
 
   Settled orchestrators keep their own rows below the fold header. Their own rows can show
-  their own unread supervisor message dot. A child message never marks its parent.
+  their exact supervisor conversation marks. A child message never marks its parent.
   Other closed message folds expose distinct unread-conversation counts as text and
   retain an expand control. The Messages group ignores settlement. Each unread Worker, supervisor, or
   Chief conversation has its own linked row and dot. Workers retain quiet parent
@@ -79,13 +79,22 @@ One screen per part of the system:
   discoverable again without reopening an orchestrator. Counts describe conversations,
   not individual messages or repeated appearances of the same conversation.
 
-  Every Worker dot means an unread owner message in that exact conversation. Approval,
-  pending questions, assignment, running state, errors, and child activity never create
-  a dot. Conversation spinners and failure diamonds retain their separate meanings.
+  Worker, supervisor, and Chief rows, pages, and hover popups share the same pair of
+  exact-conversation marks. A spinner means that conversation is working. A dot means
+  an explicit message sent to the owner remains unread in that conversation. Both can
+  appear together. Ending a turn stops the spinner and never creates a dot. Approval,
+  questions, assignment, errors, and child activity create neither mark. Missing signal
+  data stays quiet. Historical Day, Sprint, and Feedback references use these same marks
+  when their served record includes the conversation signal. Lifecycle progress stays
+  separate from conversation marks.
   Fold summaries use text counts, never aggregate dots. Status group membership and
   ordering remain unchanged, including precedence for unread completed Workers.
 
-  The Chief of Staff keeps its separate conversation mark. A browser with no saved lens
+  An open hover popup resolves its Worker, supervisor, or Chief from the latest query
+  records by identity, so its marks and child rows refresh while it stays open. Settling
+  an orchestrator changes its location without changing either conversation fact.
+
+  The Chief of Staff keeps its own exact conversation marks. A browser with no saved lens
   choice opens in Focus. Focus shows the owner's prompts, explicit messages to the owner,
   permission requests, agent questions, and their settled answers. Failed turns, stopped turns,
   and missing explicit replies remain visible as compact system rows. Full shows every

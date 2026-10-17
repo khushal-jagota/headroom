@@ -87,7 +87,7 @@ board = {
     "columns": [{"stage": "needs_implementation", "cards": [
         card("t_approval", "si_needs_him", "Needs him", awaiting_approval=True),
         card("t_assigned", "si_needs_him", "Needs him", assigned=True),
-        card("t_message", "si_needs_him", "Needs him", awaiting_reply=True),
+        card("t_message", "si_needs_him", "Needs him", awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True)),
         card("t_answer", "si_needs_him", "Needs him", awaiting_answer=True),
         card("t_agents_approval", "si_needs_him", "Needs him",
              ticket_status="awaiting_approval", awaiting_agent_approval=True),
@@ -176,10 +176,12 @@ with sync_playwright() as p:
     page.evaluate("window.__refresh()")
     expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
     chief["awaiting_reply"] = True
+    chief["conversation_signal"] = dict(working=False,message_for_owner=True)
     page.evaluate("window.__refresh()")
     expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(1)
-    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_attribute("aria-label", "Unread reply")
+    expect(page.locator("[data-chief-destination] .stage-mark")).to_have_attribute("aria-label", "Unread message")
     chief["awaiting_reply"] = False
+    chief["conversation_signal"] = dict(working=False,message_for_owner=False)
     page.evaluate("window.__refresh()")
     expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
 

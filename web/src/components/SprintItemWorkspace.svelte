@@ -7,10 +7,6 @@
   import { createRailHoverController } from "../lib/workspaceRailInteraction";
   import WorkspaceRailHover from "./WorkspaceRailHover.svelte";
   import type { SprintItemWorkspaceTicket } from "../lib/types";
-  import {
-    workItemActivityMark,
-    workItemActivityMarkPresentation
-  } from "../lib/workItemPresentation";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {
     readBackends,
@@ -22,7 +18,7 @@
   import InlineEdit from "./InlineEdit.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
-  import StageMark from "./StageMark.svelte";
+  import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import ArtifactsBand from "./ArtifactsBand.svelte";
   import ArtifactPreview from "./ArtifactPreview.svelte";
   import {
@@ -72,11 +68,12 @@
   let backends = $state<readonly BackendSnapshot[]>([]);
 
   let hoverTarget = $state<HTMLElement | null>(null);
-  let hoverWorker = $state<SprintItemWorkspaceTicket | null>(null);
+  let hoverWorkerId = $state<string | null>(null);
+  let hoverWorker = $derived(workspace.data?.tickets.find((ticket) => ticket.id === hoverWorkerId) ?? null);
   let hoverVisible = $state(false);
   let hoverInstant = $state(false);
   const hover = createRailHoverController<{target:HTMLElement; ticket:SprintItemWorkspaceTicket}>((value, instant) => {
-    hoverTarget = value.target; hoverWorker = value.ticket;
+    hoverTarget = value.target; hoverWorkerId = value.ticket.id;
     hoverVisible = true; hoverInstant = instant;
   }, () => hoverVisible = false);
   onDestroy(() => hover.dispose());
@@ -206,8 +203,6 @@
     >
       {#if workspace.data}
         {@const item = workspace.data}
-        {@const itemMark = workItemActivityMark(item)}
-        {@const itemMarkPresentation = workItemActivityMarkPresentation(itemMark)}
         <div class="sprint-item-column">
           <header class="sprint-workspace-head">
             <div class="page-eyebrow">
@@ -224,15 +219,7 @@
                 placeholder="(untitled Outcome)"
                 onSave={(value) => saveItem("title", value)}
               />
-              {#if itemMarkPresentation.state}
-                <StageMark
-                  state={itemMarkPresentation.state}
-                  class="sprint-workspace-title-mark"
-                  data-workspace-mark={itemMark ?? "none"}
-                  aria-hidden={itemMark === null ? "true" : undefined}
-                  aria-label={itemMarkPresentation.ariaLabel}
-                />
-              {/if}
+              <ConversationSignalMark signal={item.conversation_signal} conversationId={item.supervisor.conversation_id} class="sprint-workspace-title-mark" />
             </h1>
             <ClampedText
               class="sprint-workspace-brief"
@@ -294,7 +281,7 @@
   </div>
 </div>
 
-<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={hoverWorker?.stage === "cancelled" ? "Cancelled Worker" : "Worker"} worker={hoverWorker?.stage === "cancelled" ? null : hoverWorker} cards={[]} rail={hoverTarget} />
+<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={hoverWorker?.stage === "cancelled" ? "Cancelled Worker" : "Worker"} worker={hoverWorker} cards={[]} rail={hoverTarget} />
 <style>
   .sprint-item-doc { scrollbar-gutter:auto; }
   .sprint-item-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; width:min(100%, 768px); max-width:768px; margin-inline:auto; padding-inline:var(--space-5); }
