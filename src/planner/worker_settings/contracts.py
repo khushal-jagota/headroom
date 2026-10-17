@@ -51,6 +51,7 @@ class ManagedWorkerSettings:
     worker_type: str
     specialist_skill: ManagedSkill
     launch_defaults: ManagedWorkerLaunchDefaults
+    requires_macos: bool = False
     candidate_specialist_skill: ManagedSkill | None = None
 
 
@@ -68,6 +69,7 @@ class WorkerManagementSummary:
     label: str
     specialist_skill_name: str
     launch_defaults: ManagedWorkerLaunchDefaults
+    requires_macos: bool = False
 
 
 @dataclass(frozen=True, slots=True)

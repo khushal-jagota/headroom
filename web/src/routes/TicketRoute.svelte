@@ -360,7 +360,7 @@
       <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
         <header class="ticket-head">
           <div class="worker-eyebrow" data-ticket-identity>
-            <a href={detail.project_id ? `#/backlog?project=${encodeURIComponent(detail.project_id)}` : "#/backlog"} data-project-fact>{detail.project || "No project"}</a>
+            <span data-project-fact>{detail.project || "No project"}</span>
             <span aria-hidden="true">·</span>
             <span data-ticket-type>{conversationWorkerTypeLabel(detail)}</span>
           </div>
@@ -520,8 +520,6 @@
   .ticket-doc { scrollbar-gutter:auto; }
   .ticket-head { padding-top:48px; }
   .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
-  .worker-eyebrow a { color:inherit; text-decoration:none; }
-  .worker-eyebrow a:hover { color:var(--text-strong); }
   .ticket-title-row { display:block; margin-top:var(--space-3); }
   .ticket-title { font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
   .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }

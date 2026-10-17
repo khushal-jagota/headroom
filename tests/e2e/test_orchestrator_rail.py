@@ -265,14 +265,23 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(page.locator(f'[data-review-card][data-ticket-id="{ticket["id"]}"]')).to_be_visible(
         timeout=WAIT_MS
     )
-    page.goto(server.base + "/#/backlog")
-    global_row = page.locator(f'[data-backlog-tickets] [data-ticket-id="{ticket["id"]}"]')
-    expect(global_row).to_be_visible(timeout=WAIT_MS)
-    expect(global_row).to_contain_text(LONG_TITLE)
-    global_row.click()
+    # The retired global list redirects to Workspace. Settled parents retain child access.
+    page.goto(server.base + "/#/backlog?project=" + item["project_id"])
+    page.wait_for_function("location.hash === '#/workspace'", timeout=WAIT_MS)
+    expect(page.locator("[data-backlog-tickets]")).to_have_count(0)
+    left.get_by_role("button", name="Settled", exact=False).click()
+    scoped_parent = left.locator(f'[data-settled-item="{item["id"]}"]')
+    scoped_parent.locator(".settled-title").click()
+    scoped_pane = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
+    scoped_row = scoped_pane.locator(f'[data-sprint-ticket-id="{ticket["id"]}"]')
+    if not scoped_row.is_visible():
+        scoped_pane.locator('[data-workspace-group="awaiting_approval"] > summary').click()
+    expect(scoped_row).to_be_visible(timeout=WAIT_MS)
+    expect(scoped_row).to_contain_text(LONG_TITLE)
+    scoped_row.click()
     expect(page.locator(f'[data-screen="ticket"][data-ticket-id="{ticket["id"]}"]')).to_be_visible()
     page.go_back()
-    expect(global_row).to_be_visible(timeout=WAIT_MS)
+    expect(scoped_row).to_be_visible(timeout=WAIT_MS)
     page.goto(server.base + "/" + worker_hash)
     page.reload()
     expect(page.locator(f'[data-screen="ticket"][data-ticket-id="{ticket["id"]}"]')).to_be_visible()
@@ -531,6 +540,7 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
     # lifecycle group while the nested settled Messages bucket keeps exact discovery.
     expect(pane.locator('[data-workspace-section="remaining"]')).to_have_count(0)
     expect(pane.locator('[data-workspace-group="awaiting_reply"]')).to_have_count(0)
+    pane.get_by_label("Worker state").select_option("done")
     page_group = pane.locator('[data-workspace-group="done"]')
     expect(page_group).to_be_attached()
     expect(page_group).not_to_have_attribute("open", "")

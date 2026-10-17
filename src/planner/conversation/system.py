@@ -374,6 +374,28 @@ class SqliteProcessConversationSystem:
 
     # --- the contract -------------------------------------------------------------------
 
+    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            operation()
+            return True
+        if state.lock.locked():
+            return False
+        async with state.lock:
+            if (
+                state.phase is not _ConversationPhase.idle
+                or state.reserved_turn is not None
+                or state.running_turn is not None
+                or state.held_prompts
+                or state.admitted_sender_messages
+                or state.sender_messages_being_delivered
+                or state.steer_settlements
+                or any(not task.done() for task in state.settlement_tasks)
+            ):
+                return False
+            operation()
+            return True
+
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation. Writing its row is the first thing that happens.
 

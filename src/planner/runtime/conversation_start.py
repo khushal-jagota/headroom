@@ -62,6 +62,7 @@ from planner.runtime.logic.conversation_start_resolution import (
     resolve_worker_conversation_start,
 )
 from planner.tickets import data as tickets_data
+from planner.tickets import locale_configuration
 from planner.tickets.contracts import Ticket
 from planner.worker_settings.service import (
     read_chief_settings,
@@ -374,6 +375,9 @@ async def send_to_ticket_conversation(
 ) -> DeliveredMessage:
     """Send a message into this Ticket's conversation, making one if there is none yet.
 
+    The caller holds ``conversation_link_lock(f"ticket:{ticket_id}")`` throughout
+    this operation, so admission cannot cross a locale move or link reset.
+
     ``created_conversation_id`` is the name a conversation made here is given. It is the
     caller's because the caller may already have used it: the files a message carries are
     kept in its conversation's folder, and a first message's files are kept before there is
@@ -407,6 +411,22 @@ async def send_to_ticket_conversation(
     own values.
     """
     ticket = tickets_data.read_ticket(conn, ticket_id)
+    # This locale refusal is a local instance of the general delivery/readiness problem.
+    # A message must always be deliverable and must never start a step that the readiness
+    # machinery would refuse: deliver and hold, do not start. This guard only protects
+    # local execution. The general runtime fix must decide whether it subsumes this
+    # refusal so that separate admission mechanisms do not disagree.
+    if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
+        raise PlannerError(
+            ErrorCode.validation,
+            f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
+            f"this {locale_configuration.CURRENT_EXECUTION_LOCALE.value} machine",
+            {
+                "ticket_id": ticket_id,
+                "locale": ticket.locale.value,
+                "machine_locale": locale_configuration.CURRENT_EXECUTION_LOCALE.value,
+            },
+        )
     if conversation_id is None and ticket.conversation_id is None:
         return await _make_a_conversation_and_send_into_it(
             system,

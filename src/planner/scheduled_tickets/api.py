@@ -23,12 +23,14 @@ from planner.tickets.api import (
     body_str_list,
     parse_enum,
 )
+from planner.tickets.contracts import TicketLocale
 from planner.worker_types.configuration import configured_worker_type_registry
 
 router = APIRouter()
 
 _CREATE_KEYS = frozenset(
     {
+        "locale",
         "enabled",
         "cadence",
         "local_time",
@@ -109,6 +111,9 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         else ScheduledTicketPlacementMode.backlog
     )
     return ScheduledTicketTemplate(
+        locale=(
+            parse_enum(TicketLocale, body_str(raw, "locale"), "locale") if "locale" in raw else None
+        ),
         orchestrator_kind=kind,
         title=body_str(raw, "title"),
         worker_type=worker_type,
@@ -164,6 +169,8 @@ async def patch_schedule(schedule_id: str, raw: dict[str, Any], conn: DbConn, cl
     if not raw:
         raise PlannerError(ErrorCode.validation, "no schedule fields to update", {})
     changes: dict[str, object] = {}
+    if "locale" in raw:
+        changes["locale"] = parse_enum(TicketLocale, body_str(raw, "locale"), "locale")
     if "enabled" in raw:
         changes["enabled"] = _body_bool(raw, "enabled", True)
     if "cadence" in raw:

@@ -29,6 +29,7 @@ function ticket(
     stage: "needs_implementation",
     priority: "P1",
     activity_at: 1,
+    is_backlogged: false,
     ticket_status: "empty",
     waiting_to_closeout: false,
     has_pending_proposal: false,
