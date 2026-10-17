@@ -274,8 +274,11 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     scoped_parent.locator(".settled-title").click()
     scoped_pane = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
     scoped_row = scoped_pane.locator(f'[data-sprint-ticket-id="{ticket["id"]}"]')
-    if not scoped_row.is_visible():
-        scoped_pane.locator('[data-workspace-group="awaiting_approval"] > summary').click()
+    # An absent row can mean loading, so inspect the mounted fold before toggling it.
+    scoped_group = scoped_pane.locator('[data-workspace-group="awaiting_approval"]')
+    expect(scoped_group).to_be_visible(timeout=WAIT_MS)
+    if scoped_group.get_attribute("open") is None:
+        scoped_group.locator(":scope > summary").click()
     expect(scoped_row).to_be_visible(timeout=WAIT_MS)
     expect(scoped_row).to_contain_text(LONG_TITLE)
     scoped_row.click()
