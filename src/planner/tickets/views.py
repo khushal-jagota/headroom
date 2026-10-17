@@ -202,6 +202,7 @@ def _recap_preview(recap: str) -> str:
 def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
     return {
         "is_backlogged": bool(row["is_backlogged"]),
+        "waiting_to_closeout": facts.waiting_to_closeout,
         "id": str(row["id"]),
         "title": str(row["title"]),
         "worker_type": str(row["worker_type"]),
@@ -241,6 +242,12 @@ def list_ticket_summaries(
 ) -> ListPage[JsonDict]:
     clauses: list[str] = []
     params: list[str] = []
+    if filters.orchestrator is not None:
+        clauses.append("tickets.orchestrator_kind = ?")
+        params.append(filters.orchestrator.kind.value)
+        if filters.orchestrator.kind.value == "sprint_item":
+            clauses.append("tickets.sprint_item_id = ?")
+            params.append(filters.orchestrator.id)
     if project_id is not None:
         clauses.append(
             "CASE WHEN tickets.sprint_item_id IS NOT NULL THEN sprint_items.project_id "

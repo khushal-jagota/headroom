@@ -146,6 +146,7 @@ class BoardSprintItem(BoardSprintItemSource, WorkAttention):
 
 @dataclass(frozen=True, slots=True)
 class TicketListFilters:
+    orchestrator: Principal | None = None
     stages: tuple[str, ...] = ()
     excluded_stages: tuple[str, ...] = ()
     ticket_statuses: tuple[TicketStatus, ...] = ()

@@ -46,23 +46,28 @@ describe("explicit ticket lifecycle controls", () => {
   });
 });
 
-describe("bounded ticket discovery", () => {
-  it("sends server filters and page bounds rather than filtering one loaded page", async () => {
+describe("bounded orchestrator ticket discovery", () => {
+  it("isolates ownership, filter and page bounds in the query and request", async () => {
     const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response('{"tickets":[],"page":{}}', { status: 200 })));
     vi.stubGlobal("fetch", fetcher);
-    const query = queries.backlogTicketSummaries(30, 30, "project one", true, "planning_day");
-    if (typeof query.queryFn !== "function") throw new Error("Expected fetch function");
-    await query.queryFn({ signal: new AbortController().signal } as never);
-    expect(fetcher.mock.calls[0][0]).toBe("/api/tickets?detail=summary&limit=30&offset=30&project_id=project%20one&is_backlogged=true&worker_type=planning_day");
-    expect(queries.backlogTicketSummaries(0).queryKey).not.toEqual(query.queryKey);
-    const outside = queries.backlogTicketSummaries(0, 30, "", false);
-    if (typeof outside.queryFn !== "function") throw new Error("Expected fetch function");
-    await outside.queryFn({ signal: new AbortController().signal } as never);
-    expect(fetcher.mock.calls[1][0]).toContain("is_backlogged=false");
-    const retired = queries.backlogTicketSummaries(0, 30, "", null, "", true);
-    if (typeof retired.queryFn !== "function") throw new Error("Expected fetch function");
-    await retired.queryFn({ signal: new AbortController().signal } as never);
-    expect(fetcher.mock.calls[2][0]).toBe("/api/tickets?detail=summary&limit=30&offset=0&include_terminal=true&stage=cancelled");
-    expect(retired.queryKey).not.toEqual(queries.backlogTicketSummaries(0).queryKey);
+    try {
+      const chief = { kind: "chief", id: "chief" } as const;
+      const item = { kind: "sprint_item", id: "item one" } as const;
+      for (const [principal, filter, offset, suffix] of [
+        [chief, "active", 0, "&orchestrator_kind=chief"],
+        [item, "backlogged", 30, "&orchestrator_kind=sprint_item&orchestrator_id=item%20one&is_backlogged=true"],
+        [chief, "done", 0, "&orchestrator_kind=chief&include_terminal=true&stage=done"],
+        [chief, "retired", 0, "&orchestrator_kind=chief&include_terminal=true&stage=cancelled"]
+      ] as const) {
+        const query = queries.orchestratorTicketSummaries(principal, filter, offset);
+        if (typeof query.queryFn !== "function") throw new Error("Expected fetch function");
+        await query.queryFn({ signal: new AbortController().signal } as never);
+        expect(fetcher.mock.calls.at(-1)?.[0]).toBe(`/api/tickets?detail=summary&limit=30&offset=${offset}${suffix}`);
+      }
+      const key = queries.orchestratorTicketSummaries(chief, "active", 0).queryKey;
+      for (const query of [queries.orchestratorTicketSummaries(item, "active", 0), queries.orchestratorTicketSummaries(chief, "backlogged", 0), queries.orchestratorTicketSummaries(chief, "active", 30), queries.orchestratorTicketSummaries(chief, "active", 0, 15)]) {
+        expect(query.queryKey).not.toEqual(key);
+      }
+    } finally { vi.unstubAllGlobals(); }
   });
 });
