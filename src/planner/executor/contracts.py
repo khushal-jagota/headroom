@@ -148,6 +148,14 @@ class FileManifest:
 
 
 @dataclass(frozen=True, slots=True)
+class FilePublicationRequest:
+    """The child assignment authorizes bytes before publication, not just the row."""
+
+    manifest: FileManifest
+    child: ChildReference
+
+
+@dataclass(frozen=True, slots=True)
 class FileSnapshot:
     manifest: FileManifest
     local_path: Path
@@ -170,7 +178,7 @@ class EnvelopeKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class QueuedEnvelope:
-    """Digest covers canonical JSON payload plus ordered file manifest dependencies.
+    """Digest binds routing identity, kind, payload and ordered file dependencies.
 
     sender_id survives process restart in the spool metadata. Sequence starts at 1
     per (sender_id, conversation_id); submission_id never changes during retries.
@@ -368,6 +376,7 @@ class WireMessageKind(StrEnum):
     file_chunk = "file_chunk"
     file_complete = "file_complete"
     file_accepted = "file_accepted"
+    file_pending = "file_pending"
     command = "command"
     command_outcome = "command_outcome"
     command_outcome_ack = "command_outcome_ack"

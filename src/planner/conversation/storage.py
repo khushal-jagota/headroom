@@ -400,6 +400,7 @@ class ConversationStore:
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         """Write everything one delivery leaves behind, as one thing that either all
         happened or none of it did.
@@ -427,6 +428,7 @@ class ConversationStore:
             model_change,
             extra_prompts,
             owner_read_through_sequence,
+            executor_turn,
         )
 
     async def read_events_after(
@@ -734,6 +736,7 @@ class ConversationStore:
         model_change: ModelChangedEventPayload | None,
         extra_prompts: tuple[PromptEventPayload, ...] = (),
         owner_read_through_sequence: int | None = None,
+        executor_turn: tuple[str, str, str] | None = None,
     ) -> tuple[StoredConversationEvent, ...]:
         prompts: tuple[ConversationEventPayload, ...] = (prompt, *extra_prompts)
         payloads: tuple[ConversationEventPayload, ...] = (
@@ -778,6 +781,8 @@ class ConversationStore:
                 occurred_at=written[-1].created_at,
             )
             capture_conversation_attention(conn, conversation_id, written[-1].created_at, result)
+            if executor_turn is not None:
+                self.save_executor_turn_in_transaction(conn, conversation_id, executor_turn)
             _commit_appended_rows(conn, payloads)
         except BaseException:
             if conn.in_transaction:
@@ -1141,6 +1146,113 @@ class ConversationStore:
             )
         finally:
             conn.close()
+
+    @staticmethod
+    def save_executor_turn_in_transaction(
+        conn: sqlite3.Connection, conversation_id: str, metadata: tuple[str, str, str]
+    ) -> None:
+        conn.execute(
+            "INSERT INTO "
+            "executor_core_turns(conversation_id,child_json,turn_json,runtime_json) "
+            "VALUES (?,?,?,?) ON CONFLICT(conversation_id) DO UPDATE SET "
+            "child_json=excluded.child_json,turn_json=excluded.turn_json,runtime_json=excluded.runtime_json",
+            (conversation_id, *metadata),
+        )
+
+    async def read_executor_turn(self, conversation_id: str) -> tuple[str, str, str] | None:
+        def read() -> tuple[str, str, str] | None:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT child_json,turn_json,runtime_json FROM executor_core_turns WHERE "
+                    "conversation_id=?",
+                    (conversation_id,),
+                ).fetchone()
+                return None if row is None else (str(row[0]), str(row[1]), str(row[2]))
+            finally:
+                conn.close()
+
+        return await asyncio.to_thread(read)
+
+    def append_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+        *,
+        agent_activity: bool = False,
+        automatic_compaction_confirmed: bool = False,
+        automatic_compaction_result: AutomaticCompactionResult | None = None,
+        create_failure_notice: bool = False,
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Canonical append under the executor receipt's existing write transaction.
+
+        The caller owns commit and publishes these rows only after it succeeds.
+        """
+        if not conn.in_transaction:
+            raise ValueError("conversation append requires an open transaction")
+        if not payloads:
+            return ()
+        snapshot = conversation_attention_snapshot(conn, conversation_id)
+        written = self._insert_rows(conn, conversation_id, payloads)
+        last = written[-1]
+        if agent_activity:
+            conn.execute(
+                "UPDATE conversations SET latest_agent_activity_at=?, "
+                "latest_agent_activity_sequence=? WHERE conversation_id=?",
+                (last.created_at, last.sequence, conversation_id),
+            )
+        if automatic_compaction_confirmed:
+            conn.execute(
+                "UPDATE conversations SET "
+                "automatically_compacted_through_sequence=latest_agent_activity_sequence, "
+                "automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        elif automatic_compaction_result is AutomaticCompactionResult.not_compacted:
+            conn.execute(
+                "UPDATE conversations SET "
+                "automatic_compaction_attempted_through_sequence=latest_agent_activity_sequence "
+                "WHERE conversation_id=?",
+                (conversation_id,),
+            )
+        if create_failure_notice:
+            self._create_ticket_failure_notice(
+                conn,
+                conversation_id=conversation_id,
+                event_sequence=last.sequence,
+                error_summary=str(getattr(last.payload, "error_summary", None)),
+                now=last.created_at,
+            )
+        if snapshot is not None:
+            result = advance_conversation_attention(
+                snapshot,
+                payloads,
+                owner_read_through_sequence=snapshot.owner_read_through_sequence,
+                occurred_at=last.created_at,
+            )
+            capture_conversation_attention(conn, conversation_id, last.created_at, result)
+        return written
+
+    def update_remote_identity_in_transaction(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        *,
+        vendor_session_cursor: str | None = None,
+        composer_catalog: tuple[ComposerCatalogEntry, ...] | None = None,
+    ) -> None:
+        if vendor_session_cursor is not None:
+            conn.execute(
+                "UPDATE conversations SET vendor_session_cursor=? WHERE conversation_id=?",
+                (vendor_session_cursor, conversation_id),
+            )
+        if composer_catalog is not None:
+            conn.execute(
+                "UPDATE conversations SET composer_catalog=? WHERE conversation_id=?",
+                (_composer_catalog_to_json(composer_catalog), conversation_id),
+            )
 
     def _connect(self) -> sqlite3.Connection:
         return connect(self._db_path, self._busy_timeout_ms)

@@ -76,7 +76,9 @@ def conversation_attention_snapshot(
 ) -> ConversationAttentionSnapshot | None:
     """Derive one consistent snapshot before a conversation asks for the write lock."""
 
-    conn.execute("BEGIN")
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN")
     try:
         conversation = conn.execute(
             "SELECT c.latest_sequence, c.owner_read_through_sequence, c.created_at, "
@@ -93,7 +95,8 @@ def conversation_attention_snapshot(
             (conversation_id,),
         ).fetchall()
     finally:
-        conn.execute("COMMIT")
+        if owns_transaction:
+            conn.execute("COMMIT")
 
     pending_permission_ask_ids: set[str] = set()
     pending_user_input_request_ids: set[str] = set()

@@ -146,7 +146,7 @@ class BackendSteerRefused:
 class BackendSteerUncertain:
     """The adapter cannot prove admission or non-admission after the attempt."""
 
-    composed_content_delivered: bool = True
+    composed_content_delivered: bool | None = True
 
 
 type BackendSteerOutcome = BackendSteerAccepted | BackendSteerRefused | BackendSteerUncertain

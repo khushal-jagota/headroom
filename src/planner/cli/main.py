@@ -34,6 +34,7 @@ from planner.cli.record_projection import (
     render_text,
 )
 from planner.environments.cli import environment as environment_group
+from planner.executor.cli import executor_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets.contracts import TicketLocale
@@ -507,6 +508,7 @@ def main() -> None:
     """Operate the local planner server."""
 
 
+main.add_command(executor_group)
 main.add_command(environment_group)
 environment_group.hidden = True
 

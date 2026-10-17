@@ -28,6 +28,7 @@ its own prompt.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections import deque
@@ -323,6 +324,7 @@ class _ConversationState:
     last_ended_turn_was_automatic_compaction: bool = False
     child: BackendChild | None = None
     child_is_quarantined: bool = False
+    executor_child_reference: Any = None
     next_turn_number: int = 1
     has_delivered_prompt: bool = False
     last_touched_monotonic: float = 0.0
@@ -1370,7 +1372,10 @@ class SqliteProcessConversationSystem:
             child = state.child
             state.child = None
             if child is not None:
-                await self._stop_child(state, child)
+                from planner.executor.remote import RemoteBackendChild
+
+                if not isinstance(child, RemoteBackendChild):
+                    await self._stop_child(state, child)
 
     async def wait_until_quiescent(self) -> None:
         """Return once everything the system was going to do on its own has happened.
@@ -1969,6 +1974,18 @@ class SqliteProcessConversationSystem:
         except asyncio.CancelledError:
             self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
             raise
+        except Exception as delivery_error:
+            from planner.executor.remote import RemoteCommandUncertain
+
+            if isinstance(delivery_error, RemoteCommandUncertain):
+                state.child_is_quarantined = True
+                # Keep the reservation and its unresolved delivery. The model
+                # can neither retry nor run another turn beside an unknown act.
+                raise
+            self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+            if drain_after_delivery_exception:
+                await self._drain_held_prompts(state)
+            raise
         except BaseException:
             # The text reached no backend and this send is over, so the conversation is
             # free and whatever was waiting is owed its run. Without this the line was
@@ -2217,6 +2234,24 @@ class SqliteProcessConversationSystem:
                         ),
                     )
 
+                new_running = _RunningTurn(
+                    token=reservation.token,
+                    automatic_compaction=reservation.automatic_compaction,
+                    prompt_senders={
+                        principal: None
+                        for principal in (
+                            (sender if reply_requested and composed_content_delivered else None),
+                            *(
+                                message.sender
+                                if message.reply_requested and composed_content_delivered
+                                else None
+                                for message in also_delivered
+                            ),
+                        )
+                        if principal is not None
+                    },
+                    automatic_notice=reservation.automatic_notice,
+                )
                 # One transaction: the change, the conversation's new values and the
                 # prompt are one fact about one delivery, and a half-written one would
                 # leave the record saying something that never happened.
@@ -2235,6 +2270,7 @@ class SqliteProcessConversationSystem:
                             recipient=recipient,
                         ),
                         model_change=carried_change,
+                        executor_turn=self._executor_turn_metadata(state, new_running),
                         extra_prompts=tuple(
                             PromptEventPayload(
                                 content=message.content,
@@ -2277,24 +2313,7 @@ class SqliteProcessConversationSystem:
                         reasoning_effort=carried_change.reasoning_effort,
                     )
                 state.has_delivered_prompt = True
-                state.running_turn = _RunningTurn(
-                    token=reservation.token,
-                    automatic_compaction=reservation.automatic_compaction,
-                    prompt_senders={
-                        principal: None
-                        for principal in (
-                            (sender if reply_requested and composed_content_delivered else None),
-                            *(
-                                message.sender
-                                if message.reply_requested and composed_content_delivered
-                                else None
-                                for message in also_delivered
-                            ),
-                        )
-                        if principal is not None
-                    },
-                    automatic_notice=reservation.automatic_notice,
-                )
+                state.running_turn = new_running
                 self._set_phase(state, _ConversationPhase.running)
                 # The prompt commit can announce before this process-owned state is
                 # visible. Publish again after the runtime transition, so a reader of
@@ -2775,6 +2794,27 @@ class SqliteProcessConversationSystem:
                     else reasoning_effort
                 ),
             )
+        if resolved_start.role_materials is not None:
+            identity = dict(resolved_start.role_materials.identity_environment_variables)
+            ticket_id = identity.get("PLAN_TICKET_ID")
+            if ticket_id:
+                from planner.files.logic.paths import ticket_files_root
+
+                artifact_root = (ticket_files_root(self._store._db_path) / ticket_id).resolve()
+                resolved_start = replace(
+                    resolved_start,
+                    role_materials=replace(
+                        resolved_start.role_materials,
+                        identity_environment_variables=tuple(
+                            (key, value)
+                            for key, value in (
+                                resolved_start.role_materials.identity_environment_variables
+                            )
+                            if key != "PLAN_TICKET_FILES_DIR"
+                        )
+                        + (("PLAN_TICKET_FILES_DIR", str(artifact_root)),),
+                    ),
+                )
         factory = self._backend_child_factories[state.record.backend_key]
         child = factory(
             resolved_start=resolved_start,
@@ -3250,6 +3290,363 @@ class SqliteProcessConversationSystem:
         for state in recovered_quarantines:
             await self._drain_held_prompts(state)
 
+    @staticmethod
+    def _executor_turn_metadata(
+        state: _ConversationState, running: _RunningTurn
+    ) -> tuple[str, str, str] | None:
+        from planner.executor.codec import encode_value
+        from planner.executor.remote import RemoteBackendChild
+
+        child = state.child
+        reference = (
+            child.reference
+            if isinstance(child, RemoteBackendChild)
+            else state.executor_child_reference
+        )
+        if reference is None:
+            return None
+        state.executor_child_reference = reference
+        runtime = {
+            "automatic_compaction": running.automatic_compaction,
+            "compaction_confirmed": running.compaction_confirmed,
+            "automatic_notice": running.automatic_notice,
+            "ended": running.ended,
+            "pending_permission_ask_ids": list(running.pending_permission_ask_ids),
+            "pending_user_input_questions": encode_value(running.pending_user_input_questions),
+            "prompt_senders": encode_value(tuple(running.prompt_senders)),
+            "explicit_reply_recipients": encode_value(tuple(running.explicit_reply_recipients)),
+        }
+        return (
+            json.dumps(encode_value(reference)),
+            json.dumps(encode_value(running.token)),
+            json.dumps(runtime),
+        )
+
+    async def _restore_executor_turn(self, state: _ConversationState) -> None:
+        from pydantic import TypeAdapter
+
+        from planner.executor.contracts import ChildReference
+        from planner.executor.remote import RemoteBackendChild
+
+        metadata = await self._store.read_executor_turn(state.record.conversation_id)
+        if metadata is None:
+            return
+        child = TypeAdapter(ChildReference).validate_json(metadata[0])
+        token = TypeAdapter(TurnToken).validate_json(metadata[1])
+        runtime = json.loads(metadata[2])
+        state.executor_child_reference = child
+        state.next_turn_number = max(state.next_turn_number, token.turn_number + 1)
+        state.has_delivered_prompt = True
+        if runtime["ended"]:
+            state.last_ended_turn_token = token
+            state.last_ended_turn_was_automatic_compaction = runtime["automatic_compaction"]
+            return
+        running = _RunningTurn(
+            token=token,
+            automatic_compaction=runtime["automatic_compaction"],
+            compaction_confirmed=runtime["compaction_confirmed"],
+            automatic_notice=runtime["automatic_notice"],
+            pending_permission_ask_ids=set(runtime["pending_permission_ask_ids"]),
+            pending_user_input_questions=TypeAdapter(
+                dict[str, tuple[UserInputQuestion, ...]]
+            ).validate_python(runtime["pending_user_input_questions"]),
+            prompt_senders=dict.fromkeys(
+                TypeAdapter(tuple[Principal, ...]).validate_python(runtime["prompt_senders"])
+            ),
+            explicit_reply_recipients=set(
+                TypeAdapter(tuple[Principal, ...]).validate_python(
+                    runtime["explicit_reply_recipients"]
+                )
+            ),
+        )
+        state.running_turn = running
+        self._set_phase(state, _ConversationPhase.running)
+        # Child restoration comes only from inventory; historical events can still
+        # commit with this turn metadata when its native child no longer exists.
+        del child, RemoteBackendChild
+
+    async def adopt_remote_child(self, inventory: Any, child: BackendChild) -> None:
+        """Reattach only the exact Mac child and callbacks confirmed by inventory."""
+        state = await self._conversation_state(inventory.child.conversation_id)
+        if state is None:
+            raise ValueError("remote inventory names an unknown conversation")
+        async with state.lock:
+            state.child = child
+            token = inventory.active_turn
+            if token is not None:
+                if state.running_turn is None or state.running_turn.token != token:
+                    state.running_turn = _RunningTurn(token=token)
+                state.running_turn.pending_permission_ask_ids = {
+                    ask.ask_id for ask in inventory.pending_asks
+                }
+                state.next_turn_number = max(state.next_turn_number, token.turn_number + 1)
+                state.has_delivered_prompt = True
+                self._set_phase(state, _ConversationPhase.running)
+            elif state.running_turn is not None:
+                # Missing liveness is not a turn ending or a refusal. The durable
+                # ask evidence records the loss; do not invent backend news here.
+                state.running_turn.pending_permission_ask_ids.clear()
+
+    async def receive_remote_answer_application(
+        self, application: Any, envelope: Any, acceptor: Any, record_application: Any
+    ) -> Any:
+        """Native application, conversation answer row and receipt commit together."""
+        from planner.executor.contracts import ReceiptDisposition
+
+        state = await self._conversation_state(application.ask.child.conversation_id)
+        if state is None:
+            raise ValueError("answer application names unknown conversation")
+        written: tuple[StoredConversationEvent, ...] = ()
+        fresh = False
+        async with state.lock:
+
+            def write(connection: Any, accepted: Any) -> Any:
+                nonlocal written, fresh
+                del accepted
+                record_application(connection, application)
+                answer = connection.execute(
+                    "SELECT option_id FROM executor_asks WHERE answer_id=?",
+                    (application.answer_id,),
+                ).fetchone()
+                if answer is None:
+                    raise ValueError("answer application lacks authoritative choice")
+                existing_answer_row = connection.execute(
+                    "SELECT 1 FROM conversation_events WHERE conversation_id=? AND "
+                    "kind='permission_answered' AND json_extract(payload,'$.ask_id')=? LIMIT 1",
+                    (state.record.conversation_id, application.ask.ask_id),
+                ).fetchone()
+                if existing_answer_row is None:
+                    written = self._store.append_in_transaction(
+                        connection,
+                        state.record.conversation_id,
+                        (
+                            PermissionAnsweredEventPayload(
+                                ask_id=application.ask.ask_id, option_id=str(answer[0])
+                            ),
+                        ),
+                    )
+                fresh = True
+                running = state.running_turn
+                if running is not None and running.token == application.ask.turn:
+                    predicted = replace(
+                        running,
+                        pending_permission_ask_ids=running.pending_permission_ask_ids
+                        - {application.ask.ask_id},
+                    )
+                    metadata = self._executor_turn_metadata(state, predicted)
+                    if metadata is not None:
+                        self._store.save_executor_turn_in_transaction(
+                            connection, state.record.conversation_id, metadata
+                        )
+                return {"recorded": True}
+
+            receipt = acceptor(envelope, write)
+            if fresh and receipt.disposition is ReceiptDisposition.accepted:
+                self._take_in_written_rows(state, written)
+                if (
+                    state.running_turn is not None
+                    and state.running_turn.token == application.ask.turn
+                ):
+                    state.running_turn.pending_permission_ask_ids.discard(application.ask.ask_id)
+            return receipt
+
+    async def receive_remote_backend_event(self, event: Any, envelope: Any, acceptor: Any) -> Any:
+        """Validate core semantics, commit event and receipt together, then publish.
+
+        This path deliberately does not acknowledge the adapter's in-memory queue.
+        A replay returns its original receipt and never applies the effect twice.
+        """
+        from planner.executor.codec import decode_event_arguments
+        from planner.executor.contracts import BackendEventMethod, ReceiptDisposition
+
+        state = await self._conversation_state(event.child.conversation_id)
+        if state is None:
+            raise ValueError("remote event names an unknown conversation")
+        reservation = state.reserved_turn
+        if reservation is not None and event.turn == reservation.token:
+            await reservation.resolved.wait()
+        args = decode_event_arguments(event)
+        written: tuple[StoredConversationEvent, ...] = ()
+        fresh = False
+        method = event.method
+        token = event.turn
+        should_drain = False
+        async with state.lock:
+            running = state.running_turn
+            live = token is None or (
+                running is not None and running.token == token and not running.ended
+            )
+            payloads: tuple[ConversationEventPayload, ...] = ()
+            compacted = method is BackendEventMethod.context_compacted
+            compaction_result = None
+            failure_notice = False
+            if live:
+                if method is BackendEventMethod.tool_call_started:
+                    payloads = (ToolCallStartedEventPayload(**args),)
+                elif method is BackendEventMethod.tool_call_finished:
+                    payloads = (ToolCallFinishedEventPayload(**args),)
+                elif method is BackendEventMethod.plan_updated:
+                    payloads = (PlanUpdatedEventPayload(**args),)
+                elif method is BackendEventMethod.token_usage_reported:
+                    payloads = (TokenUsageEventPayload(**args),)
+                elif method is BackendEventMethod.context_compacted:
+                    payloads = (ContextCompactedEventPayload(),)
+                elif method is BackendEventMethod.permission_ask_raised:
+                    ask = args["ask"]
+                    payloads = (
+                        PermissionAskedEventPayload(
+                            ask_id=ask.ask_id,
+                            title=ask.title,
+                            detail=ask.detail,
+                            options=ask.options,
+                        ),
+                    )
+                elif method is BackendEventMethod.user_input_requested:
+                    request = args["request"]
+                    payloads = (
+                        UserInputRequestedEventPayload(
+                            request_id=request.request_id, questions=request.questions
+                        ),
+                    )
+                elif method is BackendEventMethod.user_input_failed:
+                    payloads = (UserInputFailedEventPayload(**args),)
+                elif (
+                    method is BackendEventMethod.turn_ended
+                    and running is not None
+                    and not running.ending_is_the_cores
+                ):
+                    ending = args["ending"]
+                    compaction_result = (
+                        AutomaticCompactionResult.not_compacted
+                        if running.automatic_compaction
+                        and ending is ConversationTurnEnding.completed
+                        and not running.compaction_confirmed
+                        else None
+                    )
+                    payloads = tuple(
+                        ExplicitReplyMissingEventPayload(prompt_sender=sender)
+                        for sender in running.prompt_senders
+                        if sender not in running.explicit_reply_recipients
+                    ) + (
+                        TurnEndedEventPayload(
+                            ending=ending,
+                            error_summary=normalized_failure_summary(args.get("error_summary"))
+                            if ending is ConversationTurnEnding.failed
+                            else None,
+                            automatic_compaction_result=compaction_result,
+                        ),
+                    )
+                    failure_notice = (
+                        ending is ConversationTurnEnding.failed and not running.automatic_notice
+                    )
+
+            def write(conn: Any, accepted_envelope: Any) -> Any:
+                nonlocal written, fresh
+                del accepted_envelope
+                fresh = True
+                written = self._store.append_in_transaction(
+                    conn,
+                    state.record.conversation_id,
+                    payloads,
+                    agent_activity=bool(payloads)
+                    and running is not None
+                    and not running.automatic_compaction,
+                    automatic_compaction_confirmed=compacted
+                    or (
+                        method is BackendEventMethod.turn_ended
+                        and running is not None
+                        and running.compaction_confirmed
+                    ),
+                    automatic_compaction_result=compaction_result,
+                    create_failure_notice=failure_notice,
+                )
+                if method is BackendEventMethod.vendor_session_cursor_rebound:
+                    self._store.update_remote_identity_in_transaction(
+                        conn,
+                        state.record.conversation_id,
+                        vendor_session_cursor=args["vendor_session_cursor"],
+                    )
+                elif method is BackendEventMethod.composer_catalog_reported:
+                    self._store.update_remote_identity_in_transaction(
+                        conn,
+                        state.record.conversation_id,
+                        composer_catalog=args["composer_catalog"],
+                    )
+                if live and running is not None:
+                    predicted = replace(
+                        running,
+                        pending_permission_ask_ids=set(running.pending_permission_ask_ids),
+                        pending_user_input_questions=dict(running.pending_user_input_questions),
+                    )
+                    if method is BackendEventMethod.permission_ask_raised:
+                        predicted.pending_permission_ask_ids.add(args["ask"].ask_id)
+                    elif method is BackendEventMethod.user_input_requested:
+                        request = args["request"]
+                        predicted.pending_user_input_questions[request.request_id] = (
+                            request.questions
+                        )
+                    elif method is BackendEventMethod.context_compacted:
+                        predicted.compaction_confirmed = True
+                    elif method is BackendEventMethod.turn_ended and written:
+                        predicted.ended = True
+                        predicted.pending_permission_ask_ids.clear()
+                        predicted.pending_user_input_questions.clear()
+                    metadata = self._executor_turn_metadata(state, predicted)
+                    if metadata is not None:
+                        self._store.save_executor_turn_in_transaction(
+                            conn, state.record.conversation_id, metadata
+                        )
+                return {"applied": live}
+
+            receipt = acceptor(envelope, write)
+            if fresh and receipt.disposition is ReceiptDisposition.accepted:
+                self._take_in_written_rows(state, written)
+                if written:
+                    last = written[-1]
+                    if running is not None and not running.automatic_compaction:
+                        state.record = replace(
+                            state.record,
+                            latest_agent_activity_at=last.created_at,
+                            latest_agent_activity_sequence=last.sequence,
+                        )
+                if method is BackendEventMethod.vendor_session_cursor_rebound:
+                    state.record = replace(
+                        state.record, vendor_session_cursor=args["vendor_session_cursor"]
+                    )
+                elif method is BackendEventMethod.composer_catalog_reported:
+                    state.record = replace(state.record, composer_catalog=args["composer_catalog"])
+                if live and running is not None:
+                    if method is BackendEventMethod.permission_ask_raised:
+                        running.pending_permission_ask_ids.add(args["ask"].ask_id)
+                    elif method is BackendEventMethod.user_input_requested:
+                        request = args["request"]
+                        running.pending_user_input_questions[request.request_id] = request.questions
+                    elif method is BackendEventMethod.context_compacted:
+                        running.compaction_confirmed = True
+                    elif method is BackendEventMethod.turn_ended and written:
+                        running.ended = True
+                        running.pending_permission_ask_ids.clear()
+                        running.pending_user_input_questions.clear()
+                        state.last_ended_turn_token = running.token
+                        state.last_ended_turn_was_automatic_compaction = (
+                            running.automatic_compaction
+                        )
+                        state.running_turn = None
+                        self._settle_phase(state)
+                        should_drain = True
+                if live and token is not None:
+                    if method is BackendEventMethod.agent_message_delta:
+                        self._publish_live_tail_frame(state, token, AgentMessageDeltaFrame(**args))
+                    elif method is BackendEventMethod.tool_call_progress:
+                        self._publish_live_tail_frame(state, token, ToolCallProgressFrame(**args))
+                    elif method is BackendEventMethod.model_thinking_happened:
+                        self._publish_model_thinking(state, token)
+                    elif method is BackendEventMethod.agent_message_completed:
+                        completed_backend_text_event(args["content"])
+        if should_drain:
+            asyncio.create_task(self._drain_held_prompts(state))
+        return receipt
+
     # --- shared internals ---------------------------------------------------------------
 
     async def _conversation_state(self, conversation_id: str) -> _ConversationState | None:
@@ -3267,6 +3664,7 @@ class SqliteProcessConversationSystem:
             if record is None:
                 return None
             state = _ConversationState(record=record)
+            await self._restore_executor_turn(state)
             self._conversations[conversation_id] = state
             return state
 

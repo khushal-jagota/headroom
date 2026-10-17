@@ -416,7 +416,7 @@ async def send_to_ticket_conversation(
     # machinery would refuse: deliver and hold, do not start. This guard only protects
     # local execution. The general runtime fix must decide whether it subsumes this
     # refusal so that separate admission mechanisms do not disagree.
-    if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
+    if not locale_configuration.can_execute_locale(conn, ticket.locale):
         raise PlannerError(
             ErrorCode.validation,
             f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
