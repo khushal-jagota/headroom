@@ -53,6 +53,7 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
+    AcceptanceReceipt,
     AskKind,
     AskReachability,
     AskReference,
@@ -60,7 +61,9 @@ from planner.executor.contracts import (
     CommandDisposition,
     ConnectionState,
     EnvelopeKind,
+    ExecutorIdentity,
     JsonObject,
+    JsonValue,
     QueuedEnvelope,
     WireMessage,
     WireMessageKind,
@@ -175,9 +178,11 @@ class CutReceiptEndpoint(ExecutorEndpoint):
         self.cut_input = False
         self.input_cut_count = 0
 
-    async def _accept_envelope(self, envelope, identity):
+    async def _accept_envelope(
+        self, envelope: QueuedEnvelope, identity: ExecutorIdentity
+    ) -> AcceptanceReceipt:
         if self.cut_user_input_application:
-            application = None
+            application: JsonValue = None
             if envelope.kind is EnvelopeKind.answer_application:
                 application = envelope.payload
             elif envelope.kind is EnvelopeKind.command_outcome:
@@ -1031,16 +1036,25 @@ def test_user_input_request_id_reuse_gets_separate_answer_history(
 def test_user_input_callback_application_survives_lost_receipt_without_reanswer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from planner.conversation.api import _pending_user_input
+    from planner.conversation.api import ConversationRuntime, _pending_user_input
+    from planner.conversation.backend_usage import BackendUsageService
+    from planner.conversation.live_tail import ConversationLiveTail
+    from planner.conversation.snapshot import BackendSnapshotService
 
     async def run() -> None:
         harness = await boot(tmp_path, monkeypatch)
         try:
             await harness.native.raise_user_input()
             await harness.wait_input_reachable()
-            runtime = SimpleNamespace(
+            runtime = ConversationRuntime(
                 system=harness.system,
                 store=harness.system._store,
+                live_tail=ConversationLiveTail(),
+                backend_snapshots=BackendSnapshotService(),
+                backend_usage=BackendUsageService({}),
+                message_files=ConversationMessageFiles(harness.endpoint.db_path),
+                database_path=harness.endpoint.db_path,
+                sse_heartbeat_ms=1000,
                 executor_endpoint=harness.endpoint,
             )
             pending = await _pending_user_input(runtime, "c_scripted")
@@ -1105,9 +1119,9 @@ def test_vps_refuses_protocol_one_before_replay_without_fencing_current_peer(
                 1000,
                 None,
             )
-            await write_frame(
-                writer, WireMessage(WireMessageKind.hello, "old_protocol", encode_value(old))
-            )
+            payload = encode_value(old)
+            assert isinstance(payload, dict)
+            await write_frame(writer, WireMessage(WireMessageKind.hello, "old_protocol", payload))
             assert await asyncio.wait_for(reader.read(1), 1) == b""
             writer.close()
             await writer.wait_closed()
