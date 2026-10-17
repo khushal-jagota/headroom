@@ -306,6 +306,8 @@ def _ticket_record(
     parts["proposal"] = part(data.get("pending_proposal"))
     parts["recap"] = part(data.get("recap", ""))
     parts["guidance"] = part(data.get("guidance", ""))
+    if "memory_notice_inspection" in data:
+        parts["memory_notice_inspection"] = part(data["memory_notice_inspection"])
     return header, parts
 
 
