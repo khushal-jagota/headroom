@@ -195,6 +195,17 @@ One screen per part of the system:
   Notification preferences and browser permission behavior remain. Settings does not
   change feature authority or introduce another configuration framework.
 
+  Config shares Usage's restrained rows and section spacing. Its Agents list opens
+  launch defaults and role skills. Its Workers list shows the actual number of Stages
+  from each supported manifest, in two columns on desktop and one on compact screens.
+  The Usage Config tab mounts this same Config component, with links that stay under
+  Usage. Settings retains its Config section and links back to Usage.
+
+  Config details retain the shared launch picker, per-Stage owner controls, and skill
+  editors. Owner writes remain serialized whole-record updates. Each skill field saves
+  independently, and a failed save retains its error and retry behavior. These screens
+  use the existing owner-only endpoints and preserve candidate specialist skills.
+
 The workspace keeps its resize handle within its own visual layer. Open shell menus
 cover that handle and receive pointer actions above it. The handle keeps its pointer
 and keyboard controls when unobscured.
@@ -227,24 +238,44 @@ waits. It checks the server identity again when composition becomes inactive, th
 applies the requested update. The push-only service worker and its subscription remain
 in place across this page reload.
 
-**Backends** at `#/backends` shows the conversation backends installed on this machine,
-their account and model facts, and any update Panels can run. Hermes shows its version
-and model catalogue without update discovery or an update action. The first catalogue
-paints before the page refreshes catalogue and Codex and Claude update advice in the
-background. An ordinary
-cached read remains immediate during that work. The page's **Refresh** action reads Codex
-and Claude usage only, then uses the current backend catalogues. A successful refresh
-shows each provider window as its remaining percentage, reset time, and
-observation time. The backend source still reports the used percentage. The shared
-ring derives the remaining value and empties counter-clockwise from the top as the
-allowance falls. One provider failure does not discard the other's new answer. Hermes
-has no usage source. Codex uses its app-server rate-limit read, so Refresh starts no
-model turn and consumes no allowance.
+**Usage** at `#/backends` offers Tokens, Cost, Limits, and Config as tabs. The explicit
+addresses are `#/backends/tokens`, `#/backends/cost`, `#/backends/limits`, and
+`#/backends/config`. Limits opens first. It retains Codex and Claude identity, sign-in,
+model controls, supported updates, and a backend filter. Hermes does not appear on Usage.
+Config index and detail addresses retain the Usage header and tab strip. They use the
+same Config editor as Settings, and detail links survive reloads. The Config tab does not
+load usage records or allowance-page backend snapshots. Its shared model picker retains
+its metadata reads. The first Limits visit reads its cached backend facts.
+Allowance cards show the percentage left at observation, reset time, and observation
+time. Cards mark snapshots that expired before the page's last check as cached and
+leave current allowance unavailable.
 
-The shared model picker offers the same Refresh action beside Reasoning. It replaces
-the picker owner's backend snapshots with that same refresh response, so model choices
-and usage rings update together. The picker stays open while it reads and reports a
-provider or transport failure in its existing feedback line.
+Tokens and Cost show local Codex and Claude activity, including work outside Panels.
+They offer 24-hour, 7-day, 30-day, and 90-day periods in the browser's time zone.
+The chart and breakdown show observed hours or days, provider totals, and model details.
+Unknown values display as a dash. Unrecorded intervals remain chart gaps.
+
+The coverage fold exposes partial sources, import progress, and unavailable prices.
+Cost follows T3's model-price calculations and prefers source-reported USD where present.
+Its breakdown includes input, cache, output, cache savings, and observed speed premiums.
+Unknown model prices remain unpriced. The stored price snapshot and source-reported
+amounts remain distinct in the API and evidence.
+
+Ordinary reads and period changes use stored answers. The page's **Refresh** starts
+provider allowance reads and a bounded local record import independently. Imports resume
+across files and providers after a read budget ends. Price refresh uses a stored catalogue
+with T3's cache interval. Either source
+keeps its previous records when its refresh fails. Opening Limits paints cached
+backend facts before catalogue and supported update advice refresh in the background.
+The [conversation system](conversation-system.md#recorded-local-usage) owns source and
+counting rules.
+
+The shared model picker keeps its allowance rings and Refresh action beside Reasoning.
+Its refresh reads provider allowances only and replaces the picker's backend snapshots.
+The picker stays open and reports failures in its existing feedback line.
+
+_Usage code paths:_ `web/src/routes/BackendsRoute.svelte`, `web/src/components/usage/`,
+and `web/src/lib/conversation/recordedUsageWire.ts`.
 
 ## The two rules that shape it
 
@@ -545,4 +576,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-09-15._
+_Last verified: 2026-10-16._
