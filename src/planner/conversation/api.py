@@ -20,7 +20,7 @@ import time
 from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -178,6 +178,7 @@ def build_conversation_runtime(
     sse_heartbeat_ms: int,
     backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory],
     remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
+    cleanup: AsyncExitStack | None = None,
 ) -> ConversationRuntime:
     """Compose the conversation system, its record, the files it keeps, and the tail."""
     store = ConversationStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
@@ -204,15 +205,27 @@ def build_conversation_runtime(
         executable = snapshot.executable_path
         return None if executable is None else (executable, "app-server")
 
-    return ConversationRuntime(
+    system = SqliteProcessConversationSystem(
         store=store,
-        system=SqliteProcessConversationSystem(
-            store=store,
-            backend_child_factories=backend_child_factories,
-            message_files=message_files,
-            live_tail=live_tail,
-            model_resolver=model_resolution,
-        ),
+        backend_child_factories=backend_child_factories,
+        message_files=message_files,
+        live_tail=live_tail,
+        model_resolver=model_resolution,
+    )
+    runtime: ConversationRuntime | None = None
+
+    async def shutdown_composed_runtime() -> None:
+        if runtime is None:
+            await system.shutdown()
+        else:
+            await runtime.shutdown()
+
+    # A later component constructor can fail after ownership transfers to system.
+    if cleanup is not None:
+        cleanup.push_async_callback(shutdown_composed_runtime)
+    runtime = ConversationRuntime(
+        store=store,
+        system=system,
         live_tail=live_tail,
         backend_snapshots=backend_snapshots,
         backend_usage=production_backend_usage_service(),
@@ -226,6 +239,7 @@ def build_conversation_runtime(
             remembered_login_rejection=remembered_codex_login_rejection,
         ),
     )
+    return runtime
 
 
 def _runtime(request: Request) -> ConversationRuntime:

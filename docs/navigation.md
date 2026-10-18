@@ -167,3 +167,51 @@ The isolated browser harness exercises the module against real snapshot and even
 Code paths: `web/src/lib/navigation/`, `web/tests/navigation-*`, and `scripts/navigation_browser_harness.py`.
 
 _Last verified: 2026-10-18._
+
+## Retained adapters for Signal publication
+
+The local consumer branch contains adapters for the reviewed Signal publication
+interface. They do not connect a producer or change a screen's data source.
+
+`core.db` accepts a registered transaction guard before an outer transaction starts.
+The same admission covers managed connections and raw migration transactions. Guard
+settlement precedes commit observers. Closed or failed registrations reject later
+transactions. Scoped admission tokens also cover schema initialization after migrations.
+
+The shared transaction-control guard preserves nested restrictions. A configured
+guard uses it around finalizers. The existing lifecycle finalizer still needs its
+Signal-owned call-site amendment before configured production use. The unconfigured
+path retains its existing behavior.
+
+Conversation composition registers successful system construction with the lifespan's
+cleanup stack before it constructs later components. A later failure drains that
+system. This cleanup does not establish lease transfer or bootstrap authority.
+
+Navigation delivery accepts injected authority checks. A configured but absent
+attachment rejects delivery. Each snapshot and stream retains its original permit.
+Installation checks use the SQL snapshot. Authoritative checks occur after SQL reads
+close. Invalidation fences later sends and cancels admitted sends. Bytes already
+accepted by the network cannot be recalled. No producer gate spans a network wait.
+
+These adapters use isolated injected fixtures. Producer gate and undo semantics,
+lease adoption, bootstrap phases, configured finalizer order, and combined recovery
+remain separate acceptance requirements. Public attention payloads and consumer
+cutover remain outside this adapter evidence.
+
+`navigation.signal_publication` stores complete typed publications and their producer
+cursor in private tables. Installation checks every conversation in the same source
+transaction, then rebuilds navigation with a fresh navigation epoch. Batch acceptance
+checks exact continuity, duplicate content, and conversation versions. Deletion
+records retain version fences. Association-only batches advance the producer cursor.
+
+This private installation does not add attention fields to the public schema3
+payload. Its typed attachment binder maps unavailable errors and checks installation
+identity inside SQL snapshots. Production attachment registration and recovery remain
+uncomposed. Private table creation occurs inside installation; production startup and
+migration integration still require combined proof.
+
+A successful registered admission supplies an opaque reconciliation handle before
+SQLite begins. An uncertain result carries that same object through commit paths
+and cleanup errors. Core does not inspect it or retry the operation. The Signal
+lane owns evidence resolution. Failures from observers after a known commit do
+not turn that commit into an uncertain result.

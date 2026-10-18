@@ -30,6 +30,31 @@ from sqlalchemy.engine import URL
 
 from planner.core import change_signal
 from planner.core.commit_observers import CommitObserver, observe
+from planner.core.transaction_guards import (
+    GuardRegistration as GuardRegistration,
+)
+from planner.core.transaction_guards import (
+    SavepointAction as SavepointAction,
+)
+from planner.core.transaction_guards import (
+    TransactionGuardFactory as TransactionGuardFactory,
+)
+from planner.core.transaction_guards import (
+    TransactionGuardLease as TransactionGuardLease,
+)
+from planner.core.transaction_guards import (
+    TransactionOutcome as TransactionOutcome,
+)
+from planner.core.transaction_guards import (
+    TransactionReservation,
+    reserve_transaction,
+)
+from planner.core.transaction_guards import (
+    UncertainTransactionError as UncertainTransactionError,
+)
+from planner.core.transaction_guards import (
+    register_transaction_guard as register_transaction_guard,
+)
 from planner.core.transaction_participants import TransactionParticipant, finalize
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
@@ -138,7 +163,13 @@ class ParticipatingCursor(sqlite3.Cursor):
     def execute(self, sql: str, parameters: Any = (), /) -> Self:
         connection = self.connection
         assert isinstance(connection, ChangeSignallingConnection)
-        connection._execute(self, sql, parameters)
+        try:
+            connection._execute(self, sql, parameters)
+        except UncertainTransactionError:
+            raise
+        except BaseException as error:
+            connection._preserve_rollback_uncertainty(sql, error)
+            raise
         return self
 
     def executemany(self, sql: str, parameters: Any, /) -> Self:
@@ -156,7 +187,7 @@ class ParticipatingCursor(sqlite3.Cursor):
             if owns_transaction:
                 connection.rollback()
             elif not connection.in_transaction:
-                connection._clear_transaction()
+                connection._settle_transaction("rolled_back")
             raise
 
     def executescript(self, sql_script: str, /) -> sqlite3.Cursor:
@@ -197,6 +228,104 @@ class ChangeSignallingConnection(sqlite3.Connection):
         self._savepoint_transaction = False
         self._contexts: list[str | None] = []
         self._context_sequence = 0
+        self._transaction_guard: TransactionReservation | None = None
+        self._uncertain_result: UncertainTransactionError | None = None
+        self._transaction_admission: object | None = None
+        self._control_guard_depth = 0
+        self._closed = False
+        self._authorizer: Callable[..., int] | None = None
+        self._refresh_authorizer()
+
+    def _refresh_authorizer(self) -> None:
+        # Installing the dispatcher also expires cached statements. Their old
+        # authorization cannot bypass a newly entered control guard.
+        super().set_authorizer(self._authorize)
+
+    def _authorize(self, action: int, *arguments: Any) -> int:
+        if self._control_guard_depth and action in {
+            sqlite3.SQLITE_TRANSACTION,
+            sqlite3.SQLITE_SAVEPOINT,
+        }:
+            return sqlite3.SQLITE_DENY
+        if self._authorizer is not None:
+            return self._authorizer(action, *arguments)
+        return sqlite3.SQLITE_OK
+
+    def set_authorizer(self, authorizer_callback: Callable[..., int] | None) -> None:
+        if self._control_guard_depth:
+            raise RuntimeError("transaction participants cannot replace the authorizer")
+        self._authorizer = authorizer_callback
+        self._refresh_authorizer()
+
+    def _check_transaction_control(self) -> None:
+        if self._finalizing or self._control_guard_depth:
+            raise RuntimeError("transaction participants cannot control transactions")
+
+    def _admit_transaction(self) -> None:
+        if self._transaction_guard is not None:
+            raise RuntimeError("transaction already has admission")
+        self._transaction_guard = reserve_transaction(self, self._transaction_admission)
+
+    def _settle_transaction(
+        self, outcome: TransactionOutcome, error: BaseException | None = None
+    ) -> None:
+        guard, self._transaction_guard = self._transaction_guard, None
+        self._clear_transaction()
+        if guard is not None:
+            try:
+                guard.finish(outcome, error)
+            except UncertainTransactionError as uncertain:
+                self._uncertain_result = uncertain
+                raise
+
+    def _preserve_uncertainty(self, error: BaseException) -> None:
+        if self._uncertain_result is not None:
+            self._uncertain_result.add_note(f"connection cleanup also failed: {error!r}")
+            raise self._uncertain_result
+
+    def _preserve_rollback_uncertainty(self, sql: str, error: BaseException) -> None:
+        words = _control_words(sql)
+        if words and words[0] == "rollback" and "to" not in words:
+            self._preserve_uncertainty(error)
+
+    def _failed_commit(self, error: BaseException) -> None:
+        # A failed commit with an open transaction can still establish rollback.
+        # A completed transaction with a failed result is genuinely uncertain.
+        outcome: TransactionOutcome = "uncertain"
+        try:
+            if self.in_transaction:
+                super().rollback()
+                outcome = "rolled_back"
+        except BaseException as cleanup_error:
+            error.add_note(f"commit rollback also failed: {cleanup_error!r}")
+        self._settle_transaction(outcome, error)
+
+    def close(self) -> None:
+        self._check_transaction_control()
+        if self._closed:
+            return
+        try:
+            if self.in_transaction:
+                self._rollback_failed()
+            super().close()
+            self._closed = True
+        except UncertainTransactionError:
+            raise
+        except BaseException as error:
+            self._preserve_uncertainty(error)
+            raise
+
+    def __del__(self) -> None:
+        # sqlite3's GC close alone cannot drain a process-local reservation.
+        guard = getattr(self, "_transaction_guard", None)
+        if guard is not None:
+            try:
+                sqlite3.Connection.rollback(self)
+            except BaseException as error:
+                guard.finish("uncertain", error)
+            else:
+                guard.finish("rolled_back", None)
+            self._transaction_guard = None
 
     @overload
     def cursor(self, factory: None = None) -> sqlite3.Cursor: ...
@@ -210,7 +339,13 @@ class ChangeSignallingConnection(sqlite3.Connection):
         return super().cursor(ParticipatingCursor)
 
     def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
-        return self.cursor().execute(sql, parameters)
+        try:
+            return self.cursor().execute(sql, parameters)
+        except UncertainTransactionError:
+            raise
+        except BaseException as error:
+            self._preserve_rollback_uncertainty(sql, error)
+            raise
 
     def executemany(self, sql: str, parameters: Any, /) -> sqlite3.Cursor:
         return self.cursor().executemany(sql, parameters)
@@ -236,7 +371,7 @@ class ChangeSignallingConnection(sqlite3.Connection):
             except BaseException:
                 self.rollback()
                 raise
-        if self._finalizing and operation in {
+        if (self._finalizing or self._control_guard_depth) and operation in {
             "begin",
             "commit",
             "end",
@@ -261,15 +396,30 @@ class ChangeSignallingConnection(sqlite3.Connection):
         commits = operation in {"commit", "end"} or (
             operation == "release" and release_index == 0 and self._savepoint_transaction
         )
-        if commits and had_transaction:
-            self._before_commit()
+        starts = not had_transaction and operation in {"begin", "savepoint"}
+        if starts:
+            self._admit_transaction()
+        guard = self._transaction_guard
         try:
-            result = sqlite3.Cursor.execute(cursor, sql, parameters)
-        except BaseException:
+            if guard is not None:
+                if operation == "savepoint":
+                    guard.check_savepoint("create")
+                elif operation == "release":
+                    guard.check_savepoint("release")
+                elif operation == "rollback" and "to" in words:
+                    guard.check_savepoint("rollback_to")
             if commits and had_transaction:
-                self.rollback()
+                self._before_commit()
+            result = self._sqlite_execute(cursor, sql, parameters)
+        except BaseException as error:
+            if starts:
+                self._settle_transaction("rolled_back", error)
+            elif commits and had_transaction and self._transaction_guard is not None:
+                self._failed_commit(error)
             elif had_transaction and not self.in_transaction:
-                self._clear_transaction()
+                self._settle_transaction("rolled_back", error)
+            if operation == "rollback" and "to" not in words:
+                self._preserve_uncertainty(error)
             raise
         if operation == "savepoint" and len(words) > 1:
             if not had_transaction:
@@ -291,7 +441,7 @@ class ChangeSignallingConnection(sqlite3.Connection):
         elif had_transaction:
             wrote = self._open_transaction_wrote()
             results = self._participant_results
-            self._clear_transaction()
+            self._settle_transaction("committed" if commits else "rolled_back")
             if commits:
                 observe(self, results, self._commit_observers)
             if commits and wrote:
@@ -300,12 +450,22 @@ class ChangeSignallingConnection(sqlite3.Connection):
             change_signal.emit()
         return result
 
+    def _sqlite_execute(self, cursor: sqlite3.Cursor, sql: str, parameters: Any) -> sqlite3.Cursor:
+        return sqlite3.Cursor.execute(cursor, sql, parameters)
+
     def _before_commit(self) -> None:
         if self._finalizing:
             raise RuntimeError("transaction participants cannot commit")
         self._finalizing = True
         try:
-            self._participant_results = finalize(self, self._participants)
+            reservation = self._transaction_guard
+            if reservation is not None and reservation.lease is not None:
+                with transaction_control_guard(self):
+                    self._participant_results = finalize(self, self._participants)
+            else:
+                # The retained lifecycle finalizer owns its old authorizer until
+                # Signal supplies its reviewed shared-guard call-site amendment.
+                self._participant_results = finalize(self, self._participants)
         except BaseException:
             self._rollback_failed()
             raise
@@ -313,33 +473,41 @@ class ChangeSignallingConnection(sqlite3.Connection):
             self._finalizing = False
 
     def _commit(self, *, announce: bool) -> None:
+        self._check_transaction_control()
         had_transaction = self.in_transaction
         if had_transaction:
             self._before_commit()
         wrote = self._open_transaction_wrote()
         try:
-            super().commit()
-        except BaseException:
-            self.rollback()
+            self._sqlite_commit()
+        except BaseException as error:
+            self._failed_commit(error)
             raise
         results = self._participant_results
-        self._clear_transaction()
+        self._settle_transaction("committed")
         if had_transaction:
             observe(self, results, self._commit_observers)
         if announce and had_transaction and wrote:
             change_signal.emit()
 
+    def _sqlite_commit(self) -> None:
+        super().commit()
+
     def commit(self) -> None:
         self._commit(announce=True)
 
     def rollback(self) -> None:
-        if self._finalizing:
-            raise RuntimeError("transaction participants cannot control transactions")
+        self._check_transaction_control()
         self._rollback_failed()
 
     def _rollback_failed(self) -> None:
-        super().rollback()
-        self._clear_transaction()
+        try:
+            super().rollback()
+        except BaseException as error:
+            self._settle_transaction("uncertain", error)
+            self._preserve_uncertainty(error)
+            raise
+        self._settle_transaction("rolled_back")
 
     def __enter__(self) -> Self:
         if self.in_transaction:
@@ -354,16 +522,22 @@ class ChangeSignallingConnection(sqlite3.Connection):
 
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Literal[False]:
         name = self._contexts.pop()
-        if not self.in_transaction:
-            return False
-        if name is not None:
-            if exc_type is not None:
-                self.execute(f"ROLLBACK TO {name}")
-            self.execute(f"RELEASE {name}")
-        elif exc_type is None:
-            self.commit()
-        else:
-            self.rollback()
+        try:
+            if not self.in_transaction:
+                return False
+            if name is not None:
+                if exc_type is not None:
+                    self.execute(f"ROLLBACK TO {name}")
+                self.execute(f"RELEASE {name}")
+            elif exc_type is None:
+                self.commit()
+            else:
+                self.rollback()
+        except UncertainTransactionError:
+            raise
+        except BaseException as error:
+            self._preserve_uncertainty(error)
+            raise
         return False
 
     def _clear_transaction(self) -> None:
@@ -375,6 +549,34 @@ class ChangeSignallingConnection(sqlite3.Connection):
     def _open_transaction_wrote(self) -> bool:
         baseline = self._rows_changed_at_transaction_start
         return baseline is None or self.total_changes != baseline
+
+
+@contextmanager
+def bind_transaction_admission(
+    connection: ChangeSignallingConnection, token: object, /
+) -> Iterator[None]:
+    if connection.in_transaction or connection._transaction_admission is not None:
+        raise RuntimeError("transaction admission needs an idle unbound connection")
+    connection._transaction_admission = token
+    try:
+        yield
+    finally:
+        connection._transaction_admission = None
+
+
+@contextmanager
+def transaction_control_guard(connection: ChangeSignallingConnection, /) -> Iterator[None]:
+    connection._control_guard_depth += 1
+    connection._refresh_authorizer()
+    try:
+        yield
+    finally:
+        connection._control_guard_depth -= 1
+        connection._refresh_authorizer()
+
+
+def transaction_savepoint_depth(connection: ChangeSignallingConnection, /) -> int:
+    return len(connection._savepoints)
 
 
 def commit_without_change_signal(conn: sqlite3.Connection) -> None:
@@ -413,11 +615,21 @@ def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
     return conn
 
 
-def create_schema(conn: sqlite3.Connection) -> None:
+def create_schema(conn: sqlite3.Connection, *, migration_admission: object | None = None) -> None:
     """Bring the connected database up to the current schema and seed default projects.
 
     Safe to call on every open: a new database is built, a current one is left alone.
     """
+    if migration_admission is not None:
+        if not isinstance(conn, ChangeSignallingConnection):
+            raise TypeError("scoped schema admission needs a managed connection")
+        with bind_transaction_admission(conn, migration_admission):
+            _create_schema(conn, migration_admission=migration_admission)
+    else:
+        _create_schema(conn)
+
+
+def _create_schema(conn: sqlite3.Connection, *, migration_admission: object | None = None) -> None:
     # Seeding is the only thing here that knows a domain, and domains open connections
     # through this module — so these are imported where they are used, leaving this module
     # importable on its own.
@@ -433,7 +645,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
             "create_schema needs a connection with no transaction open, because migrations "
             "run on their own connection and would wait on this one's lock"
         )
-    _upgrade_to_current_schema(_main_database_path(conn), _busy_timeout_ms(conn))
+    _upgrade_to_current_schema(
+        _main_database_path(conn), _busy_timeout_ms(conn), admission=migration_admission
+    )
     with conn:
         projects_data.seed_default_projects(conn)
     # Migration-unit fixtures deliberately replace the tree with a historical
@@ -484,21 +698,57 @@ def _busy_timeout_ms(conn: sqlite3.Connection) -> int:
 
 
 @contextmanager
-def schema_migration_transaction(db_path: str, busy_timeout_ms: int = 5000) -> Iterator[Connection]:
+def schema_migration_transaction(
+    db_path: str, busy_timeout_ms: int = 5000, *, admission: object | None = None
+) -> Iterator[Connection]:
     """Hold the same all-or-nothing schema writer lease used by application startup.
 
     Explicit offline maintenance may prepare historical schema on this connection,
     after archiving the original database. Nothing is upgraded merely by entering.
     """
     engine = _migration_engine(db_path, busy_timeout_ms)
+    reservation: TransactionReservation | None = None
+    raw: _MigrationConnection | None = None
+    error: BaseException | None = None
+    outcome: TransactionOutcome = "rolled_back"
     try:
-        with engine.begin() as connection:
-            yield connection
-            violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
-            if violations:
-                raise RuntimeError(f"migrations left foreign key violations: {violations!r}")
+        with engine.connect() as connection:
+            raw = connection.connection.driver_connection
+            assert isinstance(raw, _MigrationConnection)
+            reservation = reserve_transaction(raw, admission)
+            try:
+                with connection.begin():
+                    yield connection
+                    violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+                    if violations:
+                        raise RuntimeError(
+                            f"migrations left foreign key violations: {violations!r}"
+                        )
+                outcome = "committed"
+            except BaseException as failure:
+                error = failure
+                # A commit failure can leave SQLAlchemy's Transaction inactive
+                # while SQLite still owns an open transaction. Establish rollback
+                # on that actual connection before pool cleanup hides its state.
+                if raw._rollback_can_resolve:
+                    try:
+                        if raw.in_transaction:
+                            raw.rollback()
+                    except BaseException as rollback_error:
+                        raw.migration_outcome = "uncertain"
+                        failure.add_note(f"migration rollback also failed: {rollback_error!r}")
+                outcome = raw.migration_outcome
+                raise
     finally:
-        engine.dispose()
+        try:
+            engine.dispose()
+        finally:
+            if reservation is not None:
+                # A pool-close rollback cannot turn a completed failed commit
+                # into a known rollback. The raw adapter preserves uncertainty.
+                if raw is not None and raw.migration_outcome == "uncertain":
+                    outcome = "uncertain"
+                reservation.finish(outcome, error)
 
 
 def upgrade_schema_connection(connection: Connection, revision: str) -> None:
@@ -507,10 +757,45 @@ def upgrade_schema_connection(connection: Connection, revision: str) -> None:
     command.upgrade(_alembic_config(connection), revision)
 
 
-def _upgrade_to_current_schema(db_path: str, busy_timeout_ms: int) -> None:
+def _upgrade_to_current_schema(
+    db_path: str, busy_timeout_ms: int, *, admission: object | None = None
+) -> None:
     """Run every migration the database has not seen yet, as one all-or-nothing step."""
-    with schema_migration_transaction(db_path, busy_timeout_ms) as connection:
+    with schema_migration_transaction(db_path, busy_timeout_ms, admission=admission) as connection:
         upgrade_schema_connection(connection, "head")
+
+
+class _MigrationConnection(sqlite3.Connection):
+    """Observe actual DBAPI outcomes, including errors hidden by pool cleanup."""
+
+    migration_outcome: TransactionOutcome = "rolled_back"
+    _rollback_can_resolve = False
+
+    def commit(self) -> None:
+        try:
+            self._sqlite_commit()
+        except BaseException:
+            self._rollback_can_resolve = self.in_transaction
+            self.migration_outcome = "uncertain"
+            raise
+        self._rollback_can_resolve = False
+        self.migration_outcome = "committed"
+
+    def _sqlite_commit(self) -> None:
+        super().commit()
+
+    def rollback(self) -> None:
+        had_transaction = self.in_transaction
+        try:
+            super().rollback()
+        except BaseException:
+            self.migration_outcome = "uncertain"
+            raise
+        if had_transaction and (
+            self.migration_outcome != "uncertain" or self._rollback_can_resolve
+        ):
+            self.migration_outcome = "rolled_back"
+            self._rollback_can_resolve = False
 
 
 def _migration_engine(db_path: str, busy_timeout_ms: int) -> Engine:
@@ -519,7 +804,7 @@ def _migration_engine(db_path: str, busy_timeout_ms: int) -> Engine:
         # Take transaction control away from the driver. Left to itself it starts a
         # transaction only for row changes, so CREATE TABLE runs outside one and a failed
         # migration leaves its half-built tables behind.
-        connect_args={"isolation_level": None},
+        connect_args={"isolation_level": None, "factory": _MigrationConnection},
     )
 
     @event.listens_for(engine, "connect")
