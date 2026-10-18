@@ -1,4 +1,4 @@
-"""Real Mac/VPS dispatch over subprocess stdio and a temporary Unix socket.
+"""Real Mac/VPS dispatch over isolated OpenSSH and temporary Unix sockets.
 
 The scripted native adapter never calls a provider. Every event still traverses
 native registry, durable spool, framed transport, VPS acceptance and conversation
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import shlex
 import socket
 import struct
 import sys
@@ -19,6 +20,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from tests.support.executor_sshd import isolated_sshd
 
 from planner.conversation.backends.contracts import (
     BackendChild,
@@ -197,7 +199,7 @@ class CutReceiptEndpoint(ExecutorEndpoint):
         return await super()._accept_envelope(envelope, identity)
 
     async def _send(self, message: WireMessage) -> None:
-        if message.kind is WireMessageKind.file_chunk and self.cut_input:
+        if message.kind is WireMessageKind.file_slot and self.cut_input:
             self.cut_input = False
             self.input_cut_count += 1
             await super()._send(message)
@@ -233,6 +235,7 @@ class ExecutorHarness:
     native: ScriptedNativeChild
     task: asyncio.Task[None]
     old_systems: list[SqliteProcessConversationSystem]
+    ssh_stack: contextlib.ExitStack
 
     def events(self, kind: str) -> int:
         connection = connect(self.endpoint.db_path)
@@ -289,6 +292,12 @@ class ExecutorHarness:
         await eventually(lambda: self.endpoint.ready, "VPS core restart did not reconcile")
 
     async def close(self) -> None:
+        try:
+            await self._close()
+        finally:
+            self.ssh_stack.close()
+
+    async def _close(self) -> None:
         self.mac._stop.set()
         if self.endpoint.writer is not None:
             self.endpoint.writer.close()
@@ -340,10 +349,13 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
     )
     await endpoint.start()
     native = ScriptedNativeChild()
+    ssh_stack = contextlib.ExitStack()
+    ssh_config = ssh_stack.enter_context(isolated_sshd(root / "ssh"))
     mac = MacExecutor(
         paths=ExecutorPaths(root / "mac"),
         revision="a" * 40,
-        ssh_argv=production_relay_argv(socket_path),
+        ssh_config=ssh_config,
+        remote_command=shlex.join(production_relay_argv(socket_path)),
         panels_server_url="http://unused",
     )
 
@@ -366,7 +378,7 @@ async def boot(root: Path, monkeypatch: pytest.MonkeyPatch) -> ExecutorHarness:
         message_files=ConversationMessageFiles(root / "mac/unused"),
     )
     task = asyncio.create_task(mac.run())
-    harness = ExecutorHarness(root, endpoint, mac, system, native, task, [])
+    harness = ExecutorHarness(root, endpoint, mac, system, native, task, [], ssh_stack)
     try:
         await eventually(
             lambda: endpoint.ready and mac.state == ConnectionState.ready,
@@ -820,10 +832,13 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
                 "PLAN_APP_SHA": "a" * 40,
             },
         )
+        ssh_stack = contextlib.ExitStack()
+        ssh_config = ssh_stack.enter_context(isolated_sshd(tmp_path / "ssh"))
         mac = MacExecutor(
             paths=ExecutorPaths(tmp_path / "mac"),
             revision="a" * 40,
-            ssh_argv=production_relay_argv(socket_path),
+            ssh_config=ssh_config,
+            remote_command=shlex.join(production_relay_argv(socket_path)),
             panels_server_url="http://unused",
         )
         task = asyncio.create_task(mac.run())
@@ -851,6 +866,7 @@ def test_real_server_lifespan_restart_reaccepts_same_mac_process(
             if not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+            ssh_stack.close()
 
     asyncio.run(run())
 
@@ -1197,7 +1213,7 @@ def test_production_relay_exits_when_peer_ends_while_stdin_stays_open(
 
 
 @pytest.mark.parametrize("invalid_ack", ["empty", "mismatched"])
-def test_artifact_chunk_ack_must_validate_before_publication_and_backend_row(
+def test_artifact_slot_must_validate_before_publication_and_backend_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
     async def run() -> None:
@@ -1210,10 +1226,10 @@ def test_artifact_chunk_ack_must_validate_before_publication_and_backend_row(
             replay = harness.mac._replay_envelope
 
             async def corrupt_ack(message: WireMessage) -> None:
-                if reject and message.kind is WireMessageKind.file_chunk_ack:
+                if reject and message.kind is WireMessageKind.file_slot:
                     payload = {} if invalid_ack == "empty" else dict(message.payload)
                     if invalid_ack == "mismatched":
-                        payload["offset"] = -1
+                        payload["direction"] = "download"
                     message = WireMessage(message.kind, message.request_id, payload)
                 await send(message)
 
@@ -1244,7 +1260,7 @@ def test_artifact_chunk_ack_must_validate_before_publication_and_backend_row(
                 harness.native.turn,
                 tool_call_id="typed_ack",
                 tool_call_status=ToolCallStatus.completed,
-                detail="The file needs a valid chunk acknowledgment.",
+                detail="The file needs an authorized upload slot.",
             )
             await asyncio.wait_for(rejected.wait(), 8)
             target = tmp_path / "vps/files/tickets/t_scripted/typed-ack.bin"
@@ -1271,7 +1287,7 @@ def test_artifact_chunk_ack_must_validate_before_publication_and_backend_row(
 
 
 @pytest.mark.parametrize("invalid_ack", ["empty", "mismatched", "completion_refused"])
-def test_input_chunk_ack_must_validate_before_completion_or_command_dispatch(
+def test_input_receipt_must_validate_before_command_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
     from planner.conversation.message_content import MessageFile
@@ -1291,28 +1307,23 @@ def test_input_chunk_ack_must_validate_before_completion_or_command_dispatch(
             endpoint_send = harness.endpoint._send
 
             async def corrupt_ack(message: WireMessage) -> None:
-                if (
-                    reject
-                    and message.kind is WireMessageKind.file_accepted
-                    and invalid_ack == "completion_refused"
-                ):
-                    message = WireMessage(WireMessageKind.error, message.request_id, {})
-                    rejected.set()
-                if (
-                    reject
-                    and message.kind is WireMessageKind.file_chunk_ack
-                    and invalid_ack != "completion_refused"
-                ):
+                if reject and message.kind is WireMessageKind.file_accepted:
                     payload = {} if invalid_ack == "empty" else dict(message.payload)
                     if invalid_ack == "mismatched":
                         payload["byte_count"] = -1
-                    message = WireMessage(message.kind, message.request_id, payload)
+                    message = WireMessage(
+                        WireMessageKind.error
+                        if invalid_ack == "completion_refused"
+                        else message.kind,
+                        message.request_id,
+                        payload,
+                    )
                     rejected.set()
                 await send(message)
 
             async def count_completions(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
                 nonlocal completions
-                if kind is WireMessageKind.file_complete:
+                if kind is WireMessageKind.file_slot:
                     completions += 1
                 return await request(kind, payload)
 
@@ -1368,9 +1379,9 @@ def test_input_chunk_ack_must_validate_before_completion_or_command_dispatch(
             pending = harness.endpoint.pending_commands[command.command_id]
             assert pending[0] == command and not pending[1].done()
             assert commands == 0
-            assert completions > 0 if invalid_ack == "completion_refused" else completions == 0
+            assert completions > 0
             assert harness.native.prompt_count == 1
-            assert target.exists() if invalid_ack == "completion_refused" else not target.exists()
+            assert target.exists()
             assert (
                 await harness.endpoint.runtime.message_files.read("c_scripted", kept.stored_file_id)
                 == contents

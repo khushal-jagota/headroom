@@ -35,6 +35,31 @@ class ExecutorIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutorSshConfig:
+    host: str
+    port: int
+    username: str
+    identity_file: Path
+    known_hosts_file: Path
+
+
+@dataclass(frozen=True, slots=True)
+class FileTransferSlot:
+    """Only the opaque name crosses SFTP; a host path never grants authority."""
+
+    token: str
+    direction: Literal["upload", "download"]
+    manifest: FileManifest
+
+
+@dataclass(frozen=True, slots=True)
+class SftpEndpoint:
+    socket_path: str
+    server_public_key: str
+    username: str
+
+
+@dataclass(frozen=True, slots=True)
 class ClockSample:
     """NTP-style exchange; Unix milliseconds on each host, no zero uncertainty."""
 
@@ -182,22 +207,6 @@ class FilePublicationRequest:
 class FileSnapshot:
     manifest: FileManifest
     local_path: Path
-
-
-@dataclass(frozen=True, slots=True)
-class FileChunk:
-    publication_id: str
-    offset: int
-    content_base64: str
-
-
-@dataclass(frozen=True, slots=True)
-class FileChunkAcknowledgment:
-    """The receiver wrote this exact chunk; full publication acceptance is separate."""
-
-    publication_id: str
-    offset: int
-    byte_count: int
 
 
 class EnvelopeKind(StrEnum):
@@ -429,6 +438,12 @@ class TransactionalWriter(Protocol):
 class WireMessageKind(StrEnum):
     hello = "hello"
     hello_accepted = "hello_accepted"
+    transport_open = "transport_open"
+    transport_opened = "transport_opened"
+    preview_bind = "preview_bind"
+    preview_bound = "preview_bound"
+    preview_release = "preview_release"
+    file_slot = "file_slot"
     protocol_refused = "protocol_refused"
     reconcile_inventory = "reconcile_inventory"
     reconcile_result = "reconcile_result"
@@ -438,22 +453,13 @@ class WireMessageKind(StrEnum):
     envelope = "envelope"
     receipt = "receipt"
     file_manifest = "file_manifest"
-    file_chunk = "file_chunk"
-    file_chunk_ack = "file_chunk_ack"
     file_complete = "file_complete"
     file_accepted = "file_accepted"
-    file_pending = "file_pending"
     command = "command"
     command_outcome = "command_outcome"
     command_outcome_ack = "command_outcome_ack"
     read_request = "read_request"
     read_response = "read_response"
-    preview_open = "preview_open"
-    preview_opened = "preview_opened"
-    preview_data = "preview_data"
-    preview_credit = "preview_credit"
-    preview_close = "preview_close"
-    preview_error = "preview_error"
     health = "health"
     quiesce = "quiesce"
     quiescence = "quiescence"
@@ -559,3 +565,17 @@ class QuiescenceReceipt:
     process_id: int
     quiescence: Quiescence
     exit_committed: bool
+
+
+class ByteReader(Protocol):
+    async def read(self, n: int = -1) -> bytes: ...
+
+
+class FrameReader(Protocol):
+    async def readexactly(self, n: int) -> bytes: ...
+
+
+class ByteWriter(Protocol):
+    def write(self, data: bytes) -> None: ...
+    async def drain(self) -> None: ...
+    def close(self) -> None: ...

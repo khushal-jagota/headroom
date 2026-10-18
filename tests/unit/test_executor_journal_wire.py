@@ -18,7 +18,7 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.files import file_chunks, snapshot_file
+from planner.executor.files import snapshot_file
 from planner.executor.journal import FilesystemSpool
 from planner.executor.wire import ProtocolRefused, encode_frame, read_frame
 
@@ -81,7 +81,6 @@ def test_snapshot_bytes_immutable_after_enqueue(tmp_path: Path) -> None:
     (source / "binary").write_bytes(b"changed")
     durable = spool.snapshots(envelope.submission_id)[0]
     assert durable.local_path.read_bytes() == original
-    assert len(file_chunks(durable)) == 2
     assert spool.pending() == (envelope,)
     spool.close()
 
@@ -155,7 +154,7 @@ def test_strict_identity_refuses_coercion_unknown_fields_and_short_sha() -> None
             parse_identity(malformed)
 
 
-def test_input_chunks_not_visible_before_verified_complete(tmp_path: Path) -> None:
+def test_input_path_not_visible_before_verified_complete(tmp_path: Path) -> None:
     from planner.executor.files import IncomingFiles
 
     receiver = IncomingFiles(tmp_path / "managed", tmp_path / "quarantine")
@@ -170,9 +169,7 @@ def test_input_chunks_not_visible_before_verified_complete(tmp_path: Path) -> No
     assert not target.exists()
     with pytest.raises(ValueError, match="incomplete"):
         receiver.complete(snapshot.manifest)
-    for chunk in file_chunks(snapshot):
-        receiver.chunk(chunk)
-    receiver.complete(snapshot.manifest)
+    receiver.receive_path(snapshot.manifest, snapshot.local_path)
     assert target.read_bytes() == b"\x00binary"
 
 
@@ -233,16 +230,13 @@ def test_input_full_retry_discards_partial_quarantine_without_publishing_it(tmp_
         root=source, relative_path="file", scope=FileScope.conversation, owner_id="c_one"
     )
     receiver = IncomingFiles(tmp_path / "managed", tmp_path / "quarantine")
-    chunks = file_chunks(snapshot)
-    assert len(chunks) > 1
-    receiver.begin(snapshot.manifest)
-    receiver.chunk(chunks[0])
+    incomplete = tmp_path / "incomplete"
+    incomplete.write_bytes(contents[:100])
+    with pytest.raises(ValueError, match="incomplete"):
+        receiver.receive_path(snapshot.manifest, incomplete)
     assert not (tmp_path / "managed" / "conversations" / "c_one" / "file").exists()
     # The link drops. The same publication restarts at offset zero on reconnect.
-    receiver.begin(snapshot.manifest)
-    for chunk in chunks:
-        receiver.chunk(chunk)
-    target = receiver.complete(snapshot.manifest)
+    target = receiver.receive_path(snapshot.manifest, snapshot.local_path)
     assert target.read_bytes() == contents
 
 

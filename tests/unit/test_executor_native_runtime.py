@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -40,15 +41,20 @@ from planner.executor.contracts import (
     ChildReference,
     CommandDisposition,
     CommandOutcome,
+    ConnectionState,
     DurableAnswer,
     EnvelopeKind,
     ExecutorIdentity,
+    ExecutorSshConfig,
     IpcOperation,
     IpcRequest,
     JsonObject,
     QueuedEnvelope,
     Quiescence,
     QuiesceRequest,
+    ReconciliationResult,
+    WireMessage,
+    WireMessageKind,
 )
 from planner.executor.journal import FilesystemSpool
 from planner.executor.mac import MacExecutor, as_object
@@ -204,7 +210,9 @@ def test_stale_quiesce_rejects_restart_and_exit_is_identity_bound(tmp_path: Path
         executor = MacExecutor(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
-            ssh_argv=("false",),
+            ssh_config=ExecutorSshConfig(
+                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+            ),
             panels_server_url="http://unused",
         )
         forbidden = await executor.handle_ipc(
@@ -244,7 +252,7 @@ def test_incompatible_spool_does_not_mutate_any_path(tmp_path: Path) -> None:
     root.mkdir()
     (root / "metadata.json").write_text(json.dumps({"format": 999, "sender_id": str(uuid4())}))
     before = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*")}
-    with pytest.raises(ValueError, match="incompatible"):
+    with pytest.raises(ValueError, match="incompatible|metadata fields"):
         FilesystemSpool(root)
     after = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*")}
     assert after == before
@@ -257,7 +265,9 @@ def test_generation_change_during_quiesce_cannot_commit_exit(
         executor = MacExecutor(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
-            ssh_argv=("false",),
+            ssh_config=ExecutorSshConfig(
+                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+            ),
             panels_server_url="http://unused",
         )
         original = executor.registry.quiesce
@@ -501,7 +511,9 @@ def test_replay_failure_blocks_only_its_conversation(
         executor = MacExecutor(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
-            ssh_argv=("false",),
+            ssh_config=ExecutorSshConfig(
+                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+            ),
             panels_server_url="http://unused",
         )
         for conversation in ("c_a", "c_a", "c_b"):
@@ -548,7 +560,9 @@ def test_ipc_snapshot_owner_is_bound_and_refusal_is_an_error(
         executor = MacExecutor(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
-            ssh_argv=("false",),
+            ssh_config=ExecutorSshConfig(
+                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+            ),
             panels_server_url="http://unused",
         )
         native = ScriptedChild()
@@ -630,7 +644,10 @@ def test_real_daemon_controlled_quiesce_exits_zero(tmp_path: Path) -> None:
         "from planner.executor.mac import MacExecutor; "
         "from planner.executor.configuration import ExecutorPaths, PROTOCOL_VERSION; "
         f"service=MacExecutor(paths=ExecutorPaths(Path({str(root)!r})),revision={'a' * 40!r},"
-        "ssh_argv=('false',),panels_server_url='http://unused'); "
+        "ssh_config=__import__('planner.executor.contracts',"
+        "fromlist=['ExecutorSshConfig']).ExecutorSshConfig("
+        "'127.0.0.1',1,'unused',Path('/missing-key'),Path('/missing-hosts')),"
+        "panels_server_url='http://unused'); "
         "asyncio.run(service.run()); "
         "assert service.exit_committed"
     )
@@ -1000,122 +1017,162 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
     asyncio.run(run())
 
 
-def test_old_peer_is_refused_before_work_or_replay_and_preserves_spool(tmp_path: Path) -> None:
-    import sys
-
+def test_old_peer_is_refused_before_work_or_replay_and_preserves_spool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.executor.contracts import WireMessage, WireMessageKind
     from planner.executor.wire import ProtocolRefused
 
     async def run() -> None:
-        peer = (
-            "import json,struct,sys,time; "
-            "n=struct.unpack('!I',sys.stdin.buffer.read(4))[0]; "
-            "hello=json.loads(sys.stdin.buffer.read(n)); "
-            "identity=hello['payload']['identity']; identity['protocol_version']=1; "
-            "reply=json.dumps({'kind':'hello_accepted','request_id':hello['request_id'],"
-            "'payload':identity}).encode(); "
-            "sys.stdout.buffer.write(struct.pack('!I',len(reply))+reply); "
-            "work=json.dumps({'kind':'command','request_id':'bad-work','payload':{}}).encode(); "
-            "sys.stdout.buffer.write(struct.pack('!I',len(work))+work); "
-            "sys.stdout.buffer.flush(); time.sleep(30)"
-        )
-        executor = MacExecutor(
-            paths=ExecutorPaths(tmp_path),
-            revision="a" * 40,
-            ssh_argv=(sys.executable, "-c", peer),
-            panels_server_url="http://unused",
-        )
+        executor = make_executor(tmp_path)
+        peer = install_control_peer(executor, monkeypatch)
+        original = peer.reply
+
+        async def old_reply(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+            if kind is WireMessageKind.hello:
+                return WireMessage(
+                    WireMessageKind.hello_accepted,
+                    "hello",
+                    as_object(replace(executor.identity, protocol_version=1)),
+                )
+            return await original(kind, payload)
+
+        monkeypatch.setattr(executor, "_request", old_reply)
         row = executor.spool.mint_envelope(
-            conversation_id="c_one",
-            kind=EnvelopeKind.cli_write,
-            payload={"original": "must not transmit"},
+            conversation_id="c_one", kind=EnvelopeKind.cli_write, payload={"original": True}
         )
-        before = {
-            path.relative_to(tmp_path).as_posix(): path.read_bytes()
-            for path in tmp_path.rglob("*")
-            if path.is_file()
-        }
         with pytest.raises(ProtocolRefused):
             await executor._connected()
-        assert executor._command_tasks == set()
         assert executor.spool.pending() == (row,)
-        after = {
-            path.relative_to(tmp_path).as_posix(): path.read_bytes()
-            for path in tmp_path.rglob("*")
-            if path.is_file()
-        }
-        assert after == before
+        assert not executor._command_tasks and peer.closed
         executor.spool.close()
 
     asyncio.run(run())
 
 
-def test_link_cleanup_drains_paused_subprocess_stdout_before_reconnect(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import sys
+def make_executor(root: Path) -> MacExecutor:
+    return MacExecutor(
+        paths=ExecutorPaths(root),
+        revision="a" * 40,
+        ssh_config=ExecutorSshConfig("unused", 1, "unused", root / "key", root / "hosts"),
+        panels_server_url="http://unused",
+    )
 
-    async def run() -> None:
-        executor = MacExecutor(
-            paths=ExecutorPaths(tmp_path),
-            revision="a" * 40,
-            ssh_argv=(
-                sys.executable,
-                "-c",
-                "import os,time; os.write(1,b'x'*(1024*1024)); time.sleep(30)",
-            ),
-            panels_server_url="http://unused",
+
+class ControlPeer:
+    """Control-only boundary. Real SSH/SFTP behavior is covered by connected tests."""
+
+    def __init__(self, executor: MacExecutor) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock
+
+        self.executor = executor
+        self.reader = asyncio.StreamReader()
+        self.process = SimpleNamespace(
+            stdin=SimpleNamespace(write=Mock(), drain=AsyncMock()), stdout=self.reader
         )
-        readers: list[asyncio.StreamReader] = []
+        self.closed = False
+        self.failure: Exception | None = None
 
-        async def link_cut_with_buffered_bytes(reader: asyncio.StreamReader) -> None:
-            readers.append(reader)
-            # Force the exact transport state: its unread pipe crossed high-water
-            # and paused reads before the connection reader reports the loss.
-            while not getattr(reader, "_paused", False):
-                await asyncio.sleep(0)
-            raise ConnectionError("link cut with buffered output")
+    async def create_process(self, *args: object, **kwargs: object) -> object:
+        return self.process
 
-        monkeypatch.setattr(executor, "_read_loop", link_cut_with_buffered_bytes)
-        try:
-            with pytest.raises(ConnectionError, match="buffered output"):
-                await asyncio.wait_for(executor._connected(), 2)
-            assert executor.identity.connection_generation == 1
-            assert executor._writer is None
-        finally:
-            # Also clean up a failed old implementation so the regression leaves no
-            # subprocess transport behind when it exposes the wait-without-drain bug.
-            for reader in readers:
-                await reader.read()
-            executor.spool.close()
+    async def reply(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+        from planner.executor.contracts import WireMessage, WireMessageKind
+
+        result: JsonObject
+        if kind is WireMessageKind.hello:
+            result = as_object(self.executor.identity)
+            response = WireMessageKind.hello_accepted
+        elif kind is WireMessageKind.transport_open:
+            result = {
+                "endpoint": {
+                    "socket_path": "/unused",
+                    "server_public_key": "unused",
+                    "username": "unused",
+                },
+                "preview_root": "/unused",
+            }
+            response = WireMessageKind.transport_opened
+        elif kind is WireMessageKind.reconcile_inventory:
+            result = as_object(ReconciliationResult(self.executor.identity, (), (), (), ()))
+            response = WireMessageKind.reconcile_result
+        else:
+            assert kind is WireMessageKind.reconciliation_ready
+            result = {"ready": True}
+            response = kind
+        return WireMessage(response, "reply", result)
+
+
+def install_control_peer(executor: MacExecutor, monkeypatch: pytest.MonkeyPatch) -> ControlPeer:
+    from contextlib import asynccontextmanager
+    from typing import Any
+
+    from planner.executor import mac as module
+
+    peer = ControlPeer(executor)
+
+    async def connect(config: object) -> Any:
+        if peer.failure is not None:
+            raise peer.failure
+        peer.closed = False
+        peer.reader = asyncio.StreamReader()
+        peer.process.stdout = peer.reader
+        return peer
+
+    async def close(connection: object) -> None:
+        peer.closed = True
+        peer.reader.feed_eof()
+
+    @asynccontextmanager
+    async def sftp(*args: object) -> AsyncIterator[None]:
+        yield None
+
+    monkeypatch.setattr(module, "connect_outer", connect)
+    monkeypatch.setattr(module, "close_connection", close)
+    monkeypatch.setattr(module, "connect_sftp", sftp)
+    monkeypatch.setattr(executor, "_request", peer.reply)
+    return peer
+
+
+def test_process_open_failure_closes_outer_and_records_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        peer = install_control_peer(executor, monkeypatch)
+
+        async def refuse(*args: object, **kwargs: object) -> None:
+            raise ConnectionError("exec refused")
+
+        monkeypatch.setattr(peer, "create_process", refuse)
+        with pytest.raises(ConnectionError, match="exec refused"):
+            await executor._connected()
+        assert peer.closed and executor.lost_at_ms is not None
+        assert executor.state is ConnectionState.disconnected
+        executor.spool.close()
 
     asyncio.run(run())
 
 
-def test_controlled_stop_wakes_pending_handshake_without_peer_response(tmp_path: Path) -> None:
-    import sys
-
+def test_controlled_stop_wakes_pending_handshake_without_peer_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def run() -> None:
-        executor = MacExecutor(
-            paths=ExecutorPaths(tmp_path),
-            revision="a" * 40,
-            ssh_argv=(sys.executable, "-c", "import time; time.sleep(30)"),
-            panels_server_url="http://unused",
-        )
+        executor = make_executor(tmp_path)
+        peer = install_control_peer(executor, monkeypatch)
+        monkeypatch.setattr(executor, "_request", MacExecutor._request.__get__(executor))
         task = asyncio.create_task(executor._connected())
         try:
             while executor._writer is None:
                 await asyncio.sleep(0)
-            # The live peer has not answered hello. Controlled shutdown must not
-            # depend on that peer responding or closing its side of the link.
             executor._stop.set()
             await asyncio.wait_for(task, 1)
-            assert executor._writer is None
+            assert executor._writer is None and peer.closed
             assert not executor.spool.pending()
         finally:
-            if not task.done():
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
             executor.spool.close()
 
     asyncio.run(run())
@@ -1182,103 +1239,165 @@ def test_ready_ack_clears_loss_before_fulfilling_current_request(
 
 
 def test_current_loss_survives_failed_reconnect_and_clears_only_when_reconciled_ready(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import itertools
-    import sys
-
-    from planner.executor import mac as mac_module
-    from planner.executor.contracts import ConnectionState
-    from planner.executor.wire import ProtocolRefused
-
-    peer = """
-import json, pathlib, struct, sys, time
-mode, marker = sys.argv[1], pathlib.Path(sys.argv[2])
-def read():
-    header = sys.stdin.buffer.read(4)
-    if not header:
-        sys.exit(0)
-    return json.loads(sys.stdin.buffer.read(struct.unpack('!I', header)[0]))
-def send(kind, request, payload):
-    body = json.dumps(dict(kind=kind, request_id=request['request_id'], payload=payload)).encode()
-    sys.stdout.buffer.write(struct.pack('!I', len(body)) + body)
-    sys.stdout.buffer.flush()
-hello = read()
-identity = hello['payload']['identity']
-if mode == 'refuse':
-    identity['protocol_version'] = 1
-send('hello_accepted', hello, identity)
-if mode == 'refuse':
-    time.sleep(30)
-while True:
-    message = read()
-    if marker.exists():
-        sys.exit(0)
-    if message['kind'] == 'reconcile_inventory':
-        result = dict(identity=identity, receipts=[], answers=[], ask_evidence=[],
-                      acknowledged_command_ids=[])
-        send('reconcile_result', message, result)
-    elif message['kind'] == 'reconciliation_ready':
-        send('reconciliation_ready', message, dict(ready=True))
-"""
+    from planner.executor import mac as module
 
     async def run() -> None:
-        ticks = itertools.count(1000)
-        monkeypatch.setattr(mac_module, "now_ms", lambda: next(ticks))
-        monkeypatch.setattr(mac_module, "RECONNECT_INTERVAL_SECONDS", 0.01)
-        marker = tmp_path / "drop-link"
-        executor = MacExecutor(
-            paths=ExecutorPaths(tmp_path / "executor"),
-            revision="a" * 40,
-            ssh_argv=(sys.executable, "-c", peer, "accept", str(marker)),
-            panels_server_url="http://unused",
-        )
-        tasks: list[asyncio.Task[None]] = []
+        executor = make_executor(tmp_path)
+        peer = install_control_peer(executor, monkeypatch)
+        monkeypatch.setattr(module, "RECONNECT_INTERVAL_SECONDS", 0.001)
 
         async def ready() -> None:
-            while executor.state != ConnectionState.ready:
-                await asyncio.sleep(0.001)
+            while executor.state is not ConnectionState.ready:
+                await asyncio.sleep(0)
 
+        task = asyncio.create_task(executor._connected())
+        await asyncio.wait_for(ready(), 2)
+        assert executor.lost_at_ms is None
+        peer.reader.feed_eof()
+        with pytest.raises(asyncio.IncompleteReadError):
+            await task
+        loss = executor.lost_at_ms
+        assert loss is not None
+        peer.failure = OSError("peer unavailable")
+        with pytest.raises(OSError):
+            await executor._connected()
+        assert executor.lost_at_ms == loss
+        assert executor.state is ConnectionState.disconnected
+        peer.failure = None
+        task = asyncio.create_task(executor._connected())
         try:
-            first = asyncio.create_task(executor._connected())
-            tasks.append(first)
             await asyncio.wait_for(ready(), 2)
-            assert executor.health().lost_at_ms is None
-            first_generation = executor.identity.connection_generation
-            marker.touch()
-            with pytest.raises(asyncio.IncompleteReadError):
-                await asyncio.wait_for(first, 2)
-            loss = executor.health().lost_at_ms
-            assert loss is not None
-            assert executor.health().connection_state == ConnectionState.disconnected
-            executor.ssh_argv = (sys.executable, "-c", peer, "refuse", str(marker))
-            with pytest.raises(ProtocolRefused):
-                await executor._connected()
-            assert executor.health().lost_at_ms == loss
-            assert executor.identity.connection_generation > first_generation
-            executor.ssh_argv = (str(tmp_path / "missing-ssh-executable"),)
-            with pytest.raises(FileNotFoundError):
-                await executor._connected()
-            assert executor.health().lost_at_ms == loss
-            assert executor.health().connection_state == ConnectionState.disconnected
-            marker.unlink()
-            executor.ssh_argv = (sys.executable, "-c", peer, "accept", str(marker))
-            recovered = asyncio.create_task(executor._connected())
-            tasks.append(recovered)
-            await asyncio.wait_for(ready(), 2)
-            health = executor.health()
-            assert health.connection_state == ConnectionState.ready
-            assert health.reconciliation_ready
-            assert health.identity.connection_generation == first_generation + 3
-            assert health.lost_at_ms is None
+            assert executor.lost_at_ms is None
+            assert executor.identity.connection_generation == 3
             executor._stop.set()
-            await asyncio.wait_for(recovered, 2)
+            await asyncio.wait_for(task, 1)
         finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_replay_keeps_one_head_per_conversation_and_progresses_past_bulk_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stalled file upload cannot hold another conversation's control envelope."""
+    from planner.executor import mac as module
+    from planner.executor.contracts import AcceptanceReceipt, FileScope, ReceiptDisposition
+    from planner.executor.files import snapshot_file
+
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        source = tmp_path / "artifacts"
+        source.mkdir()
+        (source / "image").write_bytes(b"immutable")
+        snapshot = snapshot_file(
+            root=source, relative_path="image", scope=FileScope.ticket, owner_id="t_one"
+        )
+        child = ChildReference(executor.identity.executor_incarnation, str(uuid4()), "c_a")
+        first = executor.spool.mint_envelope(
+            conversation_id="c_a",
+            kind=EnvelopeKind.cli_write,
+            payload={"child": as_object(child)},
+            snapshots=(snapshot,),
+        )
+        second = executor.spool.mint_envelope(
+            conversation_id="c_a", kind=EnvelopeKind.cli_write, payload={}
+        )
+        independent = executor.spool.mint_envelope(
+            conversation_id="c_b", kind=EnvelopeKind.cli_write, payload={}
+        )
+        durable = executor.spool.snapshots(first.submission_id)[0].local_path
+        uploading, release, progressed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        sent: list[str] = []
+        executor._sftp = cast(module.asyncssh.SFTPClient, object())
+
+        async def upload(client: object, source: Path, token: str) -> None:
+            uploading.set()
+            await release.wait()
+            assert source.read_bytes() == b"immutable"
+
+        def receipt(row: QueuedEnvelope) -> AcceptanceReceipt:
+            return AcceptanceReceipt(
+                row.sender_id,
+                row.submission_id,
+                row.payload_sha256,
+                ReceiptDisposition.accepted,
+                {},
+                1,
+            )
+
+        async def transport(kind: WireMessageKind, payload: JsonObject) -> WireMessage:
+            if kind is WireMessageKind.file_manifest:
+                return WireMessage(
+                    WireMessageKind.file_slot,
+                    "slot",
+                    {"token": "authorized", "direction": "upload", "manifest": payload["manifest"]},
+                )
+            if kind is WireMessageKind.file_complete:
+                return WireMessage(WireMessageKind.file_accepted, "complete", payload["manifest"])
+            row = TypeAdapter(QueuedEnvelope).validate_python(payload)
+            sent.append(row.submission_id)
+            if row == independent:
+                progressed.set()
+            return WireMessage(WireMessageKind.receipt, "receipt", as_object(receipt(row)))
+
+        monkeypatch.setattr(module, "upload_snapshot", upload)
+        monkeypatch.setattr(executor, "_request", transport)
+        task = asyncio.create_task(executor._replay())
+        try:
+            await asyncio.wait_for(uploading.wait(), 2)
+            await asyncio.wait_for(progressed.wait(), 2)
+            assert not task.done() and second.submission_id not in sent
+            # Reconciliation can persist a receipt during a live transfer. The pin
+            # protects its source bytes until the transfer coroutine leaves.
+            executor.spool.acknowledge(receipt(first))
+            assert durable.exists()
+            release.set()
+            await asyncio.wait_for(task, 2)
+            assert not durable.exists()
+            assert executor.spool.pending() == (second,)
+            await executor._replay()
+            assert executor.spool.pending() == ()
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_quiesce_counts_admitted_input_task_before_it_starts_and_refuses_new_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The drain receipt cannot overtake an admitted but unscheduled transfer."""
+    from unittest.mock import AsyncMock
+
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        pending = asyncio.create_task(asyncio.Event().wait())
+        executor._transfer_tasks.add(cast(asyncio.Task[None], pending))
+        send = AsyncMock()
+        monkeypatch.setattr(executor, "_send", send)
+        try:
+            request = QuiesceRequest(executor.identity, os.getpid(), True)
+            response = await executor.handle_ipc(
+                IpcRequest("drain", IpcOperation.quiesce, None, None, as_object(request))
+            )
+            assert response.error is None and response.result is not None
+            assert response.result["exit_committed"] is False
+            assert not executor._stop.is_set()
+            await executor._input(WireMessage(WireMessageKind.file_slot, "late-input", {}))
+            message = send.call_args.args[0]
+            assert message.kind is WireMessageKind.error
+            assert message.request_id == "late-input"
+        finally:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
             executor.spool.close()
 
     asyncio.run(run())

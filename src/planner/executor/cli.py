@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shlex
 import sqlite3
 import sys
 from pathlib import Path
@@ -14,7 +13,12 @@ import click
 from pydantic import TypeAdapter
 
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, executor_paths
-from planner.executor.contracts import ExecutorIdentity, IpcOperation, QuiesceRequest
+from planner.executor.contracts import (
+    ExecutorIdentity,
+    ExecutorSshConfig,
+    IpcOperation,
+    QuiesceRequest,
+)
 from planner.executor.ipc_client import request
 
 
@@ -25,11 +29,28 @@ def executor_group() -> None:
 
 @executor_group.command("run")
 @click.option("--ssh-host", required=True)
+@click.option("--ssh-port", type=click.IntRange(1, 65535), required=True)
+@click.option("--ssh-user", required=True)
+@click.option(
+    "--ssh-identity-file",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    required=True,
+)
+@click.option(
+    "--ssh-known-hosts", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True
+)
 @click.option("--application-revision", required=True)
 @click.option("--panels-server-url", required=True)
 @click.option("--remote-command", default="panels executor relay", show_default=True)
 def run(
-    ssh_host: str, application_revision: str, panels_server_url: str, remote_command: str
+    ssh_host: str,
+    ssh_port: int,
+    ssh_user: str,
+    ssh_identity_file: Path,
+    ssh_known_hosts: Path,
+    application_revision: str,
+    panels_server_url: str,
+    remote_command: str,
 ) -> None:
     from planner.executor.mac import MacExecutor
 
@@ -41,21 +62,15 @@ def run(
         raise click.ClickException("application revision must be the full lowercase source SHA")
     if ssh_host.startswith("-") or not ssh_host:
         raise click.ClickException("SSH host must name the resident-configured peer")
-    command = (
-        "ssh",
-        "-T",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=yes",
-        ssh_host,
-        shlex.join(shlex.split(remote_command)),
-    )
+    if not ssh_identity_file.is_absolute() or not ssh_known_hosts.is_absolute():
+        raise click.ClickException("SSH key and known_hosts paths must be absolute")
+    config = ExecutorSshConfig(ssh_host, ssh_port, ssh_user, ssh_identity_file, ssh_known_hosts)
     asyncio.run(
         MacExecutor(
             paths=executor_paths(),
             revision=application_revision,
-            ssh_argv=command,
+            ssh_config=config,
+            remote_command=remote_command,
             panels_server_url=panels_server_url,
         ).run()
     )

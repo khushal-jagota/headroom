@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import logging
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
+import asyncssh
 from pydantic import TypeAdapter
 
 from planner.conversation.backends.claude_agent_sdk import ClaudeAgentSdkBackendChildFactory
@@ -26,6 +27,7 @@ from planner.executor.configuration import (
     CLI_RESULT_TIMEOUT_SECONDS,
     PROTOCOL_VERSION,
     RECONNECT_INTERVAL_SECONDS,
+    SFTP_MAX_TRANSFERS,
     SPOOL_FORMAT_VERSION,
     ExecutorPaths,
 )
@@ -38,10 +40,10 @@ from planner.executor.contracts import (
     EnvelopeKind,
     ExecutorHealth,
     ExecutorIdentity,
-    FileChunk,
-    FileChunkAcknowledgment,
-    FileManifest,
+    ExecutorSshConfig,
     FileSnapshot,
+    FileTransferSlot,
+    FrameReader,
     IpcOperation,
     IpcRequest,
     IpcResponse,
@@ -54,23 +56,29 @@ from planner.executor.contracts import (
     ReceiptDisposition,
     ReconciliationInventory,
     ReconciliationResult,
+    SftpEndpoint,
     SourceRetirementRequest,
     WireMessage,
     WireMessageKind,
 )
-from planner.executor.files import IncomingFiles, file_chunks, safe_component, snapshot_ticket
+from planner.executor.files import IncomingFiles, safe_component, snapshot_ticket
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry, now_ms
+from planner.executor.ssh import (
+    close_connection,
+    connect_outer,
+    connect_sftp,
+    download_slot,
+    upload_snapshot,
+)
 from planner.executor.wire import (
     ProtocolRefused,
     encode_frame,
     parse_identity,
     read_frame,
     read_typed_frame,
-    validate_file_chunk_ack,
 )
-from planner.previews.contracts import PREVIEW_KINDS
-from planner.previews.streams import PreviewStreams
+from planner.previews.forward import MacPreviewForwards
 
 
 def as_object(value: object) -> JsonObject:
@@ -83,21 +91,28 @@ class MacExecutor:
         *,
         paths: ExecutorPaths,
         revision: str,
-        ssh_argv: Sequence[str],
+        ssh_config: ExecutorSshConfig,
+        remote_command: str = "panels executor relay",
         panels_server_url: str,
         registry: NativeChildRegistry | None = None,
     ) -> None:
         self.paths = paths
-        self.ssh_argv = tuple(ssh_argv)
+        self.ssh_config = ssh_config
+        self.remote_command = remote_command
+        self._sftp: asyncssh.SFTPClient | None = None
+        self._transfers = 0
+        self._transfer_capacity = asyncio.Semaphore(SFTP_MAX_TRANSFERS)
+        self._transport_admission_stopped = False
+        self._replay_lock = asyncio.Lock()
         self.spool = FilesystemSpool(paths.spool)
         self.identity = ExecutorIdentity(
             PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, str(uuid4()), 0
         )
         self._handshake_accepted = False
-        self._preview_streams: PreviewStreams | None = None
+        self._preview_streams: MacPreviewForwards | None = None
         self.state = ConnectionState.disconnected
         self.lost_at_ms: int | None = None
-        self._writer: asyncio.StreamWriter | asyncio.subprocess.Process | None = None
+        self._writer: asyncssh.SSHWriter[bytes] | None = None
         self._write_lock = asyncio.Lock()
         self._pending: dict[str, asyncio.Future[WireMessage]] = {}
         self._receipts: dict[str, asyncio.Future[AcceptanceReceipt]] = {}
@@ -107,6 +122,7 @@ class MacExecutor:
             paths.root / "artifacts" / "files", paths.run / "input-quarantine"
         )
         self._command_tasks: set[asyncio.Task[None]] = set()
+        self._transfer_tasks: set[asyncio.Task[None]] = set()
         self._quiesce_lock = asyncio.Lock()
         self.registry = registry or NativeChildRegistry(
             paths=paths,
@@ -173,11 +189,11 @@ class MacExecutor:
 
     async def _send(self, message: WireMessage) -> None:
         async with self._write_lock:
-            process = self._writer
-            if not isinstance(process, asyncio.subprocess.Process) or process.stdin is None:
+            writer = self._writer
+            if writer is None:
                 raise ConnectionError("executor link unavailable")
-            process.stdin.write(encode_frame(message))
-            await process.stdin.drain()
+            writer.write(encode_frame(message))
+            await writer.drain()
 
     async def _request(self, kind: WireMessageKind, payload: JsonObject) -> WireMessage:
         request_id = uuid4().hex
@@ -192,51 +208,31 @@ class MacExecutor:
         finally:
             self._pending.pop(request_id, None)
 
-    async def _read_loop(self, reader: asyncio.StreamReader) -> None:
+    async def _read_loop(self, reader: FrameReader) -> None:
         while True:
             message = await read_frame(reader)
-            if message.kind in PREVIEW_KINDS:
-                if not self._handshake_accepted or self._preview_streams is None:
-                    raise ProtocolRefused("preview frame before validated handshake")
-                self._preview_streams.feed(message)
+            if message.kind in (WireMessageKind.preview_bind, WireMessageKind.preview_release):
+                task = asyncio.create_task(self._preview(message))
+                self._command_tasks.add(task)
+                task.add_done_callback(self._command_tasks.discard)
+                continue
+            if (
+                message.kind == WireMessageKind.file_slot
+                and message.request_id not in self._pending
+            ):
+                if len(self._transfer_tasks) >= SFTP_MAX_TRANSFERS:
+                    raise ProtocolRefused("input transfer capacity exceeded")
+                task = asyncio.create_task(self._input(message))
+                self._transfer_tasks.add(task)
+                task.add_done_callback(self._transfer_tasks.discard)
                 continue
             if not self._handshake_accepted and message.kind in (
-                WireMessageKind.file_manifest,
-                WireMessageKind.file_chunk,
-                WireMessageKind.file_chunk_ack,
-                WireMessageKind.file_complete,
                 WireMessageKind.command,
                 WireMessageKind.command_outcome_ack,
                 WireMessageKind.source_retire,
             ):
                 raise ProtocolRefused("peer sent work before validated handshake")
-            if message.kind == WireMessageKind.file_manifest:
-                self.inputs.begin(TypeAdapter(FileManifest).validate_python(message.payload))
-                await self._send(WireMessage(WireMessageKind.file_manifest, message.request_id, {}))
-            elif message.kind == WireMessageKind.file_chunk:
-                chunk = TypeAdapter(FileChunk).validate_python(message.payload)
-                self.inputs.chunk(chunk)
-                acknowledgment = FileChunkAcknowledgment(
-                    chunk.publication_id,
-                    chunk.offset,
-                    len(base64.b64decode(chunk.content_base64, validate=True)),
-                )
-                await self._send(
-                    WireMessage(
-                        WireMessageKind.file_chunk_ack,
-                        message.request_id,
-                        as_object(acknowledgment),
-                    )
-                )
-            elif message.kind == WireMessageKind.file_complete:
-                manifest = TypeAdapter(FileManifest).validate_python(message.payload)
-                self.inputs.complete(manifest)
-                await self._send(
-                    WireMessage(
-                        WireMessageKind.file_accepted, message.request_id, as_object(manifest)
-                    )
-                )
-            elif message.kind == WireMessageKind.health and "clock_probe" in message.payload:
+            if message.kind == WireMessageKind.health and "clock_probe" in message.payload:
                 probe = cast(JsonObject, message.payload["clock_probe"])
                 received = now_ms()
                 await self._send(
@@ -266,7 +262,7 @@ class MacExecutor:
                     if message.kind is WireMessageKind.reconciliation_ready:
                         if not self._handshake_accepted or message.payload != {"ready": True}:
                             raise ProtocolRefused("invalid reconciliation acknowledgment")
-                        # Admit opens after the ready acknowledgment in wire order.
+                        # Clear outage before readiness becomes visible to readers.
                         self.lost_at_ms = None
                         self.state = ConnectionState.ready
                     future.set_result(message)
@@ -287,28 +283,111 @@ class MacExecutor:
                 WireMessage(WireMessageKind.command_outcome, message.request_id, as_object(outcome))
             )
 
+    async def _preview(self, message: WireMessage) -> None:
+        try:
+            if (
+                not self._handshake_accepted
+                or self.state != ConnectionState.ready
+                or self._preview_streams is None
+            ):
+                raise ConnectionError("preview generation is unavailable")
+            path = str(message.payload["path"])
+            if message.kind is WireMessageKind.preview_bind:
+                await self._preview_streams.bind(path, cast(int, message.payload["port"]))
+            else:
+                await self._preview_streams.release(path)
+            await self._send(WireMessage(WireMessageKind.preview_bound, message.request_id, {}))
+        except (ValueError, OSError, ConnectionError, TimeoutError) as error:
+            await self._send(
+                WireMessage(WireMessageKind.error, message.request_id, {"message": str(error)})
+            )
+
+    async def _input(self, message: WireMessage) -> None:
+        if not self._handshake_accepted or self._sftp is None or self._transport_admission_stopped:
+            await self._send(
+                WireMessage(
+                    WireMessageKind.error,
+                    message.request_id,
+                    {"message": "input generation does not admit transfers"},
+                )
+            )
+            return
+        slot = TypeAdapter(FileTransferSlot).validate_python(message.payload)
+        if slot.direction != "download" or self._transfers >= SFTP_MAX_TRANSFERS:
+            raise ValueError("invalid input slot or transfer capacity")
+        identity = self.identity
+        self._transfers += 1
+        self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
+        temporary = self.paths.run / ("input-" + uuid4().hex)
+        try:
+            async with self._transfer_capacity:
+                await download_slot(self._sftp, slot.token, temporary)
+            if identity != self.identity or not self._handshake_accepted:
+                raise ConnectionError("input generation changed")
+            # Cancellation cannot stop disk work. Drain it before deleting its source.
+            installation = asyncio.create_task(
+                asyncio.to_thread(self.inputs.receive_path, slot.manifest, temporary)
+            )
+            try:
+                await asyncio.shield(installation)
+            except BaseException:
+                await asyncio.gather(installation, return_exceptions=True)
+                raise
+            if identity != self.identity or not self._handshake_accepted:
+                raise ConnectionError("input generation changed")
+            await self._send(
+                WireMessage(
+                    WireMessageKind.file_accepted, message.request_id, as_object(slot.manifest)
+                )
+            )
+        except (OSError, ValueError, ConnectionError, asyncssh.Error) as error:
+            with contextlib.suppress(ConnectionError):
+                await self._send(
+                    WireMessage(WireMessageKind.error, message.request_id, {"message": str(error)})
+                )
+        finally:
+            self._transfers -= 1
+            temporary.unlink(missing_ok=True)
+
     async def _replay(self) -> None:
-        blocked: set[str] = set()
-        while True:
+        # A bounded batch has only one admitted head per conversation. Failed heads
+        # retain their bytes and do not delay independent conversations.
+        async with self._replay_lock:
             heads = await asyncio.to_thread(self.spool.pending_heads)
-            ready = tuple(row for row in heads if row.conversation_id not in blocked)
-            if not ready:
-                return
-            for envelope in ready:
+            iterator = iter(heads)
+            tasks: set[asyncio.Task[None]] = set()
+
+            async def submit(envelope: QueuedEnvelope) -> None:
                 try:
                     await self._replay_envelope(envelope)
-                except (ConnectionError, BrokenPipeError):
+                except (ConnectionError, BrokenPipeError, asyncssh.Error):
                     raise
                 except (ValueError, OSError):
-                    # Keep that conversation's order while independent work drains.
-                    blocked.add(envelope.conversation_id)
                     logging.getLogger(__name__).exception(
                         "executor conversation replay blocked: %s", envelope.conversation_id
                     )
 
+            def admit() -> None:
+                while len(tasks) < SFTP_MAX_TRANSFERS:
+                    envelope = next(iterator, None)
+                    if envelope is None:
+                        return
+                    tasks.add(asyncio.create_task(submit(envelope)))
+
+            try:
+                admit()
+                while tasks:
+                    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    tasks = set(pending)
+                    for task in done:
+                        await task
+                    admit()
+            finally:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _replay_envelope(self, envelope: QueuedEnvelope) -> None:
-        # A pin protects immutable bytes through receipt cleanup and cancellation.
-        # It holds no database transaction while the transport awaits the peer.
         with self.spool.pin_snapshots(envelope.submission_id) as snapshots:
             for snapshot in snapshots:
                 payload = envelope.payload
@@ -321,10 +400,22 @@ class MacExecutor:
                 publication: JsonObject = {"manifest": as_object(snapshot.manifest), "child": child}
                 response = await self._request(WireMessageKind.file_manifest, publication)
                 if response.kind != WireMessageKind.file_accepted:
-                    for chunk in file_chunks(snapshot):
-                        response = await self._request(WireMessageKind.file_chunk, as_object(chunk))
-                        validate_file_chunk_ack(response, chunk)
-                    await self._request(WireMessageKind.file_complete, publication)
+                    slot = TypeAdapter(FileTransferSlot).validate_python(response.payload)
+                    if (
+                        slot.direction != "upload"
+                        or slot.manifest != snapshot.manifest
+                        or self._sftp is None
+                    ):
+                        raise ValueError("invalid publication slot")
+                    self._transfers += 1
+                    try:
+                        async with self._transfer_capacity:
+                            await upload_snapshot(self._sftp, snapshot.local_path, slot.token)
+                        completion = await self._request(WireMessageKind.file_complete, publication)
+                        if completion.kind is not WireMessageKind.file_accepted:
+                            raise ValueError("publication did not confirm complete bytes")
+                    finally:
+                        self._transfers -= 1
             response = await self._request(WireMessageKind.envelope, as_object(envelope))
             receipt = TypeAdapter(AcceptanceReceipt).validate_python(response.payload)
             await asyncio.to_thread(self.spool.acknowledge, receipt)
@@ -375,45 +466,25 @@ class MacExecutor:
         self.state = ConnectionState.reconciling
         self._handshake_accepted = False
         try:
-            process = await asyncio.create_subprocess_exec(
-                *self.ssh_argv,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-        except OSError:
+            outer = await connect_outer(self.ssh_config)
+        except BaseException:
             self.state = ConnectionState.disconnected
             if self.lost_at_ms is None:
                 self.lost_at_ms = now_ms()
             raise
-        self._writer = process
+        try:
+            process = await outer.create_process(self.remote_command, encoding=None)
+        except BaseException:
+            self.state = ConnectionState.disconnected
+            if self.lost_at_ms is None:
+                self.lost_at_ms = now_ms()
+            await close_connection(outer)
+            raise
+        self._writer = process.stdin
         identity = self.identity
-
-        async def send_preview(message: WireMessage) -> None:
-            async with self._write_lock:
-                if (
-                    self._writer is not process
-                    or self.identity != identity
-                    or self.state is not ConnectionState.ready
-                    or process.stdin is None
-                ):
-                    raise ConnectionError("preview executor generation changed")
-                process.stdin.write(encode_frame(message))
-                await process.stdin.drain()
-
-        self._preview_streams = PreviewStreams(
-            identity,
-            send_preview,
-            lambda: (
-                self._handshake_accepted
-                and self.state is ConnectionState.ready
-                and self._writer is process
-                and self.identity == identity
-            ),
-            accept_open=True,
-        )
-        assert process.stdout is not None
         reader_task = asyncio.create_task(self._read_loop(process.stdout))
+        client_key = asyncssh.generate_private_key("ssh-ed25519")
+        sftp_context = None
 
         async def session() -> None:
             response = await self._request(WireMessageKind.hello, as_object(self.health()))
@@ -421,6 +492,29 @@ class MacExecutor:
             if peer != self.identity:
                 raise ValueError("handshake identity changed")
             self._handshake_accepted = True
+            opened = await self._request(
+                WireMessageKind.transport_open,
+                {
+                    "client_public_key": client_key.export_public_key().decode(),
+                    "identity": as_object(identity),
+                },
+            )
+            if opened.kind is not WireMessageKind.transport_opened:
+                raise ValueError("restricted SFTP endpoint refused")
+            endpoint = TypeAdapter(SftpEndpoint).validate_python(opened.payload["endpoint"])
+            nonlocal sftp_context
+            sftp_context = connect_sftp(outer, endpoint, client_key, self.paths.run)
+            self._sftp = await sftp_context.__aenter__()
+            self._preview_streams = MacPreviewForwards(
+                outer,
+                Path(str(opened.payload["preview_root"])),
+                lambda: (
+                    self.identity == identity
+                    and self._handshake_accepted
+                    and self.state == ConnectionState.ready
+                    and not self.registry.admission_stopped
+                ),
+            )
             await self._reconcile()
             await self._replay()
             await self._reconcile()
@@ -459,15 +553,13 @@ class MacExecutor:
             for task in (reader_task, session_task, stop_task):
                 task.cancel()
             await asyncio.gather(reader_task, session_task, stop_task, return_exceptions=True)
-            if process.stdin is not None:
-                process.stdin.close()
-            if process.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    process.terminate()
-            # Process.wait also waits for pipe transport closure. A canceled frame
-            # reader can leave stdout paused above its high-water mark even after
-            # the SSH/relay process exits. Drain the pipe before awaiting that exit.
-            await process.communicate()
+            for transfer in tuple(self._transfer_tasks):
+                transfer.cancel()
+            await asyncio.gather(*self._transfer_tasks, return_exceptions=True)
+            self._sftp = None
+            if sftp_context is not None:
+                await sftp_context.__aexit__(None, None, None)
+            await close_connection(outer)
 
     async def handle_ipc(self, request: IpcRequest) -> IpcResponse:
         try:
@@ -480,7 +572,17 @@ class MacExecutor:
                         expected.expected_process_id != os.getpid()
                     ):
                         raise ValueError("quiesce identity changed; obtain fresh health")
+                    self._transport_admission_stopped = True
+                    if self._preview_streams is not None:
+                        await self._preview_streams.close()
                     quiescence = await self.registry.quiesce()
+                    pending_transfers = max(self._transfers, len(self._transfer_tasks))
+                    if pending_transfers:
+                        quiescence = replace(
+                            quiescence,
+                            uncertain_operation_count=quiescence.uncertain_operation_count
+                            + pending_transfers,
+                        )
                     if expected.expected_identity != self.identity or (
                         expected.expected_process_id != os.getpid()
                     ):
@@ -522,7 +624,9 @@ class MacExecutor:
                 )
                 snapshots: tuple[FileSnapshot, ...] = ()
                 if child.ticket_id is not None:
-                    snapshots = snapshot_ticket(self.paths, child.ticket_id)
+                    snapshots = await asyncio.to_thread(
+                        snapshot_ticket, self.paths, child.ticket_id
+                    )
                 envelope = await asyncio.to_thread(
                     self.spool.mint_envelope,
                     conversation_id=child.reference.conversation_id,
@@ -572,7 +676,13 @@ class MacExecutor:
                 while not self._stop.is_set():
                     try:
                         await self._connected()
-                    except (OSError, ValueError, ConnectionError, asyncio.IncompleteReadError):
+                    except (
+                        OSError,
+                        ValueError,
+                        ConnectionError,
+                        asyncio.IncompleteReadError,
+                        asyncssh.Error,
+                    ):
                         if not self._stop.is_set():
                             with contextlib.suppress(TimeoutError):
                                 await asyncio.wait_for(
