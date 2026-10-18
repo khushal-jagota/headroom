@@ -655,10 +655,6 @@
         "label": "Brief"
       },
       {
-        "id": "best_guess_and_open_options",
-        "label": "Best Guess and Open Options"
-      },
-      {
         "id": "wireframe",
         "label": "Wireframe"
       },
@@ -685,13 +681,6 @@
         "id": "needs_brief",
         "is_terminal": false,
         "label": "Brief",
-        "ownership_mode": "worker"
-      },
-      {
-        "gating_field": "best_guess_and_open_options",
-        "id": "needs_best_guess_and_open_options",
-        "is_terminal": false,
-        "label": "Best Guess and Open Options",
         "ownership_mode": "worker"
       },
       {

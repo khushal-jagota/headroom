@@ -71,12 +71,18 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   built in, so a copy points `pytest` at that tree's source and checks this source
   against that tree's pinned dependency versions. `git worktree move` breaks a
   virtualenv the same way. After a move, delete `.venv` and build it again.
-- `mypy` run against this tree's config refuses when the environment does not belong to
-  the tree, and names what is wrong. So does any `pytest` that collects a path under
-  `tests/`. That refusal is the check for those two. It does not cover `ruff`, a
-  `pytest` pointed outside `tests/`, or anything
-  else you launch from `.venv/bin` by hand — for those, a copied virtualenv is still
-  silent, so build the environment correctly rather than rely on being caught.
+- `mypy` with this tree's config and any `pytest` that collects under `tests/` check
+  environment identity first, then installed distributions against applicable exact
+  pins in `requirements.txt`. The dependency check runs before `planner` imports.
+  Extra installed distributions and this tree's editable install are valid.
+  A dependency refusal names the required and installed versions, active interpreter,
+  and a repair command anchored to this tree. Missing or unusable `packaging` reports
+  a parser bootstrap failure. A foreign or moved virtualenv needs a rebuild.
+  A pin change makes old environments stale, so refusal is expected until their
+  installed dependencies match. No environment variable or flag skips this check.
+  Restore the pinned dependency versions to pass it.
+  These hooks cannot cover failures before pytest or mypy loads them. They do not
+  cover `ruff`, pytest outside `tests/`, or arbitrary `.venv/bin` commands.
 - Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`
   and confirm any printed path resolves to the worktree before using its runtime.
 - Node dependency trees under `web/` and `agent_backends/` may be reused when their

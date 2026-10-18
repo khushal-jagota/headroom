@@ -92,9 +92,9 @@ the frame and reach the decision together; its other non-terminal Stages use wor
 ownership. `initiative_planning` uses user ownership for Question Answers, where
 consequential cross-Ticket choices are settled with the user; its other non-terminal
 Stages use worker ownership. `product_design` uses user ownership for Wireframe
-and Design, while its Best Guess and Open Options Stage and its handoff are
-worker-owned. Each Worker type chooses ownership for each Stage. It does not inherit
-that choice from registry order or another definition.
+and Design, while its Brief and its handoff are worker-owned. Each Worker type
+chooses ownership for each Stage. It does not inherit that choice from registry
+order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
 workflow. Ticket contracts still own universal Ticket facts such as the worker-step claim

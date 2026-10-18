@@ -1,5 +1,5 @@
 """One statement of a property every gate depends on: the tools that produce
-evidence must belong to the tree under test.
+evidence must belong to the tree under test and match its dependency pins.
 
 A virtualenv copied from another worktree keeps absolute paths to the tree it was
 built in. Those paths are silent — the working directory still looks right, and a
@@ -14,13 +14,19 @@ survive a copy, and any one of them is enough:
 ``plugin`` entry point at the end of this file) each collect the answers their own
 process can see and ask the same question.
 
-This module imports nothing outside the standard library, and never imports
+Module startup imports only the standard library. The dependency check lazily loads
+``packaging`` and diagnoses its absence before it imports ``planner``. It compares
+installed distribution metadata with applicable pins, not frozen-environment equality.
+Extra distributions and legitimate editable installs remain valid. The hooks cannot
+protect failures before pytest or mypy loads them. This module never imports
 ``planner`` at module level: it must stay usable when the environment is wrong.
 """
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
+import re
 import shlex
 import sys
 from dataclasses import dataclass, field
@@ -148,8 +154,11 @@ def venv_origin_from_pyvenv_cfg(text: str) -> Path | None:
         key, separator, value = line.partition("=")
         if separator and key.strip() == "command":
             words = shlex.split(value.strip())
-            if words and words[-1].startswith("/"):
-                return Path(words[-1]).resolve()
+            # CPython records its target without shell quoting, even with spaces.
+            # The absolute target follows the interpreter and venv options.
+            targets = [index for index, word in enumerate(words[1:], 1) if word.startswith("/")]
+            if targets:
+                return Path(" ".join(words[targets[0]:])).resolve()
     return None
 
 
@@ -174,7 +183,7 @@ def read_editable_root(venv: Path) -> Path | None:
     not otherwise ask.
     """
     for site_packages in sorted(venv.glob("lib/python*/site-packages")):
-        for path_file in sorted(site_packages.glob("__editable__*.pth")):
+        for path_file in sorted(site_packages.glob("__editable__.planner-*.pth")):
             try:
                 first = path_file.read_text(encoding="utf-8").splitlines()[:1]
             except (OSError, UnicodeDecodeError):
@@ -210,7 +219,7 @@ def running_answers(tree: Path, *, ask_planner: bool) -> EnvironmentAnswers:
             # Only planner's own absence is this module's business. A missing transitive
             # dependency, or a SyntaxError in the tree being edited, is a different
             # problem and keeps its own error rather than being reported as the wrong one.
-            if exc.name is not None and exc.name.split(".")[0] != "planner":
+            if exc.name != "planner":
                 raise
             planner_absent = True
         else:
@@ -221,6 +230,124 @@ def running_answers(tree: Path, *, ask_planner: bool) -> EnvironmentAnswers:
         editable_root=read_editable_root(venv),
         planner_file=planner_file,
         planner_absent=planner_absent,
+    )
+
+
+def dependency_faults(tree: Path) -> list[str]:
+    """Compare this interpreter's distribution metadata with the tree's pinned requirements.
+
+    The requirements file supports blank lines, comments, and PEP 508 exact pins
+    (including extras and environment markers). Other pip syntax is an explicit
+    error: silently skipping a line would turn missing evidence into a clean gate.
+    """
+    requirements = tree / "requirements.txt"
+    try:
+        lines = requirements.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        return [f"cannot read {requirements}: {exc}"]
+    try:
+        from packaging.requirements import InvalidRequirement, Requirement
+        from packaging.utils import canonicalize_name
+    except Exception as exc:
+        # This parser is itself pinned. Report its state without needing that parser.
+        required = next(
+            (line.strip() for line in lines if re.match(r"(?i)^packaging\s*[=<>!~]", line.strip())),
+            "packaging (required to parse requirements.txt)",
+        )
+        installed = installed_version("packaging")
+        return [
+            f"packaging bootstrap failure: required {required}; installed "
+            f"{installed or 'absent'}; cannot load requirement parser: {exc}"
+        ]
+
+    found: list[str] = []
+    for number, raw in enumerate(lines, 1):
+        line = re.split(r"\s+#", raw, maxsplit=1)[0].strip()
+        if not line or line.startswith("#"):
+            continue
+        location = f"{requirements}:{number}"
+        try:
+            requirement = Requirement(line)
+        except InvalidRequirement as exc:
+            found.append(f"{location}: invalid requirement {line!r}: {exc}")
+            continue
+        pins = list(requirement.specifier)
+        if (
+            requirement.url is not None
+            or len(pins) != 1
+            or pins[0].operator != "=="
+            or "*" in pins[0].version
+        ):
+            found.append(f"{location}: unsupported requirement {line!r}; expected an exact == pin")
+            continue
+        if requirement.marker is not None and not requirement.marker.evaluate():
+            continue
+        name = canonicalize_name(requirement.name)
+        installed = installed_version(name)
+        try:
+            matches = installed is not None and requirement.specifier.contains(
+                installed, prereleases=True
+            )
+        except ValueError:
+            matches = False
+        if not matches:
+            found.append(
+                f"{name}: required {requirement.specifier}; installed {installed or 'absent'}"
+            )
+    return found
+
+
+def installed_version(name: str) -> str | None:
+    """Read the active interpreter's metadata, never import the dependency itself."""
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def preflight(tree: Path, *, ask_planner: bool) -> str | None:
+    """Refuse foreign tools first, stale dependencies second, then inspect planner.
+
+    Import failures in planner after a clean preflight keep their original traceback.
+    Both hooks return the same diagnosis and commands, even from another directory.
+    """
+    tree = tree.resolve()
+    found = faults(tree, running_answers(tree, ask_planner=False))
+    if found:
+        return _diagnosis(tree, found, dependencies=False)
+    found = dependency_faults(tree)
+    if found:
+        return _diagnosis(tree, found, dependencies=True)
+    if ask_planner:
+        found = faults(tree, running_answers(tree, ask_planner=True))
+        if found:
+            return _diagnosis(tree, found, dependencies=False)
+    return None
+
+
+def _diagnosis(tree: Path, found: list[str], *, dependencies: bool) -> str:
+    interpreter = shlex.quote(sys.executable)
+    command = f"cd {shlex.quote(str(tree))} && "
+    if dependencies:
+        heading = f"dependency drift from {tree / 'requirements.txt'}"
+        command += f"{interpreter} -m pip install -r requirements.txt"
+        repair = "Repair dependencies"
+    else:
+        heading = f"this environment does not belong to {tree}"
+        command += (
+            "rm -rf .venv && python3 -m venv .venv"
+            " && .venv/bin/python -m pip install -r requirements.txt"
+            " && .venv/bin/python -m pip install --editable ."
+        )
+        repair = "Rebuild the virtualenv in place"
+    return (
+        f"{heading}:\n  " + "\n  ".join(found)
+        + (
+            "\nNo bypass is supported. After a pin change, refusal is expected "
+            "until installed dependencies match the pins."
+            if dependencies else ""
+        )
+        + f"\nActive interpreter: {sys.executable}\n{repair}: {command}"
     )
 
 
@@ -239,20 +366,11 @@ def plugin(version: str) -> type:
     from mypy.plugin import Plugin
 
     tree = Path(__file__).resolve().parent.parent
-    found = faults(tree, running_answers(tree, ask_planner=False))
-    if found:
-        # mypy turns an exception from here into a traceback that buries the reason,
-        # so print the reason plainly and stop. Exit code 2 is mypy's own code for
-        # "could not check", which is what happened.
-        print(f"mypy: this environment does not belong to {tree}:", file=sys.stderr)
-        for reason in found:
-            print(f"  {reason}", file=sys.stderr)
-        print(
-            "  rebuild the virtualenv in place: rm -rf .venv && python3 -m venv .venv"
-            " && .venv/bin/python -m pip install -r requirements.txt"
-            " && .venv/bin/python -m pip install --editable .",
-            file=sys.stderr,
-        )
+    diagnosis = preflight(tree, ask_planner=False)
+    if diagnosis:
+        # mypy buries ordinary plugin exceptions in a traceback. This refusal means
+        # "could not check", for which mypy uses exit code 2.
+        print(f"mypy: {diagnosis}", file=sys.stderr)
         raise SystemExit(2)
 
     class TreeEnvironmentPlugin(Plugin):
