@@ -1,7 +1,8 @@
-"""Real TCP delivery boundaries on synthetic transport-only SQLite state.
+"""Real TCP delivery over actual producer binding and synthetic canonical storage.
 
-No ownership/startup claim is exercised here: the fixture publishes an already
-prepared epoch so these checks isolate socket backpressure and read consistency.
+An explicitly empty runtime supplies no provider or guessed conversation facts.
+These existing checks isolate socket backpressure, replay and read consistency;
+they do not establish whole-application startup or consumer recovery acceptance.
 """
 
 from __future__ import annotations
@@ -10,7 +11,6 @@ import asyncio
 import contextlib
 import json
 import socket
-import sqlite3
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
@@ -18,57 +18,24 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+import pytest
 import uvicorn
 from fastapi import FastAPI
 
+from planner.conversation.runtime_composition import SignalRuntimeComposition, bind_admission
+from planner.core.db import connect
 from planner.core.sse import open_change_stream_count
 from planner.navigation.configuration import DeliveryConfig
-from planner.navigation.contracts import Continuity, ProjectRecord, RevisionBatch
 from planner.navigation.delivery import DeliveryRuntime
-from planner.navigation.delivery_contracts import compact_json
-
-
-def prepare(path: Path) -> None:
-    with sqlite3.connect(path) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript(
-            "CREATE TABLE navigation_meta(singleton,scope,schema_version,epoch,revision);"
-            "INSERT INTO navigation_meta VALUES(1,'socket-fixture',3,'epoch',0);"
-            "CREATE TABLE navigation_records(kind,id,value);"
-            "CREATE TABLE navigation_dirty(kind,id);"
-            "CREATE TABLE navigation_journal(revision INTEGER PRIMARY KEY,body TEXT);"
-            "CREATE TABLE navigation_delivery_retention(singleton INTEGER PRIMARY KEY,"
-            "epoch TEXT,floor_revision INTEGER);"
-        )
+from planner.navigation.signal_runtime import SignalNavigationBinding
 
 
 def append(path: Path, revision: int, title: str) -> None:
-    continuity: Continuity = {
-        "scope": "socket-fixture",
-        "schema_version": 3,
-        "semantics": "generic-source-facts-v3",
-        "epoch": "epoch",
-        "revision": str(revision),
-    }
-    record: ProjectRecord = {
-        "kind": "project",
-        "id": "p",
-        "value": {"name": title, "priority": None},
-    }
-    batch: RevisionBatch = {
-        **continuity,
-        "base_revision": str(revision - 1),
-        "upserts": [record],
-        "deletes": [],
-    }
-    with sqlite3.connect(path) as conn:
-        conn.execute("DELETE FROM navigation_records")
-        conn.execute(
-            "INSERT INTO navigation_records VALUES('project','p',?)",
-            (compact_json(record["value"]),),
-        )
-        conn.execute("INSERT INTO navigation_journal VALUES(?,?)", (revision, compact_json(batch)))
-        conn.execute("UPDATE navigation_meta SET revision=?", (revision,))
+    with contextlib.closing(connect(str(path))) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("UPDATE projects SET name=? WHERE id='p'", (title,))
+        conn.commit()
+        assert conn.execute("SELECT revision FROM navigation_meta").fetchone()[0] == revision
 
 
 async def eventually(predicate: Callable[[], bool], timeout: float = 3) -> None:
@@ -81,36 +48,60 @@ async def eventually(predicate: Callable[[], bool], timeout: float = 3) -> None:
 async def serving(
     path: Path, *, send_timeout: float = 0.2
 ) -> AsyncIterator[tuple[str, DeliveryRuntime]]:
-    config = replace(DeliveryConfig(), poll_seconds=0.01, send_timeout_seconds=send_timeout)
-    runtime = DeliveryRuntime(path, config)
-    runtime.ready = True
-    app = FastAPI()
-    app.include_router(runtime.router)
-    listener = socket.socket()
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
-    listener.bind(("127.0.0.1", 0))
-    listener.listen(128)
-    listener.setblocking(False)
-    port = listener.getsockname()[1]
-    server = uvicorn.Server(
-        uvicorn.Config(
-            app, log_level="critical", access_log=False, lifespan="off", timeout_graceful_shutdown=2
+    with contextlib.ExitStack() as cleanup:
+        composition = SignalRuntimeComposition(str(path), 1000)
+        cleanup.callback(composition.close)
+        composition.bootstrap()
+        composition.coordinator.bind_runtime(lambda identity: None)
+        with contextlib.closing(composition.connect()) as conn:
+            with bind_admission(conn, composition.initialization):
+                conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO projects(id,name,created_at,updated_at) VALUES('p','initial',0,0)"
+            )
+            conn.commit()
+        composition.initialize()
+        config = replace(DeliveryConfig(), poll_seconds=0.01, send_timeout_seconds=send_timeout)
+        runtime = DeliveryRuntime(path, config)
+        binding = SignalNavigationBinding(composition.coordinator, runtime)
+        cleanup.callback(binding.close)
+        binding.attach()
+        composition.coordinator.admit_runtime()
+        runtime.ready = True
+        app = FastAPI()
+        app.include_router(runtime.router)
+        listener = socket.socket()
+        cleanup.callback(listener.close)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(128)
+        listener.setblocking(False)
+        port = listener.getsockname()[1]
+        server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                log_level="critical",
+                access_log=False,
+                lifespan="off",
+                timeout_graceful_shutdown=2,
+            )
         )
-    )
-    task = asyncio.create_task(server.serve(sockets=[listener]))
-    try:
-        await eventually(lambda: server.started)
-        yield f"http://127.0.0.1:{port}", runtime
-    finally:
-        # Same ordering as production: publication streams drain before runtime owner release.
-        await asyncio.wait_for(runtime.close(), 3)
-        server.should_exit = True
-        await asyncio.wait_for(task, 3)
-        listener.close()
+        task = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            await eventually(lambda: server.started)
+            yield f"http://127.0.0.1:{port}", runtime
+        finally:
+            # Drain responses and the existing socket host before releasing ownership.
+            try:
+                await asyncio.wait_for(runtime.close(), 3)
+            finally:
+                server.should_exit = True
+                await asyncio.wait_for(task, 3)
 
 
 class Feed:
-    def __init__(self, initial: dict[str, Any]) -> None:
+    def __init__(self, initial: dict[str, Any], authority: dict[str, Any]) -> None:
+        self.authority = authority
         self.records = {(r["kind"], r["id"]): r for r in initial["records"]}
         self.revision = int(initial["revision"])
         self.cursor = ""
@@ -131,9 +122,12 @@ class Feed:
                             assert b"event: reset" not in frame
                             continue
                         lines = frame.splitlines()
-                        body = json.loads(
+                        envelope = json.loads(
                             next(line[6:] for line in lines if line.startswith(b"data: "))
                         )
+                        assert envelope["wire_version"] == 2
+                        assert envelope["authority"] == self.authority
+                        body = envelope["batch"]
                         assert int(body["base_revision"]) == self.revision
                         for record in body["upserts"]:
                             self.records[(record["kind"], record["id"])] = record
@@ -166,14 +160,14 @@ async def cancel(task: asyncio.Task[None]) -> None:
 def test_tcp_snapshot_live_stream_reconnect_disconnect_and_shutdown(tmp_path: Path) -> None:
     async def run() -> None:
         path = tmp_path / "navigation.db"
-        prepare(path)
         baseline = open_change_stream_count()
         async with serving(path) as (url, runtime):
             async with httpx.AsyncClient(base_url=url, trust_env=False, timeout=5) as client:
                 response = await client.get("/api/navigation/snapshot")
                 response.raise_for_status()
                 initial = response.json()
-                feed = Feed(initial["snapshot"])
+                assert initial["mode"] == "current" and initial["wire_version"] == 2
+                feed = Feed(initial["snapshot"], initial["authority"])
                 task = asyncio.create_task(feed.consume(client, initial["cursor"]))
                 try:
                     await eventually(lambda: open_change_stream_count() == baseline + 1)
@@ -192,8 +186,15 @@ def test_tcp_snapshot_live_stream_reconnect_disconnect_and_shutdown(tmp_path: Pa
                         == final["records"]
                     )
                     # An idle real TCP response must terminate from publication shutdown itself.
+                    assert feed.error is None
                     await asyncio.wait_for(runtime.close(), 1)
-                    await asyncio.wait_for(task, 1)
+                    # Configured send fencing also rejects the final HTTP terminator.
+                    # The resulting transport failure belongs only to this deliberate loss.
+                    with pytest.raises(
+                        httpx.RemoteProtocolError, match="incomplete chunked read"
+                    ) as closed:
+                        await asyncio.wait_for(task, 1)
+                    assert feed.error is closed.value
                     assert open_change_stream_count() == baseline
                 finally:
                     await cancel(task)
@@ -205,12 +206,12 @@ def test_tcp_snapshot_live_stream_reconnect_disconnect_and_shutdown(tmp_path: Pa
 def test_tcp_blocked_reader_deadline_does_not_block_fast_client(tmp_path: Path) -> None:
     async def run() -> None:
         path = tmp_path / "navigation.db"
-        prepare(path)
         baseline = open_change_stream_count()
         async with serving(path) as (url, runtime):
             async with httpx.AsyncClient(base_url=url, trust_env=False, timeout=5) as client:
                 initial = (await client.get("/api/navigation/snapshot")).json()
-                feed = Feed(initial["snapshot"])
+                assert initial["mode"] == "current" and initial["wire_version"] == 2
+                feed = Feed(initial["snapshot"], initial["authority"])
                 fast = asyncio.create_task(feed.consume(client, initial["cursor"]))
                 slow = socket.socket()
                 slow.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
