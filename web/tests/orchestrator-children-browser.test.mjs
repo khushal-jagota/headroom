@@ -45,15 +45,21 @@ def child(name, stage="needs_implementation", backlogged=False, **facts):
     row.update(facts)
     return row
 requests=[]
+totals={"active":31,"backlogged":31,"done":31}
+fail_backlog=False
 def respond(route):
     query=parse_qs(urlparse(route.request.url).query)
     requests.append(query)
     assert query["orchestrator_kind"] == ["chief"]
-    offset=int(query["offset"][0]); stage=query.get("stage",[None])[0]
-    if stage == "done": rows=[child("Completed workspace history", "done", True, awaiting_approval=True)]; total=1
-    elif stage: rows=[child(stage,stage)]; total=1
-    elif query.get("is_backlogged") == ["true"]: rows=[child("deferred",backlogged=True,awaiting_approval=True)]; total=1
-    else: total=31; rows=[child(f"quiet-{i}") for i in range(offset,min(offset+30,total))]
+    assert query["limit"] == ["30"]
+    section="done" if query.get("stage")==["done"] else "backlogged" if query.get("is_backlogged")==["true"] else "active"
+    if section=="active": assert query["is_backlogged"]==["false"]
+    if section=="done": assert query["include_terminal"]==["true"]
+    if section=="backlogged" and fail_backlog:
+        route.fulfill(status=500,body="Backlog unavailable")
+        return
+    offset=int(query["offset"][0]); total=totals[section]
+    rows=[child(f"{section}-{i}","done" if section=="done" else "needs_implementation",section!="active") for i in range(offset,min(offset+30,total))]
     after=max(0,total-offset-len(rows))
     page=dict(match_count=total,return_count=len(rows),limit=30,offset=offset,omitted_before=min(offset,total),
         omitted_after=after,complete=offset==0 and after==0,next_offset=offset+len(rows) if after else None)
@@ -63,66 +69,60 @@ with sync_playwright() as p:
     page=browser.new_page(viewport=dict(width=1100,height=900))
     page.route("**/api/tickets?**",respond)
     page.goto(sys.argv[1])
-    expect(page.locator('[data-sprint-ticket-id]')).to_have_count(30)
-    expect(page.get_by_role("link",name="quiet-0",exact=True)).to_have_attribute("href","#/workspace/quiet-0")
-    page.get_by_role("button",name="Next",exact=True).click()
-    expect(page.locator('[data-sprint-ticket-id]')).to_have_count(1)
-    expect(page.get_by_role("link",name="quiet-30",exact=True)).to_be_visible()
-    page.get_by_label("Worker state").select_option("backlogged")
-    expect(page.get_by_role("link",name="deferred",exact=True)).to_be_visible()
-    assert requests[-1]["offset"] == ["0"]
+    active=page.locator('[data-worker-section="active"]')
     backlog=page.locator('[data-workspace-group="backlog"]')
-    expect(backlog).to_be_visible()
-    expect(backlog.locator('summary')).to_contain_text("Backlog")
-    expect(backlog.get_by_role("link",name="deferred",exact=True)).to_have_attribute("href","#/workspace/deferred")
-    expect(page.locator('[data-workspace-group="awaiting_approval"]')).to_have_count(0)
-    # A reader's explicit close survives a refetch and leaving/returning to this filter.
-    backlog.locator("summary").click()
-    page.wait_for_function("!document.querySelector('[data-workspace-group=backlog]').open")
-    before_refresh=len(requests)
+    done=page.locator('[data-workspace-group="done"]')
+    expect(active.get_by_role("link",name="active-0",exact=True)).to_be_visible()
+    expect(backlog.locator('[data-group-count]')).to_have_text("31")
+    expect(done.locator('[data-group-count]')).to_have_text("31")
+    assert not backlog.evaluate("n=>n.open")
+    assert not done.evaluate("n=>n.open")
+    expect(page.get_by_label("Worker state")).to_have_count(0)
+    active.get_by_role("button",name="Next",exact=True).click()
+    expect(active.get_by_role("link",name="active-30",exact=True)).to_be_visible()
+    backlog.locator(":scope > summary").click()
+    done.locator(":scope > summary").click()
+    backlog.get_by_role("button",name="Next",exact=True).click()
+    expect(backlog.get_by_role("link",name="backlogged-30",exact=True)).to_be_visible()
+    expect(done.get_by_role("link",name="done-0",exact=True)).to_be_visible()
+    done.get_by_role("button",name="Next",exact=True).click()
+    expect(done.get_by_role("link",name="done-30",exact=True)).to_be_visible()
+    totals.update(active=1,backlogged=0,done=1)
     page.evaluate("window.__refresh()")
-    assert len(requests)>before_refresh, "refresh must complete a controlled API read"
-    assert not backlog.evaluate("node=>node.open")
-    for state,stage in [("done","done")]:
-        page.get_by_label("Worker state").select_option(state)
-        key="backlog" if stage == "done" else stage
-        group=page.locator(f'[data-workspace-group="{key}"]')
-        expect(group).to_be_visible()
-        if not group.evaluate("node=>node.open"): group.locator("summary").click()
-        name="Completed workspace history" if stage == "done" else stage
-        expect(group.get_by_role("link",name=name,exact=True)).to_have_attribute("href","#/workspace/"+name.replace(" ","%20"))
-    page.get_by_label("Worker state").select_option("backlogged")
-    expect(backlog).to_be_visible()
-    assert backlog.evaluate("node=>node.open"), "the manual open in Done follows the same Backlog group"
-    backlog.locator("summary").click()
-    page.get_by_label("Worker state").select_option("active")
-    page.get_by_label("Worker state").select_option("backlogged")
-    expect(backlog).to_be_visible()
-    assert not backlog.evaluate("node=>node.open"), "manual closed choice survives filter removal"
+    expect(active.get_by_role("link",name="active-0",exact=True)).to_be_visible()
+    expect(backlog.locator('[data-group-count]')).to_have_text("0")
+    expect(done.get_by_role("link",name="done-0",exact=True)).to_be_visible()
+    expect(active.get_by_role("button",name="Previous",exact=True)).to_have_count(0)
+    expect(backlog.get_by_role("button",name="Previous",exact=True)).to_have_count(0)
+    # Failed section reads retain independent errors without hiding other sections.
+    fail_backlog=True
+    page.evaluate("window.__refresh()")
+    expect(backlog.locator('.error-line')).to_be_visible()
+    expect(active.get_by_role("link",name="active-0",exact=True)).to_be_visible()
+    expect(done.get_by_role("link",name="done-0",exact=True)).to_be_visible()
+    backlog.locator(":scope > summary").click()
+    page.evaluate("window.__refresh()")
+    assert not backlog.evaluate("n=>n.open")
     source=[child("item-quiet"),
         child("Saved owner review",backlogged=True,awaiting_approval=True,has_pending_proposal=True),
         child("Saved supervisor review",backlogged=True,awaiting_agent_approval=True,has_pending_proposal=True),
         child("Saved message",backlogged=True,awaiting_reply=True,conversation_signal=dict(working=False,message_for_owner=True)),
-        child("Completed workspace history","done",True)]
+        child("Completed workspace history","done",True,awaiting_approval=True)]
     count=len(requests)
     page.evaluate("rows => window.__setItem(rows)",source)
-    expect(page.get_by_label("Worker state")).to_have_value("active")
-    expect(page.locator('[data-sprint-ticket-id]')).to_have_count(4)
     expect(page.get_by_role("link",name="item-quiet",exact=True)).to_have_attribute("href","#/workspace/item/item%20one/item-quiet")
-    backlog=page.locator('[data-workspace-group="backlog"]')
-    expect(backlog).to_be_visible()
-    assert backlog.evaluate("node=>node.open"), "a new principal has its own reader choices"
+    expect(backlog.locator('[data-group-count]')).to_have_text("3")
+    expect(done.locator('[data-group-count]')).to_have_text("1")
+    assert not backlog.evaluate("n=>n.open"), "a new principal resets reader choices"
+    assert not done.evaluate("n=>n.open")
+    backlog.locator(":scope > summary").click()
     for title in ["Saved owner review", "Saved supervisor review", "Saved message"]:
-        row=page.locator('[data-sprint-ticket-id="'+title+'"]')
-        expect(row).to_have_count(1)
-        expect(backlog.locator('[data-sprint-ticket-id="'+title+'"]')).to_be_visible()
+        row=backlog.locator('[data-sprint-ticket-id="'+title+'"]')
+        expect(row).to_be_visible()
         expect(row).to_have_accessible_name(title + (" Unread message" if title == "Saved message" else ""))
-        expect(row.locator('.ticket-row-title')).to_have_text(title)
-        assert row.inner_text() == title
         expect(row).to_have_attribute("href","#/workspace/item/item%20one/"+title.replace(" ","%20"))
     expect(page.locator('[data-workspace-group="awaiting_approval"], [data-workspace-group="status_awaiting_approval"]')).to_have_count(0)
     expect(backlog.locator('.stage-mark')).to_have_count(1)
-    expect(backlog.locator('[data-sprint-ticket-id="Saved message"]').locator('.stage-mark')).to_have_attribute("aria-label","Unread message")
     output=os.environ.get("PANELS_UI_PROOF_DIR")
     if output:
         folder=pathlib.Path(output);folder.mkdir(parents=True,exist_ok=True)
@@ -131,18 +131,15 @@ with sync_playwright() as p:
             expect(backlog.get_by_role("link",name="Saved owner review",exact=True)).to_be_visible()
             page.screenshot(path=str(folder/("backlog-full-list-"+label+".png")),full_page=True)
         (folder/"backlog-full-list-dom.html").write_text(page.content())
-    # Resume changes only membership: pending owner approval becomes visible again.
     source[1]["is_backlogged"]=False
     page.evaluate("rows=>window.__setRows(rows)",source)
     expect(page.locator('[data-workspace-group="awaiting_approval"]').get_by_role("link",name="Saved owner review",exact=True)).to_be_visible()
-    assert source[1]["has_pending_proposal"] is True
-    page.get_by_label("Worker state").select_option("backlogged")
-    expect(page.locator('[data-sprint-ticket-id]')).to_have_count(2)
-    page.get_by_label("Worker state").select_option("done")
-    expect(page.locator('[data-workspace-group="backlog"]')).to_be_visible()
-    history=page.get_by_role("link",name="Completed workspace history",exact=True)
+    expect(backlog.locator('[data-group-count]')).to_have_text("2")
+    done.locator(":scope > summary").click()
+    history=done.get_by_role("link",name="Completed workspace history",exact=True)
+    expect(history).to_be_visible()
     expect(history).to_have_attribute("href","#/workspace/item/item%20one/Completed%20workspace%20history")
-    expect(page.locator('[data-workspace-group="done"]')).to_have_count(0)
+    expect(backlog.locator('[data-sprint-ticket-id="Completed workspace history"]')).to_have_count(0)
     assert len(requests)==count
     browser.close()
 print("Scoped child browser checks passed")

@@ -11,7 +11,9 @@
    * Chief conversation while the route owns roster selection and responsive navigation.
    */
   import { createQuery } from "@tanstack/svelte-query";
-  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import OrchestratorHeader from "./OrchestratorHeader.svelte";
+  import OrchestratorWorkspace from "./OrchestratorWorkspace.svelte";
+  import type { ConversationState } from "../lib/conversation/conversationState";
   import ErrorLine from "./ErrorLine.svelte";
   import OrchestratorChildren from "./OrchestratorChildren.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
@@ -24,6 +26,7 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
 
+  let conversationState = $state<ConversationState>("rest");
   let conversationId = $state<string | null>(null);
   let backends = $state<readonly BackendSnapshot[]>([]);
   const workers = createQuery(() => queries.workers());
@@ -48,6 +51,10 @@
     return delivered;
   }
 
+  function saveRecap(recap: string): Promise<unknown> {
+    return mutateJson("/api/workers/chief-of-staff/recap", { method: "PUT", body: { recap } });
+  }
+
   async function newConversation(): Promise<void> {
     await mutateJson("/api/chief/conversation/reset", { method: "POST" });
     conversationId = null;
@@ -62,12 +69,15 @@
   });
 </script>
 
-<div class="chief-workspace">
-  {#if workers.data?.chief_of_staff.conversation_signal?.working || workers.data?.chief_of_staff.conversation_signal?.message_for_owner}
-    <div class="chief-signal"><ConversationSignalMark signal={workers.data?.chief_of_staff.conversation_signal} conversationId={workers.data?.chief_of_staff.conversation_id} /></div>
-  {/if}
-  <div class="chief-workers"><OrchestratorChildren principal={{ kind: "chief", id: "chief" }} /></div>
-  <div class="chief-conversation">
+<OrchestratorWorkspace class="chief-workspace" bind:conversationState>
+  <OrchestratorHeader signal={workers.data?.chief_of_staff.conversation_signal} conversationId={workers.data?.chief_of_staff.conversation_id}
+    recap={workers.data?.chief_of_staff.recap} onSaveRecap={saveRecap}>
+    {#snippet title()}Chief of Staff{/snippet}
+  </OrchestratorHeader>
+  <section class="orchestrator-workers" aria-label="Workers">
+    <OrchestratorChildren principal={{ kind: "chief", id: "chief" }} />
+  </section>
+  {#snippet conversation()}
 {#if currentConversation.error}
   <div class="chief-conversation-resource" data-chief-conversation-error>
     <ErrorLine error={currentConversation.error} />
@@ -86,6 +96,7 @@
   </div>
 {:else}
   <LiveConversation
+    bind:conversationState
     {conversationId}
     persistenceKey="owner:chief"
     label="Chief of Staff"
@@ -97,11 +108,8 @@
   />
 {/if}
 
-  </div>
-</div>
+  {/snippet}
+</OrchestratorWorkspace>
 <style>
-  .chief-signal { padding:var(--space-3) var(--space-5) 0; }
-  .chief-workspace { display:flex; flex-direction:column; width:100%; min-height:0; }
-  .chief-workers { padding:var(--space-5); max-height:45%; overflow:auto; flex:none; }
-  .chief-conversation { display:flex; flex:1; min-height:0; }
+  .orchestrator-workers { margin-top:var(--space-5); }
 </style>

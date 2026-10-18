@@ -396,7 +396,7 @@ def patch_specialist_skill(
 def read_chief_settings(conn: sqlite3.Connection) -> ManagedChiefSettings:
     row = conn.execute(
         "SELECT label, employee_backend, employee_launch_model, "
-        "employee_launch_reasoning_effort FROM chief_settings WHERE employee_id = ?",
+        "employee_launch_reasoning_effort, recap FROM chief_settings WHERE employee_id = ?",
         (CHIEF_SETTINGS_KEY,),
     ).fetchone()
     if row is None:
@@ -404,6 +404,7 @@ def read_chief_settings(conn: sqlite3.Connection) -> ManagedChiefSettings:
     return ManagedChiefSettings(
         employee_id=CHIEF_SETTINGS_KEY,
         label=str(row["label"]),
+        recap=str(row["recap"]),
         skill=read_skill(conn, CHIEF_SKILL_NAME),
         launch_defaults=ManagedWorkerLaunchDefaults(
             employee_backend=str(row["employee_backend"]),
@@ -415,6 +416,20 @@ def read_chief_settings(conn: sqlite3.Connection) -> ManagedChiefSettings:
             ),
         ),
     )
+
+
+def update_chief_recap(
+    conn: sqlite3.Connection, payload: dict[str, Any]
+) -> ManagedChiefSettings:
+    if set(payload) != {"recap"} or not isinstance(payload["recap"], str):
+        raise PlannerError(
+            ErrorCode.validation, "Chief recap requires exactly one string recap", {}
+        )
+    conn.execute(
+        "UPDATE chief_settings SET recap = ? WHERE employee_id = ?",
+        (payload["recap"], CHIEF_SETTINGS_KEY),
+    )
+    return read_chief_settings(conn)
 
 
 def update_chief_launch_defaults(
