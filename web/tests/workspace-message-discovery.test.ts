@@ -11,7 +11,7 @@ const card = (id:string, values:Partial<BoardCard> = {}): BoardCard & SprintItem
   ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id:string, values:Partial<BoardSprintItem> = {}): BoardSprintItem => ({
-  ...quiet, id, title:id, priority:"P2", created_at:1, conversation_id:`supervisor-${id}`,
+  ...quiet, id, title:id, recap_preview:"", priority:"P2", created_at:1, conversation_id:`supervisor-${id}`,
   ticket_rollup:quiet, tickets:[], ...values
 });
 const chief = (values:Partial<ChiefManagementSettings> = {}):ChiefManagementSettings => ({
@@ -152,14 +152,18 @@ describe("exact unread conversation discovery", () => {
     expect(workspaceChildMessageConversations(workspaceMessageConversations([], [read]),read)).toEqual([]);
   });
 
-  it("keeps active and Chief terminal and unfinished unread access in their existing nested Messages", () => {
+  it("keeps completed unread discovery independent of unfinished sidebar categories", () => {
     const activeTickets = [card("active-done",{stage:"done",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"sprint_item",id:"active"}}),
       card("active-unfinished",{stage:"needs_implementation",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"sprint_item",id:"active"}})];
     const chiefTickets = [card("chief-done",{stage:"done",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"chief",id:"chief"}}),
       card("chief-unfinished",{stage:"needs_implementation",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"chief",id:"chief"}})];
     const rail = buildWorkspaceRail([...activeTickets,...chiefTickets],[item("active",{tickets:activeTickets})]);
-    expect(rail.items[0].groups.find((group)=>group.key==="awaiting_reply")?.cards.map((row)=>row.id)).toEqual(["active-done","active-unfinished"]);
-    expect(rail.chiefGroups.find((group)=>group.key==="awaiting_reply")?.cards.map((row)=>row.id)).toEqual(["chief-done","chief-unfinished"]);
+    expect(rail.items[0].groups.map((group)=>[group.key,group.cards.map((row)=>row.id)]))
+      .toEqual([["empty",["active-unfinished"]]]);
+    expect(rail.chiefGroups.map((group)=>[group.key,group.cards.map((row)=>row.id)]))
+      .toEqual([["empty",["chief-unfinished"]]]);
+    expect(workspaceMessageConversations([...activeTickets,...chiefTickets],[]).map((row)=>row.id))
+      .toEqual(["active-done","active-unfinished","chief-done","chief-unfinished"]);
   });
 
   it("keeps explicit Chief assignment above a stale same-Ticket parent while retaining different Ticket aliases", () => {

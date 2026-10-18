@@ -140,3 +140,51 @@ def test_summary_preserves_canonical_consequences_wait(tmp_db: Connection) -> No
         sprint_item_id=None,
     )
     assert page.rows[0]["waiting_to_closeout"] is True
+
+
+def test_board_orchestrator_recap_uses_authoritative_body_without_changes(
+    tmp_db: Connection,
+) -> None:
+    item = seed_item(tmp_db, "Recap owner")
+    seed(tmp_db, title="Recap child", item=item)
+    body = "  Ship the sidebar.\n\tKeep attention concise.  "
+    tmp_db.execute("UPDATE sprint_items SET body=? WHERE id=?", (body, item))
+    before = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())
+
+    board = views.board_view(tmp_db)
+
+    assert board["sprint_items"][0]["recap_preview"] == "Ship the sidebar. Keep attention concise."
+    after = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    ("recap", "expected"),
+    [
+        ("  First line.\n\tSecond   line.  ", "First line. Second line."),
+        ("x" * 158 + "  " + "more text", "x" * 158 + "…"),
+        (" \n\t", ""),
+    ],
+)
+def test_board_and_child_recap_match_concise_ticket_summary(
+    tmp_db: Connection, recap: str, expected: str
+) -> None:
+    item = seed_item(tmp_db, "Recap owner")
+    ticket = seed(tmp_db, title="Recap child", item=item)
+    tmp_db.execute("UPDATE tickets SET recap=? WHERE id=?", (recap, ticket))
+
+    summary = views.list_ticket_summaries(
+        tmp_db,
+        page_request=ListPageRequest(limit=30, offset=0),
+        filters=TicketListFilters(),
+        project_id=None,
+        sprint_id=None,
+        sprint_item_id=None,
+    )
+    board = views.board_view(tmp_db)
+    card = next(card for column in board["columns"] for card in column["cards"])
+    child = board["sprint_items"][0]["tickets"][0]
+
+    assert summary.rows[0]["recap_preview"] == expected
+    assert card["recap_preview"] == expected
+    assert child["recap_preview"] == expected

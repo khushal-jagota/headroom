@@ -7,7 +7,6 @@ import type {
   WorkspaceMessageConversation,
 } from "./types";
 import {
-  WORK_ITEM_ATTENTION_GROUP_KEYS,
   workItemTicketGroupKey,
   workItemTicketGroups,
   type WorkItemTicketFacts
@@ -33,7 +32,7 @@ export type WorkspaceRailItem = {
   project: string | null;
   projectId: string | null;
   tickets: WorkItemTicketFacts[];
-  hoverGroups: WorkspaceTicketGroup[];
+  recapPreview: string;
 };
 
 export type WorkspaceRail = {
@@ -41,7 +40,6 @@ export type WorkspaceRail = {
   items: WorkspaceRailItem[];
   settledItems: WorkspaceRailItem[];
   chiefGroups: WorkspaceTicketGroup[];
-  chiefHoverGroups: WorkspaceTicketGroup[];
 };
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
@@ -53,17 +51,18 @@ function priorityRank(priority: Priority): number {
 
 function railGroups(
   cards: readonly WorkItemTicketFacts[],
-  attentionOnly = false
+  sidebarPresentation = false
 ): WorkspaceTicketGroup[] {
+  // Unread stays an independent mark in the rail, never a category or tone.
+  const originals = new Map(cards.map((card) => [card.id, card]));
   const groups = workItemTicketGroups(
-    cards,
-    attentionOnly ? WORK_ITEM_ATTENTION_GROUP_KEYS : undefined
+    sidebarPresentation ? cards.map((card) => ({...card, awaiting_reply: false})) : cards
   );
   return groups.map((group) => ({
     key: group.key,
-    label: group.label,
+    label: sidebarPresentation && group.key === "empty" ? "Other" : group.label,
     defaultCollapsed: group.quiet,
-    cards: group.tickets
+    cards: group.tickets.map((card) => originals.get(card.id)!)
   }));
 }
 
@@ -71,14 +70,52 @@ export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGro
   return railGroups(cards);
 }
 
+export function railTicketEligible(card: WorkItemTicketFacts): boolean {
+  return !card.is_backlogged && !card.blocked && card.ticket_status !== "blocked"
+    && card.stage !== "done";
+}
+
+/** Keep survivors in their presented order, then append arrivals and re-entries. */
+export function stabilizeRailGroups(next: WorkspaceTicketGroup[], previous: WorkspaceTicketGroup[]): WorkspaceTicketGroup[] {
+  return next.map((group) => {
+    const byId = new Map(group.cards.map((card) => [card.id, card]));
+    const survivors = (previous.find((old) => old.key === group.key)?.cards ?? [])
+      .flatMap((card) => { const fresh = byId.get(card.id); byId.delete(card.id); return fresh ? [fresh] : []; });
+    return {...group, cards: [...survivors, ...byId.values()]};
+  });
+}
+
+export function stabilizeWorkspaceRail(next: WorkspaceRail, previous: WorkspaceRail): WorkspaceRail {
+  const stabilize = (item: WorkspaceRailItem) => ({...item, groups: stabilizeRailGroups(item.groups,
+    [...previous.items, ...previous.settledItems].find((old) => old.id === item.id)?.groups ?? [])});
+  return {...next, chiefGroups: stabilizeRailGroups(next.chiefGroups, previous.chiefGroups),
+    items: next.items.map(stabilize), settledItems: next.settledItems.map(stabilize)};
+}
+
+export function workspaceWorkerStageSentence(ticket: WorkItemTicketFacts, lifecycle: Lifecycle | null): string {
+  const stage = lifecycle?.stageLabel[ticket.stage];
+  if (!stage) return "";
+  if (ticket.blocked || ticket.ticket_status === "blocked") return `Blocked at ${stage}.`;
+  if (ticket.awaiting_approval) return `Awaiting your approval at ${stage}.`;
+  if (ticket.awaiting_answer) return `Awaiting your answer at ${stage}.`;
+  if (ticket.assigned) return `Awaiting you at ${stage}.`;
+  if (ticket.agent_state === "errored") return `The last turn failed at ${stage}.`;
+  if (ticket.awaiting_agent_approval) return `Awaiting an agent's approval at ${stage}.`;
+  if (ticket.conversation_signal?.working) return `Currently doing ${stage}.`;
+  return `At ${stage}.`;
+}
+
 export function workspaceAttentionGroups(
   cards: readonly WorkItemTicketFacts[]
 ): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter((card) => !card.is_backlogged), true);
+  return railGroups(cards.filter(railTicketEligible), true);
 }
 
-export function workspaceHoverGroups(cards: readonly WorkItemTicketFacts[]): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter((card) => !card.is_backlogged && card.stage !== "done"));
+/** Use the existing concise recap; missing data gets only a factual list count. */
+export function workspaceListRecap(groups: readonly WorkspaceTicketGroup[], recap = ""): string {
+  if (recap.trim()) return recap;
+  const count = groups.reduce((total, group) => total + group.cards.length, 0);
+  return count ? `${count} Ticket${count === 1 ? "" : "s"} in this list.` : "Nothing in this list right now.";
 }
 
 /** Sidebar visibility stays separate from the durable unread conversation index. */
@@ -97,21 +134,6 @@ export function workspaceRailChildMessageConversations(
   ).filter((row) => visible(row.id));
 }
 
-export type WorkspaceWorkerStage = { id: string; label: string; state: "done" | "now" | "todo" };
-
-export function workspaceWorkerStages(
-  ticket: Pick<WorkItemTicketFacts, "stage">,
-  lifecycle: Lifecycle | null
-): WorkspaceWorkerStage[] {
-  if (!lifecycle) return [];
-  const current = lifecycle.stageOrder.indexOf(ticket.stage);
-  return lifecycle.stageOrder.map((id, index) => ({
-    id,
-    label: lifecycle.stageLabel[id],
-    state: current < 0 ? "todo" : index < current ? "done" : index === current ? "now" : "todo"
-  }));
-}
-
 export function buildWorkspaceRail(
   cards: readonly BoardCard[],
   sprintItems: readonly BoardSprintItem[] = []
@@ -125,7 +147,7 @@ export function buildWorkspaceRail(
     conversationSignal: item.conversation_signal,
     conversationId: item.conversation_id,
     groups: workspaceAttentionGroups(item.tickets),
-    hoverGroups: workspaceHoverGroups(item.tickets),
+    recapPreview: item.recap_preview,
     tickets: item.tickets,
     settled: item.settled === true,
     rested: item.settled === true,
@@ -148,7 +170,6 @@ export function buildWorkspaceRail(
     groups: workspaceGroups(cards),
     items: items.filter((item) => !item.settled),
     settledItems: items.filter((item) => item.settled),
-    chiefGroups: workspaceAttentionGroups(chiefTickets),
-    chiefHoverGroups: workspaceHoverGroups(chiefTickets)
+    chiefGroups: workspaceAttentionGroups(chiefTickets)
   };
 }
