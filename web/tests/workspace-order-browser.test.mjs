@@ -15,6 +15,7 @@ const scratchRoot = await scratchDirectory();
 const host = join(scratchRoot, `${stem}.svelte`);
 const main = join(scratchRoot, `${stem}.ts`);
 const index = join(scratchRoot, `${stem}.html`);
+const cacheDir = join(scratchRoot, `${stem}.vite`);
 let server;
 
 try {
@@ -47,6 +48,7 @@ let address = $state(parseWorkspaceAddress(window.location.hash)!);
   server = await createServer({
     root,
     configFile: false,
+    cacheDir,
     plugins: [svelte()],
     server: { host: "127.0.0.1", port: 0 },
     logLevel: "error"
@@ -192,27 +194,32 @@ with sync_playwright() as p:
     expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, expected)
 
-    # A real priority edit must still move an Item. A real child activity update
-    # must still reorder children inside their group, while Item age order survives.
+    # Priority still moves an Item. Child activity changes do not reorder the
+    # sidebar: persistent group entry order survives invalidation and selection.
     board["sprint_items"][1]["priority"] = "P0"
     page.evaluate("window.__refresh()")
     order(page, ["si_peer", "si_old", "si_newer"])
     children[1]["activity_at"] = 30
     page.evaluate("window.__refresh()")
-    expect(rows.first).to_have_attribute("data-ticket-id", "t_older")
+    expect(rows.first).to_have_attribute("data-ticket-id", "t_recent")
+    children[2]["activity_at"] = 50
+    page.evaluate("window.__refresh()")
+    expect(rows.first).to_have_attribute("data-ticket-id", "t_recent")
     order(page, ["si_peer", "si_old", "si_newer"])
 
     # Completion and clearing a direct unread mark do not settle or reorder an Item.
-    # Only the owner Settle action changes retirement, never child completion.
+    # Only the owner Settle action changes settlement, never child completion.
     page.goto(sys.argv[1] + "#/workspace?view=items")
     summary = board["sprint_items"][0]
     summary["tickets"] = [old]
     summary["awaiting_reply"] = True
+    summary["conversation_signal"] = dict(working=False, message_for_owner=True)
     page.evaluate("window.__refresh()")
-    expect(page.locator('[data-sprint-item="si_old"] .item-head .stage-mark')).to_have_attribute("data-workspace-mark", "reply")
+    expect(page.locator('[data-sprint-item="si_old"] .item-head .stage-mark')).to_have_attribute("data-conversation-signal", "message")
     expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, ["si_peer", "si_old", "si_newer"])
     summary["awaiting_reply"] = False
+    summary["conversation_signal"] = dict(working=False, message_for_owner=False)
     page.evaluate("window.__refresh()")
     expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, ["si_peer", "si_old", "si_newer"])
@@ -235,7 +242,7 @@ with sync_playwright() as p:
   assert.equal(code, 0, "Workspace order browser regression failed");
 } finally {
   await server?.close();
-  await Promise.all([host, main, index].map((path) => rm(path, { force: true })));
+  await Promise.all([host, main, index, cacheDir].map((path) => rm(path, { force: true, recursive: true })));
 }
 
 console.log("workspace-order-browser.test.mjs: all assertions passed");

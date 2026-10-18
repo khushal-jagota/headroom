@@ -156,6 +156,7 @@ class _LinkWatchingConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         return await self._system.send_with_receipt(
             conversation_id,
@@ -169,6 +170,7 @@ class _LinkWatchingConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            record_refusal=record_refusal,
         )
 
     async def record_message_to_owner(

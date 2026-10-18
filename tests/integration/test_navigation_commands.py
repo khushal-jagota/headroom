@@ -224,7 +224,8 @@ def test_real_application_command_families_and_store_writes(
                 json={
                     "title": "Capture this command",
                     "worker_type": "coding",
-                    "kickoff_note": "Synthetic",
+                    "brief": "Synthetic",
+                    "orchestrator": {"kind": "chief", "id": "chief"},
                 },
             )
         )
@@ -263,7 +264,7 @@ def test_real_application_command_families_and_store_writes(
                 "/api/workers/coding/launch-defaults",
                 json={
                     "employee_backend": "codex",
-                    "employee_launch_model": "gpt-5.4",
+                    "employee_launch_model": "gpt-5.6-sol",
                     "employee_launch_reasoning_effort": "high",
                 },
             ),
@@ -280,7 +281,7 @@ def test_real_application_command_families_and_store_writes(
                 "/api/conversation/conversations",
                 json={
                     "conversation_id": "synthetic",
-                    "model": "gpt-5.4",
+                    "model": "gpt-5.6-sol",
                     "backend_key": "codex",
                     "workspace_folder": str(tmp_path),
                 },

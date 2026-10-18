@@ -16,14 +16,26 @@ or browser New Ticket form. API and CLI creation remain available. A request to 
 still follows the ordinary Ticket workflow.
 
 Chief shows only its own children beside its conversation. Ordinary orchestrators retain
-their own children, including settled work. Scoped filters expose active, backlogged,
-completed, and retired Tickets. Chief results remain bounded and paginated. Each row
+their own children, including settled work. Scoped filters provide Active, Backlogged,
+and Done views. Chief results remain bounded and paginated. Each row
 opens the existing individual Ticket. Review and direct-message discovery remain separate.
 
 Backlog ticket on the Ticket page prevents automatic progression. Resume ticket restores
 ordinary readiness checks. Messages, proposals, approvals, assignment, history, and
 artifacts remain available. A delivered turn continues. Parent Settle remains independent.
 Backlog no longer means an unscheduled Ticket or an assignment change.
+
+Full workspace lists group every supplied backlogged Ticket under Backlog, including rows in
+Done history. The header follows the attention headers. A Ticket cannot
+also appear under an approval header in the same grouped list. Backlog uses normal
+rows, without extra review badges or explanations. Its header starts open and retains
+manual fold choices during page refreshes, like other unfinished groups.
+
+The existing discovery filters remain intact. Active and Backlogged exclude terminal
+Tickets. Done exposes completed work. The sidebar excludes all backlogged Tickets, including hover details and nested
+Messages under Settled. Its other existing filters remain intact. Exact unread conversation
+discovery remains independent of sidebar visibility and these grouped lists. Historical Day counts and Feedback
+labels keep their separate rules.
 
 ## Ideas
 
@@ -54,4 +66,4 @@ live in `src/planner/sprints/`.
 
 ---
 
-_Last verified: 2026-10-16._
+_Last verified: 2026-10-18._

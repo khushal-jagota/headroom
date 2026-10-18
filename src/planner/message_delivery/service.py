@@ -23,6 +23,7 @@ from planner.message_delivery.contracts import (
     MessageDeliveryResult,
     MessageRecordedToOwner,
 )
+from planner.message_delivery.logic.permissions import permits_supervisor_message
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -105,9 +106,7 @@ def _as_target(principal: Principal) -> authority.Target | None:
     return None
 
 
-def require_reach(
-    conn: sqlite3.Connection, caller: Principal, recipient: Principal
-) -> None:
+def require_reach(conn: sqlite3.Connection, caller: Principal, recipient: Principal) -> None:
     """Sending down the chain is acting on the recipient. Sending up is only speaking.
 
     Two principals in one chain can talk, in both directions. Standing above the
@@ -116,7 +115,9 @@ def require_reach(
     a Worker answering the Outcome that asked it something is speaking, and refusing that
     would make the reply every addressed prompt requires impossible to send.
 
-    Strangers are neither, and they refuse.
+    Existing ordinary orchestrator supervisors can also speak to one another. This
+    message-only permission grants no authority over either supervisor or its Tickets.
+    Other strangers are neither, and they refuse.
 
     Asked by the two routes that take a recipient from their caller, and it lives here so
     they ask the same question rather than two. It is not asked inside ``send_message``:
@@ -124,6 +125,10 @@ def require_reach(
     its own ceiling holder for help names a principal Panels addressed it to, which is not
     the caller reaching anywhere.
     """
+    if permits_supervisor_message(caller, recipient):
+        sprints_data.read_item(conn, caller.id)
+        sprints_data.read_item(conn, recipient.id)
+        return
     target = _as_target(recipient)
     if target is None:
         return
@@ -149,6 +154,7 @@ async def send_message(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
+    retain_created_conversation: bool = False,
 ) -> MessageDeliveryResult:
     """Send one text message to one resolved Panels conversation owner."""
     label = sender_label(ctx)
@@ -286,6 +292,7 @@ async def send_message(
                     recipient=recipient,
                     reply_requested=not is_reply,
                     required_sprint_item_id=item_id,
+                    retain_created_conversation=retain_created_conversation,
                 )
                 if sender.kind is PrincipalKind.owner and (
                     (current is None and delivered.conversation_id is not None)
@@ -308,6 +315,7 @@ async def send_message(
                         ),
                         principal=sender,
                         clock=clock,
+                        expected_configuration=item.supervisor_launch_configuration,
                     )
     else:
         raise PlannerError(

@@ -69,7 +69,7 @@ def test_worker_self_route_returns_detail_and_worker(tmp_path: Path) -> None:
     with TestClient(app) as client:
         created = client.post(
             "/api/tickets",
-            json={"title": "Coding work", "worker_type": "coding", "kickoff_note": "k"},
+            json={"title": "Coding work", "worker_type": "coding", "brief": "k"},
         )
         assert created.status_code == 200, created.text
         ticket_id = created.json()["id"]
@@ -95,11 +95,11 @@ def test_worker_self_route_ownership_validation_rejects_ambiguous_session(
     with TestClient(app) as client:
         first = client.post(
             "/api/tickets",
-            json={"title": "First", "worker_type": "coding", "kickoff_note": "k"},
+            json={"title": "First", "worker_type": "coding", "brief": "k"},
         ).json()
         second = client.post(
             "/api/tickets",
-            json={"title": "Second", "worker_type": "coding", "kickoff_note": "k"},
+            json={"title": "Second", "worker_type": "coding", "brief": "k"},
         ).json()
         _bind_session(db_path, first["id"], "duplicate_session")
         _bind_session(db_path, second["id"], "duplicate_session")

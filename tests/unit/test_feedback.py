@@ -52,7 +52,7 @@ def _create_ticket(
     body: dict[str, Any] = {
         "worker_type": "coding",
         "title": title,
-        "kickoff_note": "Agreed brief.",
+        "brief": "Agreed brief.",
     }
     if sprint_item_id is not None:
         body["orchestrator"] = {"kind": "sprint_item", "id": sprint_item_id}
@@ -97,6 +97,7 @@ def test_capture_list_use_dismiss_reopen_and_ticket_deletion(
         "title": "Improve the workspace",
         "stage": "needs_brief",
         "ticket_status": "awaiting_approval",
+        "conversation_signal": {"working": False, "message_for_owner": False},
         "awaiting_reply": False,
         "awaiting_answer": False,
         "awaiting_approval": True,

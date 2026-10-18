@@ -407,13 +407,20 @@ catalog stays fresh for 24 hours across a server restart. Catalogue refresh belo
 Backends screen with the rest of the machine state. A failed ordinary read keeps the saved
 picker value visible and offers a retry.
 
-The stored backend, model and reasoning are the Ticket's last-chosen values. They start
-as the Worker type's defaults and are kept up to date with what its conversation
-actually runs on, so a fresh conversation starts from where the last one ended.
+The stored backend, model and reasoning preserve the Ticket's selected variant and effort.
+Each turn resolves the current enabled model within that variant. Chief and ordinary
+orchestrators use the same rule, including after a server restart. Catalogue failures use
+the last known-good resolution when one exists. See
+[current models within a variant](conversation-system.md#current-models-within-a-variant).
 
-Chief settings use the same managed authority for Backend, Model, and Reasoning. A new Chief
-conversation is started on the then-current trio. An existing one continues on what it was
-started with, including after a server restart.
+On a fresh installation without model evidence, Ticket creation preserves its requested
+model and reasoning effort and reports unavailable resolution. It writes no invented
+catalogue or resolution. Available model evidence still enforces valid selections.
+The next turn follows the ordinary resolution rules.
+
+Saved choices can also be corrected without a Worker restart, including while the Ticket
+is idle or at a user-owned Stage. A correction changes launch choices only. It does not
+grant approval or advance work. See [model correction commands](cli.md#correct-saved-models).
 
 Access is not a launch setting and is never copied onto a Ticket. Every conversation runs
 under full access inside its workspace folder; how each backend realises that belongs to its
@@ -518,4 +525,4 @@ current user-owned Stage. No definition carries separate reconciliation capabili
 
 ---
 
-_Last verified: 2026-08-16._
+_Last verified: 2026-10-18._

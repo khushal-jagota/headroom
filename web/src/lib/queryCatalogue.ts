@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson } from "./api";
 import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
 import type { ConversationStartValues } from "./conversation/wire";
+import type { UsageDays, UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BoardResponse,
@@ -43,6 +44,11 @@ function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
 }
 
 export const queries = {
+  recordedUsage: (days: UsageDays, timezone: string) =>
+    jsonQuery<UsageSummary>(
+      ["recorded-usage", { days, timezone }],
+      `/api/conversation/usage/summary?days=${days}&timezone=${encodeURIComponent(timezone)}`
+    ),
   deploymentStatus: () =>
     jsonQuery<DeploymentStatus>(["deployment-status"], "/api/deployment-status"),
   vpsStatusSummary: () =>
@@ -53,7 +59,7 @@ export const queries = {
   orchestratorTicketSummaries: (principal: OrchestratorPrincipal, filter: OrchestratorChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
       ["tickets", "orchestrator", { principal, filter, offset, limit }],
-      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&orchestrator_kind=${principal.kind}${principal.kind === "sprint_item" ? `&orchestrator_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : filter === "retired" ? "&include_terminal=true&stage=cancelled" : ""}`
+      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&orchestrator_kind=${principal.kind}${principal.kind === "sprint_item" ? `&orchestrator_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : ""}`
     ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   feedback: () => jsonQuery<FeedbackResponse>(["feedback"], "/api/feedback"),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -132,9 +133,10 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
     assert result.status == "rolled_back"
     assert (current / "app" / "old").is_file()
     assert digest_app_artifact(current / "app") == prior_artifact_digest
-    assert json.loads((current / "app" / "manifest.json").read_text(encoding="utf-8"))[
-        "app_sha"
-    ] == SHA_A
+    assert (
+        json.loads((current / "app" / "manifest.json").read_text(encoding="utf-8"))["app_sha"]
+        == SHA_A
+    )
     assert events == [
         "stop",
         f"backup:{SHA_A}",
@@ -311,3 +313,70 @@ def _rewrite_artifact_digest(app: Path) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["artifact_digest"] = digest_app_artifact(app)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+@pytest.mark.parametrize("change", ["base", "sha", "digest", "copy", "first-copy", "same-base"])
+def test_gate_refuses_changed_proof_before_service_or_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """Existing recovery spies did not prove pre-mutation release proof binding."""
+    from planner.environments import deployment_gate
+    from planner.environments.deployment_gate_contracts import GateEvidence, ServedObservation
+
+    current = tmp_path / "current"
+    if change != "first-copy":
+        _app(current / "app", SHA_B if change == "same-base" else SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    (current / "data").mkdir(parents=True)
+    database = current / "data" / "planning.db"
+    database.write_text("db")
+    if change == "first-copy":
+        database.unlink()
+        database.parent.rmdir()
+    observation: ServedObservation = {
+        "current_root": str(current.resolve()),
+        "health_url": "http://unused/api/health",
+        "manifest_state": "missing",
+        "manifest": None,
+        "health": {"status": None, "body": None, "error": "ConnectError"},
+        "base_sha": None,
+    }
+    evidence: GateEvidence = {
+        "requested_sha": SHA_A if change == "sha" else SHA_B,
+        "artifact_digest": "0" * 64 if change == "digest" else digest_app_artifact(candidate),
+        "observation": observation,
+    }
+    monkeypatch.setattr(
+        deployment_gate,
+        "observe_served",
+        lambda *_: (
+            dict(observation, manifest="changed")
+            if change in {"base", "same-base"}
+            else observation
+        ),
+    )
+    if change in {"copy", "first-copy"}:
+        copytree = shutil.copytree
+
+        def swapped_copy(source: Path, destination: Path, *, symlinks: bool = False) -> Path:
+            monkeypatch.setattr(shutil, "copytree", copytree)
+            result = copytree(source, destination, symlinks=symlinks)
+            (destination / "web" / "dist" / "index.html").write_text("swapped")
+            _rewrite_artifact_digest(destination)
+            return result
+
+        monkeypatch.setattr(shutil, "copytree", swapped_copy)
+    events: list[str] = []
+    with pytest.raises(DeploymentError, match="(changed|differs|expected SHA)"):
+        deploy_app(
+            candidate_app=candidate,
+            current_root=current,
+            source_db=database,
+            backup=_recording_backup(events, tmp_path / "snapshot"),
+            restore=lambda _: None,
+            service=FakeService(events),
+            health=FakeHealth(events, {SHA_B}),
+            gate_evidence=evidence,
+        )
+    assert events == []
+    assert not list(current.glob(".app-*"))

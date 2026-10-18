@@ -39,19 +39,48 @@ One screen per part of the system:
   have Project and Settle above the title. Only the owner settles or reopens one.
   Existing orchestrators start active. Settlement does not change Worker eligibility.
 
-  Each active card shows the existing attention groups: Needs your approval, Needs your
-  answer, Yours, Messages, then Errored. The shared rule gives each Worker its first
-  applicable group. Holder-aware approval and the existing priority/creation ordering
-  remain. Priority is not displayed in the rail. Quiet children remain in the
-  orchestrator workspace and hover details. Empty orchestrators remain visible.
+  Each active card shows attention and ongoing work in the shared group order: Needs your
+  approval, Needs your answer, Yours, Errored, Agent, Waiting on Consequences,
+  Awaiting an agent's approval, then Other. Other is the sidebar name for the shared Empty
+  group. Done, Backlog, and Blocked stay outside this list, even if they carry
+  attention facts. Unread alone does not change a row’s category, order, or tone.
+  The rail omits the Messages group. The sidebar preserves all facts, global unread
+  discovery, and the shared classifier on other surfaces.
+  Empty cards say “Nothing in this list.” Priority is not displayed in the rail.
+
+  Attention rows are bright. Ongoing rows and their working spinners are dim.
+  Unread message dots stay bright and take precedence over working spinners.
+  Single-line titles clip before a reserved mark column. Existing category members keep
+  their displayed order across refreshes and selection. Entries and re-entries append
+  within their category. Orchestrator priority and creation order remain unchanged.
 
   A card opens its orchestrator. A row opens its Worker. The address preserves selection
   across reload and Back. Opening a detail pane never replaces rail classification.
   Hover lights the card edge and title. Worker rows retain the existing hover wash.
-  Single-line Worker titles clip before a reserved mark column. Hover or keyboard focus
-  supplies the full title and manifest stages. Orchestrator hover supplies its children
-  grouped by the existing rule, excluding Done. One panel swaps between targets without
-  a second delay. It stays inside the viewport and does not capture the pointer.
+  Fine pointers with hover capability reveal a popup after 200 milliseconds. Visible
+  keyboard focus reveals it immediately. Touch reveals it after a 400 millisecond hold.
+  Movement, release, or cancellation stops an unfinished hold. Taps and clicks select.
+  A completed hold suppresses its click. One popup swaps targets without another delay.
+
+  Worker popups show their orchestrator, full title, direct conversation mark, existing
+  concise recap, and one sentence from the served Worker manifest and current facts.
+  “Currently doing” requires an actual working signal. Idle Workers say “At” their stage.
+  Approval, answer, assignment, error, and blocked facts use their specific wording.
+  The popup has no stage ladder or named blockers. Recaps arrive through the existing
+  board and orchestrator projections, without detail requests or another transport.
+  Orchestrator popups show their existing concise body preview in a recessed recap.
+  Chief has no recap source, so its popup states only the eligible Ticket count.
+  Empty orchestrator recaps use that same factual fallback. The panel stays
+  inside the viewport and does not capture the pointer.
+
+  Rows, headings, and cards move from measured old positions to new positions. Cross-group
+  moves take 360–560 milliseconds according to distance. A new row opens space before
+  its fade. An exit fades before its space closes. Moving surfaces stay opaque, and the
+  travelling row and its card stay above their neighbors. Row and spinner colors blend
+  across group changes. Structural updates wait while a pointer rests on a Worker row.
+  Exact conversation signals and their conversation IDs stay live during that wait.
+  Updates stay serial and retain the latest pending answer. Reduced motion stops CSS
+  animation and scripted travel, including travel already in progress.
 
   The rail defaults to `clamp(17rem, 22vw, 20rem)`. Its edge resizes from 232 to 520
   pixels with a pointer or arrow keys. Double click resets it. The preference persists
@@ -63,14 +92,23 @@ One screen per part of the system:
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
 
-  Unfinished groups on the orchestrator page start open. Done and Cancelled start closed.
+  In full workspace lists, backlogged Tickets use one Backlog header after the attention headers and before Agent.
+  This rule applies to every backlogged Ticket supplied to the shared presentation,
+  including terminal history. Backlog uses normal rows and starts open. It does not
+  add review badges or explanations. Approval, reviewer, message, and readiness facts
+  remain independent. Resume restores ordinary classification and readiness checks.
+  The sidebar excludes Backlog without changing the shared classifier or unread index.
+  The existing history filters still determine which Tickets reach full lists.
+  Historical Day counts and Feedback labels keep their separate rules.
+
+  Unfinished groups on the orchestrator page start open. Done starts closed.
   Manual choices survive ordinary data refreshes in that page, including a group that
   disappears and returns. They do not persist across visits. These rounded group headers
   show ordinary Worker counts without unread suffixes. The unread facts and row dots
   remain independent.
 
   Settled orchestrators keep their own rows below the fold header. Their own rows can show
-  their own unread supervisor message dot. A child message never marks its parent.
+  their exact supervisor conversation marks. A child message never marks its parent.
   Other closed message folds expose distinct unread-conversation counts as text and
   retain an expand control. The Messages group ignores settlement. Each unread Worker, supervisor, or
   Chief conversation has its own linked row and dot. Workers retain quiet parent
@@ -79,13 +117,22 @@ One screen per part of the system:
   discoverable again without reopening an orchestrator. Counts describe conversations,
   not individual messages or repeated appearances of the same conversation.
 
-  Every Worker dot means an unread owner message in that exact conversation. Approval,
-  pending questions, assignment, running state, errors, and child activity never create
-  a dot. Conversation spinners and failure diamonds retain their separate meanings.
+  Worker, supervisor, and Chief rows, pages, and hover popups share the same pair of
+  exact-conversation marks. A spinner means that conversation is working. A dot means
+  an explicit message sent to the owner remains unread in that conversation. Both can
+  appear together. Ending a turn stops the spinner and never creates a dot. Approval,
+  questions, assignment, errors, and child activity create neither mark. Missing signal
+  data stays quiet. Historical Day, Sprint, and Feedback references use these same marks
+  when their served record includes the conversation signal. Lifecycle progress stays
+  separate from conversation marks.
   Fold summaries use text counts, never aggregate dots. Status group membership and
   ordering remain unchanged, including precedence for unread completed Workers.
 
-  The Chief of Staff keeps its separate conversation mark. A browser with no saved lens
+  An open hover popup resolves its Worker, supervisor, or Chief from the latest query
+  records by identity, so its marks and child rows refresh while it stays open. Settling
+  an orchestrator changes its location without changing either conversation fact.
+
+  The Chief of Staff keeps its own exact conversation marks. A browser with no saved lens
   choice opens in Focus. Focus shows the owner's prompts, explicit messages to the owner,
   permission requests, agent questions, and their settled answers. Failed turns, stopped turns,
   and missing explicit replies remain visible as compact system rows. Full shows every
@@ -144,13 +191,13 @@ One screen per part of the system:
 
   Steps and Artifacts are closed bands below the live card. Steps retain their circular progress marks. Each step opens its own
   text. Future stages, guidance, and a separate historical record do not appear.
-  Cancelled planning work retains truthful historical content without actionable
-  approval controls. Artifacts remain accessible even when no inline link exists,
+  Artifacts remain accessible even when no inline link exists,
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
+  Backlog and Resume remain the deferral controls.
 - **Orchestrator** — project and parent navigation, title, recap, and a Settle control
   above closed Worker bands. Worker rows show title and an exact-conversation dot.
-  Hover or keyboard focus reuses the rail's stage panel. Groups keep the shared names
+  Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
   and order, including exceptional states. The local page omits only the duplicate
   Messages group: unread Workers appear in their ordinary group with their own dot.
   Global Messages and rail discovery remain unchanged. Closed group headers include
@@ -159,7 +206,7 @@ One screen per part of the system:
 - **Historical Sprint** — retained dated links and documents remain readable. These
   screens do not supply planning or change Worker continuation. See `sprints.md`.
 - **Chief children** — the existing Chief workspace provides a scoped, bounded child
-  section with active, backlogged, completed, and retired views. It reuses the child
+  section with Active, Backlogged, and Done views. It reuses the child
   groups and rows. Ordinary orchestrators retain their own scoped children and filters.
   The standalone Workers page is removed. Former `#/backlog` addresses redirect to
   Workspace. Project facts remain text. The browser New Ticket form and global
@@ -184,6 +231,17 @@ One screen per part of the system:
   Schedule creation, edits, disable behavior, and retired-type restrictions remain.
   Notification preferences and browser permission behavior remain. Settings does not
   change feature authority or introduce another configuration framework.
+
+  Config shares Usage's restrained rows and section spacing. Its Agents list opens
+  launch defaults and role skills. Its Workers list shows the actual number of Stages
+  from each supported manifest, in two columns on desktop and one on compact screens.
+  The Usage Config tab mounts this same Config component, with links that stay under
+  Usage. Settings retains its Config section and links back to Usage.
+
+  Config details retain the shared launch picker, per-Stage owner controls, and skill
+  editors. Owner writes remain serialized whole-record updates. Each skill field saves
+  independently, and a failed save retains its error and retry behavior. These screens
+  use the existing owner-only endpoints and preserve candidate specialist skills.
 
 The workspace keeps its resize handle within its own visual layer. Open shell menus
 cover that handle and receive pointer actions above it. The handle keeps its pointer
@@ -217,24 +275,44 @@ waits. It checks the server identity again when composition becomes inactive, th
 applies the requested update. The push-only service worker and its subscription remain
 in place across this page reload.
 
-**Backends** at `#/backends` shows the conversation backends installed on this machine,
-their account and model facts, and any update Panels can run. Hermes shows its version
-and model catalogue without update discovery or an update action. The first catalogue
-paints before the page refreshes catalogue and Codex and Claude update advice in the
-background. An ordinary
-cached read remains immediate during that work. The page's **Refresh** action reads Codex
-and Claude usage only, then uses the current backend catalogues. A successful refresh
-shows each provider window as its remaining percentage, reset time, and
-observation time. The backend source still reports the used percentage. The shared
-ring derives the remaining value and empties counter-clockwise from the top as the
-allowance falls. One provider failure does not discard the other's new answer. Hermes
-has no usage source. Codex uses its app-server rate-limit read, so Refresh starts no
-model turn and consumes no allowance.
+**Usage** at `#/backends` offers Tokens, Cost, Limits, and Config as tabs. The explicit
+addresses are `#/backends/tokens`, `#/backends/cost`, `#/backends/limits`, and
+`#/backends/config`. Limits opens first. It retains Codex and Claude identity, sign-in,
+model controls, supported updates, and a backend filter. Hermes does not appear on Usage.
+Config index and detail addresses retain the Usage header and tab strip. They use the
+same Config editor as Settings, and detail links survive reloads. The Config tab does not
+load usage records or allowance-page backend snapshots. Its shared model picker retains
+its metadata reads. The first Limits visit reads its cached backend facts.
+Allowance cards show the percentage left at observation, reset time, and observation
+time. Cards mark snapshots that expired before the page's last check as cached and
+leave current allowance unavailable.
 
-The shared model picker offers the same Refresh action beside Reasoning. It replaces
-the picker owner's backend snapshots with that same refresh response, so model choices
-and usage rings update together. The picker stays open while it reads and reports a
-provider or transport failure in its existing feedback line.
+Tokens and Cost show local Codex and Claude activity, including work outside Panels.
+They offer 24-hour, 7-day, 30-day, and 90-day periods in the browser's time zone.
+The chart and breakdown show observed hours or days, provider totals, and model details.
+Unknown values display as a dash. Unrecorded intervals remain chart gaps.
+
+The coverage fold exposes partial sources, import progress, and unavailable prices.
+Cost follows T3's model-price calculations and prefers source-reported USD where present.
+Its breakdown includes input, cache, output, cache savings, and observed speed premiums.
+Unknown model prices remain unpriced. The stored price snapshot and source-reported
+amounts remain distinct in the API and evidence.
+
+Ordinary reads and period changes use stored answers. The page's **Refresh** starts
+provider allowance reads and a bounded local record import independently. Imports resume
+across files and providers after a read budget ends. Price refresh uses a stored catalogue
+with T3's cache interval. Either source
+keeps its previous records when its refresh fails. Opening Limits paints cached
+backend facts before catalogue and supported update advice refresh in the background.
+The [conversation system](conversation-system.md#recorded-local-usage) owns source and
+counting rules.
+
+The shared model picker keeps its allowance rings and Refresh action beside Reasoning.
+Its refresh reads provider allowances only and replaces the picker's backend snapshots.
+The picker stays open and reports failures in its existing feedback line.
+
+_Usage code paths:_ `web/src/routes/BackendsRoute.svelte`, `web/src/components/usage/`,
+and `web/src/lib/conversation/recordedUsageWire.ts`.
 
 ## The two rules that shape it
 
@@ -412,7 +490,8 @@ hand-rolling the same shapes per screen. Each does one job:
   screens: editable proposal, reviewer heading, Approve, and send-back action. Approve
   opens the existing compact ceiling/reviewer rail directly; there is no adjacent
   ceiling control. The reviewer heading opens the same picker for reviewer-only
-  routing. A new proposal revision resets the draft; an unrelated refresh preserves it.
+  routing. A Ticket reviewer is labelled Worker, distinct from its assigned Orchestrator.
+  A new proposal revision resets the draft; an unrelated refresh preserves it.
   Review supplies its existing voice revision box through the card.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the priority control on a Brief, the approval control, and the send-back box. It is named by a
@@ -441,6 +520,13 @@ hand-rolling the same shapes per screen. Each does one job:
   restores it across the full supported file-size range.
   Its delivery control defaults to Steer and also offers Queue and Send now. A held row
   names why Panels queued a steer fallback.
+
+  The textarea grows with its content. Its height stops at the smaller of 44% of the
+  conversation pane or 12 lines, rounded down to whole lines, then scrolls internally.
+  Pending pictures and files share one horizontal strip in attachment order. Pictures
+  show thumbnails; files show their type, name, and size. The footer keeps one row at
+  phone widths, with a truncated model name and equal-height controls. Stop keeps its
+  transparent background and error-colored outline. Send is the only filled control.
 
   The pane's options menu, under the `⋯` control in its head, holds New conversation and,
   for a screen that keeps earlier conversations, the picker that opens one. Nothing is
@@ -487,7 +573,8 @@ The Worker page uses the same ceiling/reviewer control while running or waiting.
 A pending proposal no longer locks its stage half. The compact panel shows only the existing ceiling/reviewer rail and choices. Approval uses the visible
 proposal revision as an atomic freshness check. A changed or rerouted proposal must
 be read again before approval. Existing CLI accept callers remain compatible.
-User-owned stages still require explicit review, even below the ceiling.
+Historical pending proposals still require an explicit decision, including those below
+the ceiling. New answers settle below the ceiling regardless of Stage ownership.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each
@@ -534,4 +621,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-09-15._
+_Last verified: 2026-10-18._

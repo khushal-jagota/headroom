@@ -219,6 +219,9 @@ def backup_current(source_db: Path, backup_dir: Path, current_app: Path) -> None
     type=click.Path(path_type=Path, dir_okay=False),
 )
 @click.option("--deployment-id")
+@click.option(
+    "--gate-evidence", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True
+)
 def app_deploy(
     candidate_app: Path,
     current_root: Path,
@@ -230,6 +233,7 @@ def app_deploy(
     lock_path: Path | None,
     lifecycle_path: Path | None,
     deployment_id: str | None,
+    gate_evidence: Path,
 ) -> None:
     """Hard-cut over the deployed app with a verified snapshot and full recovery."""
     if (lifecycle_path is None) != (deployment_id is None):
@@ -259,7 +263,13 @@ def app_deploy(
         )
 
     try:
+        from planner.environments.deployment_gate import read_gate_evidence
+
+        evidence = read_gate_evidence(gate_evidence)
+        if evidence["observation"]["health_url"] != health_url:
+            raise ValueError("gate evidence health URL differs from deployment health URL")
         result = deploy_app(
+            gate_evidence=evidence,
             candidate_app=candidate_app,
             current_root=current_root,
             source_db=source_db,

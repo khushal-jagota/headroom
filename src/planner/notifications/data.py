@@ -297,8 +297,7 @@ def _reconcile_attention(conn: sqlite3.Connection) -> None:
                 stage=str(row["stage"]),
                 worker_type=str(row["worker_type"]),
             ),
-            "errored": facts.ticket_status is TicketStatus.errored
-            or (conversation.errored and str(row["stage"]) != "cancelled"),
+            "errored": facts.ticket_status is TicketStatus.errored or conversation.errored,
         }
         for notification_type, active in flags.items():
             occurred_at = (
@@ -403,9 +402,7 @@ def _queue_attention_deliveries(conn: sqlite3.Connection, now: int) -> int:
         )
         intent = decide_notification(
             edge,
-            enabled=preferences.get(
-                (_preference_subject_key(edge), edge.notification_type), False
-            ),
+            enabled=preferences.get((_preference_subject_key(edge), edge.notification_type), False),
         )
         if intent is not None:
             for subscription_id in subscriptions:

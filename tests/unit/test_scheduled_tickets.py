@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -223,12 +224,16 @@ def test_schedule_model_disabled_after_save_fails_once_without_ticket(
     failed_schedule_id = _schedule(tmp_db, template=template)
     saved_schedule = data.read_schedule(tmp_db, failed_schedule_id)
     write_model_enablement(tmp_db, backend, profile.default_model, False)
+    tmp_db.execute(
+        "INSERT OR REPLACE INTO model_variant_resolutions VALUES (?,?,?,?,?)",
+        ("codex", "astra", "gpt-6-astra", '["medium", "high"]', int(time.time())),
+    )
     enabled_schedule_id = _schedule(
         tmp_db,
         template=replace(
             _template(title="Enabled override occurrence", worker_type="exploration"),
             employee_backend=str(backend),
-            employee_launch_model="enabled-override-model",
+            employee_launch_model="gpt-6-astra",
         ),
     )
     now = _now("2026-07-28T14:30:00")
@@ -248,8 +253,7 @@ def test_schedule_model_disabled_after_save_fails_once_without_ticket(
     created = data.list_occurrences(tmp_db, enabled_schedule_id)[0]
     assert created.ticket_id is not None
     assert (
-        tickets_data.read_ticket(tmp_db, created.ticket_id).employee_launch_model
-        == "enabled-override-model"
+        tickets_data.read_ticket(tmp_db, created.ticket_id).employee_launch_model == "gpt-6-astra"
     )
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
     assert tmp_db.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 0
@@ -266,26 +270,51 @@ def test_schedule_model_disabled_after_save_fails_once_without_ticket(
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
 
 
-def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(
+def test_cold_runtime_preserves_stored_choice_and_restart_safe_receipt(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     db_path = tmp_path / "scheduled-loop.db"
     conn = connect(str(db_path))
     create_schema(conn)
-    _schedule(conn)
+    schedule_id = _schedule(
+        conn,
+        template=replace(
+            _template(), employee_backend="codex", employee_launch_model="gpt-6-sol",
+        ),
+    )
+    stored_schedule = data.read_schedule(conn, schedule_id)
+    assert conn.execute("SELECT count(*) FROM model_catalogue_models").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM model_variant_resolutions").fetchone()[0] == 0
     conn.close()
-    clock = MutableClock(_now("2026-07-28T14:30:00"))
+    caplog.clear()
+    clock = MutableClock(_now("2026-07-28T14:29:59"))
 
+    # The ordinary synchronous loop needs no provider preparation for a first occurrence.
     first_loop = ScheduledTicketLoop(str(db_path), clock, boundary_hour=5)
-    second_loop = ScheduledTicketLoop(str(db_path), clock, boundary_hour=5)
+    assert first_loop.poll_once() == []
+    clock.set(_now("2026-07-28T14:30:00"))
     first = first_loop.poll_once()
+    second_loop = ScheduledTicketLoop(str(db_path), clock, boundary_hour=5)
     second = second_loop.poll_once()
 
     assert first[0].outcome is OccurrenceOutcome.created
     assert second == first
+    assert "resolution unavailable" in caplog.text
+    # A restart after the next day's due minute does not replay a missed occurrence.
+    clock.set(_now("2026-07-29T14:31:00"))
+    assert second_loop.poll_once() == []
     check = connect(str(db_path))
     try:
+        assert first[0].ticket_id is not None
+        ticket = tickets_data.read_ticket(check, first[0].ticket_id)
+        assert ticket.employee_backend == "codex"
+        assert ticket.employee_launch_model == "gpt-6-sol"
+        assert data.read_schedule(check, schedule_id) == stored_schedule
+        assert data.list_occurrences(check, schedule_id) == first
         assert check.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
         assert check.execute("SELECT count(*) FROM scheduled_ticket_occurrences").fetchone()[0] == 1
+        assert check.execute("SELECT count(*) FROM model_catalogue_models").fetchone()[0] == 0
+        assert check.execute("SELECT count(*) FROM model_variant_resolutions").fetchone()[0] == 0
     finally:
         check.close()

@@ -23,12 +23,28 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Protocol
+from typing import Final, Protocol, TypedDict
 
 from planner.conversation.message_content import MessageContent
 from planner.core.contracts import ErrorCode, PlannerError, Principal
 
 type ConversationMessageContent = MessageContent | Callable[[str], Awaitable[MessageContent]]
+
+
+class ConversationSignal(TypedDict):
+    """Independent marks for actual work and an unread explicit owner message."""
+
+    working: bool
+    message_for_owner: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationAttention:
+    """An exact conversation's signal and existing ask/error attention facts."""
+
+    signal: ConversationSignal
+    awaiting_answer: bool
+    last_turn_failed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +291,7 @@ class PromptDeliveryRefusalReason(StrEnum):
 
     no_such_conversation = "no_such_conversation"
     backend_did_not_start = "backend_did_not_start"
+    model_resolution_failed = "model_resolution_failed"
     session_did_not_load = "session_did_not_load"
     write_to_backend_failed = "write_to_backend_failed"
     no_running_turn_to_steer_into = "no_running_turn_to_steer_into"
@@ -546,12 +563,15 @@ class ConversationSystem(Protocol):
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Run the canonical send and expose replay freshness to addressed-send wiring.
 
         Ordinary callers use ``send`` and receive only the stable public fate. This
         receipt exists so Send Message can credit a reply only for the first accepted
         delivery of a sender-minted message id.
+        A caller that retains a refused initial message sets ``record_refusal`` and
+        supplies a sender message id. Its refusal remains visible in the conversation.
         """
         ...
 

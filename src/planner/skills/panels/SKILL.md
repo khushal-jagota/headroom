@@ -75,8 +75,8 @@ recovery rules. Do not invent another activation gate or retire ordinary unfinis
 
 Useful ordinary daily schedules remain. They use local calendar dates, preserve durable
 occurrence receipts, and do not create Days. Old planning schedules are retired without
-replacement. Historical proposals remain readable but cancelled Workers cannot receive
-actionable approvals.
+replacement. Existing personal Tickets keep their ordinary Stage gates. Backlog pauses
+a Ticket; Delete removes its record.
 
 ## The CLI
 

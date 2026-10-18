@@ -15,6 +15,7 @@
   } from "../lib/lifecycle";
   import { holderLabelFor } from "../lib/ceilingHolder";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
+  import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
@@ -371,6 +372,7 @@
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               />
+              <ConversationSignalMark signal={detail.conversation_signal} conversationId={detail.conversation_id} />
             </div>
             <ClampedText
               contentKey={detail.recap}
@@ -424,7 +426,7 @@
             {@const history = workerPageHistory(lc, detail)}
             {@const completedFields = history.completed}
             {@const occurredFields = history.fields}
-            {#if detail.stage !== "cancelled" && currentField}
+            {#if currentField}
               <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
@@ -457,15 +459,13 @@
             {/if}
             <div class="worker-bands">
               <details class="worker-steps" data-stage-fold>
-                <summary data-stage-fold-open>Steps<span class="band-count">{completedFields.length} of {lc.fieldIds.filter((name) => name !== "retirement").length} done</span></summary>
+                <summary data-stage-fold-open>Steps<span class="band-count">{completedFields.length} of {lc.fieldIds.length} done</span></summary>
                 <div class="worker-step-rows">
                   {#each occurredFields as name (`${detail.id}:${name}`)}
-                    {@const stageState = detail.stage === "cancelled" ? (completedFields.includes(name) ? "completed" : "current-waiting") : fieldStageVisualStateFor(lc, detail, name)}
-                    <TicketStageSection {name} value={detail.stage === "cancelled" && history.historicalProposal?.field === name
-                      ? `${detail.field_values[name] || ""}\n\nHistorical proposal (not approved):\n\n${history.historicalProposal.body}`
-                      : detail.field_values[name] ?? ""}
+                    {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
+                    <TicketStageSection {name} value={detail.field_values[name] ?? ""}
                       {stageState} lifecycle={lc} ticketStage={detail.stage}
-                      emptyText={emptyTicketFieldText} editableValue={detail.stage !== "cancelled"}
+                      emptyText={emptyTicketFieldText} editableValue={true}
                       editableCurrentValue={false} readerLeftItOpen={readerStageFolds.get(name) ?? false}
                       onReaderToggle={(open) => readerStageFolds.set(name, open)}
                       runLabel={name === currentField ? currentStageRunLabel(detail) : null}
@@ -521,7 +521,7 @@
   .ticket-head { padding-top:48px; }
   .worker-eyebrow { line-height:1.6; display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .ticket-title-row { display:block; margin-top:var(--space-3); }
-  .ticket-title { font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
+  .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
   .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
   .ticket-head :global([data-recap]) { margin-top:var(--space-3); max-width:66ch; font-family:var(--font-ui); font-size:17px; line-height:1.6; color:var(--text-faint); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }

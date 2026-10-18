@@ -28,7 +28,6 @@ COMMAND_ROUTES = (
         "/tickets/{ticket_id}/request-help",
         "/tickets/{ticket_id}/backlog",
         "/tickets/{ticket_id}/resume",
-        "/tickets/{ticket_id}/retire",
         "/tickets/{ticket_id}/move",
     ),
     *_routes("PATCH", "Ticket navigation metadata", "/tickets/{ticket_id}"),
@@ -83,6 +82,10 @@ COMMAND_ROUTES = (
     ),
     *_routes("POST", "Worker definition registry", "/worker-types"),
     *_routes(
+        "POST", "Corrections of existing navigation-affecting launch bindings",
+        "/conversation/model-corrections/apply",
+    ),
+    *_routes(
         "PUT", "Worker definitions and launch bindings", "/workers/{worker_type}/launch-defaults"
     ),
     *_routes("PATCH", "Worker definition requirements", "/workers/{worker_type}/requirements"),
@@ -132,6 +135,8 @@ EXCLUDED_COMMAND_ROUTES = (
         "POST",
         "Backend catalogue, usage and login configuration",
         "/conversation/backends/refresh",
+        "/conversation/model-corrections/preview",
+        "/conversation/usage/refresh",
         "/conversation/backends/{backend_key}/update",
         "/conversation/backends/{backend_key}/sign-in",
     ),

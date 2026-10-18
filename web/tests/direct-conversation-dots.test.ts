@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { conversationSignalPresentation } from "../src/lib/conversationSignalPresentation";
+import { conversationSignalReading } from "./support/conversationSignalReading";
 import { dayActionTiles, dayVisualTicket } from "../src/lib/dayPresentation";
-import { feedbackTicketStageState } from "../src/lib/feedback";
-import { sprintTicketCondition } from "../src/lib/sprintPresentation";
-import { workItemActivityMark, workItemTicketGroupKey } from "../src/lib/workItemPresentation";
-import { workspaceSprintItemRowMark } from "../src/lib/workspaceRail";
+import { workItemTicketGroupKey } from "../src/lib/workItemPresentation";
+import { buildWorkspaceRail } from "../src/lib/workspaceRail";
+import type { BoardSprintItem } from "../src/lib/types";
 import type { DayTicket, WorkAttention } from "../src/lib/types";
 
 const quiet: WorkAttention = {
@@ -24,17 +23,13 @@ const combinations = [false, true].flatMap((awaiting_reply) =>
 ;
 
 describe("conversation dots across Worker references", () => {
-  it.each(combinations)("uses only awaiting_reply for %o", (facts) => {
+  it.each(combinations)("does not infer marks from legacy attention %o", (facts) => {
     const ticket = {
       ...facts, id: "t_message", title: "Message", priority: "P1" as const,
       stage: "needs_implementation", ticket_status: "agent", conversation_id: null
     };
-    const state = facts.awaiting_reply ? "current-awaiting-approval" : null;
-    expect(conversationSignalPresentation(facts)?.state ?? null).toBe(state);
-    expect(workItemActivityMark(facts)).toBe(facts.awaiting_reply ? "reply" : null);
-    expect(sprintTicketCondition(ticket).mark).toBe(state);
-    expect(feedbackTicketStageState(ticket)).toBe(state);
-    expect(dayVisualTicket(ticket as DayTicket).state).toBe(state);
+    expect(conversationSignalReading(ticket)).not.toContain("data-conversation-signal");
+    expect(dayVisualTicket(ticket as DayTicket).ticket.conversation_signal).toBeUndefined();
     expect(workItemTicketGroupKey(ticket)).toBe(
       facts.awaiting_approval ? "awaiting_approval" :
       facts.awaiting_answer ? "awaiting_answer" :
@@ -43,11 +38,13 @@ describe("conversation dots across Worker references", () => {
     );
   });
 
-  it("never rolls child messages, approval, questions, running, or error into a supervisor dot", () => {
-    for (const child of combinations) {
-      expect(workspaceSprintItemRowMark({ ...quiet, ticket_rollup: child } as WorkAttention)).toBeNull();
-      expect(workspaceSprintItemRowMark({ ...quiet, awaiting_reply: true, ticket_rollup: child } as WorkAttention)).toBe("reply");
-    }
+  it("keeps the supervisor canonical signal separate from children and legacy attention", () => {
+    const own = { working:true, message_for_owner:true };
+    const item = {id:"item",title:"Item",recap_preview:"",priority:"P2",created_at:1,tickets:[],conversation_id:"own",
+      ...quiet, awaiting_reply:false, conversation_signal:own,ticket_rollup:{...quiet,awaiting_reply:true}} as BoardSprintItem;
+    expect(buildWorkspaceRail([], [item]).items[0].conversationSignal).toEqual(own);
+    delete item.conversation_signal;
+    expect(buildWorkspaceRail([], [item]).items[0].conversationSignal).toBeUndefined();
   });
 
   it("keeps Home action counts when dots disappear or coexist with work", () => {
@@ -61,7 +58,7 @@ describe("conversation dots across Worker references", () => {
       visual("assigned", { assigned: true }),
       visual("message", { awaiting_reply: true })
     ];
-    expect(tickets.map((ticket) => ticket.state)).toEqual([null, null, null, null, "current-awaiting-approval"]);
+    expect(tickets.every((ticket) => !ticket.ticket.conversation_signal)).toBe(true);
     expect(dayActionTiles(tickets).map((tile) => [tile.key, tile.count])).toEqual([
       ["needs-me", 2], ["review", 1], ["working", 1], ["assigned", 1]
     ]);

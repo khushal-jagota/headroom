@@ -50,7 +50,11 @@ def test_additive_upgrade_second_open_and_rebuild_preserve_witnesses(
         is None
     )
     db.create_schema(conn)
-    assert snapshot(conn) == before
+    after = snapshot(conn)
+    assert after["scope"] == before["scope"]
+    assert after["records"] == before["records"]
+    assert after["epoch"] != before["epoch"]
+    assert after["revision"] == "0"
     with capture_command_commits(str(tmp_path / "synthetic.db")) as capture:
         insert_project(conn, "after")
     fence = response_fence(conn, capture)
@@ -131,5 +135,9 @@ def test_failed_additive_migration_rolls_back_storage(
         "compact_navigation_lifecycle"
     )
     db.create_schema(conn)
-    assert snapshot(conn) == before
+    after = snapshot(conn)
+    assert after["scope"] == before["scope"]
+    assert after["records"] == before["records"]
+    assert after["epoch"] != before["epoch"]
+    assert after["revision"] == "0"
     conn.close()

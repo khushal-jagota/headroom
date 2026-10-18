@@ -35,6 +35,7 @@ from planner.cli.record_projection import (
 )
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.maintenance.cli import maintenance as maintenance_group
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets.contracts import TicketLocale
 from planner.worker_types.contracts import BRIEF_FIELD_ID
@@ -301,8 +302,6 @@ def _ticket_record(
     parts = {
         field["id"]: part(data["field_values"].get(field["id"])) for field in manifest["fields"]
     }
-    if "retirement" in data["field_values"]:
-        parts["retirement"] = part(data["field_values"]["retirement"])
     parts["proposal"] = part(data.get("pending_proposal"))
     parts["recap"] = part(data.get("recap", ""))
     parts["guidance"] = part(data.get("guidance", ""))
@@ -508,6 +507,7 @@ def main() -> None:
 
 
 main.add_command(environment_group)
+main.add_command(maintenance_group)
 environment_group.hidden = True
 
 
@@ -1284,9 +1284,9 @@ def ticket_create(
     if kickoff_note is not None and kickoff_note_file is not None:
         http.fail_validation("kickoff note accepts only one note option", as_json)
     if kickoff_note_file is not None:
-        body["kickoff_note"] = _read_source(kickoff_note_file, as_json)
+        body["brief"] = _read_source(kickoff_note_file, as_json)
     elif kickoff_note is not None:
-        body["kickoff_note"] = kickoff_note
+        body["brief"] = kickoff_note
     if priority is not None:
         body["priority"] = priority
     if deadline is not None:
@@ -1374,27 +1374,6 @@ def ticket_resume(ticket_id: str | None, expected_record_sha256: str | None, as_
         json_body=_drop_none({"expected_record_sha256": expected_record_sha256}),
     )
     http.emit(data, as_json, "Ticket resumed.")
-
-
-@ticket.command("retire")
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--reason", required=True, help="Why this Ticket ends without success.")
-@click.option(
-    "--expected-record-sha256", default=None, help="Refuse if this stored record changed."
-)
-@json_option
-def ticket_retire(
-    ticket_id: str | None, reason: str, expected_record_sha256: str | None, as_json: bool
-) -> None:
-    """Retire a Ticket without declaring completion."""
-    tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send(
-        "POST",
-        f"/api/tickets/{tid}/retire",
-        as_json=as_json,
-        json_body=_drop_none({"reason": reason, "expected_record_sha256": expected_record_sha256}),
-    )
-    http.emit(data, as_json, "Ticket retired.")
 
 
 @ticket.command("delete")
@@ -2070,7 +2049,33 @@ def sprint_item_create(
     if priority is not None:
         body["priority"] = priority
     data = http.send("POST", "/api/items", as_json=as_json, json_body=body)
-    http.emit(data, as_json, f"{data['id']}")
+    item_id = data["id"]
+    startup = data.get("startup")
+    human_result = f"Created orchestrator {item_id}."
+    if startup is None:
+        human_result += " Idle (no brief)."
+    else:
+        fate = startup["fate"]
+        human_result += f" Startup {fate}."
+        if fate == "queued" and startup.get("queue_position") is not None:
+            human_result += f" Queue position: {startup['queue_position']}."
+        if fate in {"refused", "uncertain", "failed"}:
+            reason = startup.get("refusal_reason") or startup.get("error")
+            if reason:
+                human_result += f" {reason}"
+            human_result += (
+                f"\nThe orchestrator is saved. Inspect: panels orchestrator show {item_id}"
+            )
+            if fate in {"uncertain", "failed"}:
+                human_result += (
+                    "\nCheck its conversation before any resend. Do not create it again."
+                )
+            else:
+                human_result += (
+                    f"\nRetry on this orchestrator: panels send-message --sprint-item {item_id}"
+                    ' --message "<brief>"'
+                )
+    http.emit(data, as_json, human_result)
 
 
 @sprint_item.command("list")
@@ -2741,6 +2746,60 @@ for _retired in ("create", "set", "add-item", "remove-item", "carry-item"):
 for _retired in ("add", "remove", "carry"):
     sprint_outcome.commands.pop(_retired, None)
 main.add_command(sprint_item, "orchestrator")
+
+
+@main.group("model-corrections", hidden=True)
+def model_corrections() -> None:
+    """Preview and correct saved models without a message or restart."""
+
+
+@model_corrections.command("preview")
+@click.option("--ticket", "ticket_ids", multiple=True)
+@click.option("--orchestrator", "orchestrator_ids", multiple=True)
+@click.option("--chief", is_flag=True)
+@click.option("--worker-default", "worker_types", multiple=True)
+@json_option
+def model_corrections_preview(
+    ticket_ids: tuple[str, ...],
+    orchestrator_ids: tuple[str, ...],
+    chief: bool,
+    worker_types: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    targets = [
+        {"kind": kind, "id": identifier}
+        for kind, identifiers in (
+            ("ticket", ticket_ids),
+            ("orchestrator", orchestrator_ids),
+            ("worker-default", worker_types),
+        )
+        for identifier in identifiers
+    ]
+    if chief:
+        targets.append({"kind": "chief", "id": "chief"})
+    if not targets:
+        http.fail_validation("select at least one correction target", as_json)
+    result = http.send(
+        "POST",
+        "/api/conversation/model-corrections/preview",
+        as_json=as_json,
+        json_body={"targets": targets},
+    )
+    http.emit(result, as_json, json.dumps(result, indent=2))
+
+
+@model_corrections.command("apply")
+@json_option
+def model_corrections_apply(as_json: bool) -> None:
+    """Read the complete preview JSON from stdin and compare before each write."""
+    try:
+        preview = json.load(sys.stdin)
+    except ValueError:
+        http.fail_validation("stdin must contain the complete preview JSON", as_json)
+    result = http.send(
+        "POST", "/api/conversation/model-corrections/apply", as_json=as_json, json_body=preview
+    )
+    http.emit(result, as_json, json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

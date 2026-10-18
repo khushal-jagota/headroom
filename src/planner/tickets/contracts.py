@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal, Required, TypedDict
 
+from planner.conversation.contracts import ConversationSignal
 from planner.core.contracts import JsonDict, Principal, Priority
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
@@ -90,6 +91,7 @@ class BoardCardSource(TypedDict):
 
     id: str
     title: str
+    recap_preview: str
     priority: str
     deadline: str | None
     project_id: str | None
@@ -119,6 +121,8 @@ class BoardCardSource(TypedDict):
 class BoardCard(BoardCardSource, WorkAttention):
     """The complete Ticket projection returned to the Workspace rail."""
 
+    conversation_signal: ConversationSignal
+
 
 class BoardSprintItemSource(TypedDict):
     """A represented Sprint Item and its complete children before live attention.
@@ -129,6 +133,7 @@ class BoardSprintItemSource(TypedDict):
 
     id: str
     title: str
+    recap_preview: str
     priority: str
     project_id: str
     project: str
@@ -141,6 +146,7 @@ class BoardSprintItemSource(TypedDict):
 class BoardSprintItem(BoardSprintItemSource, WorkAttention):
     """The complete Sprint Item projection returned to the Workspace rail."""
 
+    conversation_signal: ConversationSignal
     ticket_rollup: WorkAttention
 
 
@@ -183,6 +189,8 @@ NextCeiling = str | Literal["none"]
 
 
 class CreateTicketBody(TypedDict, total=False):  # POST /tickets
+    """Accepted create keys. Unknown keys are rejected before creation."""
+
     worker_type: Required[str]  # required registry type id (no ingress default)
     # A backend other than the Worker type's own brings its model with it: the type's
     # launch defaults belong to the type's backend, so there is nothing left for this
@@ -191,13 +199,11 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     employee_launch_model: str
     locale: str
     title: str  # default ""
-    kickoff_note: str  # default ""; proposed intake context / user guidance
+    brief: str  # default ""; intake text for the Brief field
     priority: str | None  # Explicit Priority value; omission resolves from placement
     deadline: str | None  # ISO date
     project: str | None  # legacy project name
     project_id: str | None
-    sprint_id: str | None
-    sprint_item_id: str | None
     orchestrator: object  # explicit chief or sprint_item Principal reference
     blocked_by_ticket_ids: list[str]
     # Scope stated at creation by whoever has the authority to grant it. A creator that

@@ -38,7 +38,8 @@ _LOG = logging.getLogger(__name__)
 
 
 def _validate_template(
-    conn: sqlite3.Connection, template: ScheduledTicketTemplate
+    conn: sqlite3.Connection, template: ScheduledTicketTemplate,
+    *, model_source_is_historical: bool = False,
 ) -> ScheduledTicketTemplate:
     require_creatable_worker_type(template.worker_type)
     if template.orchestrator_kind not in {"chief", "sprint_item"} or (
@@ -55,6 +56,7 @@ def _validate_template(
         worker_type=template.worker_type,
         employee_backend=template.employee_backend,
         employee_launch_model=template.employee_launch_model,
+        model_source_is_historical=model_source_is_historical,
         project_id=template.project_id,
         sprint_id=None,
         deadline=template.deadline,
@@ -212,7 +214,12 @@ def _update_schedule_locked(
             cast(tuple[str, ...], template_values["blocked_by_ticket_ids"])
         ),
     )
-    template = _validate_template(conn, template)
+    template = _validate_template(
+        conn, template,
+        model_source_is_historical=not (
+            {"employee_backend", "employee_launch_model"} & changes.keys()
+        ),
+    )
     encoded = normalized_changes
     encoded["locale"] = template.locale
     if "local_time" in encoded:
@@ -249,7 +256,8 @@ def _settle_occurrence(
                 worker_type=schedule.template.worker_type,
                 employee_backend=schedule.template.employee_backend,
                 employee_launch_model=schedule.template.employee_launch_model,
-                kickoff_note=schedule.template.kickoff_note,
+                model_source_is_historical=True,
+                brief=schedule.template.kickoff_note,
                 project_id=project_id,
                 sprint_id=None,
                 priority=schedule.template.priority,

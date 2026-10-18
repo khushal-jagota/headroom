@@ -80,6 +80,8 @@ def compose_worker_step_prompt(
             f"open the collaborative discussion for the '{field}' field. "
             "Ask bounded questions or resume the Stage conversation, and do not file a "
             "proposal until the discussion has enough shared understanding. "
+            "Once filed, the answer settles below the ceiling and waits for approval "
+            "at or beyond it. "
             f"Stage owner: {ownership_wire}."
         )
     else:

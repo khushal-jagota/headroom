@@ -1,18 +1,19 @@
-"""Codex app-server protocol bindings. Generated — do not edit.
+"""Codex app-server turn protocol bindings. Generated — do not edit.
 
 Regenerate with:
-    python -m planner.conversation.backends.codex_app_server.generate_bindings
+    python -m planner.conversation.backends.codex_app_server.generate_bindings --bundle turn
 
 The pin these models were generated under:
 
-    codex binary version   codex-cli 0.153.3
-    upstream openai/codex  rust-v0.153.3 = b1a547b1f73ce86205d9222ac19cff334b3b7a2e
+    bundle                 turn
+    codex binary version   codex-cli 0.163.0
+    upstream openai/codex  rust-v0.163.0 = 83086188ae0614bd882818ff1aa23f3194962012
     schema obtained by     codex app-server generate-json-schema --out <dir>
     from the dump's        codex_app_server_protocol.schemas.json
-    dump digest (sha256)   90760ee89ab33a9795a8876ff16e0024f37a4086e3c6bd6673f8f634116fe2da
+    dump digest (sha256)   5bc6033305d9eb75a5ddd8488968445256c0ca4481ac2daf55d4ea46712b703f
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) 53b9bb7f8d8181a7ba9a20eb653564a33e9de8fa8d940190d818618fb00d07d7
-    definitions generated  177
+    subset digest (sha256) c6f84887d8f8455325e72045e73d6866df74730dfa43156521da7dfab2f7425e
+    definitions generated  185
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -63,6 +64,7 @@ class FileChangeRequestApprovalResponse(BaseModel):
 
 class InitializeCapabilities(BaseModel):
     experimentalApi: bool | None = False
+    explicitGatewayOauth: bool | None = None
     extensions: dict[str, Any] | None = None
     mcpServerOpenaiFormElicitation: bool | None = None
     optOutNotificationMethods: list[str] | None = None
@@ -326,6 +328,11 @@ class MarketplaceLoadErrorInfo(BaseModel):
     message: str
 
 
+class McpAppUi(BaseModel):
+    preferredModelDisplayMode: Literal["inline", "fullscreen"]
+    resourceUri: str
+
+
 class McpToolCallAppContext(BaseModel):
     actionName: str | None = None
     appName: str | None = None
@@ -360,6 +367,10 @@ class MemoryCitationEntry(BaseModel):
 
 class MisalignmentSteer(BaseModel):
     message: str
+
+
+class ModelAccessPrograms(BaseModel):
+    cyber: list[Literal["standard", "daybreakBlue", "daybreakRed"]]
 
 
 class ModelAvailabilityNux(BaseModel):
@@ -526,6 +537,12 @@ class CustomSessionSource(BaseModel):
     custom: str
 
 
+class Settings(BaseModel):
+    developer_instructions: str | None = None
+    model: str
+    reasoning_effort: ReasoningEffort | None = None
+
+
 class SkillErrorInfo(BaseModel):
     message: str
     path: str
@@ -580,10 +597,6 @@ class ThreadCompactStartResponse(BaseModel):
     pass
 
 
-class ThreadGoalClearParams(BaseModel):
-    threadId: str
-
-
 class ThreadGoalClearResponse(BaseModel):
     cleared: bool
 
@@ -618,6 +631,7 @@ class McpToolCallThreadItem(BaseModel):
     error: McpToolCallError | None = None
     id: str
     mcpAppResourceUri: str | None = None
+    mcpAppUi: McpAppUi | None = None
     pluginId: str | None = None
     readOnlyHint: bool | None = None
     result: McpToolCallResult | None = None
@@ -651,6 +665,8 @@ class SubAgentActivityThreadItem(BaseModel):
     agentThreadId: str
     id: str
     kind: Literal["started", "interacted", "interrupted", "completed"]
+    model: str | None = None
+    reasoningEffort: ReasoningEffort | None = None
     type: Annotated[Literal["subAgentActivity"], Field(title="SubAgentActivityThreadItemType")]
 
 
@@ -762,10 +778,16 @@ class TextUserInput(BaseModel):
     type: Annotated[Literal["text"], Field(title="TextUserInputType")]
 
 
-class ImageUserInput(BaseModel):
+class UrlUserInput(BaseModel):
     detail: Literal["auto", "low", "high", "original"] | None = None
     type: Annotated[Literal["image"], Field(title="ImageUserInputType")]
     url: str
+
+
+class FileIdUserInput(BaseModel):
+    detail: Literal["auto", "low", "high", "original"] | None = None
+    type: Annotated[Literal["image"], Field(title="ImageUserInputType")]
+    fileId: str
 
 
 class LocalImageUserInput(BaseModel):
@@ -851,6 +873,7 @@ class ChatgptAccount(BaseModel):
         "plus",
         "pro",
         "prolite",
+        "promax",
         "team",
         "self_serve_business_prolite",
         "self_serve_business_usage_based",
@@ -903,6 +926,11 @@ class CollabAgentState(BaseModel):
     ]
 
 
+class CollaborationMode(BaseModel):
+    mode: Literal["plan", "default"]
+    settings: Settings
+
+
 class ReadCommandAction(BaseModel):
     command: str
     name: str
@@ -916,12 +944,20 @@ class FileUpdateChange(BaseModel):
     path: str
 
 
-class InputImageFunctionCallOutputContentItem(BaseModel):
+class ImageUrlFunctionCallOutputContentItem(BaseModel):
     detail: Literal["auto", "low", "high", "original"] | None = None
-    image_url: str
     type: Annotated[
         Literal["input_image"], Field(title="InputImageFunctionCallOutputContentItemType")
     ]
+    image_url: str
+
+
+class FileIdFunctionCallOutputContentItem(BaseModel):
+    detail: Literal["auto", "low", "high", "original"] | None = None
+    type: Annotated[
+        Literal["input_image"], Field(title="InputImageFunctionCallOutputContentItemType")
+    ]
+    file_id: str
 
 
 class GetAccountResponse(BaseModel):
@@ -937,12 +973,14 @@ class MemoryCitation(BaseModel):
 class MisalignmentErrorDetails(BaseModel):
     detailedExplanation: str | None = None
     errorType: str | None = None
+    reviewTarget: str | None = None
     steer: MisalignmentSteer | None = None
 
 
 class Model1(BaseModel):
     additionalSpeedTiers: list[str] | None = []
     availabilityNux: ModelAvailabilityNux | None = None
+    availableAccessPrograms: ModelAccessPrograms | None = None
     defaultReasoningEffort: Annotated[str, Field(min_length=1)]
     defaultServiceTier: str | None = None
     description: str
@@ -1039,12 +1077,18 @@ class ThreadGoal(BaseModel):
     updatedAt: int
 
 
+class ThreadGoalClearParams(BaseModel):
+    origin: Literal["user", "automatic"] | None = None
+    threadId: str
+
+
 class ThreadGoalGetResponse(BaseModel):
     goal: ThreadGoal | None = None
 
 
 class ThreadGoalSetParams(BaseModel):
     objective: str | None = None
+    origin: Literal["user", "automatic"] | None = None
     status: (
         Literal["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"] | None
     ) = None
@@ -1060,12 +1104,13 @@ class UserMessageThreadItem(BaseModel):
     clientId: str | None = None
     content: list[
         TextUserInput
-        | ImageUserInput
         | LocalImageUserInput
         | AudioUserInput
         | LocalAudioUserInput
         | SkillUserInput
         | MentionUserInput
+        | UrlUserInput
+        | FileIdUserInput
     ]
     id: str
     type: Annotated[Literal["userMessage"], Field(title="UserMessageThreadItemType")]
@@ -1075,7 +1120,7 @@ class AgentMessageThreadItem(BaseModel):
     delivery: Literal["async"] | None = None
     id: str
     memoryCitation: MemoryCitation | None = None
-    phase: Literal["commentary"] | Literal["final_answer"] | None = None
+    phase: Literal["commentary"] | Literal["partial_answer"] | Literal["final_answer"] | None = None
     questions: list[AsyncUserInputQuestion] | None = None
     text: str
     type: Annotated[Literal["agentMessage"], Field(title="AgentMessageThreadItemType")]
@@ -1193,9 +1238,11 @@ class TurnError(BaseModel):
             "sessionBudgetExceeded",
             "usageLimitExceeded",
             "rateLimitExceeded",
+            "flexUnavailable",
             "serverOverloaded",
             "cyberPolicy",
             "misalignmentPolicyViolation",
+            "tooManyDenials",
             "internalServerError",
             "unauthorized",
             "badRequest",
@@ -1208,6 +1255,8 @@ class TurnError(BaseModel):
         | ResponseStreamDisconnectedCodexErrorInfo
         | ResponseTooManyFailedAttemptsCodexErrorInfo
         | ActiveTurnNotSteerableCodexErrorInfo
+        | str
+        | dict[str, Any]
         | None
     ) = None
     message: str
@@ -1231,12 +1280,13 @@ class TurnSteerParams(BaseModel):
     expectedTurnId: str
     input: list[
         TextUserInput
-        | ImageUserInput
         | LocalImageUserInput
         | AudioUserInput
         | LocalAudioUserInput
         | SkillUserInput
         | MentionUserInput
+        | UrlUserInput
+        | FileIdUserInput
     ]
     threadId: str
 
@@ -1374,9 +1424,10 @@ class FunctionCallOutputThreadItem(BaseModel):
         str
         | list[
             InputTextFunctionCallOutputContentItem
-            | InputImageFunctionCallOutputContentItem
             | InputAudioFunctionCallOutputContentItem
             | EncryptedContentFunctionCallOutputContentItem
+            | ImageUrlFunctionCallOutputContentItem
+            | FileIdFunctionCallOutputContentItem
         ]
     )
     type: Annotated[Literal["functionCallOutput"], Field(title="FunctionCallOutputThreadItemType")]
@@ -1409,6 +1460,7 @@ class Turn(BaseModel):
         | ContextCompactionThreadItem
     ]
     itemsView: Literal["notLoaded"] | Literal["summary"] | Literal["full"] | None = "full"
+    rootTurnId: str | None = None
     startedAt: int | None = None
     status: Literal["completed", "interrupted", "failed", "inProgress"]
 
@@ -1434,11 +1486,13 @@ class TurnToolOutput(BaseModel):
         str
         | list[
             InputTextFunctionCallOutputContentItem
-            | InputImageFunctionCallOutputContentItem
             | InputAudioFunctionCallOutputContentItem
             | EncryptedContentFunctionCallOutputContentItem
+            | ImageUrlFunctionCallOutputContentItem
+            | FileIdFunctionCallOutputContentItem
         ]
     )
+    retain: bool | None = None
 
 
 class ItemCompletedNotification(BaseModel):
@@ -1521,6 +1575,7 @@ class Thread(BaseModel):
     model: str | None = None
     modelProvider: str
     name: str | None = None
+    originator: str | None = None
     parentThreadId: str | None = None
     path: str | None = None
     preview: str
@@ -1544,7 +1599,9 @@ class Thread(BaseModel):
 class ThreadResumeResponse(BaseModel):
     approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval
     approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"]
+    collaborationMode: CollaborationMode | None = None
     cwd: str
+    disabledPluginIds: list[str] | None = []
     instructionSources: list[str] | None = []
     itemsBackwardsCursor: str | None = None
     model: str
@@ -1565,6 +1622,7 @@ class ThreadStartResponse(BaseModel):
     approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval
     approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"]
     cwd: str
+    disabledPluginIds: list[str] | None = []
     instructionSources: list[str] | None = []
     model: str
     modelProvider: str
@@ -1590,19 +1648,23 @@ class TurnStartParams(BaseModel):
     approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"] | None = None
     clientUserMessageId: str | None = None
     cwd: str | None = None
+    disabledPluginIds: list[str] | None = None
     effort: ReasoningEffort | None = None
     input: list[
         TextUserInput
-        | ImageUserInput
         | LocalImageUserInput
         | AudioUserInput
         | LocalAudioUserInput
         | SkillUserInput
         | MentionUserInput
+        | UrlUserInput
+        | FileIdUserInput
     ]
     model: str | None = None
     outputSchema: Any | None = None
+    parentTurnId: str | None = None
     personality: Literal["none", "friendly", "pragmatic"] | None = None
+    rootTurnId: str | None = None
     sandboxPolicy: (
         DangerFullAccessSandboxPolicy
         | ReadOnlySandboxPolicy

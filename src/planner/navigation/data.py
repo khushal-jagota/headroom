@@ -22,7 +22,7 @@ from planner.navigation.contracts import (
 from planner.navigation.legacy_v1 import lifecycle_payload
 from planner.navigation.lifecycle_summary import INDEXES, read_summary
 from planner.navigation.schema import SCHEMA
-from planner.tickets.contracts import WorkerStepClaim
+from planner.tickets.contracts import TicketStatus, WorkerStepClaim
 from planner.tickets.derivation import StoredTicketFacts, derive_ticket_status
 from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.store import definition_from_json
@@ -259,12 +259,18 @@ def _derive(
         )
         deps.add(("ticket_blocks", identity))
         deps.update(("tickets", b["id"]) for b in blockers)
+        version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+        # Preserve historical v1/v2 backfill before the accepted retirement rewrite.
+        # Current source contains no cancelled Tickets after that migration succeeds.
+        blocker_predicate = (
+            "blocker.stage NOT IN ('done','cancelled')" if version <= 2 else LIVE_BLOCKER_PREDICATE
+        )
         live = (
             conn.execute(
                 "SELECT 1 FROM ticket_blocks JOIN tickets blocker "
                 "ON blocker.id=ticket_blocks.blocking_ticket_id "
                 "WHERE ticket_blocks.blocked_ticket_id=? AND "
-                + LIVE_BLOCKER_PREDICATE
+                + blocker_predicate
                 + " LIMIT 1",
                 (identity,),
             ).fetchone()
@@ -280,6 +286,8 @@ def _derive(
                 live,
             )
         )
+        if version <= 2 and t["stage"] == "cancelled":
+            status = TicketStatus.empty
         definition = None if definitions is None else definitions.get(t["worker_type"])
         if definition is None:
             definition_row = conn.execute(

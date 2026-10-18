@@ -133,14 +133,16 @@ from planner.conversation.message_content import (
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.model_resolution.contracts import CurrentModelResolver, ModelResolution
 from planner.conversation.storage import (
     ConversationRecord,
     ConversationRecordNamesNoModel,
     ConversationStore,
     StoredConversationEvent,
 )
+from planner.core import change_signal
 from planner.core.commit_capture import register_capture_task
-from planner.core.contracts import Principal, PrincipalKind
+from planner.core.contracts import PlannerError, Principal, PrincipalKind
 
 LOGGER = logging.getLogger("planner.conversation")
 
@@ -320,6 +322,8 @@ class _PromptDeliveryAttempt:
     refusal_reason: PromptDeliveryRefusalReason | None = None
     record_refusal: bool = False
     composed_content_delivered: bool = True
+    model_resolution: ModelResolution | None = None
+    refusal_detail: str | None = None
 
 
 type _BackendEventHandler = Callable[[], Coroutine[Any, Any, None]]
@@ -380,11 +384,13 @@ class SqliteProcessConversationSystem:
         idle_child_stop_after_seconds: float = IDLE_CHILD_STOP_AFTER_SECONDS,
         idle_child_sweep_interval_seconds: float = IDLE_CHILD_SWEEP_INTERVAL_SECONDS,
         unix_time_now: Callable[[], float] = time.time,
+        model_resolver: CurrentModelResolver | None = None,
     ) -> None:
         missing = sorted(set(ConversationBackendKey) - set(backend_child_factories))
         if missing:
             raise ValueError(f"no backend child factory for {missing}")
         self._store = store
+        self._model_resolver = model_resolver
         self._message_files = message_files
         # Nobody watching is the ordinary case for a system built without one: the record
         # is written exactly the same way, and there is simply nowhere to show it.
@@ -436,6 +442,13 @@ class SqliteProcessConversationSystem:
         replacing it would strand a live child that nothing can reach any more.
         """
         resolved = resolve_conversation_start_request(request)
+        if self._model_resolver is not None:
+            current = await self._model_resolver.resolve(
+                resolved.backend_key, resolved.model, resolved.reasoning_effort
+            )
+            resolved = replace(
+                resolved, model=current.model, reasoning_effort=current.reasoning_effort
+            )
         record = await self._store.create_conversation(resolved)
         async with self._conversations_lock:
             if record.conversation_id not in self._conversations:
@@ -485,6 +498,7 @@ class SqliteProcessConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Send a message in. See the contract; the two sender-minted fields are extra.
 
@@ -493,6 +507,8 @@ class SqliteProcessConversationSystem:
         that mints neither — every caller inside Panels today — leaves both absent and
         nothing about its rows changes.
         """
+        if record_refusal and sender_message_id is None:
+            raise ValueError("record_refusal requires a sender_message_id")
         state = await self._conversation_state(conversation_id)
         if state is None:
             return AddressedPromptDeliveryReceipt(
@@ -512,6 +528,7 @@ class SqliteProcessConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                record_refusal=record_refusal,
             ),
         )
 
@@ -529,6 +546,7 @@ class SqliteProcessConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Send a message in. See the contract; the two sender-minted fields are extra.
 
@@ -695,6 +713,30 @@ class SqliteProcessConversationSystem:
                     reply_requested,
                     owner_read_through_sequence,
                 )
+            if (
+                record_refusal
+                and isinstance(fate, PromptDeliveryRefused)
+                and sender_message_id is not None
+                and await self._store.sender_message_outcome(conversation_id, sender_message_id)
+                is None
+            ):
+                # A server-originated first send has no browser sender cache. Preserve
+                # its refusal here, unless recovery already recorded the same message.
+                async with state.lock:
+                    await self._append_event(
+                        state,
+                        PromptDeliveryRefusedEventPayload(
+                            content=content,
+                            sender_label=sender_label,
+                            mode=mode,
+                            refusal_reason=fate.refusal_reason,
+                            sender_message_id=sender_message_id,
+                            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                            sender=sender,
+                            recipient=recipient,
+                        ),
+                        owner_read_through_sequence=owner_read_through_sequence,
+                    )
             return AddressedPromptDeliveryReceipt(
                 fate=fate,
                 newly_accepted=not isinstance(fate, PromptDeliveryRefused),
@@ -1115,6 +1157,8 @@ class SqliteProcessConversationSystem:
                     sender=held.sender,
                     recipient=held.recipient,
                     reply_requested=held.reply_requested,
+                    model_resolution=delivery.model_resolution,
+                    refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.idle,
@@ -2197,6 +2241,8 @@ class SqliteProcessConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            model_resolution=delivery.model_resolution,
+            refusal_detail=delivery.refusal_detail,
             composed_content_delivered=delivery.composed_content_delivered,
             record_refusal=delivery.record_refusal,
             phase_when_not_started=_ConversationPhase.idle,
@@ -2230,8 +2276,37 @@ class SqliteProcessConversationSystem:
         No lock is held here: spawning a process and loading a session take as long as they
         take, and the conversation stays readable while they do.
         """
+        resolution: ModelResolution | None = None
+        if self._model_resolver is not None:
+            requested_model = model_change or state.record.model
+            if requested_model is None:
+                raise ConversationRecordNamesNoModel(state.record.conversation_id)
+            try:
+                resolution = await self._model_resolver.resolve(
+                    state.record.backend_key,
+                    requested_model,
+                    state.record.reasoning_effort
+                    if reasoning_effort_change is None
+                    else reasoning_effort_change,
+                )
+            except PlannerError as error:
+                return _PromptDeliveryAttempt(
+                    refusal_reason=PromptDeliveryRefusalReason.model_resolution_failed,
+                    record_refusal=True,
+                    refusal_detail=str(error),
+                )
+            model_change = resolution.model
+            reasoning_effort_change = resolution.reasoning_effort
+            if resolution.catalogue_warning is not None:
+                LOGGER.warning(
+                    "conversation %s: %s",
+                    state.record.conversation_id,
+                    resolution.catalogue_warning,
+                )
         try:
-            child = await self._ensure_child(state)
+            child = await self._ensure_child(
+                state, model=model_change, reasoning_effort=reasoning_effort_change
+            )
         except BackendSpawnFailed:
             return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
         except SessionLoadFailed:
@@ -2269,12 +2344,14 @@ class SqliteProcessConversationSystem:
             )
             return replace(
                 rebound,
+                model_resolution=resolution,
                 record_refusal=(
                     rebound.refusal_reason is not None and rebind.failed_child_recovery
                 ),
             )
         return _PromptDeliveryAttempt(
-            composed_content_delivered=accepted.composed_content_delivered
+            model_resolution=resolution,
+            composed_content_delivered=accepted.composed_content_delivered,
         )
 
     async def _rebind_and_write_prompt(
@@ -2358,6 +2435,8 @@ class SqliteProcessConversationSystem:
         recipient: Principal | None,
         reply_requested: bool,
         composed_content_delivered: bool,
+        model_resolution: ModelResolution | None = None,
+        refusal_detail: str | None = None,
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
         also_delivered: tuple[_HeldPrompt, ...] = (),
@@ -2368,6 +2447,9 @@ class SqliteProcessConversationSystem:
         The rows are written before the turn is admitted, so nothing the backend says about
         this turn can be recorded ahead of the prompt that started it.
         """
+        if model_resolution is not None:
+            model_change = model_resolution.model
+            reasoning_effort_change = model_resolution.reasoning_effort
         async with state.lock:
             try:
                 if refusal is not None:
@@ -2399,6 +2481,7 @@ class SqliteProcessConversationSystem:
                                 sender_label=sender_label,
                                 mode=mode,
                                 refusal_reason=refusal,
+                                refusal_detail=refusal_detail,
                                 sender_message_id=sender_message_id,
                                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                                 sender=sender,
@@ -2417,6 +2500,7 @@ class SqliteProcessConversationSystem:
                                     sender_label=message.sender_label,
                                     mode=mode,
                                     refusal_reason=refusal,
+                                    refusal_detail=refusal_detail,
                                     sender_message_id=message.sender_message_id,
                                     sent_at_unix_milliseconds=message.sent_at_unix_milliseconds,
                                     sender=message.sender,
@@ -2526,6 +2610,10 @@ class SqliteProcessConversationSystem:
                     automatic_notice=reservation.automatic_notice,
                 )
                 self._set_phase(state, _ConversationPhase.running)
+                # The prompt commit can announce before this process-owned state is
+                # visible. Publish again after the runtime transition, so a reader of
+                # that earlier announcement cannot keep an idle answer indefinitely.
+                change_signal.emit()
                 return True
             finally:
                 if state.phase is not _ConversationPhase.starting:
@@ -2694,6 +2782,8 @@ class SqliteProcessConversationSystem:
                     sender=held.sender,
                     recipient=held.recipient,
                     reply_requested=held.reply_requested,
+                    model_resolution=delivery.model_resolution,
+                    refusal_detail=delivery.refusal_detail,
                     composed_content_delivered=delivery.composed_content_delivered,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
@@ -3017,6 +3107,9 @@ class SqliteProcessConversationSystem:
                     state.record.latest_agent_activity_sequence
                 ),
             )
+        # The ending commit precedes clearing the live turn. Announce the runtime
+        # transition only after its state and committed record agree.
+        change_signal.emit()
         return ended
 
     # --- the child ----------------------------------------------------------------------

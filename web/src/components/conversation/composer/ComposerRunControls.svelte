@@ -15,7 +15,7 @@
     view: ComposerRunControlsView;
     intents: ComposerRunControlIntents;
     snapshots: readonly import("../../../lib/conversation/wire").BackendSnapshot[];
-    /** The microphone, drawn between stopping the work and sending a message. */
+    /** The microphone, drawn before the turn and send actions. */
     beforeSubmit?: import("svelte").Snippet;
   } = $props();
 </script>
@@ -34,8 +34,8 @@
   onChooseModel={intents.chooseModel}
 />
 
-<!-- What is on the right is what there is to do. Stopping the work comes before the
-     microphone, and sending appears when there is something to send: a composer with
+<!-- What is on the right is what there is to do. The microphone leads the turn actions,
+     and sending appears when there is something to send: a composer with
      nothing in it offers no Send, greyed out or otherwise. How the message will be
      delivered is a standing choice rather than an action, so it leads the group. -->
 <div class="chat-submit">
@@ -44,6 +44,7 @@
     disabled={view.disabled}
     onChoose={intents.chooseDeliveryMode}
   />
+  {#if beforeSubmit}{@render beforeSubmit()}{/if}
   {#if view.showStop}
     <button
       type="button"
@@ -52,9 +53,8 @@
       title="Stop the turn"
       aria-label="Stop the turn"
       onclick={intents.stop}
-    ><svg viewBox="0 0 24 24" aria-hidden="true" class="chat-send-fill"><rect x="6" y="6" width="12" height="12" rx="2" /></svg></button>
+    ><span class="chat-send-fill" aria-hidden="true"></span></button>
   {/if}
-  {#if beforeSubmit}{@render beforeSubmit()}{/if}
   {#if view.submit.active || view.submit.sending}
     <button
       type="button"

@@ -97,28 +97,22 @@ def test_only_conversations_past_the_owners_read_mark_are_named(
 # --- which Tickets the board returns ----------------------------------------------
 
 
-def test_a_named_ticket_joins_the_board_from_off_the_day(tmp_db: Connection) -> None:
+def test_all_tickets_join_the_board_from_off_the_day(tmp_db: Connection) -> None:
     on_day = _make_ticket(tmp_db, "On today")
     off_day_with_a_message = _make_ticket(tmp_db, "Off today, message waiting")
     off_day_quiet = _make_ticket(tmp_db, "Off today, nothing waiting")
     add_day_ticket(tmp_db, A_DAY, on_day, 1)
 
-    board = board_view(
-        tmp_db,
-        ticket_ids_holding_unread_owner_message=[off_day_with_a_message],
-    )
+    board = board_view(tmp_db)
 
     assert _card_ids(board) == {on_day, off_day_with_a_message, off_day_quiet}
 
 
-def test_a_named_ticket_already_on_the_day_appears_once(tmp_db: Connection) -> None:
+def test_a_ticket_already_on_the_day_appears_once(tmp_db: Connection) -> None:
     on_day = _make_ticket(tmp_db, "On today, message waiting")
     add_day_ticket(tmp_db, A_DAY, on_day, 1)
 
-    board = board_view(
-        tmp_db,
-        ticket_ids_holding_unread_owner_message=[on_day, on_day],
-    )
+    board = board_view(tmp_db)
 
     columns = board["columns"]
     assert isinstance(columns, list)

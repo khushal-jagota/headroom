@@ -57,7 +57,7 @@ def test_registry_validation_order_and_messages() -> None:
         replace(
             base, stages=(base.stages[0], replace(base.stages[1], id="cancelled"), *base.stages[2:])
         ),
-        "cancelled is a system terminal outside the linear order",
+        "cancelled is not a stage",
         {"worker_type": "coding", "stage": "cancelled"},
     )
     assert_error(

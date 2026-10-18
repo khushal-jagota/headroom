@@ -282,8 +282,11 @@ class InMemoryConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         require_message_content(content)
+        if record_refusal and sender_message_id is None:
+            raise ValueError("record_refusal requires a sender_message_id")
         state = self._conversations.get(conversation_id)
         if state is None:
             return AddressedPromptDeliveryReceipt(

@@ -1,20 +1,20 @@
 <script lang="ts">
+  import { railPreview } from "../lib/workspaceRailInteraction";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { filterOrchestratorChildren } from "../lib/orchestratorChildren";
   import { orchestratorPageGroups } from "../lib/orchestratorPage";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
-  import { workItemActivityMark, workItemActivityMarkPresentation } from "../lib/workItemPresentation";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import type { OrchestratorPrincipal, OrchestratorChildFilter, SprintItemWorkspaceTicket } from "../lib/types";
   import Disclosure from "./Disclosure.svelte";
   import ResourceState from "./ResourceState.svelte";
   import SprintTicketRow from "./SprintTicketRow.svelte";
 
-  let { principal, tickets, onHover = () => undefined, onLeave = () => undefined }: {
+  let { principal, tickets, onHover = undefined, onLeave = () => undefined }: {
     principal: OrchestratorPrincipal;
     tickets?: readonly SprintItemWorkspaceTicket[];
-    onHover?: (element: HTMLElement, ticketId: string) => void;
+    onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave?: () => void;
   } = $props();
   let filter = $state<OrchestratorChildFilter>("active");
@@ -23,7 +23,7 @@
   let groupRoot = $state<HTMLElement | null>(null);
   const filters: { value: OrchestratorChildFilter; label: string }[] = [
     { value: "active", label: "Active" }, { value: "backlogged", label: "Backlogged" },
-    { value: "done", label: "Done" }, { value: "retired", label: "Retired" }
+    { value: "done", label: "Done" }
   ];
   const children = createQuery(() => ({
     ...queries.orchestratorTicketSummaries(principal, filter, offset),
@@ -63,7 +63,7 @@
     hasData={tickets !== undefined || children.data !== undefined} loadingText="Loading Workers…">
     {#each groups as group (group.key)}
       <Disclosure variant="orchestrator-group" class="sprint-workspace-status" data-workspace-group={group.key}
-        defaultOpen={groupOpen[group.key] ?? (group.key !== "done" && group.key !== "cancelled")}
+        defaultOpen={groupOpen[group.key] ?? (group.key !== "done")}
         onReaderToggle={(open) => groupOpen[group.key] = open} chevron="none">
         {#snippet summary()}
           <span class="sprint-workspace-status-label">{group.label}</span>
@@ -71,16 +71,13 @@
         {/snippet}
         <div class="sprint-workspace-status-body">
           {#each group.tickets as ticket (ticket.id)}
-            {@const mark = workItemActivityMark(ticket)}
-            {@const presentation = workItemActivityMarkPresentation(mark)}
-            <SprintTicketRow priority={null} title={ticket.title} state={presentation.state} ariaLabel={presentation.ariaLabel}
-              quiet={ticket.stage === "done" || ticket.stage === "cancelled"}
+            <div use:railPreview={onHover ? {show:(element, immediate) => onHover?.(element, ticket.id, immediate), leave:onLeave} : null}>
+            <SprintTicketRow priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
+              quiet={ticket.stage === "done"}
               href={workspaceAddress(principal.kind === "sprint_item"
                 ? { kind: "ticket", id: ticket.id, openedFromItemId: principal.id } : { kind: "ticket", id: ticket.id })}
-              data-sprint-ticket-id={ticket.id} data-ticket-state={presentation.state} data-workspace-mark={mark ?? "none"}
-              onmouseenter={(event: MouseEvent) => onHover(event.currentTarget as HTMLElement, ticket.id)} onmouseleave={onLeave}
-              onfocus={(event: FocusEvent) => onHover(event.currentTarget as HTMLElement, ticket.id)} onblur={onLeave}
-              stageMarkAttributes={{ "data-workspace-mark": mark ?? "none" }} />
+              data-sprint-ticket-id={ticket.id} />
+            </div>
           {/each}
         </div>
       </Disclosure>

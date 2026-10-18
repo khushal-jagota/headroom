@@ -13,6 +13,43 @@ Only `app` changes during deployment. `data` and `logs` remain in place through 
 changes, failed deployments, and code rollback. Serving, deployment, rollback, backup,
 and user-service control need no sudo.
 
+## Recover an older database with cancelled Tickets
+
+An upgrade refuses an older database that contains cancelled Tickets or would produce
+them while applying historical migrations. The refusal leaves its schema and records
+unchanged. The owner chooses whether to preserve those Tickets through an
+older supported version or archive and delete them with the version being installed.
+The recovery command works directly on the database even when the server cannot start.
+
+Stop the service first. Use the same database configuration as that service and a new
+archive directory outside the application tree. Its parent directory must already exist.
+For an explicit database path:
+
+```sh
+systemctl --user stop panels-live.service
+PLAN_DB_PATH=/absolute/path/to/panels.db panels maintenance archive-cancelled-tickets --archive-dir /absolute/path/to/cancelled-ticket-archive --yes
+```
+
+Run this as the owner, without a Worker identity. The command first saves and verifies a
+complete snapshot of the original database, including unrelated records and history.
+Keep the private archive directory protected as you would the database itself.
+
+Some older databases need historical migrations before their cancelled Tickets exist.
+Only this explicit recovery action prepares those migrations, stopping before the
+retirement-removal migration. It does not start the server or initialize the current app.
+The archive also contains a readable manifest, the selected Tickets' complete records,
+field values and artifact references, and SQL evidence of the prepared database.
+Everything is verified durable and readable before deletion. Historical preparation and
+Ticket deletion share one transaction; any failure rolls both back, leaving the original
+database unchanged. The verified original snapshot remains available in the archive.
+
+Files under `/files/tickets/<ticket-id>` remain where they are; the archive retains their
+references rather than copying or deleting them.
+
+After successful recovery, retry the upgrade and restart the service. The upgrade removes
+obsolete retirement fields from the remaining Tickets. It does not change their Stage,
+ordinary fields, proposals, or approval ownership.
+
 ## Services and runner
 
 Linux uses systemd user services. `panels-live.service` launches the deployed app,
@@ -44,7 +81,10 @@ publish Preparing for the requested SHA
 exact temporary checkout → prove requested HEAD
         │
         ▼
-build and validate temporary candidate app
+observe served release → select and run related source checks
+        │
+        ▼
+build candidate once → isolated installed-launcher smoke → seal digest proof
         │ stage candidate while production remains live
         ▼
 stop service → create verified database + managed-files snapshot
@@ -93,6 +133,91 @@ policy. The command reconciles Panels skills into each agent home, removes expli
 retired Panels skills, and leaves unrelated custom skills in place. This post-deploy step
 is idempotent. If it fails after app cutover, the app remains deployed and the workflow
 reports failure; rerunning the deployment safely retries skill reconciliation.
+
+## Related checks before deployment
+
+Deployment runs related checks before any app transaction. Pull requests and staging
+pushes do not start a suite workflow. Agents still run focused checks before a push.
+The current workflow revision supplies control tooling. The requested checkout supplies
+its own editable Python environment, pinned dependencies, source, and test configuration.
+Both Node lockfiles supply build prerequisites. A rollback uses these same boundaries.
+
+Before checks, the gate records the installed manifest and exact health response. A
+baseline is trustworthy only when the manifest and `/api/health?expected_sha=<SHA>`
+agree. The selector compares that served commit with the requested commit across the
+whole release. Deleted and renamed paths, changed tests, accumulated releases, and
+rollback all affect selection. The checked-in domain map expands related coverage into
+explicit existing test files and browser hosts. Default scheduling API/CLI checks and
+HTTP authority checks remain required for their affected domains.
+
+An unavailable baseline, shared or unknown path, or change to selection/dependencies
+selects broad default coverage. Missing mapped historical coverage broadens or stops.
+Documentation-only and empty diffs omit source suites but still require candidate proof.
+The selection records its control revision, requested SHA, baseline, paths, and reasons.
+
+Ruff, mypy, three separate pytest processes, Svelte checks, typechecked Vitest, and
+selected Node browser hosts run directly as selected. Independent check steps report
+failures even when another check fails. Missing tools, empty selected collection, and
+unexpected required skips fail the gate. Seven named paid-provider opt-ins remain visible
+without default coverage credit. No provider opt-in is enabled by this workflow.
+The required bwrap mount redirects deployment artifacts into temporary storage for
+E2E and Node browser hosts. There is no unisolated fallback.
+
+After source checks pass, the workflow builds one exact candidate. Its installed launcher
+starts with fresh state, dispatch disabled, and no provider credentials. Smoke checks
+prove exact-SHA health, the root document and its built assets, and an initialized API
+read. The smoke process and state are removed on exit. The gate revalidates candidate
+bytes and records their digest with the served-base observation.
+
+The deployment transaction requires this evidence. Under its lock it rechecks the
+requested SHA, artifact digest, and exact baseline observations. It also checks copied
+candidate bytes against the pinned digest before service stop or installation. A
+changed baseline or candidate refuses deployment before production mutation, including
+first-install and same-SHA paths. Existing backup and recovery behavior remains in place.
+
+The workflow removes temporary source, environments, candidates, gate reports, and
+artifact shadows on every outcome. The lifecycle finalizer reports failures from checks,
+selection, build, smoke, cutover, or provisioning through the existing record.
+
+Repository landing on staging does not activate a changed production workflow. The
+owner must merge the reviewed revision to main. No production dispatch is required to
+review these checks. Any required-check setting must retain effective protection until
+the replacement is available. Production deployment and restart remain owner actions.
+
+## Test admission and coordinated guidance
+
+`PRINCIPLES.md` holds the standing admission policy. `AGENTS.md` references it during
+existing plan and implementation review. The operational paragraph also lives in the
+managed `panels-worker-coding` skill and its repository fresh-install seed at
+`src/planner/skills/panels-worker-coding/SKILL.md`.
+
+Chief confirmed the live rule at 02:13:38Z. Coding Workers read it on their next step,
+without a service deployment. Repository policy applies when checkout agents use the
+revision that contains it. The seed supplies fresh installations. Provisioning copies
+the database-managed rule outward to agent homes and does not replace it from the seed.
+Future revisions must supply Chief exact corresponding wording for the live skill,
+`PRINCIPLES.md`, and the seed, plus the `AGENTS.md` reference. These are coordinated
+revision destinations. Repository edits do not authorize managed-store writes.
+
+The prior instructions required focused execution, material E2E risk, cheapest faithful
+layers, and small connected proofs. They did not require every added test to name its
+incremental coverage gap, reuse hosts, replace duplicate matrices, or record connected
+cost. That gap permits individually justified tests to repeat existing proof. It does
+not establish the cause of all historical growth. Existing review now checks admission
+against the suite cut's retained proofs and intentional retirements.
+
+The cut at `f9849945` is the comparison baseline: 22 E2E cases and 20 frontend hosts.
+Its reported combined browser time changed from 516.9 to 356.6 seconds (160.3 seconds,
+31.0%) in one comparison. The earlier result included three failures. Its coverage
+ledger records replacements and intentional retirements. This deployment change adds
+no browser host or browser E2E case. New checks must document distinct risks and costs
+under the admission policy.
+
+Coverage savings and runner capacity remain separate evidence. This change removes
+PR-wide execution without an empty-diff guard or a replacement staging run. It adds no
+rolling-run capacity setting, so there is no such setting's capacity measurement or
+restoration condition to claim. Reverting the workflow change restores the former PR
+placement. Main workflow activation remains separate from staging landing.
 
 ## Deployment status evidence
 
@@ -168,4 +293,4 @@ Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-10-18 (local gate implementation; main activation remains separate)._

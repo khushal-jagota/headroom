@@ -6,8 +6,7 @@ export function filterOrchestratorChildren<T extends { stage: string; is_backlog
 ): T[] {
   return tickets.filter((ticket) => {
     if (filter === "done") return ticket.stage === "done";
-    if (filter === "retired") return ticket.stage === "cancelled";
-    if (ticket.stage === "done" || ticket.stage === "cancelled") return false;
+    if (ticket.stage === "done") return false;
     return filter !== "backlogged" || ticket.is_backlogged;
   });
 }

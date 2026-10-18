@@ -18,7 +18,7 @@ from pathlib import Path
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, expect
-from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
+from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle, capture_success
 
 from planner.conversation.events import ConversationTurnEnding, TurnEndedEventPayload
 from planner.conversation.storage import ConversationStore
@@ -30,7 +30,7 @@ def _failed_history(server: ServerHandle, ticket_id: str) -> JsonObject:
     conversation_id = f"historical-error-{ticket_id}"
     response = httpx.post(
         server.base + "/api/conversation/conversations",
-        json={"conversation_id": conversation_id, "backend_key": "codex", "model": "e2e-model"},
+        json={"conversation_id": conversation_id, "backend_key": "codex", "model": "gpt-6.1-sol"},
         timeout=10,
     )
     assert response.status_code == 201, response.text
@@ -40,7 +40,7 @@ def _failed_history(server: ServerHandle, ticket_id: str) -> JsonObject:
             ticket_id,
             conversation_id=conversation_id,
             backend="codex",
-            model="e2e-model",
+            model=response.json()["model"],
             reasoning_effort=None,
             now=1,
         )
@@ -150,7 +150,7 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
             {
                 "title": title,
                 "worker_type": "coding",
-                "kickoff_note": "Agreed brief.",
+                "brief": "Agreed brief.",
                 "orchestrator": {"kind": "sprint_item", "id": items[index]["id"]},
             },
         )
@@ -186,7 +186,7 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
     evidence = Path(__file__).resolve().parents[2] / "data/ticket-evidence/consequences"
     evidence.mkdir(parents=True, exist_ok=True)
     expect(page.locator(f'[data-sprint-item="{items[0]["id"]}"]')).to_be_visible(timeout=WAIT_MS)
-    page.screenshot(path=str(evidence / "completed-errors-workspace.png"), full_page=True)
+    capture_success(page, str(evidence / "completed-errors-workspace.png"))
     (evidence / "completed-errors-api.json").write_text(json.dumps(board, indent=2))
     (evidence / "faithful-fixture-facts.json").write_text(json.dumps(stored_facts, indent=2))
     assert [cards[ticket["id"]]["agent_state"] for ticket in tickets] == [
@@ -250,9 +250,7 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
                     f'[data-workspace-group="errored"] [data-sprint-ticket-id="{tickets[3]["id"]}"]'
                 )
             ).to_be_visible(timeout=WAIT_MS)
-        item_page.screenshot(
-            path=str(evidence / f"completed-errors-item-{index}.png"), full_page=True
-        )
+        capture_success(item_page, str(evidence / f"completed-errors-item-{index}.png"))
         item_page.close()
     for index, ticket in enumerate(tickets[:3]):
         ticket_page = open_page(
@@ -262,7 +260,7 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
         ticket_page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
         failure = ticket_page.locator('[data-conversation-row="turn_ended"]')
         expect(failure).to_contain_text("Historical Worker failure retained", timeout=WAIT_MS)
-        ticket_page.screenshot(
-            path=str(evidence / f"completed-error-history-retained-{index}.png"), full_page=True
+        capture_success(
+            ticket_page, str(evidence / f"completed-error-history-retained-{index}.png")
         )
         ticket_page.close()

@@ -136,7 +136,7 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "Target ticket",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                     "orchestrator": {"kind": "sprint_item", "id": item_a["id"]},
                 },
             )
@@ -147,7 +147,7 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "Stranger ticket",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                     "orchestrator": {"kind": "sprint_item", "id": item_b["id"]},
                 },
             )
@@ -165,7 +165,7 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "Plan the day",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                 },
             )
         )
@@ -175,7 +175,7 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "Plan the sprint",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                 },
             )
         )
@@ -185,7 +185,7 @@ def _seed(db_path: Path) -> Seed:
                 json={
                     "worker_type": "coding",
                     "title": "A user-owned gate",
-                    "kickoff_note": "Start here.",
+                    "brief": "Start here.",
                     "orchestrator": {"kind": "sprint_item", "id": item_a["id"]},
                 },
             )
@@ -247,7 +247,7 @@ def _create(**extra: Any) -> Call:
         {
             "worker_type": "coding",
             "title": "A created ticket",
-            "kickoff_note": "Start here.",
+            "brief": "Start here.",
             **extra,
         },
     )

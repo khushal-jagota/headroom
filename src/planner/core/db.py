@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Final, Literal, Self, TypeVar, overload
 
@@ -482,18 +483,34 @@ def _busy_timeout_ms(conn: sqlite3.Connection) -> int:
     return int(conn.execute("PRAGMA busy_timeout").fetchone()[0])
 
 
-def _upgrade_to_current_schema(db_path: str, busy_timeout_ms: int) -> None:
-    """Run every migration the database has not seen yet, as one all-or-nothing step."""
+@contextmanager
+def schema_migration_transaction(db_path: str, busy_timeout_ms: int = 5000) -> Iterator[Connection]:
+    """Hold the same all-or-nothing schema writer lease used by application startup.
+
+    Explicit offline maintenance may prepare historical schema on this connection,
+    after archiving the original database. Nothing is upgraded merely by entering.
+    """
     engine = _migration_engine(db_path, busy_timeout_ms)
     try:
         with engine.begin() as connection:
-            _adopt_database_left_by_the_collapsed_chain(connection)
-            command.upgrade(_alembic_config(connection), "head")
+            yield connection
             violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
             if violations:
                 raise RuntimeError(f"migrations left foreign key violations: {violations!r}")
     finally:
         engine.dispose()
+
+
+def upgrade_schema_connection(connection: Connection, revision: str) -> None:
+    """Replay packaged historical revisions within the caller's existing transaction."""
+    _adopt_database_left_by_the_collapsed_chain(connection)
+    command.upgrade(_alembic_config(connection), revision)
+
+
+def _upgrade_to_current_schema(db_path: str, busy_timeout_ms: int) -> None:
+    """Run every migration the database has not seen yet, as one all-or-nothing step."""
+    with schema_migration_transaction(db_path, busy_timeout_ms) as connection:
+        upgrade_schema_connection(connection, "head")
 
 
 def _migration_engine(db_path: str, busy_timeout_ms: int) -> Engine:
@@ -514,6 +531,11 @@ def _migration_engine(db_path: str, busy_timeout_ms: int) -> Engine:
         # off while migrations run and the foreign_key_check afterwards is what catches a
         # migration that left the record inconsistent.
         dbapi_connection.execute("PRAGMA foreign_keys=OFF")
+        # Existing module triggers also run during historical source rewrites.
+        # Attach their SQL functions before migrations, on this same connection.
+        from planner.database_modules import attach
+
+        attach(dbapi_connection)
 
     @event.listens_for(engine, "begin")
     def _begin_immediate(connection: Connection) -> None:

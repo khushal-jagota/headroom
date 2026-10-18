@@ -1,4 +1,4 @@
-"""Scoped discovery retains quiet, deferred, completed, and retired children."""
+"""Scoped discovery retains quiet, deferred, completed, children."""
 
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,7 +56,6 @@ def test_scope_precedes_counts_and_pagination_and_does_not_change_authority(
     item_two = seed_item(tmp_db, "item_two")
     other = seed(tmp_db, title="Other", item=item_two)
     owned = [seed(tmp_db, title="Quiet"), seed(tmp_db, title="Deferred", backlogged=True)]
-    retired = seed(tmp_db, title="Retired", stage="cancelled")
     done = seed(tmp_db, title="Done", stage="done")
     item = seed(tmp_db, title="Item child", item=item_one, backlogged=True)
     before = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (other,)).fetchone())
@@ -80,11 +79,10 @@ def test_scope_precedes_counts_and_pagination_and_does_not_change_authority(
     assert deferred.match_count == 1 and deferred.rows[0]["id"] == owned[1]
     assert deferred.rows[0]["is_backlogged"] is True
     assert deferred.rows[0]["waiting_to_closeout"] is False
-    for stage, expected in (("done", done), ("cancelled", retired)):
-        terminal = read(
-            TicketListFilters(orchestrator=CHIEF_PRINCIPAL, stages=(stage,), include_terminal=True)
-        )
-        assert terminal.match_count == 1 and terminal.rows[0]["id"] == expected
+    terminal = read(
+        TicketListFilters(orchestrator=CHIEF_PRINCIPAL, stages=("done",), include_terminal=True)
+    )
+    assert terminal.match_count == 1 and terminal.rows[0]["id"] == done
     scoped = read(TicketListFilters(orchestrator=Principal(PrincipalKind.sprint_item, item_one)))
     assert scoped.match_count == 1 and scoped.rows[0]["id"] == item
     assert sprint_views.item_tickets(tmp_db, item_one)[0]["is_backlogged"] is True
@@ -142,3 +140,51 @@ def test_summary_preserves_canonical_consequences_wait(tmp_db: Connection) -> No
         sprint_item_id=None,
     )
     assert page.rows[0]["waiting_to_closeout"] is True
+
+
+def test_board_orchestrator_recap_uses_authoritative_body_without_changes(
+    tmp_db: Connection,
+) -> None:
+    item = seed_item(tmp_db, "Recap owner")
+    seed(tmp_db, title="Recap child", item=item)
+    body = "  Ship the sidebar.\n\tKeep attention concise.  "
+    tmp_db.execute("UPDATE sprint_items SET body=? WHERE id=?", (body, item))
+    before = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())
+
+    board = views.board_view(tmp_db)
+
+    assert board["sprint_items"][0]["recap_preview"] == "Ship the sidebar. Keep attention concise."
+    after = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    ("recap", "expected"),
+    [
+        ("  First line.\n\tSecond   line.  ", "First line. Second line."),
+        ("x" * 158 + "  " + "more text", "x" * 158 + "…"),
+        (" \n\t", ""),
+    ],
+)
+def test_board_and_child_recap_match_concise_ticket_summary(
+    tmp_db: Connection, recap: str, expected: str
+) -> None:
+    item = seed_item(tmp_db, "Recap owner")
+    ticket = seed(tmp_db, title="Recap child", item=item)
+    tmp_db.execute("UPDATE tickets SET recap=? WHERE id=?", (recap, ticket))
+
+    summary = views.list_ticket_summaries(
+        tmp_db,
+        page_request=ListPageRequest(limit=30, offset=0),
+        filters=TicketListFilters(),
+        project_id=None,
+        sprint_id=None,
+        sprint_item_id=None,
+    )
+    board = views.board_view(tmp_db)
+    card = next(card for column in board["columns"] for card in column["cards"])
+    child = board["sprint_items"][0]["tickets"][0]
+
+    assert summary.rows[0]["recap_preview"] == expected
+    assert card["recap_preview"] == expected
+    assert child["recap_preview"] == expected

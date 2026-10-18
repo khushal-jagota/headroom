@@ -43,20 +43,22 @@ and `project list` use pages of 30 by default. Every result reports omissions an
 next offset. Ticket list no longer filters live work by Day or Sprint.
 
 Ticket lists accept `--backlogged`, `--not-backlogged`, and repeated `--worker-type`
-filters. Retired records require `--include-terminal`. Direct record reads remain
-available regardless of those list filters.
+filters. Completed records require `--include-terminal`; add `--stage done` to select
+them. Direct record reads remain available regardless of those list filters.
 
 ```sh
 panels ticket backlog t_example
 panels ticket resume t_example
-panels ticket retire t_example --reason "The original obligation is obsolete."
 panels ticket list --backlogged --worker-type coding --limit 30
 ```
 
-Each action accepts `--expected-record-sha256` from the full Ticket read. A stale hash
-refuses the action without a write. Read retirement provenance with
-`panels ticket show t_example retirement --json`. Resume does not grant an approval or
-clear a blocker. These commands use existing caller authority.
+Backlog and Resume accept `--expected-record-sha256` from the full Ticket read. A stale
+hash refuses the action without a write. Resume does not grant an approval or clear a
+blocker. These commands use existing caller authority.
+
+`panels ticket delete t_example` removes the Ticket record. Its artifact files survive.
+Backlog preserves a Ticket for later work; Delete removes it. See `deployment.md` for
+owner-run recovery when an older database contains cancelled Tickets.
 
 ## Structured Ticket writes
 
@@ -71,15 +73,20 @@ panels ticket create --input-json - <<'JSON'
   "worker_type": "coding",
   "project_id": "project_panels",
   "orchestrator": {"kind": "chief", "id": "chief"},
-  "kickoff_note": "Faithful intake context"
+  "brief": "Faithful intake context"
 }
 JSON
 ```
 
 `title` and `worker_type` are required. Existing optional keys cover launch overrides,
-priority, deadline, canonical placement IDs, blockers, kickoff, ceiling, and ceiling
+priority, deadline, canonical placement IDs, blockers, Brief, ceiling, and ceiling
 holder. Hidden legacy flags remain callable during migration. A call cannot mix those
 flags with `--input-json`.
+
+Create rejects unknown JSON keys before it creates anything. The validation error
+identifies the offending key. Use `brief` for the Brief text. The old `kickoff_note`
+JSON key and unsupported launch options such as `employee_launch_reasoning_effort`
+produce an error. Hidden legacy `--kickoff-note` flags send the text as `brief`.
 
 `ticket edit` sends one JSON object to the existing Ticket PATCH route. One request can
 change one or more fields that the route already accepts.
@@ -97,6 +104,26 @@ JSON
 The server validates the intended final state and writes it in one transaction. Proposal
 transitions, blockers, Worker restart, deletion, help, and messages keep dedicated
 commands because they have effects beyond a Ticket field edit.
+
+## Correct saved models
+
+The administrative `model-corrections` commands repair saved models within their selected
+variant. Preview accepts explicit targets. Repeat target flags to inspect several records.
+
+```sh
+panels model-corrections preview --ticket t_example --orchestrator si_example --chief --worker-default coding > corrections.json
+panels model-corrections apply < corrections.json
+```
+
+Preview prints JSON without changes to saved model choices. Review the proposed models before apply.
+Apply reads the complete preview from stdin. It checks the original launch choices and
+the proposed model again, so a stale preview cannot overwrite a later choice.
+Each result reports its own success or refusal. Both commands accept `--json`.
+
+Corrections preserve backend and reasoning effort. They work for idle Workers and
+user-owned Stages. Active turns finish on their current model. Apply does not start a turn,
+restart a Worker, approve work, or change its Stage. The server checks authority for
+each target again at apply.
 
 ## Ticket proposals
 
@@ -137,6 +164,19 @@ again.
 `orchestrator create/list/show/set/workspace` keeps the existing Item identity and
 conversation. `sprint item` remains an alias. Artifact operations keep their existing
 managed roots. `send-message --sprint-item` keeps its stable recipient address.
+`orchestrator create --body-file <brief-file>` starts the supervisor with the brief.
+A blank or absent brief leaves it idle. The result reports the saved orchestrator and
+startup outcome. Refused, failed, or uncertain startup still leaves the orchestrator saved.
+Inspect it and recover on that same orchestrator instead of creating another one.
+Uncertain startup gets no automatic replay. For failed or uncertain startup, check the
+conversation before any resend.
+`--json` preserves the complete creation response, including `startup`. As with message
+sends, a successful HTTP response exits zero. Check the startup fate for delivery success.
+
+Existing ordinary orchestrator supervisors can use it to coordinate with one another.
+The permission sends a message; approvals, ceilings, assignments, and other writes
+keep their existing authority requirements. Workers cannot use it to address an
+unrelated supervisor.
 
 `ticket assign <ticket> --chief` assigns to Chief. `--orchestrator <item>` assigns to
 an ordinary orchestrator. Structured create and edit use the same explicit `orchestrator`

@@ -23,7 +23,7 @@ The catalog retirement migration also disables every remaining schedule for `per
 `planning-day`, `planning-midday-check`, and `planning-sprint`. It preserves schedule
 identity and templates, every occurrence receipt, and all Tickets. Schedule creation
 and edits reject retired types through the canonical action layer. Existing personal
-Tickets retain their ordinary Stage gates and are not cancelled by this migration.
+Tickets retain their ordinary Stage gates.
 
 Only the current local minute can run. The loop does not backfill missed minutes.
 The occurrence key retains its timezone-aware local-minute format. Repeated polls and

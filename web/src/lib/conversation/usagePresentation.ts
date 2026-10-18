@@ -18,3 +18,8 @@ export function usageWindow(
 export function usageIsNearlySpent(percent: number): boolean {
   return percent >= USAGE_NEARLY_SPENT_PERCENT;
 }
+
+/** Allowance bars and rings share the same clamp and remaining semantics. */
+export function remainingPercent(usedPercent: number): number {
+  return 100 - Math.min(100, Math.max(0, usedPercent));
+}

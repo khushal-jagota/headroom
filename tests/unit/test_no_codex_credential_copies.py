@@ -13,19 +13,29 @@ are on the second: a hardlink shares an inode now, but diverges the moment the
 canonical path is replaced by rename. shutil.move and os.replace are deliberately
 absent: they move the credential to one place rather than create a second owner.
 
-Blind spots: whole-home copies (deliberately accepted gap)
---------------------------------------------------------
-copytree is effectively inert for realistic whole-home copies under this rule:
-copytree(real_home, scratch_home) names no login, so it passes. It remains supported
-for arguments that explicitly name a login path. Its presence in the call table
-does not mean whole-home coverage. Copying the home wholesale and pointing an
-agent at it is the closest uncaught relative of the documented incident.
-The committed successor, "Enforce one home and one credential per agent", must
-relate a copied directory's destination to the home the agent uses and account for
-legitimately synthetic homes. A copy and a home assignment merely co-occurring in
-a module cannot establish that relationship: safe config copies plus login
-symlinks also have that shape. The orchestrator will file that successor once
-staging is clear.
+Blind spots: whole-home copies (documented limit)
+------------------------------------------------
+copytree(real_home, scratch_home) names no login, so it passes. copytree is
+supported only when an argument explicitly names a login path. Matching its
+destination to a later agent home would still not prove whether the template
+contains real credentials: external environment inputs decide its contents.
+General coverage would require tracing helpers, branches, filesystem operations
+and launch paths, not merely finding a copy beside a home assignment.
+
+The invariant is one canonical home and credential per real agent identity.
+Synthetic homes are allowed. Configuration-only copies with a symlink to the
+canonical credential keep one owner; whole real-home or credential copies do not.
+The Codex runtime guard separately rejects matching credentials in a different
+home for children Panels launches, allowing unreadable credentials with a warning.
+It does not protect Hermes or Claude. The separate bounded source detector in
+scripts/check_agent_home_copies.py relates supported copies to selected agent homes,
+but cannot prove external credential provenance or safety on its omitted routes.
+
+The steering harness now copies Hermes configuration while symlinking canonical
+auth.json, and copies Claude settings while symlinking canonical .credentials.json.
+Codex uses its real home. The former whole-home and credential copies are removed;
+docs/conversation-system.md describes the current checks and their remaining limits.
+This tripwire has no new exemption.
 
 Other blind spots
 -----------------

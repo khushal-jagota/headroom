@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
@@ -98,6 +99,13 @@ from planner.conversation.message_files import (
     ConversationMessageFiles,
     MessageFileMissing,
 )
+from planner.conversation.model_corrections.contracts import (
+    CorrectionBatch,
+    CorrectionPreviewRequest,
+)
+from planner.conversation.model_corrections.service import apply_corrections, preview_corrections
+from planner.conversation.model_resolution.data import ModelResolutionStore
+from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.conversation.snapshot import (
     BackendSnapshot,
     BackendSnapshotService,
@@ -145,6 +153,7 @@ class ConversationRuntime:
     message_files: ConversationMessageFiles
     database_path: str
     sse_heartbeat_ms: int
+    model_resolution: ModelResolutionService | None = None
     backend_state: BackendStateStore | None = None
     # Absent when this process has no backend that can start a sign-in. The routes say
     # so rather than pretending the affordance exists.
@@ -178,6 +187,13 @@ def build_conversation_runtime(
         remembered_codex_login_rejection=remembered_codex_login_rejection
     )
 
+    backend_state = BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
+    model_resolution = ModelResolutionService(
+        snapshots=backend_snapshots,
+        store=ModelResolutionStore(db_path, busy_timeout_ms=db_busy_timeout_ms),
+        backend_state=backend_state,
+    )
+
     async def codex_app_server_argv() -> tuple[str, ...] | None:
         """How to run a codex app-server here, read when a sign-in starts, not at boot.
 
@@ -195,6 +211,7 @@ def build_conversation_runtime(
             backend_child_factories=backend_child_factories,
             message_files=message_files,
             live_tail=live_tail,
+            model_resolver=model_resolution,
         ),
         live_tail=live_tail,
         backend_snapshots=backend_snapshots,
@@ -202,7 +219,8 @@ def build_conversation_runtime(
         message_files=message_files,
         database_path=db_path,
         sse_heartbeat_ms=sse_heartbeat_ms,
-        backend_state=BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms),
+        backend_state=backend_state,
+        model_resolution=model_resolution,
         codex_sign_in=CodexSignInService(
             resolve_argv=codex_app_server_argv,
             remembered_login_rejection=remembered_codex_login_rejection,
@@ -770,6 +788,8 @@ async def answer_user_input(
 async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, Any]:
     """What each backend is right now. Probed when asked, then kept until asked again."""
     snapshots = await runtime.backend_snapshots.snapshots(refresh=refresh)
+    if runtime.model_resolution is not None:
+        snapshots = tuple(runtime.model_resolution.decorate_snapshot(item) for item in snapshots)
     return {"backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots]}
 
 
@@ -784,6 +804,10 @@ async def refresh_backends(runtime: Runtime) -> dict[str, Any]:
         # wait for version, identity, model-catalogue, or update-advisory probes.
         await asyncio.sleep(0)
         snapshots = await runtime.backend_snapshots.snapshots()
+        if runtime.model_resolution is not None:
+            snapshots = tuple(
+                runtime.model_resolution.decorate_snapshot(item) for item in snapshots
+            )
         refreshed = await usage_refresh
     finally:
         if not usage_refresh.done():
@@ -1326,6 +1350,9 @@ def _snapshot_json(
             {
                 "model_id": model.model_id,
                 "display_name": model.display_name,
+                "selected_variant": model.selected_variant,
+                "resolved_model_id": model.resolved_model_id,
+                "catalogue_warning": model.catalogue_warning,
                 "detail": model.detail,
                 "reasoning_effort_options": list(model.reasoning_effort_options),
                 "enabled": enabled_by_model[model.model_id],
@@ -1515,3 +1542,38 @@ __all__ = [
     "build_conversation_runtime",
     "router",
 ]
+
+
+@router.post("/model-corrections/preview")
+async def preview_model_corrections(
+    body: CorrectionPreviewRequest,
+    request: Request,
+    ctx: Ctx,
+) -> dict[str, Any]:
+    runtime = _runtime(request)
+    if runtime.model_resolution is None:
+        raise HTTPException(status_code=503, detail="model resolution is unavailable")
+    with connect(runtime.database_path) as conn:
+        results = await preview_corrections(
+            conn, ctx.principal, body.targets, runtime.model_resolution
+        )
+    return CorrectionBatch(corrections=results).model_dump(mode="json")
+
+
+@router.post("/model-corrections/apply")
+async def apply_model_corrections(
+    body: CorrectionBatch,
+    request: Request,
+    ctx: Ctx,
+) -> dict[str, Any]:
+    runtime = _runtime(request)
+    if runtime.model_resolution is None:
+        raise HTTPException(status_code=503, detail="model resolution is unavailable")
+    with connect(runtime.database_path) as conn:
+        results = await apply_corrections(
+            conn, ctx.principal, body.corrections, runtime.model_resolution, now=int(time.time())
+        )
+        if any(item.applied and item.target.kind == "worker-default" for item in results):
+            from planner.worker_types.configuration import load_worker_runtime_definitions
+            load_worker_runtime_definitions(conn)
+    return CorrectionBatch(corrections=results).model_dump(mode="json")

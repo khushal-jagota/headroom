@@ -22,6 +22,9 @@ def make_app(tmp_path: Path, *, test_mode: bool = True) -> FastAPI:
     path = tmp_path / "planner.db"
     conn = connect(str(path))
     create_schema(conn)
+    from tests.support.model_catalogue import seed_test_model_catalogue
+
+    seed_test_model_catalogue(conn)
     conn.close()
     config = load_config(
         path=None,

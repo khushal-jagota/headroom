@@ -1,3 +1,4 @@
+import { conversationSignalReading } from "./support/conversationSignalReading";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -8,15 +9,15 @@ import type {
 } from "../src/lib/types";
 import {
   WORK_ITEM_TICKET_GROUPS,
-  workItemActivityMark,
-  workItemActivityMarkPresentation,
   workItemTicketGroupKey,
   workItemTicketGroups,
   type WorkItemTicketFacts
 } from "../src/lib/workItemPresentation";
 import { buildWorkspaceRail } from "../src/lib/workspaceRail";
-import { dayVisualTicket } from "../src/lib/dayPresentation";
-import { feedbackTicketStageState, feedbackTicketStateLabel } from "../src/lib/feedback";
+import { sprintTicketCondition } from "../src/lib/sprintPresentation";
+import { workspaceHeading, sprintItemHeading, sprintItemWord, ticketFacts } from "./support/screenReadings";
+import { dayActionTiles, dayVisualTicket } from "../src/lib/dayPresentation";
+import { feedbackTicketStateLabel } from "../src/lib/feedback";
 import type { DayTicket } from "../src/lib/types";
 
 function ticket(
@@ -26,6 +27,7 @@ function ticket(
   return {
     id,
     title: id,
+    recap_preview: "",
     stage: "needs_implementation",
     priority: "P1",
     activity_at: 1,
@@ -109,7 +111,7 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
 
 function boardItem(rows: SprintItemWorkspaceTicket[]): BoardSprintItem {
   const full = workspace(rows);
-  return { id: full.id, title: full.title, priority: full.priority,
+  return { id: full.id, title: full.title, recap_preview: "", priority: full.priority,
     created_at: full.created_at, conversation_id: null, tickets: rows,
     ticket_rollup: quiet, ...quiet };
 }
@@ -131,6 +133,46 @@ describe("the shared Item and Ticket presentation", () => {
     expect(workItemTicketGroupKey(ticket("state", values))).toBe(expected);
   });
 
+  it.each([
+    { awaiting_approval: true, has_pending_proposal: true },
+    { awaiting_agent_approval: true, has_pending_proposal: true },
+    { awaiting_answer: true }, { assigned: true }, { awaiting_reply: true },
+    { agent_state: "errored" }, { agent_state: "working" },
+    { waiting_to_closeout: true }, { ticket_status: "blocked" },
+    { stage: "done" }
+  ] as const)("gives supplied backlogged work one group while preserving %o", (facts) => {
+    const row = ticket("backlogged", { ...facts, is_backlogged: true });
+    const original = { ...row };
+    const groups = workItemTicketGroups([row]);
+    expect(groups.map((group) => group.key)).toEqual(["backlog"]);
+    expect(groups[0].tickets).toEqual([original]);
+    expect(groups[0].tickets[0]).toBe(row);
+    expect(groups[0].quiet).toBe(false);
+    expect(sprintTicketCondition(row).word).toBe("backlog");
+    expect(workItemTicketGroupKey({ ...row, is_backlogged: false }))
+      .toBe(workItemTicketGroupKey(ticket(row.id, facts)));
+  });
+
+  it("forwards explicit backlog through each shared screen adapter", () => {
+    const facts = ticketFacts({ is_backlogged: true, awaiting_approval: true });
+    expect(workspaceHeading(facts)).toBe("Backlog");
+    expect(sprintItemHeading(facts)).toBe("Backlog");
+    expect(sprintItemWord(facts)).toBe("backlog");
+    const { is_backlogged: _, ...legacy } = ticket("legacy", { awaiting_approval: true });
+    expect(workItemTicketGroupKey(legacy)).toBe("awaiting_approval");
+  });
+
+  it("preserves historical Day counts and Feedback labels with raw backlog facts", () => {
+    const rows = [ticket("review", { is_backlogged: true, awaiting_approval: true }),
+      ticket("done", { is_backlogged: true, stage: "done" })];
+    const visuals = rows.map((row) => dayVisualTicket(row as unknown as DayTicket));
+    expect(visuals.map((visual) => visual.group)).toEqual(["awaiting_approval", "done"]);
+    expect(dayActionTiles(visuals).map(({ key, count }) => [key, count]))
+      .toEqual([["review", 1], ["done", 1]]);
+    expect(rows.map(feedbackTicketStateLabel)).toEqual(["Needs your approval", "Done"]);
+    expect(rows.map((row) => workItemTicketGroupKey(row))).toEqual(["backlog", "backlog"]);
+  });
+
   it("uses projected completion and failure facts in the Item, rail, Day, and Feedback", () => {
     const completed = ticket("completed-history", { stage: "done", agent_state: "idle" });
     const unfinished = ticket("unfinished-failure", { agent_state: "errored" });
@@ -148,19 +190,19 @@ describe("the shared Item and Ticket presentation", () => {
 
     expect(feedbackTicketStateLabel(completed)).toBe("Done");
     expect(feedbackTicketStateLabel(unfinished)).toBe("Errored");
-    expect(workItemActivityMark(completed)).toBeNull();
+    expect(conversationSignalReading(completed)).not.toContain("data-conversation-signal");
   });
 
   it.each([
-    [{ awaiting_approval: true }, "awaiting_approval", null],
-    [{ awaiting_answer: true }, "awaiting_answer", null],
-    [{ assigned: true }, "assigned", null],
-    [{ awaiting_reply: true }, "awaiting_reply", "reply"]
-  ] as const)("keeps %o above completed history and explicit failure", (values, group, mark) => {
+    [{ awaiting_approval: true }, "awaiting_approval"],
+    [{ awaiting_answer: true }, "awaiting_answer"],
+    [{ assigned: true }, "assigned"],
+    [{ awaiting_reply: true }, "awaiting_reply"]
+  ] as const)("keeps %o above completed history and explicit failure", (values, group) => {
     for (const agent_state of ["idle", "errored"] as const) {
       const row = ticket("completed-attention", { stage: "done", agent_state, ...values });
       expect(workItemTicketGroupKey(row)).toBe(group);
-      expect(workItemActivityMark(row)).toBe(mark);
+      expect(conversationSignalReading(row)).not.toContain("data-conversation-signal");
     }
   });
 
@@ -170,7 +212,7 @@ describe("the shared Item and Ticket presentation", () => {
       stage: "done", ticket_status: "errored", agent_state: "errored"
     });
     expect(workItemTicketGroupKey(live)).toBe("agent");
-    expect(workItemActivityMark(live)).toBeNull();
+    expect(conversationSignalReading(live)).not.toContain("data-conversation-signal");
     expect(workItemTicketGroupKey(failed)).toBe("errored");
   });
 
@@ -193,52 +235,37 @@ describe("the shared Item and Ticket presentation", () => {
     ).toBe("awaiting_approval");
   });
 
-  it("keeps ownership independent from the universal activity mark", () => {
+  it("keeps ownership independent from canonical conversation marks", () => {
     const assignedAndWorking = ticket("assigned-working", {
       assigned: true,
       agent_state: "working"
     });
     expect(workItemTicketGroupKey(assignedAndWorking)).toBe("assigned");
-    expect(workItemActivityMark(assignedAndWorking)).toBeNull();
-    expect(workItemActivityMarkPresentation(null).state).toBeNull();
+    expect(conversationSignalReading(assignedAndWorking)).not.toContain("data-conversation-signal");
   });
 
-  it("uses only direct replies for activity marks", () => {
-    expect(workItemActivityMark(ticket("all", {
-      awaiting_approval: true,
-      awaiting_answer: true,
-      awaiting_reply: true,
-      agent_state: "working"
-    }))).toBe("reply");
-    expect(workItemActivityMark(ticket("answer", {
-      awaiting_answer: true,
-      awaiting_reply: true,
-      agent_state: "working"
-    }))).toBe("reply");
-    expect(workItemActivityMark(ticket("reply", {
-      awaiting_reply: true,
-      agent_state: "working"
-    }))).toBe("reply");
-    expect(workItemActivityMark(ticket("working", { agent_state: "working" }))).toBeNull();
-    expect(workItemActivityMark(ticket("quiet"))).toBeNull();
-  });
-
-  it("uses the same activity mark on Day and Feedback Ticket rows", () => {
+  it("preserves canonical simultaneous work and message facts alongside attention", () => {
     const approval = ticket("approval", {
+      conversation_signal:{working:true,message_for_owner:true},
       awaiting_approval: true,
       awaiting_reply: true,
       agent_state: "working"
     });
-    const reply = ticket("reply", { awaiting_reply: true, agent_state: "working" });
-    const working = ticket("working", { assigned: true, agent_state: "working" });
-    expect(dayVisualTicket(approval as unknown as DayTicket).state).toBe("current-awaiting-approval");
-    expect(feedbackTicketStageState(approval)).toBe("current-awaiting-approval");
-    expect(dayVisualTicket(reply as unknown as DayTicket).state).toBe(
-      "current-awaiting-approval"
-    );
-    expect(feedbackTicketStageState(reply)).toBe("current-awaiting-approval");
-    expect(dayVisualTicket(working as unknown as DayTicket).state).toBeNull();
-    expect(feedbackTicketStageState(working)).toBeNull();
+    const reply = ticket("reply", { awaiting_reply: true, agent_state: "working", conversation_signal:{working:true,message_for_owner:true} });
+    const working = ticket("working", { assigned: true, agent_state: "working", conversation_signal:{working:true,message_for_owner:false} });
+    for (const row of [approval, reply]) {
+      const html = conversationSignalReading(row);
+      expect(html).not.toContain('data-conversation-signal="working"');
+      expect(html).toContain('data-conversation-signal="message"');
+      expect(dayVisualTicket(row as unknown as DayTicket).ticket.conversation_signal).toEqual(row.conversation_signal);
+    }
+    expect(conversationSignalReading(working)).toContain('data-conversation-signal="working"');
+    expect(conversationSignalReading(working)).not.toContain('data-conversation-signal="message"');
+    const readReply = ticket(reply.id, { ...reply, awaiting_reply:false,
+      conversation_signal:{ ...reply.conversation_signal!, message_for_owner:false } });
+    expect(readReply.conversation_signal?.working).toBe(true);
+    expect(conversationSignalReading(readReply)).toContain('data-conversation-signal="working"');
+    expect(conversationSignalReading(readReply)).not.toContain('data-conversation-signal="message"');
   });
 
   it("returns identical groups, counts, marks, and activity order for both payload shapes", () => {
@@ -257,7 +284,7 @@ describe("the shared Item and Ticket presentation", () => {
       key: group.key,
       label: group.label,
       count: group.tickets.length,
-      tickets: group.tickets.map((row) => ({ id: row.id, mark: workItemActivityMark(row) }))
+      tickets: group.tickets.map((row) => ({ id: row.id, signal: row.conversation_signal }))
     }));
     expect(reading(fromWorkspace)).toEqual(reading(fromBoard));
     expect(fromWorkspace.find((group) => group.key === "assigned")?.tickets.map((row) => row.id))
@@ -275,7 +302,7 @@ describe("the shared Item and Ticket presentation", () => {
     const summary = boardItem([full, offDay]);
     summary.ticket_rollup = { ...quiet, awaiting_reply: true };
     const rail = buildWorkspaceRail([boardCard(today)], [summary]);
-    expect(rail.items[0].mark).toBeNull();
+    expect(rail.items[0].conversationSignal).toBeUndefined();
     expect(rail.items[0].groups[0].key).toBe("awaiting_approval");
     expect(rail.items[0].groups[0].cards.map((row) => row.id)).toEqual(["same", "off-day"]);
     expect(rail.groups[0].key).toBe("assigned");
@@ -302,6 +329,7 @@ describe("the shared Item and Ticket presentation", () => {
       "assigned",
       "awaiting_reply",
       "errored",
+      "backlog",
       "agent",
       "waiting_to_closeout",
       "status_awaiting_approval",

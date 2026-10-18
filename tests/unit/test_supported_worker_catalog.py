@@ -11,6 +11,7 @@ from sqlite3 import Connection
 import pytest
 from fastapi.testclient import TestClient
 from tests.support.principals import OWNER_PRINCIPAL
+from tests.support.retired_workers import seed_historical_worker_type
 from tests.unit.test_scheduled_tickets import _template
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -23,28 +24,12 @@ from planner.scheduled_tickets import actions as schedule_actions
 from planner.scheduled_tickets import data as schedule_data
 from planner.scheduled_tickets.contracts import ScheduleCadence
 from planner.tickets import actions, data
-from planner.worker_types.configuration import load_worker_runtime_definitions
 from planner.worker_types.contracts import RETIRED_WORKER_TYPES
 
 
 def _install_history(conn: Connection) -> None:
-    source = Path(__file__).parents[1] / "support" / "retired_worker_types.json"
-    for position, definition in enumerate(json.loads(source.read_text()), start=100):
-        conn.execute(
-            "INSERT OR REPLACE INTO worker_types "
-            "(worker_type, position, definition_json, updated_at) VALUES (?, ?, ?, 0)",
-            (definition["worker_type"], position, json.dumps(definition)),
-        )
-    # Definitions may refer to skills absent from a fresh seed. History stores those too.
-    for definition in json.loads(source.read_text()):
-        skill = definition["profile"]["specialist_skill"]
-        conn.execute(
-            "INSERT OR IGNORE INTO managed_skills "
-            "(skill_name, source_text, updated_at) VALUES (?, ?, 0)",
-            (skill, f"---\nname: {skill}\ndescription: Historical specialist\n---\n\nHistory."),
-        )
-    conn.commit()
-    load_worker_runtime_definitions(conn)
+    for worker_type in sorted(RETIRED_WORKER_TYPES):
+        seed_historical_worker_type(conn, worker_type)
 
 
 @pytest.mark.parametrize("worker_type", sorted(RETIRED_WORKER_TYPES))

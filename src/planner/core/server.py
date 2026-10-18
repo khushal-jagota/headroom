@@ -23,6 +23,9 @@ from planner.conversation.backend_state import DurableCodexLoginRejection
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
+from planner.conversation.usage.api import router as recorded_usage_router
+from planner.conversation.usage.pricing import UsagePricingService
+from planner.conversation.usage.service import RecordedUsageService
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import HOST, Config
@@ -248,6 +251,11 @@ def create_app(
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
+    app.state.recorded_usage = RecordedUsageService(
+        conn_factory,
+        now=clock.now,
+        pricing=UsagePricingService(conn_factory, now=clock.now),
+    )
     app.state.conversation = None
     # The conversation system is the running one, so it belongs to the lifespan that
     # starts and stops it. Outside that window there is none.
@@ -295,6 +303,7 @@ def create_app(
     include_router(navigation_delivery.router)
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
+    include_router(recorded_usage_router, prefix="/api/conversation")
 
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:

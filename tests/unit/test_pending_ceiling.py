@@ -21,7 +21,7 @@ def _park(conn: Connection) -> Ticket:
         title="Visible proposal",
         worker_type="coding",
         principal=OWNER_PRINCIPAL,
-        kickoff_note="Brief",
+        brief="Brief",
         stated_ceiling="needs_success_condition",
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
@@ -131,7 +131,7 @@ def test_stale_or_wrong_visible_proposal_acceptance_has_no_effects(
     assert tmp_db.execute("SELECT COUNT(*) FROM manager_wakes").fetchone()[0] == wake_count
 
 
-def test_manual_visible_accept_does_not_auto_accept_future_user_owned_answers(
+def test_historical_pending_user_owned_answer_still_requires_explicit_accept(
     tmp_db: Connection,
 ) -> None:
     install_probe_registry()
@@ -141,8 +141,8 @@ def test_manual_visible_accept_does_not_auto_accept_future_user_owned_answers(
             title="User review",
             worker_type="probe",
             principal=OWNER_PRINCIPAL,
-            kickoff_note="Brief",
-            stated_ceiling="done",
+            brief="Brief",
+            stated_ceiling="needs_beta",
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
         )
@@ -154,7 +154,10 @@ def test_manual_visible_accept_does_not_auto_accept_future_user_owned_answers(
         ticket = data.file_current_proposal(
             tmp_db, ticket.id, body="User-owned answer", principal=worker, now=3
         )
-        assert ticket.pending_proposal is not None  # Still parks below Done.
+        assert ticket.pending_proposal is not None
+        # Reproduce a historical proposal parked by the former ownership rule below Done.
+        tmp_db.execute("UPDATE tickets SET ceiling='done' WHERE id=?", (ticket.id,))
+        ticket = data.read_ticket(tmp_db, ticket.id)
         original = ticket
         for ceiling in ("done", "needs_landing"):
             ticket = _edit(tmp_db, ticket, ceiling=ceiling)
@@ -179,6 +182,109 @@ def test_manual_visible_accept_does_not_auto_accept_future_user_owned_answers(
         assert accepted.pending_proposal is None
     finally:
         uninstall_probe_registry()
+
+
+@pytest.mark.parametrize(
+    ("worker_type", "user_stage", "field", "next_stage"),
+    [
+        ("exploration", "needs_understanding", "understanding", "needs_research_plan"),
+        ("probe", "needs_beta", "beta", "needs_landing"),
+    ],
+)
+@pytest.mark.parametrize("at_ceiling", [False, True])
+def test_new_user_owned_answer_follows_ceiling_and_releases_step(
+    tmp_db: Connection,
+    worker_type: str,
+    user_stage: str,
+    field: str,
+    next_stage: str,
+    at_ceiling: bool,
+) -> None:
+    from planner.runtime.worker_step_readiness import is_ready_for_worker_step
+    from planner.worker_types.configuration import configured_worker_type_registry
+
+    install_probe_registry()
+    try:
+        ticket = data.create_ticket(
+            tmp_db,
+            title="Collaborative answer",
+            worker_type=worker_type,
+            principal=OWNER_PRINCIPAL,
+            brief="Brief",
+            stated_ceiling=user_stage if at_ceiling else next_stage,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+        )
+        worker = Principal(PrincipalKind.ticket, ticket.id)
+        if worker_type == "probe":
+            ticket = data.file_current_proposal(
+                tmp_db, ticket.id, body="Alpha", principal=worker, now=2
+            )
+        assert ticket.stage == user_stage
+        definition = configured_worker_type_registry().require(worker_type)
+        claimed = data.claim_ticket_for_worker_step(
+            tmp_db, ticket.id, readiness_check=is_ready_for_worker_step, now=3
+        )
+        assert claimed is not None
+        assert claimed.worker_step_claim is WorkerStepClaim.out
+        assert tmp_db.execute(
+            "SELECT stage FROM ticket_paired_stage_openers WHERE ticket_id=?", (ticket.id,)
+        ).fetchone()[0] == user_stage
+        ticket = data.file_current_proposal(
+            tmp_db, ticket.id, body="Shared answer", principal=worker, now=4
+        )
+        assert ticket.worker_step_claim is WorkerStepClaim.none
+        if at_ceiling:
+            assert ticket.stage == user_stage
+            assert ticket.pending_proposal is not None
+            assert ticket.pending_proposal.body == "Shared answer"
+            assert field not in ticket.field_values
+            assert not is_ready_for_worker_step(tmp_db, ticket, worker_type_definition=definition)
+        else:
+            assert ticket.stage == next_stage
+            assert ticket.field_values[field] == "Shared answer"
+            assert ticket.pending_proposal is None
+            assert ticket.pending_proposal_revision == 0
+            assert tmp_db.execute(
+                "SELECT 1 FROM ticket_paired_stage_openers WHERE ticket_id=?", (ticket.id,)
+            ).fetchone() is None
+            assert is_ready_for_worker_step(tmp_db, ticket, worker_type_definition=definition)
+        assert tmp_db.execute("SELECT COUNT(*) FROM manager_wakes").fetchone()[0] == 0
+    finally:
+        uninstall_probe_registry()
+
+
+def test_historical_pending_answer_reroute_below_ceiling_still_notifies_chief(
+    tmp_db: Connection,
+) -> None:
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Historical collaborative answer",
+        worker_type="exploration",
+        principal=OWNER_PRINCIPAL,
+        brief="Brief",
+        stated_ceiling="needs_understanding",
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+    )
+    ticket = data.file_current_proposal(
+        tmp_db, ticket.id, body="Shared understanding",
+        principal=Principal(PrincipalKind.ticket, ticket.id), now=2,
+    )
+    # This persisted state was valid when Stage ownership added a review stop.
+    tmp_db.execute("UPDATE tickets SET ceiling='done' WHERE id=?", (ticket.id,))
+    original = data.read_ticket(tmp_db, ticket.id)
+    rerouted = _edit(tmp_db, original, ceiling_holder=CHIEF_PRINCIPAL)
+    assert rerouted.pending_proposal == original.pending_proposal
+    assert rerouted.stage == original.stage
+    assert rerouted.pending_proposal_revision == original.pending_proposal_revision + 1
+    wake = tmp_db.execute(
+        "SELECT ticket_id, source_revision, target_kind FROM manager_wakes"
+    ).fetchone()
+    assert wake is not None
+    assert wake["ticket_id"] == ticket.id
+    assert wake["source_revision"] == rerouted.pending_proposal_revision
+    assert wake["target_kind"] == "chief"
 
 
 @pytest.mark.parametrize("value", [True, False, 0, -1, "1", 1.5, [], {}])
