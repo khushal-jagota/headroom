@@ -209,3 +209,9 @@ payload. Its typed attachment binder maps unavailable errors and checks installa
 identity inside SQL snapshots. Production attachment registration and recovery remain
 uncomposed. Private table creation occurs inside installation; production startup and
 migration integration still require combined proof.
+
+A successful registered admission supplies an opaque reconciliation handle before
+SQLite begins. An uncertain result carries that same object through commit paths
+and cleanup errors. Core does not inspect it or retry the operation. The Signal
+lane owns evidence resolution. Failures from observers after a known commit do
+not turn that commit into an uncertain result.

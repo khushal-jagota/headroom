@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
@@ -14,6 +15,7 @@ from planner.core import change_signal
 from planner.core.commit_observers import CommitObserver
 from planner.core.db import (
     ChangeSignallingConnection,
+    UncertainTransactionError,
     bind_transaction_admission,
     commit_without_change_signal,
     register_transaction_guard,
@@ -28,6 +30,11 @@ class Lease:
         self.events = events
         self.reject_savepoint = False
         self.fail: str | None = None
+        self._handle: object | None = object()
+
+    @property
+    def reconciliation_handle(self) -> object:
+        return self._handle
 
     def check_savepoint(self, action: str) -> None:
         self.events.append(("savepoint", action))
@@ -298,23 +305,64 @@ def test_settlement_failure_poison_precedes_notifications(
     conn.close()
 
 
-def test_uncertain_commit_is_not_reclassified_or_observed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("route", ["method", "context", "quiet", "sql", "end", "release"])
+def test_uncertain_commit_is_not_reclassified_or_observed(tmp_path: Path, route: str) -> None:
     class FailedResult(ChangeSignallingConnection):
         def _sqlite_commit(self) -> None:
             super()._sqlite_commit()
             raise OSError("lost commit result")
 
+        def _sqlite_execute(
+            self, cursor: sqlite3.Cursor, sql: str, parameters: Any
+        ) -> sqlite3.Cursor:
+            result = super()._sqlite_execute(cursor, sql, parameters)
+            if sql in {"COMMIT", "END", "RELEASE outer"}:
+                raise OSError("lost commit result")
+            return result
+
+    class CapturedLease(Lease):
+        reads = 0
+
+        @property
+        def reconciliation_handle(self) -> object:
+            assert not conn.in_transaction
+            self.reads += 1
+            return super().reconciliation_handle
+
+    class CapturedFactory(Factory):
+        def enter(self, connection: sqlite3.Connection, admission: object | None) -> CapturedLease:
+            lease = CapturedLease(self.events)
+            self.leases.append(lease)
+            return lease
+
     path = tmp_path / "uncertain.db"
     conn = sqlite3.connect(path, factory=FailedResult, isolation_level=None)
     conn.execute("CREATE TABLE source (value INTEGER)")
-    factory = Factory()
+    factory = CapturedFactory()
     registration = register_transaction_guard(str(path), factory)
     observer = Mock()
     conn._commit_observers = (observer,)
-    conn.execute("BEGIN")
+    if route == "context":
+        conn.__enter__()
+    else:
+        conn.execute("SAVEPOINT outer" if route == "release" else "BEGIN")
+    lease = factory.leases[-1]
+    handle = lease._handle
     conn.execute("INSERT INTO source VALUES (1)")
-    with pytest.raises(OSError, match="lost commit"):
-        conn.commit()
+    with pytest.raises(UncertainTransactionError, match="lost commit") as caught:
+        if route == "method":
+            conn.commit()
+        elif route == "context":
+            conn.__exit__(None, None, None)
+        elif route == "quiet":
+            commit_without_change_signal(conn)
+        else:
+            conn.execute({"sql": "COMMIT", "end": "END", "release": "RELEASE outer"}[route])
+    assert caught.value.reconciliation_handle is handle
+    assert isinstance(lease, CapturedLease) and lease.reads == 1
+    assert isinstance(caught.value.__cause__, OSError)
+    with pytest.raises(AttributeError):
+        caught.value.reconciliation_handle = object()
     assert ("settle", "uncertain", "OSError") in factory.events
     assert factory.events.count("release") == 1
     observer.assert_not_called()
@@ -451,9 +499,10 @@ def test_raw_migration_uncertainty_survives_cleanup(
         raise OSError("lost migration commit result")
 
     monkeypatch.setattr(_MigrationConnection, "_sqlite_commit", lost_result)
-    with pytest.raises(OSError, match="lost migration"):
+    with pytest.raises(UncertainTransactionError, match="lost migration") as caught:
         with schema_migration_transaction(str(path)) as conn:
             conn.exec_driver_sql("CREATE TABLE committed (value INTEGER)")
+    assert caught.value.reconciliation_handle is factory.leases[-1].reconciliation_handle
     assert factory.events[-2:] == [("settle", "uncertain", "OSError"), "release"]
     with sqlite3.connect(path) as raw:
         assert raw.execute("SELECT COUNT(*) FROM committed").fetchone()[0] == 0
@@ -497,4 +546,188 @@ def test_raw_migration_failed_commit_requires_successful_rollback(
     monkeypatch.setattr(_MigrationConnection, "_sqlite_commit", original)
     with sqlite3.connect(path) as raw:
         assert raw.execute("SELECT name FROM sqlite_master WHERE name='discarded'").fetchall() == []
+    registration.close()
+
+
+def test_null_reconciliation_handle_rejects_before_begin(tmp_path: Path) -> None:
+    path = tmp_path / "null-handle.db"
+    conn = open_database(path)
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+
+    class NullFactory(Factory):
+        def enter(self, connection: sqlite3.Connection, admission: object | None) -> Lease:
+            lease = super().enter(connection, admission)
+            lease._handle = None
+            return lease
+
+    factory = NullFactory()
+    registration = register_transaction_guard(str(path), factory)
+    with pytest.raises(TypeError, match="non-null"):
+        conn.execute("BEGIN")
+    assert "BEGIN" not in statements
+    assert not conn.in_transaction
+    assert factory.events[-2:] == [("settle", "rolled_back", "TypeError"), "release"]
+    assert any(isinstance(event, tuple) and event[0] == "invalidate" for event in factory.events)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        conn.execute("BEGIN")
+    registration.close()
+    conn.close()
+
+
+@pytest.mark.parametrize("failure", ["settle", "release"])
+def test_uncertain_carrier_survives_guard_cleanup_failure(tmp_path: Path, failure: str) -> None:
+    class FailedResult(ChangeSignallingConnection):
+        def _sqlite_commit(self) -> None:
+            super()._sqlite_commit()
+            raise OSError("lost commit result")
+
+    path = tmp_path / "uncertain-cleanup.db"
+    conn = sqlite3.connect(path, factory=FailedResult, isolation_level=None)
+    factory = Factory()
+    registration = register_transaction_guard(str(path), factory)
+    conn.execute("BEGIN")
+    lease = factory.leases[-1]
+    handle = lease._handle
+    lease.fail = failure
+    with pytest.raises(UncertainTransactionError) as caught:
+        conn.commit()
+    assert caught.value.reconciliation_handle is handle
+    assert isinstance(caught.value.__cause__, OSError)
+    assert any(failure in note for note in caught.value.__notes__)
+    assert factory.events.count("release") == 1
+    registration.close()
+    conn.close()
+
+
+@pytest.mark.parametrize("route", ["method", "sql", "cursor"])
+def test_uncertain_rollback_cleanup_keeps_original_handle(tmp_path: Path, route: str) -> None:
+    class RejectedCommit(ChangeSignallingConnection):
+        def _sqlite_commit(self) -> None:
+            raise OSError("commit result unavailable")
+
+    path = tmp_path / "uncertain-rollback.db"
+    conn = sqlite3.connect(path, factory=RejectedCommit, isolation_level=None)
+    factory = Factory()
+    registration = register_transaction_guard(str(path), factory)
+    conn.execute("BEGIN")
+    handle = factory.leases[-1]._handle
+    conn.set_authorizer(
+        lambda action, *args: (
+            sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_TRANSACTION else sqlite3.SQLITE_OK
+        )
+    )
+    with pytest.raises(UncertainTransactionError) as initial:
+        with closing(conn):
+            conn.commit()
+    assert isinstance(initial.value.__cause__, OSError)
+    assert initial.value.reconciliation_handle is handle
+    with pytest.raises(UncertainTransactionError) as cleanup:
+        if route == "method":
+            conn.rollback()
+        elif route == "sql":
+            conn.execute("ROLLBACK")
+        else:
+            conn.cursor().execute("ROLLBACK")
+    assert cleanup.value is initial.value
+    assert isinstance(cleanup.value.__cause__, OSError)
+    assert cleanup.value.reconciliation_handle is handle
+    assert factory.events.count("release") == 1
+    conn.set_authorizer(None)
+    conn.rollback()
+    registration.close()
+    conn.close()
+
+
+def test_uncertain_close_error_keeps_original_handle(tmp_path: Path) -> None:
+    class FailedResult(ChangeSignallingConnection):
+        def _sqlite_commit(self) -> None:
+            super()._sqlite_commit()
+            raise OSError("lost commit result")
+
+    path = tmp_path / "uncertain-close.db"
+    conn = sqlite3.connect(path, factory=FailedResult, isolation_level=None)
+    factory = Factory()
+    registration = register_transaction_guard(str(path), factory)
+    conn.execute("BEGIN")
+    with pytest.raises(UncertainTransactionError) as initial:
+        conn.commit()
+    errors: list[BaseException] = []
+
+    def wrong_thread_close() -> None:
+        try:
+            conn.close()
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=wrong_thread_close)
+    thread.start()
+    thread.join(3)
+    assert not thread.is_alive()
+    assert errors == [initial.value]
+    assert isinstance(initial.value.__cause__, OSError)
+    assert initial.value.reconciliation_handle is factory.leases[-1]._handle
+    registration.close()
+    conn.close()
+
+
+@pytest.mark.parametrize("failure", ["observer", "wake"])
+def test_known_commit_notification_failure_has_no_uncertain_carrier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    path = tmp_path / "known-commit.db"
+    conn = open_database(path)
+    factory = Factory()
+    registration = register_transaction_guard(str(path), factory)
+
+    def fail(*arguments: object) -> None:
+        raise ValueError("notification failed")
+
+    if failure == "observer":
+        conn._commit_observers = (CommitObserver(fail, lambda results: None),)
+    else:
+        monkeypatch.setattr(change_signal, "emit", fail)
+    conn.execute("BEGIN")
+    conn.execute("INSERT INTO source VALUES (1)")
+    if failure == "wake":
+        with pytest.raises(ValueError, match="notification failed"):
+            conn.commit()
+    else:
+        conn.commit()
+    assert factory.events[-2:] == [("settle", "committed", None), "release"]
+    assert conn._uncertain_result is None
+    assert conn.execute("SELECT COUNT(*) FROM source").fetchone()[0] == 1
+    registration.close()
+    conn.close()
+
+
+@pytest.mark.parametrize("cleanup", ["context", "sql", "cursor"])
+def test_context_exit_cannot_erase_uncertainty_on_closed_connection(
+    tmp_path: Path, cleanup: str
+) -> None:
+    class ClosedResult(ChangeSignallingConnection):
+        def _sqlite_commit(self) -> None:
+            super()._sqlite_commit()
+            sqlite3.Connection.close(self)
+            raise OSError("closed commit result")
+
+    path = tmp_path / "closed-context.db"
+    conn = sqlite3.connect(path, factory=ClosedResult, isolation_level=None)
+    factory = Factory()
+    registration = register_transaction_guard(str(path), factory)
+    cursor = conn.cursor()
+    with pytest.raises(UncertainTransactionError) as caught:
+        with conn:
+            conn.commit()
+    if cleanup != "context":
+        with pytest.raises(UncertainTransactionError) as later:
+            if cleanup == "sql":
+                conn.execute("ROLLBACK")
+            else:
+                cursor.execute("ROLLBACK")
+        assert later.value is caught.value
+    assert caught.value.reconciliation_handle is factory.leases[-1]._handle
+    assert isinstance(caught.value.__cause__, OSError)
+    assert any("cleanup" in note for note in caught.value.__notes__)
+    assert factory.events.count("release") == 1
     registration.close()

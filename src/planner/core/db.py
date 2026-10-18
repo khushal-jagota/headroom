@@ -50,6 +50,9 @@ from planner.core.transaction_guards import (
     reserve_transaction,
 )
 from planner.core.transaction_guards import (
+    UncertainTransactionError as UncertainTransactionError,
+)
+from planner.core.transaction_guards import (
     register_transaction_guard as register_transaction_guard,
 )
 from planner.core.transaction_participants import TransactionParticipant, finalize
@@ -160,7 +163,13 @@ class ParticipatingCursor(sqlite3.Cursor):
     def execute(self, sql: str, parameters: Any = (), /) -> Self:
         connection = self.connection
         assert isinstance(connection, ChangeSignallingConnection)
-        connection._execute(self, sql, parameters)
+        try:
+            connection._execute(self, sql, parameters)
+        except UncertainTransactionError:
+            raise
+        except BaseException as error:
+            connection._preserve_rollback_uncertainty(sql, error)
+            raise
         return self
 
     def executemany(self, sql: str, parameters: Any, /) -> Self:
@@ -220,6 +229,7 @@ class ChangeSignallingConnection(sqlite3.Connection):
         self._contexts: list[str | None] = []
         self._context_sequence = 0
         self._transaction_guard: TransactionReservation | None = None
+        self._uncertain_result: UncertainTransactionError | None = None
         self._transaction_admission: object | None = None
         self._control_guard_depth = 0
         self._closed = False
@@ -262,29 +272,48 @@ class ChangeSignallingConnection(sqlite3.Connection):
         guard, self._transaction_guard = self._transaction_guard, None
         self._clear_transaction()
         if guard is not None:
-            guard.finish(outcome, error)
+            try:
+                guard.finish(outcome, error)
+            except UncertainTransactionError as uncertain:
+                self._uncertain_result = uncertain
+                raise
+
+    def _preserve_uncertainty(self, error: BaseException) -> None:
+        if self._uncertain_result is not None:
+            self._uncertain_result.add_note(f"connection cleanup also failed: {error!r}")
+            raise self._uncertain_result
+
+    def _preserve_rollback_uncertainty(self, sql: str, error: BaseException) -> None:
+        words = _control_words(sql)
+        if words and words[0] == "rollback" and "to" not in words:
+            self._preserve_uncertainty(error)
 
     def _failed_commit(self, error: BaseException) -> None:
         # A failed commit with an open transaction can still establish rollback.
         # A completed transaction with a failed result is genuinely uncertain.
         outcome: TransactionOutcome = "uncertain"
-        if self.in_transaction:
-            try:
+        try:
+            if self.in_transaction:
                 super().rollback()
-            except BaseException:
-                pass
-            else:
                 outcome = "rolled_back"
+        except BaseException as cleanup_error:
+            error.add_note(f"commit rollback also failed: {cleanup_error!r}")
         self._settle_transaction(outcome, error)
 
     def close(self) -> None:
         self._check_transaction_control()
         if self._closed:
             return
-        if self.in_transaction:
-            self._rollback_failed()
-        super().close()
-        self._closed = True
+        try:
+            if self.in_transaction:
+                self._rollback_failed()
+            super().close()
+            self._closed = True
+        except UncertainTransactionError:
+            raise
+        except BaseException as error:
+            self._preserve_uncertainty(error)
+            raise
 
     def __del__(self) -> None:
         # sqlite3's GC close alone cannot drain a process-local reservation.
@@ -310,7 +339,13 @@ class ChangeSignallingConnection(sqlite3.Connection):
         return super().cursor(ParticipatingCursor)
 
     def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
-        return self.cursor().execute(sql, parameters)
+        try:
+            return self.cursor().execute(sql, parameters)
+        except UncertainTransactionError:
+            raise
+        except BaseException as error:
+            self._preserve_rollback_uncertainty(sql, error)
+            raise
 
     def executemany(self, sql: str, parameters: Any, /) -> sqlite3.Cursor:
         return self.cursor().executemany(sql, parameters)
@@ -375,7 +410,7 @@ class ChangeSignallingConnection(sqlite3.Connection):
                     guard.check_savepoint("rollback_to")
             if commits and had_transaction:
                 self._before_commit()
-            result = sqlite3.Cursor.execute(cursor, sql, parameters)
+            result = self._sqlite_execute(cursor, sql, parameters)
         except BaseException as error:
             if starts:
                 self._settle_transaction("rolled_back", error)
@@ -383,6 +418,8 @@ class ChangeSignallingConnection(sqlite3.Connection):
                 self._failed_commit(error)
             elif had_transaction and not self.in_transaction:
                 self._settle_transaction("rolled_back", error)
+            if operation == "rollback" and "to" not in words:
+                self._preserve_uncertainty(error)
             raise
         if operation == "savepoint" and len(words) > 1:
             if not had_transaction:
@@ -412,6 +449,9 @@ class ChangeSignallingConnection(sqlite3.Connection):
         elif self.total_changes != before:
             change_signal.emit()
         return result
+
+    def _sqlite_execute(self, cursor: sqlite3.Cursor, sql: str, parameters: Any) -> sqlite3.Cursor:
+        return sqlite3.Cursor.execute(cursor, sql, parameters)
 
     def _before_commit(self) -> None:
         if self._finalizing:
@@ -465,6 +505,7 @@ class ChangeSignallingConnection(sqlite3.Connection):
             super().rollback()
         except BaseException as error:
             self._settle_transaction("uncertain", error)
+            self._preserve_uncertainty(error)
             raise
         self._settle_transaction("rolled_back")
 
@@ -481,16 +522,22 @@ class ChangeSignallingConnection(sqlite3.Connection):
 
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> Literal[False]:
         name = self._contexts.pop()
-        if not self.in_transaction:
-            return False
-        if name is not None:
-            if exc_type is not None:
-                self.execute(f"ROLLBACK TO {name}")
-            self.execute(f"RELEASE {name}")
-        elif exc_type is None:
-            self.commit()
-        else:
-            self.rollback()
+        try:
+            if not self.in_transaction:
+                return False
+            if name is not None:
+                if exc_type is not None:
+                    self.execute(f"ROLLBACK TO {name}")
+                self.execute(f"RELEASE {name}")
+            elif exc_type is None:
+                self.commit()
+            else:
+                self.rollback()
+        except UncertainTransactionError:
+            raise
+        except BaseException as error:
+            self._preserve_uncertainty(error)
+            raise
         return False
 
     def _clear_transaction(self) -> None:

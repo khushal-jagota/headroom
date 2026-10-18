@@ -13,10 +13,25 @@ SavepointAction = Literal["create", "release", "rollback_to"]
 
 
 class TransactionGuardLease(Protocol):
+    @property
+    def reconciliation_handle(self) -> object: ...
+
     def check_savepoint(self, action: SavepointAction, /) -> None: ...
     def settle(self, outcome: TransactionOutcome, error: BaseException | None, /) -> None: ...
     def invalidate(self, error: BaseException, /) -> None: ...
     def release(self) -> None: ...
+
+
+class UncertainTransactionError(RuntimeError):
+    """An unresolved outcome with the producer's unchanged opaque repair handle."""
+
+    def __init__(self, handle: object, error: BaseException | None) -> None:
+        super().__init__(f"transaction outcome is uncertain: {error}")
+        self._reconciliation_handle = handle
+
+    @property
+    def reconciliation_handle(self) -> object:
+        return self._reconciliation_handle
 
 
 class TransactionGuardFactory(Protocol):
@@ -100,6 +115,7 @@ class TransactionReservation:
         self.owner = owner
         self.lease: TransactionGuardLease | None = None
         self.finished = False
+        self.reconciliation_handle: object | None = None
 
     def check_savepoint(self, action: SavepointAction) -> None:
         if self.lease is not None:
@@ -146,6 +162,11 @@ class TransactionReservation:
                             if entry is self.entry:
                                 del _entries[identity]
                     _condition.notify_all()
+        if outcome == "uncertain" and self.reconciliation_handle is not None:
+            uncertain = UncertainTransactionError(self.reconciliation_handle, error)
+            if failure is not None:
+                uncertain.add_note(f"guard cleanup also failed: {failure!r}")
+            raise uncertain from error
         if failure is not None:
             raise failure
 
@@ -180,6 +201,14 @@ def reserve_transaction(
     try:
         if factory is not None:
             reservation.lease = factory.enter(connection, admission)
+            try:
+                handle = reservation.lease.reconciliation_handle
+                if handle is None:
+                    raise TypeError("transaction guard requires a non-null reconciliation handle")
+                reservation.reconciliation_handle = handle
+            except BaseException as error:
+                reservation._invalidate(error)
+                raise
         with _condition:
             if entry.unavailable:
                 raise RuntimeError("transaction admission became unavailable")
