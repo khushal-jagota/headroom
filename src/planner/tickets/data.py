@@ -1521,79 +1521,102 @@ def delete_ticket(
     """
     with _txn(conn):
         authority.require_above(conn, principal, authority.ticket(ticket_id))
-        ticket = _load_ticket_for_write(conn, ticket_id)
-        held_elsewhere = conn.execute(
-            "SELECT id FROM tickets WHERE id != ? "
-            "AND json_extract(ceiling_holder, '$.kind') = 'ticket' "
-            "AND json_extract(ceiling_holder, '$.id') = ? ORDER BY id LIMIT 1",
-            (ticket_id, ticket_id),
-        ).fetchone()
-        if held_elsewhere is not None:
-            raise PlannerError(
-                ErrorCode.validation,
-                "ticket cannot be deleted while it holds another Ticket ceiling",
-                {"ticket_id": ticket_id, "held_ticket_id": str(held_elsewhere["id"])},
-            )
-        if not even_while_running and ticket.worker_step_claim is WorkerStepClaim.out:
-            raise PlannerError(
-                ErrorCode.already_running,
-                "ticket activity is still running",
-                {"ticket_id": ticket_id},
-            )
-
-        day_ids = tuple(
-            str(row["day_id"])
-            for row in conn.execute(
-                "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id",
-                (ticket_id,),
-            ).fetchall()
+        _load_ticket_for_write(conn, ticket_id)
+        return delete_ticket_records(
+            conn, ticket_id, now=now, even_while_running=even_while_running
         )
-        ticket_block_rows = conn.execute(
-            "SELECT blocking_ticket_id, blocked_ticket_id FROM ticket_blocks "
-            "WHERE blocking_ticket_id = ? OR blocked_ticket_id = ? "
-            "ORDER BY blocking_ticket_id, blocked_ticket_id",
-            (ticket_id, ticket_id),
+
+
+def delete_ticket_records(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    now: int,
+    even_while_running: bool = False,
+    capture_attention: bool = True,
+) -> TicketDeletion:
+    """Delete database records inside the caller's transaction, retaining all guards.
+
+    This raw-row boundary also serves owner-invoked offline recovery for legacy rows
+    whose Stage is no longer a valid runtime Ticket. Callers must establish authority
+    and, for recovery, verify a durable archive before calling. Offline recovery skips
+    live attention derivation so legacy Worker metadata need not load. Artifacts are untouched.
+    """
+    ticket = _ticket_row(conn, ticket_id)
+    held_elsewhere = conn.execute(
+        "SELECT id FROM tickets WHERE id != ? "
+        "AND json_extract(ceiling_holder, '$.kind') = 'ticket' "
+        "AND json_extract(ceiling_holder, '$.id') = ? ORDER BY id LIMIT 1",
+        (ticket_id, ticket_id),
+    ).fetchone()
+    if held_elsewhere is not None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "ticket cannot be deleted while it holds another Ticket ceiling",
+            {"ticket_id": ticket_id, "held_ticket_id": str(held_elsewhere["id"])},
+        )
+    if not even_while_running and str(ticket["worker_step_claim"]) == WorkerStepClaim.out.value:
+        raise PlannerError(
+            ErrorCode.already_running,
+            "ticket activity is still running",
+            {"ticket_id": ticket_id},
+        )
+
+    day_ids = tuple(
+        str(row["day_id"])
+        for row in conn.execute(
+            "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id",
+            (ticket_id,),
         ).fetchall()
-        linked_ticket_ids = tuple(
-            sorted(
-                {
-                    str(
-                        row["blocked_ticket_id"]
-                        if row["blocking_ticket_id"] == ticket_id
-                        else row["blocking_ticket_id"]
-                    )
-                    for row in ticket_block_rows
-                }
-            )
+    )
+    ticket_block_rows = conn.execute(
+        "SELECT blocking_ticket_id, blocked_ticket_id FROM ticket_blocks "
+        "WHERE blocking_ticket_id = ? OR blocked_ticket_id = ? "
+        "ORDER BY blocking_ticket_id, blocked_ticket_id",
+        (ticket_id, ticket_id),
+    ).fetchall()
+    linked_ticket_ids = tuple(
+        sorted(
+            {
+                str(
+                    row["blocked_ticket_id"]
+                    if row["blocking_ticket_id"] == ticket_id
+                    else row["blocking_ticket_id"]
+                )
+                for row in ticket_block_rows
+            }
         )
-        sprint_item_ids = (ticket.sprint_item_id,) if ticket.sprint_item_id is not None else ()
-        effective_sprint_id = ticket.effective_sprint_id
-        sprint_ids = (effective_sprint_id,) if effective_sprint_id is not None else ()
+    )
+    sprint_item_ids = (ticket["sprint_item_id"],) if ticket["sprint_item_id"] is not None else ()
+    effective_sprint_id = ticket["sprint_id"]
+    sprint_ids = (effective_sprint_id,) if effective_sprint_id is not None else ()
 
-        for day_id in day_ids:
-            days_data.remove_day_ticket(conn, day_id, ticket_id, now)
-        for row in ticket_block_rows:
-            conn.execute(
-                "DELETE FROM ticket_blocks WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
-                (str(row["blocking_ticket_id"]), str(row["blocked_ticket_id"])),
-            )
-            if str(row["blocking_ticket_id"]) == ticket_id:
-                ticket_blocks.touch_blocked_ticket(conn, str(row["blocked_ticket_id"]), now)
-
-        conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
-        for table in ("notification_attention_edges", "notification_attention_state"):
-            conn.execute(
-                f"DELETE FROM {table} WHERE subject_kind='ticket' AND subject_id=?",
-                (ticket_id,),
-            )
-        return TicketDeletion(
-            ticket_id=ticket_id,
-            title=ticket.title,
-            day_ids=day_ids,
-            sprint_item_ids=sprint_item_ids,
-            sprint_ids=sprint_ids,
-            linked_ticket_ids=linked_ticket_ids,
+    for day_id in day_ids:
+        days_data.remove_day_ticket(conn, day_id, ticket_id, now)
+    for row in ticket_block_rows:
+        conn.execute(
+            "DELETE FROM ticket_blocks WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
+            (str(row["blocking_ticket_id"]), str(row["blocked_ticket_id"])),
         )
+        if str(row["blocking_ticket_id"]) == ticket_id:
+            ticket_blocks.touch_blocked_ticket(
+                conn, str(row["blocked_ticket_id"]), now, capture_attention=capture_attention
+            )
+
+    conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+    for table in ("notification_attention_edges", "notification_attention_state"):
+        conn.execute(
+            f"DELETE FROM {table} WHERE subject_kind='ticket' AND subject_id=?",
+            (ticket_id,),
+        )
+    return TicketDeletion(
+        ticket_id=ticket_id,
+        title=str(ticket["title"]),
+        day_ids=day_ids,
+        sprint_item_ids=sprint_item_ids,
+        sprint_ids=sprint_ids,
+        linked_ticket_ids=linked_ticket_ids,
+    )
 
 
 def _outcome_title(conn: sqlite3.Connection, sprint_item_id: str | None) -> str | None:

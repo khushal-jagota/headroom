@@ -16,25 +16,16 @@ from pathlib import Path
 
 from playwright.sync_api import BrowserContext, Page, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
+from tests.support.retired_workers import seed_historical_worker_type
 
 RETIRED = {"personal", "planning-day", "planning-midday-check", "planning-sprint"}
 
 
 def _historical_definitions(db: Path) -> None:
-    fixture = Path(__file__).parents[1] / "support/retired_worker_types.json"
-    definitions = json.loads(fixture.read_text())
     with sqlite3.connect(db) as conn:
-        for position, definition in enumerate(definitions, 100):
-            skill = definition["profile"]["specialist_skill"]
-            conn.execute(
-                "INSERT OR IGNORE INTO managed_skills VALUES (?,?,0)",
-                (skill, f"---\nname: {skill}\ndescription: Historical fixture\n---\n"),
-            )
-            conn.execute(
-                "INSERT OR REPLACE INTO worker_types "
-                "(worker_type, position, definition_json, updated_at) VALUES (?,?,?,0)",
-                (definition["worker_type"], position, json.dumps(definition)),
-            )
+        conn.row_factory = sqlite3.Row
+        for worker_type in sorted(RETIRED):
+            seed_historical_worker_type(conn, worker_type)
 
         conn.execute(
             "INSERT INTO scheduled_ticket_schedules "
@@ -65,16 +56,6 @@ def test_supported_catalog_preserves_historical_connected_pages(
         },
     )
     ticket_id = ticket["id"]
-    planning = api.direct_post(
-        server,
-        "/api/tickets",
-        {
-            "title": "Historical planning review remains readable",
-            "worker_type": "coding",
-            "brief": "Original planning review",
-            "orchestrator": {"kind": "chief", "id": "chief"},
-        },
-    )
     with sqlite3.connect(server.db_path) as conn:
         proposal = json.loads(
             conn.execute(
@@ -86,19 +67,6 @@ def test_supported_catalog_preserves_historical_connected_pages(
             "UPDATE tickets SET worker_type='personal',stage='needs_outcome',"
             "ceiling='needs_outcome',field_values=?,pending_proposal=? WHERE id=?",
             (json.dumps({"brief": "Original personal brief"}), json.dumps(proposal), ticket_id),
-        )
-        conn.execute(
-            "UPDATE tickets SET worker_type='planning-day',stage='cancelled',"
-            "ceiling='needs_review',field_values=?,pending_proposal=NULL WHERE id=?",
-            (
-                json.dumps(
-                    {
-                        "review": "Original planning review",
-                        "retirement": "Reviewed disposition",
-                    }
-                ),
-                planning["id"],
-            ),
         )
     page = open_page(context_factory(), server, "#/config", "[data-workers-list]")
     page.set_default_timeout(WAIT_MS)
@@ -119,15 +87,6 @@ def test_supported_catalog_preserves_historical_connected_pages(
     personal_row = chief_children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')
     expect(personal_row).to_be_visible()
     expect(personal_row).to_contain_text(ticket["title"])
-    chief_children.get_by_label("Worker state").select_option("retired")
-    retired_group = chief_children.locator('[data-workspace-group="cancelled"]')
-    expect(retired_group).to_be_attached()
-    if not retired_group.evaluate("element => element.open"):
-        retired_group.locator(":scope > summary").click()
-    planning_row = retired_group.locator(f'[data-sprint-ticket-id="{planning["id"]}"]')
-    expect(planning_row).to_be_visible()
-    expect(planning_row).to_contain_text(planning["title"])
-
     page.goto(server.base + "/#/scheduled-tasks")
     page.locator("[data-create-schedule]").click()
     schedule_type = page.locator('[data-input="worker-type"]')
@@ -168,16 +127,6 @@ def test_supported_catalog_preserves_historical_connected_pages(
     expect(page.locator("[data-review-manifest-error]")).to_have_count(0)
     review.locator("[data-open-ticket]").click()
     expect(page.locator('[data-screen="ticket"]')).to_have_attribute("data-stage", "needs_outcome")
-    page.goto(server.base + f"/#/ticket/{planning['id']}")
-    historical_planning = page.locator('[data-screen="ticket"]')
-    expect(historical_planning).to_have_attribute("data-stage", "cancelled")
-    expect(page.locator("[data-ticket-manifest-error]")).to_have_count(0)
-    # Original fields remain accessible through the existing stage folds.
-    original_review = historical_planning.get_by_text("Original planning review", exact=True)
-    if not original_review.is_visible():
-        historical_planning.locator("[data-stage-fold-open]").first.click()
-        historical_planning.locator('[data-field="review"] > summary').click()
-    expect(original_review).to_be_visible()
     assert errors == []
     after = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     assert after["worker_type"] == "personal" and after["stage"] == "needs_outcome"

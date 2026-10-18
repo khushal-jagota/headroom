@@ -83,7 +83,7 @@ with sync_playwright() as p:
     page.evaluate("window.__refresh()")
     assert len(requests)>before_refresh, "refresh must complete a controlled API read"
     assert not backlog.evaluate("node=>node.open")
-    for state,stage in [("done","done"),("retired","cancelled")]:
+    for state,stage in [("done","done")]:
         page.get_by_label("Worker state").select_option(state)
         key="backlog" if stage == "done" else stage
         group=page.locator(f'[data-workspace-group="{key}"]')
@@ -103,7 +103,7 @@ with sync_playwright() as p:
         child("Saved owner review",backlogged=True,awaiting_approval=True,has_pending_proposal=True),
         child("Saved supervisor review",backlogged=True,awaiting_agent_approval=True,has_pending_proposal=True),
         child("Saved message",backlogged=True,awaiting_reply=True,conversation_signal=dict(working=False,message_for_owner=True)),
-        child("Completed workspace history","done",True),child("item-old","cancelled")]
+        child("Completed workspace history","done",True)]
     count=len(requests)
     page.evaluate("rows => window.__setItem(rows)",source)
     expect(page.get_by_label("Worker state")).to_have_value("active")
@@ -138,8 +138,6 @@ with sync_playwright() as p:
     assert source[1]["has_pending_proposal"] is True
     page.get_by_label("Worker state").select_option("backlogged")
     expect(page.locator('[data-sprint-ticket-id]')).to_have_count(2)
-    page.get_by_label("Worker state").select_option(label="Cancelled")
-    expect(page.locator('[data-sprint-ticket-id]')).to_have_count(1)
     page.get_by_label("Worker state").select_option("done")
     expect(page.locator('[data-workspace-group="backlog"]')).to_be_visible()
     history=page.get_by_role("link",name="Completed workspace history",exact=True)

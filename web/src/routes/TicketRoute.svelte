@@ -426,7 +426,7 @@
             {@const history = workerPageHistory(lc, detail)}
             {@const completedFields = history.completed}
             {@const occurredFields = history.fields}
-            {#if detail.stage !== "cancelled" && currentField}
+            {#if currentField}
               <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card>
                 {#if detail.pending_proposal?.field === currentField}
                   {#key `${detail.pending_proposal.field}:${detail.pending_proposal.created_at}:${detail.pending_proposal.revision}`}
@@ -459,15 +459,13 @@
             {/if}
             <div class="worker-bands">
               <details class="worker-steps" data-stage-fold>
-                <summary data-stage-fold-open>Steps<span class="band-count">{completedFields.length} of {lc.fieldIds.filter((name) => name !== "retirement").length} done</span></summary>
+                <summary data-stage-fold-open>Steps<span class="band-count">{completedFields.length} of {lc.fieldIds.length} done</span></summary>
                 <div class="worker-step-rows">
                   {#each occurredFields as name (`${detail.id}:${name}`)}
-                    {@const stageState = detail.stage === "cancelled" ? (completedFields.includes(name) ? "completed" : "current-waiting") : fieldStageVisualStateFor(lc, detail, name)}
-                    <TicketStageSection {name} value={detail.stage === "cancelled" && history.historicalProposal?.field === name
-                      ? `${detail.field_values[name] || ""}\n\nHistorical proposal (not approved):\n\n${history.historicalProposal.body}`
-                      : detail.field_values[name] ?? ""}
+                    {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
+                    <TicketStageSection {name} value={detail.field_values[name] ?? ""}
                       {stageState} lifecycle={lc} ticketStage={detail.stage}
-                      emptyText={emptyTicketFieldText} editableValue={detail.stage !== "cancelled"}
+                      emptyText={emptyTicketFieldText} editableValue={true}
                       editableCurrentValue={false} readerLeftItOpen={readerStageFolds.get(name) ?? false}
                       onReaderToggle={(open) => readerStageFolds.set(name, open)}
                       runLabel={name === currentField ? currentStageRunLabel(detail) : null}

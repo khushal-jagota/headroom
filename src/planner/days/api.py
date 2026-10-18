@@ -49,7 +49,7 @@ async def _day_view(
     dts = days_data.list_day_tickets(conn, did)
     board = await add_conversation_row_signals(
         conn,
-        board_view(conn, ticket_ids_holding_unread_owner_message=tuple(dt.ticket_id for dt in dts)),
+        board_view(conn),
         conversations,
         conversation_record,
     )

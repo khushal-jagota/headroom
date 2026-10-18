@@ -142,7 +142,7 @@ payload. Mounted queries fetch the canonical conversation signal again.
 
 The shell's working count sums that same working fact across Worker, supervisor, and
 Chief conversations. Each conversation counts once, even when multiple records refer to
-it. Settled supervisors and cancelled Workers still count when their conversations run.
+it. Settled supervisors and backlogged Workers still count when their conversations run.
 Worker-step claims do not define this count. Its existing query uses the same change
 stream refresh as the individual marks.
 

@@ -1,13 +1,12 @@
 """Prove lifecycle controls across UI, real writers, SSE, and durable history.
 
 Mocked frontend responses cannot establish that approval controls, persisted state,
-and cancelled history agree after a durable write and reload. This bounded synthetic
+and backlog state agree after a durable write and reload. This bounded synthetic
 proof uses the existing deterministic conversation adapter and no provider calls.
 """
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from collections.abc import Callable
 
@@ -19,7 +18,7 @@ from tests.e2e.test_retired_page_interiors import _propose
 from tests.support.principals import ticket_principal
 
 
-def test_ticket_backlog_resume_cancelled_history_and_settled_discovery(
+def test_ticket_backlog_resume_and_settled_discovery(
     rail_server: ServerHandle,  # noqa: F811
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -46,7 +45,9 @@ def test_ticket_backlog_resume_cancelled_history_and_settled_discovery(
     artifact_href = f"/files/tickets/{ticket_id}/evidence.md"
     artifact = server.db_path.parent / "files" / "tickets" / ticket_id / "evidence.md"
     artifact.parent.mkdir(parents=True, exist_ok=True)
-    artifact.write_text("# Retained evidence\n\nThis file remains in cancelled history.")
+    artifact.write_text(
+        "# Retained evidence\n\nThis file remains available while work is deferred."
+    )
     api.direct_post(
         server,
         f"/api/tickets/{ticket_id}/accept/brief",
@@ -60,7 +61,7 @@ def test_ticket_backlog_resume_cancelled_history_and_settled_discovery(
         f"/api/tickets/{ticket_id}",
         {"field_values": {"brief": f"Approved brief with [retained evidence]({artifact_href})."}},
     )
-    proposal = f"Pending success evidence stays historical. [Original artifact]({artifact_href})"
+    proposal = f"Pending success evidence survives deferral. [Original artifact]({artifact_href})"
     _propose(server, ticket_id, proposal)
     _conversation(server, "synthetic-lifecycle-conversation")
     with sqlite3.connect(server.db_path) as conn:
@@ -73,7 +74,7 @@ def test_ticket_backlog_resume_cancelled_history_and_settled_discovery(
             ("synthetic-lifecycle-conversation", ticket_id),
         )
 
-    transcript = "Retained conversation evidence remains readable after cancellation."
+    transcript = "Conversation evidence remains readable after deferral."
     _message(server, "synthetic-lifecycle-conversation", ticket_principal(ticket_id), transcript)
     path = f"/api/tickets?detail=full&id={ticket_id}"
     before = api.get(server, path)
@@ -127,88 +128,9 @@ def test_ticket_backlog_resume_cancelled_history_and_settled_discovery(
     expect(worker.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
     page.reload()
     expect(worker.locator("[data-ticket-backlog-action]")).to_have_text("Backlog ticket")
-    # The retained cancelled record is synthetic fixture history, not a live action.
-    reason = "Historical cancellation: preserve its evidence without success."
-    with sqlite3.connect(server.db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        original = dict(conn.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
-        values = json.loads(original["field_values"])
-        values["retirement"] = json.dumps(
-            {
-                "reason": reason,
-                "original_record": original,
-                "original_stage": original["stage"],
-                "original_pending_proposal_json": original["pending_proposal"],
-            }
-        )
-        conn.execute(
-            "UPDATE tickets SET stage='cancelled',pending_proposal=NULL,field_values=? WHERE id=?",
-            (json.dumps(values), ticket_id),
-        )
-        stored_history = dict(
-            conn.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone()
-        )
-    page.reload()
-    retired = api.get(server, path)
-    assert retired["stage"] == "cancelled"
-    assert retired["pending_proposal"] is None
-    assert retired["field_values"]["brief"] == before["field_values"]["brief"]
-    provenance = json.loads(retired["field_values"]["retirement"])
-    assert provenance["reason"] == reason
-    assert provenance["original_stage"] == before["stage"]
-    assert json.loads(provenance["original_pending_proposal_json"])["body"] == proposal
-    assert retired["conversation_id"] == before["conversation_id"]
-    expect(worker.locator("[data-retirement-reason]")).to_have_text(reason)
-    expect(worker.get_by_role("button", name="Approve", exact=True)).to_have_count(0)
-    expect(worker.locator("[data-ticket-retire-action]")).to_have_count(0)
-    expect(worker.locator("[data-worker-live-card]")).to_have_count(0)
-    page.reload()
-    expect(worker.locator("[data-ticket-cancelled]")).to_have_text("Cancelled")
-    worker.locator("[data-stage-fold-open]").click()
-    for summary in worker.locator(".disclosure--stage > summary").all():
-        summary.click()
-    expect(worker).to_contain_text("Historical proposal (not approved)")
-    expect(worker).to_contain_text("Pending success evidence stays historical")
-    artifact_links = worker.locator('[data-field="success_condition"] a[href*="preview"]')
-    expect(artifact_links.first).to_be_visible()
-    artifact_links.first.click()
-    expect(page.locator("[data-ticket-artifact]")).to_contain_text(
-        "This file remains in cancelled history."
-    )
-    page.keyboard.press("Escape")
     page.locator("[data-conversation-rest-bar]").click()
     page.locator('[data-conversation-lens-choice="full"]').click()
     expect(page.get_by_text(transcript, exact=True)).to_be_visible()
-    with sqlite3.connect(server.db_path) as conn:
-        stored = conn.execute(
-            "SELECT stage,is_backlogged,conversation_id FROM tickets WHERE id=?", (ticket_id,)
-        ).fetchone()
-    assert stored == ("cancelled", 0, "synthetic-lifecycle-conversation")
-    with sqlite3.connect(server.db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        assert (
-            dict(conn.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
-            == stored_history
-        )
-
-    page.goto(server.base + "/#/backlog")
-    page.wait_for_function("location.hash === '#/workspace'", timeout=WAIT_MS)
-    page.goto(server.base + f"/#/workspace/item/{item['id']}")
-    children = page.locator(f'[data-orchestrator-children="sprint_item:{item["id"]}"]')
-    state_filter = children.get_by_label("Worker state", exact=True)
-    expect(state_filter).to_have_value("active")
-    expect(children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')).to_have_count(0)
-    state_filter.select_option(label="Cancelled")
-    retired_group = children.locator('[data-workspace-group="cancelled"]')
-    expect(retired_group).to_be_attached()
-    if not retired_group.evaluate("element => element.open"):
-        retired_group.locator(":scope > summary").click()
-    retired_row = retired_group.locator(f'[data-sprint-ticket-id="{ticket_id}"]')
-    expect(retired_row).to_be_visible()
-    expect(retired_group.locator("[data-group-count]")).to_have_text("1")
-    expect(retired_row).to_have_attribute("href", f"#/workspace/item/{item['id']}/{ticket_id}")
-    retired_row.click()
-    expect(worker.locator("[data-retirement-reason]")).to_have_text(reason)
 
     api.direct_patch(server, f"/api/items/{item['id']}/settled", {"settled": True})
     page.goto(server.base + "/#/workspace")

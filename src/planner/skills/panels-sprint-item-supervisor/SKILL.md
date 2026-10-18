@@ -202,5 +202,5 @@ proposal discovery, or messages.
 
 Today membership is retired. Preserve all other continuation rules. Do not create daily
 or Sprint planning Tickets, restore calendar writers, or invent replacement activation
-or recurring review machinery. Historical records remain readable. Cancelled planning
-Workers preserve their original history and proposals without actionable approvals.
+or recurring review machinery. Historical planning documents remain readable.
+Backlog pauses a Ticket; Delete removes its record.

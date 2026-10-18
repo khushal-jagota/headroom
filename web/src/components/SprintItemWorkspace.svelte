@@ -281,7 +281,7 @@
   </div>
 </div>
 
-<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={hoverWorker?.stage === "cancelled" ? "Cancelled Worker" : "Worker"} worker={hoverWorker} cards={[]} rail={hoverTarget} />
+<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={"Worker"} worker={hoverWorker} cards={[]} rail={hoverTarget} />
 <style>
   .sprint-item-doc { scrollbar-gutter:auto; }
   .sprint-item-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; width:min(100%, 768px); max-width:768px; margin-inline:auto; padding-inline:var(--space-5); }

@@ -203,7 +203,7 @@ with sync_playwright() as p:
     order(page, ["si_peer", "si_old", "si_newer"])
 
     # Completion and clearing a direct unread mark do not settle or reorder an Item.
-    # Only the owner Settle action changes retirement, never child completion.
+    # Only the owner Settle action changes settlement, never child completion.
     page.goto(sys.argv[1] + "#/workspace?view=items")
     summary = board["sprint_items"][0]
     summary["tickets"] = [old]

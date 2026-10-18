@@ -43,7 +43,7 @@ def test_retire_command_is_unavailable_without_sending_a_request(
     assert "retire" not in help_result.output
 
 
-def test_cancelled_history_list_preserves_filters_and_page(
+def test_done_history_list_preserves_filters_and_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     requests: list[tuple[str, str, dict[str, Any]]] = []
@@ -51,8 +51,8 @@ def test_cancelled_history_list_preserves_filters_and_page(
         "tickets": [
             {
                 "id": "t_history",
-                "stage": "cancelled",
-                "ticket_status": "cancelled",
+                "stage": "done",
+                "ticket_status": "done",
                 "priority": "P2",
                 "title": "Historical work",
                 "project": None,
@@ -82,7 +82,7 @@ def test_cancelled_history_list_preserves_filters_and_page(
             "list",
             "--include-terminal",
             "--stage",
-            "cancelled",
+            "done",
             "--limit",
             "3",
             "--offset",
@@ -100,7 +100,7 @@ def test_cancelled_history_list_preserves_filters_and_page(
                 "params": {
                     "detail": "summary",
                     "include_terminal": True,
-                    "stage": ["cancelled"],
+                    "stage": ["done"],
                     "limit": 3,
                     "offset": 1,
                 },
@@ -110,13 +110,12 @@ def test_cancelled_history_list_preserves_filters_and_page(
     assert json.loads(result.output) == response
 
 
-def test_cancelled_history_show_preserves_exact_retirement_provenance(
+def test_removed_retirement_projection_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     requests: list[tuple[str, str, dict[str, Any]]] = []
     provenance = (
-        '{ "reason": "Historical disposition 🌱",\n'
-        ' "original_record": {"stage": "needs_plan"} }'
+        '{ "reason": "Historical disposition 🌱",\n "original_record": {"stage": "needs_plan"} }'
     )
 
     def send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
@@ -124,7 +123,7 @@ def test_cancelled_history_show_preserves_exact_retirement_provenance(
         if path == "/api/tickets":
             return {
                 "id": "t_history",
-                "stage": "cancelled",
+                "stage": "done",
                 "worker_type": "coding",
                 "field_values": {"retirement": provenance},
             }
@@ -133,15 +132,6 @@ def test_cancelled_history_show_preserves_exact_retirement_provenance(
 
     monkeypatch.setattr(http, "send", send)
     result = CliRunner().invoke(main, ["ticket", "show", "t_history", "retirement", "--json"])
-    assert result.exit_code == 0, result.output
-    assert requests == [
-        (
-            "GET",
-            "/api/tickets",
-            {"as_json": True, "params": {"detail": "full", "id": "t_history"}},
-        ),
-        ("GET", "/api/worker-types", {"as_json": True}),
-    ]
-    projected = json.loads(result.output)
-    assert projected["header"]["stage"] == "cancelled"
-    assert projected["parts"] == {"retirement": {"value": provenance, "proposal": None}}
+    assert result.exit_code != 0
+    assert "retirement" in result.output
+    assert provenance not in result.output

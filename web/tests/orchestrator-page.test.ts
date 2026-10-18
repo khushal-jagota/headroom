@@ -24,24 +24,23 @@ describe("complete orchestrator page groups", () => {
   it("uses normal Backlog rows for approval, supervisor review and terminal history", () => {
     const rows = [ticket("owner", { is_backlogged:true, awaiting_approval:true, has_pending_proposal:true }),
       ticket("supervisor", { is_backlogged:true, awaiting_agent_approval:true, has_pending_proposal:true }),
-      ticket("done", { is_backlogged:true, stage:"done", ticket_status:"empty" }),
-      ticket("cancelled", { is_backlogged:true, stage:"cancelled", ticket_status:"cancelled" })];
+      ticket("done", { is_backlogged:true, stage:"done", ticket_status:"empty" })];
     const groups = orchestratorPageGroups(rows);
     expect(groups.map((group) => [group.key, group.quiet])).toEqual([["backlog",false]]);
-    expect(groups[0].tickets).toHaveLength(4);
+    expect(groups[0].tickets).toHaveLength(3);
     for (const row of rows) expect(groups[0].tickets).toContain(row);
     expect(groups[0].tickets.find((row) => row.id === "owner")?.has_pending_proposal).toBe(true);
     expect(groups[0].tickets.find((row) => row.id === "supervisor")?.awaiting_agent_approval).toBe(true);
   });
-  it("retains canonical group order, exceptional rows and truthful cancellation without changing input", () => {
-    const rows = [ticket("cancelled",{stage:"cancelled",ticket_status:"",awaiting_reply:true}),
+  it("retains canonical group order, exceptional rows and completion without changing input", () => {
+    const rows = [ticket("done",{stage:"done",ticket_status:"",awaiting_reply:true}),
       ticket("blocked",{ticket_status:"blocked"}), ticket("error",{agent_state:"errored"}),
       ticket("answer",{awaiting_answer:true}), ticket("approval",{awaiting_approval:true}),
       ticket("owner",{assigned:true}),ticket("empty",{ticket_status:""})];
     const groups = orchestratorPageGroups(rows);
-    expect(groups.map((group)=>group.key)).toEqual(["awaiting_approval","awaiting_answer","assigned","errored","empty","blocked","cancelled"]);
+    expect(groups.map((group)=>group.key)).toEqual(["awaiting_approval","awaiting_answer","assigned","errored","empty","blocked","done"]);
     expect(groups.flatMap((group)=>group.tickets)).toHaveLength(rows.length);
-    expect(groups.at(-1)?.label).toBe("Cancelled");
+    expect(groups.at(-1)?.label).toBe("Done");
     expect(rows[0].awaiting_reply).toBe(true);
     expect(groups.at(-1)?.tickets[0]).toBe(rows[0]);
   });

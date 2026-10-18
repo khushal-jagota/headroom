@@ -79,12 +79,10 @@ proposed), then **Consequences** (only the applicable merge, deploy, follow-up, 
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
 what moves the ticket one stage forward. **done** records successful completion.
-Historical cancelled Tickets retain a separate non-success ending, `cancelled`, outside
-the Stage ladder and ceiling choices. Retire is no longer a Ticket action.
 Stages advance through approval or direct completion of a current user-owned gate;
 there is no arbitrary Stage jump.
 
-## Backlog, resume, and cancelled history
+## Backlog, resume, and delete
 
 Explicit backlog prevents the next automatic Worker step. It preserves the current
 Stage, proposal, approval holder, assignment, history, conversations, and artifacts.
@@ -99,15 +97,9 @@ The Ticket page provides Backlog ticket and Resume ticket controls. Each transit
 one writer. An optional stored-record hash precondition refuses stale requests inside
 the write transaction. The browser sends that precondition automatically.
 
-Historical cancelled Tickets retain their records, conversations, artifacts, and
-retirement provenance. That provenance preserves the original record, proposal, approval
-holder, revision feedback, actor, and time. The Steps section retains historical proposal
-evidence. Direct record reads and bounded lists with `stage=cancelled` and
-`include_terminal=true` retain access to that history.
-
-Cancelled Tickets remain terminal. Their historical proposals cannot receive actionable
-approvals, and normal readiness does not start another Worker step. Historical reads do
-not provide a cancellation action or another way to end current work.
+Delete removes a Ticket's record. Files under `/files/tickets/<ticket-id>` survive
+Ticket deletion. Backlog is the reversible way to pause work while keeping the Ticket.
+The Stage ladder ends only at Done; there is no retirement state or retirement field.
 
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -491,4 +483,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-08-14._
+_Last verified: 2026-10-18._

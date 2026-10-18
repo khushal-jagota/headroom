@@ -12,10 +12,9 @@ const child = (id: string, stage: string, is_backlogged = false): SprintItemWork
 
 describe("orchestrator child discovery", () => {
   it("keeps terminal backlog in existing history filters without widening active discovery", () => {
-    const rows = [child("active", "needs_implementation", true), child("done", "done", true),
-      child("cancelled", "cancelled", true)];
+    const rows = [child("active", "needs_implementation", true), child("done", "done", true)];
     const expected: Record<OrchestratorChildFilter, string[]> = {
-      active:["active"], backlogged:["active"], done:["done"], retired:["cancelled"]
+      active:["active"], backlogged:["active"], done:["done"]
     };
     for (const filter of Object.keys(expected) as OrchestratorChildFilter[]) {
       const groups = orchestratorPageGroups(filterOrchestratorChildren(rows, filter));
@@ -24,21 +23,20 @@ describe("orchestrator child discovery", () => {
     }
   });
 
-  it("retains quiet active children and exposes deferred, completed and retired children separately", () => {
+  it("retains quiet active children and exposes deferred and completed children separately", () => {
     const rows = [child("quiet", "needs_implementation"), child("deferred", "needs_brief", true),
-      child("done", "done"), child("retired", "cancelled")];
+      child("done", "done")];
     const expected: Record<OrchestratorChildFilter, string[]> = {
-      active:["quiet", "deferred"], backlogged:["deferred"], done:["done"], retired:["retired"]
+      active:["quiet", "deferred"], backlogged:["deferred"], done:["done"]
     };
     for (const filter of Object.keys(expected) as OrchestratorChildFilter[]) {
       const filtered = filterOrchestratorChildren(rows, filter);
       expect(filtered.map((row) => row.id)).toEqual(expected[filter]);
       expect(orchestratorPageGroups(filtered).flatMap((group) => group.tickets)).toHaveLength(filtered.length);
     }
-    expect(orchestratorPageGroups(filterOrchestratorChildren(rows,"retired"))[0].label).toBe("Cancelled");
     const consequences = { ...child("closeout", "needs_consequences"), waiting_to_closeout:true };
     expect(orchestratorPageGroups([consequences])[0].key).toBe("waiting_to_closeout");
     expect(filterOrchestratorChildren([],"active")).toEqual([]);
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(3);
   });
 });

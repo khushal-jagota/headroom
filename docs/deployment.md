@@ -13,6 +13,43 @@ Only `app` changes during deployment. `data` and `logs` remain in place through 
 changes, failed deployments, and code rollback. Serving, deployment, rollback, backup,
 and user-service control need no sudo.
 
+## Recover an older database with cancelled Tickets
+
+An upgrade refuses an older database that contains cancelled Tickets or would produce
+them while applying historical migrations. The refusal leaves its schema and records
+unchanged. The owner chooses whether to preserve those Tickets through an
+older supported version or archive and delete them with the version being installed.
+The recovery command works directly on the database even when the server cannot start.
+
+Stop the service first. Use the same database configuration as that service and a new
+archive directory outside the application tree. Its parent directory must already exist.
+For an explicit database path:
+
+```sh
+systemctl --user stop panels-live.service
+PLAN_DB_PATH=/absolute/path/to/panels.db panels maintenance archive-cancelled-tickets --archive-dir /absolute/path/to/cancelled-ticket-archive --yes
+```
+
+Run this as the owner, without a Worker identity. The command first saves and verifies a
+complete snapshot of the original database, including unrelated records and history.
+Keep the private archive directory protected as you would the database itself.
+
+Some older databases need historical migrations before their cancelled Tickets exist.
+Only this explicit recovery action prepares those migrations, stopping before the
+retirement-removal migration. It does not start the server or initialize the current app.
+The archive also contains a readable manifest, the selected Tickets' complete records,
+field values and artifact references, and SQL evidence of the prepared database.
+Everything is verified durable and readable before deletion. Historical preparation and
+Ticket deletion share one transaction; any failure rolls both back, leaving the original
+database unchanged. The verified original snapshot remains available in the archive.
+
+Files under `/files/tickets/<ticket-id>` remain where they are; the archive retains their
+references rather than copying or deleting them.
+
+After successful recovery, retry the upgrade and restart the service. The upgrade removes
+obsolete retirement fields from the remaining Tickets. It does not change their Stage,
+ordinary fields, proposals, or approval ownership.
+
 ## Services and runner
 
 Linux uses systemd user services. `panels-live.service` launches the deployed app,

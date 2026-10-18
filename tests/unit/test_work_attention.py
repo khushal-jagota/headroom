@@ -63,7 +63,7 @@ def test_shell_count_tracks_distinct_actual_work_across_all_roles(
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
         )
-        for title in ("Cancelled worker", "Duplicate association", "Claim only")
+        for title in ("Completed worker", "Duplicate association", "Claim only")
     ]
     ids = {"worker", "supervisor", "chief", "unknown", "stale"}
     conn.executemany(
@@ -73,7 +73,7 @@ def test_shell_count_tracks_distinct_actual_work_across_all_roles(
         [(conversation_id,) for conversation_id in ids],
     )
     conn.executemany(
-        "UPDATE tickets SET conversation_id = 'worker', stage = 'cancelled' WHERE id = ?",
+        "UPDATE tickets SET conversation_id = 'worker', stage = 'done' WHERE id = ?",
         [(ticket.id,) for ticket in tickets[:2]],
     )
     conn.execute("UPDATE tickets SET worker_step_claim = 'out' WHERE id = ?", (tickets[2].id,))

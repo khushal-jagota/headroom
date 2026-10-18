@@ -673,7 +673,6 @@ async def read_tickets(
         registry.require(worker_type).completed_stage()
         for worker_type in registry.registered_worker_types()
     }
-    terminal_stages.add("cancelled")
     requested_terminal = sorted(set(included_stages) & terminal_stages)
     if requested_terminal and not include_terminal:
         raise PlannerError(
@@ -1396,16 +1395,9 @@ async def board(
     conversations: Conversations,
     conversation_record: ConversationRecord,
 ) -> JsonDict:
-    # Unread messages remain discoverable, including on historical Workers.
-    unread = await conversation_record.conversation_ids_holding_unread_owner_message()
     return await add_conversation_row_signals(
         conn,
-        tickets_views.board_view(
-            conn,
-            ticket_ids_holding_unread_owner_message=tickets_views.ticket_ids_for_conversations(
-                conn, unread
-            ),
-        ),
+        tickets_views.board_view(conn),
         conversations,
         conversation_record,
     )

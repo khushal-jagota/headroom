@@ -1,6 +1,5 @@
-"""Explicit deferral preserves work; cancelled records remain read-only history."""
+"""Explicit deferral preserves work; removed lifecycle states are invalid."""
 
-import json
 from sqlite3 import Connection
 
 import pytest
@@ -72,50 +71,17 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
     assert deferred_again.worker_step_claim_revision == claimed.worker_step_claim_revision
 
 
-def test_cancelled_history_preserves_provenance_and_refuses_gate_actions(
-    tmp_db: Connection,
-) -> None:
-    tid = create(tmp_db)
-    original = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone())
-    provenance = {
-        "reason": "Historical disposition",
-        "original_record": original,
-        "original_stage": original["stage"],
-        "original_pending_proposal_json": original["pending_proposal"],
-        "retired_by": {"kind": "owner", "id": "owner"},
-    }
-    values = json.loads(original["field_values"])
-    values["retirement"] = json.dumps(provenance)
-    # Synthetic historical state, never a callable cancellation path.
-    tmp_db.execute(
-        "UPDATE tickets SET stage='cancelled',pending_proposal=NULL,field_values=? WHERE id=?",
-        (json.dumps(values), tid),
-    )
-    tmp_db.commit()
-    historical = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone())
-    detail = views.ticket_detail(tmp_db, tid, 31)
-    assert detail["stage"] == "cancelled"
-    assert json.loads(detail["field_values"]["retirement"]) == provenance
-    with pytest.raises(PlannerError):
-        data.accept_proposal(
-            tmp_db,
-            tid,
-            field="brief",
-            principal=OWNER_PRINCIPAL,
-            now=31,
-            next_ceiling="needs_success_condition",
-            next_holder=OWNER_PRINCIPAL,
-            expected_proposal_revision=original["pending_proposal_revision"],
-        )
-    with pytest.raises(PlannerError):
-        data.reject_proposal(tmp_db, tid, principal=OWNER_PRINCIPAL, now=31, message=None)
-    with pytest.raises(PlannerError):
-        backlog(tmp_db, tid, False)
-    assert dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone()) == historical
+def test_removed_stage_and_field_are_rejected(tmp_db: Connection) -> None:
+    from planner.tickets.logic.fields_codec import values_from_json
+
     definition = configured_worker_type_registry().require("coding")
-    assert definition.is_terminal("cancelled")
-    assert "cancelled" not in definition.stage_ids()
-    assert "cancelled" not in definition.ceiling_range()
+    assert not definition.is_known_stage("cancelled")
+    with pytest.raises(PlannerError, match="stage outside the linear order"):
+        definition.validate_ticket_position("cancelled", definition.default_ceiling())
+    with pytest.raises(PlannerError, match="corrupt ticket field state"):
+        values_from_json('{"retirement":"Legacy provenance"}', definition.field_ids())
+    assert definition.is_terminal("done")
+    assert definition.advance_target("done") is None
 
 
 def test_hash_guard_detects_same_second_changes_and_authority_is_unchanged(

@@ -68,7 +68,7 @@ function railGroups(
 }
 
 export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter((card) => card.ticket_status !== "cancelled"));
+  return railGroups(cards);
 }
 
 export function workspaceAttentionGroups(
@@ -78,7 +78,7 @@ export function workspaceAttentionGroups(
 }
 
 export function workspaceHoverGroups(cards: readonly WorkItemTicketFacts[]): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter((card) => !card.is_backlogged && card.stage !== "done" && card.ticket_status !== "cancelled"));
+  return railGroups(cards.filter((card) => !card.is_backlogged && card.stage !== "done"));
 }
 
 /** Sidebar visibility stays separate from the durable unread conversation index. */
@@ -124,7 +124,7 @@ export function buildWorkspaceRail(
     createdAt: item.created_at,
     conversationSignal: item.conversation_signal,
     conversationId: item.conversation_id,
-    groups: workspaceAttentionGroups(item.tickets.filter((ticket) => ticket.ticket_status !== "cancelled")),
+    groups: workspaceAttentionGroups(item.tickets),
     hoverGroups: workspaceHoverGroups(item.tickets),
     tickets: item.tickets,
     settled: item.settled === true,
@@ -148,7 +148,7 @@ export function buildWorkspaceRail(
     groups: workspaceGroups(cards),
     items: items.filter((item) => !item.settled),
     settledItems: items.filter((item) => item.settled),
-    chiefGroups: workspaceAttentionGroups(chiefTickets.filter((ticket) => ticket.ticket_status !== "cancelled")),
+    chiefGroups: workspaceAttentionGroups(chiefTickets),
     chiefHoverGroups: workspaceHoverGroups(chiefTickets)
   };
 }

@@ -13,6 +13,10 @@ def historical_definition(worker_type: str) -> WorkerTypeDefinition:
     """Read one preserved definition without changing the default seed or registry."""
     for definition in json.loads(Path(__file__).with_name("retired_worker_types.json").read_text()):
         if definition["worker_type"] == worker_type:
+            # Restored metadata undergoes the same field removal as an upgraded install.
+            definition["fields"] = [
+                field for field in definition["fields"] if field["id"] != "retirement"
+            ]
             return definition_from_json(json.dumps(definition))
     raise KeyError(worker_type)
 

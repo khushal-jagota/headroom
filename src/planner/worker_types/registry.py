@@ -10,12 +10,9 @@ from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
     BRIEF_FIELD_ID,
-    CANCELLED_STAGE_ID,
     CONSEQUENCES_FIELD_ID,
     NEEDS_BRIEF_STAGE_ID,
-    RETIRED_PLANNING_WORKER_TYPES,
     RETIRED_WORKER_TYPES,
-    RETIREMENT_FIELD_ID,
     WorkerTypeDefinition,
     WorkerTypeManifest,
     WorkerTypeManifestField,
@@ -94,9 +91,9 @@ def validate_definition(
         )
 
     for stage in definition.stages:
-        if stage.id == CANCELLED_STAGE_ID:
+        if stage.id == "cancelled":
             raise fail(
-                "cancelled is a system terminal outside the linear order",
+                "cancelled is not a stage",
                 {"worker_type": worker_type, "stage": stage.id},
             )
         if stage.id == "dropped":
@@ -168,8 +165,6 @@ def validate_definition(
             )
 
     for field in definition.fields:
-        if field.id == RETIREMENT_FIELD_ID and worker_type in RETIRED_PLANNING_WORKER_TYPES:
-            continue
         if gated_count.get(field.id, 0) == 0:
             raise fail(
                 "declared field is never gated",
