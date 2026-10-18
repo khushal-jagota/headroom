@@ -1121,6 +1121,66 @@ def test_controlled_stop_wakes_pending_handshake_without_peer_response(tmp_path:
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("case", ["valid", "no_handshake", "bad_payload", "stale_request"])
+def test_ready_ack_clears_loss_before_fulfilling_current_request(
+    tmp_path: Path, case: str
+) -> None:
+    from planner.executor.contracts import ConnectionState, WireMessage, WireMessageKind
+    from planner.executor.wire import ProtocolRefused, encode_frame
+
+    async def run() -> None:
+        executor = MacExecutor(
+            paths=ExecutorPaths(tmp_path),
+            revision="a" * 40,
+            ssh_argv=("false",),
+            panels_server_url="http://unused",
+        )
+        executor.state = ConnectionState.reconciling
+        executor.lost_at_ms = 123
+        executor._handshake_accepted = case != "no_handshake"
+        observed: list[tuple[ConnectionState, int | None]] = []
+
+        class ObservedFuture(asyncio.Future[WireMessage]):
+            def set_result(self, result: WireMessage) -> None:
+                # Observe synchronously before fulfillment can resume the session.
+                observed.append((executor.state, executor.lost_at_ms))
+                super().set_result(result)
+
+        pending = ObservedFuture()
+        executor._pending["current-request"] = pending
+        reader = asyncio.StreamReader()
+        reader.feed_data(
+            encode_frame(
+                WireMessage(
+                    WireMessageKind.reconciliation_ready,
+                    "old-request" if case == "stale_request" else "current-request",
+                    {"ready": False} if case == "bad_payload" else {"ready": True},
+                )
+            )
+        )
+        reader.feed_eof()
+        try:
+            if case in ("no_handshake", "bad_payload"):
+                with pytest.raises(ProtocolRefused, match="invalid reconciliation"):
+                    await executor._read_loop(reader)
+            else:
+                with pytest.raises(asyncio.IncompleteReadError):
+                    await executor._read_loop(reader)
+            if case == "valid":
+                assert observed == [(ConnectionState.ready, None)]
+                assert pending.done()
+            else:
+                assert observed == []
+                assert not pending.done()
+                assert executor.state == ConnectionState.reconciling
+                assert executor.lost_at_ms == 123
+        finally:
+            pending.cancel()
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
 def test_current_loss_survives_failed_reconnect_and_clears_only_when_reconciled_ready(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -267,6 +267,7 @@ class MacExecutor:
                         if not self._handshake_accepted or message.payload != {"ready": True}:
                             raise ProtocolRefused("invalid reconciliation acknowledgment")
                         # Admit opens after the ready acknowledgment in wire order.
+                        self.lost_at_ms = None
                         self.state = ConnectionState.ready
                     future.set_result(message)
 
