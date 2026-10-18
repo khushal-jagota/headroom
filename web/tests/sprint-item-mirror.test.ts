@@ -27,6 +27,7 @@ function ticket(
   return {
     id,
     title: id,
+    recap_preview: "",
     stage: "needs_implementation",
     priority: "P1",
     activity_at: 1,

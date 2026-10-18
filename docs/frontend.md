@@ -39,20 +39,43 @@ One screen per part of the system:
   have Project and Settle above the title. Only the owner settles or reopens one.
   Existing orchestrators start active. Settlement does not change Worker eligibility.
 
-  Each active card shows the existing attention groups: Needs your approval, Needs your
-  answer, Yours, Messages, then Errored. Backlogged Workers stay outside the sidebar,
-  including hover details and nested Messages under Settled. The shared rule gives
-  other Workers their first applicable group. Holder-aware approval and the existing priority/creation ordering
-  remain. Priority is not displayed in the rail. Quiet children remain in the
-  orchestrator workspace and hover details. Empty orchestrators remain visible.
+  Each active card shows attention and ongoing work in the shared group order: Needs your
+  approval, Needs your answer, Yours, Messages, Errored, Agent, Waiting on Consequences,
+  Awaiting an agent's approval, then Other. Other is the sidebar name for the shared Empty
+  group. Done, Backlog, Blocked, and Cancelled stay outside this list, even if they carry
+  attention facts. The sidebar does not change those facts or the shared classifier.
+  Empty cards say “Nothing in this list.” Priority is not displayed in the rail.
+
+  Attention rows are bright. Ongoing rows and their working spinners are dim.
+  Unread message dots stay bright and take precedence over working spinners.
+  Single-line titles clip before a reserved mark column. Existing category members keep
+  their displayed order across refreshes and selection. Entries and re-entries append
+  within their category. Orchestrator priority and creation order remain unchanged.
 
   A card opens its orchestrator. A row opens its Worker. The address preserves selection
   across reload and Back. Opening a detail pane never replaces rail classification.
   Hover lights the card edge and title. Worker rows retain the existing hover wash.
-  Single-line Worker titles clip before a reserved mark column. Hover or keyboard focus
-  supplies the full title and manifest stages. Orchestrator hover supplies its children
-  grouped by the existing rule, excluding Done and Backlog. One panel swaps between targets without
-  a second delay. It stays inside the viewport and does not capture the pointer.
+  Fine pointers with hover capability reveal a popup after 200 milliseconds. Visible
+  keyboard focus reveals it immediately. Touch reveals it after a 400 millisecond hold.
+  Movement, release, or cancellation stops an unfinished hold. Taps and clicks select.
+  A completed hold suppresses its click. One popup swaps targets without another delay.
+
+  Worker popups show their orchestrator, full title, direct conversation mark, existing
+  concise recap, and one sentence from the served Worker manifest and current facts.
+  “Currently doing” requires an actual working signal. Idle Workers say “At” their stage.
+  Approval, answer, assignment, error, and blocked facts use their specific wording.
+  The popup has no stage ladder or named blockers. Recaps arrive through the existing
+  board and orchestrator projections, without detail requests or another transport.
+  Orchestrator popups show their eligible children in the shared groups. The panel stays
+  inside the viewport and does not capture the pointer.
+
+  Rows, headings, and cards move from measured old positions to new positions. Cross-group
+  moves take 360–560 milliseconds according to distance. A new row opens space before
+  its fade. An exit fades before its space closes. Moving surfaces stay opaque, and the
+  travelling row and its card stay above their neighbors. Row and spinner colors blend
+  across group changes. Structural updates wait while a pointer rests on a Worker row.
+  Updates stay serial and retain the latest pending answer. Reduced motion stops CSS
+  animation and scripted travel, including travel already in progress.
 
   The rail defaults to `clamp(17rem, 22vw, 20rem)`. Its edge resizes from 232 to 520
   pixels with a pointer or arrow keys. Double click resets it. The preference persists
@@ -170,7 +193,7 @@ One screen per part of the system:
   Backlog and Resume remain the deferral controls. There is no Retire control.
 - **Orchestrator** — project and parent navigation, title, recap, and a Settle control
   above closed Worker bands. Worker rows show title and an exact-conversation dot.
-  Hover or keyboard focus reuses the rail's stage panel. Groups keep the shared names
+  Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
   and order, including exceptional states. The local page omits only the duplicate
   Messages group: unread Workers appear in their ordinary group with their own dot.
   Global Messages and rail discovery remain unchanged. Closed group headers include

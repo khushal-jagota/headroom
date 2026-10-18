@@ -91,6 +91,7 @@ class BoardCardSource(TypedDict):
 
     id: str
     title: str
+    recap_preview: str
     priority: str
     deadline: str | None
     project_id: str | None

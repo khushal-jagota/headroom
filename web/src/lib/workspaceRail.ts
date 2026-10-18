@@ -7,7 +7,6 @@ import type {
   WorkspaceMessageConversation,
 } from "./types";
 import {
-  WORK_ITEM_ATTENTION_GROUP_KEYS,
   workItemTicketGroupKey,
   workItemTicketGroups,
   type WorkItemTicketFacts
@@ -53,15 +52,15 @@ function priorityRank(priority: Priority): number {
 
 function railGroups(
   cards: readonly WorkItemTicketFacts[],
-  attentionOnly = false
+  railLabel = false
 ): WorkspaceTicketGroup[] {
   const groups = workItemTicketGroups(
     cards,
-    attentionOnly ? WORK_ITEM_ATTENTION_GROUP_KEYS : undefined
+    undefined
   );
   return groups.map((group) => ({
     key: group.key,
-    label: group.label,
+    label: railLabel && group.key === "empty" ? "Other" : group.label,
     defaultCollapsed: group.quiet,
     cards: group.tickets
   }));
@@ -71,14 +70,49 @@ export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGro
   return railGroups(cards.filter((card) => card.ticket_status !== "cancelled"));
 }
 
+export function railTicketEligible(card: WorkItemTicketFacts): boolean {
+  return !card.is_backlogged && !card.blocked && card.ticket_status !== "blocked"
+    && card.stage !== "done" && card.stage !== "cancelled" && card.ticket_status !== "cancelled";
+}
+
+/** Keep survivors in their presented order, then append arrivals and re-entries. */
+export function stabilizeRailGroups(next: WorkspaceTicketGroup[], previous: WorkspaceTicketGroup[]): WorkspaceTicketGroup[] {
+  return next.map((group) => {
+    const byId = new Map(group.cards.map((card) => [card.id, card]));
+    const survivors = (previous.find((old) => old.key === group.key)?.cards ?? [])
+      .flatMap((card) => { const fresh = byId.get(card.id); byId.delete(card.id); return fresh ? [fresh] : []; });
+    return {...group, cards: [...survivors, ...byId.values()]};
+  });
+}
+
+export function stabilizeWorkspaceRail(next: WorkspaceRail, previous: WorkspaceRail): WorkspaceRail {
+  const stabilize = (item: WorkspaceRailItem) => ({...item, groups: stabilizeRailGroups(item.groups,
+    [...previous.items, ...previous.settledItems].find((old) => old.id === item.id)?.groups ?? [])});
+  return {...next, chiefGroups: stabilizeRailGroups(next.chiefGroups, previous.chiefGroups),
+    items: next.items.map(stabilize), settledItems: next.settledItems.map(stabilize)};
+}
+
+export function workspaceWorkerStageSentence(ticket: WorkItemTicketFacts, lifecycle: Lifecycle | null): string {
+  const stage = lifecycle?.stageLabel[ticket.stage];
+  if (!stage) return "";
+  if (ticket.blocked || ticket.ticket_status === "blocked") return `Blocked at ${stage}.`;
+  if (ticket.awaiting_approval) return `Awaiting your approval at ${stage}.`;
+  if (ticket.awaiting_answer) return `Awaiting your answer at ${stage}.`;
+  if (ticket.assigned) return `Awaiting you at ${stage}.`;
+  if (ticket.agent_state === "errored") return `The last turn failed at ${stage}.`;
+  if (ticket.awaiting_agent_approval) return `Awaiting an agent's approval at ${stage}.`;
+  if (ticket.conversation_signal?.working) return `Currently doing ${stage}.`;
+  return `At ${stage}.`;
+}
+
 export function workspaceAttentionGroups(
   cards: readonly WorkItemTicketFacts[]
 ): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter((card) => !card.is_backlogged), true);
+  return railGroups(cards.filter(railTicketEligible), true);
 }
 
 export function workspaceHoverGroups(cards: readonly WorkItemTicketFacts[]): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter((card) => !card.is_backlogged && card.stage !== "done" && card.ticket_status !== "cancelled"));
+  return railGroups(cards.filter(railTicketEligible), true);
 }
 
 /** Sidebar visibility stays separate from the durable unread conversation index. */
@@ -95,21 +129,6 @@ export function workspaceRailChildMessageConversations(
     {...parent, tickets: parent.tickets.filter((ticket) => visible(ticket.id))},
     cards
   ).filter((row) => visible(row.id));
-}
-
-export type WorkspaceWorkerStage = { id: string; label: string; state: "done" | "now" | "todo" };
-
-export function workspaceWorkerStages(
-  ticket: Pick<WorkItemTicketFacts, "stage">,
-  lifecycle: Lifecycle | null
-): WorkspaceWorkerStage[] {
-  if (!lifecycle) return [];
-  const current = lifecycle.stageOrder.indexOf(ticket.stage);
-  return lifecycle.stageOrder.map((id, index) => ({
-    id,
-    label: lifecycle.stageLabel[id],
-    state: current < 0 ? "todo" : index < current ? "done" : index === current ? "now" : "todo"
-  }));
 }
 
 export function buildWorkspaceRail(

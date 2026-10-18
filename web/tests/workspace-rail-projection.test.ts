@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BoardCard, BoardSprintItem, SprintItemWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
-import { buildWorkspaceRail, workspaceWorkerStages } from "../src/lib/workspaceRail";
+import { buildWorkspaceRail, stabilizeWorkspaceRail, workspaceWorkerStageSentence } from "../src/lib/workspaceRail";
 
 const quiet = {
   awaiting_reply: false, awaiting_answer: false, awaiting_approval: false,
@@ -41,7 +41,7 @@ describe("orchestrator rail projection", () => {
       card("obsolete", { ticket_status: "cancelled", awaiting_approval: true })
     ] })]);
     expect(rail.chiefGroups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["legacy-chief", "explicit-chief"]);
-    expect(rail.items[0].groups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["complete-child"]);
+    expect(rail.items[0].groups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["complete-child", "agent-child"]);
     expect(rail.items[0].hoverGroups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["complete-child", "agent-child"]);
     expect(rail.items[0].tickets).toHaveLength(4);
     expect(rail.items[0].conversationSignal).toBeUndefined();
@@ -64,8 +64,37 @@ describe("orchestrator rail projection", () => {
     expect(rail.settledItems[0].tickets).toEqual(rows);
     const resumed = rows.map((row) => ({...row, is_backlogged:false}));
     expect(buildWorkspaceRail(resumed).chiefGroups.map((group) => group.key))
-      .toEqual(["awaiting_approval", "awaiting_reply"]);
+      .toEqual(["awaiting_approval", "awaiting_reply", "agent"]);
     expect(rows[0].awaiting_approval).toBe(true);
+  });
+
+  it("filters ineligible overlap before grouping and keeps quiet work in the sidebar", () => {
+    const rows = [card("working", { conversation_signal:{working:true,message_for_owner:false} }),
+      card("closeout", { ticket_status:"empty", waiting_to_closeout:true }),
+      card("agent-review", { ticket_status:"empty", awaiting_agent_approval:true }),
+      card("idle", { ticket_status:"empty" }),
+      ...["done", "backlog", "blocked", "cancelled"].map((id) => card(id, {
+        awaiting_approval:true, stage:id === "done" ? "done" : "needs_plan",
+        is_backlogged:id === "backlog", blocked:id === "blocked", ticket_status:id === "cancelled" ? "cancelled" : "agent"
+      }))];
+    const rail = buildWorkspaceRail(rows);
+    expect(rail.chiefGroups.map((group) => [group.label, group.cards.map((row) => row.id)]))
+      .toEqual([["Agent", ["working"]], ["Waiting on Consequences", ["closeout"]],
+        ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["idle"]]]);
+    expect(rail.groups.find((group) => group.key === "empty")?.label).toBe("Empty");
+  });
+
+  it("retains survivors through refetch and appends entries and re-entries per category", () => {
+    const initial = buildWorkspaceRail([card("a", {activity_at:20}), card("b", {activity_at:10})]);
+    const refreshed = stabilizeWorkspaceRail(buildWorkspaceRail([
+      card("b", {activity_at:90}), card("a", {activity_at:1}), card("new", {activity_at:100})]), initial);
+    expect(refreshed.chiefGroups[0].cards.map((row) => row.id)).toEqual(["a", "b", "new"]);
+    const moved = stabilizeWorkspaceRail(buildWorkspaceRail([
+      card("a", {awaiting_approval:true}), card("b"), card("new")]), refreshed);
+    expect(moved.chiefGroups.map((group) => group.key)).toEqual(["awaiting_approval", "agent"]);
+    const reentered = stabilizeWorkspaceRail(buildWorkspaceRail([card("a"), card("b"), card("new")]), moved);
+    expect(reentered.chiefGroups[0].cards.map((row) => row.id)).toEqual(["b", "new", "a"]);
+    expect(reentered.chiefGroups[0].cards[2].awaiting_approval).toBe(false);
   });
 
   it("preserves priority order and exact direct-conversation message marks", () => {
@@ -78,7 +107,7 @@ describe("orchestrator rail projection", () => {
     expect(rail.items.map((row) => row.conversationSignal)).toEqual([{working:true,message_for_owner:true}, undefined, undefined, undefined]);
   });
 
-  it("derives stages from the served Worker manifest without a fabricated fallback", () => {
+  it("states only manifest stages and facts that prove work", () => {
     const lifecycle = buildLifecycle({
       worker_type: "bespoke", label: "Bespoke", stages: [
         { id: "draft", label: "Draft", gating_field: "draft", is_terminal: false, ownership_mode: "worker" },
@@ -87,12 +116,12 @@ describe("orchestrator rail projection", () => {
       ], advance: {}, fields: [], ceiling_range: [], default_ceiling: "done",
       worker_profile_id: "bespoke", default_backend: "codex", default_model: null, default_reasoning_effort: null
     } as WorkerTypeManifest);
-    expect(workspaceWorkerStages({ stage: "review" }, lifecycle)).toEqual([
-      { id: "draft", label: "Draft", state: "done" },
-      { id: "review", label: "Review", state: "now" },
-      { id: "done", label: "Done", state: "todo" }
-    ]);
-    expect(workspaceWorkerStages({ stage: "unknown" }, lifecycle).every((stage) => stage.state === "todo")).toBe(true);
-    expect(workspaceWorkerStages({ stage: "review" }, null)).toEqual([]);
+    const reviewing = card("reviewing", {stage:"review", ticket_status:"agent"});
+    expect(workspaceWorkerStageSentence(reviewing, lifecycle)).toBe("At Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, conversation_signal:{working:true,message_for_owner:false}}, lifecycle)).toBe("Currently doing Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, awaiting_approval:true, conversation_signal:{working:true,message_for_owner:false}}, lifecycle)).toBe("Awaiting your approval at Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, agent_state:"errored"}, lifecycle)).toBe("The last turn failed at Review.");
+    expect(workspaceWorkerStageSentence({...reviewing, blocked:true, conversation_signal:{working:true,message_for_owner:false}}, lifecycle)).toBe("Blocked at Review.");
+    expect(workspaceWorkerStageSentence(reviewing, null)).toBe("");
   });
 });

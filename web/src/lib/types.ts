@@ -427,6 +427,7 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
   conversation_id?: string | null;
   id: string;
   title: string;
+  recap_preview: string;
   stage: string;
   priority: Priority;
   activity_at: number;
@@ -519,6 +520,7 @@ export type BoardCard = WorkAttention & {
   orchestrator?: Principal;
   id: string;
   title: string;
+  recap_preview: string;
   priority: Priority;
   deadline: string | null;
   project_id: string | null;

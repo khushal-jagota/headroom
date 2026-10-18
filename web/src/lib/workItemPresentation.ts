@@ -5,6 +5,8 @@ export type WorkItemTicketFacts = WorkAttention & {
   conversation_signal?: import("./conversationSignal").ConversationSignal;
   id: string;
   title: string;
+  recap_preview?: string;
+  blocked?: boolean;
   priority: Priority;
   stage: string;
   worker_type?: string;
