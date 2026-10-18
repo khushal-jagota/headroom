@@ -599,7 +599,7 @@ export type NotificationSettingsResponse = {
 
 // One row names one durable unread conversation, independent of settlement.
 export type WorkspaceMessageConversation = {
-  conversationSignal?: ConversationSignal;
+  conversationSignal?: Partial<ConversationSignal>;
   kind: "chief" | "sprint_item" | "ticket";
   id: string;
   title: string;

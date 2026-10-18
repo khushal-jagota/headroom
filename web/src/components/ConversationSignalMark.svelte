@@ -8,7 +8,7 @@
     class: extraClass = "",
     ...rest
   }: {
-    signal: ConversationSignal | null | undefined;
+    signal: Partial<ConversationSignal> | null | undefined;
     conversationId?: string | null;
     class?: string;
     [key: string]: unknown;

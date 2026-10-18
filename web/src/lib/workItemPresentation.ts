@@ -1,8 +1,14 @@
 import type { Priority, WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
-export type WorkItemTicketFacts = WorkAttention & {
-  conversation_signal?: import("./conversationSignal").ConversationSignal;
+export type WorkItemAttentionFacts = Omit<WorkAttention, 'awaiting_reply' | 'awaiting_answer' | 'agent_state'> & {
+  awaiting_reply: boolean | null;
+  awaiting_answer: boolean | null;
+  agent_state: import('./types').AgentState | null;
+};
+
+export type WorkItemTicketFacts = WorkItemAttentionFacts & {
+  conversation_signal?: Partial<import("./conversationSignal").ConversationSignal>;
   id: string;
   title: string;
   recap_preview?: string;
@@ -13,7 +19,7 @@ export type WorkItemTicketFacts = WorkAttention & {
   conversation_id?: string | null;
   ticket_status: string;
   is_backlogged?: boolean;
-  waiting_to_closeout?: boolean;
+  waiting_to_closeout?: boolean | null;
   gating_field?: string | null;
   activity_at?: number;
 };

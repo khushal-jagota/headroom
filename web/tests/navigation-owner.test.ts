@@ -5,7 +5,7 @@ import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { createNavigationOwner } from '../src/lib/navigation/owner';
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { Continuity, Fence, SnapshotResponse, RevisionBatch, BatchEnvelope, CurrentSnapshotResponse } from '../src/lib/navigation/contracts';
-import type { NavigationStreamHandlers, NavigationTransport } from '../src/lib/navigation/transport';
+import { NavigationRequestError, type NavigationStreamHandlers, type NavigationTransport } from '../src/lib/navigation/transport';
 import { continuity, currentSnapshot, degradedSnapshot, envelope, authority, conversation } from './support/navigation/fixtures';
 function snapshot(revision = '0', epoch = 'e1', proof: SnapshotResponse['proof'] = null): CurrentSnapshotResponse {
   const value = {...continuity, revision, epoch};
@@ -37,6 +37,28 @@ function observerFor(owner:ReturnType<typeof createNavigationOwner>, id:string) 
 }
 function fence(revision = '1', extra = {}): Fence {return {version:1,...continuity,revision,coverage:'complete',witnesses:['a'.repeat(64)],signature:'signed',...extra};}
 describe('navigation owner', () => {
+  it('retains request failure until an accepted snapshot and ignores obsolete aborted failures',async()=>{
+    const adapter=createNavigationCollection();
+    let read:NavigationTransport['snapshot']=async()=>{throw new NavigationRequestError('offline','network');};
+    const owner=createNavigationOwner({adapter,transport:{snapshot:(signal,fence)=>read(signal,fence),connect:()=>()=>undefined},reconnectDelayMs:100000});
+    try {
+      await expect(owner.start()).rejects.toThrow('offline');
+      expect(owner.getState().error?.code).toBe('network');
+      read=async()=>{throw new Error('invalid protocol');};
+      await expect(owner.recover()).rejects.toThrow('invalid protocol');
+      expect(owner.getState().error?.code).toBe('network');
+      read=async()=>snapshot();await owner.recover();
+      expect(owner.getState().error).toBeNull();
+      let rejectOld!:(error:Error)=>void;let oldSignal!:AbortSignal;
+      read=(signal)=>{oldSignal=signal;return new Promise((_resolve,reject)=>{rejectOld=reject;});};
+      const old=owner.recover();const oldFailure=expect(old).rejects.toThrow('late failure');await flush();
+      read=async()=>snapshot();await owner.recover();
+      expect(oldSignal.aborted).toBe(true);
+      rejectOld(new NavigationRequestError('late failure','network'));await oldFailure;
+      expect(owner.getState().error).toBeNull();
+      expect(owner.getState().connection).toBe('subscribed');
+    } finally {owner.dispose();adapter.destroy();}
+  });
   it('publishes in order, waits separately for selectors and render, and ignores duplicate batches', async () => {
     const f = fixture();
     try {

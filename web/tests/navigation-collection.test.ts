@@ -13,11 +13,11 @@ describe('TanStack source publication', () => {
     // Amendment/classifier boundary only: synthetic attention facts do not prove Signal parity.
     const adapter = createNavigationCollection();
     const record: TicketRecord = {kind:'ticket',id:'t',value:{
-      title:'Ticket',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',
-      blocked:false,updated_at:10,worker_step_claim_out:false,priority:'P2',deadline:null,
+      title:'Ticket',recap_preview:'Ticket recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',
+      blocked:false,created_at:1,updated_at:10,worker_step_claim_out:false,priority:'P2',deadline:null,
       project_id:null,orchestrator_kind:'chief',sprint_item_id:null,conversation_id:null,
       is_backlogged:false,ceiling:'needs_implementation',ceiling_holder:{kind:'owner',id:'owner'},
-      proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',
+      gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',
       terminal:false,locale:'en'
     }};
     const known: WorkItemTicketFacts = {id:'t',title:'Ticket',priority:'P2',stage:'needs_implementation',

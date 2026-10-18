@@ -183,3 +183,98 @@ describe("orchestrator rail projection", () => {
     expect(workspaceWorkerStageSentence(reviewing, null)).toBe("");
   });
 });
+
+// Shared-publication adoption: these are browser adapters, not a new Signal policy.
+import { createNavigationCollection } from '../src/lib/navigation/collection';
+import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
+import { navigationWorkspacePresentation } from '../src/lib/navigation/presentation';
+import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
+import { encodeCursor } from '../src/lib/navigation/validation';
+import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
+const sourceTicket:TicketRecord={kind:'ticket',id:'source-ticket',value:{
+  title:'Source Ticket',recap_preview:'Source recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
+  updated_at:11,worker_step_claim_out:false,priority:'P2',deadline:null,project_id:'project',orchestrator_kind:'sprint_item',
+  sprint_item_id:'item',conversation_id:'conversation',is_backlogged:false,ceiling:'needs_implementation',
+  ceiling_holder:{kind:'owner',id:'owner'},gating_field:'implementation',proposal_field:null,proposal_revision:0,
+  proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'en'}};
+const sourceRecords:NavigationRecord[]=[sourceTicket,conversation('conversation'),
+  {kind:'orchestrator',id:'item',value:{title:'Parent',recap_preview:'Parent recap',priority:'P1',created_at:1,project_id:'project',settled:false,conversation_id:null}},
+  {kind:'project',id:'project',value:{name:'Project',priority:null}},
+  {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:null}},
+  {kind:'address',id:'address',value:{owner_kind:'ticket',owner_id:'source-ticket',conversation_id:'conversation',current:true,parent_kind:'orchestrator',parent_id:'item'}}];
+
+describe('canonical navigation workspace presentation',()=>{
+  it('preserves independent canonical structural facts and exact known/unknown conversation values',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    try {
+      const source={...sourceTicket,value:{...sourceTicket.value,ticket_status:'awaiting_approval',blocked:true,
+        stage_ownership:'user',ceiling_holder:{kind:'owner',id:'owner'}}};
+      adapter.publishSnapshot(currentSnapshot({...continuity,records:[source,...sourceRecords.slice(1)]}),'source');
+      const view=knowledge.accept(adapter.getPublication()!);
+      const first=navigationWorkspacePresentation(view);
+      expect(first.tickets[0]).toMatchObject({blocked:true,assigned:true,awaiting_approval:true,awaiting_agent_approval:false,
+        agent_state:'working',awaiting_reply:true,conversation_signal:{working:true,message_for_owner:true}});
+      expect(buildWorkspaceRail(first.tickets,first.orchestrators).items[0].groups).toEqual([]);
+      const retained=navigationWorkspacePresentation(knowledge.loseRuntime()!);
+      expect(retained.tickets[0]).toMatchObject({agent_state:'errored',awaiting_reply:true,awaiting_answer:null,
+        conversation_signal:{message_for_owner:true}});
+      expect(retained.tickets[0].conversation_signal).not.toHaveProperty('working');
+      expect(retained.orchestrators[0].tickets).toHaveLength(1);
+      expect(retained.orchestrators[0].project).toBe('Project');
+      knowledge.invalidateDurableFact('conversation','message_for_owner',10);
+      const unknown=navigationWorkspacePresentation(knowledge.getView()!);
+      expect(unknown.tickets[0].awaiting_reply).toBeNull();
+      expect(unknown.tickets[0].conversation_signal).not.toHaveProperty('message_for_owner');
+      expect(unknown.tickets[0].agent_state).toBe('errored');
+      const done={...source,value:{...source.value,stage:'done',ticket_status:'empty',terminal:true}};
+      adapter.publishSnapshot(currentSnapshot({...continuity,revision:'1',records:[done,...sourceRecords.slice(1)]}),'done');
+      knowledge.accept(adapter.getPublication()!);knowledge.loseRuntime();
+      expect(navigationWorkspacePresentation(knowledge.getView()!).tickets[0].agent_state).toBeNull();
+      const agentApproval={...done,value:{...done.value,ticket_status:'awaiting_approval',ceiling_holder:{kind:'owner',id:'another'}}};
+      adapter.publishSnapshot(currentSnapshot({...continuity,revision:'2',records:[agentApproval]}),'agent-approval');
+      const last=navigationWorkspacePresentation(knowledge.accept(adapter.getPublication()!)).tickets[0];
+      expect(last.awaiting_approval).toBe(false);expect(last.awaiting_agent_approval).toBe(true);
+    } finally {adapter.destroy();}
+  });
+  it('moves the Consequences category from the same publication even while the label manifest stays stale',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    const staleLabels=buildLifecycle({worker_type:'coding',label:'Coding',stages:[{id:'needs_implementation',label:'Implementation',gating_field:'implementation',is_terminal:false,ownership_mode:'worker'}],advance:{},fields:[{id:'implementation',label:'Implementation'}],ceiling_range:[],default_ceiling:'needs_implementation',worker_profile_id:'worker',default_backend:'codex',default_model:null,default_reasoning_effort:null});
+    const records=[{...sourceTicket,value:{...sourceTicket.value,conversation_id:null}},...sourceRecords.slice(2)];
+    const seen:string[]=[];
+    adapter.subscribe(publication=>{
+      const projected=navigationWorkspacePresentation(knowledge.accept(publication));
+      seen.push(buildWorkspaceRail(projected.tickets,projected.orchestrators).items[0].groups[0].key);
+    });
+    try {
+      adapter.publishSnapshot(currentSnapshot({...continuity,records}),'before');
+      const batch={...continuity,base_revision:'0',revision:'1',upserts:[{...sourceTicket,value:{...sourceTicket.value,conversation_id:null,gating_field:'consequences'}}],deletes:[]};
+      adapter.publishBatch(envelope(batch),encodeCursor(batch),'gating-only');
+      expect(seen).toEqual(['empty','waiting_to_closeout']);
+      expect(staleLabels.gatingField.needs_implementation).toBe('implementation');
+      const ticket=navigationWorkspacePresentation(knowledge.getView()!).tickets[0];
+      expect(ticket.gating_field).toBe('consequences');
+      expect(workspaceWorkerStageSentence(ticket,staleLabels)).toBe('At Implementation.');
+    } finally {adapter.destroy();}
+  });
+  it('retains exact historical unread addresses independently of current conversation and visible sidebar classification',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    const historical:NavigationRecord={kind:'address',id:'historical',value:{owner_kind:'ticket',owner_id:'source-ticket',conversation_id:'past',current:false,parent_kind:'orchestrator',parent_id:'item'}};
+    try {
+      adapter.publishSnapshot(currentSnapshot({...continuity,records:[...sourceRecords,conversation('past'),historical]}),'aliases');
+      const projected=navigationWorkspacePresentation(knowledge.accept(adapter.getPublication()!));
+      expect(projected.messages.map(row=>[row.id,row.conversationId,row.parentId])).toEqual([
+        ['source-ticket','conversation','item'],['source-ticket','past','item']]);
+      expect(projected.tickets[0].conversation_id).toBe('conversation');
+      expect(projected.messages.every(row=>row.conversationSignal?.message_for_owner)).toBe(true);
+      const readPast=conversation('past',20,false);
+      readPast.value.attention.current!.signal.working=false;
+      const batch={...continuity,base_revision:'0',revision:'1',upserts:[readPast],deletes:[]};
+      adapter.publishBatch(envelope(batch),encodeCursor(batch),'read-history');
+      const afterRead=navigationWorkspacePresentation(knowledge.accept(adapter.getPublication()!));
+      expect(afterRead.messages.map(row=>row.conversationId)).toEqual(['conversation']);
+      expect(afterRead.conversationSignals.get('past')).toEqual({working:false,message_for_owner:false});
+      expect(afterRead.conversationSignals.get('conversation')).toEqual({working:true,message_for_owner:true});
+      expect(afterRead.conversationSignals.get('deleted-history')).toBeUndefined();
+    } finally {adapter.destroy();}
+  });
+});

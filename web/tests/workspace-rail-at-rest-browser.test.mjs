@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { rm, writeFile, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
@@ -26,9 +26,31 @@ import { tick, onMount } from "svelte";
 import { parseWorkspaceAddress } from "../src/lib/workspaceAddress";
 import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
 import BoardRoute from "../src/routes/BoardRoute.svelte";
+import { provideNavigationApplication } from "../src/lib/navigation/application.svelte";
+const navigation=provideNavigationApplication();
+(window as any).__navigation=navigation;
+const railObservers: ReturnType<typeof navigation.owner.registerObserver>[]=[];
+const register=navigation.owner.registerObserver;
+navigation.owner.registerObserver=(name) => { const observer=register(name); if(name.startsWith('workspace-rail:')) railObservers.push(observer); return observer; };
+(window as any).__startRailWait=() => {
+  const publication=navigation.owner.getState().publication!;
+  (window as any).__railWaitStatus='pending';
+  void navigation.owner.waitForVisibility({...publication.continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic-proof'},
+    {requiredObservers:railObservers.slice(-1)}).then(result => (window as any).__railWaitStatus=result.status);
+};
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-(window as any).__refresh = async () => { await client.invalidateQueries(); await tick(); };
+(window as any).__refresh = async () => {
+  await client.invalidateQueries();
+  const response=await (await fetch('/api/navigation/snapshot')).json();
+  const previous=navigation.owner.getState().publication!;
+  const keys=new Set(response.snapshot.records.map((record:any)=>JSON.stringify([record.kind,record.id])));
+  const batch={...response.snapshot,base_revision:previous.continuity.revision,
+    upserts:response.snapshot.records,deletes:previous.records.filter(record=>!keys.has(JSON.stringify([record.kind,record.id]))).map(record=>({kind:record.kind,id:record.id}))};
+  delete batch.records;
+  const published=new Promise<void>(resolve=>{ const unsubscribe=navigation.owner.subscribe(state=>{if(state.publication?.continuity.revision===batch.revision){unsubscribe();resolve();}}); });
+  (window as any).__navigationSource.dispatchEvent(new MessageEvent('batch',{data:JSON.stringify({wire_version:response.wire_version,authority:response.authority,batch}),lastEventId:response.cursor}));
+  await published; await tick(); };
 let address = $state(parseWorkspaceAddress(location.hash) ?? { selection: {kind:"none" as const},view:"items" as const,openFile:null });
 onMount(() => {
   const update = () => address = parseWorkspaceAddress(location.hash) ?? {selection:{kind:"none"},view:"items",openFile:null};
@@ -43,7 +65,7 @@ onMount(() => {
 `, "utf8");
   await writeFile(
     main,
-    `import { mount } from "svelte"; import Host from "./${stem}.svelte"; import "../../assets/tokens.css"; import "../../assets/app.css"; mount(Host, { target: document.getElementById("app")! });`,
+    `globalThis.EventSource = class extends EventTarget { onerror = null; constructor(url) { super(); if(String(url).startsWith('/api/navigation/events?')) globalThis.__navigationSource=this; } close() {} }; import { mount } from "svelte"; import Host from "./${stem}.svelte"; import "../../assets/tokens.css"; import "../../assets/app.css"; mount(Host, { target: document.getElementById("app")! });`,
     "utf8"
   );
   await writeFile(
@@ -64,7 +86,8 @@ onMount(() => {
   const address = server.httpServer.address();
   assert.ok(address && typeof address === "object");
 
-  const script = String.raw`
+  const fixturePython = await readFile(join(root,"tests/support/navigation/browser-fixture.py"),"utf8");
+  const script = fixturePython + String.raw`
 import json, os, pathlib, sys, time, re
 from playwright.sync_api import sync_playwright, expect
 from tests.e2e.harness import browser_failure_evidence
@@ -80,7 +103,7 @@ def card(ticket_id, item_id, item_title, **values):
         "worker_type": "coding", "employee_backend": "codex", "stage": "needs_implementation",
         "stage_label": "Implementation", "gating_field": "implementation",
         "gating_field_label": "Implementation", "is_done": False, "blocked": False,
-        "conversation_id": None, "waiting_to_closeout": False, "recap_preview": "A concise recap from the current projection.",
+        "conversation_id": "fixture-ticket-"+ticket_id, "waiting_to_closeout": False, "recap_preview": "A concise recap from the current projection.",
         "sprint_item_id": item_id, "sprint_item_title": item_title, "sprint_item_priority": "P1",
         "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
         "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
@@ -93,7 +116,7 @@ def item(item_id):
         "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
         "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
     }
-    return {"id": item_id, "created_at": 0, "conversation_id": None, "ticket_rollup": dict(quiet), **quiet}
+    return {"id": item_id, "created_at": 0, "conversation_id": "fixture-item-"+item_id, "ticket_rollup": dict(quiet), **quiet}
 
 # One orchestrator mixes attention, ongoing work, and ineligible overlap rows.
 # The other has no eligible work, so its existing quiet line must remain visible.
@@ -129,7 +152,7 @@ for summary in board["sprint_items"]:
     summary["priority"] = "P1"
     summary["recap_preview"] = ORCHESTRATOR_RECAP
 workers = {
-    "chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "awaiting_reply": False, "agent_working": False, "latest_turn_ended_sequence": 0},
+    "chief_of_staff": {"conversation_id":"fixture-chief", "label": "Chief of Staff", "needs_me": False, "awaiting_reply": False, "agent_working": False, "latest_turn_ended_sequence": 0},
     "workers": [],
 }
 
@@ -157,10 +180,16 @@ workspace = dict(id="si_needs_him",title="Needs him",body="The orchestrator brie
     created_at=0,updated_at=0,supervisor=dict(agent_key="sprint_item:si_needs_him",conversation_id=None),
     tickets=[],artifacts=[],conversation_history=[],ticket_rollup={},settled=False)
 
+preview_requests = []
+
 def respond(route):
     path = route.request.url.split("/api/", 1)[1].split("?")[0]
-    if path == "board": result = board
-    elif path == "workers": result = workers
+    if path == "navigation/snapshot": result = navigation_response(board,workers)
+    elif path == "board": raise AssertionError("sidebar summary query remains active: " + path)
+    elif path == "workers":
+        assert '#/workspace/chief-of-staff' in route.request.frame.url, 'sidebar must not request the worker roster'
+        result = workers  # The selected Chief pane is the next, explicitly unadopted tranche.
+    elif path.endswith("/recap-preview"): raise AssertionError("unexpected preview request: " + path)
     elif path == "worker-types": result = manifest
     elif path == "backends": result = {"backends": []}
     elif path.endswith("/workspace"): result = {**workspace,"tickets":board["sprint_items"][0]["tickets"]}
@@ -183,6 +212,9 @@ with sync_playwright() as p:
 
         needs_him = page.locator('[data-sprint-item="si_needs_him"]')
         needs_him.wait_for()
+        page.evaluate("window.__startRailWait()")
+        page.wait_for_function("window.__railWaitStatus === 'included'")
+        assert preview_requests == [], "initial source load must not prefetch every preview"
 
         # Nothing is selected, and the groups are already there.
         assert page.locator('[data-sprint-item] [aria-current="page"]').count() == 0
@@ -433,6 +465,47 @@ with sync_playwright() as p:
         page.mouse.move(1200, 950)
         expect(panel).to_have_attribute("aria-hidden", "true")
 
+        # Canonical inline previews preserve first-open pointer and immediate keyboard
+        # content without any separate preview requests. Earlier cold-read failures stay in evidence.
+        page.mouse.move(1200,950)
+        expect(panel).to_have_attribute("aria-hidden","true")
+        preview_metrics = []
+        for cached,trigger in [(False,'pointer'),(True,'pointer'),(False,'focus')]:
+            before_requests = len(preview_requests)
+            page.evaluate("""() => {
+              const root=document.querySelector('[data-rail-hover-panel]');
+              window.__previewTiming={start:performance.now(),visible:null,recap:null,firstText:null};
+              window.__previewObserver?.disconnect();
+              window.__previewObserver=new MutationObserver(() => {
+                const t=window.__previewTiming;
+                if(root.getAttribute('aria-hidden')==='false' && t.visible===null) {
+                  t.visible=performance.now()-t.start;t.firstText=root.querySelector('.recap')?.textContent ?? '';
+                }
+                if(t.visible!==null && root.querySelector('.recap')?.textContent==='A concise recap from the current projection.' && t.recap===null) t.recap=performance.now()-t.start;
+              });
+              window.__previewObserver.observe(root,{subtree:true,childList:true,characterData:true,attributes:true});
+            }""")
+            if trigger == 'pointer': row.hover()
+            else:
+                page.locator('body').click(position=dict(x=1100,y=920))
+                row.focus()
+                page.keyboard.press('Tab')
+                page.keyboard.press('Shift+Tab')
+            expect(panel).to_have_attribute("aria-hidden","false")
+            expect(panel.locator('.recap')).to_have_text('A concise recap from the current projection.')
+            page.wait_for_function("window.__previewTiming.recap !== null")
+            measurement=dict(cached=cached,trigger=trigger,requests=len(preview_requests)-before_requests,**page.evaluate('window.__previewTiming'))
+            assert measurement['requests'] == 0
+            assert measurement['firstText'] == 'A concise recap from the current projection.'
+            preview_metrics.append(measurement)
+            page.mouse.move(1200,950)
+            page.locator('body').click(position=dict(x=1100,y=920))
+            expect(panel).to_have_attribute("aria-hidden","true")
+        page.evaluate("window.__previewObserver.disconnect()")
+        metric_path=pathlib.Path(os.environ['PANELS_SIDEBAR_ARTIFACT_DIR'])/'inline-preview-timing.json'
+        metric_path.parent.mkdir(parents=True,exist_ok=True)
+        metric_path.write_text(json.dumps(preview_metrics,indent=2))
+
         # Hover freezes structure through a live refetch. Leaving applies the latest
         # answer, and a row that rejoins a group enters below its existing members.
         ordinary = next(r for r in board["columns"][0]["cards"] if r["id"] == "t_parent_quiet")
@@ -444,14 +517,18 @@ with sync_playwright() as p:
         ordinary["conversation_id"] = "rebound-quiet-worker"
         ordinary["conversation_signal"] = dict(working=True,message_for_owner=False)
         page.evaluate("window.__refresh()")
+        page.evaluate("window.__startRailWait()")
+        assert page.evaluate("window.__railWaitStatus") == "pending"
         expect(frozen_row.locator('[data-conversation-id="rebound-quiet-worker"] [data-conversation-signal="working"]')).to_have_count(1)
         assert all(abs(frozen_row.bounding_box()[key]-frozen_bounds[key]) < 1 for key in ["x","y","width","height"])
         expect(needs_him.locator('[data-bucket-key="empty"] [data-ticket-id="t_parent_quiet"]')).to_have_count(1)
         expect(needs_him.locator('[data-bucket-key="awaiting_answer"] [data-ticket-id="t_parent_quiet"]')).to_have_count(0)
         page.mouse.move(1200,950)
         expect(needs_him.locator('[data-bucket-key="awaiting_answer"] [data-ticket-id="t_parent_quiet"]')).to_have_count(1)
+        page.wait_for_function("window.__railWaitStatus === 'included'")
         expect(needs_him.locator('[data-bucket-key="awaiting_answer"] [data-ticket-id]').last).to_have_attribute("data-ticket-id","t_parent_quiet")
         ordinary["awaiting_answer"] = False
+        ordinary["conversation_signal"] = dict(working=False,message_for_owner=False)
         page.evaluate("window.__refresh()")
         expect(needs_him.locator('[data-bucket-key="empty"] [data-ticket-id="t_parent_quiet"]')).to_have_count(1)
         ordinary["awaiting_answer"] = True
@@ -494,6 +571,8 @@ with sync_playwright() as p:
         before_spinner = mover_row.locator(".stage-mark").evaluate("e=>getComputedStyle(e).borderTopColor")
         source["tickets"] = [r for r in source["tickets"] if r["id"] != "t_agent"]
         destination["tickets"].append(mover)
+        mover["sprint_item_id"] = destination["id"]
+        mover["sprint_item_title"] = destination["title"]
         mover["assigned"] = True
         page.evaluate("""() => {
           window.__motionEvidence=[];

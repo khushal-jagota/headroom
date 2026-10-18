@@ -1,8 +1,20 @@
 import {describe,it,expect,vi} from 'vitest';
-import {createNavigationTransport} from '../src/lib/navigation/transport';
+import {createNavigationTransport,NavigationRequestError} from '../src/lib/navigation/transport';
 import {fetchJson} from '../src/lib/api';
 
 describe('navigation transport',()=>{
+  it('preserves snapshot read errors without exposing schema or abort failures',async()=>{
+    const abort=new AbortController();
+    const read=(request:typeof fetch)=>createNavigationTransport({fetch:request}).snapshot(abort.signal);
+    await expect(read(async()=>{throw new TypeError('offline');})).rejects.toMatchObject({code:'network',message:'network error'});
+    await expect(read(async()=>new Response('unavailable',{status:503}))).rejects.toMatchObject({code:'http_error',message:'HTTP 503',status:503});
+    await expect(read(async()=>new Response(JSON.stringify({error:{code:'forbidden',message:'Not permitted',detail:{scope:'owner'}}}),{status:403})))
+      .rejects.toMatchObject({code:'forbidden',message:'Not permitted',detail:{scope:'owner'},status:403,isPlannerError:true});
+    await expect(read(async()=>new Response('bad JSON'))).rejects.toMatchObject({code:'bad_json',message:'invalid JSON in response',status:200});
+    await expect(read(async()=>new Response('{}'))).rejects.not.toBeInstanceOf(NavigationRequestError);
+    const cancelled=new DOMException('Cancelled','AbortError');abort.abort();
+    await expect(read(async()=>{throw cancelled;})).rejects.toBe(cancelled);
+  });
   it('closes native reconnect before error and ignores late events',()=>{
     const source=new EventTarget() as EventSource;
     source.close=vi.fn();

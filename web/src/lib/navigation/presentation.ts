@@ -1,0 +1,96 @@
+import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
+import type { AgentState, Priority } from '../types';
+import type { WorkspaceTicket, WorkspaceOrchestrator, WorkspaceChief } from '../workspaceRail';
+import type { ConversationSignal } from '../conversationSignal';
+import type { WorkspaceMessageConversation } from '../types';
+
+export type NavigationWorkspacePresentation = {
+  readonly tickets: WorkspaceTicket[];
+  readonly orchestrators: WorkspaceOrchestrator[];
+  readonly chief: WorkspaceChief | null;
+  readonly messages: WorkspaceMessageConversation[];
+  readonly conversationSignals: ReadonlyMap<string,Partial<ConversationSignal>>;
+};
+const value = (fact: KnownFact<boolean> | undefined): boolean | null => fact && fact.state !== 'unknown' ? fact.value : null;
+function signal(knowledge: ConversationKnowledge | undefined): Partial<ConversationSignal> {
+  const working=value(knowledge?.working), message=value(knowledge?.message_for_owner);
+  return {...(working === null ? {} : {working}),...(message === null ? {} : {message_for_owner:message})};
+}
+function priority(raw: string): Priority {
+  if (raw === 'P0' || raw === 'P1' || raw === 'P2' || raw === 'P3') return raw;
+  throw new Error('Invalid navigation priority');
+}
+/** Same existing agent-state precedence; unknown runtime never becomes an idle fact. */
+function agentState(status: string | null, stage: string | null, knowledge: ConversationKnowledge | undefined): AgentState | null {
+  const working=value(knowledge?.working), failed=value(knowledge?.last_turn_failed);
+  if (working === true) return 'working';
+  if (status === 'errored') return 'errored';
+  if (failed === true && stage !== 'done') return 'errored';
+  return working === false && (failed === false || stage === 'done') ? 'idle' : null;
+}
+
+/** One coherent source view, including the canonical bounded preview strings. */
+export function navigationWorkspacePresentation(view: EffectiveNavigationView): NavigationWorkspacePresentation {
+  const records=view.publication.records;
+  const conversationSignals=new Map([...view.conversations].map(([id,knowledge])=>[id,signal(knowledge)]));
+  const projects=new Map(records.flatMap(record=>record.kind==='project' ? [[record.id,record.value] as const] : []));
+  const orchestratorRecords=records.filter(record=>record.kind==='orchestrator');
+  const orchestratorsById=new Map(orchestratorRecords.map(record=>[record.id,record.value]));
+  const tickets: WorkspaceTicket[]=records.flatMap(record=>{
+    if(record.kind!=='ticket') return [];
+    const row=record.value;
+    const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
+    const owner=row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner';
+    const parked=row.ticket_status==='awaiting_approval';
+    const parent=row.orchestrator_kind==='chief' ? null : row.sprint_item_id;
+    return [{id:record.id,title:row.title,priority:priority(row.priority),stage:row.stage,worker_type:row.worker_type,
+      ticket_status:row.ticket_status,is_backlogged:row.is_backlogged,blocked:row.blocked,
+      activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
+      awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
+      awaiting_approval:parked && owner,awaiting_agent_approval:parked && !owner,assigned:row.stage_ownership==='user',
+      agent_state:agentState(row.ticket_status,row.stage,knowledge),
+      waiting_to_closeout:row.gating_field==='consequences' && row.ticket_status==='empty',
+      gating_field:row.gating_field,recap_preview:row.recap_preview,
+      orchestrator:parent === null ? {kind:'chief',id:'chief'} : {kind:'sprint_item',id:parent},
+      sprint_item_id:parent,sprint_item_title:parent === null ? null : orchestratorsById.get(parent)?.title ?? null}];
+  });
+  const orchestrators: WorkspaceOrchestrator[]=orchestratorRecords.map(record=>{
+    const row=record.value;
+    const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
+    return {id:record.id,title:row.title,priority:priority(row.priority),created_at:row.created_at,
+      settled:row.settled,project_id:row.project_id,project:projects.get(row.project_id)?.name,
+      recap_preview:row.recap_preview,conversation_id:row.conversation_id,
+      conversation_signal:signal(knowledge),tickets:tickets.filter(ticket=>ticket.orchestrator?.kind==='sprint_item' && ticket.orchestrator.id===record.id),
+      awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
+      awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge)};
+  });
+  const chiefRecord=records.find(record=>record.kind==='chief');
+  const chief=chiefRecord?.kind==='chief' ? {
+    label:chiefRecord.value.label,conversation_id:chiefRecord.value.conversation_id,
+    conversation_signal:signal(chiefRecord.value.conversation_id === null ? undefined : view.conversations.get(chiefRecord.value.conversation_id)),
+    awaiting_reply:chiefRecord.value.conversation_id === null ? null : value(view.conversations.get(chiefRecord.value.conversation_id)?.message_for_owner),
+  } : null;
+  const byTicket=new Map(tickets.map(ticket=>[ticket.id,ticket]));
+  const messages: WorkspaceMessageConversation[]=[];
+  const seen=new Set<string>();
+  // Preserve exact address membership before deduplication. Current addresses win within an owner.
+  const addresses=records.filter(record=>record.kind==='address').sort((a,b)=>Number(b.value.current)-Number(a.value.current) || a.id.localeCompare(b.id));
+  for(const record of addresses) {
+    const address=record.value;
+    const knowledge=view.conversations.get(address.conversation_id);
+    if(value(knowledge?.message_for_owner)!==true) continue;
+    const key=`${address.owner_kind}:${address.owner_id}:${address.conversation_id}`;
+    if(seen.has(key)) continue;
+    const ticket=byTicket.get(address.owner_id), item=orchestratorsById.get(address.owner_id);
+    const parentId=address.parent_kind==='chief' ? 'chief' : address.parent_id;
+    const parent=parentId === null ? undefined : orchestratorsById.get(parentId);
+    const title=address.owner_kind==='ticket' ? ticket?.title : address.owner_kind==='orchestrator' ? item?.title : chief?.label;
+    if(title===undefined) continue;
+    seen.add(key);
+    messages.push({kind:address.owner_kind==='orchestrator' ? 'sprint_item' : address.owner_kind,
+      id:address.owner_id,title,conversationId:address.conversation_id,conversationSignal:signal(knowledge),
+      parentId,parentTitle:parentId==='chief' ? chief?.label ?? null : parent?.title ?? null,
+      settled:address.owner_kind==='orchestrator' ? item?.settled === true : parent?.settled === true});
+  }
+  return {tickets,orchestrators,chief,messages,conversationSignals};
+}

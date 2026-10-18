@@ -2,13 +2,14 @@ import type { Fence, SnapshotResponse, CurrentAuthority, DegradedAuthority } fro
 import type { NavigationCollectionAdapter, NavigationPublication } from './collection';
 import { compareRevision, assertCursorMatches, parseBatchEnvelope, parseSnapshotResponse, sameAuthority } from './validation';
 import { navigationConfiguration } from './configuration';
-import type { NavigationTransport } from './transport';
+import { NavigationRequestError, type NavigationTransport } from './transport';
 import { createVisibilityTracker, type Certification, type VisibilityResult } from './visibility';
 import { createNavigationKnowledge, type DurableFact, type EffectiveNavigationView } from './knowledge';
 
 export type NavigationOwnerState = {
   connection: 'idle' | 'snapshot' | 'subscribed' | 'reconnecting' | 'degraded' | 'disposed';
   generation: number;
+  error: NavigationRequestError | null;
   publication: NavigationPublication | undefined;
   effective: EffectiveNavigationView | undefined;
 };
@@ -22,7 +23,7 @@ export function createNavigationOwner(options: {
 }) {
   const { adapter, transport } = options;
   const knowledge = createNavigationKnowledge();
-  let state: NavigationOwnerState = { connection:'idle',generation:0,publication:undefined,effective:undefined };
+  let state: NavigationOwnerState = { connection:'idle',generation:0,error:null,publication:undefined,effective:undefined };
   const listeners = new Set<(state: NavigationOwnerState) => void>();
   const pendingPublications = new Set<{ token: string; resolve(publication: NavigationPublication): void; reject(error: Error): void }>();
   let controller = new AbortController();
@@ -181,13 +182,14 @@ export function createNavigationOwner(options: {
       if (!current(generation) || paused) throw new Error('obsolete navigation publication');
       if (lastAuthority && lastAuthority.delivery_session_id !== response.authority.delivery_session_id) retiredSessions.add(lastAuthority.delivery_session_id);
       lastAuthority = response.authority;
+      state = {...state,error:null};
       if (response.mode === 'current') connect(generation);
       else { update('degraded'); scheduleRecovery(generation); }
       return {publication,proof:canCertify() ? response.proof : null};
     } catch (error) {
       if (current(generation) && !paused) {
         // Failed requests are an observed authority loss even if collection state remains.
-        state = {...state,effective:knowledge.loseRuntime()};
+        state = {...state,effective:knowledge.loseRuntime(),...(error instanceof NavigationRequestError && !signal.aborted ? {error} : {})};
         visibility.loseRuntime();
         update('reconnecting');
         scheduleRecovery(generation);

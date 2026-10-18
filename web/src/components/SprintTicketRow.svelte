@@ -20,7 +20,7 @@
     // Sprint Item the tile is repeated noise.
     priority: Priority | null;
     title: string;
-    signal?: ConversationSignal;
+    signal?: Partial<ConversationSignal>;
     conversationId?: string | null;
     href?: string | null;
     active?: boolean;

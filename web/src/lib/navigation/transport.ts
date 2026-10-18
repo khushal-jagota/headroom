@@ -1,5 +1,9 @@
 import type { Fence, SnapshotResponse } from './contracts';
 import { parseSnapshotResponse } from './validation';
+import { PlannerFetchError } from '../api';
+
+/** An ordinary failed read, distinct from internal protocol and recovery state. */
+export class NavigationRequestError extends PlannerFetchError {}
 
 export interface NavigationStreamHandlers {
   batch(data: unknown, cursor: string): void;
@@ -21,9 +25,28 @@ export function createNavigationTransport(options: {
   return {
     async snapshot(signal, fence) {
       const query = fence ? `?fence=${encodeURIComponent(JSON.stringify(fence))}` : '';
-      const response = await request(`/api/navigation/snapshot${query}`, { signal, cache: 'no-store' });
-      if (!response.ok) throw new Error(`navigation snapshot HTTP ${response.status}`);
-      return parseSnapshotResponse(await response.json());
+      let response: Response;
+      try { response = await request(`/api/navigation/snapshot${query}`, { signal, cache: 'no-store' }); }
+      catch (error) {
+        if (signal.aborted) throw error;
+        throw new NavigationRequestError('network error','network');
+      }
+      if (!response.ok) {
+        let parsed: unknown;
+        try { parsed = await response.json(); } catch { parsed = null; }
+        if (parsed && typeof parsed === 'object' && 'error' in parsed && parsed.error
+          && typeof parsed.error === 'object' && 'code' in parsed.error) {
+          const envelope = parsed.error as {code: unknown; message?: unknown; detail?: unknown};
+          throw new NavigationRequestError(String(envelope.message || 'request failed'),String(envelope.code),{
+            status:response.status,detail:envelope.detail,isPlannerError:true,
+          });
+        }
+        throw new NavigationRequestError(`HTTP ${response.status}`,'http_error',{status:response.status});
+      }
+      let parsed: unknown;
+      try { parsed = await response.json(); }
+      catch { throw new NavigationRequestError('invalid JSON in response','bad_json',{status:response.status}); }
+      return parseSnapshotResponse(parsed);
     },
     connect(cursor, handlers, signal) {
       const stream = source(`/api/navigation/events?cursor=${encodeURIComponent(cursor)}`);
