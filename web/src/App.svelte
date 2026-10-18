@@ -11,7 +11,8 @@
     type WorkspaceSelection
   } from "./lib/workspaceAddress";
   import SettingsRoute from "./routes/SettingsRoute.svelte";
-  import { canonicalShellHash } from "./lib/shellRouting";
+  import { canonicalShellHash, parseConfigSelection } from "./lib/shellRouting";
+  import { parseUsageSelection, type UsageTab } from "./lib/usageAddress";
   import BackendsRoute from "./routes/BackendsRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import DayRoute from "./routes/DayRoute.svelte";
@@ -114,15 +115,19 @@
         if (!["notifications", "scheduled-tasks"].includes(params.section) || detail.length) {
           return { name: "unknown", params: {}, key: "unknown" };
         }
-      } else if (detail.length === 0) params.roleKind = "index";
-      else if (detail[0] === "chief-of-staff" && detail.length === 1) {
-        params.roleKind = "agent"; params.id = "chief_of_staff";
-      } else if (["worker-skill", "sprint-item-supervisor"].includes(detail[0]) && detail.length === 1) {
-        params.roleKind = "skill";
-        params.id = detail[0] === "worker-skill" ? "panels-worker" : "panels-sprint-item-supervisor";
-      } else if (detail[0] === "workers" && detail[1] && detail.length === 2) {
-        params.roleKind = "worker"; params.id = decodeRouteSegment(detail[1]);
-      } else return { name: "unknown", params: {}, key: "unknown" };
+      } else {
+        const config = parseConfigSelection(detail);
+        if (config === null) return { name: "unknown", params: {}, key: "unknown" };
+        params.roleKind = config.roleKind;
+        if (config.roleId) params.id = config.roleId;
+      }
+    }
+    if (name === "backends") {
+      const usage = parseUsageSelection(segments.slice(1));
+      if (usage === null) return { name: "unknown", params: {}, key: "unknown" };
+      params.tab = usage.tab;
+      params.roleKind = usage.roleKind;
+      if (usage.roleId) params.id = usage.roleId;
     }
     if (name === "sprint" && segments[1]) {
       // Legacy sub-routes redirect to the new split: the old two-tab page became a
@@ -143,7 +148,9 @@
     if (name === "sprint" && search.has("sprint")) {
       params.sprint = search.get("sprint") || "";
     }
-    const screenKey = segments.join("/") || "day";
+    // Usage owns its tab state so period/provider choices survive tab navigation.
+    // Its Config detail keys live inside the page, beside the shared editor mount.
+    const screenKey = name === "backends" ? "backends" : segments.join("/") || "day";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
 
@@ -355,7 +362,7 @@
           {:else if route.name === "settings"}
             <SettingsRoute section={route.params.section} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />
           {:else if route.name === "backends"}
-            <BackendsRoute />
+            <BackendsRoute tab={route.params.tab as UsageTab} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
           {/if}
