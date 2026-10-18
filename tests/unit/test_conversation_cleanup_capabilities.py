@@ -20,7 +20,10 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import AgentMessageDeltaFrame, ModelThinkingFrame
-from planner.conversation.lifecycle_storage import ConversationRuntimeAlreadyOwned
+from planner.conversation.lifecycle_storage import (
+    ConversationRuntimeAlreadyOwned,
+    acquire_runtime_ownership,
+)
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
@@ -28,6 +31,7 @@ from planner.core import server
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
+from planner.server_lifecycle import runtime as application_runtime
 
 
 def _create_database(path: Path) -> None:
@@ -82,7 +86,7 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
     def conn_factory() -> sqlite3.Connection:
         return connect(str(db_path))
 
-    monkeypatch.setattr(server, "build_conversation_runtime", build_isolated_runtime)
+    monkeypatch.setattr(application_runtime, "build_conversation_runtime", build_isolated_runtime)
     monkeypatch.setattr(server, "observe_path_changes", failed_observer)
     app = server.create_app(config, build_clock(config), conn_factory)
 
@@ -109,16 +113,17 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
         original_finish_writes = runtime.store.finish_writes
 
         def blocked_write() -> None:
-            conn = connect(str(db_path))
-            try:
+            with runtime.store._publication_connection() as (conn, _admission):
                 conn.execute("BEGIN IMMEDIATE")
                 conn.execute("UPDATE conversations SET model=model WHERE conversation_id='live'")
-                writer_started.set()
-                if not writer_release.wait(10):
-                    raise RuntimeError("synthetic writer release timed out")
+                runtime.store._record_signal_result(conn, None)
                 conn.execute("COMMIT")
-            finally:
-                conn.close()
+            # Hold the tracked operation after canonical SQL and its producer gate
+            # close. Holding the gate until child stop would deadlock shutdown's
+            # preceding invalidation. This proves operation drain, not active SQL.
+            writer_started.set()
+            if not writer_release.wait(10):
+                raise RuntimeError("synthetic writer release timed out")
 
         async def observe_write_drain() -> None:
             draining_writes.set()
@@ -160,7 +165,7 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
                 await closing
             assert runtime.system._runtime_ownership.closed
             assert not runtime.store._write_operations
-            ownership = ConversationStore(str(db_path)).claim_runtime()
+            ownership = acquire_runtime_ownership(str(db_path))
             ownership.close()
             assert app.state.conversation is None
         finally:

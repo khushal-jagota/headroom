@@ -14,6 +14,8 @@ Local incorporation into a worker's own branch is permitted. No push of any kind
 
 ## Composition and storage
 
+The application lifetime in `server_lifecycle/runtime.py` owns startup and shutdown order. It acquires the producer lease before schema work, constructs the conversation runtime, initializes Signal, installs the complete navigation binding, checks ownership, then admits the runtime. The HTTP root consumes that lifetime. It supplies one callback to stop delivery and background resources. On exit, the lifetime invalidates Signal before that callback, then drains the conversation system before it detaches navigation and closes registrations. Producer and navigation adapters keep separate responsibilities. The conversation runtime builder lives outside the HTTP API.
+
 Every common database connection calls `navigation.attach`. It installs the transaction guard even before the navigation schema exists. `navigation.finalize` checks schema availability on each commit. The module registry supplies this participant to the generic coordinator. CLI, server, cursor, bulk, context manager, SQL commit, outer savepoint release, and quiet commits share that coordinator. Quiet commits retain their existing wake suppression.
 
 Source triggers capture transaction-local affected keys. Insert capture follows actual insertion, so ignored inserts create no revision. Update and deletion capture precede changes and cascades. Ticket capture includes both old and new parent totals. Savepoint rollback rolls back affected keys. Private conversation cursors, composer catalog, and compaction bookkeeping do not affect navigation.

@@ -14,10 +14,11 @@ from typing import Any
 
 import pytest
 
-from planner.conversation import api
+from planner.conversation import runtime_composition as runtime_build
 from planner.core import server
 from planner.core.clock import Clock
 from planner.core.config import load_config
+from planner.server_lifecycle import runtime as application_runtime
 
 
 class CompositionFailure(RuntimeError):
@@ -49,10 +50,10 @@ def test_runtime_cleanup_tracks_successful_system_transfer(
         async def shutdown(self) -> None:
             events.append("sign-in shutdown")
 
-    monkeypatch.setattr(api, "SqliteProcessConversationSystem", System)
-    monkeypatch.setattr(api, "CodexSignInService", SignIn)
+    monkeypatch.setattr(runtime_build, "SqliteProcessConversationSystem", System)
+    monkeypatch.setattr(runtime_build, "CodexSignInService", SignIn)
     monkeypatch.setattr(
-        api,
+        runtime_build,
         "ConversationLiveTail",
         lambda: SimpleNamespace(close_all_subscriptions=lambda: events.append("tail closed")),
     )
@@ -64,12 +65,12 @@ def test_runtime_cleanup_tracks_successful_system_transfer(
         "ModelResolutionService",
         "ModelResolutionStore",
     ):
-        monkeypatch.setattr(api, name, lambda *args, **kwargs: object())
-    monkeypatch.setattr(api, "production_backend_usage_service", lambda: object())
+        monkeypatch.setattr(runtime_build, name, lambda *args, **kwargs: object())
+    monkeypatch.setattr(runtime_build, "production_backend_usage_service", lambda: object())
 
     async def compose() -> None:
         async with AsyncExitStack() as cleanup:
-            api.build_conversation_runtime(
+            runtime_build.build_conversation_runtime(
                 db_path=str(tmp_path / "synthetic.db"),
                 db_busy_timeout_ms=100,
                 sse_heartbeat_ms=100,
@@ -114,7 +115,7 @@ def test_application_stack_drains_failure_before_runtime_return(
         cleanup.push_async_callback(shutdown)
         raise CompositionFailure("composition after transfer")
 
-    monkeypatch.setattr(server, "build_conversation_runtime", fail_after_transfer)
+    monkeypatch.setattr(application_runtime, "build_conversation_runtime", fail_after_transfer)
     monkeypatch.setattr(server, "DurableCodexLoginRejection", lambda *args, **kwargs: object())
     config = load_config(
         None,
@@ -158,12 +159,12 @@ def test_actual_bootstrap_owner_cleanup_before_and_after_system_transfer(
         def fail_sign_in(**kwargs: Any) -> Any:
             raise CompositionFailure("after actual ownership transfer")
 
-        monkeypatch.setattr(api, "CodexSignInService", fail_sign_in)
+        monkeypatch.setattr(runtime_build, "CodexSignInService", fail_sign_in)
 
     async def compose() -> None:
         async with AsyncExitStack() as cleanup:
             cleanup.callback(composition.close)
-            api.build_conversation_runtime(
+            runtime_build.build_conversation_runtime(
                 db_path=path,
                 db_busy_timeout_ms=100,
                 sse_heartbeat_ms=100,
@@ -234,3 +235,60 @@ def test_idle_managed_connection_refreshes_functions_across_runtime_generations(
         assert epochs[0] != epochs[1]
     finally:
         idle.close()
+
+
+def test_composed_lifetime_invalidates_before_failed_dependent_stop_and_drains_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed HTTP cleanup callback must not bypass the actual runtime owner."""
+    from planner.conversation.lifecycle_storage import acquire_runtime_ownership
+    from planner.core.clock import build_clock
+    from planner.core.db import connect
+
+    path = str(tmp_path / "callback-failure.db")
+    config = load_config(
+        None,
+        env={
+            "PLAN_DB_PATH": path,
+            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+            "PLAN_HERMES_HOME": str(tmp_path / "hermes"),
+            "PLAN_TEST_MODE": "1",
+        },
+    )
+    app = server.create_app(config, build_clock(config), lambda: connect(path))
+    events: list[str] = []
+
+    async def exercise() -> None:
+        context = app.router.lifespan_context(app)
+        await context.__aenter__()
+        runtime = app.state.conversation
+        source = runtime.store.signal_coordinator
+        assert source is not None
+        original_shutdown = runtime.system.shutdown
+        original_close = app.state.navigation_delivery.close
+
+        async def failed_dependent_stop() -> None:
+            assert source.signal_availability().state == "unavailable"
+            assert not runtime.system._runtime_ownership.closed
+            assert source._participant is not None
+            events.append("dependent stop")
+            await original_close()
+            raise CompositionFailure("dependent stop failed")
+
+        async def observe_shutdown() -> None:
+            events.append("system drain")
+            assert source._participant is not None
+            await original_shutdown()
+
+        monkeypatch.setattr(app.state.navigation_delivery, "close", failed_dependent_stop)
+        monkeypatch.setattr(runtime.system, "shutdown", observe_shutdown)
+        with pytest.raises(CompositionFailure, match="dependent stop failed"):
+            await context.__aexit__(None, None, None)
+        assert events == ["dependent stop", "system drain"]
+        assert runtime.system._runtime_ownership.closed
+        assert source._participant is None
+        assert app.state.conversation is None
+        successor = acquire_runtime_ownership(path)
+        successor.close()
+
+    asyncio.run(exercise())
