@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 import yaml
+from tests.support.resident_runtime import write_runtime_identity
 
 from planner.environments.app import AppManifest, digest_app_artifact
 from planner.environments.resident import cli, driver, packaging, transport, update
@@ -28,6 +29,7 @@ from planner.environments.resident.contracts import (
     ResidentPackage,
     ResidentPaths,
 )
+from planner.environments.resident.installed import installed_identity
 from planner.environments.resident.logic.upgrade import require_supported_upgrade
 from planner.environments.resident.preflight import (
     CONFIGURATION_SOURCE,
@@ -43,6 +45,16 @@ from planner.environments.resident.preflight import (
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 SHA = "a" * 40
+
+
+def _launch(root: Path, revision: str) -> ExecutorLaunchOptions:
+    key, hosts = root / "executor-key", root / "executor-hosts"
+    key.write_text("fixture-private-key")
+    key.chmod(0o600)
+    hosts.write_text("vps.example ssh-ed25519 fixture-pinned-host-key\n")
+    return ExecutorLaunchOptions(
+        "vps.example", revision, "https://panels.example", 2222, "owner", key, hosts
+    )
 
 
 def _source(protocol: int = PROTOCOL_VERSION) -> str:
@@ -63,6 +75,19 @@ def _mac(home: Path, protocol: int = PROTOCOL_VERSION) -> Path:
                     "spool_format_version": SPOOL_FORMAT_VERSION,
                 },
                 "files": {CONFIGURATION_SOURCE: hashlib.sha256(path.read_bytes()).hexdigest()},
+            }
+        )
+    )
+    digest = hashlib.sha256((app / "resident-package.json").read_bytes()).hexdigest()
+    runtime = home / "Deployments/PanelsExecutor/runtimes" / digest
+    (runtime / "bin").mkdir(parents=True)
+    write_runtime_identity(runtime)
+    (runtime / "resident-runtime.json").write_text(
+        json.dumps(
+            {
+                "input_digest": digest,
+                "runtime_path": str(runtime.absolute()),
+                "installed_identity": installed_identity(runtime),
             }
         )
     )
@@ -100,6 +125,7 @@ def _repository(source: Path) -> str:
     (source / CONFIGURATION_SOURCE).parent.mkdir(parents=True)
     (source / CONFIGURATION_SOURCE).write_text(_source())
     (source / "requirements.lock").write_text("")
+    (source / "requirements-build.txt").write_text("")
     (source / "src/example").mkdir()
     (source / "src/example/runner.py").write_text("print('exact old app')\n")
     _git(source, "init", "-q")
@@ -113,9 +139,14 @@ def _package(revision: str) -> ResidentPackage:
         SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
-        "3.12",
+        "3.14.3",
         ExecutorSourceClosure(
-            (CONFIGURATION_SOURCE, "src/example/runner.py", "requirements.lock"),
+            (
+                CONFIGURATION_SOURCE,
+                "src/example/runner.py",
+                "requirements.lock",
+                "requirements-build.txt",
+            ),
             "example.runner",
             "requirements.lock",
         ),
@@ -192,7 +223,7 @@ def test_versions_read_exact_git_commit_and_current_tooling_stays_separate(tmp_p
 
     with patch.object(subprocess, "run", run), pytest.raises(ResidentError, match="compatibility"):
         driver.write_package_spec(
-            source, incompatible, build_contract, "arm64", "3.12", tmp_path / "output"
+            source, incompatible, build_contract, "arm64", "3.14.3", tmp_path / "output"
         )
     assert not (tmp_path / "output").exists()
 
@@ -323,7 +354,7 @@ def test_direct_local_paths_refuse_before_source_or_native_build(
     manifest = tmp_path / "spec"
     manifest.write_text(json.dumps(asdict(package)))
     candidate = packaging.build_source_package(source, package, tmp_path / "prepared")
-    launch = ExecutorLaunchOptions("vps", revision, "https://panels.example")
+    launch = _launch(tmp_path, revision)
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(Path, "home", lambda: home)
 
@@ -435,8 +466,12 @@ def test_production_workflow_shell_refuses_before_lifecycle_and_vps_mutation(
         PANELS_MAC_NODE="/usr/bin/node",
         PANELS_MAC_NPM="/usr/bin/npm",
         PANELS_MAC_ARCHITECTURE="arm64",
-        PANELS_MAC_PYTHON_VERSION="3.12",
-        PANELS_EXECUTOR_SSH_HOST="vps",
+        PANELS_MAC_PYTHON_VERSION="3.14.3",
+        PANELS_EXECUTOR_SSH_HOST="vps.example",
+        PANELS_EXECUTOR_SSH_PORT="2222",
+        PANELS_EXECUTOR_SSH_USER="owner",
+        PANELS_EXECUTOR_SSH_IDENTITY_FILE=str(tmp_path / "executor-key"),
+        PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE=str(tmp_path / "executor-hosts"),
         PANELS_EXECUTOR_SERVER_URL="https://panels.example",
         PANELS_EXECUTOR_RELAY_COMMAND="panels executor relay",
         PANELS_EXECUTOR_BACKEND_PATH="",
@@ -548,7 +583,15 @@ def test_remote_cli_refuses_before_report_or_upload(
             "--python",
             sys.executable,
             "--executor-ssh-host",
-            "vps",
+            "vps.example",
+            "--executor-ssh-port",
+            "2222",
+            "--executor-ssh-user",
+            "owner",
+            "--executor-ssh-identity-file",
+            str(tmp_path / "executor-key"),
+            "--executor-ssh-known-hosts",
+            str(tmp_path / "executor-hosts"),
             "--panels-server-url",
             "https://panels.example",
             "--vps-health-url",

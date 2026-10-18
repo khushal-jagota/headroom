@@ -1,7 +1,7 @@
 """Exact-source payloads and native, permanent-path runtime preparation.
 
-The executor must supply its source/dependency closure. This module deliberately
-has no default closure, native installer, or whole-server packaging fallback.
+Setuptools owns Python package discovery. The cold export includes standard
+package input roots, while its immutable manifest records exact committed bytes.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from dataclasses import asdict
 from pathlib import Path, PurePosixPath
 from typing import cast
 
+from planner.environments.resident.configuration import MAC_PYTHON_VERSION
 from planner.environments.resident.contracts import (
     ExecutorSourceClosure,
     PreparedResidentPackage,
@@ -26,12 +27,13 @@ from planner.environments.resident.contracts import (
     ResidentPackage,
     ResidentPaths,
 )
+from planner.environments.resident.installed import installed_identity
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 RuntimeBuilder = Callable[[Path, Path, ResidentPackage], None]
 MANIFEST_NAME = "resident-package.json"
 RUNTIME_MARKER = "resident-runtime.json"
-_GENERATED = {"executor-bootstrap.py", "bin/panels"}
+_GENERATED = {"bin/panels"}
 _FORBIDDEN = {"data", ".venv", "node_modules", "web", ".git"}
 
 
@@ -58,16 +60,26 @@ def validate_package(package: ResidentPackage) -> None:
         or package.spool_format_version != SPOOL_FORMAT_VERSION
     ):
         raise ResidentError("unsupported executor compatibility versions")
-    if package.target_os != "darwin" or package.target_architecture not in {"arm64", "x86_64"}:
-        raise ResidentError("executor runtime target must be a supported Mac architecture")
+    if package.target_os == "darwin":
+        if package.target_architecture != "arm64":
+            raise ResidentError("Intel macOS is unsupported for the pinned native dependencies")
+        if package.python_version != MAC_PYTHON_VERSION:
+            raise ResidentError("Mac executor requires ordinary CPython " + MAC_PYTHON_VERSION)
+    elif package.target_os != "linux" or package.target_architecture not in {"aarch64", "x86_64"}:
+        raise ResidentError("unsupported native runtime target")
     if re.fullmatch(r"3\.(?:1[2-9]|[2-9][0-9])(?:\.[0-9]+)?", package.python_version) is None:
         raise ResidentError("executor requires an explicit Python >= 3.12 version")
     closure = package.closure
     if not closure.files or len(set(closure.files)) != len(closure.files):
-        raise ResidentError("executor source allowlist is missing or repeated")
-    if {"src/planner/core/server.py", "src/planner/cli/main.py"} & set(
-        closure.files
-    ) and closure.entrypoint_module != "planner.executor.entrypoint":
+        raise ResidentError("standard package inputs are missing or repeated")
+    if (
+        any(
+            name in {"src/planner/core/server.py", "src/planner/cli/main.py"}
+            or "src/planner/cli/main.py".startswith(name + "/")
+            for name in closure.files
+        )
+        and closure.entrypoint_module != "planner.executor.entrypoint"
+    ):
         raise ResidentError("full planner source requires the agreed offline executor entrypoint")
     for item in closure.files:
         _relative(item)
@@ -76,8 +88,20 @@ def validate_package(package: ResidentPackage) -> None:
     if re.fullmatch(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", closure.entrypoint_module) is None:
         raise ResidentError("executor offline entrypoint module is missing or invalid")
     module_path = "src/" + closure.entrypoint_module.replace(".", "/")
-    if not ({module_path + ".py", module_path + "/__main__.py"} & set(closure.files)):
+    if not any(
+        name in {module_path + ".py", module_path + "/__main__.py"}
+        or module_path.startswith(name + "/")
+        for name in closure.files
+    ):
         raise ResidentError("executor offline entrypoint is absent from source closure")
+    if not isinstance(closure.build_requirements, str):
+        raise ResidentError("build dependency lock must be a path")
+    _relative(closure.build_requirements)
+    if not isinstance(closure.python_requirements, str):
+        raise ResidentError("Python dependency lock must be a path")
+    _relative(closure.python_requirements)
+    if closure.build_requirements not in closure.files:
+        raise ResidentError("locked build dependency input is absent from source closure")
     if closure.python_requirements not in closure.files:
         raise ResidentError("locked Python dependency input is absent from source closure")
     for root in closure.node_package_roots:
@@ -122,7 +146,11 @@ def package_from_dict(payload: dict[str, object]) -> ResidentPackage:
             target_architecture=cast(str, strings[2]),
             python_version=cast(str, strings[3]),
             closure=ExecutorSourceClosure(
-                tuple(files), cast(str, strings[4]), cast(str, strings[5]), tuple(roots)
+                tuple(files),
+                cast(str, strings[4]),
+                cast(str, strings[5]),
+                tuple(roots),
+                cast(str, closure.get("build_requirements", "requirements-build.txt")),
             ),
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -144,16 +172,23 @@ def _safe_parents(path: Path) -> None:
 def _source_hashes(app: Path, package: ResidentPackage) -> dict[str, str]:
     inputs: dict[str, str] = {}
     for name in package.closure.files:
-        path = app / name
-        _safe_parents(path)
-        if path.is_symlink() or not path.is_file():
-            raise ResidentError(f"package input is not a regular file: {name}")
-        inputs[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        root = app / name
+        _safe_parents(root)
+        if not root.exists():
+            raise ResidentError(f"package input is missing: {name}")
+        for path in sorted(root.rglob("*")) if root.is_dir() else [root]:
+            _safe_parents(path)
+            if path.is_dir():
+                continue
+            if not path.is_file():
+                raise ResidentError(f"package input is not a regular file: {path}")
+            relative = path.relative_to(app).as_posix()
+            inputs[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     return inputs
 
 
-def _validate_tree(app: Path, package: ResidentPackage) -> None:
-    allowed_files = {*package.closure.files, MANIFEST_NAME, *_GENERATED}
+def _validate_tree(app: Path, files: set[str]) -> None:
+    allowed_files = {*files, MANIFEST_NAME, *_GENERATED}
     allowed_directories = {
         str(parent)
         for name in allowed_files
@@ -173,8 +208,8 @@ def _validate_tree(app: Path, package: ResidentPackage) -> None:
 
 def _input_digest(app: Path, package: ResidentPackage) -> str:
     _safe_parents(app / MANIFEST_NAME)
-    _validate_tree(app, package)
     expected = {"package": asdict(package), "files": _source_hashes(app, package)}
+    _validate_tree(app, set(expected["files"]))
     try:
         actual = (app / MANIFEST_NAME).read_bytes()
     except OSError as exc:
@@ -187,7 +222,7 @@ def _input_digest(app: Path, package: ResidentPackage) -> str:
         versions_from_source,
     )
 
-    if CONFIGURATION_SOURCE in package.closure.files and versions_from_source(
+    if (app / CONFIGURATION_SOURCE).is_file() and versions_from_source(
         (app / CONFIGURATION_SOURCE).read_text()
     ) != package_versions(package):
         raise ResidentError("package compatibility differs from source configuration")
@@ -195,7 +230,7 @@ def _input_digest(app: Path, package: ResidentPackage) -> str:
 
 
 def build_source_package(source: Path, package: ResidentPackage, destination: Path) -> Path:
-    """Extract only declared regular files from the exact committed revision."""
+    """Export standard package inputs from the exact commit, never the checkout."""
     validate_package(package)
     from planner.environments.resident.preflight import (
         CONFIGURATION_SOURCE,
@@ -203,9 +238,10 @@ def build_source_package(source: Path, package: ResidentPackage, destination: Pa
         requested_versions,
     )
 
-    if CONFIGURATION_SOURCE in package.closure.files and requested_versions(
-        source, package.application_revision
-    ) != package_versions(package):
+    if any(
+        CONFIGURATION_SOURCE == name or CONFIGURATION_SOURCE.startswith(name + "/")
+        for name in package.closure.files
+    ) and requested_versions(source, package.application_revision) != package_versions(package):
         raise ResidentError("package compatibility differs from exact source versions")
     _safe_parents(source)
     _safe_parents(destination)
@@ -243,7 +279,14 @@ def build_source_package(source: Path, package: ResidentPackage, destination: Pa
                 _relative(name)
                 if member.isdir():
                     continue
-                if not member.isfile() or name not in package.closure.files or name in found:
+                if (
+                    not member.isfile()
+                    or not any(
+                        name == root or name.startswith(root + "/")
+                        for root in package.closure.files
+                    )
+                    or name in found
+                ):
                     raise ResidentError("source archive contains a non-regular or undeclared file")
                 stream = archive.extractfile(member)
                 if stream is None:
@@ -252,7 +295,10 @@ def build_source_package(source: Path, package: ResidentPackage, destination: Pa
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(stream.read())
                 found.add(name)
-        if found != set(package.closure.files):
+        if any(
+            not any(name == root or name.startswith(root + "/") for name in found)
+            for root in package.closure.files
+        ):
             raise ResidentError("source closure contains missing files")
         (destination / MANIFEST_NAME).write_bytes(
             _json_bytes(
@@ -277,8 +323,16 @@ def _validate_native_runtime(prepared: PreparedResidentPackage) -> None:
     marker = prepared.runtime / RUNTIME_MARKER
     if marker.is_symlink() or not marker.is_file():
         raise ResidentError("native runtime has no immutable preparation marker")
+    try:
+        identity = installed_identity(prepared.runtime)
+    except (ValueError, OSError) as exc:
+        raise ResidentError(f"installed artifact validation failed: {exc}") from exc
     if marker.read_bytes() != _json_bytes(
-        {"input_digest": digest, "runtime_path": str(prepared.runtime.absolute())}
+        {
+            "input_digest": digest,
+            "runtime_path": str(prepared.runtime.absolute()),
+            "installed_identity": identity,
+        }
     ):
         raise ResidentError("native runtime input identity does not match source package")
     if prepared.runtime_digest and prepared.runtime_digest != digest:
@@ -294,10 +348,7 @@ def _validate_native_runtime(prepared: PreparedResidentPackage) -> None:
 def validate_runtime(prepared: PreparedResidentPackage) -> None:
     """Validate native input identity and the exact executable source payload."""
     _validate_native_runtime(prepared)
-    for name, expected in (
-        ("executor-bootstrap.py", _bootstrap_text(prepared)),
-        ("bin/panels", _launcher_text(prepared)),
-    ):
+    for name, expected in (("bin/panels", _launcher_text(prepared)),):
         target = prepared.app / name
         _safe_parents(target)
         if not target.is_file() or target.read_text() != expected:
@@ -320,6 +371,9 @@ def prepare_runtime(
     """
     validate_package(package)
     digest = _input_digest(app, package)
+    preflight = getattr(builder, "preflight", None)
+    if preflight is not None:
+        preflight(app, package)
     runtime = paths.runtimes / digest
     _safe_parents(runtime)
     if runtime.is_symlink():
@@ -341,7 +395,11 @@ def prepare_runtime(
             _write_launcher(prepared)
             (runtime / RUNTIME_MARKER).write_bytes(
                 _json_bytes(
-                    {"input_digest": digest, "runtime_path": str(prepared.runtime.absolute())}
+                    {
+                        "input_digest": digest,
+                        "runtime_path": str(prepared.runtime.absolute()),
+                        "installed_identity": installed_identity(runtime),
+                    }
                 )
             )
             validate_runtime(prepared)
@@ -350,22 +408,6 @@ def prepare_runtime(
             (runtime / RUNTIME_MARKER).unlink(missing_ok=True)
             raise
     return prepared
-
-
-def _bootstrap_text(prepared: PreparedResidentPackage) -> str:
-    return (
-        "import runpy, sys\nfrom pathlib import Path\n"
-        "sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))\n"
-        "if sys.argv[1:2] == ['serve']:\n"
-        "    raise SystemExit('resident package cannot run the local Panels server')\n"
-        "if sys.argv[1:3] == ['executor', 'run']:\n"
-        "    if any(arg == '--application-revision' or arg.startswith('--application-revision=') "
-        "for arg in sys.argv[3:]):\n"
-        "        raise SystemExit('application revision is owned by the installed package')\n"
-        "    sys.argv.extend(['--application-revision', "
-        f"{prepared.package.application_revision!r}])\n"
-        f"runpy.run_module({prepared.package.closure.entrypoint_module!r}, run_name='__main__')\n"
-    )
 
 
 def _launcher_text(prepared: PreparedResidentPackage) -> str:
@@ -389,16 +431,19 @@ def _launcher_text(prepared: PreparedResidentPackage) -> str:
         + backend
         + "exec "
         + shlex.quote(str(prepared.runtime / "bin/python"))
-        + ' -I -B "$(dirname "$0")/../executor-bootstrap.py" "$@"\n'
+        + " -I -B -c "
+        + shlex.quote(
+            "from planner.executor.entrypoint import resident_main;resident_main("
+            + repr(prepared.package.application_revision)
+            + ")"
+        )
+        + ' "$@"\n'
     )
 
 
 def _write_launcher(prepared: PreparedResidentPackage) -> None:
-    bootstrap = prepared.app / "executor-bootstrap.py"
     launcher = prepared.app / "bin/panels"
-    _safe_parents(bootstrap)
     _safe_parents(launcher)
-    bootstrap.write_text(_bootstrap_text(prepared))
     launcher.parent.mkdir(exist_ok=True)
     launcher.write_text(_launcher_text(prepared))
     launcher.chmod(0o755)

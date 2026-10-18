@@ -102,6 +102,7 @@ def test_source_build_uses_committed_bytes_and_requested_manifest(
     module.parent.mkdir(parents=True)
     module.write_text("print('committed')\n")
     (source / "requirements.lock").write_text("")
+    (source / "requirements-build.txt").write_text("")
     subprocess.run(["git", "-C", str(source), "add", "."], check=True)
     subprocess.run(
         [
@@ -138,9 +139,13 @@ def test_source_build_uses_committed_bytes_and_requested_manifest(
                 "spool_format_version": SPOOL_FORMAT_VERSION,
                 "target_os": "darwin",
                 "target_architecture": "arm64",
-                "python_version": "3.12",
+                "python_version": "3.14.3",
                 "closure": {
-                    "files": ["src/example/runner.py", "requirements.lock"],
+                    "files": [
+                        "src/example/runner.py",
+                        "requirements.lock",
+                        "requirements-build.txt",
+                    ],
                     "entrypoint_module": "example.runner",
                     "python_requirements": "requirements.lock",
                     "node_package_roots": [],

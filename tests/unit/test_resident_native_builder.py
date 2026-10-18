@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import zipfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -20,7 +21,11 @@ from planner.environments.resident.contracts import (
     ResidentError,
     ResidentPackage,
 )
-from planner.environments.resident.native_builder import NativeRuntimeBuilder, run_native_command
+from planner.environments.resident.native_builder import (
+    NativeRuntimeBuilder,
+    _verify_pure_http_ece,
+    run_native_command,
+)
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 
@@ -29,7 +34,10 @@ class ScriptedNativeCommands:
     runtime: Path
     platform: str = "darwin"
     architecture: str = "arm64"
-    version: tuple[int, int, int] = (3, 12, 9)
+    version: tuple[int, int, int] = (3, 14, 3)
+    macos: str = "15.0"
+    implementation: str = "CPython"
+    free_threaded: bool = False
     bad_prefix: bool = False
     fail_import: bool = False
     calls: list[tuple[list[str], Path, dict[str, str], float]] = field(default_factory=list)
@@ -37,8 +45,8 @@ class ScriptedNativeCommands:
     def __call__(self, argv: list[str], cwd: Path, env: dict[str, str], timeout: float) -> str:
         self.calls.append((argv, cwd, env, timeout))
         if "venv" in argv:
-            python = self.runtime / "bin/python"
-            python.parent.mkdir()
+            python = Path(argv[-1]) / "bin/python"
+            python.parent.mkdir(parents=True)
             python.write_text("#!/bin/sh\nexit 0\n")
             python.chmod(0o755)
         if "-c" in argv and "platform.machine()" in argv[4]:
@@ -49,10 +57,20 @@ class ScriptedNativeCommands:
                     "version": self.version,
                     "prefix": "wrong" if self.bad_prefix else str(self.runtime),
                     "executable": argv[0],
+                    "implementation": self.implementation,
+                    "free_threaded": self.free_threaded,
+                    "macos": self.macos,
                 }
             )
         if "-c" in argv and "importlib.import_module" in argv[4] and self.fail_import:
             raise ResidentError("offline import failed")
+        if "wheel" in argv:
+            wheels = Path(argv[argv.index("--wheel-dir") + 1])
+            (wheels / "planner-2.0.0-py3-none-any.whl").write_bytes(b"test wheel")
+        if "-c" in argv and "importlib.metadata.distributions" in argv[4]:
+            return json.dumps(
+                {"distribution": "planner", "version": "2.0.0", "files": {"bin/panels": "a" * 64}}
+            )
         return ""
 
 
@@ -61,6 +79,7 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path, Path, ResidentPackage]:
     app.mkdir()
     runtime.mkdir()
     (app / "executor.txt").write_text("example==1.2.3\n")
+    (app / "requirements-build.txt").write_text("setuptools==80.9.0\nwheel==0.46.3\n")
     python = tmp_path / "absolute python"
     python.write_text("#!/bin/sh\nexit 0\n")
     python.chmod(0o755)
@@ -70,8 +89,10 @@ def _inputs(tmp_path: Path) -> tuple[Path, Path, Path, ResidentPackage]:
         SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
-        "3.12",
-        ExecutorSourceClosure(("src/offline.py", "executor.txt"), "offline", "executor.txt"),
+        "3.14.3",
+        ExecutorSourceClosure(
+            ("src/offline.py", "executor.txt", "requirements-build.txt"), "offline", "executor.txt"
+        ),
     )
     return app, runtime, python, package
 
@@ -88,31 +109,29 @@ def test_builds_venv_in_place_installs_only_declared_lock_and_imports_offline_mo
         monkeypatch.setenv(key, "/live/server")
     runner = ScriptedNativeCommands(runtime)
     NativeRuntimeBuilder(python, runner=runner)(app, runtime, package)
-    assert len(runner.calls) == 5
-    assert runner.calls[1][0] == [str(python), "-I", "-B", "-m", "venv", str(runtime)]
-    pip = runner.calls[3][0]
-    assert pip[:7] == [
-        str(runtime / "bin/python"),
-        "-I",
-        "-B",
-        "-m",
-        "pip",
-        "--isolated",
-        "install",
-    ]
-    assert "--no-deps" in pip
-    assert pip[-2:] == ["--requirement", str(app / "executor.txt")]
-    assert "--require-hashes" not in pip
-    assert runner.calls[4][0][-2:] == [str(app / "src"), "offline"]
-    for _, cwd, environment, deadline in runner.calls:
-        assert cwd == app
+    commands = [call[0] for call in runner.calls]
+    downloads = [cmd for cmd in commands if "download" in cmd]
+    assert len(downloads) == 1
+    assert "--only-binary=:all:" in downloads[0] and "--no-deps" in downloads[0]
+    builds = [cmd for cmd in commands if "wheel" in cmd]
+    assert len(builds) == 1 and "--no-build-isolation" in builds[0]
+    assert builds[0][-1] != str(app)
+    permanent_creation = commands.index([str(python), "-I", "-B", "-m", "venv", str(runtime)])
+    assert next(i for i, cmd in enumerate(commands) if "check" in cmd) < permanent_creation
+    imports = [cmd for cmd in commands if "-c" in cmd and "importlib.import_module" in cmd[4]]
+    assert len(imports) == 1 and imports[0][-1] == "offline"
+    assert "sys.path.insert" not in imports[0][4]
+    receipt = json.loads((runtime / "resident-installed.json").read_text())
+    assert receipt["wheel_filename"] == "planner-2.0.0-py3-none-any.whl"
+    assert receipt["entrypoint_module"] == "offline"
+    assert (runtime / "wheels" / receipt["wheel_filename"]).is_file()
+    for _, _, environment, deadline in runner.calls:
         assert environment["HOME"] == "/Users/Khushal"
         assert environment["CODEX_HOME"] == "/Users/Khushal/.codex"
         assert environment["CLAUDE_CONFIG_DIR"] == "/Users/Khushal/.claude"
         assert not any(key.startswith("PLAN_") for key in environment)
         assert "PYTHONPATH" not in environment and "PIP_TARGET" not in environment
-        assert environment["PATH"].split(os.pathsep)[0] == str(runtime / "bin")
-        assert "/live/server" not in environment["PATH"]
+        assert "/live/server" not in environment.get("PATH", "")
         assert deadline in {NATIVE_PROBE_TIMEOUT_SECONDS, NATIVE_BUILD_TIMEOUT_SECONDS}
 
 
@@ -134,9 +153,9 @@ def test_wrong_native_interpreter_refuses_before_venv(tmp_path: Path, claim: str
 def test_exact_patch_version_is_enforced(tmp_path: Path) -> None:
     app, runtime, python, package = _inputs(tmp_path)
     runner = ScriptedNativeCommands(runtime)
-    with pytest.raises(ResidentError, match="probe"):
+    with pytest.raises(ResidentError, match="CPython|probe"):
         NativeRuntimeBuilder(python, runner=runner)(
-            app, runtime, replace(package, python_version="3.12.8")
+            app, runtime, replace(package, python_version="3.14.2")
         )
 
 
@@ -166,7 +185,7 @@ def test_optional_hashed_lock_enables_pip_hash_enforcement(tmp_path: Path) -> No
     (app / "executor.txt").write_text("example==1.2.3 \\\n    --hash=sha256:" + "a" * 64 + "\n")
     runner = ScriptedNativeCommands(runtime)
     NativeRuntimeBuilder(python, runner=runner)(app, runtime, package)
-    assert "--require-hashes" in runner.calls[3][0]
+    assert "--require-hashes" in next(call[0] for call in runner.calls if "download" in call[0])
 
 
 def test_mixed_hashed_lock_refuses_before_any_command(tmp_path: Path) -> None:
@@ -356,11 +375,22 @@ def test_node_mismatch_refuses_before_native_build(tmp_path: Path, claim: str) -
     assert not any("venv" in argv for argv, _, _, _ in runner.calls)
 
 
-def test_node_x64_is_target_x86_64(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "architecture,node_architecture", [("x86_64", "x64"), ("aarch64", "arm64")]
+)
+def test_linux_node_architecture_matches_native_python(
+    tmp_path: Path, architecture: str, node_architecture: str
+) -> None:
     app, runtime, python, package, node, npm = _node_inputs(tmp_path)
-    runner = ScriptedNodeCommands(runtime, architecture="x86_64", node_architecture="x64")
+    runner = ScriptedNodeCommands(
+        runtime,
+        platform="linux",
+        architecture=architecture,
+        node_platform="linux",
+        node_architecture=node_architecture,
+    )
     NativeRuntimeBuilder(python, npm=npm, node=node, runner=runner)(
-        app, runtime, replace(package, target_architecture="x86_64")
+        app, runtime, replace(package, target_os="linux", target_architecture=architecture)
     )
 
 
@@ -386,3 +416,61 @@ def test_node_lock_and_tool_errors_fail_before_any_probe(tmp_path: Path, invalid
     with pytest.raises(ResidentError):
         NativeRuntimeBuilder(python, npm=npm, node=node, runner=runner)(app, runtime, package)
     assert runner.calls == []
+
+
+@pytest.mark.parametrize("change", ["intel", "old_macos", "free_threaded", "pypy"])
+def test_unsupported_mac_target_refuses_before_any_filesystem_mutation(
+    tmp_path: Path, change: str
+) -> None:
+    app, runtime, python, package = _inputs(tmp_path)
+    runtime.rmdir()
+    runner = ScriptedNativeCommands(runtime)
+    if change == "intel":
+        package = replace(package, target_architecture="x86_64")
+    elif change == "old_macos":
+        runner.macos = "10.15.7"
+    elif change == "free_threaded":
+        runner.free_threaded = True
+    else:
+        runner.implementation = "PyPy"
+    with pytest.raises(ResidentError):
+        NativeRuntimeBuilder(python, runner=runner).preflight(app, package)
+    assert not runtime.exists()
+    assert not any("venv" in call[0] for call in runner.calls)
+
+
+@pytest.mark.parametrize("failure", ["download", "check"])
+def test_dependency_tag_or_closure_failure_does_not_mutate_permanent_runtime(
+    tmp_path: Path, failure: str
+) -> None:
+    app, runtime, python, package = _inputs(tmp_path)
+    scripted = ScriptedNativeCommands(runtime)
+
+    def runner(argv: list[str], cwd: Path, env: dict[str, str], timeout: float) -> str:
+        if failure in argv:
+            raise ResidentError("dependency qualification failed")
+        return scripted(argv, cwd, env, timeout)
+
+    with pytest.raises(ResidentError, match="qualification"):
+        NativeRuntimeBuilder(python, runner=runner)(app, runtime, package)
+    assert list(runtime.iterdir()) == []
+
+
+@pytest.mark.parametrize("defect", ["none", "native", "version", "tag", "purelib"])
+def test_only_exact_pure_http_ece_source_artifact_is_accepted(tmp_path: Path, defect: str) -> None:
+    wheel = tmp_path / "http_ece-1.2.1-py2.py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        version = "2.0.0" if defect == "version" else "1.2.1"
+        archive.writestr(
+            "http_ece-1.2.1.dist-info/METADATA", f"Name: http-ece\nVersion: {version}\n"
+        )
+        tag = "cp314-cp314-macosx_11_0_arm64" if defect == "tag" else "py3-none-any"
+        pure = "false" if defect == "purelib" else "true"
+        archive.writestr("http_ece-1.2.1.dist-info/WHEEL", f"Root-Is-Purelib: {pure}\nTag: {tag}\n")
+        if defect == "native":
+            archive.writestr("http_ece/native.so", "native")
+    if defect == "none":
+        _verify_pure_http_ece(wheel)
+    else:
+        with pytest.raises(ResidentError, match="pure Python wheel"):
+            _verify_pure_http_ece(wheel)

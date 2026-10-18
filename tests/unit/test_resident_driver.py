@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from tests.support.resident_runtime import write_runtime_identity
 
 from planner.environments.resident import cli, driver, transport
 from planner.environments.resident.contracts import (
@@ -28,6 +29,16 @@ from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSIO
 SHA = "a" * 40
 
 
+def _launch(root: Path, revision: str) -> ExecutorLaunchOptions:
+    key, hosts = root / "executor-key", root / "executor-hosts"
+    key.write_text("fixture-private-key")
+    key.chmod(0o600)
+    hosts.write_text("vps.example ssh-ed25519 fixture-pinned-host-key\n")
+    return ExecutorLaunchOptions(
+        "vps.example", revision, "https://panels.example", 2222, "owner", key, hosts
+    )
+
+
 def _package() -> ResidentPackage:
     return ResidentPackage(
         SHA,
@@ -35,9 +46,11 @@ def _package() -> ResidentPackage:
         SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
-        "3.12",
+        "3.14.3",
         ExecutorSourceClosure(
-            ("src/example/runner.py", "requirements.lock"), "example.runner", "requirements.lock"
+            ("src/example/runner.py", "requirements.lock", "requirements-build.txt"),
+            "example.runner",
+            "requirements.lock",
         ),
     )
 
@@ -55,7 +68,7 @@ def _remote(tmp_path: Path) -> dict[str, Any]:
         known_hosts=hosts,
         identity=key,
         python=Path("/opt/python/bin/python3"),
-        launch=ExecutorLaunchOptions("vps", SHA, "https://panels.example"),
+        launch=_launch(tmp_path, SHA),
         timeout_seconds=1200.0,
     )
 
@@ -182,7 +195,15 @@ def test_preflight_validates_config_archive_and_read_only_host_evidence(
         "--python",
         "/opt/python/bin/python3",
         "--executor-ssh-host",
-        "vps",
+        "vps.example",
+        "--executor-ssh-port",
+        "2222",
+        "--executor-ssh-user",
+        "owner",
+        "--executor-ssh-identity-file",
+        str(tmp_path / "executor-key"),
+        "--executor-ssh-known-hosts",
+        str(tmp_path / "executor-hosts"),
         "--panels-server-url",
         "https://panels.example",
     ]
@@ -221,6 +242,14 @@ def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
         assert argv[0] == str(runtime / "bin/python")
         assert argv[1:4] == ["-I", "-B", "-c"]
         assert "activate" in argv
+        assert argv[argv.index("--executor-ssh-port") + 1] == "2222"
+        assert argv[argv.index("--executor-ssh-user") + 1] == "owner"
+        assert argv[argv.index("--executor-ssh-identity-file") + 1] == str(
+            tmp_path / "executor-key"
+        )
+        assert argv[argv.index("--executor-ssh-known-hosts") + 1] == str(
+            tmp_path / "executor-hosts"
+        )
         assert argv[argv.index("--backend-path") + 1] == "/native/bin:/usr/bin"
         assert kwargs["timeout"] == 120.0
         assert "PYTHONPATH" not in kwargs["env"]
@@ -240,9 +269,7 @@ def test_native_prepare_reexecutes_new_runtime_with_explicit_tool_source(
         app,
         python=Path("/native/python"),
         home=home,
-        launch=ExecutorLaunchOptions(
-            "vps", SHA, "https://panels.example", backend_path="/native/bin:/usr/bin"
-        ),
+        launch=replace(_launch(tmp_path, SHA), backend_path="/native/bin:/usr/bin"),
         timeout_seconds=30.0,
     )
     assert result.disposition == "verified"
@@ -284,7 +311,7 @@ def test_production_package_spec_uses_exact_pinned_source_without_builds(tmp_pat
         revision,
         source / "ops/panels-environments/executor-build-contract.json",
         "arm64",
-        "3.12",
+        "3.14.3",
         output,
     )
     package = json.loads(output.read_bytes())
@@ -293,10 +320,10 @@ def test_production_package_spec_uses_exact_pinned_source_without_builds(tmp_pat
     assert package["spool_format_version"] == SPOOL_FORMAT_VERSION
     closure = package["closure"]
     assert closure["entrypoint_module"] == "planner.executor.entrypoint"
-    assert "src/planner/executor/preflight.py" in closure["files"]
-    assert "src/planner/previews/streams.py" in closure["files"]
-    assert "src/planner/previews/forward.py" in closure["files"]
-    assert "src/planner/core/server.py" in closure["files"]
+    assert "src/planner" in closure["files"]
+    assert "pyproject.toml" in closure["files"]
+    assert "requirements-executor.txt" in closure["files"]
+    assert "requirements-build.txt" in closure["files"]
     assert closure["node_package_roots"] == ["agent_backends"]
     assert not any(name.startswith(("web/", "data/", ".venv/")) for name in closure["files"])
     assert set(tmp_path.iterdir()) == {output}
@@ -324,6 +351,7 @@ def test_real_adapter_wiring_retries_same_interrupted_first_install_only(
         f"PROTOCOL_VERSION = {PROTOCOL_VERSION}\nSPOOL_FORMAT_VERSION = {SPOOL_FORMAT_VERSION}\n"
     )
     (source / "requirements.lock").write_text("")
+    (source / "requirements-build.txt").write_text("")
     subprocess.run(["git", "init", "-q", str(source)], check=True)
     subprocess.run(["git", "-C", str(source), "add", "."], check=True)
     subprocess.run(
@@ -358,6 +386,7 @@ def test_real_adapter_wiring_retries_same_interrupted_first_install_only(
     def builder(app: Path, runtime: Path, package: ResidentPackage) -> None:
         (runtime / "bin").mkdir()
         (runtime / "bin/python").symlink_to(sys.executable)
+        write_runtime_identity(runtime)
 
     packaging.prepare_runtime(app, package, paths, builder)
     real_control, real_service = control.OwnerExecutorControl, service.LaunchAgentService
@@ -409,7 +438,7 @@ def test_real_adapter_wiring_retries_same_interrupted_first_install_only(
     monkeypatch.setattr(service, "LaunchAgentService", launch)
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(Path, "home", lambda: home)
-    launch_options = ExecutorLaunchOptions("vps", revision, "https://panels.example")
+    launch_options = _launch(tmp_path, revision)
     with pytest.raises(ResidentError, match="bootstrap failed"):
         driver.activate(app, home=home, launch=launch_options, timeout_seconds=1.0)
     assert paths.app.is_dir()
@@ -422,3 +451,40 @@ def test_real_adapter_wiring_retries_same_interrupted_first_install_only(
     assert bootstraps == [2]
     assert all(adapter.before_quiesce is not None for adapter in instances)
     assert all(command[1] in {"print", "bootstrap"} for command in calls)
+
+
+def test_invalid_local_ssh_inputs_refuse_before_source_or_runtime_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "owner"
+    home.mkdir()
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "home", lambda: home)
+    launch = replace(_launch(tmp_path, SHA), ssh_identity_file=Path("relative-key"))
+
+    def forbidden(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("invalid SSH inputs must refuse before persistent writes")
+
+    monkeypatch.setattr(driver, "prepare_runtime", forbidden)
+    monkeypatch.setattr(driver, "build_source_package", forbidden)
+    before = set(tmp_path.rglob("*"))
+    with pytest.raises(ResidentError, match="absolute"):
+        driver.prepare_and_activate(
+            tmp_path / "absent-app",
+            python=Path("/native/python"),
+            home=home,
+            launch=launch,
+            timeout_seconds=1,
+        )
+    with pytest.raises(ResidentError, match="absolute"):
+        driver.deploy_local_source(
+            tmp_path / "absent-source",
+            tmp_path / "absent-manifest",
+            tmp_path / "candidate",
+            python=Path("/native/python"),
+            home=home,
+            launch=launch,
+            timeout_seconds=1,
+        )
+    assert set(tmp_path.rglob("*")) == before

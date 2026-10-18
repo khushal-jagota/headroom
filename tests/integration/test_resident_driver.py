@@ -37,6 +37,7 @@ def test_exact_bundle_bootstraps_without_preinstalled_panels_or_hidden_checkout(
     (source / "src/example").mkdir(parents=True)
     (source / "src/example/runner.py").write_text("pass\n")
     (source / "requirements.lock").write_text("")
+    (source / "requirements-build.txt").write_text("")
     subprocess.run(["git", "init", "-q", str(source)], check=True)
     subprocess.run(["git", "-C", str(source), "add", "."], check=True)
     subprocess.run(
@@ -64,9 +65,11 @@ def test_exact_bundle_bootstraps_without_preinstalled_panels_or_hidden_checkout(
         SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
-        "3.12",
+        "3.14.3",
         ExecutorSourceClosure(
-            ("src/example/runner.py", "requirements.lock"), "example.runner", "requirements.lock"
+            ("src/example/runner.py", "requirements.lock", "requirements-build.txt"),
+            "example.runner",
+            "requirements.lock",
         ),
     )
     manifest = tmp_path / "spec"
@@ -118,7 +121,15 @@ def test_exact_bundle_bootstraps_without_preinstalled_panels_or_hidden_checkout(
         "--requested-sha",
         revision,
         "--executor-ssh-host",
-        "vps",
+        "vps.example",
+        "--executor-ssh-port",
+        "2222",
+        "--executor-ssh-user",
+        "owner",
+        "--executor-ssh-identity-file",
+        str(home / "key"),
+        "--executor-ssh-known-hosts",
+        str(home / "known_hosts"),
         "--panels-server-url",
         "https://panels.example",
     ]

@@ -174,19 +174,33 @@ Its spool, artifacts, logs, and IPC socket remain outside replaceable code. The 
 HOME and provider homes remain unchanged. Worker shells find the installed `panels`
 wrapper through a stable app path.
 
-`package-spec` expands the executor-owned build contract from the requested Git
-revision. The checked contract records the original executor commit and its local
-import provenance. Its explicit closure contains the full planner Python package,
-declared package data, Python pins, and backend npm locks. This source closure supports
-the executor and Worker CLI. No local Panels database or web build is installed. The
-light executor entrypoint runs the service; the generated wrapper rejects `serve`.
+`package-spec` records standard package input roots from the requested Git revision.
+The checked build contract preserves the original executor commit and import provenance.
+Setuptools owns Python discovery and declared package data. No parallel Python file
+inventory exists. Exact source export excludes checkout changes, databases, credentials,
+and web output. Pinned tools build a standard wheel from a temporary copy of that export.
+
+The native permanent runtime installs the wheel and the complete pinned dependency
+closure without implicit resolution. Native dependencies require compatible wheels.
+The sole source exception is the pinned pure-Python `http_ece` archive, with checked
+source digest, wheel metadata and contents, and retained provenance. A separate clean
+environment checks dependencies before permanent installation. A standard generated
+console supports the executor and Worker CLI. The minimal isolated resident wrapper
+refuses `serve`, injects the exact revision, and refuses caller revision overrides.
+Read-only artifact checks bind installed code, scripts, metadata, dependencies, bytecode,
+and the application wheel to the source manifest and permanent runtime path.
+See [Mac executor packages](environments.md#mac-executor-packages) for the locks and limits.
 
 Preview forwarding requires protocol 4 on both peers. The existing full planner
 source closure includes `src/planner/previews/` and the executor stream handlers.
 Build both peers from the same reviewed revision. The journal format stays at 1.
 Protocol 3 peers refuse the handshake before work or preview admission.
 
-Native Python and Node probes must match the requested Mac architecture and versions.
+The Mac target requires native ordinary CPython 3.14.3 on Apple Silicon. The actual
+macOS version, ABI, and compatible wheel tags must qualify before installation.
+Intel macOS is explicitly unsupported for this pinned dependency set. No Intel
+source-build or toolchain fallback exists. Linux VPS builds remain supported.
+Native Python and Node probes must match their requested architectures and versions.
 The builder creates Python and native backend dependencies directly at a permanent
 versioned runtime path. It never copies a VPS environment. The package launcher maps
 the managed Claude executable to that runtime and injects its own exact source revision.

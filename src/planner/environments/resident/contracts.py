@@ -61,18 +61,18 @@ class ResidentPaths:
 
 @dataclass(frozen=True)
 class ExecutorSourceClosure:
-    """Executor supplies this exact allowlist; no inferred whole-app fallback.
+    """Standard package inputs from one commit, including source directory roots.
 
-    Paths are repository-relative regular files. The entrypoint is an offline
-    module supplied by executor, implementing ``executor run`` without importing
-    the local Panels server. Dependency specifications are locked source files;
-    existing environments and node_modules are never included in the payload.
+    Setuptools owns Python discovery and package data. These paths select build
+    inputs, not a parallel inventory of importable Python files. Dependency locks
+    and backend manifests are committed inputs, never existing environments.
     """
 
     files: tuple[str, ...]
     entrypoint_module: str
     python_requirements: str
     node_package_roots: tuple[str, ...] = ()
+    build_requirements: str = "requirements-build.txt"
 
 
 @dataclass(frozen=True)
@@ -125,6 +125,10 @@ class ExecutorLaunchOptions:
     ssh_host: str
     application_revision: str
     panels_server_url: str
+    ssh_port: int
+    ssh_user: str
+    ssh_identity_file: Path
+    ssh_known_hosts_file: Path
     remote_command: str = "panels executor relay"
     backend_path: str | None = None
 

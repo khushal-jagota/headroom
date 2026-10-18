@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from tests.support.resident_runtime import write_runtime_identity
 
 from planner.environments.resident.contracts import (
     ExecutorSourceClosure,
@@ -29,6 +30,7 @@ def _repository(tmp_path: Path) -> tuple[Path, ResidentPackage]:
     (source / "src/executor_fixture/__main__.py").write_text("print('committed')\n")
     (source / "executor-requirements.txt").write_text("example==1.0\n")
     (source / "secret").write_text("not allowed")
+    (source / "requirements-build.txt").write_text("setuptools==82.0.1\n")
     subprocess.run(["git", "-C", str(source), "add", "."], check=True)
     subprocess.run(
         [
@@ -54,9 +56,13 @@ def _repository(tmp_path: Path) -> tuple[Path, ResidentPackage]:
         SPOOL_FORMAT_VERSION,
         "darwin",
         "arm64",
-        "3.12",
+        "3.14.3",
         ExecutorSourceClosure(
-            ("src/executor_fixture/__main__.py", "executor-requirements.txt"),
+            (
+                "src/executor_fixture/__main__.py",
+                "executor-requirements.txt",
+                "requirements-build.txt",
+            ),
             "executor_fixture",
             "executor-requirements.txt",
         ),
@@ -69,6 +75,7 @@ def _builder(app: Path, runtime: Path, package: ResidentPackage) -> None:
     python = runtime / "bin/python"
     python.write_text("#!/bin/sh\nexit 0\n")
     python.chmod(0o755)
+    write_runtime_identity(runtime)
 
 
 def test_exact_committed_allowlist_excludes_dirty_files_and_secrets(tmp_path: Path) -> None:
@@ -241,5 +248,5 @@ def test_runtime_validation_rejects_undeclared_source(tmp_path: Path, extra: str
     target = app / extra
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("raise RuntimeError('undeclared')")
-    with pytest.raises(ResidentError, match="undeclared"):
+    with pytest.raises(ResidentError, match="undeclared|input bytes changed"):
         validate_runtime(prepared)

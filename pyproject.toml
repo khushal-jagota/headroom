@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools==82.0.1", "wheel==0.46.3", "packaging==26.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,6 +9,8 @@ description = "Planning system v2 — database-backed personal planning server a
 requires-python = ">=3.12"
 dependencies = [
   "agent-client-protocol==0.11.0",
+  "asyncssh==2.24.1",
+  "claude-agent-sdk==0.2.152",
   "alembic",
   "fastapi",
   "uvicorn",

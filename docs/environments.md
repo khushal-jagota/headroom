@@ -151,6 +151,59 @@ path.
 - **The conversation system** (`conversation-system.md`) — the three agent backends
   that use the configured provider homes.
 
+## Mac executor packages
+
+The executor uses a standard wheel from the exact committed source. Setuptools
+selects Python packages and declared data from `pyproject.toml`. The cold source
+export includes package input roots, runtime and build locks, and backend manifests.
+An immutable manifest records the requested revision and exported file hashes.
+Build output stays in temporary source copies, outside that manifest.
+
+The permanent native runtime contains the wheel and its pinned dependencies.
+The build uses `requirements-build.txt` and `requirements-executor.txt` without
+implicit dependency resolution. A separate clean environment checks the complete
+dependency closure before installation into the permanent runtime. All native
+dependencies use compatible binary wheels. The only source exception is
+`http_ece==1.2.1`, which publishes no wheel. Its exact source digest, locked build
+tools, pure wheel metadata and contents, and output digest receive explicit checks.
+No native toolchain installation or broad source fallback exists.
+
+The standard generated `panels` entrypoint serves the executor and Worker CLI.
+The resident wrapper uses the isolated permanent interpreter and installed package.
+It refuses `serve` and caller-supplied revision overrides. It injects the exact
+committed revision for `executor run`. It does not add source paths to `sys.path`.
+The separate deployment-tool bootstrap remains a standard-library cold tool.
+
+Read-only preflight checks the installed wheel, distribution metadata, scripts,
+Python files, native extensions, and bytecode against the receipt. The runtime
+marker binds that receipt to the source manifest and permanent runtime path.
+Changed or extra installed files refuse reuse and activation. Existing identity
+fences, native Node locks, launchd quiescence, rollback, persistent data, normal
+HOME, and provider credentials keep their existing boundaries.
+
+The supported Mac target is Apple Silicon with native ordinary CPython 3.14.3.
+The interpreter probe checks its actual OS, architecture, implementation, and ABI.
+Every selected wheel must fit the real OS and interpreter before installation.
+The native wheels require macOS 11 or later. Tags alone do not qualify a host.
+Intel macOS is explicitly unsupported for this pinned dependency set because
+cryptography 49 removes that target. The package refuses Intel before host mutation.
+Linux VPS builds remain supported on their matching native interpreter and architecture.
+
+The capability readout in `ops/panels-environments/executor-build-contract.json`
+separates required support from verified host evidence. Its original handoff
+provenance remains unchanged. Current packaging inputs live in `current_packaging`.
+Physical Mac support, installed credentials, reboot, and pre-unlock behavior remain
+unverified. The implementation does not authorize host installation or live probes.
+
+The Mac-initiated executor connection requires explicit resolved host, port, user,
+identity file, and known-hosts file. Deployment inputs are
+`PANELS_EXECUTOR_SSH_PORT`, `PANELS_EXECUTOR_SSH_USER`,
+`PANELS_EXECUTOR_SSH_IDENTITY_FILE`, and `PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE`.
+The identity and known-hosts paths belong to the Mac. They are separate from the
+VPS-to-Mac delivery credentials. Ambient SSH configuration, agents, default keys,
+aliases, proxies, and interactive key setup do not supply missing inputs.
+
+
 ---
 
 _Last verified: 2026-08-09._

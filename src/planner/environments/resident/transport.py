@@ -165,14 +165,9 @@ def validate_remote_configuration(
         or any(ord(char) < 32 for char in launch.backend_path)
     ):
         raise ResidentError("backend PATH entries must be concrete absolute paths")
-    if (
-        not launch.ssh_host
-        or launch.ssh_host.startswith("-")
-        or any(c.isspace() for c in launch.ssh_host)
-        or not launch.panels_server_url.startswith(("http://", "https://"))
-        or not launch.remote_command.strip()
-    ):
-        raise ResidentError("invalid executor launch configuration")
+    from planner.environments.resident.launch_agent import validate_executor_launch
+
+    validate_executor_launch(launch, check_files=False)
 
 
 def build_delivery_archive(source: Path, manifest: Path, revision: str) -> bytes:
@@ -327,6 +322,14 @@ class SshResidentDeployment:
             requested_revision,
             "--executor-ssh-host",
             self.launch.ssh_host,
+            "--executor-ssh-port",
+            str(self.launch.ssh_port),
+            "--executor-ssh-user",
+            self.launch.ssh_user,
+            "--executor-ssh-identity-file",
+            str(self.launch.ssh_identity_file),
+            "--executor-ssh-known-hosts",
+            str(self.launch.ssh_known_hosts_file),
             "--panels-server-url",
             self.launch.panels_server_url,
             "--relay-command",

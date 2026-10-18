@@ -104,5 +104,57 @@
     "compatibility": "Protocol 3 peers refuse before preview admission. Journal format remains 1.",
     "lifecycle": "Ephemeral generation-bound loopback streams; no journal or replay.",
     "verification_scope": "Isolated synthetic fixtures only. No physical Mac, provider, installed route or deployment evidence."
+  },
+  "current_packaging": {
+    "format": "standard-wheel-v1",
+    "inputs": [
+      "pyproject.toml",
+      "src/planner",
+      "requirements-executor.txt",
+      "requirements-build.txt",
+      "agent_backends/package.json",
+      "agent_backends/package-lock.json"
+    ],
+    "python_discovery": "Setuptools package discovery and declared package-data; no maintained Python file inventory.",
+    "locks": {
+      "runtime": "requirements-executor.txt",
+      "build": "requirements-build.txt",
+      "native_backend": "agent_backends/package-lock.json"
+    },
+    "compatibility_constants": "src/planner/executor/configuration.py: PROTOCOL_VERSION and SPOOL_FORMAT_VERSION",
+    "provenance": "Original source_revision, imported_source_revision and package_inputs above remain the immutable handoff. Each package records its exact requested commit and exported file hashes. Runtime receipt binds application wheel SHA256, installed distribution metadata, scripts, dependencies, and bytecode.",
+    "capabilities": {
+      "macos_arm64": {
+        "required": "Native ordinary CPython3.14.3; real macOS version>=11; every selected wheel tag and dependency must match actual interpreter/OS. Explicit transport input/capability agreement precedes combined integration.",
+        "verified": "Unknown on the physical Mac. Linux isolated artifact tests establish packaging only."
+      },
+      "macos_x86_64": {
+        "supported": false,
+        "reason": "cryptography49 removes x86_64 macOS support. Refuse before host mutation. No source/toolchain fallback."
+      },
+      "linux": {
+        "supported": true,
+        "scope": "Native matching interpreter/architecture; isolated Linux artifact builds do not qualify a Mac."
+      }
+    },
+    "pure_source_exception": {
+      "distribution": "http_ece",
+      "version": "1.2.1",
+      "source_sha256": "8c6ab23116bbf6affda894acfd5f2ca0fb8facbcbb72121c11c75c33e7ce8cff",
+      "constraint": "Only this pinned pure-Python sdist. Locked build tools, no dependencies/build isolation, verified pure wheel metadata and contents; runtime receipt retains source and wheel SHA256."
+    },
+    "installed_entrypoint": "Standard generated panels console entrypoint; resident wrapper uses isolated permanent interpreter and installed resident_main for serve refusal and exact revision injection.",
+    "limitations": "No host installation, live Mac/provider probe, deployment, account/reboot/pre-unlock qualification, staging action, or skill application.",
+    "transport_capabilities": {
+      "required": [
+        "private streamlocal forwarding in both directions",
+        "restricted SFTP slotsv1"
+      ],
+      "verified": false,
+      "status": "unknown until reviewed transport and target qualification evidence",
+      "failed_probe": "refuse, distinct from confirmed unsupported capability",
+      "probe_effects": "Metadata inspection is read-only. Actual transport probes can create temporary sockets and isolated test slots with owner-checked cleanup. No persistent installation/account/permission changes.",
+      "authorization": "No live transport probes are authorized by this coding ticket."
+    }
   }
 }

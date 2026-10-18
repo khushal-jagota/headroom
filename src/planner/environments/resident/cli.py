@@ -59,6 +59,10 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--node", type=Path)
         command.add_argument("--requested-sha", type=_revision, required=True)
         command.add_argument("--executor-ssh-host", required=True)
+        command.add_argument("--executor-ssh-port", type=int, required=True)
+        command.add_argument("--executor-ssh-user", required=True)
+        command.add_argument("--executor-ssh-identity-file", type=Path, required=True)
+        command.add_argument("--executor-ssh-known-hosts", type=Path, required=True)
         command.add_argument("--panels-server-url", required=True)
         command.add_argument("--relay-command", default="panels executor relay")
         command.add_argument("--backend-path")
@@ -78,6 +82,10 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--npm", type=Path)
         command.add_argument("--node", type=Path)
         command.add_argument("--executor-ssh-host")
+        command.add_argument("--executor-ssh-port", type=int)
+        command.add_argument("--executor-ssh-user")
+        command.add_argument("--executor-ssh-identity-file", type=Path)
+        command.add_argument("--executor-ssh-known-hosts", type=Path)
         command.add_argument("--panels-server-url")
         command.add_argument("--relay-command", default="panels executor relay")
         command.add_argument("--backend-path")
@@ -125,6 +133,10 @@ def main(argv: list[str] | None = None) -> int:
                 "identity",
                 "python",
                 "executor_ssh_host",
+                "executor_ssh_port",
+                "executor_ssh_user",
+                "executor_ssh_identity_file",
+                "executor_ssh_known_hosts",
                 "panels_server_url",
             )
             if any(getattr(arguments, name) is None for name in required):
@@ -156,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.executor_ssh_host,
                 arguments.requested_sha,
                 arguments.panels_server_url,
+                arguments.executor_ssh_port,
+                arguments.executor_ssh_user,
+                arguments.executor_ssh_identity_file,
+                arguments.executor_ssh_known_hosts,
                 arguments.relay_command,
                 arguments.backend_path,
             )
@@ -172,10 +188,10 @@ def main(argv: list[str] | None = None) -> int:
                 node=arguments.node,
             )
             if arguments.command == "preflight":
+                adapter.preflight(arguments.requested_sha, vps_app=arguments.vps_app)
                 build_delivery_archive(
                     arguments.source_root, arguments.manifest, arguments.requested_sha
                 )
-                adapter.preflight(arguments.requested_sha, vps_app=arguments.vps_app)
                 print(
                     json.dumps(
                         {
@@ -215,6 +231,10 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.executor_ssh_host,
                 arguments.requested_sha,
                 arguments.panels_server_url,
+                arguments.executor_ssh_port,
+                arguments.executor_ssh_user,
+                arguments.executor_ssh_identity_file,
+                arguments.executor_ssh_known_hosts,
                 arguments.relay_command,
                 arguments.backend_path,
             )

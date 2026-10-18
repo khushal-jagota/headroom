@@ -211,6 +211,9 @@ def prepare_and_activate(
     """Build natively, then execute activation with the declared runtime codecs."""
     if sys.platform != "darwin" or home != Path.home().absolute():
         raise ResidentError("native deployment requires the actual Mac owner's HOME")
+    from planner.environments.resident.launch_agent import validate_executor_launch
+
+    validate_executor_launch(launch, check_files=True)
     manifest = json.loads((app / MANIFEST_NAME).read_bytes())
     package = package_from_dict(manifest["package"])
     if package.application_revision != launch.application_revision:
@@ -240,6 +243,14 @@ def prepare_and_activate(
         launch.application_revision,
         "--executor-ssh-host",
         launch.ssh_host,
+        "--executor-ssh-port",
+        str(launch.ssh_port),
+        "--executor-ssh-user",
+        launch.ssh_user,
+        "--executor-ssh-identity-file",
+        str(launch.ssh_identity_file),
+        "--executor-ssh-known-hosts",
+        str(launch.ssh_known_hosts_file),
         "--panels-server-url",
         launch.panels_server_url,
         "--relay-command",
@@ -283,6 +294,9 @@ def deploy_local_source(
     npm: Path | None = None,
     node: Path | None = None,
 ) -> HostDeploymentResult:
+    from planner.environments.resident.launch_agent import validate_executor_launch
+
+    validate_executor_launch(launch, check_files=True)
     payload = json.loads(manifest.read_bytes())
     package = package_from_dict(payload)
     if package.application_revision != launch.application_revision:
@@ -416,30 +430,20 @@ def write_package_spec(
             check=True,
             capture_output=True,
         )
-        files = subprocess.check_output(
-            [
-                "git",
-                "-C",
-                str(source),
-                "ls-tree",
-                "-r",
-                "--name-only",
-                revision,
-                "--",
-                "src/planner",
-            ],
-            text=True,
-        ).splitlines()
     except subprocess.CalledProcessError as exc:
         raise ResidentError(
             "requested release does not contain the pinned executor source"
         ) from exc
-    files += [
-        "pyproject.toml",
-        "requirements.txt",
-        "agent_backends/package.json",
-        "agent_backends/package-lock.json",
-    ]
+    from planner.environments.resident.configuration import (
+        APPLICATION_ENTRYPOINT,
+        BUILD_REQUIREMENTS,
+        EXECUTOR_REQUIREMENTS,
+    )
+
+    files = (
+        "pyproject.toml", "src/planner", EXECUTOR_REQUIREMENTS, BUILD_REQUIREMENTS,
+        "agent_backends/package.json", "agent_backends/package-lock.json",
+    )
     versions = requested_versions(source, revision)
     package = ResidentPackage(
         revision,
@@ -450,9 +454,10 @@ def write_package_spec(
         python_version,
         ExecutorSourceClosure(
             tuple(sorted(files)),
-            "planner.executor.entrypoint",
-            "requirements.txt",
+            APPLICATION_ENTRYPOINT,
+            EXECUTOR_REQUIREMENTS,
             ("agent_backends",),
+            BUILD_REQUIREMENTS,
         ),
     )
     validate_package(package)

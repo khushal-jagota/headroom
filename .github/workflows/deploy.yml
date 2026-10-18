@@ -21,6 +21,10 @@ env:
   PANELS_MAC_ARCHITECTURE: ${{ vars.PANELS_MAC_ARCHITECTURE }}
   PANELS_MAC_PYTHON_VERSION: ${{ vars.PANELS_MAC_PYTHON_VERSION }}
   PANELS_EXECUTOR_SSH_HOST: ${{ vars.PANELS_EXECUTOR_SSH_HOST }}
+  PANELS_EXECUTOR_SSH_PORT: ${{ vars.PANELS_EXECUTOR_SSH_PORT }}
+  PANELS_EXECUTOR_SSH_USER: ${{ vars.PANELS_EXECUTOR_SSH_USER }}
+  PANELS_EXECUTOR_SSH_IDENTITY_FILE: ${{ vars.PANELS_EXECUTOR_SSH_IDENTITY_FILE }}
+  PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE: ${{ vars.PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE }}
   PANELS_EXECUTOR_SERVER_URL: ${{ vars.PANELS_EXECUTOR_SERVER_URL }}
   PANELS_EXECUTOR_BACKEND_PATH: ${{ vars.PANELS_EXECUTOR_BACKEND_PATH }}
   PANELS_REQUESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
@@ -56,7 +60,7 @@ jobs:
         if: vars.PANELS_RESIDENT_DEPLOY_ENABLED == 'true'
         run: |
           python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python 3.12 or newer is required"'
-          for name in PANELS_MAC_HOST PANELS_MAC_KNOWN_HOSTS PANELS_MAC_SSH_IDENTITY PANELS_MAC_PYTHON PANELS_MAC_NODE PANELS_MAC_NPM PANELS_MAC_ARCHITECTURE PANELS_MAC_PYTHON_VERSION PANELS_EXECUTOR_SSH_HOST PANELS_EXECUTOR_SERVER_URL; do
+          for name in PANELS_MAC_HOST PANELS_MAC_KNOWN_HOSTS PANELS_MAC_SSH_IDENTITY PANELS_MAC_PYTHON PANELS_MAC_NODE PANELS_MAC_NPM PANELS_MAC_ARCHITECTURE PANELS_MAC_PYTHON_VERSION PANELS_EXECUTOR_SSH_HOST PANELS_EXECUTOR_SSH_PORT PANELS_EXECUTOR_SSH_USER PANELS_EXECUTOR_SSH_IDENTITY_FILE PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE PANELS_EXECUTOR_SERVER_URL; do
             test -n "${!name}" || { echo "Missing explicit resident configuration: $name" >&2; exit 2; }
           done
           git show "$PANELS_REQUESTED_SHA:ops/panels-environments/executor-build-contract.json" > "$PANELS_EXECUTOR_CONTRACT"
@@ -75,6 +79,9 @@ jobs:
             --known-hosts "$PANELS_MAC_KNOWN_HOSTS" --identity "$PANELS_MAC_SSH_IDENTITY" \
             --python "$PANELS_MAC_PYTHON" --node "$PANELS_MAC_NODE" --npm "$PANELS_MAC_NPM" \
             --executor-ssh-host "$PANELS_EXECUTOR_SSH_HOST" --panels-server-url "$PANELS_EXECUTOR_SERVER_URL" \
+            --executor-ssh-port "$PANELS_EXECUTOR_SSH_PORT" --executor-ssh-user "$PANELS_EXECUTOR_SSH_USER" \
+            --executor-ssh-identity-file "$PANELS_EXECUTOR_SSH_IDENTITY_FILE" \
+            --executor-ssh-known-hosts "$PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE" \
             --relay-command "$PANELS_EXECUTOR_RELAY_COMMAND" \
             "${backend_args[@]}"
       - name: Start deployment lifecycle
@@ -184,6 +191,9 @@ jobs:
             --known-hosts "$PANELS_MAC_KNOWN_HOSTS" --identity "$PANELS_MAC_SSH_IDENTITY" \
             --python "$PANELS_MAC_PYTHON" --node "$PANELS_MAC_NODE" --npm "$PANELS_MAC_NPM" \
             --executor-ssh-host "$PANELS_EXECUTOR_SSH_HOST" --panels-server-url "$PANELS_EXECUTOR_SERVER_URL" \
+            --executor-ssh-port "$PANELS_EXECUTOR_SSH_PORT" --executor-ssh-user "$PANELS_EXECUTOR_SSH_USER" \
+            --executor-ssh-identity-file "$PANELS_EXECUTOR_SSH_IDENTITY_FILE" \
+            --executor-ssh-known-hosts "$PANELS_EXECUTOR_SSH_KNOWN_HOSTS_FILE" \
             --relay-command "$PANELS_EXECUTOR_RELAY_COMMAND" \
             --vps-health-url "http://127.0.0.1:8767/api/health" --report "$PANELS_RESIDENT_REPORT" \
             --deployment-id "$PANELS_DEPLOYMENT_ID" "${backend_args[@]}"

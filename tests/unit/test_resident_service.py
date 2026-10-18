@@ -50,11 +50,21 @@ class Commands:
         return subprocess.CompletedProcess(command, 0, self.outputs.pop(0), "")
 
 
+def _launch(root: Path, revision: str) -> ExecutorLaunchOptions:
+    key, hosts = root / "executor-key", root / "executor-hosts"
+    key.write_text("fixture-private-key")
+    key.chmod(0o600)
+    hosts.write_text("vps.example ssh-ed25519 fixture-pinned-host-key\n")
+    return ExecutorLaunchOptions(
+        "vps.example", revision, "https://panels.example", 2222, "owner", key, hosts
+    )
+
+
 def service(tmp_path: Path, outputs: list[str]) -> tuple[LaunchAgentService, Commands]:
     configuration = ServiceConfiguration(
         ResidentPaths(tmp_path, tmp_path / "deploy", tmp_path / "data"),
         501,
-        launch=ExecutorLaunchOptions("panels-vps", "a" * 40, "http://127.0.0.1:8765"),
+        launch=_launch(tmp_path, "a" * 40),
     )
     commands = Commands(outputs)
     return LaunchAgentService(
@@ -190,7 +200,7 @@ def test_start_refuses_stale_loaded_arguments(tmp_path: Path) -> None:
     def run(command: tuple[str, ...], timeout: float) -> subprocess.CompletedProcess[str]:
         calls.append(command)
         return subprocess.CompletedProcess(
-            command, 0, loaded_job(adapter).replace("panels-vps", "old-vps"), ""
+            command, 0, loaded_job(adapter).replace("vps.example", "old-vps"), ""
         )
 
     adapter.run = run

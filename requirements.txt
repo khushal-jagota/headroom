@@ -8,6 +8,7 @@ annotated-types==0.7.0
 anyio==4.14.1
 argcomplete==3.7.0
 ast_serialize==0.6.0
+asyncssh==2.24.1
 attrs==26.1.0
 black==26.5.1
 certifi==2026.6.17

@@ -18,6 +18,7 @@ from planner.environments.resident.contracts import (
     ResidentError,
     ResidentPackage,
 )
+from planner.environments.resident.installed import installed_identity
 from planner.environments.resident.logic.upgrade import require_supported_upgrade
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
@@ -102,7 +103,8 @@ def _mac_identity(home: Path) -> dict[str, object]:
         if any(_path_present(path) for path in evidence):
             raise ValueError("absent Mac app conflicts with existing installation evidence")
         return {"host": "mac", "application_revision": None, "versions": None}
-    manifest = json.loads(_regular_read(app / "resident-package.json"))
+    manifest_bytes = _regular_read(app / "resident-package.json")
+    manifest = json.loads(manifest_bytes)
     if not isinstance(manifest, dict):
         raise ValueError("resident manifest is not an object")
     package, files = manifest.get("package"), manifest.get("files")
@@ -120,6 +122,15 @@ def _mac_identity(home: Path) -> dict[str, object]:
         raise ValueError("installed executor configuration differs from resident manifest")
     if _literal_versions(source.decode()) != versions:
         raise ValueError("installed executor source and manifest versions disagree")
+    digest = hashlib.sha256(manifest_bytes).hexdigest()
+    runtime = root / "runtimes" / digest
+    marker = json.loads(_regular_read(runtime / "resident-runtime.json"))
+    if marker != {
+        "input_digest": digest,
+        "runtime_path": str(runtime.absolute()),
+        "installed_identity": installed_identity(runtime),
+    }:
+        raise ValueError("installed runtime and source identity disagree")
     return {"host": "mac", "application_revision": revision, "versions": versions}
 
 
@@ -214,10 +225,10 @@ def require_mac_upgrade(home: Path, package: ResidentPackage) -> None:
 
 def mac_probe_source() -> str:
     """Deliver the exact local read-only inspector without importing remote code."""
-    functions = (_literal_versions, _path_present, _regular_read, _mac_identity)
+    functions = (installed_identity, _literal_versions, _path_present, _regular_read, _mac_identity)
     return (
         "from __future__ import annotations\n"
-        "import ast,hashlib,json,os,re,stat\nfrom pathlib import Path\n"
+        "import ast,hashlib,json,os,re,stat\nfrom pathlib import Path, PurePosixPath\n"
         + "\n".join(inspect.getsource(function) for function in functions)
     )
 
