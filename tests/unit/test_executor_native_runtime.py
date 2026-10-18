@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import cast
 from uuid import uuid4
 
+import asyncssh
 import pytest
 from pydantic import TypeAdapter
 
@@ -59,6 +60,7 @@ from planner.executor.contracts import (
 from planner.executor.journal import FilesystemSpool
 from planner.executor.mac import MacExecutor, as_object
 from planner.executor.runtime import NativeChildRegistry
+from planner.previews.forward import MacPreviewForwards
 
 
 class ScriptedChild:
@@ -1179,9 +1181,7 @@ def test_controlled_stop_wakes_pending_handshake_without_peer_response(
 
 
 @pytest.mark.parametrize("case", ["valid", "no_handshake", "bad_payload", "stale_request"])
-def test_ready_ack_clears_loss_before_fulfilling_current_request(
-    tmp_path: Path, case: str
-) -> None:
+def test_ready_ack_clears_loss_before_fulfilling_current_request(tmp_path: Path, case: str) -> None:
     from planner.executor.contracts import ConnectionState, WireMessage, WireMessageKind
     from planner.executor.wire import ProtocolRefused, encode_frame
 
@@ -1189,7 +1189,9 @@ def test_ready_ack_clears_loss_before_fulfilling_current_request(
         executor = MacExecutor(
             paths=ExecutorPaths(tmp_path),
             revision="a" * 40,
-            ssh_argv=("false",),
+            ssh_config=ExecutorSshConfig(
+                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+            ),
             panels_server_url="http://unused",
         )
         executor.state = ConnectionState.reconciling
@@ -1313,7 +1315,7 @@ def test_replay_keeps_one_head_per_conversation_and_progresses_past_bulk_bytes(
         durable = executor.spool.snapshots(first.submission_id)[0].local_path
         uploading, release, progressed = asyncio.Event(), asyncio.Event(), asyncio.Event()
         sent: list[str] = []
-        executor._sftp = cast(module.asyncssh.SFTPClient, object())
+        executor._sftp = cast(asyncssh.SFTPClient, object())
 
         async def upload(client: object, source: Path, token: str) -> None:
             uploading.set()
@@ -1338,7 +1340,9 @@ def test_replay_keeps_one_head_per_conversation_and_progresses_past_bulk_bytes(
                     {"token": "authorized", "direction": "upload", "manifest": payload["manifest"]},
                 )
             if kind is WireMessageKind.file_complete:
-                return WireMessage(WireMessageKind.file_accepted, "complete", payload["manifest"])
+                return WireMessage(
+                    WireMessageKind.file_accepted, "complete", cast(JsonObject, payload["manifest"])
+                )
             row = TypeAdapter(QueuedEnvelope).validate_python(payload)
             sent.append(row.submission_id)
             if row == independent:
@@ -1359,8 +1363,7 @@ def test_replay_keeps_one_head_per_conversation_and_progresses_past_bulk_bytes(
             release.set()
             await asyncio.wait_for(task, 2)
             assert not durable.exists()
-            assert executor.spool.pending() == (second,)
-            await executor._replay()
+            assert sent.index(first.submission_id) < sent.index(second.submission_id)
             assert executor.spool.pending() == ()
         finally:
             release.set()
@@ -1398,6 +1401,136 @@ def test_quiesce_counts_admitted_input_task_before_it_starts_and_refuses_new_inp
         finally:
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", ["preview", "sftp"])
+def test_cleanup_failure_still_revokes_generation_drains_tasks_and_closes_outer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from planner.executor import mac as module
+
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        peer = install_control_peer(executor, monkeypatch)
+        exited = asyncio.Event()
+
+        @asynccontextmanager
+        async def context(*args: object) -> AsyncIterator[None]:
+            try:
+                yield None
+            finally:
+                exited.set()
+                if failure == "sftp":
+                    raise TimeoutError("SFTP cleanup failed")
+
+        async def broken_close() -> None:
+            # Generation access is already gone when closure raises.
+            assert executor._writer is None and not executor._handshake_accepted
+            raise TimeoutError("preview cleanup failed")
+
+        monkeypatch.setattr(module, "connect_sftp", context)
+        task = asyncio.create_task(executor._connected())
+        try:
+            while executor.state is not ConnectionState.ready:
+                await asyncio.sleep(0)
+            if failure == "preview":
+                executor._preview_streams = cast(
+                    MacPreviewForwards, SimpleNamespace(close=broken_close)
+                )
+            executor._stop.set()
+            with pytest.raises(TimeoutError, match="cleanup failed"):
+                await asyncio.wait_for(task, 2)
+            assert peer.closed and exited.is_set()
+            assert executor._writer is None and executor._sftp is None
+            assert executor.health().connection_state is ConnectionState.disconnected
+            assert not executor._pending and not executor._transfer_tasks
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_disconnect_closes_network_before_waiting_for_canceled_sftp_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SFTP close can wait for a peer reply until its outer channel terminates."""
+    from planner.executor import mac as module
+
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        peer = install_control_peer(executor, monkeypatch)
+        closed, canceled, entered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def close(connection: object) -> None:
+            peer.closed = True
+            peer.reader.feed_eof()
+            closed.set()
+
+        async def transfer() -> None:
+            try:
+                entered.set()
+                await asyncio.Event().wait()
+            finally:
+                canceled.set()
+                # Models the SFTP client's file context waiting for FXP_CLOSE.
+                await closed.wait()
+
+        monkeypatch.setattr(module, "close_connection", close)
+        connection = asyncio.create_task(executor._connected())
+        try:
+            while executor.state is not ConnectionState.ready:
+                await asyncio.sleep(0)
+            blocked = asyncio.create_task(transfer())
+            executor._transfer_tasks.add(blocked)
+            blocked.add_done_callback(executor._transfer_tasks.discard)
+            await entered.wait()
+            executor._stop.set()
+            await asyncio.wait_for(connection, 2)
+            assert closed.is_set() and canceled.is_set()
+            assert not executor._transfer_tasks
+        finally:
+            closed.set()
+            connection.cancel()
+            await asyncio.gather(connection, return_exceptions=True)
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+def test_input_capacity_refusal_replies_instead_of_abandoning_waiting_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from planner.executor.contracts import FileManifest, FileScope, FileTransferSlot
+
+    async def run() -> None:
+        executor = make_executor(tmp_path)
+        executor._handshake_accepted = True
+        executor._sftp = cast(asyncssh.SFTPClient, object())
+        executor._transfers = 4
+        send = AsyncMock()
+        monkeypatch.setattr(executor, "_send", send)
+        slot = FileTransferSlot(
+            "slot",
+            "download",
+            FileManifest("publication", FileScope.conversation, "c_one", "input", "a" * 64, 1),
+        )
+        try:
+            await executor._input(WireMessage(WireMessageKind.file_slot, "caller", as_object(slot)))
+            message = send.call_args.args[0]
+            assert message.kind is WireMessageKind.error and message.request_id == "caller"
+            assert "capacity" in message.payload["message"]
+            assert executor._transfers == 4
+        finally:
             executor.spool.close()
 
     asyncio.run(run())

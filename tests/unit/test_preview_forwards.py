@@ -140,3 +140,62 @@ def test_idle_preview_stream_stops_at_deadline(monkeypatch: pytest.MonkeyPatch) 
         writer.write.assert_not_called()
 
     asyncio.run(exercise())
+
+
+def test_one_replaced_socket_does_not_skip_other_listener_cleanup(tmp_path: Path) -> None:
+    from planner.previews.forward import ForwardLease
+
+    async def exercise() -> None:
+        forwards = PreviewForwards(tmp_path, AsyncMock(), lambda: True)
+        servers = []
+        sockets = []
+        paths = []
+        try:
+            for index in range(2):
+                path = tmp_path / str(index)
+                sock = socket.socket(socket.AF_UNIX)
+                sockets.append(sock)
+                sock.bind(str(path))
+                info = path.lstat()
+                server = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", 0)
+                servers.append(server)
+                paths.append(path)
+                forwards.leases[("ticket", index)] = ForwardLease(
+                    server, 1, path, (info.st_dev, info.st_ino)
+                )
+            paths[0].unlink()
+            paths[0].write_bytes(b"replacement")
+            with pytest.raises(ValueError, match="unsafe"):
+                await asyncio.wait_for(forwards.close(), 1)
+            assert all(not server.is_serving() for server in servers)
+            assert not forwards.leases
+            assert paths[0].read_bytes() == b"replacement"
+            assert not paths[1].exists()
+        finally:
+            for server in servers:
+                server.close()
+                await server.wait_closed()
+            for sock in sockets:
+                sock.close()
+
+    asyncio.run(exercise())
+
+
+def test_mac_close_drains_all_leases_after_one_listener_timeout(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        connection = Mock(spec=asyncssh.SSHClientConnection)
+        listeners = [Mock(spec=asyncssh.SSHListener) for _ in range(2)]
+        listeners[0].wait_closed = AsyncMock(side_effect=TimeoutError("listener timeout"))
+        listeners[1].wait_closed = AsyncMock()
+        connection.start_unix_server = AsyncMock(side_effect=listeners)
+        forwards = MacPreviewForwards(connection, tmp_path, lambda: True)
+        for name in ("a", "b"):
+            await forwards.bind(str(tmp_path / (name * 32)), 8080)
+        with pytest.raises(TimeoutError, match="listener timeout"):
+            await asyncio.wait_for(forwards.close(), 1)
+        assert not forwards.leases
+        for listener in listeners:
+            listener.close.assert_called_once()
+            listener.wait_closed.assert_awaited_once()
+
+    asyncio.run(exercise())

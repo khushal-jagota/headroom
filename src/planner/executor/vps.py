@@ -179,7 +179,7 @@ class ExecutorEndpoint:
         self._inventory: dict[str, ChildInventory] = {}
         self._retained_inventory: dict[str, CommandOutcome] = {}
         self._send_lock = asyncio.Lock()
-        self._input_transfer_lock = asyncio.Lock()
+        self._input_transfer_locks: dict[str, asyncio.Lock] = {}
         self._conversation_locks: dict[str, asyncio.Lock] = {}
         self.factory = RemoteBackendChildFactory(self.assign_child, self.send_command)
         self.file_receiver: Any = None
@@ -285,7 +285,8 @@ class ExecutorEndpoint:
             self._responses.pop(request_id, None)
 
     async def _transfer_command_inputs(self, command: ChildCommand) -> None:
-        async with self._input_transfer_lock:
+        lock = self._input_transfer_locks.setdefault(command.child.conversation_id, asyncio.Lock())
+        async with lock:
             await self._transfer_command_inputs_locked(command)
 
     async def _transfer_command_inputs_locked(self, command: ChildCommand) -> None:
@@ -739,10 +740,12 @@ class ExecutorEndpoint:
             self._preview_forwards = None
             if old_writer is not None and old_writer is not writer:
                 old_writer.close()
-            if old_previews is not None:
-                await old_previews.close()
-            if old_identity is not None:
-                await self._close_transport(old_identity)
+            try:
+                if old_previews is not None:
+                    await old_previews.close()
+            finally:
+                if old_identity is not None:
+                    await self._close_transport(old_identity)
             if self.writer is not writer or self.identity != identity:
                 return
             self._inventory = {}
@@ -801,12 +804,16 @@ class ExecutorEndpoint:
                         response_future.set_exception(ConnectionError("executor link lost"))
             writer.close()
             current_forwards = self._preview_forwards if self.identity == identity else None
-            if forwards is not None:
-                await forwards.close()
-            if current_forwards is not None:
-                await current_forwards.close()
-            if identity is not None:
-                await self._close_transport(identity)
+            try:
+                if forwards is not None:
+                    await forwards.close()
+            finally:
+                try:
+                    if current_forwards is not None:
+                        await current_forwards.close()
+                finally:
+                    if identity is not None:
+                        await self._close_transport(identity)
 
     async def _measure_clock(self) -> None:
         sent = now_ms()
@@ -1107,14 +1114,16 @@ class ExecutorEndpoint:
 
     async def _close_transport(self, identity: ExecutorIdentity) -> None:
         service = self._transports.pop(identity, None)
-        if service is not None:
-            await service.close()
-        for key in tuple(self._upload_slots):
-            if key[0] == identity:
-                self._upload_slots.pop(key)
-        root = self._transport_roots.pop(identity, None)
-        if root is not None:
-            root.cleanup()
+        try:
+            if service is not None:
+                await service.close()
+        finally:
+            for key in tuple(self._upload_slots):
+                if key[0] == identity:
+                    self._upload_slots.pop(key)
+            root = self._transport_roots.pop(identity, None)
+            if root is not None:
+                root.cleanup()
 
 
 def _object(value: object) -> JsonObject:

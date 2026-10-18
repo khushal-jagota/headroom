@@ -274,8 +274,8 @@ SFTP is never a fallback. Missing capabilities refuse work and grant no authorit
 for host configuration changes. Both connections share the outer TCP transport,
 so underlying TCP contention remains.
 
-The restricted service audits each inherited SFTP operation. Mutation, path,
-metadata, filesystem, and link extensions refuse. The standard read-only
+The restricted service audits each inherited SFTP operation. Unapproved path,
+metadata, filesystem, and link operations refuse. The standard read-only
 `limits@openssh.com` response remains advisory. Its library and OS maxima grant no
 additional Panels authority. Panels enforces its smaller bounds independently.
 

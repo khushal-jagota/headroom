@@ -312,9 +312,15 @@ class MacExecutor:
                 )
             )
             return
-        slot = TypeAdapter(FileTransferSlot).validate_python(message.payload)
-        if slot.direction != "download" or self._transfers >= SFTP_MAX_TRANSFERS:
-            raise ValueError("invalid input slot or transfer capacity")
+        try:
+            slot = TypeAdapter(FileTransferSlot).validate_python(message.payload)
+            if slot.direction != "download" or self._transfers >= SFTP_MAX_TRANSFERS:
+                raise ValueError("invalid input slot or transfer capacity")
+        except ValueError as error:
+            await self._send(
+                WireMessage(WireMessageKind.error, message.request_id, {"message": str(error)})
+            )
+            return
         identity = self.identity
         self._transfers += 1
         self.paths.run.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -350,38 +356,42 @@ class MacExecutor:
             temporary.unlink(missing_ok=True)
 
     async def _replay(self) -> None:
-        # A bounded batch has only one admitted head per conversation. Failed heads
-        # retain their bytes and do not delay independent conversations.
+        # Admit one head per conversation and refill capacity after every receipt.
+        # A blocked conversation retains its bytes without stopping other heads.
         async with self._replay_lock:
-            heads = await asyncio.to_thread(self.spool.pending_heads)
-            iterator = iter(heads)
-            tasks: set[asyncio.Task[None]] = set()
+            tasks: dict[asyncio.Task[bool], str] = {}
+            blocked: set[str] = set()
 
-            async def submit(envelope: QueuedEnvelope) -> None:
+            async def submit(envelope: QueuedEnvelope) -> bool:
                 try:
                     await self._replay_envelope(envelope)
+                    return True
                 except (ConnectionError, BrokenPipeError, asyncssh.Error):
                     raise
                 except (ValueError, OSError):
                     logging.getLogger(__name__).exception(
                         "executor conversation replay blocked: %s", envelope.conversation_id
                     )
+                    return False
 
-            def admit() -> None:
-                while len(tasks) < SFTP_MAX_TRANSFERS:
-                    envelope = next(iterator, None)
-                    if envelope is None:
-                        return
-                    tasks.add(asyncio.create_task(submit(envelope)))
+            async def admit() -> None:
+                active = set(tasks.values())
+                for envelope in await asyncio.to_thread(self.spool.pending_heads):
+                    if len(tasks) >= SFTP_MAX_TRANSFERS:
+                        break
+                    if envelope.conversation_id not in active | blocked:
+                        tasks[asyncio.create_task(submit(envelope))] = envelope.conversation_id
+                        active.add(envelope.conversation_id)
 
             try:
-                admit()
+                await admit()
                 while tasks:
-                    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                    tasks = set(pending)
+                    done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                     for task in done:
-                        await task
-                    admit()
+                        conversation = tasks.pop(task)
+                        if not await task:
+                            blocked.add(conversation)
+                    await admit()
             finally:
                 for task in tasks:
                     task.cancel()
@@ -503,8 +513,9 @@ class MacExecutor:
                 raise ValueError("restricted SFTP endpoint refused")
             endpoint = TypeAdapter(SftpEndpoint).validate_python(opened.payload["endpoint"])
             nonlocal sftp_context
-            sftp_context = connect_sftp(outer, endpoint, client_key, self.paths.run)
-            self._sftp = await sftp_context.__aenter__()
+            opening_sftp = connect_sftp(outer, endpoint, client_key, self.paths.run)
+            self._sftp = await opening_sftp.__aenter__()
+            sftp_context = opening_sftp
             self._preview_streams = MacPreviewForwards(
                 outer,
                 Path(str(opened.payload["preview_root"])),
@@ -539,10 +550,9 @@ class MacExecutor:
             for task in done:
                 await task
         finally:
+            # Revoke generation access before any fallible cleanup can yield.
             self._handshake_accepted = False
-            if self._preview_streams is not None:
-                await self._preview_streams.close()
-                self._preview_streams = None
+            previews, self._preview_streams = self._preview_streams, None
             self.state = ConnectionState.disconnected
             if self.lost_at_ms is None:
                 self.lost_at_ms = now_ms()
@@ -550,16 +560,30 @@ class MacExecutor:
             for future in self._pending.values():
                 if not future.done():
                     future.set_exception(ConnectionError("executor link lost"))
-            for task in (reader_task, session_task, stop_task):
+            transfers = tuple(self._transfer_tasks)
+            for task in (reader_task, session_task, stop_task, *transfers):
                 task.cancel()
-            await asyncio.gather(reader_task, session_task, stop_task, return_exceptions=True)
-            for transfer in tuple(self._transfer_tasks):
-                transfer.cancel()
-            await asyncio.gather(*self._transfer_tasks, return_exceptions=True)
-            self._sftp = None
-            if sftp_context is not None:
-                await sftp_context.__aexit__(None, None, None)
-            await close_connection(outer)
+            # A canceled SFTP operation can await FXP_CLOSE in its context exit.
+            # Terminate channels before waiting for those canceled operations.
+            try:
+                await close_connection(outer)
+            finally:
+                try:
+                    await asyncio.gather(
+                        reader_task,
+                        session_task,
+                        stop_task,
+                        *transfers,
+                        return_exceptions=True,
+                    )
+                finally:
+                    self._sftp = None
+                    try:
+                        if previews is not None:
+                            await previews.close()
+                    finally:
+                        if sftp_context is not None:
+                            await sftp_context.__aexit__(None, None, None)
 
     async def handle_ipc(self, request: IpcRequest) -> IpcResponse:
         try:

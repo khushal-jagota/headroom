@@ -16,6 +16,7 @@ from planner.executor.configuration import ExecutorPaths
 from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,
+    ExecutorSshConfig,
     FileScope,
     JsonObject,
     ReceiptDisposition,
@@ -33,7 +34,9 @@ def test_replay_pin_retains_bytes_after_concurrent_receipt_until_transfer_finish
         mac = MacExecutor(
             paths=ExecutorPaths(tmp_path / "mac"),
             revision="a" * 40,
-            ssh_argv=(),
+            ssh_config=ExecutorSshConfig(
+                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+            ),
             panels_server_url="http://unused",
         )
         source = tmp_path / "source"
@@ -50,8 +53,12 @@ def test_replay_pin_retains_bytes_after_concurrent_receipt_until_transfer_finish
         )
         durable_path = mac.spool.snapshots(row.submission_id)[0].local_path
         receipt = AcceptanceReceipt(
-            row.sender_id, row.submission_id, row.payload_sha256,
-            ReceiptDisposition.accepted, {}, 100,
+            row.sender_id,
+            row.submission_id,
+            row.payload_sha256,
+            ReceiptDisposition.accepted,
+            {},
+            100,
         )
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -119,8 +126,12 @@ def test_replay_drains_conversation_heads_and_quiescence_counts_without_full_inv
 ) -> None:
     async def run() -> None:
         mac = MacExecutor(
-            paths=ExecutorPaths(tmp_path), revision="a" * 40,
-            ssh_argv=(), panels_server_url="http://unused",
+            paths=ExecutorPaths(tmp_path),
+            revision="a" * 40,
+            ssh_config=ExecutorSshConfig(
+                "unused", 1, "unused", tmp_path / "key", tmp_path / "hosts"
+            ),
+            panels_server_url="http://unused",
         )
         for conversation in ("c_one", "c_one", "c_two", "c_two"):
             mac.spool.mint_envelope(
@@ -138,8 +149,12 @@ def test_replay_drains_conversation_heads_and_quiescence_counts_without_full_inv
             assert isinstance(sequence, int)
             visited.setdefault(conversation, []).append(sequence)
             receipt = AcceptanceReceipt(
-                str(payload["sender_id"]), str(payload["submission_id"]),
-                str(payload["payload_sha256"]), ReceiptDisposition.accepted, {}, 100,
+                str(payload["sender_id"]),
+                str(payload["submission_id"]),
+                str(payload["payload_sha256"]),
+                ReceiptDisposition.accepted,
+                {},
+                100,
             )
             return WireMessage(WireMessageKind.receipt, "row", as_object(receipt))
 
