@@ -65,7 +65,7 @@ def test_supported_catalog_preserves_historical_connected_pages(
         {
             "title": "Historical personal outcome remains reviewable",
             "worker_type": "coding",
-            "kickoff_note": "Original personal brief",
+            "brief": "Original personal brief",
             "orchestrator": {"kind": "chief", "id": "chief"},
         },
     )
@@ -76,7 +76,7 @@ def test_supported_catalog_preserves_historical_connected_pages(
         {
             "title": "Historical planning review remains readable",
             "worker_type": "coding",
-            "kickoff_note": "Original planning review",
+            "brief": "Original planning review",
             "orchestrator": {"kind": "chief", "id": "chief"},
         },
     )

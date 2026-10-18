@@ -22,7 +22,7 @@ def create(conn: Connection) -> str:
         principal=OWNER_PRINCIPAL,
         now=10,
         title_max_chars=200,
-        kickoff_note="Agreed brief",
+        brief="Agreed brief",
     ).id
 
 

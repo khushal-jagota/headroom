@@ -577,6 +577,8 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     page = browser.new_page(viewport={"width": 1000, "height": 760})
     page.set_default_timeout(5_000)
+    browser_errors = []
+    page.on("pageerror", lambda error: browser_errors.append(str(error)))
     page.goto(sys.argv[1], wait_until="domcontentloaded")
 
     # Rest, peeked, and opened are three heights of one mounted conversation.
@@ -979,7 +981,7 @@ with sync_playwright() as playwright:
 
     # The right of the composer is what there is to do, in the agreed order. A composer
     # with nothing in it offers no Send at all — not a greyed-out one — and the control
-    # that stops the work sits before the microphone.
+    # that stops the work sits after the microphone, as the approved composer design specifies.
     def submit_order(page):
         return page.locator(".chat-submit > *").evaluate_all(
             """els => els.map(e =>
@@ -1008,12 +1010,12 @@ with sync_playwright() as playwright:
     page.wait_for_function(
         "() => document.querySelector('[data-conversation-stop]') !== null"
     )
-    assert submit_order(page) == ["delivery", "stop", "mic", "send"]
+    assert submit_order(page) == ["delivery", "mic", "stop", "send"]
     page.locator(INPUT).fill("")
     page.wait_for_function(
         "() => document.querySelector('[data-conversation-send]') === null"
     )
-    assert submit_order(page) == ["delivery", "stop", "mic"]
+    assert submit_order(page) == ["delivery", "mic", "stop"]
 
     # The head carries no worker title and no launch folder. The folder is still one
     # press away, where the card keeps everything else it is not showing.
@@ -1166,6 +1168,44 @@ with sync_playwright() as playwright:
     page.wait_for_function(
         "entry => document.querySelector('[data-conversation-catalog-active]')"
         "?.getAttribute('data-conversation-catalog-entry') === entry", arg=wanted_entry)
+
+    # A resting card grows intrinsically inside the bounded conversation layer.
+    # Its own height cannot be the ruler for its content cap: that creates a shrinking
+    # ResizeObserver feedback loop. Collapse/reopen must preserve the long draft.
+    page.reload(wait_until="domcontentloaded")
+    state(page, "rest")
+    long_draft = "\n".join("Resting draft line " + str(n) for n in range(40))
+    page.locator(INPUT).fill(long_draft)
+    state(page, "rest")
+    def measure_writing_area():
+        return page.locator(INPUT).evaluate("""e => ({
+          height:e.getBoundingClientRect().height,line:parseFloat(getComputedStyle(e).lineHeight),
+          overflow:getComputedStyle(e).overflowY})""")
+    def settle_frames():
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))))")
+    settle_frames()
+    resting = measure_writing_area()
+    assert resting["height"] >= resting["line"] * 3, resting
+    assert resting["height"] <= resting["line"] * 12 + 1, resting
+    assert resting["overflow"] == "auto", resting
+    for _ in range(3):
+        settle_frames()
+        assert measure_writing_area() == resting
+    page.locator(INPUT).click()
+    state(page, "peeked")
+    settle_frames()
+    peeked = measure_writing_area()
+    assert peeked["height"] >= peeked["line"] * 2, peeked
+    page.keyboard.press("Escape")
+    state(page, "rest")
+    settle_frames()
+    assert measure_writing_area() == resting
+    page.locator(INPUT).click()
+    state(page, "peeked")
+    settle_frames()
+    assert measure_writing_area() == peeked
+    assert page.locator(INPUT).input_value() == long_draft
+    assert not browser_errors, browser_errors
 
     browser.close()
 

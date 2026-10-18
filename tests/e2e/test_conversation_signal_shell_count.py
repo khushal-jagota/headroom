@@ -54,7 +54,7 @@ def test_shell_counts_actual_unique_conversations_without_worker_claims(
         "title": "Count supervisor", "project_id": project["id"],
     })
     tickets = [api.direct_post(server, "/api/tickets", {
-        "title": title, "worker_type": "coding", "kickoff_note": "Bounded count proof.",
+        "title": title, "worker_type": "coding", "brief": "Bounded count proof.",
         "orchestrator": {"kind": "sprint_item", "id": item["id"]},
     }) for title in ("Count Worker", "Duplicate association to same conversation")]
     # Match the existing mark proof's real parked owner-proposal fixture: rows are

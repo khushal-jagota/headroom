@@ -75,7 +75,7 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
         {
             "title": "Verify approval and revision on the approved Worker page",
             "worker_type": "coding",
-            "kickoff_note": "The brief is ready for review.",
+            "brief": "The brief is ready for review.",
             "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )
@@ -89,7 +89,7 @@ def test_page_approval_revision_artifacts_and_responsive_layout(
             "title": "Worker from a different project",
             "worker_type": "coding",
             "project_id": unrelated_project["id"],
-            "kickoff_note": "Not in the selected project.",
+            "brief": "Not in the selected project.",
             "orchestrator": {"kind": "chief", "id": "chief"},
         },
     )

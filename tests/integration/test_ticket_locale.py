@@ -55,7 +55,7 @@ def test_http_mac_refusal_requirements_explicit_override_and_schedule(
     request: JsonObject = {
         "title": "Mac request",
         "worker_type": "coding",
-        "kickoff_note": "Check Mac requirements.",
+        "brief": "Check Mac requirements.",
         "orchestrator": {"kind": "chief", "id": "chief"},
     }
     for choices in ({"locale": "macos"}, {"project_id": project["id"]}):

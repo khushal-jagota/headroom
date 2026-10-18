@@ -118,7 +118,7 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
         {
             "title": LONG_TITLE,
             "worker_type": "coding",
-            "kickoff_note": "Review the brief.",
+            "brief": "Review the brief.",
             "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )
@@ -133,7 +133,7 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
             {
                 "title": title,
                 "worker_type": "coding",
-                "kickoff_note": "Agreed brief.",
+                "brief": "Agreed brief.",
                 "orchestrator": {"kind": "sprint_item", "id": item["id"]},
                 "blocked_by_ticket_ids": blockers,
             },
@@ -149,7 +149,7 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
         {
             "title": "Answer only Worker with no direct message",
             "worker_type": "coding",
-            "kickoff_note": "Agreed brief.",
+            "brief": "Agreed brief.",
             "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         },
     )
@@ -439,7 +439,7 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
             {
                 "title": title,
                 "worker_type": "coding",
-                "kickoff_note": "Historical brief.",
+                "brief": "Historical brief.",
                 "orchestrator": {"kind": "sprint_item", "id": parent["id"]},
             },
         )
@@ -620,7 +620,7 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
         {
             "title": "Unread child assigned explicitly to Chief",
             "worker_type": "coding",
-            "kickoff_note": "Review this brief.",
+            "brief": "Review this brief.",
             "orchestrator": {"kind": "chief", "id": "chief"},
         },
     )

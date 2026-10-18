@@ -41,7 +41,7 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
         assert unknown.status_code == 400
         made = client.post(
             "/api/tickets",
-            json={"title": "Coding", "worker_type": "coding", "kickoff_note": "k"},
+            json={"title": "Coding", "worker_type": "coding", "brief": "k"},
         )
         assert made.status_code == 200, made.json()
         assert made.json()["worker_type"] == "coding"

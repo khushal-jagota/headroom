@@ -225,7 +225,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                     "worker_type": "general",
                     "employee_backend": "codex",
                     "employee_launch_model": "gpt-6-luna",
-                    "kickoff_note": brief,
+                    "brief": brief,
                     "orchestrator": {"kind": "sprint_item", "id": item["id"]},
                 },
             )

@@ -1284,9 +1284,9 @@ def ticket_create(
     if kickoff_note is not None and kickoff_note_file is not None:
         http.fail_validation("kickoff note accepts only one note option", as_json)
     if kickoff_note_file is not None:
-        body["kickoff_note"] = _read_source(kickoff_note_file, as_json)
+        body["brief"] = _read_source(kickoff_note_file, as_json)
     elif kickoff_note is not None:
-        body["kickoff_note"] = kickoff_note
+        body["brief"] = kickoff_note
     if priority is not None:
         body["priority"] = priority
     if deadline is not None:

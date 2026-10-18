@@ -143,7 +143,7 @@ def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
             conn,
             worker_type="coding",
             title="Mid flight",
-            kickoff_note="Kickoff",
+            brief="Kickoff",
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,

@@ -150,7 +150,7 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
             {
                 "title": title,
                 "worker_type": "coding",
-                "kickoff_note": "Agreed brief.",
+                "brief": "Agreed brief.",
                 "orchestrator": {"kind": "sprint_item", "id": items[index]["id"]},
             },
         )
