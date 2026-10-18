@@ -17,11 +17,12 @@ let server;
 try {
   await writeFile(paths[0], `<script lang="ts">
 import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
+import { tick } from 'svelte';
 import BoardRoute from '../src/routes/BoardRoute.svelte';
 import { parseWorkspaceAddress } from '../src/lib/workspaceAddress';
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 let address = $state(parseWorkspaceAddress(window.location.hash)!);
-(window as any).__refresh = () => client.invalidateQueries();
+(window as any).__refresh = async () => { await client.invalidateQueries(); await tick(); };
 </script>
 <svelte:window onhashchange={() => address = parseWorkspaceAddress(window.location.hash) ?? address} />
 <div class="shell">
@@ -35,7 +36,7 @@ let address = $state(parseWorkspaceAddress(window.location.hash)!);
   await server.listen();
   const { port } = server.httpServer.address();
   const script = String.raw`
-import json, os, pathlib, sys
+import json, os, pathlib, sys, time
 from playwright.sync_api import sync_playwright, expect
 
 quiet = dict(awaiting_reply=False, awaiting_answer=False, awaiting_approval=False,
@@ -110,10 +111,51 @@ def opened(page, key):
 def bottom(box): return box["y"] + box["height"]
 
 def screenshot(page, name):
-    directory = os.environ.get("PANELS_UI_PROOF_DIR")
+    directory = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR") or os.environ.get("PANELS_UI_PROOF_DIR")
     if directory:
         pathlib.Path(directory).mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(pathlib.Path(directory) / (name + ".png")), full_page=True)
+
+def motion_idle(page):
+    # Infinite running-status spinners are unrelated to structural rail motion.
+    page.wait_for_function("""() => !document.querySelector('.approved-rail').hasAttribute('data-rail-motion-busy') && ![...document.querySelector('.approved-rail').getAnimations({subtree:true})]
+        .some(a => a.playState === 'running' && a.effect.getTiming().iterations !== Infinity)""")
+    page.wait_for_timeout(40)
+
+def motion_frames(page, name, action="void window.__refresh()"):
+    page.evaluate("""action => {
+      window.__settledFrames = []; const start = performance.now();
+      const sample = () => {
+        const find = s => document.querySelector(s);
+        const opacity = n => n ? Number(getComputedStyle(n).opacity) : null;
+        const body = find('[data-settled-scroll]');
+        const card = find('[data-sprint-item="si_active_00"]');
+        const row = find('[data-settled-item="si_active_00"]');
+        const child = find('[data-message-conversation="conv-t_archived_message"]');
+        const below = find('[data-settled-item="si_settled_01"]');
+        window.__settledFrames.push({ms:performance.now()-start,
+          card:opacity(card),row:opacity(row),child:opacity(child),
+          body:body ? opacity(body)*opacity(body.querySelector('[data-settled-item]')) : null,height:find('.settled')?.getBoundingClientRect().height ?? 0,
+          below:below?.getBoundingClientRect().y ?? null,
+          chevron:getComputedStyle(find('.settled-chevron')).transform,
+          count:find('[data-settled-count]')?.textContent,
+          countOpacity:opacity(find('[data-settled-count]'))});
+        if(performance.now()-start<850) requestAnimationFrame(sample);
+      }; requestAnimationFrame(sample); (new Function(action))();
+    }""", action)
+    page.wait_for_timeout(90)
+    if name in ["settle", "reopen", "close"]:
+        screenshot(page, "settled-motion-" + name + "-early")
+    page.wait_for_timeout(180)
+    if name in ["settle", "reopen", "open"]:
+        screenshot(page, "settled-motion-" + name + "-late")
+    page.wait_for_timeout(650)
+    motion_idle(page)
+    values = page.evaluate("window.__settledFrames")
+    directory = os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR")
+    if directory:
+        pathlib.Path(directory, "settled-motion-" + name + ".json").write_text(json.dumps(values, indent=2))
+    return values
 
 def overflow(locator):
     return locator.evaluate("n => ({height:n.clientHeight, full:n.scrollHeight, top:n.scrollTop})")
@@ -204,6 +246,115 @@ with sync_playwright() as p:
     expect(page.locator('[data-sprint-ticket-id="t_agent"] .stage-mark')).to_have_count(0)
     expect(page.locator('[data-workspace-group="agent"] summary .sprint-workspace-count')).to_have_text("1")
 
+    # One connected sequence exercises the browser-only motion boundary using
+    # this existing host and fixture: no extra page, live backend, or matrix.
+    motion_started = time.monotonic()
+    # Keep both endpoints visible for the filmstrip, then restore the large
+    # existing fixture for overflow checks below.
+    all_cards = board["columns"][0]["cards"]
+    motion_ids = {"si_active_00", "si_settled_00", "si_settled_01"}
+    board["sprint_items"] = [i for i in items if i["id"] in motion_ids]
+    board["columns"][0]["cards"] = [t for t in all_cards if t["sprint_item_id"] in motion_ids]
+    page.evaluate("location.hash = '#/workspace?view=items'")
+    page.evaluate("window.__refresh()")
+    head = page.locator('.settled-head')
+    motion_idle(page)
+    opened_frames = motion_frames(page, "open", "document.querySelector('.settled-head').click()")
+    assert any(0 < x["body"] < 1 for x in opened_frames if x["body"] is not None), opened_frames
+    heights = [x["height"] for x in opened_frames]
+    assert any(1 < h < heights[-1] - 1 for h in heights), heights
+    assert len(set(x["chevron"] for x in opened_frames)) > 2
+    assert head.get_attribute('aria-expanded') == 'true'
+    stable = motion_frames(page, "unchanged-refresh")
+    assert all(x["below"] is not None for x in stable)
+    assert page.locator('[data-settled-item="si_settled_01"]').evaluate("n => getComputedStyle(n).opacity") == '1'
+    assert not page.locator('.settled .rail-moving').count()
+
+    moving_item = next(i for i in items if i["id"] == "si_active_00")
+    moving_item["settled"] = True
+    settled_frames = motion_frames(page, "settle")
+    exiting = [x for x in settled_frames if x["card"] is not None and 0 < x["card"] < 1]
+    arriving = [x for x in settled_frames if x["row"] is not None and 0 < x["row"] < 1]
+    assert exiting and arriving, settled_frames
+    assert max(x["ms"] for x in exiting) < min(x["ms"] for x in arriving)
+    assert all(x["row"] is None for x in exiting), "Destination appeared before source departure"
+    expect(page.locator('[data-settled-item="si_active_00"]')).to_have_count(1)
+    expect(page.locator('[data-sprint-item="si_active_00"]')).to_have_count(0)
+    expect(head).to_have_accessible_name("Settled (3)")
+    assert any(0 < x["countOpacity"] < 1 for x in settled_frames if x["countOpacity"] is not None)
+    moving_item["settled"] = False
+    reopened_frames = motion_frames(page, "reopen")
+    exiting = [x for x in reopened_frames if x["row"] is not None and 0 < x["row"] < 1]
+    arriving = [x for x in reopened_frames if x["card"] is not None and 0 < x["card"] < 1]
+    assert exiting and arriving, reopened_frames
+    assert max(x["ms"] for x in exiting) < min(x["ms"] for x in arriving)
+    expect(page.locator('[data-settled-item="si_active_00"]')).to_have_count(0)
+    expect(page.locator('[data-sprint-item="si_active_00"]')).to_have_count(1)
+    expect(head).to_have_accessible_name("Settled (2)")
+
+    child_ticket = next(t for i in items for t in i["tickets"] if t["id"] == "t_archived_message")
+    # The existing active Worker hover freezes global structural motion, while
+    # settled child conversation facts must still update immediately.
+    page.locator('[data-ticket-id="t_work_00"]').hover()
+    child_ticket["awaiting_reply"] = False
+    child_ticket["conversation_signal"] = dict(working=False,message_for_owner=False)
+    page.evaluate("window.__refresh()")
+    child = page.locator('[data-message-conversation="conv-t_archived_message"]')
+    expect(child).to_have_count(1)
+    expect(child.locator('.stage-mark')).to_have_count(0)
+    page.mouse.move(1430,10)
+    child_exit = motion_frames(page, "child-exit", "")
+    assert any(x["child"] is not None and 0 < x["child"] < 1 for x in child_exit)
+    assert child_exit[-1]["child"] is None
+    positions = [x["below"] for x in child_exit if x["below"] is not None]
+    # This survivor is anchored above the fixed footer before and after the
+    # preceding child disappears. Parent height motion must not apply its
+    # displacement twice and make the survivor jump away, then return.
+    assert max(positions)-min(positions) < 2, positions
+    child_ticket["awaiting_reply"] = True
+    child_ticket["conversation_signal"] = dict(working=False,message_for_owner=True)
+    child_enter = motion_frames(page, "child-enter")
+    assert any(x["child"] is not None and 0 < x["child"] < 1 for x in child_enter)
+    expect(page.locator('[data-message-conversation="conv-t_archived_message"]')).to_have_count(1)
+
+    # A collapse containing focus hands it back to the persistent header.
+    page.locator('[data-settled-item="si_settled_00"] .settled-title').focus()
+    closed_frames = motion_frames(page, "close", "document.querySelector('.settled-head').click()")
+    assert any(x["body"] is not None and 0 < x["body"] < 1 for x in closed_frames)
+    assert any(1 < x["height"] < closed_frames[0]["height"] - 1 for x in closed_frames)
+    expect(head).to_be_focused()
+    expect(page.locator('[data-settled-item]')).to_have_count(0)
+    moving_item["settled"] = True
+    rapid = motion_frames(page, "rapid-refresh", """const head=document.querySelector('.settled-head');
+      head.click(); setTimeout(()=>{head.click(); void window.__refresh();},40);
+      setTimeout(()=>head.click(),80);""")
+    expect(head).to_have_attribute('aria-expanded', 'true')
+    expect(page.locator('[data-settled-item="si_active_00"]')).to_have_count(1)
+    expect(head).to_have_accessible_name('Settled (3)')
+    assert not page.locator('.settled .rail-moving').count()
+
+    # Changing the OS preference during an exit cancels the current beat and
+    # still drains to the requested final state without leftover inline styles.
+    page.evaluate("document.querySelector('.settled-head').click()")
+    page.wait_for_function("document.querySelector('.settled .rail-moving') !== null")
+    page.emulate_media(reduced_motion='reduce')
+    motion_idle(page)
+    expect(page.locator('[data-settled-item]')).to_have_count(0)
+    assert page.locator('.settled').evaluate("n => n.style.overflow === '' && n.getAnimations({subtree:true}).length === 0")
+    page.evaluate("document.querySelector('.settled-head').click()")
+    expect(page.locator('[data-settled-item]')).to_have_count(3)
+    moving_item["settled"] = False
+    page.evaluate("window.__refresh()")
+    expect(page.locator('[data-sprint-item="si_active_00"]')).to_have_count(1)
+    expect(head).to_have_accessible_name('Settled (2)')
+    page.evaluate("document.querySelector('.settled-head').click()")
+    expect(page.locator('[data-settled-item]')).to_have_count(0)
+    assert page.locator('.settled').evaluate("n => n.getAnimations({subtree:true}).length") == 0
+    page.emulate_media(reduced_motion='no-preference')
+    board["sprint_items"] = items
+    board["columns"][0]["cards"] = all_cards
+    print('Added Settled connected motion sequence seconds:', round(time.monotonic()-motion_started, 2))
+
     # Real rail layout at tall, short, and compact viewports with both lists overflowing.
     for label, width, height in [("tall",1440,1000), ("short",1280,480), ("compact",390,560)]:
         page.set_viewport_size(dict(width=width, height=height))
@@ -233,6 +384,7 @@ with sync_playwright() as p:
 
         head.click()
         expect(head).to_have_attribute("aria-expanded", "true")
+        motion_idle(page)
         expect(page.locator("[data-settled-item]")).to_have_count(24)
         body = page.locator("[data-settled-scroll]")
         rail_box, settled_box = rail.bounding_box(), settled.bounding_box()
@@ -263,6 +415,7 @@ with sync_playwright() as p:
         screenshot(page, "settled-" + label + "-last-rows")
         head.click()
         expect(head).to_have_attribute("aria-expanded", "false")
+        motion_idle(page)
         assert abs(head.bounding_box()["y"] - (bottom(settled_box) - head_box["height"])) < 2
         # Footer links remain keyboard accessible and retain actual navigation targets.
         config.focus()
@@ -272,6 +425,7 @@ with sync_playwright() as p:
         page.wait_for_function("location.hash === '#/backends'")
         page.evaluate("location.hash = '#/workspace?view=items'")
         head.click()
+        motion_idle(page)
         body = page.locator("[data-settled-scroll]")
         body.evaluate("n => n.scrollTop = 0")
         expect(page.locator('[data-settled-item="si_settled_00"] .settled-title .stage-mark')).to_have_attribute("aria-label", "Unread message")

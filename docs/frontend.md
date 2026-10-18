@@ -92,6 +92,17 @@ One screen per part of the system:
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
 
+  Settling fades the active card and its rows out over 160 milliseconds before
+  the Settled row arrives with the usual 140 millisecond delay and 320 millisecond
+  fade. Reopening uses the same sequence in reverse: the card and headings arrive
+  first, then its Workers. Layout changes share the existing 340 millisecond
+  space adjustment. A closed Settled section stays closed and its count crossfades.
+  Opening and closing change section height and rotate the chevron together;
+  contents fade within that movement. Child-message arrivals and departures use
+  the same queue, so the rows below slide when their height changes. The latest
+  requested state waits through a transition. Reduced motion applies the final
+  state immediately, and closing returns focus to the header if it hid focus.
+
   In full workspace lists, backlogged Tickets use one Backlog header after the attention headers and before Agent.
   This rule applies to every backlogged Ticket supplied to the shared presentation,
   including terminal history. Backlog uses normal rows and starts open. It does not

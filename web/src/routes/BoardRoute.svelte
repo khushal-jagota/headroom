@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { createRailMotionController } from "../lib/workspaceRailMotion";
+  import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
@@ -29,12 +29,20 @@
   const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspace(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
   let allCards = $derived((board.data?.columns ?? []).flatMap((column) => column.cards));
   let desiredRail = $derived(buildWorkspaceRail(allCards, board.data?.sprint_items ?? []));
-  let rail = $state(buildWorkspaceRail([]));
+  let presentation = $state<WorkspaceRailPresentation>({rail:buildWorkspaceRail([]), settledOpen:false, settledMessages:{}});
+  let rail = $derived(presentation.rail);
+  let settledOpen = $derived(presentation.settledOpen);
+  let requestedSettledOpen = $state(false);
   let messages = $derived(workspaceMessageConversations(allCards, board.data?.sprint_items ?? [], workers.data?.chief_of_staff));
   let itemPane = $derived(opening.markedItemId !== null);
   let railElement = $state<HTMLElement | null>(null);
-  const motion = createRailMotionController(() => railElement, () => rail, (next) => rail = next);
-  $effect(() => { const next = desiredRail; untrack(() => motion.update(next)); });
+  const motion = createRailMotionController(() => railElement, () => presentation, (next) => presentation = next);
+  $effect(() => {
+    const next = {rail:desiredRail, settledOpen:requestedSettledOpen,
+      settledMessages:Object.fromEntries(desiredRail.settledItems.map((item) =>
+        [item.id, workspaceRailChildMessageConversations(messages, item, allCards)]))};
+    untrack(() => motion.update(next));
+  });
   function freezeRows(event: PointerEvent, leaving: boolean): void {
     if (event.pointerType === "touch") return;
     const target = (leaving ? event.relatedTarget : event.target) as HTMLElement | null;
@@ -44,7 +52,6 @@
   let railWidth = $state<number | null>(null);
   let measuredRailWidth = $state(272);
   let resizing = $state(false);
-  let settledOpen = $state(false);
   let busyItem = $state<string | null>(null);
   let settleError = $state("");
   let hoverVisible = $state(false);
@@ -156,17 +163,17 @@
             {/each}
             {#if settleError}<p role="alert">{settleError}</p>{/if}
             </div>
-            <div class="settled" class:settled--open={settledOpen}>
-              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => settledOpen = !settledOpen}><span>Settled <span class="count" data-settled-count>({rail.settledItems.length})</span></span><span class="rule"></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+            <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
+              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => requestedSettledOpen = !requestedSettledOpen}><span>Settled <span class="settled-count"><span class="count" data-settled-count>({rail.settledItems.length})</span></span></span><span class="rule"></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               {#if settledOpen}
                 <div class="settled-body" data-settled-scroll onscroll={() => hover.leave()}>
                 {#each rail.settledItems as item (item.id)}
-                  <div class="settled-item" data-settled-item={item.id}>
+                  <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
                   <div class="settled-row">
                     <button class="settled-title" type="button" onclick={() => selectItem(item.id)} use:railPreview={{show:(target, immediate) => hoverItem(target,item,immediate), leave:() => hover.leave()}}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
                     <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
                   </div>
-                  <WorkspaceMessages conversations={workspaceRailChildMessageConversations(messages, item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
+                  <WorkspaceMessages conversations={presentation.settledMessages[item.id] ?? []} motionPrefix={item.id} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
                   </div>
                 {/each}
                 </div>
@@ -240,6 +247,7 @@
   .settled { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); }
   .settled-head { flex:none; display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) 0; border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
   .settled-head:hover { color:var(--text-strong); }
+  .settled-count { position:relative; display:inline-block; }
   .settled-chevron { width:16px; height:16px; flex:none; }
   .settled--open .settled-chevron { transform:rotate(180deg); }
   .rail-utilities { display:flex; flex:none; align-items:center; gap:var(--space-1); padding-top:var(--space-2); border-top:var(--border-hairline) solid var(--border-color); }
