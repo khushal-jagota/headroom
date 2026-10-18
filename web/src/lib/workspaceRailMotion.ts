@@ -18,12 +18,33 @@ export type WorkspaceRailPresentation = {
   settledMessages: Record<string, WorkspaceMessageConversation[]>;
 };
 
-type Part = { node: HTMLElement; rect: DOMRect; color: string; mark: string[] | null; parent: string | null };
+type MotionSurface = { background: string; surrounding: string };
+type Part = { surface: MotionSurface; node: HTMLElement; rect: DOMRect; color: string; mark: string[] | null; parent: string | null };
 function snapshot(root: HTMLElement | null): Map<string, Part> {
+  // Resolve the complete batch before motion classes alter any ancestor surface.
+  // Canvas composites transparent CSS colors over their real ancestor backgrounds.
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  const context = canvas.getContext("2d", { willReadFrequently: true })!;
+  const backgrounds = new Map<HTMLElement, string>();
+  function background(node: HTMLElement | null): string {
+    if (!node) return "rgb(255, 255, 255)";
+    const cached = backgrounds.get(node);
+    if (cached) return cached;
+    const behind = background(node.parentElement);
+    context.fillStyle = behind;
+    context.fillRect(0, 0, 1, 1);
+    context.fillStyle = getComputedStyle(node).backgroundColor;
+    context.fillRect(0, 0, 1, 1);
+    const [r, g, b] = context.getImageData(0, 0, 1, 1).data;
+    const color = `rgb(${r}, ${g}, ${b})`;
+    backgrounds.set(node, color);
+    return color;
+  }
   return new Map(Array.from(root?.querySelectorAll<HTMLElement>("[data-rail-motion]") ?? []).map((node) => {
     const mark = node.dataset.railMotion?.startsWith("row:") ? node.querySelector<HTMLElement>(".stage-mark--current-running") : null;
     const style = mark && getComputedStyle(mark);
-    return [node.dataset.railMotion!, { node, rect: node.getBoundingClientRect(), color: getComputedStyle(node).color,
+    return [node.dataset.railMotion!, { node, surface: { background: background(node), surrounding: background(node.parentElement) }, rect: node.getBoundingClientRect(), color: getComputedStyle(node).color,
       mark: style ? [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor] : null,
       parent: node.parentElement?.closest<HTMLElement>("[data-rail-motion]")?.dataset.railMotion ?? null }];
   }));
@@ -37,6 +58,12 @@ export function createRailMotionController(root: () => HTMLElement | null,
   let busy = false;
   let disposed = false;
   const animations = new Set<Animation>();
+  let surfaces = new Map<HTMLElement, MotionSurface>();
+  function measure() {
+    const parts = snapshot(root());
+    surfaces = new Map([...parts.values()].map((part) => [part.node, part.surface]));
+    return parts;
+  }
   let media: MediaQueryList | null = null;
   const motionPreferenceChanged = () => { if (media?.matches) for (const animation of animations) animation.cancel(); };
   const reduced = () => {
@@ -48,6 +75,11 @@ export function createRailMotionController(root: () => HTMLElement | null,
   };
   function animate(node: HTMLElement, frames: Keyframe[], duration: number, delay = 0, travelling = false, easing = RAIL_MOTION.ease): Promise<void> {
     if (reduced() || typeof node.animate !== "function") return Promise.resolve();
+    const surface = surfaces.get(node);
+    if (surface) {
+      node.style.setProperty("--rail-motion-background", surface.background);
+      node.style.setProperty("--rail-motion-surrounding", surface.surrounding);
+    }
     node.classList.add("rail-moving");
     const travellingCard = travelling ? node.closest<HTMLElement>(".orchestrator-card") : null;
     if (travelling) { node.classList.add("rail-travelling"); travellingCard?.classList.add("rail-travelling-card"); }
@@ -55,8 +87,11 @@ export function createRailMotionController(root: () => HTMLElement | null,
     animations.add(animation);
     return animation.finished.catch(() => {}).then(() => {
       animations.delete(animation);
-      if (!Array.from(animations).some((active) => (active.effect as KeyframeEffect)?.target === node))
+      if (!Array.from(animations).some((active) => (active.effect as KeyframeEffect)?.target === node)) {
         node.classList.remove("rail-moving", "rail-travelling");
+        node.style.removeProperty("--rail-motion-background");
+        node.style.removeProperty("--rail-motion-surrounding");
+      }
       if (travellingCard && !Array.from(animations).some((active) => {
         const target = (active.effect as KeyframeEffect)?.target;
         return target instanceof HTMLElement && target.classList.contains("rail-travelling") && travellingCard.contains(target);
@@ -99,7 +134,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
       void drain();
       return;
     }
-    const first = snapshot(root());
+    const first = measure();
     // Exit while the old space still exists. Headings leave with their last row.
     const remaining = new Set<string>(["card:chief", "settled-section", ...next.rail.items.map((item) => `card:${item.id}`)]);
     for (const [id, groups] of [["chief", next.rail.chiefGroups], ...next.rail.items.map((item) => [item.id, item.groups] as const)] as const) {
@@ -128,7 +163,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     apply(next);
     await tick();
     if (disposed) return;
-    const last = snapshot(root());
+    const last = measure();
     const plays: Promise<void>[] = [];
     if (section) {
       const newHeight = section.getBoundingClientRect().height;
@@ -223,6 +258,6 @@ export function createRailMotionController(root: () => HTMLElement | null,
       if (value && pending && !disposed) apply(signalsOnly(pending));
       if (!value) void drain();
     },
-    dispose() { root()?.removeAttribute("data-rail-motion-busy"); disposed = true; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
+    dispose() { root()?.removeAttribute("data-rail-motion-busy"); disposed = true; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
   };
 }

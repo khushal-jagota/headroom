@@ -68,7 +68,7 @@
   .bucket :global(.worker-row.ticket-row--active) { background:var(--surface-2); }
   .bucket[data-tone="quiet"] :global(.stage-mark--current-running) { border-color:var(--border-color); border-top-color:var(--text-faintest); border-right-color:var(--text-faintest); }
   .bucket :global(.worker-row:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
-  :global(.approved-rail .workspace-ticket-bucket .worker-row.rail-moving), :global(.approved-rail .bucket-label.rail-moving), :global(.approved-rail .orchestrator-card.rail-moving) { position:relative; z-index:1; transition:none; background:var(--surface-1); outline:4px solid var(--surface-1); }
+  :global(.approved-rail .workspace-ticket-bucket .worker-row.rail-moving), :global(.approved-rail .bucket-label.rail-moving), :global(.approved-rail .orchestrator-card.rail-moving) { position:relative; z-index:1; transition:none; background-color:var(--rail-motion-background); outline:4px solid var(--rail-motion-surrounding); }
   :global(.approved-rail .rail-travelling) { z-index:2; }
   :global(.approved-rail .orchestrator-card.rail-travelling-card) { z-index:3; }
   :global(.approved-rail .stage-mark.rail-moving) { background:transparent; outline:none; }

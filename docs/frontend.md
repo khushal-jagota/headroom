@@ -75,8 +75,9 @@ One screen per part of the system:
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group
   moves take 360–560 milliseconds according to distance. A new row opens space before
-  its fade. An exit fades before its space closes. Moving surfaces stay opaque, and the
-  travelling row and its card stay above their neighbors. Row and spinner colors blend
+  its fade. An exit fades before its space closes. Each moving surface uses its effective
+  background before motion starts. Its opaque edge uses the surrounding background,
+  so an active row keeps its shape. The travelling row and its card stay above their neighbors. Row and spinner colors blend
   across group changes. Structural updates wait while a pointer rests on a Worker row.
   Exact conversation signals and their conversation IDs stay live during that wait.
   Updates stay serial and retain the latest pending answer. Reduced motion stops CSS
