@@ -52,6 +52,11 @@ single document. It is read whole, written whole, and checked whole, because its
 mean nothing apart: stages that gate fields the type does not declare are not a partly
 valid Worker type, they are not one at all.
 
+A historical Ticket can hold text for a field its current Worker type no longer declares.
+Reads omit that text, and later Ticket writes preserve it in storage. This does not add
+a Stage or field to the current definition. Definition edits still refuse to remove a
+field that an unfinished Ticket uses. New values and pending proposals still require declared fields.
+
 Opening a database loads its Worker types into the process, and that is what the rest of
 Panels reads. Declaring or changing one is therefore a write, not a release: the change is
 in force as soon as it is stored.
