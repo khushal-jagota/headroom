@@ -225,6 +225,11 @@ browser selections, remain mandatory. Only the exact provider opt-in skip allowl
 excludes paid proof. Gate changes require the disposable hosted rehearsal before
 integration into the release branch.
 
+The integration bootstrap case remains. It runs the requested revision's builder
+with real dependencies and checks its installed result. The release gate uses the
+control revision's builder. These can differ during rollback, so the actual candidate
+smoke does not replace that source-builder proof.
+
 
 ## Disposable workflow rehearsal
 
