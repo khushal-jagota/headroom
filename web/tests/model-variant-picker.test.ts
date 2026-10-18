@@ -10,12 +10,13 @@ function picker(models: BackendModel[], model = "gpt-6.1-sol") {
 }
 
 describe("current model variants in the shared picker", () => {
-  it("shows the server variant beside its current model without deriving a family", () => {
+  it("shows the readable resolved model and effort while the list keeps its variant", () => {
     const view = picker([{
       model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,
       selected_variant: "sol", resolved_model_id: "gpt-6.1-sol"
     }]);
-    expect(view.face).toBe("sol · gpt-6.1-sol medium");
+    expect(view.face).toBe("GPT 6.1 Sol medium");
+    expect(view.modelValue).toBe("gpt-6.1-sol");
     expect(view.models).toEqual([{ value: "gpt-6.1-sol", name: "sol", detail: "gpt-6.1-sol" }]);
     expect(view.catalogueWarning).toBeNull();
   });
@@ -37,7 +38,8 @@ describe("current model variants in the shared picker", () => {
       selected_variant: "opus", resolved_model_id: "claude-opus-5-5"
     }], "opus");
     expect(view.modelValue).toBe("opus");
-    expect(view.face).toBe("opus · claude-opus-5-5 medium");
+    expect(view.face).toBe("Opus 5.5 medium");
+    expect(view.models).toEqual([{ value: "opus", name: "opus", detail: "claude-opus-5-5" }]);
   });
 
   it("preserves catalogue labels when the backend supplies no variant metadata", () => {
@@ -46,5 +48,36 @@ describe("current model variants in the shared picker", () => {
     }], "provider:custom");
     expect(view.face).toBe("Custom model medium");
     expect(view.models[0].name).toBe("Custom model");
+  });
+
+  it.each([
+    { resolved: null, expected: "Opus medium" },
+    { resolved: "opus", expected: "Opus medium" },
+    { resolved: "unrecognized-model-vNext", expected: "unrecognized-model-vNext medium" },
+    { resolved: "claude-opus-5-5[1m]", expected: "Opus 5.5 (1M) medium" },
+    { resolved: "claude-haiku-4-5-20251001", expected: "Haiku 4.5", efforts: [] },
+    { resolved: "gpt-6.1-sol", expected: "GPT 6.1 Sol medium", model: "gpt-6.1-sol", alias: "sol" }
+  ])("uses resolved evidence without invented versions or unsupported effort: $expected", ({
+    resolved, expected, efforts, model = "opus", alias = "opus"
+  }) => {
+    const view = picker([{
+      model_id: model, display_name: alias === "opus" ? "Opus" : alias, enabled: true,
+      selected_variant: alias, resolved_model_id: resolved,
+      ...(efforts ? { reasoning_effort_options: efforts } : {})
+    }], model);
+    expect(view.face).toBe(expected);
+    expect(view.modelValue).toBe(model);
+  });
+
+  it("prefers the catalogue name for the concrete resolution over an alias label", () => {
+    const view = picker([
+      {
+        model_id: "opus", display_name: "Opus", enabled: true,
+        selected_variant: "opus", resolved_model_id: "provider:custom"
+      },
+      { model_id: "provider:custom", display_name: "Custom model", enabled: true }
+    ], "opus");
+    expect(view.face).toBe("Custom model medium");
+    expect(view.modelValue).toBe("opus");
   });
 });
