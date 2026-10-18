@@ -23,6 +23,11 @@ from planner.navigation.contracts import (
     parse_revision,
 )
 from planner.navigation.data import snapshot
+from planner.navigation.delivery_authority import (
+    DeliveryAdmission,
+    DeliveryRead,
+    DeliveryUnavailable,
+)
 from planner.navigation.delivery_contracts import (
     Cursor,
     ReplayPage,
@@ -43,12 +48,19 @@ def _read_connection(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def read_snapshot(path: Path, fence: object = None) -> SnapshotResponse:
+def read_snapshot(
+    path: Path,
+    fence: object = None,
+    admission: DeliveryAdmission | None = None,
+    read: DeliveryRead | None = None,
+) -> SnapshotResponse:
     from planner.navigation.proof import certify
 
     with contextlib.closing(_read_connection(path)) as conn:
         conn.execute("BEGIN")
         try:
+            if admission is not None:
+                admission.validate_snapshot(conn, read)
             value = snapshot(conn)
             proof = certify(conn, fence) if fence is not None else None
             return {
@@ -61,10 +73,18 @@ def read_snapshot(path: Path, fence: object = None) -> SnapshotResponse:
             conn.rollback()
 
 
-def read_page(path: Path, cursor: Cursor, config: DeliveryConfig) -> ReplayPage:
+def read_page(
+    path: Path,
+    cursor: Cursor,
+    config: DeliveryConfig,
+    admission: DeliveryAdmission | None = None,
+    read: DeliveryRead | None = None,
+) -> ReplayPage:
     with contextlib.closing(_read_connection(path)) as conn:
         conn.execute("BEGIN")
         try:
+            if admission is not None:
+                admission.validate_snapshot(conn, read)
             scope, schema, epoch, current = conn.execute(
                 "SELECT scope,schema_version,epoch,revision FROM navigation_meta"
             ).fetchone()
@@ -147,6 +167,7 @@ class DeliveryRuntime:
         self.path = Path(path)
         self.config = config or DeliveryConfig()
         self.ready = False
+        self.admission = DeliveryAdmission()
         self._closing = asyncio.Event()
         self._retention_task: asyncio.Task[None] | None = None
         self._stream_closers: dict[asyncio.Event, asyncio.Event] = {}
@@ -187,6 +208,7 @@ class DeliveryRuntime:
 
     async def close(self) -> None:
         self.ready = False
+        self.admission.invalidate()
         self._closing.set()
         for closer in tuple(self._stream_closers):
             closer.set()
@@ -197,7 +219,20 @@ class DeliveryRuntime:
             await self._retention_task
             self._retention_task = None
 
-    async def stream(self, encoded_cursor: str) -> AsyncIterator[bytes]:
+    async def current_snapshot(
+        self, fence: object = None
+    ) -> tuple[SnapshotResponse, DeliveryRead | None]:
+        read = self.admission.capture()
+        value = await asyncio.to_thread(read_snapshot, self.path, fence, self.admission, read)
+        self.admission.validate(read)
+        return value, read
+
+    async def stream(
+        self, encoded_cursor: str, read: DeliveryRead | None = None
+    ) -> AsyncIterator[bytes]:
+        if read is None:
+            read = self.admission.capture()
+        self.admission.validate(read)
         try:
             cursor = decode_cursor(encoded_cursor, self.config.cursor_bytes)
         except ResetRequired as exc:
@@ -207,6 +242,7 @@ class DeliveryRuntime:
         wake = asyncio.Event()
         closed = asyncio.Event()
         drained = asyncio.Event()
+        forget_invalidation = self.admission.watch(closed, read)
         self._stream_closers[closed] = drained
 
         def hint() -> None:
@@ -222,14 +258,19 @@ class DeliveryRuntime:
             while self.ready and not closed.is_set():
                 wake.clear()
                 try:
-                    page = await asyncio.to_thread(read_page, self.path, cursor, self.config)
+                    page = await asyncio.to_thread(
+                        read_page, self.path, cursor, self.config, self.admission, read
+                    )
+                    self.admission.validate(read)
                 except ResetRequired as exc:
+                    self.admission.validate(read)
                     yield reset_frame(exc.reason)
                     return
                 if closed.is_set() or not self.ready:
                     return
                 for batch in page["batches"]:
                     # Each yield owns one complete revision; there is no per-record progress.
+                    self.admission.validate(read)
                     yield batch_frame(batch)
                     cursor = decode_cursor(encode_cursor(cast(Continuity, batch)))
                     last_frame = time.monotonic()
@@ -238,6 +279,7 @@ class DeliveryRuntime:
                 if page["has_more"]:
                     continue
                 if time.monotonic() - last_frame >= self.config.heartbeat_seconds:
+                    self.admission.validate(read)
                     yield b": keep-alive\n\n"
                     last_frame = time.monotonic()
                 waiter = asyncio.create_task(wake.wait())
@@ -252,8 +294,11 @@ class DeliveryRuntime:
                     waiter.cancel()
                     closer.cancel()
                     await asyncio.gather(waiter, closer, return_exceptions=True)
+        except DeliveryUnavailable:
+            return
         finally:
             self._stream_closers.pop(closed, None)
+            forget_invalidation()
             forget()
             unsubscribe()
             drained.set()

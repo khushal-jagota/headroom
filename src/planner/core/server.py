@@ -8,7 +8,7 @@ import os
 import re
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from time import monotonic as _monotonic
 from typing import Any
@@ -141,104 +141,103 @@ def create_app(
 
     @asynccontextmanager
     async def _configured_lifespan(app: FastAPI) -> AsyncIterator[None]:
-        Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
-        from planner.tickets import data as tickets_data
+        async with AsyncExitStack() as cleanup:
+            Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
+            from planner.tickets import data as tickets_data
 
-        # The conversation system, built before anything that sends into one. It composes
-        # the three real agents on this machine, and spawns none of them until a
-        # conversation has something to send. Everything that starts or steers a worker
-        # goes through it, so it has to exist before the readiness loop starts.
-        # One account, one login, so one memory of what a turn found out about it. The
-        # conversations that run codex write it and the backends card reads it. It is in
-        # the database because a refused login is still refused after a restart, and
-        # Panels restarts on every deploy.
-        remembered_codex_login_rejection = DurableCodexLoginRejection(
-            config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
-        )
-        conversation = build_conversation_runtime(
-            db_path=config.db_path,
-            db_busy_timeout_ms=config.db_busy_timeout_ms,
-            sse_heartbeat_ms=config.sse_heartbeat_ms,
-            backend_child_factories=production_backend_child_factories(
-                # Where this server is answering, so the `panels` CLI in an agent's shell
-                # can reach it. Read from the running config rather than stored with a
-                # conversation, so a conversation resumed after a restart reaches the
-                # server that resumed it.
-                panels_server_url=f"http://{HOST}:{config.port}",
+            # The conversation system, built before anything that sends into one. It composes
+            # the three real agents on this machine, and spawns none of them until a
+            # conversation has something to send. Everything that starts or steers a worker
+            # goes through it, so it has to exist before the readiness loop starts.
+            # One account, one login, so one memory of what a turn found out about it. The
+            # conversations that run codex write it and the backends card reads it. It is in
+            # the database because a refused login is still refused after a restart, and
+            # Panels restarts on every deploy.
+            remembered_codex_login_rejection = DurableCodexLoginRejection(
+                config.db_path, busy_timeout_ms=config.db_busy_timeout_ms
+            )
+            conversation = build_conversation_runtime(
+                db_path=config.db_path,
+                db_busy_timeout_ms=config.db_busy_timeout_ms,
+                sse_heartbeat_ms=config.sse_heartbeat_ms,
+                backend_child_factories=production_backend_child_factories(
+                    # Where this server is answering, so the `panels` CLI in an agent's shell
+                    # can reach it. Read from the running config rather than stored with a
+                    # conversation, so a conversation resumed after a restart reaches the
+                    # server that resumed it.
+                    panels_server_url=f"http://{HOST}:{config.port}",
+                    remembered_codex_login_rejection=remembered_codex_login_rejection,
+                ),
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
-            ),
-            remembered_codex_login_rejection=remembered_codex_login_rejection,
-        )
-        lifecycle_observer: asyncio.Task[None] | None = None
-        loops: Any = None
-        try:
-            audit_conn = conn_factory()
-            try:
-                tickets_data.audit_ticket_registry_integrity(audit_conn)
-                reconcile_managed_skill_versions(audit_conn)
-                reconcile_provisional_worker_step_bindings(audit_conn)
-            finally:
-                audit_conn.close()
-
-            app.state.conversation = conversation
-            # A test that drives workers wants a conversation system it can hold still, so it
-            # passes one in. Nothing else does: production always runs the real one.
-            app.state.conversation_system = (
-                conversation.system
-                if conversation_system_for_test is None
-                else conversation_system_for_test
+                cleanup=cleanup,
             )
-            if not config.test_mode:
-                from planner.core.loops import prepare_background_loops
-
-                loops = prepare_background_loops(
-                    config, clock,
-                    conversation_system=app.state.conversation_system,
-                    asyncio_loop=asyncio.get_running_loop(),
-                )
-
-            # The real runtime already reconciled under its exclusive lease, even
-            # when tests inject a conversation facade. No schema open grants this.
-            conversation.system.require_runtime_ownership()
-            publication_conn = conn_factory()
+            lifecycle_observer: asyncio.Task[None] | None = None
+            loops: Any = None
             try:
-                publication_conn.execute("BEGIN IMMEDIATE")
-                navigation_data.reset_epoch(publication_conn)
-                publication_conn.commit()
-            except BaseException:
-                publication_conn.rollback()
-                raise
-            finally:
-                publication_conn.close()
-            await navigation_delivery.start()
-            await conversation.system.start_idle_child_janitor()
-            lifecycle_observer = asyncio.create_task(
-                observe_path_changes(deployment_lifecycle_path, change_signal.emit)
-            )
-            if loops is not None:
-                loops.start(config.tick_seconds)
-            yield
-
-        finally:
-            app.state.conversation = None
-            try:
+                audit_conn = conn_factory()
                 try:
-                    await navigation_delivery.close()
+                    tickets_data.audit_ticket_registry_integrity(audit_conn)
+                    reconcile_managed_skill_versions(audit_conn)
+                    reconcile_provisional_worker_step_bindings(audit_conn)
                 finally:
-                    if loops is not None:
-                        deadline = _monotonic() + float(config.shutdown_grace_seconds)
-                        await _stop_runtime_with_deadline(loops, deadline)
-            finally:
+                    audit_conn.close()
+
+                app.state.conversation = conversation
+                # A test that drives workers wants a conversation system it can hold still, so it
+                # passes one in. Nothing else does: production always runs the real one.
+                app.state.conversation_system = (
+                    conversation.system
+                    if conversation_system_for_test is None
+                    else conversation_system_for_test
+                )
+                if not config.test_mode:
+                    from planner.core.loops import prepare_background_loops
+
+                    loops = prepare_background_loops(
+                        config, clock,
+                        conversation_system=app.state.conversation_system,
+                        asyncio_loop=asyncio.get_running_loop(),
+                    )
+
+                # The real runtime already reconciled under its exclusive lease, even
+                # when tests inject a conversation facade. No schema open grants this.
+                conversation.system.require_runtime_ownership()
+                publication_conn = conn_factory()
                 try:
+                    publication_conn.execute("BEGIN IMMEDIATE")
+                    navigation_data.reset_epoch(publication_conn)
+                    publication_conn.commit()
+                except BaseException:
+                    publication_conn.rollback()
+                    raise
+                finally:
+                    publication_conn.close()
+                await navigation_delivery.start()
+                await conversation.system.start_idle_child_janitor()
+                lifecycle_observer = asyncio.create_task(
+                    observe_path_changes(deployment_lifecycle_path, change_signal.emit)
+                )
+                if loops is not None:
+                    loops.start(config.tick_seconds)
+                yield
+
+            finally:
+                app.state.conversation = None
+                try:
+                    try:
+                        await navigation_delivery.close()
+                    finally:
+                        if loops is not None:
+                            deadline = _monotonic() + float(config.shutdown_grace_seconds)
+                            await _stop_runtime_with_deadline(loops, deadline)
+                finally:
                     if lifecycle_observer is not None:
                         lifecycle_observer.cancel()
                         try:
                             await lifecycle_observer
                         except asyncio.CancelledError:
                             pass
-                finally:
-                    await conversation.shutdown()
 
     navigation_delivery = create_delivery_runtime(config.db_path)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
