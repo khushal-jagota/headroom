@@ -9,7 +9,7 @@ import json
 import re
 import subprocess
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from planner.environments.logic.related_checks import select_paths, test_suite
 from planner.environments.related_checks_contracts import (
@@ -84,9 +84,29 @@ def select_release(
             if (path := value.decode()) and test_suite(path) == suite
             and (suite in ("vitest", "browser") or Path(path).name.startswith("test_"))
         )
-    domains, docs = load_map(map_path or Path(__file__).with_name("related_checks_map.json"))
+    browser_format = "legacy"
+    catalog_path = "web/tests/browser/catalog.json"
+    if catalog_path.encode() in tracked.split(b"\0"):
+        # Capability comes from the tracked requested revision, never a result file.
+        catalog = json.loads(git(source_root, "show", f"{requested_sha}:{catalog_path}"))
+        if catalog.get("schema") != 1 or not isinstance(catalog.get("entries"), list):
+            raise ValueError("Unsupported requested-source browser catalog")
+        browser_paths = tuple(entry["path"] for entry in catalog["entries"])
+        if (not browser_paths or len(set(browser_paths)) != len(browser_paths)
+                or any(path not in inventory["browser"] for path in browser_paths)):
+            raise ValueError("Requested browser catalog entries are missing or duplicated")
+        inventory["browser"] = browser_paths
+        browser_format = "shared-v1"
+    map_unavailable = False
+    try:
+        domains, docs = load_map(map_path or Path(__file__).with_name("related_checks_map.json"))
+    except FileNotFoundError:
+        domains, docs = (), ()
+        map_unavailable = True
     changes: list[tuple[str, str]] = []
-    unavailable: str | None = None
+    unavailable: str | None = (
+        "Selector map unavailable; selecting all default suites" if map_unavailable else None
+    )
     if base_sha is None:
         unavailable = "No healthy resolved served baseline; selecting all default suites"
     else:
@@ -131,9 +151,10 @@ def select_release(
         tools.update(("npm", "node"))
     if selected["browser"] or selected["e2e"]:
         tools.add("playwright")
-    if selected["e2e"]:
+    if selected["browser"] or selected["e2e"]:
         tools.add("bwrap")
     return RelatedSelection(
+        browser_format=cast("Literal[\"legacy\", \"shared-v1\"]", browser_format),
         requested_sha=requested_sha, control_sha=control_sha, base_sha=base_sha,
         broad=broad, reasons=reasons, changed_paths=[path for _, path in changes],
         unit=selected["unit"], integration=selected["integration"], e2e=selected["e2e"],

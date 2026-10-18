@@ -285,17 +285,38 @@ jobs:
           selected_text="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; assert isinstance(v,list) and all(isinstance(p,str) and p for p in v), "invalid selected paths"; print("\n".join(v))' "$PANELS_GATE_DIR/selection.json" "browser")"
           if [ -z "$selected_text" ]; then exit 0; fi
           mapfile -t selected <<< "$selected_text"
-          status=0
-          for host in "${selected[@]}"; do
+          browser_format="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["browser_format"])' "$PANELS_GATE_DIR/selection.json")"
+          if [ "$browser_format" = shared-v1 ]; then
+            invocation_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-browser"
             bwrap --bind / / --dev-bind /dev /dev \
               --bind "$PANELS_GATE_DIR/artifact-shadow" /home/vps/Deployments/Panels \
               --bind "$PANELS_CANDIDATE_SOURCE" "$PANELS_CANDIDATE_SOURCE" \
               --bind "$PANELS_REPORT_DIR" "$PANELS_REPORT_DIR" \
               --bind "$PANELS_CODEX_TOOLS" "$PANELS_CODEX_TOOLS" \
               --chdir "$PANELS_CANDIDATE_SOURCE/web" -- \
-              node "${host#web/}" || status=1
-          done
-          exit "$status"
+              node tests/browser/run.mjs --report "$PANELS_REPORT_DIR/browser.json" \
+                --revision "$PANELS_REQUESTED_SHA" --invocation-id "$invocation_id" "${selected[@]}"
+            "$PANELS_DEPLOY_VENV/bin/python" "$GITHUB_WORKSPACE/scripts/deployment_check_report.py" \
+              browser "$PANELS_REPORT_DIR/browser.json" "${selected[@]}" \
+              --source-root "$PANELS_CANDIDATE_SOURCE" --revision "$PANELS_REQUESTED_SHA" \
+              --invocation-id "$invocation_id"
+          elif [ "$browser_format" = legacy ]; then
+            # Rollback source predates case receipts. Preserve its original exit checks.
+            status=0
+            for host in "${selected[@]}"; do
+              bwrap --bind / / --dev-bind /dev /dev \
+                --bind "$PANELS_GATE_DIR/artifact-shadow" /home/vps/Deployments/Panels \
+                --bind "$PANELS_CANDIDATE_SOURCE" "$PANELS_CANDIDATE_SOURCE" \
+                --bind "$PANELS_REPORT_DIR" "$PANELS_REPORT_DIR" \
+                --bind "$PANELS_CODEX_TOOLS" "$PANELS_CODEX_TOOLS" \
+                --chdir "$PANELS_CANDIDATE_SOURCE/web" -- \
+                node "${host#web/}" || status=1
+            done
+            exit "$status"
+          else
+            echo "Unsupported browser proof format: $browser_format" >&2
+            exit 1
+          fi
       - name: Build exact candidate once
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" -m planner environment app-build \

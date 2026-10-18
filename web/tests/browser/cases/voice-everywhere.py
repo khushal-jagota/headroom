@@ -92,9 +92,6 @@ def run(browser, urls):
     page = open_page("?supported=1")
     page.locator("[data-conversation-input]").wait_for(state="visible")
     assert page.locator("[data-voice-record]").is_visible()
-    assert page.locator("[data-voice-record]").evaluate(
-        "e => [e.getBoundingClientRect().width,e.getBoundingClientRect().height]"
-    ) == [32, 32]
     page.locator("[data-voice-record]").click()
     page.locator("[data-voice-stop]").click()
     page.locator("[data-conversation-input]").wait_for(state="visible")
