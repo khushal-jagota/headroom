@@ -21,6 +21,7 @@ export type WorkspaceRailPresentation = {
 type MotionSurface = { background: string; surrounding: string };
 type Part = { surface: MotionSurface; node: HTMLElement; rect: DOMRect; color: string; mark: string[] | null; parent: string | null };
 function snapshot(root: HTMLElement | null): Map<string, Part> {
+  if (!root || typeof document === "undefined") return new Map();
   // Resolve the complete batch before motion classes alter any ancestor surface.
   // Canvas composites transparent CSS colors over their real ancestor backgrounds.
   const canvas = document.createElement("canvas");
