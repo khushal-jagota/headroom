@@ -60,12 +60,200 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cold-contexts", type=int, default=3)
     parser.add_argument("--browser-executable", type=Path)
     parser.add_argument("--browser-cache", type=Path)
+    parser.add_argument(
+        "--diagnostic-only",
+        action="store_true",
+        help="Separate instrumented cold CPU and bounded forced-GC heap attribution",
+    )
+    parser.add_argument(
+        "--heap-snapshots",
+        action="store_true",
+        help="Write diagnostic before/after CDP heap snapshots",
+    )
     parser.add_argument("--isolated-child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--runtime", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.tickets < 3 or args.trials < 1 or args.cold_contexts < 1:
         parser.error("at least three Tickets and one warm/cold trial are required")
     return args
+
+
+async def diagnose(
+    browser: Any, args: argparse.Namespace, url: str, seed: dict[str, Any], source: Path
+) -> dict[str, Any]:
+    """Use the actual App, with external CDP instrumentation only.
+
+    This mode does not enter the matched timing path. Forced GC and CPU sampling
+    perturb execution and are explicitly diagnostic rather than production costs.
+    """
+    context = await browser.new_context(viewport={"width": 1440, "height": 1000})
+    try:
+        page = await context.new_page()
+        cdp = await context.new_cdp_session(page)
+        await cdp.send("Network.enable")
+        await cdp.send("Performance.enable")
+        await cdp.send("HeapProfiler.enable")
+        await cdp.send("Profiler.enable")
+        await cdp.send("Profiler.setSamplingInterval", {"interval": 500})
+        network: list[dict[str, Any]] = []
+        trace: list[dict[str, Any]] = []
+        for event in ("requestWillBeSent", "responseReceived", "loadingFinished"):
+            cdp.on(
+                "Network." + event,
+                lambda data, name=event: network.append({"event": name, "data": data}),
+            )
+        cdp.on("Tracing.dataCollected", lambda data: trace.extend(data["value"]))
+        trace_done = asyncio.Event()
+        cdp.on("Tracing.tracingComplete", lambda _data: trace_done.set())
+        await cdp.send(
+            "Tracing.start",
+            {
+                "categories": (
+                    "devtools.timeline,v8,disabled-by-default-v8.compile,blink.user_timing"
+                ),
+                "options": "record-as-much-as-possible",
+            },
+        )
+        await cdp.send("Profiler.start")
+        started = time.perf_counter_ns()
+        await page.goto(url + "#/workspace/item/" + seed["items"][0])
+        await page.locator(f'[data-sprint-ticket-id="{seed["tickets"][0]}"]').wait_for(
+            state="attached"
+        )
+        usable = time.perf_counter_ns()
+        await page.wait_for_timeout(600)
+        cpu = await cdp.send("Profiler.stop")
+        await cdp.send("Tracing.end")
+        await asyncio.wait_for(trace_done.wait(), 10)
+        args.output.with_suffix(".cpu.json").write_text(json.dumps(cpu) + "\n")
+        args.output.with_suffix(".cdp-trace.json").write_text(
+            json.dumps({"traceEvents": trace}) + "\n"
+        )
+        resources = await page.evaluate("""() => ({
+            navigation:performance.getEntriesByType('navigation').map(x=>x.toJSON()),
+            resources:performance.getEntriesByType('resource').map(x=>x.toJSON())})""")
+        initial_metrics = await cdp.send("Performance.getMetrics")
+        bodies = []
+        for network_event in network:
+            if network_event["event"] != "responseReceived":
+                continue
+            data = network_event["data"]
+            path = urlparse(data["response"]["url"]).path
+            if path not in {"/api/navigation/snapshot", "/api/bootstrap"}:
+                continue
+            try:
+                body = await cdp.send("Network.getResponseBody", {"requestId": data["requestId"]})
+                raw = (
+                    base64.b64decode(body["body"])
+                    if body["base64Encoded"]
+                    else body["body"].encode()
+                )
+                parsed = json.loads(raw)
+                args.output.with_suffix(
+                    ".initial-" + path.rsplit("/", 1)[-1] + ".json"
+                ).write_bytes(raw)
+                bodies.append(
+                    {
+                        "path": path,
+                        "body_bytes": len(raw),
+                        "top_level_keys": list(parsed),
+                        "response": data["response"],
+                    }
+                )
+            except Exception as error:
+                bodies.append({"path": path, "unavailable": str(error)})
+
+        async def heap_point(label: str, snapshot: bool = False) -> dict[str, Any]:
+            await page.wait_for_timeout(600)
+            quiet = await cdp.send("Performance.getMetrics")
+            await cdp.send("HeapProfiler.collectGarbage")
+            await page.wait_for_timeout(100)
+            forced = await cdp.send("Performance.getMetrics")
+            usage = await cdp.send("Runtime.getHeapUsage")
+            if snapshot and args.heap_snapshots:
+                chunks: list[str] = []
+
+                def take_chunk(data: dict[str, Any]) -> None:
+                    chunks.append(data["chunk"])
+
+                cdp.on("HeapProfiler.addHeapSnapshotChunk", take_chunk)
+                await cdp.send("HeapProfiler.takeHeapSnapshot", {"reportProgress": False})
+                cdp.remove_listener("HeapProfiler.addHeapSnapshotChunk", take_chunk)
+                args.output.with_suffix(f".{label}.heapsnapshot").write_text("".join(chunks))
+            return {
+                "label": label,
+                "quiet_metrics": quiet,
+                "forced_gc_metrics": forced,
+                "heap_usage_after_gc": usage,
+                "dom": await cdp.send("Memory.getDOMCounters"),
+            }
+
+        heap = [await heap_point("before", True)]
+        workloads = []
+        for batch in range(3):
+            batch_start = time.perf_counter_ns()
+            for index in range(20):
+                # Constant row count and equal-length values bound retained state.
+                tag = f"heap-cycle-{batch:02d}-{index:02d}"
+                response = await page.request.post(
+                    url + "api/harness/change", data={"scenario": "background", "tag": tag}
+                )
+                assert response.ok, await response.text()
+                await page.wait_for_function(
+                    '([id,tag])=>document.querySelector(`[data-ticket-id="${id}"]`)'
+                    "?.textContent.includes(tag) && "
+                    'document.querySelector(`[data-sprint-ticket-id="${id}"]`)'
+                    "?.textContent.includes(tag)",
+                    arg=[seed["tickets"][0], tag],
+                )
+            workloads.append(
+                {
+                    "batch": batch,
+                    "writes": 20,
+                    "started_ns": batch_start,
+                    "ended_ns": time.perf_counter_ns(),
+                }
+            )
+            heap.append(await heap_point(f"batch-{batch}", batch == 2))
+        return {
+            "diagnostic_only": True,
+            "mode": args.mode,
+            "source": str(source),
+            "revision": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=source, text=True
+            ).strip(),
+            "source_dirty_state": subprocess.check_output(
+                ["git", "status", "--short"], cwd=source, text=True
+            ),
+            "built_asset_hashes": {
+                str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in (source / "web/dist").rglob("*")
+                if path.is_file()
+            },
+            "runner_hashes": {
+                path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in (
+                    Path(__file__),
+                    Path(__file__).with_name("measure_navigation_delivery.py"),
+                )
+            },
+            "cold_started_ns": started,
+            "cold_usable_ns": usable,
+            "cold_metrics": initial_metrics,
+            "resource_timings": resources,
+            "initial_bodies": bodies,
+            "network": network,
+            "heap": heap,
+            "workloads": workloads,
+            "limits": [
+                "Instrumented diagnostic only; CPU sampling/tracing and forced GC perturb costs.",
+                "Fresh browser/process and synthetic runtime, warm OS/disk cache.",
+                "Quiet points wait 600ms. Forced GC diagnoses retention, not production heap.",
+                "Three 20-write batches bound observations; they cannot exclude slow leaks.",
+            ],
+        }
+    finally:
+        await context.close()
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -234,6 +422,10 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             if args.browser_executable:
                 launch["executable_path"] = str(args.browser_executable)
             browser = await playwright.chromium.launch(**launch)
+            if args.diagnostic_only:
+                diagnostic = await diagnose(browser, args, url, seed, source)
+                diagnostic["isolated_paths"] = isolated_paths
+                return diagnostic
             cold: list[dict[str, Any]] = []
             for index in range(args.cold_contexts):
                 cold_context = await browser.new_context(viewport={"width": 1440, "height": 1000})
@@ -864,7 +1056,8 @@ def main() -> None:
     result = asyncio.run(run(args))
     from jsonschema import validate  # type: ignore[import-untyped]
 
-    validate(result, EVIDENCE_SCHEMA)
+    if not args.diagnostic_only:
+        validate(result, EVIDENCE_SCHEMA)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
 
 

@@ -3,10 +3,28 @@ import type { SnapshotResponse, RevisionBatch, Fence, Cursor, Continuity, Reset,
 
 export class NavigationProtocolError extends Error {}
 type Descriptor = {ref?: string; primitive?: string; literal?: unknown[]; array?: Descriptor; union?: Descriptor[]; object?: Record<string, Descriptor>};
+function matchesCandidate(value: unknown, descriptor: Descriptor): boolean {
+  if (descriptor.ref) return matchesCandidate(value, wireDescriptors[descriptor.ref] as Descriptor);
+  if (descriptor.literal && !descriptor.literal.includes(value)) return false;
+  if (descriptor.primitive) {
+    const type = descriptor.primitive;
+    if (!(type === 'null' ? value === null : type === 'integer' ? typeof value === 'number' && Number.isSafeInteger(value) : typeof value === type)) return false;
+  }
+  if (descriptor.object) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    for (const key in descriptor.object) {
+      const field = descriptor.object[key];
+      if (field.literal && !field.literal.includes(record[key])) return false;
+    }
+  }
+  return true;
+}
 function validate(value: unknown, descriptor: Descriptor, path: string): void {
   if (descriptor.ref) return validate(value, wireDescriptors[descriptor.ref] as Descriptor, path);
   if (descriptor.union) {
     for (const candidate of descriptor.union) {
+      if (!matchesCandidate(value, candidate)) continue;
       try { validate(value, candidate, path); return; } catch (error) { if (!(error instanceof NavigationProtocolError)) throw error; }
     }
     throw new NavigationProtocolError(`${path}: invalid union`);
