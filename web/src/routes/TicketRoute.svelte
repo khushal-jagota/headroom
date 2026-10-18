@@ -37,9 +37,10 @@
   import ArtifactsBand from "../components/ArtifactsBand.svelte";
   import WorkerProposalCard from "../components/WorkerProposalCard.svelte";
   import { workerPageHistory } from "../lib/workerPageHistory";
-  import { ticketPageArtifactItems } from "../lib/artifactStrip";
+  import { managedFileTargetFromLinkHref, ticketPageArtifactItems } from "../lib/artifactStrip";
   import { isPlainLinkClick } from "../lib/linkClick";
   import {
+    resolvePreview,
     targetFromPreviewHref,
     type ManagedFileTarget
   } from "../lib/filePreview";
@@ -186,20 +187,19 @@
 
   /** A click on a link to a managed file opens the file here.
    *
-   * Every "Open plan.md" the shared preview writes points at the `#/preview` address, in
-   * a Ticket field, in a note, and in the conversation alike. On this screen that address
-   * is not somewhere to go: the file is opened over the Ticket's own document instead.
-   * A click asking for a new tab or a new window is left alone, and so is every link that
-   * names anything else — a dev server among them, which is a page and not a file.
+   * Explicit preview addresses always open here. Raw managed links use the same viewer
+   * when their format supports a preview. Downloads and requests for another tab stay
+   * with the browser.
    */
   function openManagedFileInPlace(event: MouseEvent): void {
     if (event.defaultPrevented) return;
     const anchor = (event.target as Element | null)?.closest?.("a[href]");
-    if (!anchor) return;
+    if (!anchor || anchor.hasAttribute("download")) return;
     const link = { href: anchor.getAttribute("href"), target: anchor.getAttribute("target") };
     if (!isPlainLinkClick(link, event)) return;
-    const file = targetFromPreviewHref(link.href);
-    if (!file) return;
+    const explicitPreview = targetFromPreviewHref(link.href);
+    const file = explicitPreview ?? managedFileTargetFromLinkHref(link.href);
+    if (!file || (!explicitPreview && resolvePreview(file).kind === "download")) return;
     event.preventDefault();
     showFile(file);
   }
