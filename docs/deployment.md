@@ -160,8 +160,19 @@ selected Node browser hosts run directly as selected. Independent check steps re
 failures even when another check fails. Missing tools, empty selected collection, and
 unexpected required skips fail the gate. Seven named paid-provider opt-ins remain visible
 without default coverage credit. No provider opt-in is enabled by this workflow.
+Before pytest, the workflow resolves the exact Codex CLI pin from the requested source's
+installed Python package. It checks PATH and the user's local CLI, then installs that
+exact npm version into run-temporary tools only if neither matches. It logs the required
+version, selected executable and actual version, publishes its directory through
+`GITHUB_PATH`, and verifies it again before every selected pytest suite. No credentials
+are provisioned and provider opt-ins stay disabled. Rollbacks read the requested source's
+pin while using the current workflow's setup helper.
+
 The required bwrap mount redirects deployment artifacts into temporary storage for
-E2E and Node browser hosts. There is no unisolated fallback.
+E2E and Node browser hosts. The source, dedicated report directory, and temporary Codex
+tools are rebound after that shadow mount. Thus a runner directory nested beneath the
+deployment path still writes the E2E report to the same host-visible file that the
+strict report checker reads. There is no unisolated fallback.
 
 After source checks pass, the workflow builds one exact candidate. Its installed launcher
 starts with fresh state, dispatch disabled, and no provider credentials. Smoke checks
@@ -183,6 +194,41 @@ Repository landing on staging does not activate a changed production workflow. T
 owner must merge the reviewed revision to main. No production dispatch is required to
 review these checks. Any required-check setting must retain effective protection until
 the replacement is available. Production deployment and restart remain owner actions.
+
+## Disposable workflow rehearsal
+
+The same `Deploy exact commit` workflow accepts `rehearsal: true` on manual dispatch.
+Supply `commit_sha` and an explicit known-good `baseline_sha`; both are full SHAs and
+must differ. The rehearsal runs on a fresh GitHub-hosted Ubuntu VM with its own
+concurrency group. Production runs remain on the dedicated self-hosted runner and only
+accept the workflow control revision from `main`.
+
+The hosted setup installs Python 3.12, Node 22, Chromium's runtime dependencies,
+bubblewrap, FFmpeg, and a real systemd user manager and bus. The required offline Hermes
+extension-packaging checks use a separate interpreter in the runner's home, provisioned
+from official `NousResearch/hermes-agent` revision
+`76d832d3857551a029c4b39c23945eb47c16fe5b` (Hermes 0.20.0), with only its core and ACP
+extra. This matches the deployed Hermes source used to validate that packaging boundary;
+it enables no provider tests and receives no credentials. Installation logs and the exact
+revision are retained with the rehearsal proof, and cleanup removes that interpreter.
+This test prerequisite is separate from the disposable app's private agent homes. It creates a unique user service,
+available loopback port, private home, fresh database with dispatch disabled, backup
+root and agent homes. No production secrets or private-network access are used.
+Temporary paths deliberately sit below `/home/vps/Deployments/Panels` to exercise the
+report-shadow collision rather than avoid it.
+
+The setup builds and serves the exact baseline app before observation and selection.
+The normal source checks, candidate build, installed-launcher smoke, digest evidence,
+`app-deploy`, real backup/replacement and exact-SHA health checks, and skill provisioning
+then run against those disposable paths. They use the same fail-closed gates as
+production. An unchanged baseline/candidate pair is refused so the rehearsal proves
+replacement and backup rather than only the same-SHA fast path.
+
+On every outcome, the workflow first finalizes the lifecycle and collects reports,
+gate evidence, baseline and final health, deployed manifest, backup metadata, service
+unit and logs into an Actions artifact. It then stops and removes the temporary service
+and removes worktrees and temporary state. The artifact remains available after the VM
+is discarded. Production runs do not upload deployment data.
 
 ## Test admission and coordinated guidance
 

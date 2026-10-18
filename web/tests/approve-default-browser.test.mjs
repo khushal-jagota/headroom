@@ -308,6 +308,8 @@ with sync_playwright() as p:
     assert scope_writes[-1] == {'ceiling': 'needs_brief', 'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}
     assert approvals == []
     # Draft navigation, letters, Escape, and outside cancellation send no writes.
+    # The request count precedes the response and rendered mutation completion.
+    expect(block().locator('[data-accept]')).to_be_enabled()
     block().locator('[data-accept]').focus()
     block().locator('[data-accept]').press('ArrowDown')
     expect(page.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')

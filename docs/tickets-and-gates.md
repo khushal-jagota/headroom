@@ -82,6 +82,11 @@ what moves the ticket one stage forward. **done** records successful completion.
 Stages advance through approval or direct completion of a current user-owned gate;
 there is no arbitrary Stage jump.
 
+Artifact links in Ticket fields and the conversation open in the Ticket viewer when their
+format supports a preview. JSON receipts and unsupported formats keep their download
+behavior. Explicit preview links still open the viewer for any managed file. Download
+links and requests for another tab keep normal browser behavior.
+
 ## Backlog, resume, and delete
 
 Explicit backlog prevents the next automatic Worker step. It preserves the current
