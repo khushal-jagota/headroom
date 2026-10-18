@@ -68,6 +68,8 @@ from planner.executor.wire import (
     read_typed_frame,
     validate_file_chunk_ack,
 )
+from planner.previews.contracts import PREVIEW_KINDS
+from planner.previews.streams import PreviewStreams
 
 
 def as_object(value: object) -> JsonObject:
@@ -91,6 +93,7 @@ class MacExecutor:
             PROTOCOL_VERSION, revision, SPOOL_FORMAT_VERSION, str(uuid4()), 0
         )
         self._handshake_accepted = False
+        self._preview_streams: PreviewStreams | None = None
         self.state = ConnectionState.disconnected
         self.lost_at_ms: int | None = None
         self._writer: asyncio.StreamWriter | asyncio.subprocess.Process | None = None
@@ -191,6 +194,11 @@ class MacExecutor:
     async def _read_loop(self, reader: asyncio.StreamReader) -> None:
         while True:
             message = await read_frame(reader)
+            if message.kind in PREVIEW_KINDS:
+                if not self._handshake_accepted or self._preview_streams is None:
+                    raise ProtocolRefused("preview frame before validated handshake")
+                self._preview_streams.feed(message)
+                continue
             if not self._handshake_accepted and message.kind in (
                 WireMessageKind.file_manifest,
                 WireMessageKind.file_chunk,
@@ -249,6 +257,11 @@ class MacExecutor:
             else:
                 future = self._pending.get(message.request_id)
                 if future is not None and not future.done():
+                    if message.kind is WireMessageKind.reconciliation_ready:
+                        if not self._handshake_accepted or message.payload != {"ready": True}:
+                            raise ProtocolRefused("invalid reconciliation acknowledgment")
+                        # Admit opens after the ready acknowledgment in wire order.
+                        self.state = ConnectionState.ready
                     future.set_result(message)
 
     async def _command(self, message: WireMessage) -> None:
@@ -353,6 +366,31 @@ class MacExecutor:
                 self.lost_at_ms = now_ms()
             raise
         self._writer = process
+        identity = self.identity
+
+        async def send_preview(message: WireMessage) -> None:
+            async with self._write_lock:
+                if (
+                    self._writer is not process
+                    or self.identity != identity
+                    or self.state is not ConnectionState.ready
+                    or process.stdin is None
+                ):
+                    raise ConnectionError("preview executor generation changed")
+                process.stdin.write(encode_frame(message))
+                await process.stdin.drain()
+
+        self._preview_streams = PreviewStreams(
+            identity,
+            send_preview,
+            lambda: (
+                self._handshake_accepted
+                and self.state is ConnectionState.ready
+                and self._writer is process
+                and self.identity == identity
+            ),
+            accept_open=True,
+        )
         assert process.stdout is not None
         reader_task = asyncio.create_task(self._read_loop(process.stdout))
 
@@ -387,6 +425,9 @@ class MacExecutor:
                 await task
         finally:
             self._handshake_accepted = False
+            if self._preview_streams is not None:
+                await self._preview_streams.close()
+                self._preview_streams = None
             self.state = ConnectionState.disconnected
             if self.lost_at_ms is None:
                 self.lost_at_ms = now_ms()

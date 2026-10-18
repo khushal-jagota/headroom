@@ -53,6 +53,7 @@ from planner.files.api import router as files_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.notifications.api import router as notifications_router
+from planner.previews.api import build_preview_router
 from planner.projects.api import router as projects_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
 from planner.skill_versions import (
@@ -301,6 +302,7 @@ def create_app(
         membership_router,
     ):
         include_router(domain_router, prefix="/api")
+    include_router(build_preview_router())
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
     include_router(recorded_usage_router, prefix="/api/conversation")
