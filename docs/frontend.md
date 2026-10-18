@@ -39,6 +39,17 @@ One screen per part of the system:
   have Project and Settle above the title. Only the owner settles or reopens one.
   Existing orchestrators start active. Settlement does not change Worker eligibility.
 
+  Ticket rows and the persistent Ticket header show the same Mac or VPS symbol.
+  The visible key names both machines. Touch and keyboard open an explanation before
+  the explicit move action. Destination review explains material limits and shows
+  authoritative refusals. Creation exposes the locale choice and its resolved machine.
+  The server resolves draft choices, and the final create or move revalidates them.
+
+  One neutral machine notice stays visible when the visible Workspace includes Mac
+  Tickets with unknown current activity. Rail rows count, even with a VPS Ticket open.
+  Hidden completed rows do not count. A direct VPS-only visit has no Mac notice.
+  Symbols keep their identity during uncertainty. Copy text keeps its curated content.
+
   Each active card shows the existing attention groups: Needs your approval, Needs your
   answer, Yours, Messages, then Errored. The shared rule gives each Worker its first
   applicable group. Holder-aware approval and the existing priority/creation ordering
