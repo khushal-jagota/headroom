@@ -212,7 +212,7 @@ def smoke_candidate(candidate_app: Path, requested_sha: str, *, timeout: float =
                             raise ValueError("candidate root has no referenced built assets")
                         for asset in assets:
                             client.get(urljoin(base, asset)).raise_for_status()
-                        initialized = client.get(base + "/api/projects")
+                        initialized = client.get(base + "/api/projects", params={"detail": "full"})
                         initialized.raise_for_status()
                         if not isinstance(initialized.json().get("projects"), list):
                             raise ValueError("candidate initialized API returned no project list")
