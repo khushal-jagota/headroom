@@ -267,6 +267,8 @@ def test_production_package_spec_uses_exact_pinned_source_without_builds(tmp_pat
     closure = package["closure"]
     assert closure["entrypoint_module"] == "planner.executor.entrypoint"
     assert "src/planner/executor/preflight.py" in closure["files"]
+    assert "src/planner/previews/streams.py" in closure["files"]
+    assert "src/planner/previews/forward.py" in closure["files"]
     assert "src/planner/core/server.py" in closure["files"]
     assert closure["node_package_roots"] == ["agent_backends"]
     assert not any(name.startswith(("web/", "data/", ".venv/")) for name in closure["files"])

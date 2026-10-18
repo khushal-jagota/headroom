@@ -23,7 +23,7 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 3. Earlier peers refuse work before replay. The
+The wire protocol is version 4. Earlier peers refuse work before replay. The
 journal format remains version 1 because its stored envelopes retain the same
 interpretation. Wire compatibility and journal compatibility are separate checks.
 
@@ -130,6 +130,39 @@ An incompatible rollback preserves the journal and refuses mutation.
 
 Code paths: `src/planner/executor/entrypoint.py`, `cli.py`, `preflight.py`,
 `configuration.py`, `mac.py`.
+
+## Browser previews
+
+A preview uses `/dev/tickets/<ticket-id>/<port>/` on either locale. The server reads
+that Ticket's current locale before each request. VPS previews use VPS loopback.
+Mac previews use a temporary VPS loopback listener. Its byte streams cross the
+existing Mac-initiated executor connection and reach only `127.0.0.1` on the Mac.
+The URL carries no host name and accepts no host parameter.
+
+Concurrent requests for one Ticket and port share a leased listener. The final
+lease closes it. Link loss, replacement, cancellation, and shutdown close its
+streams. A new request can acquire a new listener after the connection is ready.
+If a stream fails, concurrent requests on the same leased listener can also return
+unavailable. The final request releases that listener.
+Preview traffic stays outside the journal, replay, and conversation commands.
+A failed request never moves to a VPS service at the same requested port.
+
+The remote open and local connect deadlines are one second. Idle streams expire
+after 30 seconds. Each direction sends at most one 64 KiB chunk before credit
+returns. Each peer admits at most 32 streams. The VPS admits at most 32 listeners.
+Capacity waits occur outside the
+shared executor reader and writer lock. These limits live in
+`src/planner/previews/configuration.py`.
+
+The proxy preserves the requested port in `Host` and preview-local redirects.
+It strips Panels credentials and hop-by-hop headers before the preview receives a
+request. Hosted access still passes through the existing trusted ingress. Lease,
+remote connection, and stream failures return the existing unavailable response.
+Protocol 3 peers refuse the protocol 4 handshake. The spool format stays at 1.
+
+Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
+a real browser. That proves the software boundary and does not prove physical Mac
+access, installed routes, provider credentials, or deployed behavior.
 
 ## Evidence boundaries
 

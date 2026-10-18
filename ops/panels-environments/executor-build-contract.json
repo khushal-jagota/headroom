@@ -52,7 +52,7 @@
     "mypy": "Success: no issues found in 6 source files"
   },
   "gate": "Reviewed commit for resident-owned feature/mac-vps-execution only; no competing remote branch. Staging requires owner approval of whole combined work. No live action, skill application, or ticket closure.",
-  "protocol_version": 3,
+  "protocol_version": 4,
   "spool_format_version": 1,
   "source_baseline": "95af473d2250d8136f2e298b528b7c2c6a9bef35",
   "source_diff": "/files/tickets/t_t77znn6k/artifacts/executor-chunk-ack-from-accepted.patch",
@@ -96,5 +96,13 @@
     "failure": "refuse malformed acknowledgment before completion; retain Mac envelope; retain the same VPS caller, command ID, and pending future across acknowledgment refusal and reconnect"
   },
   "imported_source_revision": "58698d4e8777b4e64d4a72c244c14e9f20da0177",
-  "resident_prior_provenance": "/files/tickets/t_j1wkk0p7/evidence/final-relay/provenance.json"
+  "resident_prior_provenance": "/files/tickets/t_j1wkk0p7/evidence/final-relay/provenance.json",
+  "preview_transport": {
+    "protocol_version": 4,
+    "baseline_revision": "c28d07e502ab620b1fae293364c46810d877e1b1",
+    "source_closure": "The requested package revision includes src/planner/previews and both executor stream handlers through the existing full planner package closure.",
+    "compatibility": "Protocol 3 peers refuse before preview admission. Journal format remains 1.",
+    "lifecycle": "Ephemeral generation-bound loopback streams; no journal or replay.",
+    "verification_scope": "Isolated synthetic fixtures only. No physical Mac, provider, installed route or deployment evidence."
+  }
 }

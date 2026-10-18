@@ -105,7 +105,7 @@ def test_invalid_expected_chunk_cannot_receive_a_valid_ack(chunk: FileChunk) -> 
         )
 
 
-def test_old_protocol_two_mac_is_refused_by_protocol_three_vps_before_work(
+def test_old_protocol_three_mac_is_refused_by_protocol_four_vps_before_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -121,7 +121,7 @@ def test_old_protocol_two_mac_is_refused_by_protocol_three_vps_before_work(
             return await super().accept_envelope(envelope, identity)
 
     async def run() -> None:
-        assert PROTOCOL_VERSION == 3 and SPOOL_FORMAT_VERSION == 1
+        assert PROTOCOL_VERSION == 4 and SPOOL_FORMAT_VERSION == 1
         database_path = str(tmp_path / "vps.sqlite")
         connection = connect(database_path)
         create_schema(connection)
@@ -132,7 +132,7 @@ def test_old_protocol_two_mac_is_refused_by_protocol_three_vps_before_work(
         writer: asyncio.StreamWriter | None = None
         try:
             reader, writer = await asyncio.open_unix_connection(str(socket_path))
-            identity = ExecutorIdentity(2, "a" * 40, 1, str(uuid4()), 1)
+            identity = ExecutorIdentity(3, "a" * 40, 1, str(uuid4()), 1)
             health = ExecutorHealth(identity, 123, ConnectionState.reconciling, False, 1000, None)
             payload = encode_value(health)
             assert isinstance(payload, dict)
@@ -160,11 +160,11 @@ def test_old_protocol_two_mac_is_refused_by_protocol_three_vps_before_work(
     asyncio.run(run())
 
 
-def test_new_protocol_three_mac_is_refused_by_simulated_protocol_two_peer_before_replay(
+def test_new_protocol_four_mac_is_refused_by_simulated_protocol_three_peer_before_replay(
     tmp_path: Path,
 ) -> None:
     async def run() -> None:
-        assert PROTOCOL_VERSION == 3
+        assert PROTOCOL_VERSION == 4
         observation = tmp_path / "old_peer_observation"
         peer = r"""
 import json, struct, sys
@@ -174,13 +174,13 @@ header = sys.stdin.buffer.read(4)
 body = sys.stdin.buffer.read(struct.unpack("!I", header)[0])
 hello = json.loads(body)
 identity = hello["payload"]["identity"]
-wire.PROTOCOL_VERSION = 2
+wire.PROTOCOL_VERSION = 3
 try:
     wire.parse_identity(identity)
 except wire.ProtocolRefused:
     Path(sys.argv[1]).write_text(str(identity["protocol_version"]) + ":refused-before-work")
     response = {"kind":"protocol_refused","request_id":hello["request_id"],
-                "payload":{"error":"protocol 2 required"}}
+                "payload":{"error":"protocol 3 required"}}
     encoded = json.dumps(response).encode()
     sys.stdout.buffer.write(struct.pack("!I",len(encoded)) + encoded)
     sys.stdout.buffer.flush()
@@ -206,7 +206,7 @@ else:
             }
             with pytest.raises((ValueError, asyncio.IncompleteReadError, ConnectionError)):
                 await asyncio.wait_for(mac._connected(), 3)
-            assert observation.read_text() == "3:refused-before-work"
+            assert observation.read_text() == "4:refused-before-work"
             assert mac.spool.pending() == (pending,)
             assert {
                 path.relative_to(mac.paths.spool): path.read_bytes()

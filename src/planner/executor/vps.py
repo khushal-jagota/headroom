@@ -8,6 +8,8 @@ import hashlib
 import os
 import sqlite3
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -64,6 +66,9 @@ from planner.executor.wire import (
     validate_file_chunk_ack,
     write_frame,
 )
+from planner.previews.contracts import PREVIEW_KINDS
+from planner.previews.forward import PreviewForwards
+from planner.previews.streams import PreviewStreams
 
 
 def now_ms() -> int:
@@ -94,6 +99,7 @@ class ExecutorEndpoint:
         self.identity: ExecutorIdentity | None = None
         self.writer: asyncio.StreamWriter | None = None
         self.ready = False
+        self._preview_forwards: PreviewForwards | None = None
         self._server: asyncio.Server | None = None
         self.children: dict[str, RemoteBackendChild] = {}
         self.sinks: dict[str, BackendEventSink] = {}
@@ -131,7 +137,18 @@ class ExecutorEndpoint:
         self._server = await asyncio.start_unix_server(self._session, path=str(path))
         path.chmod(0o600)
 
+    @asynccontextmanager
+    async def preview_forward(self, port: int, ticket_id: str) -> AsyncIterator[int]:
+        forwards = self._preview_forwards
+        if not self.ready or forwards is None:
+            raise ConnectionError("Mac executor is unavailable")
+        async with forwards.lease(port, ticket_id) as local_port:
+            yield local_port
+
     async def close(self) -> None:
+        if self._preview_forwards is not None:
+            await self._preview_forwards.close()
+            self._preview_forwards = None
         if self._server is not None:
             self._server.close()
         if self.writer is not None:
@@ -607,6 +624,7 @@ class ExecutorEndpoint:
 
     async def _session(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         identity = None
+        forwards: PreviewForwards | None = None
         try:
             hello = await read_frame(reader)
             if hello.kind is not WireMessageKind.hello:
@@ -624,12 +642,32 @@ class ExecutorEndpoint:
             self.process_id = health.process_id
             self.observed_at_ms = now_ms()
             self.lost_at_ms = None
+            old_previews = self._preview_forwards
             self.identity, self.writer, self.ready = identity, writer, False
             self.last_contact_at_ms = now_ms()
-            self._inventory = {}
-            self._retained_inventory = {}
+
+            async def send_preview(message: WireMessage) -> None:
+                async with self._send_lock:
+                    if self.writer is not writer or self.identity != identity or not self.ready:
+                        raise ConnectionError("preview executor generation changed")
+                    await write_frame(writer, message)
+
+            previews = PreviewStreams(
+                identity,
+                send_preview,
+                lambda: self.ready and self.writer is writer and self.identity == identity,
+                accept_open=False,
+            )
+            forwards = PreviewForwards(previews)
+            self._preview_forwards = forwards
             if old_writer is not None and old_writer is not writer:
                 old_writer.close()
+            if old_previews is not None:
+                await old_previews.close()
+            if self.writer is not writer or self.identity != identity:
+                return
+            self._inventory = {}
+            self._retained_inventory = {}
             if (
                 old_identity is not None
                 and old_identity.executor_incarnation != identity.executor_incarnation
@@ -644,9 +682,17 @@ class ExecutorEndpoint:
                                 {"reason": "executor_process_replaced"},
                             )
                         )
-            await self._send(
-                WireMessage(WireMessageKind.hello_accepted, hello.request_id, _object(identity))
-            )
+            async with self._send_lock:
+                if self.writer is not writer or self.identity != identity:
+                    return
+                await write_frame(
+                    writer,
+                    WireMessage(
+                        WireMessageKind.hello_accepted, hello.request_id, _object(identity)
+                    ),
+                )
+            if self.writer is not writer or self.identity != identity:
+                return
             probe = asyncio.create_task(self._measure_clock())
             self._tasks.add(probe)
             probe.add_done_callback(self._tasks.discard)
@@ -657,14 +703,19 @@ class ExecutorEndpoint:
                 if self.writer is not writer or self.identity != identity:
                     break
                 self.last_contact_at_ms = now_ms()
+                if message.kind in PREVIEW_KINDS:
+                    previews.feed(message)
+                    continue
                 task = asyncio.create_task(self._handle(message, identity, writer))
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
         except (asyncio.IncompleteReadError, ConnectionError, OSError, ValueError):
             pass
         finally:
-            if identity is not None and self.writer is writer:
+            if identity is not None and self.writer is writer and self.identity == identity:
+                # Detach this generation before cleanup yields to a replacement hello.
                 self.ready = False
+                self._preview_forwards = None
                 self.writer = None
                 self.lost_at_ms = now_ms()
                 self.store.mark_lost(identity, now_ms())
@@ -672,6 +723,8 @@ class ExecutorEndpoint:
                     if not response_future.done():
                         response_future.set_exception(ConnectionError("executor link lost"))
             writer.close()
+            if forwards is not None:
+                await forwards.close()
 
     async def _measure_clock(self) -> None:
         sent = now_ms()

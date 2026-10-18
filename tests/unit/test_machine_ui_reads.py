@@ -42,6 +42,16 @@ from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 class Writer:
     def __init__(self) -> None:
         self.closed = False
+        self.writes: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    async def drain(self) -> None:
+        return None
+
+    async def wait_closed(self) -> None:
+        return None
 
     def close(self) -> None:
         self.closed = True
