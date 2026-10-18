@@ -16,9 +16,9 @@ import {QueryClient,QueryClientProvider} from '@tanstack/svelte-query';
 import BoardRoute from '../src/routes/BoardRoute.svelte';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
 const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
-let direct=$state(false),id=$state('t19');
-let address=$derived({selection:{kind:'ticket' as const,id},view:'tickets' as const,openFile:null});
-(window as any).__fixture=(d=false,next='t19')=>{direct=d;id=next;client.invalidateQueries();};
+let direct=$state(false),id=$state('t19'),chief=$state(false);
+let address=$derived({selection:chief ? {kind:'chief' as const} : {kind:'ticket' as const,id},view:'tickets' as const,openFile:null});
+(window as any).__fixture=(d=false,next='t19')=>{direct=d;id=next;chief=next==='chief';client.invalidateQueries();};
 </script>
 <QueryClientProvider {client}>{#if direct}{#key id}<TicketRoute {id} />{/key}{:else}<BoardRoute {address} />{/if}</QueryClientProvider>
 <style>:global(html),:global(body),:global(#app) {height:100%; margin:0;}</style>`);
@@ -46,7 +46,13 @@ def api(route):
  elif path=='/api/workers': data={'workers':[],'chief_of_staff':{'label':'Chief of Staff','conversation_id':None}}
  elif path=='/api/executor/health': data=health
  elif path=='/api/worker-types': data={'worker_types':[manifest]}
- elif path=='/api/tickets': data=detail(int(parse_qs(u.query)['id'][0][1:]))
+ elif path=='/api/tickets':
+  q=parse_qs(u.query)
+  if q.get('detail')==['summary']:
+   rows=[dict(card(i),is_backlogged=False) for i in range(20) if not hide_mac or i>=share]
+   if q.get('stage')==['done']: rows=[dict(card(i),is_backlogged=False,stage='done') for i in range(share)]
+   data={'tickets':rows,'page':dict(match_count=len(rows),return_count=len(rows),limit=30,offset=0,omitted_before=0,omitted_after=0,complete=True,next_offset=None)}
+  else: data=detail(int(q['id'][0][1:]))
  elif path=='/api/conversation/backends': data={'backends':[]}
  elif path.endswith('/conversation/start-values'): data={'employee_backend':'codex','employee_launch_model':None,'employee_launch_reasoning_effort':None}
  else: data={}
@@ -69,6 +75,12 @@ with sync_playwright() as p:
  page.evaluate('()=>window.__fixture(false,"t0")');expect(page.locator('[data-screen="ticket"][data-ticket-id="t0"]')).to_be_visible();expect(page.locator('[data-machine-notice]')).to_have_count(1)
  page.locator('.ticket-doc').evaluate('(e)=>e.scrollTop=400');expect(page.locator('[data-machine-notice]')).to_be_visible()
  if os.environ.get('PANELS_MACHINE_ARTIFACTS'):page.screenshot(path=os.path.join(os.environ['PANELS_MACHINE_ARTIFACTS'],'workspace-machine-mac-phone.png'),full_page=True)
+ page.evaluate('()=>window.__fixture(false,"chief")');expect(page.locator('[data-orchestrator-children="chief:chief"]')).to_be_visible();expect(page.locator('[data-machine-notice]')).to_have_count(1)
+ hide_mac=True;page.evaluate('()=>window.__fixture(false,"chief")');expect(page.locator('[data-machine-notice]')).to_have_count(0)
+ page.get_by_label('Worker state').select_option('done');expect(page.locator('[data-workspace-group="done"]')).to_be_visible();expect(page.locator('[data-machine-notice]')).to_have_count(0)
+ page.locator('[data-workspace-group="done"] summary').click();expect(page.locator('[data-machine-notice]')).to_have_count(1)
+ page.locator('[data-workspace-group="done"] summary').click();expect(page.locator('[data-machine-notice]')).to_have_count(0)
+ hide_mac=False
  page.evaluate('()=>window.__fixture(true,"t19")');expect(page.locator('[data-machine-notice]')).to_have_count(0)
  page.evaluate('()=>window.__fixture(true,"t0")');expect(page.locator('[data-machine-notice]')).to_have_count(1)
  if os.environ.get('PANELS_MACHINE_ARTIFACTS'):page.screenshot(path=os.path.join(os.environ['PANELS_MACHINE_ARTIFACTS'],'direct-machine-mac-phone-before.png'),full_page=True)

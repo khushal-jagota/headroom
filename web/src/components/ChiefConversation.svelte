@@ -24,6 +24,8 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
 
+  let { onMachineRowsChange = () => undefined }: { onMachineRowsChange?: (hasMac: boolean) => void } = $props();
+
   let conversationId = $state<string | null>(null);
   let backends = $state<readonly BackendSnapshot[]>([]);
   const workers = createQuery(() => queries.workers());
@@ -66,7 +68,7 @@
   {#if workers.data?.chief_of_staff.conversation_signal?.working || workers.data?.chief_of_staff.conversation_signal?.message_for_owner}
     <div class="chief-signal"><ConversationSignalMark signal={workers.data?.chief_of_staff.conversation_signal} conversationId={workers.data?.chief_of_staff.conversation_id} /></div>
   {/if}
-  <div class="chief-workers"><OrchestratorChildren principal={{ kind: "chief", id: "chief" }} /></div>
+  <div class="chief-workers"><OrchestratorChildren {onMachineRowsChange} principal={{ kind: "chief", id: "chief" }} /></div>
   <div class="chief-conversation">
 {#if currentConversation.error}
   <div class="chief-conversation-resource" data-chief-conversation-error>

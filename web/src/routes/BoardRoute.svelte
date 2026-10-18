@@ -27,9 +27,15 @@
   let windowWidth = $state(1200);
   let creating = $state(false);
   let openItemHasMac = $state(false);
+  let chiefHasMac = $state(false);
   const workers = createQuery(() => queries.workers());
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let opening = $derived(whatTheAddressOpens(address));
+  $effect(() => {
+    // A new pane reports its own visible children; never retain the prior scope.
+    opening.openItemId; opening.chiefMarked;
+    openItemHasMac = false; chiefHasMac = false;
+  });
   const selectedTicket = createQuery(() => ({...queries.ticket(opening.markedTicketId ?? ""),enabled:opening.markedTicketId !== null}));
 
   const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspace(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
@@ -135,7 +141,7 @@
   <ResourceState error={board.error} loading={board.isFetching} hasData={Boolean(board.data)} loadingText="Loading workspace...">
     <div class="workspace-machine-bar"><MachineKey /><button type="button" class="button button--quiet" onclick={() => creating = !creating}>Create Ticket</button></div>
     {#if creating}<TicketCreation onCreated={(id) => {creating=false; selectCard(id,null);}} />{/if}
-    <MachineNotice relevant={Boolean(selectedTicket.data?.locale === "macos" || (itemPane && openItemHasMac) || ((windowWidth > 960 || (!opening.markedTicketId && !itemPane && !opening.chiefMarked)) && (rail.chiefGroups.some(group => group.cards.some(ticket => ticket.locale === "macos")) || rail.items.some(item => item.groups.some(group => group.cards.some(ticket => ticket.locale === "macos"))) || (settledOpen && rail.settledItems.some(item => workspaceChildMessageConversations(messages,item,allCards).some(row => row.locale === "macos"))))))} />
+    <MachineNotice relevant={Boolean(selectedTicket.data?.locale === "macos" || (itemPane && openItemHasMac) || (opening.chiefMarked && chiefHasMac) || ((windowWidth > 960 || (!opening.markedTicketId && !itemPane && !opening.chiefMarked)) && (rail.chiefGroups.some(group => group.cards.some(ticket => ticket.locale === "macos")) || rail.items.some(item => item.groups.some(group => group.cards.some(ticket => ticket.locale === "macos"))) || (settledOpen && rail.settledItems.some(item => workspaceChildMessageConversations(messages,item,allCards).some(row => row.locale === "macos"))))))} />
     <div class="board-workspace-wrap">
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
@@ -183,7 +189,7 @@
         >
           {#if opening.chiefMarked}
             <div class="board-workspace-chief-conversation">
-              <ChiefConversation />
+              <ChiefConversation onMachineRowsChange={(hasMac) => chiefHasMac = hasMac} />
             </div>
           {:else if opening.markedTicketId}
             {#key opening.markedTicketId}
