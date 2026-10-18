@@ -46,7 +46,8 @@ from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSIO
     ],
 )
 def test_resident_restrictions_precede_cli_routing(
-    arguments: list[str], monkeypatch: pytest.MonkeyPatch,
+    arguments: list[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from planner.executor import entrypoint
 
@@ -142,6 +143,49 @@ def test_real_wheel_installs_full_cli_data_and_resident_identity(tmp_path: Path)
         PYTHONPATH=str(hostile),
         PLAN_TICKET_ID="t_fixture",
         PLAN_ACTOR="worker",
+    )
+    # Eager CLI help never imports the executor's actual runtime or AsyncSSH.
+    # Resolve that dependency closure from installed wheels under an isolated
+    # interpreter, without a checkout path, connection, or provider instance.
+    import_proof = subprocess.run(
+        [
+            str(prepared.runtime / "bin/python"),
+            "-I",
+            "-B",
+            "-c",
+            """import importlib, json, sys, sysconfig
+from pathlib import Path
+names = (
+    'planner.executor.mac', 'planner.executor.ssh', 'planner.executor.sftp',
+    'planner.executor.preflight', 'planner.cli.main', 'asyncssh',
+)
+modules = {name: importlib.import_module(name) for name in names}
+assert modules['planner.executor.mac'].MacExecutor.__module__ == 'planner.executor.mac'
+sites = {Path(sysconfig.get_path(key)).resolve() for key in ('purelib', 'platlib')}
+for name, module in tuple(sys.modules.items()):
+    if name.split('.')[0] in {'planner', 'asyncssh', 'cryptography', 'cffi'}:
+        origin = Path(module.__file__).resolve()
+        assert any(origin.is_relative_to(site) for site in sites), (name, str(origin))
+print(json.dumps({name: module.__file__ for name, module in modules.items()}))
+""",
+        ],
+        cwd=hostile,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    installed_origins = json.loads(import_proof.stdout)
+    assert set(installed_origins) == {
+        "planner.executor.mac",
+        "planner.executor.ssh",
+        "planner.executor.sftp",
+        "planner.executor.preflight",
+        "planner.cli.main",
+        "asyncssh",
+    }
+    assert all(
+        Path(origin).is_relative_to(prepared.runtime) for origin in installed_origins.values()
     )
     requests: list[str] = []
 
