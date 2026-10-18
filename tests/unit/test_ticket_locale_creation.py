@@ -109,7 +109,13 @@ def test_inherited_project_resolves_before_locale(
 
 
 @pytest.mark.parametrize("locale", ["macos", "wrong", "", 12])
-def test_refused_creation_is_atomic(tmp_db: Connection, locale: object) -> None:
+def test_refused_creation_is_atomic(
+    tmp_db: Connection, locale: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # This case exercises unavailable compatibility, independent of proven defaults.
+    monkeypatch.setitem(
+        locale_configuration.LOCALE_SUPPORTED_BACKENDS, TicketLocale.macos, frozenset()
+    )
     before = tuple(tmp_db.iterdump())
     with pytest.raises(PlannerError) as error:
         data.create_ticket(
@@ -170,17 +176,23 @@ def test_locale_migration_preserves_entire_existing_rows(
     from planner.core import db
 
     original = db.MIGRATIONS_DIRECTORY
+    scripts = ScriptDirectory(str(original))
+    locale_revision = scripts.get_revision("ticket_locale")
+    assert locale_revision is not None
+    predecessor = locale_revision.down_revision
+    assert isinstance(predecessor, str)
     tree = tmp_path / "predecessor-migrations"
     (tree / "versions").mkdir(parents=True)
     shutil.copy(original / "env.py", tree / "env.py")
-    # Select the predecessor chain so later migrations stay outside this old schema.
-    for revision in ScriptDirectory(str(original)).walk_revisions(
-        base="base", head="disable_retired_worker_schedules"
-    ):
-        shutil.copy(revision.path, tree / "versions" / Path(revision.path).name)
+    # Build the actual pre-locale history, regardless of later descendants.
+    for revision in scripts.walk_revisions(base="base", head=predecessor):
+        path = Path(revision.path)
+        shutil.copy(path, tree / "versions" / path.name)
     conn = db.connect(str(tmp_path / "old.db"))
     monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", tree)
     db.create_schema(conn)
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == predecessor
+    assert "locale" not in {row[1] for row in conn.execute("PRAGMA table_info(tickets)")}
     conn.execute(
         "INSERT INTO tickets (id,title,worker_type,employee_backend,ceiling,field_values,"
         "worker_step_claim,stage,created_at,updated_at) VALUES "
@@ -192,6 +204,9 @@ def test_locale_migration_preserves_entire_existing_rows(
     workers_before = [dict(row) for row in conn.execute("SELECT * FROM worker_types")]
     monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", original)
     db.create_schema(conn)
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+        scripts.get_current_head()
+    )
     after = dict(conn.execute("SELECT * FROM tickets WHERE id='t_preserved'").fetchone())
     assert after.pop("locale") == "vps"
     assert after == before

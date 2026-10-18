@@ -161,6 +161,92 @@ The operator must establish the single-user filesystem layout, user units, runne
 persistent paths before enabling automatic deployment. Repository deployment does not
 perform that host setup or change the existing Tailscale Serve route.
 
+## Mac executor deployment
+
+`python -m planner.environments.resident.cli` supplies the production source-build,
+native preparation, owner-only activation, and pinned-host delivery commands. These
+commands change a host only after explicit invocation. Code review does not authorize
+their live use.
+
+The code location is `~/Deployments/PanelsExecutor/current/app`. The stable data root
+is `~/Library/Application Support/Panels/executor`, selected by `PLAN_EXECUTOR_ROOT`.
+Its spool, artifacts, logs, and IPC socket remain outside replaceable code. The account
+HOME and provider homes remain unchanged. Worker shells find the installed `panels`
+wrapper through a stable app path.
+
+`package-spec` expands the executor-owned build contract from the requested Git
+revision. The checked contract records the original executor commit and its local
+import provenance. Its explicit closure contains the full planner Python package,
+declared package data, Python pins, and backend npm locks. This source closure supports
+the executor and Worker CLI. No local Panels database or web build is installed. The
+light executor entrypoint runs the service; the generated wrapper rejects `serve`.
+
+Preview forwarding requires protocol 4 on both peers. The existing full planner
+source closure includes `src/planner/previews/` and the executor stream handlers.
+Build both peers from the same reviewed revision. The journal format stays at 1.
+Protocol 3 peers refuse the handshake before work or preview admission.
+
+Native Python and Node probes must match the requested Mac architecture and versions.
+The builder creates Python and native backend dependencies directly at a permanent
+versioned runtime path. It never copies a VPS environment. The package launcher maps
+the managed Claude executable to that runtime and injects its own exact source revision.
+The registered LaunchAgent therefore keeps stable arguments across code updates.
+
+The dedicated GUI LaunchAgent uses `KeepAlive={SuccessfulExit:false}`. An abnormal
+exit requests restart. A successful intentional maintenance exit stays stopped unless
+another demand starts the job. The generated job has no additional automatic demand
+triggers beyond its initial RunAtLoad. This design follows Apple's
+[launchd property-list documentation](https://github.com/apple-oss-distributions/launchd/blob/main/man/launchd.plist.5).
+It does not prove behavior on the target Mac.
+
+Before quiescence, the service records the expected launchd PID and run count. The
+owner-only IPC request names the full executor identity and PID. Cutover requires a
+matching zero-work receipt, committed exit, unchanged run count, no live PID, and status
+zero. A replacement process or missing evidence refuses cutover. The adapter never
+kills or boots out a replacement. It checks executor-owned spool compatibility again
+after exit and before source mutation. Rollback requires a separate fresh candidate
+receipt and another stable-boundary compatibility check.
+
+`deploy-local` prepares a committed source package on the native host. `deploy-remote`
+streams exact source and separate deployment tooling through SSH with an explicit
+identity and pinned known_hosts. Native preparation needs no preexisting Mac Panels
+installation or Git checkout. The remote code performs the native build, then uses its
+new interpreter for the owner-only control path. An interrupted first install can
+resume only under the recorded same-package intent and positive safety checks.
+
+The workflow enables this path only when `PANELS_RESIDENT_DEPLOY_ENABLED=true` and
+all explicit Mac, interpreter, backend, and transport configuration passes preflight.
+Without opt-in, the existing VPS workflow remains unchanged. The resident step records
+both observed hosts under the deployment identity. Both observed revisions must match
+the request before aggregate success. One successful host stays installed after its
+peer fails. A later explicit deployment retries the request.
+
+The managed VPS launcher reads `current/data/executor-launch.json`. This bounded,
+owner-only file accepts only version, mode, and socket fields. Missing configuration
+means the existing local default. Malformed or unauthorized explicit configuration
+fails. The launcher first scrubs the ambient environment, then applies only the
+validated `PLAN_EXECUTOR_MODE` and optional `PLAN_EXECUTOR_VPS_SOCKET` values. Ambient
+executor flags cannot enable the endpoint.
+
+The workflow prepares the desired settings in runner-temporary storage. The VPS
+deployment transaction applies them after service stop and restores the prior bytes
+or absence before fallback restart. Opt-out changes a stale remote selection to local.
+An absent local configuration leaves an unchanged deployment on its existing fast
+path. The SSH relay receives an explicit deployed executable and `--socket-path`
+equal to the server setting, independent of SSH environment propagation.
+
+An SSH failure before remote invocation leaves the existing installation untouched.
+A timeout or lost SSH connection after invocation leaves the remote outcome unknown.
+The report keeps the requested revision unverified and never infers cancellation or
+retention of the old version. It queues no automatic deployment retry. `verify-report`
+checks the recorded identity, revisions, and outcomes without host contact.
+
+Native builder, IPC, transfer, service, and restart-race checks use synthetic fixtures
+and local processes until a live test is separately authorized. Installed-agent
+credential access before and after interaction/keychain unlock, sleep recovery,
+unattended reboot, and the VPS-after-Mac grant check remain unproved. The full
+unattended outcome remains required.
+
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 `src/planner/environments/deployment.py`,
 `src/planner/environments/deployment_lifecycle.py`,

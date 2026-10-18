@@ -47,6 +47,7 @@ from planner.environments.materialize import (
     reset_environment_instance,
 )
 from planner.environments.repository_runtime import resolve_repository_runtime_python
+from planner.environments.resident.vps_launch import read_vps_launch
 from planner.environments.runtime_port import reserve_available_tcp_listener
 from planner.environments.vps_status import (
     CleanupInventory,
@@ -218,6 +219,9 @@ def backup_current(source_db: Path, backup_dir: Path, current_app: Path) -> None
     "--lifecycle-path",
     type=click.Path(path_type=Path, dir_okay=False),
 )
+@click.option(
+    "--executor-launch-config", type=click.Path(path_type=Path, exists=True, dir_okay=False)
+)
 @click.option("--deployment-id")
 def app_deploy(
     candidate_app: Path,
@@ -230,6 +234,7 @@ def app_deploy(
     lock_path: Path | None,
     lifecycle_path: Path | None,
     deployment_id: str | None,
+    executor_launch_config: Path | None,
 ) -> None:
     """Hard-cut over the deployed app with a verified snapshot and full recovery."""
     if (lifecycle_path is None) != (deployment_id is None):
@@ -259,6 +264,11 @@ def app_deploy(
         )
 
     try:
+        launch_configuration = None
+        if executor_launch_config is not None:
+            launch_configuration = read_vps_launch(executor_launch_config)
+            if launch_configuration is None:
+                raise ValueError("explicit executor launch configuration is missing")
         result = deploy_app(
             candidate_app=candidate_app,
             current_root=current_root,
@@ -272,6 +282,7 @@ def app_deploy(
             service=SubprocessServiceController(service_manager, service_name),
             health=HttpHealthClient(health_url),
             lock_path=lock_path,
+            executor_launch_configuration=launch_configuration,
             lifecycle_transition=publish_lifecycle if lifecycle_store is not None else None,
         )
     except (OSError, RuntimeError, ValueError) as exc:

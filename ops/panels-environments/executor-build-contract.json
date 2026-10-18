@@ -1,0 +1,108 @@
+{
+  "source_revision": "58698d4e8777b4e64d4a72c244c14e9f20da0177",
+  "source_repository": "/home/vps/projects/panels/repository",
+  "source_worktree": "/home/vps/projects/panels/repository-worktrees/t_t77znn6k-executor",
+  "publication": "Resident owns combined remote feature/mac-vps-execution. This executor commit has no independent publication authority.",
+  "entry_module": "planner.executor.entrypoint:main",
+  "offline_command": [
+    "python",
+    "-m",
+    "planner.executor.entrypoint",
+    "executor",
+    "--help"
+  ],
+  "package_inputs": [
+    "pyproject.toml",
+    "requirements.txt",
+    "src/planner (entire Python package and declared package-data)",
+    "agent_backends/package.json",
+    "agent_backends/package-lock.json"
+  ],
+  "native_dependencies": {
+    "python": ">=3.12; install pinned requirements on target architecture",
+    "node": ">=22 if bundled Claude CLI is installed via locked agent_backends package",
+    "backend_executables": "native installed Codex on PATH; Claude uses bundled managed executable or PLAN_CLAUDE_EXECUTABLE override"
+  },
+  "excluded": [
+    "data/",
+    "web/dist/",
+    "VPS .venv",
+    "VPS node_modules",
+    "credential or provider-home copies"
+  ],
+  "layout": {
+    "replaceable_code": "$HOME/Deployments/PanelsExecutor/current/app",
+    "persistent_root": "$HOME/Library/Application Support/Panels/executor",
+    "data_env": "PLAN_EXECUTOR_ROOT",
+    "ipc": "PLAN_EXECUTOR_ROOT/run/executor.sock (owner-only)"
+  },
+  "control_contract": {
+    "health": "panels executor health -> ExecutorHealth JSON",
+    "quiesce": "panels executor quiesce --expected-incarnation UUID --expected-generation N --expected-revision FULL_SHA --expected-pid PID --exit-when-ready",
+    "receipt": "QuiescenceReceipt; inspect .quiescence.ready and .exit_committed",
+    "identity_fence": "expected full identity/PID checked before admission changes and again after awaited drain",
+    "successful_exit": "committed controlled exit returns normal status 0",
+    "resident_policy": "KeepAlive={SuccessfulExit:false}; resident waits matching PID exit and refuses any replacement PID, never kills or bootouts a replacement",
+    "rollback": "failed candidate needs fresh candidate-specific health and quiescence; earlier exit receipt grants no authority over replacement"
+  },
+  "synthetic_evidence": {
+    "unit": "144 passed in 9.78s",
+    "integration": "23 passed in 71.86s (0:01:11)",
+    "ruff": "All checks passed!",
+    "mypy": "Success: no issues found in 6 source files"
+  },
+  "gate": "Reviewed commit for resident-owned feature/mac-vps-execution only; no competing remote branch. Staging requires owner approval of whole combined work. No live action, skill application, or ticket closure.",
+  "protocol_version": 4,
+  "spool_format_version": 1,
+  "source_baseline": "95af473d2250d8136f2e298b528b7c2c6a9bef35",
+  "source_diff": "/files/tickets/t_t77znn6k/artifacts/executor-chunk-ack-from-accepted.patch",
+  "preflight": {
+    "import": "planner.executor.preflight.check_spool_compatibility",
+    "signature": "(root: Path, expected_format: int) -> None",
+    "root": "stable PLAN_EXECUTOR_ROOT, not root/spool",
+    "refusal": "ValueError or OSError; no writes, lock, migration, or journal construction",
+    "authorization": "compatibility observation only; fresh identity-bound quiescence remains required"
+  },
+  "vps_launcher": {
+    "enable": "PLAN_EXECUTOR_MODE=remote",
+    "socket": "PLAN_EXECUTOR_VPS_SOCKET or database-parent/executor.sock",
+    "boundary": "Supply explicit values after managed PLAN_* environment scrub; ambient values do not enable installed VPS endpoint."
+  },
+  "synthetic_evidence_links": {
+    "unit": "/files/tickets/t_t77znn6k/artifacts/executor-chunk-ack-unit-check.txt",
+    "integration": "/files/tickets/t_t77znn6k/artifacts/executor-chunk-ack-integration-check.txt",
+    "ruff": "/files/tickets/t_t77znn6k/artifacts/executor-chunk-ack-ruff-check.txt",
+    "mypy": "/files/tickets/t_t77znn6k/artifacts/executor-chunk-ack-mypy-check.txt"
+  },
+  "review": "/files/tickets/t_t77znn6k/artifacts/executor-chunk-ack-review.txt",
+  "answer_contract": "permission choices and complete user_input maps share one durable VPS ask record, exact callback kind/child/turn/ID, immutable first choice, application acknowledgment, and reconnect reconciliation",
+  "held_content": "canonical pending conversation content and original queued receipt commit atomically; original target/order restore; promotion/discard consume; interrupted dispatch retains bytes as uncertainty without native replay; no reconstruction of previously lost volatile content",
+  "accepted_evidence_revision": "95af473d2250d8136f2e298b528b7c2c6a9bef35",
+  "staging_base": "bdaaf251dcf0128d67b101ce36a5aea3c51a359e",
+  "producer_correction": "583cfccf631699fe2b610b98c97df9d86e58c8dc",
+  "candidate_receipt": "/files/tickets/t_t77znn6k/artifacts/executor-chunk-ack-candidate.json",
+  "resident_fixtures": "/files/tickets/t_t77znn6k/artifacts/executor-chunk-ack-fixtures.json",
+  "relay_fixture_correction": "f12638d03ea52b98cb4e025071ab02e6b0ad8a0a",
+  "chunk_ack": {
+    "kind": "file_chunk_ack",
+    "fields": {
+      "publication_id": "str",
+      "offset": "int, never bool",
+      "byte_count": "int, never bool"
+    },
+    "meaning": "successful write of exactly one chunk, not complete publication",
+    "validation": "exact keys/types/kind/publication/offset/decoded byte count",
+    "both_directions": "request then validate acknowledgment before next chunk or complete",
+    "failure": "refuse malformed acknowledgment before completion; retain Mac envelope; retain the same VPS caller, command ID, and pending future across acknowledgment refusal and reconnect"
+  },
+  "imported_source_revision": "58698d4e8777b4e64d4a72c244c14e9f20da0177",
+  "resident_prior_provenance": "/files/tickets/t_j1wkk0p7/evidence/final-relay/provenance.json",
+  "preview_transport": {
+    "protocol_version": 4,
+    "baseline_revision": "c28d07e502ab620b1fae293364c46810d877e1b1",
+    "source_closure": "The requested package revision includes src/planner/previews and both executor stream handlers through the existing full planner package closure.",
+    "compatibility": "Protocol 3 peers refuse before preview admission. Journal format remains 1.",
+    "lifecycle": "Ephemeral generation-bound loopback streams; no journal or replay.",
+    "verification_scope": "Isolated synthetic fixtures only. No physical Mac, provider, installed route or deployment evidence."
+  }
+}

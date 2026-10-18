@@ -155,6 +155,9 @@ def worker_resolve(
         overrides=overrides,
         workspace_folder=_worker_workspace_folder(conn, ticket, workspace_folder),
     )
+    locale_configuration.require_locale_backend_compatibility(
+        ticket.locale, values.backend_key.value
+    )
     if ticket.employee_launch_model is None or overrides.model is not None:
         require_enabled_model(conn, values.backend_key, values.model)
     return values
@@ -416,7 +419,7 @@ async def send_to_ticket_conversation(
     # machinery would refuse: deliver and hold, do not start. This guard only protects
     # local execution. The general runtime fix must decide whether it subsumes this
     # refusal so that separate admission mechanisms do not disagree.
-    if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
+    if not locale_configuration.can_execute_locale(conn, ticket.locale):
         raise PlannerError(
             ErrorCode.validation,
             f"the Ticket locale is {ticket.locale.value}, so it cannot start on "

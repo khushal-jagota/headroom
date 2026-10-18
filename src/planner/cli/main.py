@@ -34,6 +34,7 @@ from planner.cli.record_projection import (
     render_text,
 )
 from planner.environments.cli import environment as environment_group
+from planner.executor.cli import executor_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets.contracts import TicketLocale
@@ -295,6 +296,7 @@ def _ticket_record(
         "sprint_item_id",
         "effective_sprint_id",
         "ceiling",
+        "ceiling_holder",
     )
     header = {key: data[key] for key in header_keys if key in data}
     manifest = _worker_type(str(data["worker_type"]), True)
@@ -306,6 +308,8 @@ def _ticket_record(
     parts["proposal"] = part(data.get("pending_proposal"))
     parts["recap"] = part(data.get("recap", ""))
     parts["guidance"] = part(data.get("guidance", ""))
+    if "memory_notice_inspection" in data:
+        parts["memory_notice_inspection"] = part(data["memory_notice_inspection"])
     return header, parts
 
 
@@ -507,6 +511,7 @@ def main() -> None:
     """Operate the local planner server."""
 
 
+main.add_command(executor_group)
 main.add_command(environment_group)
 environment_group.hidden = True
 

@@ -452,6 +452,12 @@ text into the captured running turn and does not apply model choices that waited
 that message. Being told that the message is gone is an ordinary answer because
 automatic delivery may win the same race.
 
+For executor admissions, the VPS saves held content and its first queued receipt
+together. Startup restores its original target and order. Interrupted dispatch
+retains the content with `delivery_uncertain`, blocks further dispatch, and does
+not repeat the native operation. Queued and uncertain receipts do not prove an
+explicit reply. Actual composed delivery supplies that credit.
+
 Claude gives every steered message a UUID. Its queue receipt admits the message to work
 owned by the captured Panels turn. Claude can fold that work into its current model loop
 or run a native continuation. Panels does not classify those paths. It keeps their
@@ -620,11 +626,20 @@ remembering — this system keeps no grant state at all. Ask and answer are both
 notebook rows; an answer only lands on an ask that is still waiting on the live
 turn, and an unanswered ask dies — visibly — when its turn ends.
 
-Agent questions use a separate path. A request keeps every question in order, including
+For a remote child, the VPS saves the selected choice before transmission and
+records callback application separately. A dropped connection supplies no answer
+or refusal. Current evidence for the exact callback gates new selections.
+Reconciliation recovers recorded choices after reconnect. See
+[the Mac executor](executor.md) for this boundary and its timing limitations.
+
+Agent question requests keep every question in order, including
 its short header, full text, choices, descriptions, whether several choices are allowed,
 and whether a typed answer is allowed. The composer presents one question at a time and
-sends the complete answer map only after all are answered. The answer row is written only
-after the backend accepts that map. Refreshing the page rebuilds a still-pending request
+sends the complete answer map only after all are answered. For a remote child, the same
+authoritative answer path preserves the validated map before transmission. Its identity
+includes the callback type, child, turn, and request. The conversation answer row appears
+after callback application. A lost callback leaves the accepted map unresolved.
+Refreshing the page rebuilds a still-pending request
 from the notebook. Cancelling the turn withdraws it. A malformed question request is
 shown as a failure and refused; it never turns into an approval prompt.
 
@@ -636,16 +651,19 @@ ACP has no agent-question request, so its existing permission flow is unchanged.
 
 One child process per conversation, started when a send or maintenance run needs it. The
 agent's own session handle is stored on the conversation row, so a later send
-can bring the same memory back. After a server restart nothing is running and
-the system says so — there is no pretending, and no machinery that quietly
-reattaches. An agent idle for half an hour is stopped silently (its memory is
+can bring the same memory back. After a server restart local children are gone.
+Remote children can survive and require exact inventory and record reconciliation
+before they reattach. Link recovery alone proves no child or callback survival.
+An agent idle for half an hour is stopped silently (its memory is
 already saved); the next send brings it back without anyone noticing. A resume
 that did not actually restore the agent's memory is refused out loud — never
 silently accepted as a fresh brain behind an old transcript. A failed turn
 writes one error-log line with the ids and the tail of the process's stderr.
 
-Held messages live in memory only: a server restart loses whatever was still
-waiting in line (the notebook keeps what was delivered or discarded). Kill is
+Executor-admitted held messages survive a VPS restart in the canonical operation
+record. Pending items resume through the held lifecycle. An interrupted dispatch
+stays uncertain. This cannot recover content lost before persistence existed.
+Ordinary local admissions retain the memory-only held line. Kill is
 the loud version of stopping: it ends the running turn and throws away the
 waiting line, writing a discard row for each thrown-away message, because text
 someone handed over must never vanish without a trace. Pressing New in the pane
@@ -1200,8 +1218,8 @@ steer into a turn that was genuinely running, on a receipt from the provider pro
 
 ## Deferred
 
-- **Held-line durability**: if losing the in-memory waiting line on a restart
-  ever bites, the line can be made durable without changing the contract.
+- **Local held-line durability**: ordinary local admissions retain the volatile
+  waiting line. Executor-admitted messages now persist their pending content.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 

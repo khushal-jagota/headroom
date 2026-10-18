@@ -465,12 +465,10 @@ def _parse_next_ceiling(
 # --- ticket routes -------------------------------------------------------------
 
 
-@router.post("/tickets")
-async def create_ticket(
+def write_create_ticket(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
-    cfg: Cfg,
     clk: Clk,
 ) -> JsonDict:
     body = _marshal_create_ticket(raw)
@@ -514,6 +512,13 @@ async def create_ticket(
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets")
+async def create_ticket(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+) -> JsonDict:
+    return write_create_ticket(raw, conn, ctx, clk)
 
 
 @router.get("/tickets")
@@ -990,9 +995,8 @@ async def delete_ticket(
     }
 
 
-@router.patch("/tickets/{ticket_id}")
-async def patch_ticket(
-    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+def write_patch_ticket(
+    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
     recognized = (
         "title",
@@ -1061,6 +1065,13 @@ async def patch_ticket(
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
+
+
+@router.patch("/tickets/{ticket_id}")
+async def patch_ticket(
+    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+) -> JsonDict:
+    return write_patch_ticket(ticket_id, body, conn, ctx, clk)
 
 
 @router.post("/tickets/{ticket_id}/propose")
