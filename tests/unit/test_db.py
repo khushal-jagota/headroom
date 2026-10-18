@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from planner.core import db as db_module
@@ -81,7 +82,7 @@ def _revision(conn: sqlite3.Connection) -> str:
 
 def _head_revision() -> str:
     """The revision this build finishes at, which moves as revisions are added."""
-    config = db_module.Config()
+    config = Config()
     config.set_main_option("script_location", str(db_module.MIGRATIONS_DIRECTORY))
     return str(ScriptDirectory.from_config(config).get_current_head())
 

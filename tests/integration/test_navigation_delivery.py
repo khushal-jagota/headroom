@@ -16,6 +16,7 @@ from planner.core.sse import open_change_stream_count
 from planner.navigation.api import DeadlineStreamingResponse
 from planner.navigation.configuration import DeliveryConfig
 from planner.navigation.contracts import Continuity, ProjectRecord, RevisionBatch
+from planner.navigation.data import snapshot
 from planner.navigation.delivery import DeliveryRuntime, read_page, read_snapshot
 from planner.navigation.delivery_authority import (
     DeliveryAuthority,
@@ -379,7 +380,7 @@ def test_snapshot_discards_old_permit_after_threaded_read_and_rapid_recovery(
 
     pinned = threading.Event()
     release = threading.Event()
-    original = delivery.snapshot
+    original = snapshot
 
     def blocked(conn: sqlite3.Connection) -> object:
         value = original(conn)
@@ -474,7 +475,7 @@ def test_empty_page_invalidation_closes_stream_and_cannot_revive_after_recovery(
         authority = InjectedDeliveryAuthority()
         runtime.admission.configure(authority.callbacks())
         stream = runtime.stream(encode_cursor(continuity()))
-        pending = asyncio.create_task(anext(stream))
+        pending: asyncio.Future[bytes] = asyncio.ensure_future(anext(stream))
         try:
             assert await asyncio.to_thread(pinned.wait, 3)
             runtime.admission.invalidate()

@@ -1589,5 +1589,6 @@ async def apply_model_corrections(
         )
         if any(item.applied and item.target.kind == "worker-default" for item in results):
             from planner.worker_types.configuration import load_worker_runtime_definitions
+
             load_worker_runtime_definitions(conn)
     return CorrectionBatch(corrections=results).model_dump(mode="json")
