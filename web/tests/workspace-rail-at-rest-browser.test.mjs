@@ -162,6 +162,10 @@ def respond(route):
     if path == "board": result = board
     elif path == "workers": result = workers
     elif path == "worker-types": result = manifest
+    elif path == "skills": result = {"skills": []}
+    elif path == "feedback": result = {"open": [], "open_count": 0, "handled_groups": []}
+    elif path == "conversation/backends/codex/sign-in": result = {"sign_in": None}
+    elif path.startswith("conversation/backends"): result = {"backends": []}
     elif path == "backends": result = {"backends": []}
     elif path.endswith("/workspace"): result = {**workspace,"tickets":board["sprint_items"][0]["tickets"]}
     elif path.endswith("/start-values"): result = {"backend_key":"codex","model":None,"reasoning_effort":None}
@@ -178,7 +182,7 @@ with sync_playwright() as p:
         page = browser.new_page(viewport={"width": 1280, "height": 900})
         page.context.tracing.start(screenshots=True,snapshots=True,sources=True)
         page.on("pageerror",lambda error:(errors.append(str(error)),print("Page error:",error,flush=True)))
-        page.route("**/api/**", respond)
+        page.context.route("**/api/**", respond)
         page.goto(sys.argv[1])
 
         needs_him = page.locator('[data-sprint-item="si_needs_him"]')
@@ -432,6 +436,57 @@ with sync_playwright() as p:
         row.click()
         page.mouse.move(1200, 950)
         expect(panel).to_have_attribute("aria-hidden", "true")
+
+        # Each utility opens in the workspace pane, restores from a reloadable
+        # address, and opens from that copied address in a second page.
+        utility_cases = [
+            ("Usage and Backends", "usage", "backends"),
+            ("Settings", "settings", "settings"),
+            ("Ideas", "ideas", "ideas"),
+            ("Feedback", "feedback", "feedback"),
+        ]
+        for label, utility, screen in utility_cases:
+            link = page.locator('.rail-utilities a[aria-label="'+label+'"]')
+            link.click()
+            pane = page.locator('.board-workspace-right [data-screen="'+screen+'"], .board-workspace-right [data-settings]')
+            expect(pane).to_be_visible()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            expect(link).to_have_attribute("aria-current", "page")
+            expect(page.locator('.rail-utilities a[aria-current="page"]')).to_have_count(1)
+            accent_border = page.evaluate("""() => {
+                const probe = document.createElement('span');
+                probe.style.borderColor = 'var(--accent-bright)';
+                document.body.append(probe);
+                const color = getComputedStyle(probe).borderTopColor;
+                probe.remove();
+                return color;
+            }""")
+            assert link.evaluate("element => getComputedStyle(element).borderTopColor") == accent_border
+            link.hover()
+            assert link.evaluate("element => getComputedStyle(element).borderTopColor") == accent_border
+            page.mouse.move(1200, 900)
+            assert link.evaluate("element => getComputedStyle(element).borderTopColor") == accent_border
+            assert page.evaluate("location.hash") == "#/workspace/utility/" + utility
+            copied_address = page.url
+            page.reload()
+            pane = page.locator('.board-workspace-right [data-screen="'+screen+'"], .board-workspace-right [data-settings]')
+            expect(pane).to_be_visible()
+            expect(page.locator('.rail-utilities a[aria-label="'+label+'"]')).to_have_attribute("aria-current", "page")
+            shared_context = browser.new_context(viewport={"width": 1280, "height": 900})
+            shared_context.route("**/api/**", respond)
+            shared_page = shared_context.new_page()
+            shared_page.goto(copied_address)
+            expect(shared_page.locator('.board-workspace-right [data-screen="'+screen+'"], .board-workspace-right [data-settings]')).to_be_visible()
+            expect(shared_page.locator('.rail-utilities a[aria-label="'+label+'"][aria-current="page"]')).to_be_visible()
+            shared_context.close()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+        # The utility content stacks with the rail on a compact viewport and
+        # remains inside the viewport without horizontal scrolling.
+        page.set_viewport_size(dict(width=820,height=1000))
+        expect(page.locator('.board-workspace-right [data-screen="feedback"]')).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.set_viewport_size(dict(width=1440,height=1000))
 
         # Hover freezes structure through a live refetch. Leaving applies the latest
         # answer, and a row that rejoins a group enters below its existing members.

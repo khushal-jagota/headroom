@@ -5,10 +5,12 @@ import {
 } from "./filePreview";
 
 export type WorkspaceView = "tickets" | "items";
+export type WorkspaceUtility = "usage" | "settings" | "ideas" | "feedback";
 
 export type WorkspaceSelection =
   | { kind: "none" }
   | { kind: "chief" }
+  | { kind: "utility"; utility: WorkspaceUtility }
   | { kind: "ticket"; id: string; openedFromItemId?: string }
   | { kind: "item"; id: string };
 
@@ -31,6 +33,7 @@ export type WorkspaceOpening = {
   markedItemId: string | null;
   markedTicketId: string | null;
   chiefMarked: boolean;
+  markedUtility: WorkspaceUtility | null;
 };
 
 function decodeSegment(segment: string): string {
@@ -45,7 +48,7 @@ function decodeSegment(segment: string): string {
 // with Item context belong to Sprint Items. An address only carries `?view=` when the
 // reader asked for the other one.
 export function impliedWorkspaceView(selection: WorkspaceSelection): WorkspaceView {
-  if (selection.kind === "none") return "tickets";
+  if (selection.kind === "none" || selection.kind === "utility") return "tickets";
   if (selection.kind === "ticket" && !selection.openedFromItemId) return "tickets";
   return "items";
 }
@@ -54,6 +57,10 @@ function parseSelection(segments: string[]): WorkspaceSelection | null {
   if (segments.length === 1) return { kind: "none" };
   if (segments[1] === "chief-of-staff" && segments.length === 2) {
     return { kind: "chief" };
+  }
+  if (segments[1] === "utility" && segments.length === 3 &&
+      ["usage", "settings", "ideas", "feedback"].includes(segments[2])) {
+    return { kind: "utility", utility: segments[2] as WorkspaceUtility };
   }
   if (segments[1] === "item" && segments[2]) {
     if (segments.length === 3) return { kind: "item", id: decodeSegment(segments[2]) };
@@ -104,6 +111,7 @@ export function workspaceAddress(
 function selectionPath(selection: WorkspaceSelection): string {
   if (selection.kind === "none") return "#/workspace";
   if (selection.kind === "chief") return "#/workspace/chief-of-staff";
+  if (selection.kind === "utility") return `#/workspace/utility/${selection.utility}`;
   if (selection.kind === "item") {
     return `#/workspace/item/${encodeURIComponent(selection.id)}`;
   }
@@ -122,6 +130,7 @@ export function whatTheAddressOpens(address: WorkspaceAddress): WorkspaceOpening
     openItemId: selection.kind === "item" ? selection.id : openedFromItemId,
     markedItemId: selection.kind === "item" ? selection.id : null,
     markedTicketId: selection.kind === "ticket" ? selection.id : null,
-    chiefMarked: selection.kind === "chief"
+    chiefMarked: selection.kind === "chief",
+    markedUtility: selection.kind === "utility" ? selection.utility : null
   };
 }

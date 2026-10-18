@@ -4838,6 +4838,11 @@ a.artifact-chip:hover,
     padding: 0;
   }
 
+  .board-workspace-right.board-workspace-right--utility {
+    display: flex;
+    padding: var(--space-5);
+  }
+
   .board-workspace-back {
     display: block;
     flex: none;

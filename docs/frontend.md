@@ -54,8 +54,11 @@ One screen per part of the system:
   their displayed order across refreshes and selection. Entries and re-entries append
   within their category. Orchestrator priority and creation order remain unchanged.
 
-  A card opens its orchestrator. A row opens its Worker. The address preserves selection
-  across reload and Back. Opening a detail pane never replaces rail classification.
+  A card opens its orchestrator. A row opens its Worker. The four utility links open
+  Usage and Backends, Settings, Ideas, or Feedback in the right pane. The workspace
+  address preserves these selections across reload and Back. Standalone utility routes
+  remain available. The open utility uses the selected card's accent-bright border.
+  Opening a detail pane never replaces rail classification.
   Hover lights the card edge and title. Worker rows retain the existing hover wash.
   Fine pointers with hover capability reveal a popup after 200 milliseconds. Visible
   keyboard focus reveals it immediately. Touch reveals it after a 400 millisecond hold.
