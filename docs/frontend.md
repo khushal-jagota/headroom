@@ -78,6 +78,7 @@ One screen per part of the system:
   its fade. An exit fades before its space closes. Moving surfaces stay opaque, and the
   travelling row and its card stay above their neighbors. Row and spinner colors blend
   across group changes. Structural updates wait while a pointer rests on a Worker row.
+  Exact conversation signals and their conversation IDs stay live during that wait.
   Updates stay serial and retain the latest pending answer. Reduced motion stops CSS
   animation and scripted travel, including travel already in progress.
 

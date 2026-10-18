@@ -1,8 +1,10 @@
 import { workItemTicketGroupKey } from "../src/lib/workItemPresentation";
 import { describe, expect, it } from "vitest";
+import { tick } from "svelte";
 import type { BoardCard, BoardSprintItem, SprintItemWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
-import { buildWorkspaceRail, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
+import { buildWorkspaceRail, refreshWorkspaceRailSignals, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
+import { createRailMotionController } from "../src/lib/workspaceRailMotion";
 
 const quiet = {
   awaiting_reply: false, awaiting_answer: false, awaiting_approval: false,
@@ -119,7 +121,7 @@ describe("orchestrator rail projection", () => {
     expect(workspaceListRecap([])).toBe("Nothing in this list right now.");
   });
 
-  it("retains survivors through refetch and appends entries and re-entries per category", () => {
+  it("retains survivors through refetch and appends entries and re-entries per category", async () => {
     const initial = buildWorkspaceRail([card("a", {activity_at:20}), card("b", {activity_at:10})]);
     const refreshed = stabilizeWorkspaceRail(buildWorkspaceRail([
       card("b", {activity_at:90}), card("a", {activity_at:1}), card("new", {activity_at:100})]), initial);
@@ -130,6 +132,27 @@ describe("orchestrator rail projection", () => {
     const reentered = stabilizeWorkspaceRail(buildWorkspaceRail([card("a"), card("b"), card("new")]), moved);
     expect(reentered.chiefGroups[0].cards.map((row) => row.id)).toEqual(["b", "new", "a"]);
     expect(reentered.chiefGroups[0].cards[2].awaiting_approval).toBe(false);
+    // Hover defers reassignment and new groups, while the exact conversation stays live.
+    const updated = buildWorkspaceRail([], [item("new-parent", { tickets: [
+      card("a", {awaiting_approval:true, title:"Changed title", conversation_id:"rebound",
+        conversation_signal:{working:true,message_for_owner:false}})
+    ] })]);
+    const frozen = refreshWorkspaceRailSignals(reentered, updated);
+    expect(frozen.chiefGroups[0].cards.map((row) => row.id)).toEqual(["b", "new", "a"]);
+    expect(frozen.items).toEqual([]);
+    expect(frozen.chiefGroups[0].cards[2]).toEqual({...reentered.chiefGroups[0].cards[2],
+      conversation_id:"rebound", conversation_signal:{working:true,message_for_owner:false}});
+    // A pointer can arrive after drain captures the answer but before exits settle.
+    let presented = reentered;
+    const motion = createRailMotionController(() => null, () => presented, (next) => presented = next);
+    motion.update(updated);
+    motion.freeze(true);
+    await tick();
+    expect(presented).toEqual(frozen);
+    motion.freeze(false);
+    await tick();
+    expect(presented).toEqual(stabilizeWorkspaceRail(updated, frozen));
+    motion.dispose();
   });
 
   it("preserves priority order and exact direct-conversation message marks", () => {

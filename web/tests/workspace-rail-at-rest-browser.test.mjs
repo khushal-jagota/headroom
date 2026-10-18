@@ -401,6 +401,7 @@ with sync_playwright() as p:
             target.hover()
             expect(panel).to_have_attribute("aria-hidden","false")
             identity = panel.element_handle()
+            source_bounds = target.bounding_box()
             for signal, winner in [(dict(working=True,message_for_owner=False),"working"),(dict(working=True,message_for_owner=True),"message"),(dict(working=True,message_for_owner=False),"working"),(dict(working=False,message_for_owner=False),None)]:
                 facts["conversation_signal"] = signal
                 page.evaluate("window.__refresh()")
@@ -408,6 +409,10 @@ with sync_playwright() as p:
                 expect(title.locator("[data-conversation-signal]")).to_have_count(0 if winner is None else 1)
                 if winner:
                     expect(title.locator("[data-conversation-signal]")).to_have_attribute("data-conversation-signal",winner)
+                expect(target.locator("[data-conversation-signal]")).to_have_count(0 if winner is None else 1)
+                if winner:
+                    expect(target.locator("[data-conversation-signal]")).to_have_attribute("data-conversation-signal",winner)
+                assert all(abs(target.bounding_box()[key]-source_bounds[key]) < 1 for key in ["x","y","width","height"])
                 assert identity.evaluate("e=>e===document.querySelector('[data-rail-hover-panel]')")
                 expect(panel).to_have_attribute("aria-hidden","false")
 
@@ -433,8 +438,14 @@ with sync_playwright() as p:
         ordinary = next(r for r in board["columns"][0]["cards"] if r["id"] == "t_parent_quiet")
         needs_him.locator('[data-ticket-id="t_parent_quiet"]').hover()
         expect(panel).to_have_attribute("aria-hidden","false")
+        frozen_row = needs_him.locator('[data-ticket-id="t_parent_quiet"]')
+        frozen_bounds = frozen_row.bounding_box()
         ordinary["awaiting_answer"] = True
+        ordinary["conversation_id"] = "rebound-quiet-worker"
+        ordinary["conversation_signal"] = dict(working=True,message_for_owner=False)
         page.evaluate("window.__refresh()")
+        expect(frozen_row.locator('[data-conversation-id="rebound-quiet-worker"] [data-conversation-signal="working"]')).to_have_count(1)
+        assert all(abs(frozen_row.bounding_box()[key]-frozen_bounds[key]) < 1 for key in ["x","y","width","height"])
         expect(needs_him.locator('[data-bucket-key="empty"] [data-ticket-id="t_parent_quiet"]')).to_have_count(1)
         expect(needs_him.locator('[data-bucket-key="awaiting_answer"] [data-ticket-id="t_parent_quiet"]')).to_have_count(0)
         page.mouse.move(1200,950)

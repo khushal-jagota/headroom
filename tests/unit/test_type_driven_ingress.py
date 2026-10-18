@@ -21,12 +21,21 @@ from sqlite3 import Connection
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import (
+    install_probe_registry,
+    seed_probe_worker_type,
+    uninstall_probe_registry,
+)
 
+from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.worker_types.configuration import load_worker_runtime_definitions
+from planner.worker_types.store import read_definition
 
 AppDb = tuple[FastAPI, Path]
 OWNER = {"kind": "owner", "id": "owner"}
@@ -42,11 +51,57 @@ def probe_installed() -> Iterator[None]:
 
 
 @pytest.fixture
-def app_db(tmp_path: Path) -> AppDb:
+def app_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, probe_installed: None,
+) -> AppDb:
     db_path = tmp_path / "ingress.db"
     boot = connect(str(db_path))
     create_schema(boot)
+    probe = seed_probe_worker_type(boot)
+    coding = read_definition(boot, "coding")
+    boot.commit()
+    load_worker_runtime_definitions(boot)
     boot.close()
+
+    # The ingress tests own these model choices, not the locally installed providers.
+    async def snapshot(
+        self: BackendSnapshotService,
+        backend_key: ConversationBackendKey,
+        *,
+        refresh: bool = False,
+        discover_update_advisory: bool = True,
+    ) -> BackendSnapshot:
+        profiles = tuple(
+            definition.worker_profile
+            for definition in (coding, probe)
+            if definition.worker_profile.default_backend == backend_key.value
+        )
+        assert profiles, backend_key
+        models = tuple(
+            BackendModel(
+                profile.default_model,
+                reasoning_effort_options=(
+                    (profile.default_reasoning_effort,)
+                    if profile.default_reasoning_effort is not None else ()
+                ),
+            )
+            for profile in profiles
+        )
+        return BackendSnapshot(
+            backend_key=backend_key,
+            installed=True,
+            executable_path="/scripted/backend",
+            version="1.0.0",
+            identity=None,
+            available_models=models,
+            reasoning_effort_options=(),
+            default_model_id=models[0].model_id,
+            default_reasoning_effort=profiles[0].default_reasoning_effort,
+            update_advisory=None,
+            diagnoses=(),
+        )
+
+    monkeypatch.setattr(BackendSnapshotService, "snapshot", snapshot)
     config = load_config(
         path=None,
         env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
@@ -55,7 +110,12 @@ def app_db(tmp_path: Path) -> AppDb:
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, build_clock(config), conn_factory), db_path
+    return create_app(
+        config,
+        build_clock(config),
+        conn_factory,
+        conversation_system_for_test=InMemoryConversationSystem(),
+    ), db_path
 
 
 def _create(client: TestClient, worker_type: str) -> str:

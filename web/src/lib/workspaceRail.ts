@@ -92,6 +92,29 @@ export function stabilizeWorkspaceRail(next: WorkspaceRail, previous: WorkspaceR
     items: next.items.map(stabilize), settledItems: next.settledItems.map(stabilize)};
 }
 
+/** Refresh exact conversation facts without moving the currently presented rows. */
+export function refreshWorkspaceRailSignals(current: WorkspaceRail, next: WorkspaceRail): WorkspaceRail {
+  const items = [...next.items, ...next.settledItems];
+  const tickets = new Map([...next.groups.flatMap((group) => group.cards),
+    ...items.flatMap((item) => item.tickets)].map((ticket) => [ticket.id, ticket]));
+  const heads = new Map(items.map((item) => [item.id, item]));
+  const refreshTicket = (ticket: WorkItemTicketFacts): WorkItemTicketFacts => {
+    const fresh = tickets.get(ticket.id);
+    return fresh ? {...ticket, conversation_signal: fresh.conversation_signal,
+      conversation_id: fresh.conversation_id} : ticket;
+  };
+  const refreshGroups = (groups: WorkspaceTicketGroup[]) => groups.map((group) =>
+    ({...group, cards: group.cards.map(refreshTicket)}));
+  const refreshItems = (rows: WorkspaceRailItem[]) => rows.map((item) => {
+    const fresh = heads.get(item.id);
+    return {...item, ...(fresh ? {conversationSignal: fresh.conversationSignal,
+      conversationId: fresh.conversationId} : {}), groups: refreshGroups(item.groups),
+      tickets: item.tickets.map(refreshTicket)};
+  });
+  return {...current, groups: refreshGroups(current.groups), chiefGroups: refreshGroups(current.chiefGroups),
+    items: refreshItems(current.items), settledItems: refreshItems(current.settledItems)};
+}
+
 export function workspaceWorkerStageSentence(ticket: WorkItemTicketFacts, lifecycle: Lifecycle | null): string {
   const stage = lifecycle?.stageLabel[ticket.stage];
   if (!stage) return "";

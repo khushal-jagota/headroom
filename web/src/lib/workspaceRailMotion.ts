@@ -1,5 +1,5 @@
 import { tick } from "svelte";
-import { stabilizeWorkspaceRail, type WorkspaceRail } from "./workspaceRail";
+import { refreshWorkspaceRailSignals, stabilizeWorkspaceRail, type WorkspaceRail } from "./workspaceRail";
 
 // The approved Glide timing: distance changes duration, never the easing.
 export const RAIL_MOTION = {
@@ -21,7 +21,7 @@ function snapshot(root: HTMLElement | null): Map<string, Part> {
   }));
 }
 
-/** Serial presentation updates retain only the newest server answer during motion or hover. */
+/** Defer structure during motion or hover; conversation facts stay live during hover. */
 export function createRailMotionController(root: () => HTMLElement | null,
   read: () => WorkspaceRail, apply: (rail: WorkspaceRail) => void) {
   let pending: WorkspaceRail | null = null;
@@ -72,7 +72,12 @@ export function createRailMotionController(root: () => HTMLElement | null,
     await Promise.all(exits.map(([, part]) => animate(part.node, [{ opacity: 1 }, { opacity: 0 }], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave)));
     if (disposed) return;
     // A pointer can arrive during an exit. Restore it, and defer the whole structure.
-    if (frozen) { pending ??= next; busy = false; return; }
+    if (frozen) {
+      pending ??= next;
+      apply(refreshWorkspaceRailSignals(read(), pending));
+      busy = false;
+      return;
+    }
     apply(next);
     await tick();
     if (disposed) return;
@@ -116,8 +121,17 @@ export function createRailMotionController(root: () => HTMLElement | null,
     void drain();
   }
   return {
-    update(next: WorkspaceRail) { pending = next; void drain(); },
-    freeze(value: boolean) { frozen = value; if (!value) void drain(); },
+    update(next: WorkspaceRail) {
+      if (disposed) return;
+      pending = next;
+      if (frozen) apply(refreshWorkspaceRailSignals(read(), next));
+      void drain();
+    },
+    freeze(value: boolean) {
+      frozen = value;
+      if (value && pending && !disposed) apply(refreshWorkspaceRailSignals(read(), pending));
+      if (!value) void drain();
+    },
     dispose() { disposed = true; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
   };
 }

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from planner.core.db import create_schema
 from planner.core.errors import PlannerError
 from planner.maintenance import recovery
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
+from planner.tickets.data import delete_ticket_records
 
 _process_probe = recovery.require_no_backend_processes
 
@@ -230,7 +232,7 @@ def test_recovery_failure_never_partially_deletes(
             lambda *args: (_ for _ in ()).throw(RuntimeError("unverifiable")),
         )
     if failure == "delete":
-        original = recovery.delete_ticket_records
+        original = delete_ticket_records
 
         def delete(conn: sqlite3.Connection, ticket_id: str, **kwargs: Any) -> Any:
             if ticket_id == "t_b":
@@ -239,7 +241,7 @@ def test_recovery_failure_never_partially_deletes(
 
         monkeypatch.setattr(recovery, "delete_ticket_records", delete)
     if failure == "ownership":
-        monkeypatch.setattr(recovery.os, "geteuid", lambda: tmp_db_uid + 1)
+        monkeypatch.setattr(os, "geteuid", lambda: tmp_db_uid + 1)
     if failure == "reference":
         tmp_db.execute("CREATE TABLE protected_reference(ticket_id TEXT REFERENCES tickets(id))")
         tmp_db.execute("INSERT INTO protected_reference VALUES ('t_b')")
