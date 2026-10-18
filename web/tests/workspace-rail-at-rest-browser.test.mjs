@@ -18,6 +18,7 @@ const main = join(scratchRoot, `${stem}.ts`);
 const index = join(scratchRoot, `${stem}.html`);
 const cacheDir = join(scratchRoot, `${stem}.vite`);
 let server;
+const startedAt = performance.now();
 
 try {
   await writeFile(host, `<script lang="ts">
@@ -64,10 +65,11 @@ onMount(() => {
   assert.ok(address && typeof address === "object");
 
   const script = String.raw`
-import json, os, pathlib, sys, time
+import json, os, pathlib, sys, time, re
 from playwright.sync_api import sync_playwright, expect
 from tests.e2e.harness import browser_failure_evidence
 
+ORCHESTRATOR_RECAP = "Coordinate the workspace sidebar with its current shipping data paths."
 LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this long approval row"
 
 def card(ticket_id, item_id, item_title, **values):
@@ -97,7 +99,7 @@ def item(item_id):
 # The other has no eligible work, so its existing quiet line must remain visible.
 board = {
     "columns": [{"stage": "needs_implementation", "cards": [
-        card("t_approval", "si_needs_him", "Needs him", title=LONG_TITLE, awaiting_approval=True),
+        card("t_approval", "si_needs_him", "Needs him", title=LONG_TITLE, awaiting_approval=True, awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True)),
         card("t_assigned", "si_needs_him", "Needs him", assigned=True),
         card("t_message", "si_needs_him", "Needs him", awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True)),
         card("t_answer", "si_needs_him", "Needs him", awaiting_answer=True),
@@ -126,6 +128,7 @@ for summary in board["sprint_items"]:
     summary["tickets"] = [row for column in board["columns"] for row in column["cards"] if row["sprint_item_id"] == summary["id"]]
     summary["title"] = summary["tickets"][0]["sprint_item_title"]
     summary["priority"] = "P1"
+    summary["recap_preview"] = ORCHESTRATOR_RECAP
 workers = {
     "chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "awaiting_reply": False, "agent_working": False, "latest_turn_ended_sequence": 0},
     "workers": [],
@@ -189,9 +192,9 @@ with sync_playwright() as p:
         # Backlog stays outside the sidebar. An answer
         # he owes sits under the decision he owes and above the Stage that is merely his.
         headers = needs_him.locator("[data-bucket-key]")
-        expect(headers).to_have_count(8)
-        assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(8)] == [
-            "awaiting_approval", "awaiting_answer", "assigned", "awaiting_reply",
+        expect(headers).to_have_count(7)
+        assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(7)] == [
+            "awaiting_approval", "awaiting_answer", "assigned",
             "agent", "waiting_to_closeout", "status_awaiting_approval", "empty"
         ]
 
@@ -200,7 +203,7 @@ with sync_playwright() as p:
             ("t_approval", "awaiting_approval"),
             ("t_broken", "awaiting_approval"),
             ("t_assigned", "assigned"),
-            ("t_message", "awaiting_reply"),
+            ("t_message", "empty"),
             ("t_answer", "awaiting_answer"),
         ]:
             row = needs_him.locator('[data-ticket-id="' + ticket_id + '"]')
@@ -265,16 +268,80 @@ with sync_playwright() as p:
         expect(page.locator('[data-message-conversation="ordinary-settled"]')).to_be_visible()
         assert_backlog_absent()
 
-        # Parent hover has the ordinary child control and no backlogged title.
+        # Keep the global settled-message discovery above proved, then close it
+        # so captures isolate the active rail's approved group structure.
+        page.get_by_role("button", name="Settled (1)").click()
+
+        # The revision preserves unread facts and clears the actual query signal
+        # without recategorizing, reordering, or brightening the quiet row.
+        artifact_dir = pathlib.Path(os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/home/vps/Deployments/Panels/current/data/files/tickets/t_21sxtdb3/artifacts/revision"))
+        artifact_dir.mkdir(parents=True,exist_ok=True)
+        unread = next(r for r in board["columns"][0]["cards"] if r["id"] == "t_message")
+        running = next(r for r in board["columns"][0]["cards"] if r["id"] == "t_agent")
+        unread_row = needs_him.locator('[data-ticket-id="t_message"]')
+        working_row = needs_him.locator('[data-ticket-id="t_agent"]')
+        running["awaiting_reply"] = True
+        running["conversation_signal"] = dict(working=True,message_for_owner=True)
+        page.evaluate("window.__refresh()")
+        expect(working_row.locator("[data-conversation-signal]")).to_have_attribute("data-conversation-signal","message")
+        expect(needs_him.locator('[data-bucket-key="awaiting_reply"]')).to_have_count(0)
+        expect(needs_him.locator('[data-bucket-key="empty"]')).to_contain_text("t_message")
+        expect(needs_him.locator('[data-bucket-key="agent"]')).to_contain_text("t_agent")
+        expect(needs_him.locator('[data-bucket-key="awaiting_approval"] [data-ticket-id="t_approval"] [data-conversation-signal]')).to_have_attribute("data-conversation-signal","message")
+        def row_state(row):
+            return row.evaluate("e=>({group:e.closest('[data-bucket-key]').dataset.bucketKey,tone:e.closest('[data-tone]').dataset.tone,color:getComputedStyle(e).color,order:[...e.closest('[data-bucket-key]').querySelectorAll('[data-ticket-id]')].map(x=>x.dataset.ticketId)})")
+        before_unread, before_working = row_state(unread_row),row_state(working_row)
+        assert before_unread["tone"] == before_working["tone"] == "quiet"
+        page.wait_for_timeout(600)
+        page.screenshot(path=str(artifact_dir/"sidebar-unread-quiet-working-and-needs-you.png"))
+        unread["awaiting_reply"] = False
+        unread["conversation_signal"] = dict(working=False,message_for_owner=False)
+        approval = board["columns"][0]["cards"][0]
+        approval_row = needs_him.locator('[data-ticket-id="t_approval"]')
+        before_approval = row_state(approval_row)
+        approval["awaiting_reply"] = False
+        approval["conversation_signal"] = dict(working=False,message_for_owner=False)
+        running["awaiting_reply"] = False
+        running["conversation_signal"] = dict(working=True,message_for_owner=False)
+        page.evaluate("window.__refresh()")
+        expect(unread_row.locator(".stage-mark")).to_have_count(0)
+        expect(working_row.locator("[data-conversation-signal]")).to_have_attribute("data-conversation-signal","working")
+        page.wait_for_timeout(600)
+        after_unread, after_working = row_state(unread_row),row_state(working_row)
+        assert before_unread == after_unread
+        assert before_working == after_working
+        expect(approval_row.locator(".stage-mark")).to_have_count(0)
+        after_approval = row_state(approval_row)
+        assert before_approval == after_approval
+        assert after_approval["tone"] == "attention"
+        page.screenshot(path=str(artifact_dir/"sidebar-read-cleared-same-groups.png"))
+        (artifact_dir/"sidebar-unread-clear-proof.json").write_text(json.dumps(dict(quiet_before=before_unread,quiet_after=after_unread,working_before=before_working,working_after=after_working,approval_before=before_approval,approval_after=after_approval),indent=2))
+
+        # Parent hover uses the authoritative recap, with no child inventory.
         needs_him.locator(".item-head").hover()
         panel = page.locator("[data-rail-hover-panel]")
         expect(panel).to_have_attribute("aria-hidden", "false")
-        expect(panel).to_contain_text(LONG_TITLE)
+        expect(panel.locator(".recap")).to_have_text(ORCHESTRATOR_RECAP)
+        expect(panel).not_to_contain_text(LONG_TITLE)
         for title in ["Review saved workspace changes", "Prepare the next workspace pass"]:
             expect(panel).not_to_contain_text(title)
         chief_card.locator(".item-head").hover()
         expect(panel).to_contain_text("Chief of Staff")
+        expect(panel.locator(".recap")).to_have_text("Nothing in this list right now.")
         expect(panel).not_to_contain_text("Revisit workspace navigation")
+        # Capture both real popup branches at desktop and compact widths.
+        for viewport, label in [(dict(width=1440,height=1000),"desktop"),(dict(width=560,height=1000),"compact")]:
+            page.set_viewport_size(viewport)
+            for target, name, recap in [(needs_him.locator(".item-head"),"orchestrator",ORCHESTRATOR_RECAP),(chief_card.locator(".item-head"),"chief","Nothing in this list right now.")]:
+                target.hover()
+                expect(panel).to_have_attribute("aria-hidden","false")
+                expect(panel.locator(".recap")).to_have_text(recap)
+                expect(panel.locator("[data-bucket-key],.group-label,.child-title")).to_have_count(0)
+                expect(panel).not_to_contain_text(LONG_TITLE)
+                page.wait_for_function("getComputedStyle(document.querySelector('[data-rail-hover-panel]')).opacity === '1'")
+                assert panel.bounding_box()["x"] >= 0
+                assert panel.bounding_box()["x"]+panel.bounding_box()["width"] <= viewport["width"]
+                page.screenshot(path=str(artifact_dir/f"sidebar-{name}-{label}-popup.png"))
         page.mouse.move(1200, 900)
         expect(panel).to_have_attribute("aria-hidden", "true")
 
@@ -314,7 +381,8 @@ with sync_playwright() as p:
         expect(panel).not_to_contain_text("Stages")
         expect(panel).to_contain_text("Awaiting your approval at implementation.")
         needs_him.locator(".item-head").hover()
-        expect(panel).to_contain_text("Quiet ordinary Worker")
+        expect(panel.locator(".recap")).to_have_text(ORCHESTRATOR_RECAP)
+        expect(panel).not_to_contain_text("Quiet ordinary Worker")
         expect(panel).not_to_contain_text("Blocked ordinary Worker")
         expect(panel).not_to_contain_text("Stages")
         expect(panel).to_have_count(1)
@@ -385,7 +453,7 @@ with sync_playwright() as p:
         expect(needs_him.locator('[data-bucket-key="awaiting_answer"] [data-ticket-id]').first).to_have_attribute("data-ticket-id","t_answer")
 
         # Width limits protect real text layout and title ellipsis, not a mock box.
-        artifact_dir = pathlib.Path(os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/home/vps/Deployments/Panels/current/data/files/tickets/t_21sxtdb3/artifacts"))
+        artifact_dir = pathlib.Path(os.environ.get("PANELS_SIDEBAR_ARTIFACT_DIR", "/home/vps/Deployments/Panels/current/data/files/tickets/t_21sxtdb3/artifacts/revision"))
         artifact_dir.mkdir(parents=True,exist_ok=True)
         for width in [232,520]:
             grip.focus()
@@ -636,4 +704,4 @@ with sync_playwright() as p:
   await Promise.all([host, main, index, cacheDir].map((path) => rm(path, { force: true, recursive: true })));
 }
 
-console.log("workspace-rail-at-rest-browser.test.mjs: all assertions passed");
+console.log(`workspace-rail-at-rest-browser.test.mjs: all assertions passed (${((performance.now() - startedAt) / 1000).toFixed(2)}s)`);

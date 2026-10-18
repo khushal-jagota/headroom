@@ -501,6 +501,7 @@ export type BoardSprintItem = {
   project?: string;
   id: string;
   title: string;
+  recap_preview: string;
   priority: Priority;
   tickets: SprintItemWorkspaceTicket[];
   created_at: number;

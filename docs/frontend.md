@@ -40,10 +40,12 @@ One screen per part of the system:
   Existing orchestrators start active. Settlement does not change Worker eligibility.
 
   Each active card shows attention and ongoing work in the shared group order: Needs your
-  approval, Needs your answer, Yours, Messages, Errored, Agent, Waiting on Consequences,
+  approval, Needs your answer, Yours, Errored, Agent, Waiting on Consequences,
   Awaiting an agent's approval, then Other. Other is the sidebar name for the shared Empty
   group. Done, Backlog, Blocked, and Cancelled stay outside this list, even if they carry
-  attention facts. The sidebar does not change those facts or the shared classifier.
+  attention facts. Unread alone does not change a row’s category, order, or tone.
+  The rail omits the Messages group. The sidebar preserves all facts, global unread
+  discovery, and the shared classifier on other surfaces.
   Empty cards say “Nothing in this list.” Priority is not displayed in the rail.
 
   Attention rows are bright. Ongoing rows and their working spinners are dim.
@@ -66,7 +68,9 @@ One screen per part of the system:
   Approval, answer, assignment, error, and blocked facts use their specific wording.
   The popup has no stage ladder or named blockers. Recaps arrive through the existing
   board and orchestrator projections, without detail requests or another transport.
-  Orchestrator popups show their eligible children in the shared groups. The panel stays
+  Orchestrator popups show their existing concise body preview in a recessed recap.
+  Chief has no recap source, so its popup states only the eligible Ticket count.
+  Empty orchestrator recaps use that same factual fallback. The panel stays
   inside the viewport and does not capture the pointer.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group

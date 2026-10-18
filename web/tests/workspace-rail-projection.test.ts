@@ -1,7 +1,8 @@
+import { workItemTicketGroupKey } from "../src/lib/workItemPresentation";
 import { describe, expect, it } from "vitest";
 import type { BoardCard, BoardSprintItem, SprintItemWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
-import { buildWorkspaceRail, stabilizeWorkspaceRail, workspaceWorkerStageSentence } from "../src/lib/workspaceRail";
+import { buildWorkspaceRail, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
 
 const quiet = {
   awaiting_reply: false, awaiting_answer: false, awaiting_approval: false,
@@ -14,7 +15,7 @@ const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & SprintIt
   ...quiet, ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id: string, values: Partial<BoardSprintItem> = {}): BoardSprintItem => ({
-  id, title: id, priority: "P2", created_at: 1, tickets: [], conversation_id: null,
+  id, title: id, recap_preview: "", priority: "P2", created_at: 1, tickets: [], conversation_id: null,
   ticket_rollup: quiet, ...quiet, ...values
 });
 
@@ -30,7 +31,7 @@ describe("orchestrator rail projection", () => {
     expect(rail.settledItems[0].groups[0].key).toBe("awaiting_answer");
   });
 
-  it("keeps Chief ownership distinct and uses complete children in hover", () => {
+  it("keeps Chief ownership distinct and retains complete child facts", () => {
     const rail = buildWorkspaceRail([
       card("legacy-chief", { assigned: true }),
       card("explicit-chief", { orchestrator: { kind: "chief", id: "chief" }, awaiting_reply: true }),
@@ -42,12 +43,11 @@ describe("orchestrator rail projection", () => {
     ] })]);
     expect(rail.chiefGroups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["legacy-chief", "explicit-chief"]);
     expect(rail.items[0].groups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["complete-child", "agent-child"]);
-    expect(rail.items[0].hoverGroups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["complete-child", "agent-child"]);
     expect(rail.items[0].tickets).toHaveLength(4);
     expect(rail.items[0].conversationSignal).toBeUndefined();
   });
 
-  it("excludes backlog from Chief, active, settled, and hover projections without changing child facts", () => {
+  it("excludes backlog from Chief, active and settled projections without changing child facts", () => {
     const rows = [card("approval", { is_backlogged:true, awaiting_approval:true }),
       card("supervisor", { is_backlogged:true, awaiting_agent_approval:true }),
       card("message", { is_backlogged:true, awaiting_reply:true }),
@@ -55,8 +55,7 @@ describe("orchestrator rail projection", () => {
       card("done", { is_backlogged:true, stage:"done", ticket_status:"empty" }),
       card("cancelled", { is_backlogged:true, stage:"cancelled", ticket_status:"cancelled" })];
     const rail = buildWorkspaceRail(rows, [item("ordinary", { tickets:rows }), item("settled", { tickets:rows, settled:true })]);
-    for (const groups of [rail.chiefGroups, rail.chiefHoverGroups,
-      rail.items[0].groups, rail.items[0].hoverGroups, rail.settledItems[0].groups, rail.settledItems[0].hoverGroups]) {
+    for (const groups of [rail.chiefGroups, rail.items[0].groups, rail.settledItems[0].groups]) {
       expect(groups).toEqual([]);
     }
     expect(rail.groups.map((group) => group.key)).toEqual(["backlog"]);
@@ -64,7 +63,7 @@ describe("orchestrator rail projection", () => {
     expect(rail.settledItems[0].tickets).toEqual(rows);
     const resumed = rows.map((row) => ({...row, is_backlogged:false}));
     expect(buildWorkspaceRail(resumed).chiefGroups.map((group) => group.key))
-      .toEqual(["awaiting_approval", "awaiting_reply", "agent"]);
+      .toEqual(["awaiting_approval", "agent"]);
     expect(rows[0].awaiting_approval).toBe(true);
   });
 
@@ -82,6 +81,44 @@ describe("orchestrator rail projection", () => {
       .toEqual([["Agent", ["working"]], ["Waiting on Consequences", ["closeout"]],
         ["Awaiting an agent's approval", ["agent-review"]], ["Other", ["idle"]]]);
     expect(rail.groups.find((group) => group.key === "empty")?.label).toBe("Empty");
+  });
+
+  it("keeps unread independent of rail categories while preserving global classification and original records", () => {
+    const rows = [
+      card("working", { awaiting_reply:true, conversation_signal:{working:true,message_for_owner:true} }),
+      card("quiet", { ticket_status:"empty", awaiting_reply:true, conversation_signal:{working:false,message_for_owner:true} }),
+      card("approval", { awaiting_reply:true, awaiting_approval:true }),
+      card("answer", { awaiting_reply:true, awaiting_answer:true }),
+      card("assigned", { awaiting_reply:true, assigned:true }),
+      card("error", { awaiting_reply:true, agent_state:"errored" })
+    ];
+    const originals = structuredClone(rows);
+    const before = buildWorkspaceRail(rows);
+    expect(before.chiefGroups.map((group) => [group.key, group.cards.map((row) => row.id)]))
+      .toEqual([["awaiting_approval", ["approval"]], ["awaiting_answer", ["answer"]],
+        ["assigned", ["assigned"]], ["errored", ["error"]], ["agent", ["working"]], ["empty", ["quiet"]]]);
+    for (const row of rows) expect(before.chiefGroups.flatMap((group) => group.cards).find((entry) => entry.id === row.id)).toBe(row);
+    expect(rows).toEqual(originals);
+    expect(workItemTicketGroupKey(rows[0])).toBe("awaiting_reply");
+    expect(before.groups.find((group) => group.key === "awaiting_reply")?.cards.map((row) => row.id))
+      .toEqual(["error", "quiet", "working"]);
+    const after = stabilizeWorkspaceRail(buildWorkspaceRail(rows.map((row) => ({...row,
+      awaiting_reply:false, conversation_signal:row.conversation_signal
+        ? {...row.conversation_signal, message_for_owner:false} : undefined }))), before);
+    const categories = (rail: typeof before) => rail.chiefGroups.map((group) => [group.key, group.cards.map((row) => row.id)]);
+    expect(categories(after)).toEqual(categories(before));
+    expect(after.chiefGroups.flatMap((group) => group.cards).every((row) => !row.awaiting_reply && !row.conversation_signal?.message_for_owner)).toBe(true);
+    expect(after.chiefGroups.find((group) => group.key === "agent")?.cards[0].conversation_signal?.working).toBe(true);
+  });
+
+  it("passes the authoritative orchestrator recap and uses only factual counts when absent", () => {
+    const source = item("recap", {recap_preview:"Keep existing summary semantics.", tickets:[card("live"), card("done", {stage:"done"})]});
+    const rail = buildWorkspaceRail([], [source]);
+    expect(rail.items[0].recapPreview).toBe(source.recap_preview);
+    expect(workspaceListRecap(rail.items[0].groups, rail.items[0].recapPreview)).toBe(source.recap_preview);
+    expect(workspaceListRecap(rail.items[0].groups, " ")).toBe("1 Ticket in this list.");
+    expect(workspaceListRecap(buildWorkspaceRail([card("one"), card("two")]).chiefGroups)).toBe("2 Tickets in this list.");
+    expect(workspaceListRecap([])).toBe("Nothing in this list right now.");
   });
 
   it("retains survivors through refetch and appends entries and re-entries per category", () => {

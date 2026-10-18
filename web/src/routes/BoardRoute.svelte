@@ -5,7 +5,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
-  import { buildWorkspaceRail, workspaceRailChildMessageConversations, type WorkspaceRailItem } from "../lib/workspaceRail";
+  import { buildWorkspaceRail, workspaceListRecap, workspaceRailChildMessageConversations, type WorkspaceRailItem } from "../lib/workspaceRail";
   import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, railPreview, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
   import { whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
@@ -58,7 +58,8 @@
   let hoverWorker = $derived(allCards.find((card) => card.id === hoverWorkerId)
     ?? [...rail.items, ...rail.settledItems].flatMap((item) => item.tickets).find((ticket) => ticket.id === hoverWorkerId) ?? null);
   let hoveredItem = $derived([...rail.items, ...rail.settledItems].find((item) => item.id === hoverItemId));
-  let hoverGroups = $derived(hoverChief ? rail.chiefHoverGroups : hoveredItem?.hoverGroups ?? null);
+  let hoverRecap = $derived(hoverChief ? workspaceListRecap(rail.chiefGroups)
+    : workspaceListRecap(hoveredItem?.groups ?? [], hoveredItem?.recapPreview));
   let hoverSignal = $derived(hoverChief ? workers.data?.chief_of_staff.conversation_signal : hoveredItem?.conversationSignal);
   let hoverConversationId = $derived(hoverChief ? workers.data?.chief_of_staff.conversation_id : hoveredItem?.conversationId);
   let currentHoverTitle = $derived(hoverWorker?.title ?? (hoverChief ? workers.data?.chief_of_staff.label : hoveredItem?.title) ?? hoverTitle);
@@ -225,7 +226,7 @@
   </ResourceState>
 </section>
 
-<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={currentHoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} groups={hoverGroups} cards={allCards} rail={railElement} />
+<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={currentHoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} recap={hoverRecap} cards={allCards} rail={railElement} />
 <style>
   .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); }

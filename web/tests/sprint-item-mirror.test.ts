@@ -111,7 +111,7 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
 
 function boardItem(rows: SprintItemWorkspaceTicket[]): BoardSprintItem {
   const full = workspace(rows);
-  return { id: full.id, title: full.title, priority: full.priority,
+  return { id: full.id, title: full.title, recap_preview: "", priority: full.priority,
     created_at: full.created_at, conversation_id: null, tickets: rows,
     ticket_rollup: quiet, ...quiet };
 }

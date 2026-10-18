@@ -32,7 +32,7 @@ export type WorkspaceRailItem = {
   project: string | null;
   projectId: string | null;
   tickets: WorkItemTicketFacts[];
-  hoverGroups: WorkspaceTicketGroup[];
+  recapPreview: string;
 };
 
 export type WorkspaceRail = {
@@ -40,7 +40,6 @@ export type WorkspaceRail = {
   items: WorkspaceRailItem[];
   settledItems: WorkspaceRailItem[];
   chiefGroups: WorkspaceTicketGroup[];
-  chiefHoverGroups: WorkspaceTicketGroup[];
 };
 
 const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
@@ -52,17 +51,18 @@ function priorityRank(priority: Priority): number {
 
 function railGroups(
   cards: readonly WorkItemTicketFacts[],
-  railLabel = false
+  sidebarPresentation = false
 ): WorkspaceTicketGroup[] {
+  // Unread stays an independent mark in the rail, never a category or tone.
+  const originals = new Map(cards.map((card) => [card.id, card]));
   const groups = workItemTicketGroups(
-    cards,
-    undefined
+    sidebarPresentation ? cards.map((card) => ({...card, awaiting_reply: false})) : cards
   );
   return groups.map((group) => ({
     key: group.key,
-    label: railLabel && group.key === "empty" ? "Other" : group.label,
+    label: sidebarPresentation && group.key === "empty" ? "Other" : group.label,
     defaultCollapsed: group.quiet,
-    cards: group.tickets
+    cards: group.tickets.map((card) => originals.get(card.id)!)
   }));
 }
 
@@ -111,8 +111,11 @@ export function workspaceAttentionGroups(
   return railGroups(cards.filter(railTicketEligible), true);
 }
 
-export function workspaceHoverGroups(cards: readonly WorkItemTicketFacts[]): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter(railTicketEligible), true);
+/** Use the existing concise recap; missing data gets only a factual list count. */
+export function workspaceListRecap(groups: readonly WorkspaceTicketGroup[], recap = ""): string {
+  if (recap.trim()) return recap;
+  const count = groups.reduce((total, group) => total + group.cards.length, 0);
+  return count ? `${count} Ticket${count === 1 ? "" : "s"} in this list.` : "Nothing in this list right now.";
 }
 
 /** Sidebar visibility stays separate from the durable unread conversation index. */
@@ -144,7 +147,7 @@ export function buildWorkspaceRail(
     conversationSignal: item.conversation_signal,
     conversationId: item.conversation_id,
     groups: workspaceAttentionGroups(item.tickets.filter((ticket) => ticket.ticket_status !== "cancelled")),
-    hoverGroups: workspaceHoverGroups(item.tickets),
+    recapPreview: item.recap_preview,
     tickets: item.tickets,
     settled: item.settled === true,
     rested: item.settled === true,
@@ -167,7 +170,6 @@ export function buildWorkspaceRail(
     groups: workspaceGroups(cards),
     items: items.filter((item) => !item.settled),
     settledItems: items.filter((item) => item.settled),
-    chiefGroups: workspaceAttentionGroups(chiefTickets.filter((ticket) => ticket.ticket_status !== "cancelled")),
-    chiefHoverGroups: workspaceHoverGroups(chiefTickets)
+    chiefGroups: workspaceAttentionGroups(chiefTickets.filter((ticket) => ticket.ticket_status !== "cancelled"))
   };
 }

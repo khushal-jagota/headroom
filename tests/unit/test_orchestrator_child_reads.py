@@ -144,6 +144,22 @@ def test_summary_preserves_canonical_consequences_wait(tmp_db: Connection) -> No
     assert page.rows[0]["waiting_to_closeout"] is True
 
 
+def test_board_orchestrator_recap_uses_authoritative_body_without_changes(
+    tmp_db: Connection,
+) -> None:
+    item = seed_item(tmp_db, "Recap owner")
+    seed(tmp_db, title="Recap child", item=item)
+    body = "  Ship the sidebar.\n\tKeep attention concise.  "
+    tmp_db.execute("UPDATE sprint_items SET body=? WHERE id=?", (body, item))
+    before = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())
+
+    board = views.board_view(tmp_db)
+
+    assert board["sprint_items"][0]["recap_preview"] == "Ship the sidebar. Keep attention concise."
+    after = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())
+    assert after == before
+
+
 @pytest.mark.parametrize(
     ("recap", "expected"),
     [

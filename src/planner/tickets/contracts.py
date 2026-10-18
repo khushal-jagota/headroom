@@ -133,6 +133,7 @@ class BoardSprintItemSource(TypedDict):
 
     id: str
     title: str
+    recap_preview: str
     priority: str
     project_id: str
     project: str
