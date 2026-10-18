@@ -24,7 +24,7 @@
     orderedComposerAttachments, attachmentExtension, attachmentByteLabel,
     type ComposerAttachmentReference
   } from "./composer/attachments";
-  import { calculateComposerTextareaHeight } from "./composer/textareaSizing";
+  import { createComposerTextareaMeasurement } from "./composer/textareaMeasurement";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
@@ -807,6 +807,8 @@
     return pane.clientHeight;
   }
 
+  let textareaMeasurement: ReturnType<typeof createComposerTextareaMeasurement> | null = null;
+
   function resizeWritingArea(): void {
     const input = inputElement;
     if (input === null || input.hidden || input.getClientRects().length === 0) return;
@@ -817,15 +819,14 @@
     const style = getComputedStyle(input);
     const lineHeight = Number.parseFloat(style.lineHeight);
     if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
-    const verticalPadding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
-    const verticalBorder = Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth);
-    input.style.height = "auto";
-    const size = calculateComposerTextareaHeight({
-      lineHeight, paneHeight, scrollHeight: input.scrollHeight,
-      verticalPadding, verticalBorder
-    });
-    input.style.height = `${size.height}px`;
-    input.style.overflowY = size.overflowY;
+    if (textareaMeasurement?.input !== input) {
+      textareaMeasurement?.dispose();
+      textareaMeasurement = createComposerTextareaMeasurement(input);
+    }
+    const size = textareaMeasurement.measure(style, paneHeight);
+    const height = `${size.height}px`;
+    if (input.style.height !== height) input.style.height = height;
+    if (input.style.overflowY !== size.overflowY) input.style.overflowY = size.overflowY;
   }
 
   // Effects run after Svelte has written values and hidden-state changes into the DOM.
@@ -864,6 +865,10 @@
     return () => {
       observer.disconnect();
       cancelAnimationFrame(resizeFrame);
+      if (textareaMeasurement?.input === input) {
+        textareaMeasurement.dispose();
+        textareaMeasurement = null;
+      }
     };
   });
 

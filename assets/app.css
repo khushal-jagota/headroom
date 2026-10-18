@@ -2081,7 +2081,17 @@ button.list-row:hover .list-row-title {
           mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
 }
 
+/* The measured content box keeps the transcript's original flex layout. It cannot
+ * shrink when delayed media or Markdown grows, and answer room stays outside it. */
+.chat-thread-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  flex: none;
+}
+
 .chat-thread > *,
+.chat-thread-content > *,
 .chat-u,
 .chat-a,
 .chat-system {
