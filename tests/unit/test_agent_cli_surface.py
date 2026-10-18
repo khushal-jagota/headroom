@@ -34,7 +34,6 @@ def test_ordinary_help_exposes_orchestrators_and_retires_calendar_writes() -> No
         "ticket",
         "sprint",
         "orchestrator",
-        "model-corrections",
     ]
     assert ("panels", "orchestrator", "settle") in leaves
     assert ("panels", "ticket", "assign") in leaves
