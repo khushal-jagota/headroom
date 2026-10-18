@@ -969,9 +969,11 @@ def test_priority_removal_preserves_other_values_constraints_and_dependents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     shipped = db_module.MIGRATIONS_DIRECTORY
-    tree = _migration_tree_through(tmp_path, monkeypatch, "remove_ticket_retirement")
+    tree = _migration_tree_through(tmp_path, monkeypatch, "chief_recap")
     conn = connect(str(tmp_path / "without-priority.db"))
     create_schema(conn)
+    conn.execute("UPDATE chief_settings SET recap='Keep the owner recap'")
+    chief_before = tuple(conn.execute("SELECT * FROM chief_settings").fetchone())
     project_id = str(conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0])
     conn.execute(
         "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
@@ -1022,6 +1024,7 @@ def test_priority_removal_preserves_other_values_constraints_and_dependents(
         assert structure["indexes"] == structures[table]["indexes"]
         sql = conn.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()[0]
         assert "priority" not in sql
+    assert tuple(conn.execute("SELECT * FROM chief_settings").fetchone()) == chief_before
     after = _schema_objects(conn)
     assert {key: value for key, value in after.items() if key not in tables} == {
         key: value for key, value in dependents.items() if key not in tables

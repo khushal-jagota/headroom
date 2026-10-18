@@ -262,6 +262,7 @@ export type ChiefManagementSettings = {
   conversation_signal?: ConversationSignal;
   employee_id: string;
   label: string;
+  recap: string;
   skill: ManagedSkill;
   launch_defaults: EmployeeConfigurationSnapshot;
   conversation_id: string | null;

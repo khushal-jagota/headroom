@@ -14,13 +14,15 @@ const stem = `orchestrator-groups-settled-${process.pid}`;
 const scratch = await scratchDirectory();
 const paths = ["svelte", "ts", "html"].map((ext) => join(scratch, `${stem}.${ext}`));
 let server;
+const startedAt = performance.now();
 try {
   await writeFile(paths[0], `<script lang="ts">
-import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
+import { QueryClientProvider } from '@tanstack/svelte-query';
 import { tick } from 'svelte';
 import BoardRoute from '../src/routes/BoardRoute.svelte';
 import { parseWorkspaceAddress } from '../src/lib/workspaceAddress';
-const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+import { queryClient as client } from '../src/lib/queryClient';
+client.setDefaultOptions({ queries: { retry: false } });
 let address = $state(parseWorkspaceAddress(window.location.hash)!);
 (window as any).__refresh = async () => { await client.invalidateQueries(); await tick(); };
 </script>
@@ -37,6 +39,7 @@ let address = $state(parseWorkspaceAddress(window.location.hash)!);
   const { port } = server.httpServer.address();
   const script = String.raw`
 import json, os, pathlib, sys, time
+from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import sync_playwright, expect
 
 quiet = dict(awaiting_reply=False, awaiting_answer=False, awaiting_approval=False,
@@ -80,7 +83,10 @@ for i in range(24):
         conversation_signal=dict(working=False,message_for_owner=(i == 0)), awaiting_reply=(i == 0), conversation_id="conv-settled" if i == 0 else None))
 board = dict(columns=[dict(stage="needs_implementation", cards=[t for i in items for t in i["tickets"]])], sprint_items=items)
 workers = dict(chief_of_staff=dict(label="Chief of Staff", needs_me=False, awaiting_reply=False,
-    agent_working=False, latest_turn_ended_sequence=0), workers=[])
+    agent_working=False, latest_turn_ended_sequence=0, recap="Keep our shared work clear."), workers=[])
+chief_rows = [ticket("t_chief_active", None), ticket("t_chief_saved", None, is_backlogged=True),
+    ticket("t_chief_done", None, stage="done", is_done=True)]
+recap_writes = []
 requests = []
 
 def respond(route):
@@ -88,6 +94,10 @@ def respond(route):
     requests.append(path)
     if path == "board": result = board
     elif path == "workers": result = workers
+    elif path == "workers/chief-of-staff/recap":
+        recap_writes.append(route.request.post_data_json)
+        workers["chief_of_staff"]["recap"] = route.request.post_data_json["recap"]
+        result = workers["chief_of_staff"]
     elif path.startswith("items/") and path.endswith("/workspace"):
         result = next(i for i in items if i["id"] == path.split("/")[1])
     elif path == "worker-types": result = dict(worker_types=[])
@@ -95,7 +105,10 @@ def respond(route):
     elif path == "chief/conversation": result = dict(conversation_id=None)
     elif path.endswith("start-values"): result = dict(backends=[], current=None)
     elif path == "tickets" and "detail=summary" in route.request.url:
-        result = dict(tickets=[], page=dict(match_count=0, return_count=0, limit=30, offset=0,
+        query = parse_qs(urlsplit(route.request.url).query)
+        rows = [row for row in chief_rows if (row["is_backlogged"] if query.get("is_backlogged") == ["true"] else
+            row["stage"] == "done" if query.get("stage") == ["done"] else not row["is_backlogged"] and row["stage"] != "done")]
+        result = dict(tickets=rows, page=dict(match_count=len(rows), return_count=len(rows), limit=30, offset=0,
             omitted_before=0, omitted_after=0, complete=True, next_offset=None))
     elif path == "tickets":
         route.fulfill(status=404, content_type="application/json", body='{"detail":"Ticket not found"}')
@@ -166,11 +179,13 @@ with sync_playwright() as p:
     page.route("**/api/**", respond)
     page.goto(sys.argv[1] + "#/workspace/item/si_focus")
     expect(page.locator('[data-workspace-group="agent"]')).to_be_visible()
-    # Sample actual transition frames: pointer exit must never reveal an accent border.
+    # Selection holds its existing accent outline through hover, focus and pointer exit.
     selected = page.locator('[data-sprint-item="si_focus"]')
+    selected_style = lambda: selected.evaluate("n => ({border: getComputedStyle(n).borderTopColor, background: getComputedStyle(n).backgroundColor})")
     selected.hover()
     page.wait_for_timeout(180)
-    hovered_border = selected.evaluate("n => getComputedStyle(n).borderTopColor")
+    hover_style = selected_style()
+    hovered_border = hover_style["border"]
     page.mouse.move(1430, 10)
     border_frames = selected.evaluate("""n => new Promise(resolve => {
       const frames = [];
@@ -188,11 +203,14 @@ with sync_playwright() as p:
       probe.style.borderColor = 'var(--border-color)'; const neutral = getComputedStyle(probe).borderTopColor;
       probe.remove(); return {accent, neutral};
     }""")
-    assert all(frame["border"] != colors["accent"] for frame in border_frames), border_frames
-    assert border_frames[-1]["border"] == colors["neutral"], border_frames[-1]
+    assert hovered_border == colors["accent"], hovered_border
+    assert all(frame["border"] == colors["accent"] for frame in border_frames), border_frames
+    assert page.locator('[data-sprint-item="si_active_00"]').evaluate("n => getComputedStyle(n).borderTopColor") == colors["neutral"]
+    assert selected.evaluate("n => getComputedStyle(n).backgroundColor") == page.locator('[data-sprint-item="si_active_00"]').evaluate("n => getComputedStyle(n).backgroundColor")
+    expect(selected.locator('.item-head')).to_have_attribute("aria-current", "page")
     selected.locator('.item-head').click()
     page.mouse.move(1430, 10)
-    assert selected.evaluate("n => getComputedStyle(n).borderTopColor") != colors["accent"]
+    assert selected.evaluate("n => getComputedStyle(n).borderTopColor") == colors["accent"]
     selected.locator('.item-head').blur()
     selected.locator('.item-head').focus()
     page.keyboard.press("Tab")
@@ -201,38 +219,46 @@ with sync_playwright() as p:
     page.keyboard.press("Shift+Tab")
     assert selected.locator('.item-head').evaluate("n => n.matches(':focus-visible')")
     assert selected.locator('.item-head').evaluate("n => getComputedStyle(n).outlineStyle") != "none"
+    assert selected.evaluate("n => getComputedStyle(n).borderTopColor") == colors["accent"]
+    focus_style = selected_style()
+    selected.locator('.item-head').blur()
+    page.wait_for_function("[...document.querySelectorAll('[data-rail-hover-panel]')].every(n => getComputedStyle(n).opacity === '0')")
+    normal_style = selected_style()
+    neutral_background = page.locator('[data-sprint-item="si_active_00"]').evaluate("n => getComputedStyle(n).backgroundColor")
+    selection_styles = dict(normal=normal_style, hover=hover_style, focus=focus_style, accent=colors["accent"], neutral_background=neutral_background)
+    print("Selected card computed styles:", json.dumps(selection_styles))
+    assert all(state["border"] == colors["accent"] and state["background"] == neutral_background for state in [normal_style, hover_style, focus_style])
+    screenshot(page, "selected-outline")
     unfinished = ["awaiting_approval", "awaiting_answer", "assigned", "errored", "empty", "blocked", "agent"]
     for key in unfinished:
         assert opened(page, key), key + " unfinished group did not open by default"
-    for key in ["done"]:
-        expect(page.locator('[data-workspace-group="' + key + '"]')).to_have_count(0)
+    assert not opened(page, "done")
+    assert not opened(page, "backlog")
+    expect(page.get_by_label("Worker state")).to_have_count(0)
     for key in unfinished:
         count = page.locator('[data-workspace-group="' + key + '"] summary .sprint-workspace-count')
         expect(count).to_have_text("1")
         expect(count).to_be_visible()
-    # Real row facts survive, including on the separately accessible Done filter.
-    for state, id in [("active", "t_agent"), ("done", "t_done")]:
-        page.get_by_label("Worker state").select_option(state)
-        row = page.locator('[data-sprint-ticket-id="' + id + '"]')
-        expect(row.locator('[data-conversation-signal="message"]')).to_have_count(1)
-        expect(row.locator('.stage-mark[aria-label="Unread message"]')).to_have_count(1)
-        expect(row).to_have_attribute("href", "#/workspace/item/si_focus/" + id)
-    for state, key in [("done", "done")]:
-        page.get_by_label("Worker state").select_option(state)
-        assert not opened(page, key), key + " terminal group opened by default"
-        page.locator('[data-workspace-group="' + key + '"] summary').click()
-    page.get_by_label("Worker state").select_option("active")
+    # The one list retains exact row facts, and Done opens independently.
+    row = page.locator('[data-sprint-ticket-id="t_agent"]')
+    expect(row.locator('[data-conversation-signal="message"]')).to_have_count(1)
+    expect(row.locator('.stage-mark[aria-label="Unread message"]')).to_have_count(1)
+    expect(row).to_have_attribute("href", "#/workspace/item/si_focus/t_agent")
+    page.locator('[data-workspace-group="done"] summary').click()
+    row = page.locator('[data-sprint-ticket-id="t_done"]')
+    expect(row.locator('[data-conversation-signal="message"]')).to_have_count(1)
+    expect(row).to_have_attribute("href", "#/workspace/item/si_focus/t_done")
+    assert opened(page, "done")
     expect(page.locator('[data-sprint-ticket-id="t_yours"] .stage-mark')).to_have_count(0)
     screenshot(page, "worker-groups-defaults")
 
-    # Reader choices survive refreshes and filter changes without changing row facts.
+    # Reader choices survive refreshes without changing row facts.
     page.locator('[data-workspace-group="agent"] summary').click()
     focus_tickets[6]["title"] = "Updated Worker title"
     page.evaluate("window.__refresh()")
     expect(page.locator('[data-sprint-ticket-id="t_agent"] .ticket-row-title')).to_have_text("Updated Worker title")
     assert not opened(page, "agent")
-    for state, key in [("done", "done"), ("active", "assigned")]:
-        page.get_by_label("Worker state").select_option(state)
+    for key in ["done", "assigned"]:
         assert opened(page, key)
         count = page.locator('[data-workspace-group="' + key + '"] summary .sprint-workspace-count')
         expect(count).to_have_text("1")
@@ -433,6 +459,56 @@ with sync_playwright() as p:
         # Opening the archived message keeps its exact Worker address accessible.
         message.click()
         page.wait_for_function("location.hash === '#/workspace/item/si_settled_00/t_archived_message'")
+    # The Chief and ordinary orchestrators share real column and conversation controls.
+    # A component-only test cannot prove shell sizing, pointer capture or focus retention.
+    page.set_viewport_size(dict(width=1440, height=1000))
+    workers["chief_of_staff"]["conversation_signal"] = dict(working=True,message_for_owner=False)
+    page.evaluate("location.hash = '#/workspace/chief-of-staff'")
+    chief = page.locator('.chief-workspace')
+    expect(chief.get_by_role("heading", level=1)).to_be_visible()
+    expect(chief.get_by_role("button", name="Settle Chief of Staff")).to_have_count(0)
+    expect(chief.locator('h1 [data-conversation-signal="working"]')).to_have_count(1)
+    recap = chief.get_by_role("textbox", name="Orchestrator recap")
+    expect(recap).to_have_text("Keep our shared work clear.")
+    recap.fill("Keep the Chief and orchestrators consistent.")
+    with page.expect_response("**/api/workers/chief-of-staff/recap"):
+        chief.get_by_role("heading", level=1).click()
+    expect(recap).to_have_text("Keep the Chief and orchestrators consistent.")
+    assert recap_writes == [dict(recap="Keep the Chief and orchestrators consistent.")], recap_writes
+    page.evaluate("window.__refresh()")
+    expect(recap).to_have_text("Keep the Chief and orchestrators consistent.")
+    pane = chief.locator('[data-conversation-pane]')
+    expect(pane).to_have_attribute("data-conversation-state", "rest")
+    document_column = chief.locator('.sprint-item-column').bounding_box()
+    conversation_column = chief.locator('.conversation-column').bounding_box()
+    assert abs(document_column["x"] - conversation_column["x"]) < 1
+    assert abs(document_column["width"] - conversation_column["width"]) < 1
+    page.mouse.move(1430, 10)
+    expect(page.locator('[data-rail-hover-panel][aria-hidden="false"]')).to_have_count(0)
+    page.wait_for_function("[...document.querySelectorAll('[data-rail-hover-panel]')].every(n => getComputedStyle(n).opacity === '0')")
+    screenshot(page, "chief-desktop-rest")
+    composer = chief.locator('[data-conversation-input]')
+    composer.click()
+    composer.fill("Draft that must survive conversation controls")
+    expect(pane).to_have_attribute("data-conversation-state", "peeked")
+    screenshot(page, "chief-desktop-peeked")
+    chief.locator('[data-conversation-expand]').click()
+    expect(pane).to_have_attribute("data-conversation-state", "opened")
+    screenshot(page, "chief-desktop-opened")
+    chief.locator('[data-conversation-collapse]').click()
+    expect(pane).to_have_attribute("data-conversation-state", "peeked")
+    composer.focus()
+    page.keyboard.press("Escape")
+    expect(pane).to_have_attribute("data-conversation-state", "rest")
+    expect(composer).to_have_value("Draft that must survive conversation controls")
+    composer.click()
+    chief.get_by_role("heading", level=1).click()
+    expect(pane).to_have_attribute("data-conversation-state", "rest")
+    expect(composer).to_have_value("Draft that must survive conversation controls")
+    # Live canonical refreshes never open the conversation for the person.
+    page.evaluate("window.__refresh()")
+    expect(pane).to_have_attribute("data-conversation-state", "rest")
+
     # Compact selection replaces the rail with the selected inspector. The scoped
     # flex rule for the rail must not override the production responsive hide rule.
     page.set_viewport_size(dict(width=390, height=560))
@@ -447,11 +523,28 @@ with sync_playwright() as p:
         expect(page.locator(".rail-grip")).to_be_hidden()
         shell_box = page.locator(".board-workspace-shell").bounding_box()
         inspector_box = inspector.bounding_box()
+        if kind in ["chief", "item"]:
+            assert inspector.evaluate("n => getComputedStyle(n).padding") == "0px"
         assert abs(inspector_box["y"] - shell_box["y"]) < 1, (kind, shell_box, inspector_box)
         assert abs(inspector_box["height"] - shell_box["height"]) < 1, (kind, shell_box, inspector_box)
         assert inspector_box["x"] >= 0 and inspector_box["x"] + inspector_box["width"] <= 391
         assert bottom(inspector_box) <= 560
         screenshot(page, "compact-selected-" + kind)
+        if kind == "chief":
+            pane = inspector.locator('[data-conversation-pane]')
+            expect(pane).to_have_attribute("data-conversation-state", "rest")
+            inspector.locator('[data-conversation-input]').click()
+            expect(pane).to_have_attribute("data-conversation-state", "peeked")
+            inspector.locator('[data-conversation-expand]').click()
+            expect(pane).to_have_attribute("data-conversation-state", "opened")
+            assert pane.bounding_box()["width"] <= 390
+            assert bottom(pane.bounding_box()) <= 560
+            screenshot(page, "chief-compact-opened")
+            inspector.locator('[data-conversation-collapse]').click()
+            expect(pane).to_have_attribute("data-conversation-state", "peeked")
+            page.keyboard.press("Escape")
+            expect(pane).to_have_attribute("data-conversation-state", "rest")
+
     page.evaluate("location.hash = '#/workspace?view=items'")
     expect(page.locator(".board-workspace-left")).to_be_visible()
     expect(page.get_by_role("navigation", name="Workspace utilities")).to_be_in_viewport()
@@ -467,4 +560,4 @@ print("orchestrator defaults, stable choices, counts/dots/navigation, and indepe
   await server?.close();
   await Promise.all(paths.map((path) => rm(path, { force: true })));
 }
-console.log("orchestrator-groups-settled-browser.test.mjs: all assertions passed");
+console.log(`orchestrator-groups-settled-browser.test.mjs: all assertions passed (${((performance.now() - startedAt) / 1000).toFixed(2)}s)`);

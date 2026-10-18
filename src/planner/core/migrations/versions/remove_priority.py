@@ -8,7 +8,7 @@ from alembic import op
 from sqlalchemy.engine import Connection
 
 revision = "remove_priority"
-down_revision = "remove_ticket_retirement"
+down_revision = "chief_recap"
 branch_labels = None
 depends_on = None
 

@@ -3144,14 +3144,10 @@ select {
   background: var(--surface-1);
 }
 
-.board-workspace-right--item {
+.board-workspace-right--item,
+.board-workspace-right--chief {
   padding: 0;
   overflow: hidden;
-  background: var(--surface-1);
-}
-
-.board-workspace-right--chief {
-  padding: var(--space-5) var(--space-6);
   background: var(--surface-1);
 }
 
@@ -3160,16 +3156,6 @@ select {
  * beside the pane already. */
 .board-workspace-back {
   display: none;
-}
-
-.board-workspace-chief-conversation {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
 }
 
 .board-workspace-empty-inspector {
@@ -4109,10 +4095,8 @@ select {
     0 0 0 3px color-mix(in srgb, var(--accent-bright) 9%, transparent);
 }
 
-/* Where there is no card to light, the well carries the focus itself: at full height,
- * because the card's outline is the page, and in a host that gives the conversation the
- * space it has rather than a card — the Chief of Staff is that one. Focus has to be
- * visible everywhere, and the textarea draws no outline of its own. */
+/* At full height the well carries focus because the card's outline is the page.
+ * Hosts without a state use the same focus rule. The textarea draws no outline of its own. */
 [data-conversation-pane][data-conversation-state="opened"]:focus-within .chat-box,
 [data-conversation-pane]:not([data-conversation-state]):focus-within .chat-box {
   box-shadow:
@@ -4765,12 +4749,8 @@ a.artifact-chip:hover,
     display: none;
   }
 
+  .board-workspace-right.board-workspace-right--item,
   .board-workspace-right.board-workspace-right--chief {
-    display: flex;
-    padding: var(--space-5);
-  }
-
-  .board-workspace-right.board-workspace-right--item {
     display: flex;
     padding: 0;
   }
