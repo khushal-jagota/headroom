@@ -203,9 +203,15 @@ existing Ticket id with its worker identity. Direct callers keep the same access
 complete change once. It writes nothing to the blocked Ticket, because what that Ticket
 reads as is worked out from the block itself.
 
+### List order
+
+Ticket API and CLI lists show oldest-created Tickets first, then identifier. Day-scoped
+lists retain stored position. The stage board places dated Tickets first, earliest
+deadline first, then oldest-created.
+
 ### Ordinary Ticket edits
 
-One ordinary edit may change a Ticket's title, priority, deadline, Project, Sprint, and
+One ordinary edit may change a Ticket's title, deadline, Project, Sprint, and
 optional Sprint Item together. Panels checks the whole request before saving any of it. All requested
 changes succeed together or none do, and the history records
 only fields that really changed. Sending values the Ticket already has leaves it

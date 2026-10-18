@@ -11,13 +11,13 @@ const quiet = {
   awaiting_agent_approval: false, assigned: false, agent_state: "idle" as const
 };
 const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & SprintItemWorkspaceTicket => ({
-  id, title: id, is_backlogged:false, priority: "P2", activity_at: 0, stage: "needs_implementation",
+  id, title: id, is_backlogged:false, activity_at: 0, stage: "needs_implementation",
   ticket_status: "agent", worker_type: "coding", sprint_item_id: null,
   day_ids: [], sprint_id: null, sprint_name: null,
   ...quiet, ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id: string, values: Partial<BoardSprintItem> = {}): BoardSprintItem => ({
-  id, title: id, recap_preview: "", priority: "P2", created_at: 1, tickets: [], conversation_id: null,
+  id, title: id, recap_preview: "", created_at: 1, tickets: [], conversation_id: null,
   ticket_rollup: quiet, ...quiet, ...values
 });
 
@@ -175,10 +175,10 @@ describe("orchestrator rail projection", () => {
     childMotion.dispose();
   });
 
-  it("preserves priority order and exact direct-conversation message marks", () => {
+  it("preserves creation and ID order and exact direct-conversation message marks", () => {
     const rail = buildWorkspaceRail([], [
       item("newer", { created_at: 20 }), item("older", { created_at: 10 }),
-      item("urgent", { priority: "P0", awaiting_reply: true, conversation_signal: {working:true,message_for_owner:true} }),
+      item("urgent", { created_at: 0, awaiting_reply: true, conversation_signal: {working:true,message_for_owner:true} }),
       item("children-message", { ticket_rollup: { ...quiet, awaiting_reply: true } })
     ]);
     expect(rail.items.map((row) => row.id)).toEqual(["urgent", "children-message", "older", "newer"]);

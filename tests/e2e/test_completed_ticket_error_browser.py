@@ -127,7 +127,6 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
         {
             "name": "Historical errors proof",
             "summary": "",
-            "priority": "P2",
         },
     )
     items = [
@@ -138,7 +137,6 @@ def test_completed_failed_history_api_rail_rollup_and_visible_record(
                 "title": title,
                 "body": "",
                 "project_id": project["id"],
-                "priority": "P2",
             },
         )
         for title in ("Completed work only", "Mixed work")

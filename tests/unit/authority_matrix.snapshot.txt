@@ -5,7 +5,6 @@ POST   /tickets orchestrator                 allow   allow   allow           ref
 POST   /tickets ceiling                      allow   allow   allow           refuse            refuse       refuse           refuse               refuse
 POST   /tickets ceiling_holder               allow   allow   allow           refuse            refuse       refuse           refuse               refuse
 GET    /tickets (detail=full)                allow   allow   allow           allow             allow        allow            allow                allow
-PATCH  /tickets/{t} priority                 allow   allow   allow           refuse            allow        refuse           refuse               refuse
 PATCH  /tickets/{t} title                    allow   allow   allow           refuse            refuse       refuse           refuse               refuse
 PATCH  /tickets/{t} orchestrator             allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 PATCH  /tickets/{t} project_id               allow   allow   allow           refuse            refuse       refuse           refuse               refuse

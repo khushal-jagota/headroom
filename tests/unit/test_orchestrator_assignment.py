@@ -14,7 +14,7 @@ from tests.support.principals import OWNER_PRINCIPAL
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
-from planner.core.contracts import Principal, PrincipalKind, Priority
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.server import create_app
@@ -28,7 +28,7 @@ CHIEF = Principal(PrincipalKind.chief, "chief")
 
 
 def _item(conn: Connection) -> str:
-    project = projects_data.create_project(conn, name="Item Project", priority=Priority.P2, now=1)
+    project = projects_data.create_project(conn, name="Item Project", now=1)
     return sprints_data.create_item(
         conn, title="An orchestrator", project_id=project.id, clock=RealClock()
     ).id

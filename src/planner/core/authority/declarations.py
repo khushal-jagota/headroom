@@ -16,7 +16,7 @@ DAY_MIDDAY_FIELD: Final = "midday_reconciliation"
 # What an Outcome is, as sprint planning shapes it: its words and its placement. Not its
 # existence, not its agent, and not its files. Sprint planning writes briefs; it does not
 # delete Outcomes or reach into a manager's conversation, and the declaration says so.
-OUTCOME_BRIEF_FIELDS: Final = ("title", "body", "priority", "project_id")
+OUTCOME_BRIEF_FIELDS: Final = ("title", "body", "project_id")
 
 # Retired planning types retain their records but no longer write shared planning objects.
 # Retired planning types retain their records but no longer write shared planning objects.

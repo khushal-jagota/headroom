@@ -6,12 +6,12 @@ import type { BoardCard, BoardSprintItem, ChiefManagementSettings, SprintItemWor
 const quiet = { awaiting_reply:false, awaiting_answer:false, awaiting_approval:false,
   awaiting_agent_approval:false, assigned:false, agent_state:"idle" as const };
 const card = (id:string, values:Partial<BoardCard> = {}): BoardCard & SprintItemWorkspaceTicket => ({
-  ...quiet, id, title:id, priority:"P2", stage:"needs_implementation", ticket_status:"agent",
+  ...quiet, id, title:id, stage:"needs_implementation", ticket_status:"agent",
   conversation_id:`conversation-${id}`, sprint_item_id:null, sprint_item_title:null,
   ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id:string, values:Partial<BoardSprintItem> = {}): BoardSprintItem => ({
-  ...quiet, id, title:id, recap_preview:"", priority:"P2", created_at:1, conversation_id:`supervisor-${id}`,
+  ...quiet, id, title:id, recap_preview:"", created_at:1, conversation_id:`supervisor-${id}`,
   ticket_rollup:quiet, tickets:[], ...values
 });
 const chief = (values:Partial<ChiefManagementSettings> = {}):ChiefManagementSettings => ({

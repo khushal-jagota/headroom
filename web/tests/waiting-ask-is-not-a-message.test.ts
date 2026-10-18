@@ -45,7 +45,6 @@ function boardCard(values: Partial<BoardCard>): BoardCard {
   return {
     id: "t_1",
     title: "A Ticket",
-    priority: "P1",
     deadline: null,
     activity_at: 0,
     has_pending_proposal: false,

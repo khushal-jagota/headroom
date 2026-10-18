@@ -6,7 +6,7 @@ from sqlite3 import Connection
 import pytest
 
 from planner.core.clock import TestClock as ClockForTest
-from planner.core.contracts import OWNER_PRINCIPAL, Priority
+from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError
 from planner.projects import data as projects
 from planner.sprints import data as sprints
@@ -34,7 +34,6 @@ def test_creation_uses_explicit_then_either_requirement_then_vps(
     project = projects.create_project(
         tmp_db,
         name="Mac project",
-        priority=Priority.P2,
         requires_macos=project_requirement,
         now=1,
     )
@@ -76,7 +75,6 @@ def test_inherited_project_resolves_before_locale(
     project = projects.create_project(
         tmp_db,
         name="Inherited Mac",
-        priority=Priority.P2,
         requires_macos=True,
         now=1,
     )
@@ -84,7 +82,6 @@ def test_inherited_project_resolves_before_locale(
         tmp_db,
         title="Parent",
         project_id=project.id,
-        priority=Priority.P2,
         clock=fake_clock,
     )
     context = data.resolve_ticket_creation_context(
@@ -137,7 +134,6 @@ def test_existing_defaults_and_requirements_round_trip(tmp_db: Connection) -> No
     project = projects.create_project(
         tmp_db,
         name="Persisted",
-        priority=Priority.P2,
         requires_macos=True,
         now=1,
     )
@@ -190,7 +186,7 @@ def test_locale_migration_preserves_entire_existing_rows(
     before = dict(conn.execute("SELECT * FROM tickets WHERE id='t_preserved'").fetchone())
     projects_before = [dict(row) for row in conn.execute("SELECT * FROM projects")]
     workers_before = [dict(row) for row in conn.execute("SELECT * FROM worker_types")]
-    monkeypatch.setattr(db, "MIGRATIONS_DIRECTORY", original)
+    shutil.copy(original / "versions" / "ticket_locale.py", tree / "versions")
     db.create_schema(conn)
     after = dict(conn.execute("SELECT * FROM tickets WHERE id='t_preserved'").fetchone())
     assert after.pop("locale") == "vps"
@@ -226,7 +222,6 @@ def test_every_authenticated_creator_uses_locale_resolution(
     project = projects.create_project(
         tmp_db,
         name="API Mac",
-        priority=Priority.P2,
         requires_macos=True,
         now=1,
     )
@@ -234,7 +229,6 @@ def test_every_authenticated_creator_uses_locale_resolution(
         tmp_db,
         title="API parent",
         project_id=project.id,
-        priority=Priority.P2,
         clock=fake_clock,
     )
     db_path = tmp_db.execute("PRAGMA database_list").fetchone()[2]

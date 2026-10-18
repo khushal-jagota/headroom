@@ -1,4 +1,4 @@
-import type { Priority, WorkAttention } from "./types";
+import type { WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type WorkItemTicketFacts = WorkAttention & {
@@ -7,7 +7,6 @@ export type WorkItemTicketFacts = WorkAttention & {
   title: string;
   recap_preview?: string;
   blocked?: boolean;
-  priority: Priority;
   stage: string;
   worker_type?: string;
   conversation_id?: string | null;

@@ -53,7 +53,6 @@ def test_done_history_list_preserves_filters_and_page(
                 "id": "t_history",
                 "stage": "done",
                 "ticket_status": "done",
-                "priority": "P2",
                 "title": "Historical work",
                 "project": None,
                 "recap_preview": "",

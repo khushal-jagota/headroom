@@ -1,19 +1,14 @@
 # Projects
 
 Projects are a small catalog, not a fixed enum. Each project has a stable ID, a
-display name, an optional folder path, and a priority. Priority is either P0–P3 or unassessed. Unassessed is
-stored and returned as `null`; it is never interpreted as P3. The live rows include a
-Personal Project for planning work. New rows can be added without changing code.
+display name, an optional folder path, and a summary. New rows can be added without
+changing code.
 
 ```
 Project ──► Ticket ──► optional Sprint Item classification
    └─────► Sprint Item
    └─────► Idea
 ```
-
-Existing and built-in Projects may be unassessed. Creating a new Project through the
-ordinary API or CLI requires an explicit P0–P3. The ordinary API and CLI can reassess
-an existing Project to P0–P3. They cannot return it to the unassessed state.
 
 Each Project folder is explicit and does not depend on the Project name. Panels expands
 paths that start with `~` and stores an absolute path. The folder can be absent on disk.
@@ -44,13 +39,12 @@ Workers page no longer supplies a project-filtered list.
 - `GET /api/projects?detail=summary|full` reads the catalog at the level asked for.
   `detail` is required and has no default. Add `id=<project_id>` with `detail=full` to
   read one canonical Project record.
-- `POST /api/projects {name, priority, summary?, folder_path?}` creates an assessed project.
-- `PATCH /api/projects/{project_id}` updates the name, summary, priority, or folder path.
+- `POST /api/projects {name, summary?, folder_path?}` creates a Project.
+- `PATCH /api/projects/{project_id}` updates the name, summary, or folder path.
 - `panels project list`, `panels project show <project_id> [summary]`,
-  `panels project create --name ... --priority P0|P1|P2|P3 --summary ... --folder-path ...`, and
-  `panels project set <project_id> priority --value P0|P1|P2|P3` expose the same
-  catalog. The `set` command also supports the `name`, `summary`, and `folder-path`
-  fields. Use `--clear` to clear the folder path.
+  `panels project create --name ... --summary ... --folder-path ...`, and
+  `panels project set <project_id> name|summary|folder-path --value ...` expose the same
+  catalog. Use `--clear` to clear the folder path.
 - Frontend project selectors fetch the `projects` resource and use project IDs as
   values with project names as labels.
 
@@ -69,7 +63,7 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 ## Deferred
 
 - **Project removal.** There is no delete or archive flow. Trigger: the catalog needs
-  lifecycle management beyond reassessment.
+  lifecycle management beyond name and context edits.
 
 ---
 

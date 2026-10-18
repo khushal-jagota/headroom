@@ -46,14 +46,13 @@ quiet = dict(awaiting_reply=False, awaiting_answer=False, awaiting_approval=Fals
              awaiting_agent_approval=False, assigned=False, agent_state="idle")
 
 def ticket(id, parent="si_focus", **overrides):
-    row = dict(id=id, title=id.replace("_", " "), priority="P2", deadline=None,
+    row = dict(id=id, title=id.replace("_", " "), deadline=None,
         project_id=None, project=None, group_project_id=None, group_project=None,
         activity_at=1, has_pending_proposal=False, ticket_status="agent",
         worker_type="coding", employee_backend="codex", stage="needs_implementation",
         stage_label="Implementation", gating_field="implementation", gating_field_label="Implementation",
         is_done=False, blocked=False, conversation_id="conv-" + id, waiting_to_closeout=False,
-        sprint_item_id=parent, sprint_item_title=parent, sprint_item_priority="P2",
-        day_ids=[], sprint_id=None, sprint_name=None, is_backlogged=False, **quiet)
+        sprint_item_id=parent, sprint_item_title=parent, day_ids=[], sprint_id=None, sprint_name=None, is_backlogged=False, **quiet)
     row.update(overrides)
     return row
 
@@ -64,8 +63,7 @@ focus_tickets = [ticket("t_approval", awaiting_approval=True), ticket("t_answer"
     ticket("t_done", stage="done", ticket_status="", is_done=True, awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True))]
 
 def item(id, title, rows=None, **overrides):
-    row = dict(id=id, title=title, body="Shared work and owner decisions", priority="P2",
-        project_id=None, project=None, created_at=1, updated_at=1, settled=False,
+    row = dict(id=id, title=title, body="Shared work and owner decisions", project_id=None, project=None, created_at=1, updated_at=1, settled=False,
         conversation_id=None, conversation_history=[], tickets=rows or [], artifacts=[],
         ticket_rollup=dict(quiet), supervisor=dict(agent_key="sprint_item:" + id,
             conversation_id=None, launch_configuration=dict(employee_backend="codex",
@@ -183,9 +181,11 @@ with sync_playwright() as p:
     expect(page.locator('[data-workspace-group="agent"]')).to_be_visible()
     # Selection holds its existing accent outline through hover, focus and pointer exit.
     selected = page.locator('[data-sprint-item="si_focus"]')
+    selected_style = lambda: selected.evaluate("n => ({border: getComputedStyle(n).borderTopColor, background: getComputedStyle(n).backgroundColor})")
     selected.hover()
     page.wait_for_timeout(180)
-    hovered_border = selected.evaluate("n => getComputedStyle(n).borderTopColor")
+    hover_style = selected_style()
+    hovered_border = hover_style["border"]
     page.mouse.move(1430, 10)
     border_frames = selected.evaluate("""n => new Promise(resolve => {
       const frames = [];
@@ -220,8 +220,14 @@ with sync_playwright() as p:
     assert selected.locator('.item-head').evaluate("n => n.matches(':focus-visible')")
     assert selected.locator('.item-head').evaluate("n => getComputedStyle(n).outlineStyle") != "none"
     assert selected.evaluate("n => getComputedStyle(n).borderTopColor") == colors["accent"]
+    focus_style = selected_style()
     selected.locator('.item-head').blur()
     page.wait_for_function("[...document.querySelectorAll('[data-rail-hover-panel]')].every(n => getComputedStyle(n).opacity === '0')")
+    normal_style = selected_style()
+    neutral_background = page.locator('[data-sprint-item="si_active_00"]').evaluate("n => getComputedStyle(n).backgroundColor")
+    selection_styles = dict(normal=normal_style, hover=hover_style, focus=focus_style, accent=colors["accent"], neutral_background=neutral_background)
+    print("Selected card computed styles:", json.dumps(selection_styles))
+    assert all(state["border"] == colors["accent"] and state["background"] == neutral_background for state in [normal_style, hover_style, focus_style])
     screenshot(page, "selected-outline")
     unfinished = ["awaiting_approval", "awaiting_answer", "assigned", "errored", "empty", "blocked", "agent"]
     for key in unfinished:

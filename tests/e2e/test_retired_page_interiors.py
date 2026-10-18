@@ -37,13 +37,12 @@ def test_page_revision_persists_exact_feedback_and_refreshes(
     api: ApiHelper,
 ) -> None:
     server = rail_server
-    project = api.direct_post(server, "/api/projects", {"name": "Page proof", "priority": "P1"})
+    project = api.direct_post(server, "/api/projects", {"name": "Page proof"})
     item = api.direct_post(
         server,
         "/api/items",
         {
             "title": "Verify the complete retirement product",
-            "priority": "P1",
             "project_id": project["id"],
             "body": "Review the real connected product before release.",
         },
@@ -59,7 +58,7 @@ def test_page_revision_persists_exact_feedback_and_refreshes(
         },
     )
     unrelated_project = api.direct_post(
-        server, "/api/projects", {"name": "Unrelated proof", "priority": "P2"}
+        server, "/api/projects", {"name": "Unrelated proof"}
     )
     unrelated = api.direct_post(
         server,

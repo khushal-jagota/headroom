@@ -42,6 +42,9 @@ Sprint creation, edits, commitment changes, and carry-forward are retired from t
 API and CLI. `panels sprint list/show/list-items` and historical GET routes preserve
 access. Reading history neither creates a Sprint nor activates old planning work.
 
+Historical Sprint outcomes use oldest-created order, then identifier. Project groups
+and Ticket section and title order remain.
+
 The final visual layout waits for the approved design handoff. Its confirmed direction
 keeps Workers nested beneath orchestrators and puts Project and Settle in the eyebrow
 above the title in the sidebar and open content.

@@ -31,6 +31,7 @@ const workers: WorkersResponse = {
   chief_of_staff: {
     employee_id: "chief",
     label: "Chief of Staff",
+    recap: "",
     skill: { name: "panels-chief-of-staff", description: "Long Chief skill description", markdown_body: "Chief body" },
     launch_defaults: defaults,
     conversation_id: null,

@@ -38,7 +38,7 @@ describe("shared conversation signal consumers", () => {
     { working: true, message_for_owner: true }
   ])("uses message precedence in Worker and supervisor rows: %j", (signal) => {
     const worker = render(SprintTicketRow, { props: {
-      priority: null, title: "Worker", signal, conversationId: "worker-exact"
+      title: "Worker", signal, conversationId: "worker-exact"
     } }).body;
     const supervisor = render(WorkspaceRailCard, { props: {
       id: "item", title: "Supervisor", signal, conversationId: "supervisor-exact",
@@ -55,7 +55,7 @@ describe("shared conversation signal consumers", () => {
     const html = render(WorkspaceRailCard, { props: {
       id: "chief", title: "Chief", chief: true, selected: false, selectedTicketId: null,
       groups: [{key:"awaiting_approval",label:"Needs your approval",defaultCollapsed:false,cards:[{
-        id:"child",title:"Child",priority:"P1",stage:"done",ticket_status:"empty",
+        id:"child",title:"Child",stage:"done",ticket_status:"empty",
         awaiting_reply:false,awaiting_answer:false,awaiting_approval:true,awaiting_agent_approval:false,
         assigned:false,agent_state:"idle",conversation_id:"child-exact",
         conversation_signal:{working:true,message_for_owner:true}

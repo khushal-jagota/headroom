@@ -38,7 +38,7 @@ from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import sync_playwright, expect
 
 def child(name, stage="needs_implementation", backlogged=False, **facts):
-    row = dict(id=name,title=name,stage=stage,is_backlogged=backlogged,priority="P2",activity_at=1,
+    row = dict(id=name,title=name,stage=stage,is_backlogged=backlogged,activity_at=1,
         ticket_status="empty",waiting_to_closeout=False,has_pending_proposal=False,gating_field=None,
         blocked=False,worker_type="coding",day_ids=[],sprint_id=None,sprint_name=None,awaiting_reply=False,
         awaiting_answer=False,awaiting_approval=False,awaiting_agent_approval=False,assigned=False,agent_state="idle")

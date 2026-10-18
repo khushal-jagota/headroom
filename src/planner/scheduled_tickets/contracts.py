@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from planner.core.contracts import Priority
 from planner.tickets.contracts import TicketLocale
 
 
@@ -32,7 +31,6 @@ class ScheduledTicketTemplate:
     title: str
     worker_type: str
     kickoff_note: str
-    priority: Priority
     deadline: str | None
     project_id: str | None
     placement_mode: ScheduledTicketPlacementMode

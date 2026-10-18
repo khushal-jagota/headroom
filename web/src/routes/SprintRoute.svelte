@@ -14,7 +14,6 @@
   import ClampedText from "../components/ClampedText.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
-  import PriorityTile from "../components/PriorityTile.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
 
@@ -91,7 +90,7 @@
       <ConversationSignalMark signal={ticket.conversation_signal} conversationId={ticket.conversation_id} />
       <span class="list-row-title">{ticket.title}</span>
       <span class="sprint-ticket-state">
-        <span class="sprint-ticket-priority">{ticket.priority}</span>{#if ticket.stage !== "done"} · {condition.word}{/if}
+        {#if ticket.stage !== "done"}{condition.word}{/if}
       </span>
     </a>
   {/each}
@@ -186,7 +185,6 @@
                   variant="workspace-bucket"
                   defaultOpen={true}
                   data-sprint-project={group.key}
-                  data-project-priority={group.priority || ""}
                 >
                   {#snippet summary()}
                     <span class="board-workspace-bucket-label">{group.label}</span>
@@ -196,7 +194,7 @@
                       {@const outcome = outcomeGroup.outcome}
                       <div class="sprint-outcome-block" data-outcome-id={outcome.id} data-committed={outcomeGroup.committed}>
                         <a class="list-row sprint-item-row" href={workspaceAddress({ kind:"item", id:outcome.id })}>
-                          <PriorityTile priority={outcome.priority} /><span class="list-row-title">{outcome.title}</span>
+                          <span class="list-row-title">{outcome.title}</span>
                           <span class="sprint-item-rollup">{outcomeTicketProgress(outcomeGroup)}</span>
                         </a>
                       </div>
@@ -207,7 +205,6 @@
               {#if looseTickets.length}
                 <details class="sprint-no-outcome" data-sprint-no-outcome>
                   <summary class="list-row sprint-item-row">
-                    <span class="priority-tile priority-tile--blank" aria-hidden="true"></span>
                     <span class="list-row-title">No Outcome</span>
                     <span class="sprint-item-rollup">{looseTicketProgress}</span>
                   </summary>

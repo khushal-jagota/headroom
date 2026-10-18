@@ -1,7 +1,3 @@
-
-export const PRIORITIES = ["P0", "P1", "P2", "P3"];
-export const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
-
 export type FieldStageVisualState =
   | "completed"
   | "current-running"

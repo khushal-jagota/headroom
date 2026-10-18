@@ -120,9 +120,9 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     server = signal_server
     evidence = server.db_path.parent / "evidence"
     evidence.mkdir()
-    project = api.direct_post(server, "/api/projects", {"name": "Signal proof", "priority": "P1"})
+    project = api.direct_post(server, "/api/projects", {"name": "Signal proof"})
     item = api.direct_post(server, "/api/items", {
-        "title": "Signal orchestrator", "priority": "P1", "project_id": project["id"],
+        "title": "Signal orchestrator", "project_id": project["id"],
     })
     ticket = api.direct_post(server, "/api/tickets", {
         "title": "Signal Worker", "worker_type": "coding", "brief": "Agreed brief.",
