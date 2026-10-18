@@ -288,9 +288,13 @@ jobs:
           browser_format="$("$PANELS_DEPLOY_VENV/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["browser_format"])' "$PANELS_GATE_DIR/selection.json")"
           if [ "$browser_format" = shared-v1 ]; then
             invocation_id="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-browser"
+            # The receipt proves its own revision with git, so the checkout's git
+            # directory must survive the artifact shadow it can sit underneath.
+            git_common_dir="$(git -C "$PANELS_CANDIDATE_SOURCE" rev-parse --path-format=absolute --git-common-dir)"
             bwrap --bind / / --dev-bind /dev /dev \
               --bind "$PANELS_GATE_DIR/artifact-shadow" /home/vps/Deployments/Panels \
               --bind "$PANELS_CANDIDATE_SOURCE" "$PANELS_CANDIDATE_SOURCE" \
+              --ro-bind "$git_common_dir" "$git_common_dir" \
               --bind "$PANELS_REPORT_DIR" "$PANELS_REPORT_DIR" \
               --bind "$PANELS_CODEX_TOOLS" "$PANELS_CODEX_TOOLS" \
               --chdir "$PANELS_CANDIDATE_SOURCE/web" -- \
