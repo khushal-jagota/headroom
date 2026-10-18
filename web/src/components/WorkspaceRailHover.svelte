@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MachineActivityMark from "./machines/MachineActivityMark.svelte";
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
@@ -41,7 +42,7 @@
 </script>
 <div bind:this={panel} class="rail-hover-panel" class:visible class:instant style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}>
   <div class="kicker">{kicker}</div>
-  <div class="title"><span>{currentWorker?.title ?? title}</span><ConversationSignalMark signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <div class="title"><span>{currentWorker?.title ?? title}</span><MachineActivityMark locale={currentWorker?.locale} signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} completed={currentWorker?.stage === "done" || currentWorker?.stage === "cancelled"} /></div>
   {#if worker}
     <div class="label">Stages</div>
     {#each stages as stage (stage.id)}
@@ -50,7 +51,7 @@
   {:else if groups}
     {#each groups as group (group.key)}
       <div class="label">{group.label}</div>
-      {#each group.cards as ticket (ticket.id)}<div class="worker"><span>{ticket.title}</span><ConversationSignalMark signal={ticket.conversation_signal} conversationId={ticket.conversation_id} /></div>{/each}
+      {#each group.cards as ticket (ticket.id)}<div class="worker"><span>{ticket.title}</span><MachineActivityMark locale={ticket.locale} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} completed={ticket.stage === "done" || ticket.stage === "cancelled"} /></div>{/each}
     {/each}
   {/if}
 </div>

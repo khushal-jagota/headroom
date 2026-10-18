@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MachineKey from "./machines/MachineKey.svelte";
+  import MachineNotice from "./machines/MachineNotice.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount, onDestroy } from "svelte";
   import { mutateJson } from "../lib/mutate";
@@ -36,18 +38,21 @@
   };
 
   let {
-    itemId,
+    itemId, machineNoticeManaged = false, onMachineRowsChange = () => undefined,
     sprintName,
     backHref = "#/sprint",
     workspaceResource = null
     // A host that is already a way back can pass null so the line is not drawn.
   }: {
     itemId: string;
+    machineNoticeManaged?: boolean;
+    onMachineRowsChange?: (hasMac: boolean) => void;
     sprintName: string;
     backHref?: string | null;
     workspaceResource?: SprintItemWorkspaceResource | null;
   } = $props();
 
+  let visibleMacRows = $state(false);
   const ownWorkspace = createQuery(() => ({
     ...queries.sprintItemWorkspace(itemId),
     enabled: workspaceResource === null
@@ -203,7 +208,9 @@
     >
       {#if workspace.data}
         {@const item = workspace.data}
+        {#if !machineNoticeManaged}<MachineNotice relevant={visibleMacRows} />{/if}
         <div class="sprint-item-column">
+          <MachineKey />
           <header class="sprint-workspace-head">
             <div class="page-eyebrow">
               <span>{item.project}</span>
@@ -239,7 +246,7 @@
           </header>
 
           <section class="orchestrator-workers" aria-label="Workers">
-            <OrchestratorChildren principal={{ kind: "sprint_item", id: itemId }} tickets={item.tickets}
+            <OrchestratorChildren onMachineRowsChange={(hasMac) => {visibleMacRows=hasMac;onMachineRowsChange(hasMac);}} principal={{ kind: "sprint_item", id: itemId }} tickets={item.tickets}
               onHover={(element, id) => {
                 const ticket = item.tickets.find((candidate) => candidate.id === id);
                 if (ticket) hoverRow(element, ticket);

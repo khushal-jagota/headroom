@@ -10,8 +10,9 @@
   import ResourceState from "./ResourceState.svelte";
   import SprintTicketRow from "./SprintTicketRow.svelte";
 
-  let { principal, tickets, onHover = () => undefined, onLeave = () => undefined }: {
+  let { principal, tickets, onMachineRowsChange = () => undefined, onHover = () => undefined, onLeave = () => undefined }: {
     principal: OrchestratorPrincipal;
+    onMachineRowsChange?: (hasMac: boolean) => void;
     tickets?: readonly SprintItemWorkspaceTicket[];
     onHover?: (element: HTMLElement, ticketId: string) => void;
     onLeave?: () => void;
@@ -30,6 +31,9 @@
   }));
   let rows = $derived(tickets === undefined ? children.data?.tickets ?? [] : filterOrchestratorChildren(tickets, filter));
   let groups = $derived(orchestratorPageGroups<WorkItemTicketFacts>(rows));
+  $effect(() => {
+    onMachineRowsChange(groups.some(group => (groupOpen[group.key] ?? (group.key !== "done" && group.key !== "cancelled")) && group.tickets.some(ticket => ticket.locale === "macos")));
+  });
   let page = $derived(tickets === undefined ? children.data?.page : undefined);
   let scope = $derived(`${principal.kind}:${principal.id}`);
   let previousScope = $state("");
@@ -70,7 +74,7 @@
         {/snippet}
         <div class="sprint-workspace-status-body">
           {#each group.tickets as ticket (ticket.id)}
-            <SprintTicketRow priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
+            <SprintTicketRow locale={ticket.locale} ticketId={ticket.id} priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
               quiet={ticket.stage === "done" || ticket.stage === "cancelled"}
               href={workspaceAddress(principal.kind === "sprint_item"
                 ? { kind: "ticket", id: ticket.id, openedFromItemId: principal.id } : { kind: "ticket", id: ticket.id })}

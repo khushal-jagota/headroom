@@ -1,4 +1,7 @@
 <script lang="ts">
+  import MachineNotice from "../components/machines/MachineNotice.svelte";
+  import MachineKey from "../components/machines/MachineKey.svelte";
+  import TicketCreation from "../components/machines/TicketCreation.svelte";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
@@ -21,9 +24,14 @@
 
   let { address }: { address: WorkspaceAddress } = $props();
   const board = createQuery(() => queries.board());
+  let windowWidth = $state(1200);
+  let creating = $state(false);
+  let openItemHasMac = $state(false);
   const workers = createQuery(() => queries.workers());
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let opening = $derived(whatTheAddressOpens(address));
+  const selectedTicket = createQuery(() => ({...queries.ticket(opening.markedTicketId ?? ""),enabled:opening.markedTicketId !== null}));
+
   const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspace(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
   let allCards = $derived((board.data?.columns ?? []).flatMap((column) => column.cards));
   let rail = $derived(buildWorkspaceRail(allCards, board.data?.sprint_items ?? []));
@@ -122,8 +130,12 @@
   }
 </script>
 
+<svelte:window bind:innerWidth={windowWidth} />
 <section class="board-screen" data-screen="workspace">
   <ResourceState error={board.error} loading={board.isFetching} hasData={Boolean(board.data)} loadingText="Loading workspace...">
+    <div class="workspace-machine-bar"><MachineKey /><button type="button" class="button button--quiet" onclick={() => creating = !creating}>Create Ticket</button></div>
+    {#if creating}<TicketCreation onCreated={(id) => {creating=false; selectCard(id,null);}} />{/if}
+    <MachineNotice relevant={Boolean(selectedTicket.data?.locale === "macos" || (itemPane && openItemHasMac) || ((windowWidth > 960 || (!opening.markedTicketId && !itemPane && !opening.chiefMarked)) && (rail.chiefGroups.some(group => group.cards.some(ticket => ticket.locale === "macos")) || rail.items.some(item => item.groups.some(group => group.cards.some(ticket => ticket.locale === "macos"))) || (settledOpen && rail.settledItems.some(item => workspaceChildMessageConversations(messages,item,allCards).some(row => row.locale === "macos"))))))} />
     <div class="board-workspace-wrap">
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
@@ -175,7 +187,7 @@
             </div>
           {:else if opening.markedTicketId}
             {#key opening.markedTicketId}
-              <TicketRoute
+              <TicketRoute machineNoticeManaged
                 id={opening.markedTicketId}
                 openFile={address.openFile}
                 onOpenFile={openFileOnTicket}
@@ -183,7 +195,7 @@
             {/key}
           {:else if itemPane && opening.openItemId}
             {#key opening.openItemId}
-              <SprintItemWorkspace
+              <SprintItemWorkspace machineNoticeManaged onMachineRowsChange={(hasMac) => openItemHasMac = hasMac}
                 itemId={opening.openItemId}
                 sprintName="Workspace"
                 backHref="#/workspace"
@@ -207,6 +219,9 @@
 
 <WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={hoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} groups={hoverGroups} cards={allCards} rail={railElement} />
 <style>
+.board-screen { display:flex; flex-direction:column; }
+.board-workspace-wrap { flex:1; height:auto; }
+.workspace-machine-bar { display:flex; justify-content:space-between; align-items:center; padding-inline:var(--space-4); flex:none; }
   .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); }
   .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
@@ -245,3 +260,5 @@
     .board-workspace-shell--ticket .approved-rail { display:none; }
   }
 </style>
+
+

@@ -1,4 +1,8 @@
 <script lang="ts">
+  import MachineActivityMark from "../components/machines/MachineActivityMark.svelte";
+  import MachineIdentity from "../components/machines/MachineIdentity.svelte";
+  import MachineKey from "../components/machines/MachineKey.svelte";
+  import MachineNotice from "../components/machines/MachineNotice.svelte";
   import { onMount, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
@@ -45,7 +49,7 @@
   } from "../lib/filePreview";
 
   let {
-    id,
+    id, machineNoticeManaged = false,
     // The artifact this screen is showing, when the host keeps that in its address, and
     // the way to write it there. The Workspace supplies both; without them, the screen
     // holds the value itself.
@@ -53,6 +57,7 @@
     onOpenFile = null
   }: {
     id: string;
+    machineNoticeManaged?: boolean;
     openFile?: ManagedFileTarget | null;
     onOpenFile?: ((file: ManagedFileTarget | null) => void) | null;
   } = $props();
@@ -359,6 +364,8 @@
       <div class="ticket-page">
       <div class="ticket-reading">
       <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
+        <div class="machine-heading">{#if detail.locale}<MachineIdentity locale={detail.locale} ticketId={detail.id} />{/if}<span class="machine-heading-title">{detail.title}</span><MachineKey /></div>
+        {#if !machineNoticeManaged}<div class="ticket-machine-notice"><MachineNotice relevant={detail.locale === "macos"} /></div>{/if}
         <header class="ticket-head">
           <div class="worker-eyebrow" data-ticket-identity>
             <span data-project-fact>{detail.project || "No project"}</span>
@@ -372,7 +379,7 @@
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               />
-              <ConversationSignalMark signal={detail.conversation_signal} conversationId={detail.conversation_id} />
+              <MachineActivityMark locale={detail.locale} signal={detail.conversation_signal} conversationId={detail.conversation_id} completed={detail.stage === "done" || detail.stage === "cancelled"} />
             </div>
             <ClampedText
               contentKey={detail.recap}
@@ -497,7 +504,7 @@
         onclickcapture={dismissConversationOnAPressBesideTheCard}
       >
         <div class="conversation-column">
-          <LiveConversation
+          <LiveConversation locale={detail.locale}
             bind:conversationState
             conversationId={detail.conversation_id}
             persistenceKey={`owner:ticket:${detail.id}`}
@@ -517,6 +524,9 @@
 </section>
 
 <style>
+  .machine-heading-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:var(--type-sm); }
+  .machine-heading { position:sticky; top:0; z-index:4; display:flex; align-items:center; gap:var(--space-3); background:var(--surface-1); }
+  .ticket-machine-notice { position:sticky; top:var(--space-7); z-index:3; }
   .ticket-head, .ticket-col { width:min(720px, calc(100% - 48px)); padding-inline:0; }
   .ticket-col { padding-top:0; }
   .ticket-doc { scrollbar-gutter:auto; }

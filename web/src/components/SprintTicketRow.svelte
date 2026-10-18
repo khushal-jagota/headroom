@@ -1,10 +1,14 @@
 <script lang="ts">
+  import MachineActivityMark from "./machines/MachineActivityMark.svelte";
+  import MachineIdentity from "./machines/MachineIdentity.svelte";
+  import type { TicketLocale } from "../lib/ticketMachines";
   import type { Priority } from "../lib/types";
   import PriorityTile from "./PriorityTile.svelte";
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import type { ConversationSignal } from "../lib/conversationSignal";
 
   let {
+    locale, ticketId,
     priority,
     title,
     signal = undefined,
@@ -18,6 +22,8 @@
   }: {
     // No priority when the row's own container already answers for it: inside a
     // Sprint Item the tile is repeated noise.
+    locale?: TicketLocale;
+    ticketId?: string;
     priority: Priority | null;
     title: string;
     signal?: ConversationSignal;
@@ -34,10 +40,12 @@
 {#snippet content()}
   {#if priority}<PriorityTile {priority} />{/if}
   <span class="ticket-row-title">{title}</span>
-  <ConversationSignalMark {signal} {conversationId} />
+  <MachineActivityMark {locale} {signal} {conversationId} completed={quiet} />
 
 {/snippet}
 
+<div class="machine-ticket-row">
+{#if locale && ticketId}<MachineIdentity {locale} {ticketId} />{/if}
 {#if href === null}
   <button
     type="button"
@@ -60,3 +68,6 @@
     {@render content()}
   </a>
 {/if}
+
+</div>
+<style>.machine-ticket-row { display:flex; align-items:center; min-width:0; }.machine-ticket-row > :global(.ticket-row) { flex:1; min-width:0; }</style>

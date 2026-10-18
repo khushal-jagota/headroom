@@ -1,3 +1,4 @@
+import type { TicketLocale } from "./ticketMachines";
 import type { ConversationSignal } from "./conversationSignal";
 export type AnyRecord = Record<string, any>;
 
@@ -91,6 +92,7 @@ export type ListPageFacts = {
 };
 
 export type TicketSummary = WorkAttention & {
+  locale?: TicketLocale;
   is_backlogged: boolean;
   waiting_to_closeout: boolean;
   orchestrator?: Principal;
@@ -310,6 +312,7 @@ export type TicketConversationHistoryEntry = {
 };
 
 export type TicketDetail = {
+  locale?: TicketLocale;
   conversation_signal?: ConversationSignal;
   is_backlogged?: boolean;
   record_sha256?: string;
@@ -383,6 +386,7 @@ export type SprintWireBody = {
 export type CurrentSprint = SprintWireBody;
 
 export type SprintTicketSummary = WorkAttention & {
+  locale?: TicketLocale;
   id: string;
   title: string;
   stage: string;
@@ -421,6 +425,7 @@ export type CarryOutcomeResult = {
 };
 
 export type SprintItemWorkspaceTicket = WorkAttention & {
+  locale?: TicketLocale;
   conversation_signal?: ConversationSignal;
   is_backlogged: boolean;
   conversation_id?: string | null;
@@ -513,6 +518,7 @@ export type BoardSprintItem = {
 };
 
 export type BoardCard = WorkAttention & {
+  locale?: TicketLocale;
   conversation_signal?: ConversationSignal;
   orchestrator?: Principal;
   id: string;
@@ -542,6 +548,7 @@ export type BoardCard = WorkAttention & {
 };
 
 export type DayTicket = AnyRecord & {
+  locale?: TicketLocale;
   conversation_signal?: ConversationSignal;
   id: string;
   title: string;
@@ -594,6 +601,7 @@ export type NotificationSettingsResponse = {
 
 // One row names one durable unread conversation, independent of settlement.
 export type WorkspaceMessageConversation = {
+  locale?: TicketLocale;
   conversationSignal?: ConversationSignal;
   kind: "chief" | "sprint_item" | "ticket";
   id: string;

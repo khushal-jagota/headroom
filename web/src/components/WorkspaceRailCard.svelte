@@ -26,7 +26,7 @@
     <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key}>
       <div class="bucket-label">{group.label}</div>
       {#each group.cards as ticket (ticket.id)}
-        <SprintTicketRow priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} onclick={() => onTicket(ticket.id)} onmouseenter={(event: MouseEvent) => {event.stopPropagation(); onWorkerHover(event.currentTarget as HTMLElement, ticket);}} onmouseleave={onLeave} onfocus={(event: FocusEvent) => onWorkerHover(event.currentTarget as HTMLElement, ticket)} onblur={onLeave} />
+        <SprintTicketRow locale={ticket.locale} ticketId={ticket.id} priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id} class="worker-row" active={ticket.id === selectedTicketId} data-ticket-id={ticket.id} data-ticket-stage={ticket.stage} data-ticket-status={ticket.ticket_status} aria-current={ticket.id === selectedTicketId ? "page" : undefined} onclick={() => onTicket(ticket.id)} onmouseenter={(event: MouseEvent) => {event.stopPropagation(); onWorkerHover(event.currentTarget as HTMLElement, ticket);}} onmouseleave={onLeave} onfocus={(event: FocusEvent) => onWorkerHover(event.currentTarget as HTMLElement, ticket)} onblur={onLeave} />
       {/each}
     </div>
   {/each}

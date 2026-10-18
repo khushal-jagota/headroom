@@ -2,6 +2,7 @@ import type { Priority, WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type WorkItemTicketFacts = WorkAttention & {
+  locale?: import("./ticketMachines").TicketLocale;
   conversation_signal?: import("./conversationSignal").ConversationSignal;
   id: string;
   title: string;

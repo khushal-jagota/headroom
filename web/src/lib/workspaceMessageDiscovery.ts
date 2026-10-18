@@ -89,7 +89,7 @@ export function workspaceMessageConversations(
     const parent = byItem.get(parentId);
     add({
       conversationSignal: card.conversation_signal,
-      kind: "ticket", id: card.id, title: card.title, conversationId: card.conversation_id,
+      locale: card.locale, kind: "ticket", id: card.id, title: card.title, conversationId: card.conversation_id,
       parentId, parentTitle: parentId === "chief" ? chief?.label ?? "Chief of Staff"
         : parent?.title ?? card.sprint_item_title,
       settled: parentId !== "chief" && parent?.settled === true
