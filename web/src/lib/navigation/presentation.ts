@@ -96,3 +96,48 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   }
   return {tickets,orchestrators,chief,messages,conversationSignals};
 }
+
+/** Review follows the canonical complete queue, independently of sidebar filters. */
+export function navigationReviewPresentation(view: EffectiveNavigationView): {
+  items: import('../types').NavigationReviewItem[];
+  runningConversationCount: number | null;
+  exactOutClaimCount: number;
+} {
+  const pointers = new Set<string>();
+  const items: import('../types').NavigationReviewItem[] = [];
+  let exactOutClaimCount = 0;
+  for (const record of view.publication.records) {
+    if (record.kind === 'ticket') {
+      const row = record.value;
+      if (row.worker_step_claim_out) exactOutClaimCount += 1;
+      if (row.conversation_id !== null) pointers.add(row.conversation_id);
+      if (row.ticket_status === 'awaiting_approval' && row.ceiling_holder.kind === 'owner'
+        && row.ceiling_holder.id === 'owner' && row.gating_field !== null && row.proposal_field !== null
+        && row.proposal_created_at !== null) {
+        items.push({priority:priority(row.priority),review_item_type:'proposal', ticket_id:record.id,field:row.gating_field,title:row.title,
+          waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision});
+      }
+    } else if (record.kind === 'chief' || record.kind === 'orchestrator') {
+      if (record.value.conversation_id !== null) pointers.add(record.value.conversation_id);
+    }
+  }
+  items.sort((a,b) => a.waiting_since-b.waiting_since || (a.ticket_id < b.ticket_id ? -1 : a.ticket_id > b.ticket_id ? 1 : 0));
+  let runningConversationCount: number | null = view.runtimeCurrent ? 0 : null;
+  for (const id of pointers) {
+    const fact = view.conversations.get(id)?.working;
+    if (!fact || fact.state !== 'fresh') { runningConversationCount = null; break; }
+    if (runningConversationCount !== null && fact.value) runningConversationCount += 1;
+  }
+  return {items,runningConversationCount,exactOutClaimCount};
+}
+
+export function reviewProposalIdentity(item: import('../types').NavigationReviewItem): string {
+  return JSON.stringify([item.ticket_id,item.field,item.proposal_field,item.waiting_since,item.proposal_revision]);
+}
+
+/** Summary identity admits the body; detail and manifest cannot rewrite the queue. */
+export function reviewProposalDetailMatches(item: import('../types').NavigationReviewItem, detail: Pick<import('../types').TicketDetail,'id' | 'pending_proposal'>): boolean {
+  const proposal = detail.pending_proposal;
+  return detail.id === item.ticket_id && proposal !== null && proposal.field === item.proposal_field
+    && proposal.created_at === item.waiting_since && proposal.revision === item.proposal_revision;
+}

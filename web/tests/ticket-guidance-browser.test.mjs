@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
@@ -20,9 +20,41 @@ try {
   await writeFile(host, `<script lang="ts">
 import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
-import ReviewProposalCard from '../src/components/ReviewProposalCard.svelte';
+import ReviewRoute from '../src/routes/ReviewRoute.svelte';
+import { reviewBadgeDomMatches } from '../src/lib/navigation/render';
+(window as any).__badgeProof=()=>{
+ const link=document.createElement('a');const badge=document.createElement('span');link.append(badge);
+ badge.className='nav-badge hidden';
+ const emptyHidden=reviewBadgeDomMatches(link,0);
+ badge.classList.remove('hidden');const emptyVisible=reviewBadgeDomMatches(link,0);
+ badge.classList.add('hidden');badge.textContent='2';const nonemptyHidden=reviewBadgeDomMatches(link,0);
+ badge.classList.remove('hidden');const positiveVisible=reviewBadgeDomMatches(link,2);
+ const wrongCount=reviewBadgeDomMatches(link,1);
+ badge.classList.add('hidden');const positiveHidden=reviewBadgeDomMatches(link,2);
+ badge.remove();const absent=reviewBadgeDomMatches(link,0);
+ return {emptyHidden,emptyVisible,nonemptyHidden,positiveVisible,wrongCount,positiveHidden,absent};
+};
+import ShellStatus from '../src/components/ShellStatus.svelte';
+import { provideNavigationApplication } from '../src/lib/navigation/application.svelte';
+const navigation=provideNavigationApplication();
+(window as any).__navigation=navigation;
+(window as any).__refresh=()=>navigation.owner.recover().catch(()=>undefined);
+(window as any).__batch=async()=>{
+ const response=await (await fetch('/api/navigation/snapshot')).json();
+ const previous=navigation.owner.getState().publication!;
+ const batch={...response.snapshot,base_revision:previous.continuity.revision,upserts:response.snapshot.records,deletes:[]};delete batch.records;
+ const published=new Promise<void>(resolve=>{const unsubscribe=navigation.owner.subscribe(state=>{if(state.publication?.continuity.revision===batch.revision){unsubscribe();resolve();}});});
+ (window as any).__navigationSource.dispatchEvent(new MessageEvent('batch',{data:JSON.stringify({wire_version:response.wire_version,authority:response.authority,batch}),lastEventId:response.cursor}));
+ await published;
+};
+(window as any).__wait=()=>{
+ const publication=navigation.owner.getState().publication!;
+ return navigation.owner.waitForVisibility({...publication.continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic'},
+ {requiredObservers:navigation.captureRenderBoundaries(),timeoutMs:250});
+};
 import ConfigRoute from '../src/routes/ConfigRoute.svelte';
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+(window as any).__manifest=()=>client.invalidateQueries({queryKey:['worker-types']});
 let review = $state(false);
 let config = $state(false);
 let ticketId = $state('t_guidance');
@@ -32,21 +64,22 @@ let ticketId = $state('t_guidance');
 </script>
 <QueryClientProvider {client}>
 {#if config}<ConfigRoute roleKind="worker" roleId="coding" />
-{:else if review}<ReviewProposalCard ticketId="t_guidance" field="success_condition" />
+{:else if review}<ShellStatus connectionState="connected" /><ReviewRoute />
 {:else}{#key ticketId}<TicketRoute id={ticketId} />{/key}{/if}
 </QueryClientProvider>`);
-  await writeFile(main, `import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
+  await writeFile(main, `globalThis.EventSource=class extends EventTarget{onerror=null;constructor(url){super();if(String(url).startsWith('/api/navigation/events?'))globalThis.__navigationSource=this;}close(){}}; import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
   await writeFile(index, `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
   server = await createServer({ root, configFile: false, plugins: [svelte()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
   await server.listen();
   const address = server.httpServer.address();
   assert.ok(address && typeof address === 'object');
-  const script = String.raw`
+  const fixturePython=await readFile(join(root,'tests/support/navigation/browser-fixture.py'),'utf8');
+  const script = fixturePython + String.raw`
 import json, sys
 from urllib.parse import parse_qs
 from playwright.sync_api import sync_playwright, expect
 
-ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success_condition', ceiling='needs_success_condition', priority='P2', resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': {'id': 'outcome_kept', 'title': 'Kept outcome', 'priority': 'P2'}}, ticket_status='awaiting_approval', ceiling_holder={'kind': 'chief', 'id': 'chief'}, conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': []}, recap='Orientation', guidance='Original **constraint**', field_values={'brief': 'Request'}, pending_proposal={'field': 'success_condition', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1})
+ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success_condition', ceiling='needs_success_condition', priority='P2', resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': {'id': 'outcome_kept', 'title': 'Kept outcome', 'priority': 'P2'}}, ticket_status='awaiting_approval', ceiling_holder={'kind': 'chief', 'id': 'chief'}, conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': []}, recap='Orientation', guidance='Original **constraint**', field_values={'brief': 'Request'}, pending_proposal={'field': 'success_condition', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1, 'revision': 1})
 stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode='worker' if f else None) for s,l,f in [('needs_brief','Kickoff','brief'),('needs_success_condition','Success','success_condition'),('done','Done',None)]]
 personal_stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode=o) for s,l,f,o in [('needs_brief','Kickoff','brief','user'),('needs_outcome','Outcome','outcome','user'),('needs_consequences','Closeout','consequences','worker'),('done','Done',None,None)]]
 manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, advance={'needs_brief': 'needs_success_condition', 'needs_success_condition': 'done'}, ceiling_range=['needs_brief','needs_success_condition','done'], default_ceiling='needs_success_condition', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'}, {'id':'success_condition','label':'Success'}]), dict(worker_type='personal', label='Personal', stages=personal_stages, advance={'needs_brief':'needs_outcome','needs_outcome':'needs_consequences','needs_consequences':'done'}, ceiling_range=['needs_brief','needs_outcome','needs_consequences','done'], default_ceiling='needs_brief', worker_profile_id='panels-worker-personal-task', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'},{'id':'outcome','label':'Outcome'},{'id':'consequences','label':'Closeout'}])]}
@@ -55,12 +88,42 @@ writes=[]
 placement_writes=[]
 ceiling_writes=[]
 approvals=[]
+held_details=[]
+hold_detail=False
+snapshot_unavailable=False
+runtime_working=False
+server_revision=None
+navigation_proposal=None
+# This host retains all old Ticket assertions and adds the actual Review route.
+def review_snapshot():
+    response=navigation_response({'columns':[{'cards':[ticket]}],'sprint_items':[]},
+      {'chief_of_staff':{'label':'Chief of Staff','conversation_id':None}})
+    for record in response['snapshot']['records']:
+        if record['kind']=='ticket':
+            proposal=navigation_proposal or ticket['pending_proposal']
+            record['value'].update(ceiling_holder=ticket['ceiling_holder'],gating_field='success_condition',
+              proposal_field=proposal['field'] if proposal else None,proposal_created_at=proposal['created_at'] if proposal else None,proposal_revision=proposal['revision'] if proposal else 0)
+        elif record['kind']=='conversation':
+            record['value']['attention']['current']['signal']['working']=runtime_working
+    return response
+
 def respond(route):
+    global navigation_proposal
     path=route.request.url.split('/api/',1)[1]
     # A single object is read through its collection address now: tickets?detail=full&id=X.
     if path.startswith('tickets?'):
         path='tickets/'+parse_qs(path.split('?',1)[1])['id'][0]
-    if path == 'tickets/t_guidance':
+    if path.split('?')[0] == 'navigation/snapshot':
+        if snapshot_unavailable:
+            route.fulfill(status=503,content_type='application/json',body=json.dumps({'error':{'code':'unavailable','message':'Workspace unavailable','detail':None}}))
+            return
+        result=review_snapshot()
+    elif path == 'review': raise AssertionError('competing review summary query remains')
+    elif path.startswith('navigation/events'): return
+    elif path == 'tickets/t_guidance':
+        if hold_detail and route.request.method=='GET':
+            held_details.append(route)
+            return
         if route.request.method == 'PATCH':
             body=route.request.post_data_json
             assert not ({'project_id', 'sprint_id', 'sprint_item_id'} & set(body))
@@ -100,8 +163,14 @@ def respond(route):
         result={**ticket, 'id': 't_done', 'stage': 'done', 'ticket_status': 'empty', 'pending_proposal': None}
     elif path.endswith('/accept/success_condition'):
         assert route.request.method == 'POST'
-        approvals.append(route.request.post_data_json)
-        result={**ticket, 'pending_proposal': None, 'ticket_status': 'empty'}
+        approval=route.request.post_data_json
+        if server_revision is not None and approval['expected_proposal_revision']!=server_revision:
+            route.fulfill(status=409,content_type='application/json',body=json.dumps({'error':{'code':'validation','message':'the visible proposal changed; read it again before accepting','detail':None}}))
+            return
+        approvals.append(approval)
+        ticket.update(pending_proposal=None,ticket_status='empty')
+        navigation_proposal=None
+        result=ticket
     elif path == 'worker-types': result=manifest
     elif path == 'workers/coding': result=worker_detail
     elif path == 'conversation/backends': result={'backends': []}
@@ -113,6 +182,7 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: print(str(e), flush=True))
     page.route('**/api/**', respond)
     page.goto(sys.argv[1])
+    assert page.evaluate('window.__badgeProof()')==dict(emptyHidden=True,emptyVisible=False,nonemptyHidden=False,positiveVisible=True,wrongCount=False,positiveHidden=False,absent=False)
     expect(page.locator('[data-project-fact]')).to_have_text('One')
     expect(page.locator('[data-ticket-identity]')).to_have_text('One · Coding')
     expect(page.locator('[data-parent-link]')).to_have_count(0)
@@ -288,6 +358,9 @@ with sync_playwright() as p:
     page.locator('[data-ticket-id="t_done"]').wait_for()
     assert page.locator('[data-copy]').count() == 0
     assert page.locator('.ticket-operating').count() == 0
+    ticket['conversation_id']='review-worker'
+    ticket['ceiling_holder']={'kind':'owner','id':'owner'}
+    page.evaluate('window.__refresh()')
     page.evaluate('window.__showReview()')
     expect(page.locator('[data-ticket-guidance]')).to_have_count(1)
     guidance=page.locator('[data-ticket-guidance]')
@@ -306,6 +379,14 @@ with sync_playwright() as p:
     assert [option.get_attribute('data-ceiling-picker-choice') for option in approve_row.locator('[role="option"]').all()] == ['owner', 'chief', 'outcome_kept']
     expect(approve_row.get_by_role('option', name='Orchestrator', exact=True)).to_have_count(1)
     approve_row.get_by_role('listbox').press('Escape')
+    # Unchanged tuple publication retains local edits, selected reviewer and component state.
+    retained_editor=page.locator('[data-approval-block] [data-edit]')
+    retained_editor.click()
+    retained_editor.fill('Retained local draft')
+    retained_editor.press('Tab')
+    page.evaluate('window.__batch()')
+    expect(retained_editor).to_contain_text('Retained local draft')
+    # New tuple below must reset this draft, not carry it into a replacement.
     approve_row.locator('[data-accept]').click()
     expect(approve_row.get_by_role('listbox')).to_have_attribute('aria-label', 'Ceiling stage')
     approve_row.locator('[data-ceiling-picker-choice="done"]').click()
@@ -317,6 +398,82 @@ with sync_playwright() as p:
     assert len(approvals) == 1
     assert approvals[0]['next_ceiling'] == 'done'
     assert approvals[0]['next_holder'] == {'kind': 'chief', 'id': 'chief'}
+    assert approvals[0]['expected_proposal_revision'] == 1
+    expect(page.locator('[data-review-card]')).to_have_count(0)
+    # A later canonical proposal is a new ask, not resurrection of the accepted one.
+    ticket.update(ticket_status='awaiting_approval',pending_proposal={'field':'success_condition','body':'A result','proposed_by':'agent','created_at':2,'revision':2})
+    page.evaluate('window.__refresh()')
+    expect(page.locator('[data-review-card]')).to_have_count(1)
+    # A title-only canonical update must not retain the old detail title.
+    navigation_proposal=dict(ticket['pending_proposal'])
+    old_title=ticket['title']
+    ticket['title']='Canonical Review title'
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.review-ticket-title [contenteditable]')).to_have_text('Canonical Review title')
+    # Stale manifest gate changes cannot settle or drop the still-current queue.
+    for stage in manifest['worker_types'][0]['stages']:
+        if stage['id']=='needs_success_condition': stage['gating_field']='plan'
+    page.evaluate('window.__manifest()')
+    expect(page.locator('[data-review-card]')).to_have_count(1)
+    # New tuple first, old delayed detail second: old body cannot be relabeled.
+    navigation_proposal={**ticket['pending_proposal'],'created_at':3,'revision':3,'body':'Replacement body'}
+    hold_detail=True
+    page.evaluate('window.__refresh()')
+    expect(page.locator('[data-review-card]')).to_have_count(0)
+    for _ in range(100):
+        if held_details: break
+        page.wait_for_timeout(10)
+    assert held_details
+    held_details.pop(0).fulfill(status=200,content_type='application/json',body=json.dumps(ticket))
+    expect(page.locator('[data-review-card]')).to_have_count(0)
+    ticket['pending_proposal']=navigation_proposal
+    hold_detail=False
+    for route in held_details:
+        route.fulfill(status=200,content_type='application/json',body=json.dumps(ticket))
+    held_details.clear()
+    expect(page.locator('[data-approval-block]')).to_contain_text('Replacement body')
+    expect(page.locator('[data-approval-block]')).not_to_contain_text('A result')
+    proof=page.evaluate('window.__wait()')
+    assert proof['status']=='included', proof
+    # A server replacement racing a gesture retains the existing revision-CAS error.
+    server_revision=4
+    approve_row=page.locator('[data-approval-block]')
+    approve_row.locator('[data-accept]').click()
+    approve_row.locator('[data-ceiling-picker-choice="done"]').click()
+    approve_row.locator('[data-ceiling-picker-choice="chief"]').click()
+    expect(page.locator('.error-message')).to_contain_text('visible proposal changed')
+    assert len(approvals)==1
+    server_revision=3
+    proposal_editor=approve_row.locator('[data-edit]')
+    proposal_editor.click()
+    proposal_editor.fill('Edited replacement body')
+    proposal_editor.press('Tab')
+    approve_row.locator('[data-accept]').click()
+    approve_row.locator('[data-ceiling-picker-choice="done"]').click()
+    approve_row.locator('[data-ceiling-picker-choice="chief"]').click()
+    for _ in range(100):
+        if len(approvals)==2: break
+        page.wait_for_timeout(10)
+    assert approvals[1]['expected_proposal_revision']==3
+    assert approvals[1]['edited_body']=='Edited replacement body'
+
+    expect(page.locator('[data-review-card]')).to_have_count(0)
+    # Runtime loss omits count only, preserving other Review content.
+    runtime_working=True
+    page.evaluate('window.__refresh()')
+    expect(page.locator('[data-shell-presence]')).to_have_text('1 working')
+    expect(page.locator('.review-empty-meta')).to_have_text('1 agent in progress')
+    snapshot_unavailable=True
+    page.evaluate('window.__refresh()')
+    expect(page.locator('[data-shell-presence]')).to_have_count(0)
+    assert 'working' not in page.locator('[data-shell-status]').get_attribute('aria-label')
+    expect(page.locator('[data-review-empty]')).to_contain_text('There is nothing to review right now.')
+    expect(page.locator('.review-empty-meta')).to_have_count(0)
+    snapshot_unavailable=False
+    runtime_working=False
+    page.evaluate('window.__refresh()')
+    expect(page.locator('[data-shell-presence]')).to_have_text('0 working')
+    expect(page.locator('.review-empty-meta')).to_have_text('0 agents in progress')
     # Declared ownership is Config's to change. Every non-terminal Stage carries one
     # owner control, and the Stage table carries nothing else that edits.
     page.evaluate('window.__showConfig()')

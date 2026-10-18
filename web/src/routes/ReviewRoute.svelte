@@ -1,13 +1,21 @@
 <script lang="ts">
-  import { createQuery } from "@tanstack/svelte-query";
+  import { tick, onDestroy } from "svelte";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { navigationReviewPresentation, reviewProposalIdentity } from "../lib/navigation/presentation";
+  import { reviewDomMatches } from "../lib/navigation/render";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import { queries } from "../lib/queryCatalogue";
-  import type { ReviewItem } from "../lib/types";
+  import type { NavigationReviewItem as ReviewItem } from "../lib/types";
   import ResourceState from "../components/ResourceState.svelte";
   import ReviewProposalCard from "../components/ReviewProposalCard.svelte";
 
-  const review = createQuery(() => queries.review());
+  const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
+  const observer = navigation.registerRenderBoundary(`review:${crypto.randomUUID()}`);
+  onDestroy(() => navigation.disposeRenderBoundary(observer));
+  let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
+  $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
+  let review = $derived(displayed ? navigationReviewPresentation(displayed) : null);
 
+  let renderedBody = $state(0);
   let skipped = $state<Record<string, boolean>>({});
   // The route's own element. The approve shortcut's lookup is scoped to it, so a
   // card mounted by another screen at the same time can never be the one a Review
@@ -18,8 +26,8 @@
     return `${item.ticket_id}:${item.field}`;
   }
 
-  let items = $derived(review.data?.items || []);
-  let runningWorkerCount = $derived(review.data?.running_worker_count ?? 0);
+  let items = $derived(review?.items ?? []);
+  let runningWorkerCount = $derived(review?.runningConversationCount ?? null);
   let currentItem = $derived.by<ReviewItem | null>(() => {
     if (!items.length) return null;
     const live = items.filter((item) => !skipped[itemKey(item)]);
@@ -41,8 +49,27 @@
   // The card says a decision has left the queue — approved, sent back, or already
   // gone by the time its Ticket was read. Re-read the queue so the next ask comes up.
   function proposalResolved(): void {
-    void review.refetch().catch(() => undefined);
+    void navigation.owner.recover().catch(() => undefined);
   }
+
+  $effect(() => {
+    const effective = displayed;
+    const generation = navigation.state.generation;
+    const element = screenElement;
+    const selected = currentItem;
+    const bodyObservation = renderedBody;
+    void bodyObservation;
+    const count = runningWorkerCount;
+    if (!effective?.runtimeCurrent || !element) return;
+    const publication = effective.publication;
+    const observation = observer.observeSelectors(publication,generation);
+    let obsolete = false;
+    void tick().then(() => {
+      if (!obsolete && element.isConnected && navigation.state.generation === generation
+        && navigation.selectors.effective === effective && reviewDomMatches(element,selected,count)) observer.acknowledgeRender(publication,observation);
+    });
+    return () => { obsolete = true; };
+  });
 
   // Global review shortcuts (approved addition): s = skip, o = open ticket,
   // Cmd/Ctrl+Enter = approve the current ask. They fire only when the keystroke
@@ -97,17 +124,19 @@
 {/snippet}
 
 <section class="review-screen" data-screen="review" bind:this={screenElement}>
-  <ResourceState error={review.error} loading={review.isFetching} hasData={Boolean(review.data)} loadingText="Loading review...">
+  <ResourceState error={navigation.state.error} loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
     {#if !items.length}
       <div class="review-empty-state" data-review-empty>
         <div class="review-empty-mark" aria-hidden="true"><span></span></div>
         <div class="review-empty-text">There is nothing to review right now.</div>
-        <div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>
+        {#if runningWorkerCount !== null}<div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>{/if}
       </div>
     {:else if currentItem}
       {@const proposal = currentItem}
-      {#key itemKey(proposal)}
+      {#key reviewProposalIdentity(proposal)}
         <ReviewProposalCard
+          identity={proposal}
+          onRendered={() => { renderedBody += 1; }}
           ticketId={proposal.ticket_id}
           field={proposal.field}
           title={proposal.title}
@@ -120,7 +149,7 @@
       <div class="review-empty-state" data-review-empty>
         <div class="review-empty-mark" aria-hidden="true"><span></span></div>
         <div class="review-empty-text">There is nothing to review right now.</div>
-        <div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>
+        {#if runningWorkerCount !== null}<div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>{/if}
       </div>
     {/if}
   </ResourceState>

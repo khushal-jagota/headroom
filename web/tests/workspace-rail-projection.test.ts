@@ -187,7 +187,7 @@ describe("orchestrator rail projection", () => {
 // Shared-publication adoption: these are browser adapters, not a new Signal policy.
 import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
-import { navigationWorkspacePresentation } from '../src/lib/navigation/presentation';
+import { navigationWorkspacePresentation, navigationReviewPresentation, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
 import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
@@ -275,6 +275,47 @@ describe('canonical navigation workspace presentation',()=>{
       expect(afterRead.conversationSignals.get('past')).toEqual({working:false,message_for_owner:false});
       expect(afterRead.conversationSignals.get('conversation')).toEqual({working:true,message_for_owner:true});
       expect(afterRead.conversationSignals.get('deleted-history')).toBeUndefined();
+    } finally {adapter.destroy();}
+  });
+});
+
+
+describe('shared Review and runtime counts',()=>{
+  it('keeps canonical queue ordering, current-pointer union and all outclaims independent through atomic loss and replacement',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    const ask=(id:string,stamp:number,changes:Partial<TicketRecord['value']>={}):TicketRecord=>({kind:'ticket',id,value:{...sourceTicket.value,
+      ticket_status:'awaiting_approval',proposal_field:'plan',gating_field:'implementation',proposal_created_at:stamp,proposal_revision:1,...changes}});
+    const records:NavigationRecord[]=[ask('b',2,{is_backlogged:true,blocked:true,terminal:true,worker_step_claim_out:true}),
+      ask('a',2),ask('earliest',1),ask('supervisor',0,{ceiling_holder:{kind:'chief',id:'chief'}}),
+      ask('claim-only',0,{ticket_status:'empty',worker_step_claim_out:true,conversation_id:null}),
+      ...sourceRecords.slice(1).filter(record=>record.kind!=='chief').map(record=>record.kind==='orchestrator' ? {...record,value:{...record.value,conversation_id:'supervisor-current'}} : record),conversation('historical'),conversation('supervisor-current'),
+      {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:'conversation'}},
+      {kind:'address',id:'history',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'historical',current:false,parent_kind:'chief',parent_id:'chief'}}];
+    try {
+      const initial=records.find(record=>record.kind==='conversation' && record.id==='conversation');
+      if (initial?.kind==='conversation') initial.value.attention.current!.signal.working=false;
+      const supervisor=records.find(record=>record.kind==='conversation' && record.id==='supervisor-current');
+      if (supervisor?.kind==='conversation') supervisor.value.attention.current!.signal.working=false;
+      adapter.publishSnapshot(currentSnapshot({...continuity,records}),'counts');
+      let view=knowledge.accept(adapter.getPublication()!);
+      expect(navigationReviewPresentation(view)).toMatchObject({runningConversationCount:0,exactOutClaimCount:2,
+        items:[{ticket_id:'earliest',field:'implementation',proposal_field:'plan'},{ticket_id:'a'},{ticket_id:'b'}]});
+      const active=conversation('conversation');active.value.attention.current!.signal.working=true;
+      const historical=conversation('historical');historical.value.attention.current!.signal.working=true;
+      adapter.publishBatch(envelope({...continuity,base_revision:'0',revision:'1',upserts:[active,historical,conversation('supervisor-current')],deletes:[]}),encodeCursor({...continuity,revision:'1'}),'counts-batch');
+      view=knowledge.accept(adapter.getPublication()!);
+      expect(navigationReviewPresentation(view).runningConversationCount).toBe(2);
+      const lost=knowledge.loseRuntime()!;
+      expect(navigationReviewPresentation(lost)).toMatchObject({runningConversationCount:null,exactOutClaimCount:2});
+      expect(navigationReviewPresentation(lost).items.map(item=>item.ticket_id)).toEqual(['earliest','a','b']);
+      const missing={...view,conversations:new Map([...view.conversations].filter(([id])=>id!=='conversation'))};
+      expect(navigationReviewPresentation(missing).runningConversationCount).toBeNull();
+      const empty={...view,publication:{...view.publication,records:[]}};
+      expect(navigationReviewPresentation(empty).runningConversationCount).toBe(0);
+      // Identity is stricter than same-field membership; a newer body cannot wear an older stamp.
+      const item=navigationReviewPresentation(view).items[0];
+      const detail={id:item.ticket_id,pending_proposal:{field:'plan',created_at:1,revision:2,body:'replacement',proposed_by:'agent'}};
+      expect(reviewProposalDetailMatches(item,detail)).toBe(false);
     } finally {adapter.destroy();}
   });
 });

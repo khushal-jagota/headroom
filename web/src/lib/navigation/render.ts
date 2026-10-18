@@ -1,3 +1,5 @@
+import { reviewProposalIdentity, reviewProposalDetailMatches } from './presentation';
+import { renderMarkdownToElement, serializeMarkdownDomToSource } from '../markdownPipeline';
 import { workspaceAddress } from '../workspaceAddress';
 import { workspaceRailChildMessageConversations } from '../workspaceRail';
 import type { WorkspaceMessageConversation } from '../types';
@@ -91,4 +93,35 @@ export function workspaceHeaderDomMatches(root:HTMLElement,item:import('../works
     && root.querySelector('h1 [contenteditable]')?.textContent===item.title
     && root.querySelector('.page-settle')?.getAttribute('aria-label')===`${item.settled ? 'Reopen' : 'Settle'} ${item.title}`
     && JSON.stringify(actualMark(root.querySelector('h1')!))===JSON.stringify(expectedMark(item.conversation_signal,item.conversation_id));
+}
+
+export function shellRuntimeDomMatches(root:HTMLElement,count:number | null,label:string):boolean {
+  const presence=root.querySelector('[data-shell-presence]');
+  return root.getAttribute('aria-label')===`${label}.${count === null ? '' : ` ${count} working.`}`
+    && (count === null ? presence === null : presence?.textContent?.trim()===`${count} working`
+      && Boolean(presence.querySelector('.shell-presence-spin'))===(count>0));
+}
+
+export function reviewDomMatches(root:HTMLElement,item:import('../types').NavigationReviewItem | null,count:number | null):boolean {
+  if (item) return root.querySelector('[data-review-card]')?.getAttribute('data-proposal-identity')===reviewProposalIdentity(item);
+  const empty=root.querySelector('[data-review-empty]');
+  const meta=empty?.querySelector('.review-empty-meta');
+  return Boolean(empty) && (count === null ? !meta : meta?.textContent===`${count} ${count===1 ? 'agent' : 'agents'} in progress`);
+}
+
+/** Check actual editor DOM for the admitted body, not a summary marker alone. */
+export function reviewProposalDomMatches(root:HTMLElement,item:import('../types').NavigationReviewItem,detail:import('../types').TicketDetail):boolean {
+  if (!reviewProposalDetailMatches(item,detail) || detail.pending_proposal?.field!==item.field
+    || root.getAttribute('data-proposal-identity')!==reviewProposalIdentity(item)) return false;
+  if (root.querySelector('.review-ticket-title [contenteditable]')?.textContent !== item.title) return false;
+  if (item.field === 'brief' && root.querySelector<HTMLSelectElement>('[data-review-priority-control] select')?.value !== item.priority) return false;
+  const editor=root.querySelector<HTMLElement>('[data-approval-block] [data-edit]');
+  return Boolean(editor && detail.pending_proposal
+    && serializeMarkdownDomToSource(editor)===serializeMarkdownDomToSource(renderMarkdownToElement(detail.pending_proposal.body)));
+}
+
+export function reviewBadgeDomMatches(root:HTMLElement,count:number):boolean {
+  const badge=root.querySelector('.nav-badge');
+  return count > 0 ? badge?.textContent===String(count) && !badge.classList.contains('hidden')
+    : badge?.classList.contains('hidden')===true && badge.textContent==='';
 }

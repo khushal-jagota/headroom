@@ -1,7 +1,7 @@
 /** Browser proof for voice availability and first-message dictation. */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -26,9 +26,13 @@ try {
   import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
   import ReviewProposalCard from "../src/components/ReviewProposalCard.svelte";
+  import { provideNavigationApplication } from "../src/lib/navigation/application.svelte";
+  import { navigationReviewPresentation } from "../src/lib/navigation/presentation";
 
   const parameters = new URLSearchParams(location.search);
   const review = parameters.get("mode") === "review";
+  const navigation=review ? provideNavigationApplication() : undefined;
+  let identity=$derived(navigation?.selectors.effective ? navigationReviewPresentation(navigation.selectors.effective).items.find(item=>item.ticket_id==='review-voice') : undefined);
   const conversationId = parameters.get("conversation") === "1" ? "conv-existing" : null;
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   let sent = $state<string[]>([]);
@@ -37,7 +41,7 @@ try {
 
 {#if review}
   <QueryClientProvider client={queryClient}>
-    <ReviewProposalCard ticketId="review-voice" field="implementation" />
+    {#if identity}<ReviewProposalCard {identity} ticketId="review-voice" field="implementation" />{/if}
   </QueryClientProvider>
 {:else}
   <ConversationComposer
@@ -55,7 +59,8 @@ try {
   );
   await writeFile(
     mainPath,
-    String.raw`const parameters = new URLSearchParams(location.search);
+    String.raw`globalThis.EventSource=class extends EventTarget {onerror=null;close(){}};
+const parameters = new URLSearchParams(location.search);
 Object.defineProperty(window, "matchMedia", {
   value: () => ({
     matches: parameters.get("coarse") === "1",
@@ -125,7 +130,8 @@ mount(Host, { target: document.getElementById("app")! });
   const url = `http://127.0.0.1:${port}/${builtIndex}`;
   await waitUntilReady(url);
 
-  const browserScript = String.raw`
+  const fixturePython=await readFile(join(webRoot,"tests/support/navigation/browser-fixture.py"),"utf8");
+  const browserScript = fixturePython + String.raw`
 from playwright.sync_api import sync_playwright
 import sys
 
@@ -154,7 +160,7 @@ TICKET = {
   "ticket_status": "awaiting_approval", "conversation_id": "worker-session",
   "conversation_history": [],
   "guidance": "", "field_values": {},
-  "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1}
+  "pending_proposal": {"field": "implementation", "body": "Done", "proposed_by": "worker", "created_at": 1,"revision":1}
 }
 
 with sync_playwright() as playwright:
@@ -163,6 +169,16 @@ with sync_playwright() as playwright:
     def open_page(query):
         page = browser.new_page(viewport={"width": 1100, "height": 760})
         page.set_default_timeout(5_000)
+        def snapshot(route):
+            response=navigation_response({'columns':[{'cards':[TICKET]}],'sprint_items':[]},
+                {'chief_of_staff':{'label':'Chief of Staff','conversation_id':None}})
+            for record in response['snapshot']['records']:
+                if record['kind']=='ticket':
+                    proposal=TICKET['pending_proposal']
+                    record['value'].update(ceiling_holder=TICKET['ceiling_holder'],gating_field='implementation',
+                        proposal_field=proposal['field'],proposal_created_at=proposal['created_at'],proposal_revision=proposal['revision'])
+            route.fulfill(json=response)
+        page.route("**/api/navigation/snapshot*",snapshot)
         page.route("**/api/worker-types", lambda route: route.fulfill(json=MANIFEST))
         page.route("**/api/tickets?*id=review-voice*", lambda route: route.fulfill(json=TICKET))
         page.route("**/api/conversation/voice-transcriptions", lambda route: route.fulfill(json={"transcript": "dictated words"}))

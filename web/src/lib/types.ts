@@ -477,6 +477,12 @@ export type ReviewProposalItem = {
   waiting_since: number;
 };
 
+export type NavigationReviewItem = ReviewProposalItem & {
+  priority: Priority;
+  proposal_field: string;
+  proposal_revision: number;
+};
+
 export type ReviewItem = ReviewProposalItem;
 
 export type ReviewResponse = {

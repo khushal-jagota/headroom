@@ -4,7 +4,9 @@ This module supplies the shared browser replica. `App.svelte` calls `provideNavi
 
 `navigationApplication()` reads that context. An isolated component host without the provider receives `undefined`. It never creates another owner. Every successful existing `advanceOwnerRead` response triggers shared-owner recovery before the unread-message optimization or current-conversation check. Failed reads retain their existing behavior.
 
-Production summary consumers still use their existing Query paths. Their adoption and actual DOM proof remain pending. The shared core now accepts schema4 (`attention-knowledge-v4`) through wire2. This prerequisite does not establish a completed cutover, UI parity, or application speed improvement.
+The workspace sidebar, ordinary orchestrator headers and child lists, Chief child pagination, Review queue, and shell work count use the shared view. Ordinary orchestrator body, artifacts, and conversation history use a separate content-only read. Proposal bodies use a detail query keyed by the exact published proposal identity. Ticket masthead and remaining conversation adoption are still pending. These bounded consumer changes do not establish complete application recovery, UI parity, or a speed improvement.
+
+Review and shell work counts preserve the canonical distinct union of current Ticket, Chief, and existing orchestrator conversation pointers. The exact unfiltered Worker out-claim sum remains separate. Unknown runtime count is null and omits the runtime indicator. Known zero preserves the existing presentation. A pending collection handoff retains the last coherent display without dropping local proposal edits. Explicit authority loss still suppresses runtime knowledge.
 
 Snapshots have current or degraded mode. A current response contains complete attention, an exact authority profile, and a replay cursor. A degraded response contains coherent durable attention only, with a null cursor and proof. Every batch carries the same complete authority profile as its accepted current snapshot. Producer permit scope and navigation cursor scope are independent namespaces. Authority checks precede duplicate suppression.
 
@@ -18,7 +20,7 @@ Only the owner writes canonical navigation records. Consumers must not call coll
 
 `createNavigationSelectors(adapter)` supplies a coherent publication from the Svelte live query. A publication contains records, continuity, and the canonical cursor. Metadata and records share one source transaction. Keep publication identity intact. Use `$state.raw` when a Svelte component retains a publication for a later DOM update.
 
-Each mounted render boundary registers one observer with `owner.registerObserver(name)`. Dispose that handle on unmount. A visibility wait names its required observer handles explicitly. The set is fixed for that wait. New route instances register new handles. A removed handle cannot transfer its observation to a new instance.
+Application consumers register genuine observer handles with `application.registerRenderBoundary(name)` and dispose them with `disposeRenderBoundary`. This registry wraps the owner's observer API. Capture its mounted handles before the command request. The required set stays fixed for that wait. New route instances register new handles. A removed handle cannot transfer its observation to a new instance.
 
 Subscribe to owner state and make its generation a reactive dependency of the consumer observation effect. Call `observeSelectors(publication, generation)` when that consumer selects the coherent publication. Retain the returned observation token. Call `acknowledgeRender(publication, observation)` only after its actual DOM reflects that same publication. A Svelte `tick()` alone does not establish this fact. Check that the component still represents the captured publication after the tick. Do not acknowledge an old callback after a route change or disposal. An unchanged reconnect requires a fresh observation token for its new generation.
 
@@ -44,11 +46,10 @@ Run focused browser verification:
 ```sh
 cd web
 npm run test:vitest -- tests/navigation-contract.test.ts tests/navigation-collection.test.ts tests/navigation-owner.test.ts tests/navigation-transport.test.ts
-node tests/navigation-browser.test.mjs
 ```
 
-The harness uses an isolated synthetic runtime. Its comparator is not the original browser baseline. Production consumer parity and the complete baseline/candidate performance comparison remain downstream.
+The existing order, rail, child, and guidance browser hosts provide bounded consumer DOM evidence with synthetic sources. The old `navigation-browser.test.mjs` comparator and its measurement scripts require actual wire2 producer lifetime adaptation before further use. They are not the original production browser baseline. Complete application recovery and the matched production baseline/candidate comparison remain pending.
 
-The owner permits merges of staging into the local feature branch, local conflict resolution, implementation, and isolated validation. No rebuild push or merge into staging/main, deployment, or push-triggered CI is authorized. Retain the local candidate for owner inspection. Tests, reviews, completion, and agent approvals do not authorize publication. No rebase, cherry-pick, reset, or patch assembly is authorized.
+The owner permits local incorporation, implementation, and isolated validation under the recorded source dispositions. No push of any kind, staging/main merge or publication, deployment, or push-triggered CI is authorized. Retain the local candidate for owner inspection. Tests, reviews, completion, and agent approvals do not authorize publication. No rebase, cherry-pick, reset, or patch assembly is authorized.
 
 Migration tests never open `/home/vps/Deployments/Panels/current/data/planner.db` writable. Isolate whole runtimes. Use synthetic databases or consistent copies from explicitly read-only sources. No live fallback or real agent-home fixtures.

@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { tick, onDestroy } from "svelte";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { navigationReviewPresentation } from "../lib/navigation/presentation";
+  import { shellRuntimeDomMatches } from "../lib/navigation/render";
   import { createQuery } from "@tanstack/svelte-query";
   import type { ConnectionStatus } from "../lib/changeStream";
   import {
@@ -15,12 +19,34 @@
   } from "../lib/types";
 
   let {
-    connectionState,
-    runningWorkerCount
+    connectionState
   }: {
     connectionState: ConnectionStatus;
-    runningWorkerCount: number;
   } = $props();
+
+  const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Shell requires the application navigation owner"); return value; })();
+  const observer = navigation.registerRenderBoundary(`shell-runtime:${crypto.randomUUID()}`);
+  onDestroy(() => navigation.disposeRenderBoundary(observer));
+  let root = $state<HTMLElement | null>(null);
+  let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
+  $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
+  let runningWorkerCount = $derived(displayed ? navigationReviewPresentation(displayed).runningConversationCount : null);
+  $effect(() => {
+    const effective = displayed;
+    const generation = navigation.state.generation;
+    const element = root;
+    const count = runningWorkerCount;
+    const label = statusLabels[statusState];
+    if (!effective?.runtimeCurrent || !element) return;
+    const publication = effective.publication;
+    const observation = observer.observeSelectors(publication,generation);
+    let obsolete = false;
+    void tick().then(() => {
+      if (!obsolete && element.isConnected && navigation.state.generation === generation
+        && navigation.selectors.effective === effective && shellRuntimeDomMatches(element,count,label)) observer.acknowledgeRender(publication,observation);
+    });
+    return () => { obsolete = true; };
+  });
 
   let clock = $state(Date.now());
   let isOpen = $state(false);
@@ -100,10 +126,11 @@
 </script>
 
 <div
+  bind:this={root}
   class="shell-status"
   role="status"
   aria-live="polite"
-  aria-label={`${statusLabels[statusState]}. ${runningWorkerCount} working.`}
+  aria-label={`${statusLabels[statusState]}.${runningWorkerCount === null ? "" : ` ${runningWorkerCount} working.`}`}
   data-shell-status
 >
   <div class="vps-status" data-vps-status>
@@ -176,10 +203,12 @@
       </section>
     {/if}
   </div>
+  {#if runningWorkerCount !== null}
   <span class="shell-presence" data-shell-presence>
     {#if runningWorkerCount > 0}
       <span class="shell-presence-spin" aria-hidden="true"></span>
     {/if}
     {runningWorkerCount} working
   </span>
+  {/if}
 </div>

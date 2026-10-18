@@ -152,7 +152,9 @@ Code paths: `navigation/proof.py`, `navigation/proof_contracts.py`, `navigation/
 
 ## Browser synchronization boundary
 
-The browser navigation module maintains one shared replica above routes and panes. Consumer adoption is in progress, starting with the sidebar. Screens retain existing Query fact reads until their cutover removes the overlap.
+The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary orchestrator headers and children, Chief child pagination, Review queue, and shell work count use it. Ordinary orchestrator content and exact-identity proposal bodies remain separate detail reads. Ticket masthead and remaining conversation adoption are pending. Unconverted surfaces retain their existing reads until their cutover removes the overlap.
+
+The Review and shell count deduplicates current Ticket, Chief, and existing orchestrator conversation pointers. Historical-only and unlinked conversations do not contribute. The exact unfiltered Worker out-claim count remains a separate fact. Unknown runtime count is null and omits the runtime mark or count line. Known zero preserves the existing behavior.
 
 ```text
 complete snapshot / revision batches
@@ -186,7 +188,7 @@ After an epoch change, the server must certify the issued fence against a replac
 
 Unknown visibility never causes an automatic command resend. A certified no-op does not imply a relevant visible change.
 
-The isolated browser harness exercises the module against real snapshot and event endpoints. Its measurements do not establish production consumer parity or speedup.
+Existing frontend browser hosts exercise the converted consumers with strict synthetic source publications. Isolated runtime and socket fixtures exercise actual producer admission and delivery separately. The old comparator harness requires actual wire2 producer lifetime adaptation before further use. These bounded results do not establish complete application recovery, production consumer parity, or speedup.
 
 Code paths: `web/src/lib/navigation/`, `web/tests/navigation-*`, and `scripts/navigation_browser_harness.py`.
 

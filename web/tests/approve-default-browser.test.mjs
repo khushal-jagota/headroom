@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
@@ -22,15 +22,47 @@ try {
 import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
 import ReviewRoute from '../src/routes/ReviewRoute.svelte';
+import { tick } from 'svelte';
+import { provideNavigationApplication } from '../src/lib/navigation/application.svelte';
+const navigation=provideNavigationApplication();
+(window as any).__publishSource=async()=>{
+ const ready=async()=>{
+  if(navigation.owner.getState().connection==='subscribed')return;
+  await new Promise<void>((resolve,reject)=>{
+   let stop=()=>{};
+   const timer=setTimeout(()=>{stop();reject(new Error('fixture stream not ready: '+JSON.stringify(navigation.owner.getState())));},5000);
+   stop=navigation.owner.subscribe(state=>{if(state.connection==='subscribed'){clearTimeout(timer);stop();resolve();}});
+  });
+ };
+ for(let attempt=0;attempt<3;attempt++){
+  await ready();
+  const generation=navigation.owner.getState().generation;
+  const response=await (await fetch('/api/navigation/snapshot')).json();
+  const current=navigation.owner.getState();
+  if(current.generation!==generation || current.connection!=='subscribed')continue;
+  const previous=current.publication!;
+  const keys=new Set(response.snapshot.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
+  const batch={...response.snapshot,base_revision:previous.continuity.revision,upserts:response.snapshot.records,
+  deletes:previous.records.filter(row=>!keys.has(JSON.stringify([row.kind,row.id]))).map(row=>({kind:row.kind,id:row.id}))};delete batch.records;
+  const published=new Promise<void>((resolve,reject)=>{
+   const timer=setTimeout(()=>{stop();reject(new Error('fixture batch not admitted: '+JSON.stringify({wanted:batch.revision,generation,current:navigation.owner.getState()})));},5000);
+   const stop=navigation.owner.subscribe(state=>{if(state.publication?.continuity.revision===batch.revision){clearTimeout(timer);stop();resolve();}});
+  });
+  (window as any).__navigationSource.dispatchEvent(new MessageEvent('batch',{data:JSON.stringify({wire_version:response.wire_version,authority:response.authority,batch}),lastEventId:response.cursor}));
+  await published;await tick();return;
+ }
+ throw new Error('fixture source changed generation during publication');
+};
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 let hostKind = $state<'ticket' | 'review'>('ticket');
 let ticketId = $state('t_coding');
 let field = $state('success_condition');
 (window as any).__showTicket = (id: string) => { hostKind = 'ticket'; ticketId = id; };
-(window as any).__showReview = (id: string, nextField: string) => { hostKind = 'review'; ticketId = id; field = nextField; };
+(window as any).__showReview = async (id: string, nextField: string) => { await navigation.owner.recover(); hostKind = 'review'; ticketId = id; field = nextField; };
 (window as any).__refresh = () => Promise.all([
   client.refetchQueries({ queryKey: ['ticket'] }),
-  client.refetchQueries({ queryKey: ['worker-types'] })
+  client.refetchQueries({ queryKey: ['worker-types'] }),
+  (window as any).__publishSource()
 ]);
 </script>
 <QueryClientProvider {client}>
@@ -40,7 +72,7 @@ let field = $state('success_condition');
     {#key ticketId}<TicketRoute id={ticketId} />{/key}
   {/if}
 </QueryClientProvider>`);
-  await writeFile(main, `import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
+  await writeFile(main, `globalThis.EventSource=class extends EventTarget {onerror=null;constructor(url){super();if(String(url).startsWith('/api/navigation/events?'))globalThis.__navigationSource=this;}close(){}};import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
   await writeFile(index, `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
 
   server = await createServer({
@@ -54,7 +86,8 @@ let field = $state('success_condition');
   const address = server.httpServer.address();
   assert.ok(address && typeof address === 'object');
 
-  const script = String.raw`
+  const fixturePython=await readFile(join(root,"tests/support/navigation/browser-fixture.py"),"utf8");
+  const script = fixturePython + String.raw`
 import json, sys, os
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -113,6 +146,7 @@ def ticket(ticket_id, worker_type, stage, field, body, created_at):
         'conversation_id': None, 'conversation_history': [], 'day_ids': [],
         'blocked': False, 'blocker_summary': {'blocked_by': []}, 'recap': 'Orientation',
         'guidance': '', 'field_values': {'brief': 'Request'},
+        'pending_proposal_revision': 1,
         'pending_proposal': {
             'field': field, 'body': body, 'proposed_by': 'agent', 'created_at': created_at,
             'revision': 1
@@ -130,10 +164,25 @@ tickets = {
 }
 approvals = []
 scope_writes = []
-review_ticket = 't_coding'
 priority_route = None
 accept_attempts = []
 read_count = 0
+
+def navigation_snapshot():
+    response=navigation_response({'columns':[{'cards':list(tickets.values())}],'sprint_items':[]},
+        {'chief_of_staff':{'label':'Chief of Staff','conversation_id':None}})
+    for record in response['snapshot']['records']:
+        if record['kind']=='ticket':
+            row=tickets[record['id']]
+            proposal=row['pending_proposal']
+            definition=next(worker for worker in manifest['worker_types'] if worker['worker_type']==row['worker_type'])
+            stage=next(stage for stage in definition['stages'] if stage['id']==row['stage'])
+            record['value'].update(ceiling_holder=row['ceiling_holder'],gating_field=stage['gating_field'],
+                stage_ownership=stage['ownership_mode'],terminal=stage['is_terminal'],
+                proposal_field=None if proposal is None else proposal['field'],
+                proposal_created_at=None if proposal is None else proposal['created_at'],
+                proposal_revision=row['pending_proposal_revision'] if proposal is None else proposal['revision'])
+    return response
 
 def respond(route):
     global read_count, priority_route
@@ -143,8 +192,8 @@ def respond(route):
     if path == 'tickets/t_brief' and route.request.method == 'PATCH' and 'priority' in route.request.post_data_json:
         priority_route = route
         return
-    if path == 'review':
-        result = {'items': [{'ticket_id': review_ticket, 'field': tickets[review_ticket]['pending_proposal']['field'], 'title': tickets[review_ticket]['title']}], 'running_worker_count': 0}
+    if path.split('?')[0]=='navigation/snapshot': result=navigation_snapshot()
+    elif path=='review': raise AssertionError('competing Review summary read')
     elif path.startswith('tickets/') and path.count('/') == 1 and route.request.method == 'PATCH':
         scope_writes.append(route.request.post_data_json)
         tickets[path.split('/')[1]].update(route.request.post_data_json)
@@ -182,7 +231,8 @@ def respond(route):
             }))
             return
         approvals.append(attempt)
-        result = {**tickets[ticket_id], 'pending_proposal': None, 'ticket_status': 'empty'}
+        tickets[ticket_id].update(pending_proposal_revision=tickets[ticket_id]['pending_proposal']['revision'],pending_proposal=None,ticket_status='empty')
+        result = tickets[ticket_id]
     elif path.endswith('/conversation/start-values'):
         result = {}
     elif path.startswith('tickets/') and path.count('/') == 1:
@@ -224,12 +274,17 @@ with sync_playwright() as p:
 
     expect(block().locator('[data-reviewer-heading]')).to_have_text('Orchestrator')
     assert block().locator('[data-scope-ceiling], [data-ceiling-effect], .approves-mark').count() == 0
+    # The old Review fixture admitted an Orchestrator-held proposal despite the
+    # owner-only canonical queue. Preserve the preceding real Ticket default,
+    # then transfer its actual backing holder before comparing both product hosts.
+    tickets['t_coding']['ceiling_holder']={'kind':'owner','id':'owner'}
+    page.evaluate('window.__refresh()')
     # Capture both actual product hosts with exactly the same proposal and reviewer.
     artifact_dir = os.environ.get('PANELS_APPROVAL_ARTIFACT_DIR')
     evidence = []
     for host_kind in ['ticket', 'review']:
         if host_kind == 'review': page.evaluate("window.__showReview('t_coding', 'success_condition')")
-        expect(block().locator('[data-reviewer-heading]')).to_have_text('Orchestrator')
+        expect(block().locator('[data-reviewer-heading]')).to_have_text('User')
         expect(block().locator('[contenteditable]')).to_have_text('Coding result')
         for width, label in [(1280, 'desktop'), (390, 'compact')]:
             page.set_viewport_size({'width': width, 'height': 1000})
@@ -340,7 +395,7 @@ with sync_playwright() as p:
     wait_count(approvals, 1)
     assert approvals[-1]['body'] == {'next_ceiling': 'needs_what_changes', 'next_holder': {'kind': 'owner', 'id': 'owner'}, 'expected_proposal_revision': 2}
 
-    review_ticket = 't_findings'
+    tickets['t_findings']['ceiling_holder']={'kind':'owner','id':'owner'}
     page.evaluate("window.__showReview('t_findings', 'findings')")
     expect(block()).to_have_attribute('data-field', 'findings')
     choose('needs_answer')
@@ -379,7 +434,7 @@ with sync_playwright() as p:
     wait_count(approvals, 5)
     assert approvals[-1]['body']['expected_proposal_revision'] == 2
     # Review also discards an open old-revision gesture before replacement can accept.
-    review_ticket = 't_review_replace'
+    tickets['t_review_replace']['ceiling_holder']={'kind':'owner','id':'owner'}
     page.evaluate("window.__showReview('t_review_replace', 'plan')")
     expect(block().locator('[contenteditable]')).to_have_text('Original Review plan')
     open_approval()
@@ -415,7 +470,7 @@ with sync_playwright() as p:
             assert mark.evaluate('(element) => getComputedStyle(element).animationName') != 'none'
             page.emulate_media(reduced_motion='reduce')
     # Brief priority writes cannot race approval in Review.
-    review_ticket = 't_brief'
+    tickets['t_brief']['ceiling_holder']={'kind':'owner','id':'owner'}
     page.evaluate("window.__showReview('t_brief', 'brief')")
     expect(block()).to_have_attribute('data-field', 'brief')
     expect(block().locator('[data-send-back]')).to_have_count(0)
@@ -428,7 +483,7 @@ with sync_playwright() as p:
     expect(block().locator('[data-accept]')).to_be_enabled()
     assert errors == [], errors
     if artifact_dir:
-        (Path(artifact_dir) / 'frontend-assertions.json').write_text(json.dumps({'hosts': ['TicketRoute', 'ReviewRoute'], 'same_proposal_revision': 1, 'same_reviewer': 'Orchestrator', 'screenshots': evidence, 'browser_errors': errors, 'steps': step_states, 'approval_transactions': approvals, 'scope_transactions': scope_writes}, indent=2))
+        (Path(artifact_dir) / 'frontend-assertions.json').write_text(json.dumps({'hosts': ['TicketRoute', 'ReviewRoute'], 'same_proposal_revision': 1, 'same_reviewer': 'User', 'preceding_ticket_reviewer': 'Orchestrator', 'screenshots': evidence, 'browser_errors': errors, 'steps': step_states, 'approval_transactions': approvals, 'scope_transactions': scope_writes}, indent=2))
     browser.close()
 `;
 

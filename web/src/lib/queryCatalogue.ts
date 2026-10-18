@@ -14,7 +14,6 @@ import type {
   IdeasResponse,
   NotificationSettingsResponse,
   ProjectsResponse,
-  ReviewResponse,
   SchedulesResponse,
   SkillsHomeResponse,
   SprintsResponse,
@@ -55,7 +54,6 @@ export const queries = {
   vpsStatusSummary: () =>
     jsonQuery<VpsStatusSummary>(["vps-status-summary"], "/api/vps-status-summary"),
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
-  review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
   orchestratorTicketSummaries: (principal: OrchestratorPrincipal, filter: OrchestratorChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
@@ -94,6 +92,9 @@ export const queries = {
     ),
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets?detail=full&id=${encodeURIComponent(ticketId)}`),
+  reviewProposal: (item: import('./types').NavigationReviewItem) =>
+    jsonQuery<TicketDetail>(["ticket",item.ticket_id,"proposal",item.field,item.proposal_field,item.waiting_since,item.proposal_revision],
+      `/api/tickets?detail=full&id=${encodeURIComponent(item.ticket_id)}`),
   // What a conversation started right now would run on, for each owner that starts one.
   // It follows the change stream because the owner can change it: Config sets the
   // Chief's, and a Ticket's own last-chosen values move when its worker is talked to.
