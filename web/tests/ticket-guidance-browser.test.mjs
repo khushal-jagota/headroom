@@ -42,7 +42,7 @@ let ticketId = $state('t_guidance');
   const address = server.httpServer.address();
   assert.ok(address && typeof address === 'object');
   const script = String.raw`
-import json, sys
+import json, os, sys, time
 from urllib.parse import parse_qs
 from playwright.sync_api import sync_playwright, expect
 
@@ -92,6 +92,31 @@ def respond(route):
         result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'brief':'Context'}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':True}
     elif path == 'tickets/t_kickoff':
         result={**ticket, 'id': 't_kickoff', 'stage': 'needs_brief', 'ceiling': 'needs_brief', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}, 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': {'field': 'brief', 'body': 'Opened for somebody else', 'proposed_by': 'chief', 'created_at': 1}, 'field_values': {}}
+    elif path == 'tickets/t_artifacts':
+        result={**ticket, 'id':'t_artifacts', 'title':'Artifact links in place',
+          'conversation_id':'artifact-conversation',
+          'field_values':{'brief': 'Saved [HTML plan](/files/sprint-items/si_artifacts/artifacts/plan.html?mode=read#summary). '
+             '[Ticket document](/files/tickets/t_artifacts/artifacts/plan.md) '
+             '[Receipt](/files/tickets/t_artifacts/artifacts/receipt.json) '
+             '[Raw receipt](/files/sprint-items/si_artifacts/artifacts/receipt.json) '
+             '[Unsupported](/files/sprint-items/si_artifacts/artifacts/archive.zip) '
+             '[External](https://example.test/files/sprint-items/si_artifacts/plan.html) '
+             '[Dev preview](/dev/tickets/t_artifacts/8791/) '
+             '[Malformed](/files/sprint-items/si_artifacts/artifacts/%252e%252e/plan.html) '
+             '[Explicit receipt](#/preview?source=ticket&ticket=t_artifacts&path=artifacts%2Freceipt.json)'},
+          'pending_proposal':{'field':'success_condition', 'body':'Proposed [Markdown plan](/files/sprint-items/si_artifacts/artifacts/plan.md).', 'proposed_by':'agent', 'created_at':1}}
+    elif path == 'conversation/conversations/artifact-conversation':
+        result=dict(conversation_id='artifact-conversation', backend_key='codex', supports_steer=True,
+          model='gpt-test', reasoning_effort=None, workspace_folder='/tmp', access='full', role_text=None,
+          identity_environment_variable_names=[], latest_sequence=1, owner_read_through_sequence=1,
+          is_running=False, held_prompts=[], pending_permission_ask=None, pending_user_input=None, composer_catalog=[])
+    elif path.startswith('conversation/conversations/artifact-conversation/events?'):
+        result={'events':[dict(conversation_id='artifact-conversation',sequence=1,created_at=1,kind='message_to_owner',
+          payload={'text':'Conversation [Audio plan](/files/sprint-items/si_artifacts/artifacts/plan.wav).',
+            'sender_label':'Worker','sender':{'kind':'ticket','id':'t_artifacts'},'recipient':{'kind':'owner','id':'owner'}})]}
+    elif path.endswith('/tail'):
+        route.fulfill(status=200, content_type='text/event-stream', body='')
+        return
     elif path == 'tickets/t_with_session':
         result={**ticket, 'id': 't_with_session', 'conversation_id':'existing-worker-session'}
     elif path == 'tickets/t_open':
@@ -112,6 +137,17 @@ with sync_playwright() as p:
     page=browser.new_page()
     page.on('pageerror', lambda e: print(str(e), flush=True))
     page.route('**/api/**', respond)
+    def serve_file(route):
+        path=route.request.url.split('?',1)[0]
+        if path.endswith('.html'):
+            route.fulfill(content_type='text/html', body='<html><body style="background:#fff;color:#17202a;padding:24px;font:18px system-ui"><h1>Artifact plan</h1><p>Opened over the Ticket.</p></body></html>')
+        elif path.endswith('.md'):
+            route.fulfill(content_type='text/markdown', body='# Markdown plan\n\nRead [Nested image](/files/sprint-items/si_artifacts/artifacts/image.svg).')
+        elif path.endswith('.svg'):
+            route.fulfill(content_type='image/svg+xml', body='<svg xmlns="http://www.w3.org/2000/svg" width="300" height="180"><rect width="300" height="180" fill="steelblue"/></svg>')
+        else:
+            route.fulfill(content_type='application/octet-stream', body='fixture')
+    page.route('**/files/**', serve_file)
     page.goto(sys.argv[1])
     expect(page.locator('[data-project-fact]')).to_have_text('One')
     expect(page.locator('[data-ticket-identity]')).to_have_text('One · Coding')
@@ -319,6 +355,75 @@ with sync_playwright() as p:
     assert approvals[0]['next_holder'] == {'kind': 'chief', 'id': 'chief'}
     # Declared ownership is Config's to change. Every non-terminal Stage carries one
     # owner control, and the Stage table carries nothing else that edits.
+    # Reuse this Ticket host: raw managed Markdown links must reach its delegated
+    # handler across saved fields, proposals, nested documents, and the real transcript.
+    artifact_started=time.monotonic()
+    page.evaluate("window.__showTicket('t_artifacts')")
+    page.locator('[data-ticket-id="t_artifacts"]').wait_for()
+    page.locator('[data-stage-fold]').evaluate('(element) => element.open = true')
+    page.locator('[data-stage-fold] [data-field="brief"]').evaluate('(element) => element.open = true')
+    saved_artifacts=page.locator('[data-stage-fold] [data-field="brief"]')
+    html_link=saved_artifacts.get_by_role('link', name='HTML plan', exact=True)
+    assert html_link.get_attribute('href').startswith('/files/sprint-items/')
+    original_url=page.url
+    # Probe browser-owned gestures without allowing their default navigation to destroy
+    # the fixture. The listener observes prevention after the Ticket handler, then cancels.
+    def click_was_claimed(link, **options):
+        return link.evaluate("""(anchor, options) => {
+          let claimed;
+          document.addEventListener('click', event => {
+            claimed = event.defaultPrevented;
+            event.preventDefault();
+          }, {once:true});
+          anchor.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, ...options}));
+          return claimed;
+        }""", options)
+    for modifier in ['ctrlKey','metaKey','shiftKey','altKey']:
+        assert not click_was_claimed(html_link, **{modifier:True})
+    assert not click_was_claimed(html_link, button=1)
+    html_link.evaluate("a => a.setAttribute('target', '_blank')")
+    assert not click_was_claimed(html_link)
+    html_link.evaluate("a => a.removeAttribute('target')")
+    html_link.evaluate("a => a.setAttribute('download', '')")
+    assert not click_was_claimed(html_link)
+    html_link.evaluate("a => a.removeAttribute('download')")
+    html_link.evaluate("a => a.addEventListener('click', event => event.preventDefault(), {once:true})")
+    assert click_was_claimed(html_link)
+    expect(page.locator('[data-ticket-artifact]')).to_have_count(0)
+    for label in ['Download receipt.json','Raw receipt','Unsupported','External','Dev preview','Malformed']:
+        assert not click_was_claimed(saved_artifacts.get_by_role('link', name=label, exact=True))
+    html_link.click()
+    viewer=page.locator('[data-ticket-artifact]')
+    expect(viewer).to_have_attribute('aria-label','plan.html')
+    expect(viewer.frame_locator('iframe').get_by_role('heading',name='Artifact plan')).to_be_visible()
+    assert page.url == original_url
+    if os.environ.get('PANELS_ARTIFACT_SCREENSHOT'):
+        page.screenshot(path=os.environ['PANELS_ARTIFACT_SCREENSHOT'], full_page=True)
+    viewer.get_by_role('button',name='Close',exact=True).click()
+    page.locator('[data-approval-block]').get_by_role('link',name='Markdown plan',exact=True).click()
+    expect(viewer).to_have_attribute('aria-label','plan.md')
+    viewer.get_by_role('link',name='Nested image',exact=True).click()
+    expect(viewer).to_have_attribute('aria-label','image.svg')
+    expect(viewer.locator('img')).to_be_visible()
+    viewer.get_by_role('button',name='Close',exact=True).click()
+    saved_artifacts.get_by_role('link',name='Open plan.md',exact=True).click()
+    expect(viewer).to_have_attribute('aria-label','plan.md')
+    viewer.get_by_role('button',name='Close',exact=True).click()
+    saved_artifacts.get_by_role('link',name='Explicit receipt',exact=True).click()
+    expect(viewer).to_have_attribute('aria-label','receipt.json')
+    expect(viewer.get_by_role('link',name='Download receipt.json',exact=True)).to_have_attribute('download','')
+    viewer.get_by_role('button',name='Close',exact=True).click()
+    if page.locator('[data-conversation-pane][data-conversation-state="rest"]').count():
+        page.locator('[data-conversation-input]').click()
+    if page.locator('[data-conversation-pane][data-conversation-state="peeked"]').count():
+        page.locator('[data-conversation-expand]').click()
+    expect(page.locator('[data-conversation-pane]')).to_have_attribute('data-conversation-state','opened')
+    page.get_by_role('link',name='Audio plan',exact=True).click()
+    expect(viewer).to_have_attribute('aria-label','plan.wav')
+    expect(viewer.locator('audio')).to_have_attribute('src','/files/sprint-items/si_artifacts/artifacts/plan.wav')
+    expect(page.locator('[data-conversation-pane]')).to_have_attribute('data-conversation-state','peeked')
+    assert page.url == original_url
+    print(f'Artifact link browser coverage: {time.monotonic()-artifact_started:.2f}s', flush=True)
     page.evaluate('window.__showConfig()')
     stage_table=page.locator('[data-worker-stage-table]')
     stage_table.locator('[data-worker-stage-row]').first.wait_for()
