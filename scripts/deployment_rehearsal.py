@@ -210,7 +210,9 @@ def capture() -> None:
         subprocess.run(["journalctl", "--user", "-u", os.environ["PANELS_SERVICE_NAME"],
                         "--no-pager"], stdout=log, stderr=subprocess.STDOUT, check=False)
     try:
-        with urllib.request.urlopen(os.environ["PANELS_HEALTH_URL"], timeout=5) as response:
+        url = (os.environ["PANELS_HEALTH_URL"]
+               + "?expected_sha=" + os.environ["PANELS_REQUESTED_SHA"])
+        with urllib.request.urlopen(url, timeout=5) as response:
             (gate / "final-health.json").write_bytes(response.read())
     except (OSError, ValueError) as exc:
         (gate / "final-health-error.txt").write_text(str(exc))

@@ -1,16 +1,18 @@
 """Workflow routing and the real mount boundary, without another browser host."""
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
 from scripts.deployment_check_report import check_pytest
-from scripts.deployment_rehearsal import deployment_paths, verify_proof
+from scripts.deployment_rehearsal import capture, deployment_paths, verify_proof
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/deploy.yml"
 
@@ -153,3 +155,31 @@ def test_rehearsal_success_requires_actual_prior_backup_and_requested_health(
     (tmp_path / "final-health.json").write_text(json.dumps({"app_sha": "b" * 40, "ready": True}))
     with pytest.raises(ValueError, match="requested SHA"):
         verify_proof(tmp_path, "b" * 40, "a" * 40)
+
+
+def test_capture_requests_health_proof_for_the_exact_requested_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = tmp_path / "gate"
+    expected_sha = "a" * 40
+    for key, value in {
+        "PANELS_REHEARSAL": "true", "RUNNER_ENVIRONMENT": "github-hosted",
+        "PANELS_GATE_DIR": str(gate), "PANELS_CURRENT_ROOT": str(tmp_path / "current"),
+        "PANELS_LIFECYCLE_PATH": str(tmp_path / "lifecycle.json"),
+        "XDG_RUNTIME_DIR": str(tmp_path / "run"), "PANELS_SERVICE_NAME": "rehearsal.service",
+        "PANELS_HEALTH_URL": "http://127.0.0.1:12345/api/health",
+        "PANELS_REQUESTED_SHA": expected_sha, "PANELS_REHEARSAL_JOB_STATUS": "failure",
+    }.items():
+        monkeypatch.setenv(key, value)
+    payload = json.dumps({"app_sha": expected_sha, "ready": True}).encode()
+    with (
+        patch("scripts.deployment_rehearsal.subprocess.run"),
+        patch("scripts.deployment_rehearsal.urllib.request.urlopen",
+              return_value=io.BytesIO(payload)) as request,
+    ):
+        capture()
+    request.assert_called_once_with(
+        "http://127.0.0.1:12345/api/health?expected_sha=" + expected_sha, timeout=5,
+    )
+    assert (gate / "final-health.json").read_bytes() == payload
+    assert not (gate / "final-health-error.txt").exists()
