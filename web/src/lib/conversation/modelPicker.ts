@@ -1,4 +1,5 @@
 import { effortOptionsFor, modelDisplayName } from "./composer";
+import { resolvedModelPickerLabel } from "./modelPickerLabel";
 import {
   CONVERSATION_BACKEND_KEYS,
   type BackendModel,
@@ -15,7 +16,6 @@ export const MODEL_PICKER_BACKEND_KEYS: readonly ConversationBackendKey[] = [
 export type ModelPickerChoice = Readonly<{
   value: string;
   name: string;
-  detail?: string | null;
 }>;
 
 export type ModelPickerBackend = Readonly<{
@@ -96,11 +96,7 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
   const modelValue = input.model ?? defaultModel ?? "";
   const modelName = modelDisplayName(catalogModels, modelValue === "" ? null : modelValue) ?? "";
   const selectedModel = catalogModels.find((candidate) => candidate.model_id === modelValue);
-  const variant = selectedModel?.selected_variant;
-  const resolvedModel = selectedModel?.resolved_model_id;
-  const modelFace = variant && resolvedModel
-    ? (variant === resolvedModel ? variant : `${variant} · ${resolvedModel}`)
-    : modelName;
+  const modelFace = resolvedModelPickerLabel(catalogModels, modelValue);
   const efforts = effortOptionsFor(
     catalogModels,
     modelValue === "" ? null : modelValue,
@@ -138,8 +134,7 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     }),
     models: models.map((candidate) => ({
       value: candidate.model_id,
-      name: candidate.selected_variant ?? candidate.display_name ?? candidate.model_id,
-      detail: candidate.resolved_model_id ?? candidate.detail ?? null
+      name: resolvedModelPickerLabel(catalogModels, candidate.model_id)
     })),
     efforts: efforts.map((effort) => ({ value: effort, name: effort })),
     defaultModel,

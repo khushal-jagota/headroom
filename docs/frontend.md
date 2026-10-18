@@ -54,12 +54,15 @@ One screen per part of the system:
   their displayed order across refreshes and selection. Entries and re-entries append
   within their category. Orchestrator priority and creation order remain unchanged.
 
-  A card opens its orchestrator. A row opens its Worker. The four utility links open
-  Usage and Backends, Settings, Ideas, or Feedback in the right pane. The workspace
-  address preserves these selections across reload and Back. Standalone utility routes
-  remain available. The open utility uses the selected card's accent-bright border.
-  Opening a detail pane never replaces rail classification.
-  Hover lights the card edge and title. Worker rows retain the existing hover wash.
+  A card opens its orchestrator. A row opens its Worker. The address preserves selection
+  across reload and Back. Opening a detail pane never replaces rail classification.
+  Selection uses the existing bright accent outline without a background fill. The
+  outline stays bright through hover and focus. Hover lights unselected card edges and
+  titles. Worker rows retain the existing hover wash.
+  The four utility links open Usage and Backends, Settings, Ideas, or Feedback in the
+  right pane. The workspace address preserves these selections across reload and Back.
+  Standalone utility routes remain available. The open utility uses the same accent-bright
+  border as a selected orchestrator card.
   Fine pointers with hover capability reveal a popup after 200 milliseconds. Visible
   keyboard focus reveals it immediately. Touch reveals it after a 400 millisecond hold.
   Movement, release, or cancellation stops an unfinished hold. Taps and clicks select.
@@ -72,7 +75,7 @@ One screen per part of the system:
   The popup has no stage ladder or named blockers. Recaps arrive through the existing
   board and orchestrator projections, without detail requests or another transport.
   Orchestrator popups show their existing concise body preview in a recessed recap.
-  Chief has no recap source, so its popup states only the eligible Ticket count.
+  The Chief popup states the eligible Ticket count.
   Empty orchestrator recaps use that same factual fallback. The panel stays
   inside the viewport and does not capture the pointer.
 
@@ -106,16 +109,13 @@ One screen per part of the system:
   requested state waits through a transition. Reduced motion applies the final
   state immediately, and closing returns focus to the header if it hid focus.
 
-  In full workspace lists, backlogged Tickets use one Backlog header after the attention headers and before Agent.
-  This rule applies to every backlogged Ticket supplied to the shared presentation,
-  including terminal history. Backlog uses normal rows and starts open. It does not
-  add review badges or explanations. Approval, reviewer, message, and readiness facts
-  remain independent. Resume restores ordinary classification and readiness checks.
-  The sidebar excludes Backlog without changing the shared classifier or unread index.
-  The existing history filters still determine which Tickets reach full lists.
+  Orchestrator pages show active groups first, then Backlogged and Done headers.
+  Backlogged contains unfinished deferred Tickets. Done contains every completed Ticket,
+  including completed Tickets that retain a backlog flag. Both headers start closed.
+  Active groups start open. The sidebar excludes Backlog without a change to the shared
+  classifier or unread index. Resume restores ordinary classification and readiness checks.
   Historical Day counts and Feedback labels keep their separate rules.
 
-  Unfinished groups on the orchestrator page start open. Done starts closed.
   Manual choices survive ordinary data refreshes in that page, including a group that
   disappears and returns. They do not persist across visits. These rounded group headers
   show ordinary Worker counts without unread suffixes. The unread facts and row dots
@@ -210,18 +210,21 @@ One screen per part of the system:
   configuration, and conversation behavior remain available in their existing states.
   Backlog and Resume remain the deferral controls.
 - **Orchestrator** — project and parent navigation, title, recap, and a Settle control
-  above closed Worker bands. Worker rows show title and an exact-conversation dot.
+  above grouped Workers. Worker rows show title and an exact-conversation dot.
   Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
   and order, including exceptional states. The local page omits only the duplicate
   Messages group: unread Workers appear in their ordinary group with their own dot.
   Global Messages and rail discovery remain unchanged. Closed group headers include
   distinct unread-conversation counts as text. Artifacts occupy their own closed band
-  below the Workers. Chief keeps its existing conversation screen and cannot settle.
+  below the Workers. Chief shares the same header, reading column, and conversation layer.
+  Chief keeps an editable recap in its managed settings, through the same header control.
+  Chief cannot settle and has no Project or parent navigation.
 - **Historical Sprint** — retained dated links and documents remain readable. These
   screens do not supply planning or change Worker continuation. See `sprints.md`.
-- **Chief children** — the existing Chief workspace provides a scoped, bounded child
-  section with Active, Backlogged, and Done views. It reuses the child
-  groups and rows. Ordinary orchestrators retain their own scoped children and filters.
+- **Chief children** — the Chief and ordinary orchestrators show one scoped Worker list.
+  Active groups stay visible. Backlogged and Done have independent collapsible headers.
+  Each Chief section retains its own bounded pages and reader choices. Ordinary
+  orchestrators use their full workspace data and retain independent reader choices.
   The standalone Workers page is removed. Former `#/backlog` addresses redirect to
   Workspace. Project facts remain text. The browser New Ticket form and global
   project/type list are removed; API and CLI creation remain available.
@@ -564,9 +567,9 @@ hand-rolling the same shapes per screen. Each does one job:
   screens — a move changes how tall it is and nothing else, so the reader keeps their
   place in the transcript and keeps whatever they had half-typed.
 
-  Which state it opens in is the page's to choose, and the page can change it later. A
-  page that says nothing gets no layer at all: the Chief of Staff and the Workspace desk
-  each keep a conversation that fills the space it is given.
+  The Chief and ordinary orchestrators share one layout with this layer and the same
+  outside-click dismissal. Both start at rest. The person controls rest, peeked, and
+  opened states, and a refresh keeps that choice.
 - **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
   `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and
   plugins. The list narrows as text is typed. A choice inserts its exact catalog text

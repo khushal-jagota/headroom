@@ -203,9 +203,7 @@
           aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Orchestrator workspace" : "Workspace inspector"}
         >
           {#if opening.chiefMarked}
-            <div class="board-workspace-chief-conversation">
-              <ChiefConversation />
-            </div>
+            <ChiefConversation />
           {:else if opening.markedTicketId}
             {#key opening.markedTicketId}
               <TicketRoute

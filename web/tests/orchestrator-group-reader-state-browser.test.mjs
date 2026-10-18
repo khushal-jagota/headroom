@@ -7,7 +7,7 @@ import { createServer } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { scratchDirectory } from "./support/scratch.mjs";
 
-// A native details click and filter removal in one task expose queued-toggle loss.
+// A native details click and membership change in one task expose queued-toggle loss.
 // Pure helpers cannot prove browser event ordering or the real component's remount.
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const scratch = await scratchDirectory();
@@ -24,13 +24,14 @@ import { tick } from 'svelte';
 const mirror = new URLSearchParams(location.search).has('mirror');
 import type { SprintItemWorkspaceTicket } from '../src/lib/types';
 const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
-const tickets = ['done','needs_implementation'].map((stage, i) => ({
+let tickets = $state(['done','needs_implementation'].map((stage, i) => ({
  id:'t_'+i,title:stage,stage,is_backlogged:false,priority:'P2',activity_at:1,
  ticket_status:'empty',waiting_to_closeout:false,has_pending_proposal:false,gating_field:null,
  blocked:false,worker_type:'coding',day_ids:[],sprint_id:null,sprint_name:null,
  awaiting_reply:false,awaiting_answer:false,awaiting_approval:false,
  awaiting_agent_approval:false,assigned:false,agent_state:'idle'
-})) as SprintItemWorkspaceTicket[];
+})) as SprintItemWorkspaceTicket[]);
+(window as any).__setDone = (done: boolean) => {tickets = tickets.map(t => t.id === "t_0" ? {...t,stage:done ? "done" : "needs_implementation"} : t);};
 </script>
 <QueryClientProvider {client}>{#if mirror}<BoardRoute address={{selection:{kind:'item',id:'si_mirror'},view:'items',openFile:null}}/>{:else}<OrchestratorChildren principal={{kind:'sprint_item',id:'si_probe'}} {tickets}/>{/if}</QueryClientProvider>`);
   await writeFile(files[1], `import {mount} from 'svelte';import Host from './${stem}.svelte';import '../../assets/tokens.css';import '../../assets/app.css';mount(Host,{target:document.body});`);
@@ -162,7 +163,6 @@ with sync_playwright() as p:
 
             page = context.new_page()
             page.goto(sys.argv[1])
-            page.get_by_label("Worker state").select_option("done")
             group = page.locator('[data-workspace-group="done"]')
             expect(group).to_be_visible()
             assert not group.evaluate("n=>n.open"), "terminal default changed"
@@ -174,11 +174,10 @@ with sync_playwright() as p:
                 page.wait_for_function("window.__opened === true")
             page.evaluate("""() => {const d=document.querySelector('[data-workspace-group="done"]');
                 d.querySelector('summary').click();
-                const s=document.querySelector('select');s.value='active';
-                s.dispatchEvent(new Event('change',{bubbles:true}));}""")
-            expect(page.locator('[data-workspace-group="empty"]')).to_be_visible()
+                window.__setDone(false);}""")
+            expect(page.locator('[data-workspace-group="empty"] [data-group-count]')).to_have_text("2")
+            page.evaluate("window.__setDone(true)")
             assert page.locator('[data-workspace-group="empty"]').evaluate("n=>n.open"), "unfinished default changed"
-            page.get_by_label("Worker state").select_option("done")
             expect(group).to_be_visible()
             actual = group.evaluate("n=>n.open")
             expected = choice == "open"
@@ -322,7 +321,7 @@ assert all(r['actual']==r['expected'] for r in results), results
   const child = spawn(process.env.PANELS_TEST_PYTHON || join(root,"..",".venv","bin","python"),
     ["-c",script,`http://127.0.0.1:${port}/.test-scratch/${stem}.html`,...process.argv.slice(2)],{stdio:"inherit",cwd:join(root,"..")});
   const code = await new Promise((resolve,reject) => {child.on("error",reject);child.on("exit",resolve);});
-  assert.equal(code,0,"Reader choices must survive same-task filter removal");
+  assert.equal(code,0,"Reader choices must survive same-task membership change");
 } finally {
   await server?.close();
   await Promise.all(files.map(path=>rm(path,{force:true})));

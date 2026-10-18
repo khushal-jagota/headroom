@@ -61,6 +61,7 @@ class ManagedChiefSettings:
     label: str
     skill: ManagedSkill
     launch_defaults: ManagedWorkerLaunchDefaults
+    recap: str = ""
 
 
 @dataclass(frozen=True, slots=True)
