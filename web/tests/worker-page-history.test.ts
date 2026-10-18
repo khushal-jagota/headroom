@@ -14,6 +14,6 @@ describe("Worker page occurred steps", () => {
     expect(workerPageHistory(lifecycle,ticket("needs_plan"))).toEqual({ fields:["brief","plan"], completed:["brief"] });
   });
   it("retains every completed step when the Ticket is done", () => {
-    expect(workerPageHistory(lifecycle,ticket("done"))).toEqual({ fields:["brief","plan","implementation"], completed:["brief","plan","implementation"] });
+    expect(workerPageHistory(lifecycle,ticket("done", { obsolete_step: "Preserved historical text" }))).toEqual({ fields:["brief","plan","implementation"], completed:["brief","plan","implementation"] });
   });
 });
