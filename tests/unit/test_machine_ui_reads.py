@@ -291,3 +291,72 @@ def test_invalid_draft_never_writes(tmp_db: Connection, fields: dict[str, Any]) 
             )
         )
     assert tuple(tmp_db.iterdump()) == before
+
+
+def test_preview_receipt_advances_contact_without_per_ask_liveness(
+    tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from planner.conversation.backends.contracts import TurnToken
+    from planner.previews.contracts import preview_identity
+    from planner.previews.streams import PreviewStreams
+
+    endpoint = _endpoint(tmp_db, fake_clock)
+    tick = [100]
+    monkeypatch.setattr(vps, "now_ms", lambda: tick[0])
+    received = asyncio.Event()
+    original_feed = PreviewStreams.feed
+
+    async def probe() -> None:
+        return None
+
+    async def unexpected_dispatch(*_: object) -> None:
+        pytest.fail("preview receipt must bypass domain dispatch")
+
+    def feed(streams: PreviewStreams, message: WireMessage) -> None:
+        assert endpoint.last_contact_at_ms == 200
+        assert endpoint.observed_at_ms == 100
+        assert endpoint.ask_status("conversation", "ask")["answer_available"] is False
+        original_feed(streams, message)
+        received.set()
+
+    monkeypatch.setattr(endpoint, "_measure_clock", probe)
+    monkeypatch.setattr(endpoint, "_handle", unexpected_dispatch)
+    monkeypatch.setattr(PreviewStreams, "feed", feed)
+
+    async def run() -> None:
+        reader = asyncio.StreamReader()
+        reader.feed_data(encode_frame(_hello()))
+        task = asyncio.create_task(endpoint._session(reader, cast(Any, Writer())))
+        while endpoint.writer is None:
+            await asyncio.sleep(0)
+        identity = cast(ExecutorIdentity, endpoint.identity)
+        child_reference = ChildReference(identity.executor_incarnation, "child", "conversation")
+        turn = TurnToken("turn", 1)
+        child = RemoteBackendChild(child_reference, cast(Any, None))
+        state = SimpleNamespace(child=child, running_turn=SimpleNamespace(token=turn))
+        endpoint.runtime = SimpleNamespace(
+            system=SimpleNamespace(_conversations={"conversation": state})
+        )
+        evidence = AskEvidence(
+            AskReference(child_reference, turn, "ask"),
+            identity.connection_generation,
+            AskReachability.uncertain,
+            100,
+        )
+        monkeypatch.setattr(endpoint.store, "evidence_for_conversation", lambda _: (evidence,))
+        # Reconciled transport permits a preview, but this ask still lacks liveness.
+        endpoint.ready = True
+        tick[0] = 200
+        reader.feed_data(
+            encode_frame(
+                WireMessage(WireMessageKind.preview_close, str(uuid4()), preview_identity(identity))
+            )
+        )
+        await asyncio.wait_for(received.wait(), 1)
+        assert endpoint.ask_status("conversation", "ask")["answer_available"] is False
+        assert endpoint.health()["last_contact_at_ms"] == 200
+        reader.feed_eof()
+        await task
+        assert endpoint.health()["last_contact_at_ms"] == 200
+
+    asyncio.run(run())
