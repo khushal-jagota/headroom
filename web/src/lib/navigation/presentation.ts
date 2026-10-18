@@ -1,11 +1,13 @@
+import type { TicketValue } from './contracts';
 import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
 import type { AgentState, Priority } from '../types';
 import type { WorkspaceTicket, WorkspaceOrchestrator, WorkspaceChief } from '../workspaceRail';
 import type { ConversationSignal } from '../conversationSignal';
 import type { WorkspaceMessageConversation } from '../types';
 
+export type NavigationTicket = WorkspaceTicket & Pick<TicketValue,'created_at' | 'terminal' | 'is_backlogged'>;
 export type NavigationWorkspacePresentation = {
-  readonly tickets: WorkspaceTicket[];
+  readonly tickets: NavigationTicket[];
   readonly orchestrators: WorkspaceOrchestrator[];
   readonly chief: WorkspaceChief | null;
   readonly messages: WorkspaceMessageConversation[];
@@ -36,14 +38,14 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const projects=new Map(records.flatMap(record=>record.kind==='project' ? [[record.id,record.value] as const] : []));
   const orchestratorRecords=records.filter(record=>record.kind==='orchestrator');
   const orchestratorsById=new Map(orchestratorRecords.map(record=>[record.id,record.value]));
-  const tickets: WorkspaceTicket[]=records.flatMap(record=>{
+  const tickets: NavigationTicket[]=records.flatMap(record=>{
     if(record.kind!=='ticket') return [];
     const row=record.value;
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
     const owner=row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner';
     const parked=row.ticket_status==='awaiting_approval';
     const parent=row.orchestrator_kind==='chief' ? null : row.sprint_item_id;
-    return [{id:record.id,title:row.title,priority:priority(row.priority),stage:row.stage,worker_type:row.worker_type,
+    return [{id:record.id,created_at:row.created_at,terminal:row.terminal,title:row.title,priority:priority(row.priority),stage:row.stage,worker_type:row.worker_type,
       ticket_status:row.ticket_status,is_backlogged:row.is_backlogged,blocked:row.blocked,
       activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),

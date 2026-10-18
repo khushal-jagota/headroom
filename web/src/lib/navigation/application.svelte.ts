@@ -3,6 +3,7 @@ import { createNavigationCollection } from './collection';
 import { createNavigationOwner, type NavigationOwnerState } from './owner';
 import { createNavigationSelectors } from './selectors.svelte';
 import { createNavigationTransport } from './transport';
+import type { RenderObserver } from './visibility';
 
 const applicationContext = Symbol('navigation application');
 
@@ -13,10 +14,24 @@ export function provideNavigationApplication() {
   let state = $state.raw<NavigationOwnerState>(owner.getState());
   const unsubscribe = owner.subscribe((next) => { state = next; });
   const selectors = createNavigationSelectors(collection, () => state);
-  const application = { owner, selectors, get state() { return state; } };
+  const boundaries = new Set<RenderObserver>();
+  const application = {
+    owner, selectors, get state() { return state; },
+    registerRenderBoundary(name: string) {
+      const observer = owner.registerObserver(name);
+      boundaries.add(observer);
+      return observer;
+    },
+    disposeRenderBoundary(observer: RenderObserver) {
+      boundaries.delete(observer);
+      observer.dispose();
+    },
+    captureRenderBoundaries: () => [...boundaries],
+  };
   setContext(applicationContext, application);
   onMount(() => { void owner.start().catch(() => undefined); });
   onDestroy(() => {
+    boundaries.clear();
     owner.dispose();
     collection.destroy();
     unsubscribe();

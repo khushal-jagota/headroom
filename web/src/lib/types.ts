@@ -608,3 +608,6 @@ export type WorkspaceMessageConversation = {
   parentTitle: string | null;
   settled: boolean;
 };
+
+/** Exact detail-only reply, independent of shared navigation facts. */
+export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "body" | "artifacts" | "conversation_history">;

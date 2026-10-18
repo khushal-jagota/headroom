@@ -20,6 +20,7 @@ import type {
   SprintsResponse,
   SprintItemsResponse,
   SprintItemWorkspace,
+  SprintItemWorkspaceContent,
   SprintTrackingBody,
   TicketDetail,
   TicketSummariesResponse,
@@ -75,6 +76,11 @@ export const queries = {
     jsonQuery<SprintTrackingBody>(
       ["sprint", sprintId, "tracking"],
       `/api/sprints/${encodeURIComponent(sprintId)}/tracking`
+    ),
+  sprintItemWorkspaceContent: (itemId: string) =>
+    jsonQuery<SprintItemWorkspaceContent>(
+      ["sprint-item", itemId, "workspace-content"],
+      `/api/items/${encodeURIComponent(itemId)}/workspace-content`
     ),
   sprintItemWorkspace: (itemId: string) =>
     jsonQuery<SprintItemWorkspace>(

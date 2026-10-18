@@ -1,12 +1,19 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import OrchestratorChildren from "./OrchestratorChildren.svelte";
   import { createRailHoverController } from "../lib/workspaceRailInteraction";
   import WorkspaceRailHover from "./WorkspaceRailHover.svelte";
-  import type { SprintItemWorkspaceTicket } from "../lib/types";
+  import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { navigationWorkspacePresentation } from "../lib/navigation/presentation";
+  import type { EffectiveNavigationView } from "../lib/navigation/knowledge";
+  import { hoverDomMatches, workspaceHeaderDomMatches } from "../lib/navigation/render";
+  import { lifecycleFor } from "../lib/lifecycle";
+  import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
+  import type { RenderObserver } from "../lib/navigation/visibility";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {
     readBackends,
@@ -27,10 +34,10 @@
   } from "../lib/artifactStrip";
   import { isPlainLinkClick } from "../lib/linkClick";
   import type { ManagedFileTarget } from "../lib/filePreview";
-  import type { SprintItemWorkspace as SprintItemWorkspaceData } from "../lib/types";
+  import type { SprintItemWorkspaceContent } from "../lib/types";
 
   export type SprintItemWorkspaceResource = {
-    data: SprintItemWorkspaceData | undefined;
+    data: SprintItemWorkspaceContent | undefined;
     error: unknown;
     isLoading: boolean;
   };
@@ -49,10 +56,27 @@
   } = $props();
 
   const ownWorkspace = createQuery(() => ({
-    ...queries.sprintItemWorkspace(itemId),
+    ...queries.sprintItemWorkspaceContent(itemId),
     enabled: workspaceResource === null
   }));
-  let workspace = $derived(workspaceResource ?? ownWorkspace);
+  const navigation=(()=>{
+    const context=navigationApplication();
+    if(!context) throw new Error('SprintItemWorkspace requires the application navigation owner');
+    return context;
+  })();
+  const headerObserver=navigation.registerRenderBoundary(`orchestrator-header:${crypto.randomUUID()}`);
+  onDestroy(()=>navigation.disposeRenderBoundary(headerObserver));
+  let displayedView=$state.raw<EffectiveNavigationView | undefined>(undefined);
+  $effect(()=>{const view=navigation.selectors.effective;if(view) displayedView=view;});
+  let shared=$derived(displayedView ? navigationWorkspacePresentation(displayedView) : undefined);
+  let publicItem=$derived(shared?.orchestrators.find(item=>item.id===itemId));
+  let content=$derived(workspaceResource ?? ownWorkspace);
+  let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
+    error:content.error ?? navigation.state.error,isLoading:content.isLoading || !publicItem});
+  const manifests=createQuery(()=>queries.workerTypeManifests());
+  let headerElement=$state<HTMLElement | null>(null);
+  let hoverElement=$state<HTMLDivElement | null>(null);
+  let hoverObserver=$state.raw<RenderObserver | null>(null);
   const startValues = createQuery(() => queries.sprintItemConversationStartValues(itemId));
   let conversationId = $state<string | null>(null);
   let selectedPastConversationId = $state<string | null>(null);
@@ -69,20 +93,27 @@
 
   let hoverTarget = $state<HTMLElement | null>(null);
   let hoverWorkerId = $state<string | null>(null);
-  let hoverWorker = $derived(workspace.data?.tickets.find((ticket) => ticket.id === hoverWorkerId) ?? null);
+  let hoverWorker = $derived(shared?.tickets.find((ticket) => ticket.id === hoverWorkerId && ticket.sprint_item_id===itemId) ?? null);
   let hoverVisible = $state(false);
   let hoverInstant = $state(false);
-  const hover = createRailHoverController<{target:HTMLElement; ticket:SprintItemWorkspaceTicket}>((value, instant) => {
+  const hover = createRailHoverController<{target:HTMLElement; ticket:WorkItemTicketFacts}>((value, instant) => {
     if (!value.target.isConnected) return;
     hoverTarget = value.target; hoverWorkerId = value.ticket.id;
     hoverVisible = true; hoverInstant = instant;
   }, () => hoverVisible = false);
   onDestroy(() => hover.dispose());
-  function hoverRow(target: HTMLElement, ticket: SprintItemWorkspaceTicket, immediate = false): void {
+  function hoverRow(target: HTMLElement, ticket: WorkItemTicketFacts, immediate = false): void {
     hover.enter({target, ticket}, immediate);
   }
+  let observedPointer=$state<string | null>(null);
   $effect(() => {
-    if (workspace.data) conversationId = workspace.data.supervisor.conversation_id;
+    const item=publicItem;
+    if(!item) return;
+    const identity=JSON.stringify([itemId,item.conversation_id]);
+    if(identity!==observedPointer) {
+      observedPointer=identity;
+      conversationId=item.conversation_id;
+    }
   });
 
   onMount(() => {
@@ -91,11 +122,19 @@
       .catch(() => undefined);
   });
 
-  function saveItem(field: "title" | "body" | "priority", value: string): Promise<unknown> {
-    return mutateJson(`/api/items/${encodeURIComponent(itemId)}`, {
-      method: "PATCH",
-      body: { [field]: value }
+  function commandVisibility(headers:Headers | undefined,requiredObservers:readonly RenderObserver[]):void {
+    let fence:unknown;
+    try {fence=JSON.parse(headers?.get('Panels-Navigation-Fence') ?? 'null');} catch {fence=null;}
+    void navigation.owner.waitForVisibility(fence,{requiredObservers});
+  }
+  async function saveItem(field: "title" | "body" | "priority", value: string): Promise<unknown> {
+    const required=navigation.captureRenderBoundaries();
+    const responseMetadata:{headers?:Headers}={};
+    const result=await mutateJson(`/api/items/${encodeURIComponent(itemId)}`, {
+      method: "PATCH",body: { [field]: value },responseMetadata
     });
+    commandVisibility(responseMetadata.headers,required);
+    return result;
   }
 
   let settleBusy = $state(false);
@@ -103,8 +142,11 @@
   async function setSettled(settled: boolean): Promise<void> {
     settleBusy = true;
     settleError = "";
+    const required=navigation.captureRenderBoundaries();
+    const responseMetadata:{headers?:Headers}={};
     try {
-      await mutateJson(`/api/items/${encodeURIComponent(itemId)}/settled`, { method: "PATCH", body: { settled } });
+      await mutateJson(`/api/items/${encodeURIComponent(itemId)}/settled`, { method: "PATCH", body: { settled },responseMetadata });
+      commandVisibility(responseMetadata.headers,required);
     } catch (error) {
       settleError = error instanceof Error ? error.message : "The orchestrator could not be updated.";
     } finally {
@@ -141,7 +183,7 @@
   }
 
   let artifactRows = $derived(
-    workspace.data ? sprintItemArtifactStripItems(workspace.data.id, workspace.data.artifacts) : []
+    workspace.data ? sprintItemArtifactStripItems(itemId, workspace.data.artifacts) : []
   );
   let shownFile = $state<ManagedFileTarget | null>(null);
   let artifactReloadSignal = $state(0);
@@ -182,6 +224,44 @@
     event.preventDefault();
     showFile(null);
   }
+  $effect(()=>{
+    const view=navigation.selectors.effective;
+    const generation=navigation.state.generation;
+    const root=headerElement;
+    const item=publicItem;
+    if(!view?.runtimeCurrent || view!==displayedView || !root || !item) return;
+    const observation=headerObserver.observeSelectors(view.publication,generation);
+    let obsolete=false;
+    void tick().then(()=>{
+      if(obsolete || !root.isConnected || navigation.state.generation!==generation || navigation.selectors.effective!==view) return;
+      if(workspaceHeaderDomMatches(root,item)) headerObserver.acknowledgeRender(view.publication,observation);
+    });
+    return ()=>{obsolete=true;};
+  });
+  $effect(()=>{
+    if(!hoverVisible || !hoverElement) return;
+    const observer=navigation.registerRenderBoundary(`orchestrator-hover:${crypto.randomUUID()}`);
+    hoverObserver=observer;
+    return ()=>{navigation.disposeRenderBoundary(observer);hoverObserver=null;};
+  });
+  $effect(()=>{
+    const view=navigation.selectors.effective;
+    const generation=navigation.state.generation;
+    const root=hoverElement, target=hoverTarget,observer=hoverObserver,worker=hoverWorker;
+    const parent=publicItem;
+    const stage=worker ? workspaceWorkerStageSentence(worker,lifecycleFor(manifests.data,worker.worker_type)) : '';
+    if(!view?.runtimeCurrent || view!==displayedView || !root || !target?.isConnected || !observer || !worker || !parent || !hoverVisible) return;
+    const observation=observer.observeSelectors(view.publication,generation);
+    let obsolete=false;
+    void tick().then(()=>{
+      if(obsolete || !root.isConnected || !target.isConnected || hoverTarget!==target || !hoverVisible
+        || navigation.state.generation!==generation || navigation.selectors.effective!==view) return;
+      if(hoverDomMatches(root,worker.title,worker.recap_preview ?? '',stage,worker.conversation_signal,worker.conversation_id,parent.title))
+        observer.acknowledgeRender(view.publication,observation);
+    });
+    return ()=>{obsolete=true;};
+  });
+
 </script>
 
 <svelte:window onkeydown={closeFileOnEscape} />
@@ -205,7 +285,7 @@
       {#if workspace.data}
         {@const item = workspace.data}
         <div class="sprint-item-column">
-          <header class="sprint-workspace-head">
+          <header bind:this={headerElement} class="sprint-workspace-head">
             <div class="page-eyebrow">
               <span>{item.project}</span>
               {#if backHref !== null}<span aria-hidden="true">/</span><a href={backHref} aria-label={`Back to ${sprintName}`}>↖</a>{/if}
@@ -220,7 +300,7 @@
                 placeholder="(untitled Outcome)"
                 onSave={(value) => saveItem("title", value)}
               />
-              <ConversationSignalMark signal={item.conversation_signal} conversationId={item.supervisor.conversation_id} class="sprint-workspace-title-mark" />
+              <ConversationSignalMark signal={item.conversation_signal} conversationId={item.conversation_id} class="sprint-workspace-title-mark" />
             </h1>
             <ClampedText
               class="sprint-workspace-brief"
@@ -240,9 +320,9 @@
           </header>
 
           <section class="orchestrator-workers" aria-label="Workers">
-            <OrchestratorChildren principal={{ kind: "sprint_item", id: itemId }} tickets={item.tickets}
+            <OrchestratorChildren principal={{ kind: "sprint_item", id: itemId }} publication={displayedView?.publication} tickets={shared?.tickets.filter(ticket=>ticket.sprint_item_id===itemId) ?? []}
               onHover={(element, id, immediate) => {
-                const ticket = item.tickets.find((candidate) => candidate.id === id);
+                const ticket = shared?.tickets.find((candidate) => candidate.id === id && candidate.sprint_item_id===itemId);
                 if (ticket) hoverRow(element, ticket, immediate);
               }} onLeave={() => hover.leave()} />
           </section>
@@ -282,7 +362,7 @@
   </div>
 </div>
 
-<WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Orchestrator"} worker={hoverWorker} cards={[]} rail={hoverTarget} />
+<WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Orchestrator"} worker={hoverWorker} cards={[]} rail={hoverTarget} />
 <style>
   .sprint-item-doc { scrollbar-gutter:auto; }
   .sprint-item-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; width:min(100%, 768px); max-width:768px; margin-inline:auto; padding-inline:var(--space-5); }

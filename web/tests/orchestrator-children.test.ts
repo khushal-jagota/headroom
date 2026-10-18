@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterOrchestratorChildren } from "../src/lib/orchestratorChildren";
+import { chiefChildrenPage, filterOrchestratorChildren } from "../src/lib/orchestratorChildren";
 import { orchestratorPageGroups } from "../src/lib/orchestratorPage";
 import type { OrchestratorChildFilter, SprintItemWorkspaceTicket } from "../src/lib/types";
 
@@ -11,6 +11,25 @@ const child = (id: string, stage: string, is_backlogged = false): SprintItemWork
 });
 
 describe("orchestrator child discovery", () => {
+  it("preserves Chief canonical terminal filtering and creation-page membership before groups",()=>{
+    const rows=Array.from({length:31},(_,i)=>({...child(`child-${String(i).padStart(2,'0')}`,"needs_implementation"),
+      created_at:Math.floor(i/2),terminal:false,activity_at:100-i}));
+    rows.reverse();
+    const first=chiefChildrenPage(rows,"active",0);
+    expect(first.tickets.map(row=>row.id)).toEqual(Array.from({length:30},(_,i)=>`child-${String(i).padStart(2,'0')}`));
+    expect(first.page).toEqual({match_count:31,return_count:30,limit:30,offset:0,omitted_before:0,omitted_after:1,complete:false,next_offset:30});
+    expect(chiefChildrenPage(rows,"active",30).tickets.map(row=>row.id)).toEqual(['child-30']);
+    expect(chiefChildrenPage([],"active",30).page).toMatchObject({omitted_before:0,omitted_after:0,complete:true});
+    const terminal={...rows[0],id:'custom-terminal',stage:'cancelled',terminal:true,is_backlogged:true};
+    const done={...terminal,id:'done',stage:'done'};
+    expect(chiefChildrenPage([terminal,done],"active",0).tickets).toEqual([]);
+    expect(chiefChildrenPage([terminal,done],"backlogged",0).tickets).toEqual([]);
+    expect(chiefChildrenPage([terminal,done],"done",0).tickets.map(row=>row.id)).toEqual(['done']);
+    expect(filterOrchestratorChildren([terminal,done],"active").map(row=>row.id)).toEqual(['custom-terminal']);
+    const activityOrder=first.tickets.map((row,i)=>({...row,activity_at:i}));
+    expect(orchestratorPageGroups(activityOrder).flatMap(group=>group.tickets).map(row=>row.id)).toEqual(activityOrder.map(row=>row.id).reverse());
+  });
+
   it("keeps terminal backlog in existing history filters without widening active discovery", () => {
     const rows = [child("active", "needs_implementation", true), child("done", "done", true)];
     const expected: Record<OrchestratorChildFilter, string[]> = {

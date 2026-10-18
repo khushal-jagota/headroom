@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { rm, writeFile, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
@@ -16,23 +16,39 @@ try {
   await writeFile(files[0], `<script lang="ts">
 import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
 import { tick } from "svelte";
+import { provideNavigationApplication } from "../src/lib/navigation/application.svelte";
+const navigation=provideNavigationApplication();
+(window as any).__navigation=navigation;
 import OrchestratorChildren from "../src/components/OrchestratorChildren.svelte";
 import type { OrchestratorPrincipal, SprintItemWorkspaceTicket } from "../src/lib/types";
 const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
+let mounted=$state(true);
+(window as any).__unmount=()=>mounted=false;
 let principal = $state<OrchestratorPrincipal>({kind:"chief",id:"chief"});
 let tickets = $state<SprintItemWorkspaceTicket[] | undefined>(undefined);
-(window as any).__refresh = async () => { await client.invalidateQueries(); await tick(); };
+(window as any).__refresh = async () => {
+ await client.invalidateQueries();
+ const response=await (await fetch('/api/navigation/snapshot')).json();
+ const previous=navigation.owner.getState().publication!;
+ const keys=new Set(response.snapshot.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
+ const batch={...response.snapshot,base_revision:previous.continuity.revision,upserts:response.snapshot.records,
+ deletes:previous.records.filter(row=>!keys.has(JSON.stringify([row.kind,row.id]))).map(row=>({kind:row.kind,id:row.id}))};delete batch.records;
+ const published=new Promise<void>(resolve=>{const unsubscribe=navigation.owner.subscribe(state=>{if(state.publication?.continuity.revision===batch.revision){unsubscribe();resolve();}});});
+ (window as any).__navigationSource.dispatchEvent(new MessageEvent('batch',{data:JSON.stringify({wire_version:response.wire_version,authority:response.authority,batch}),lastEventId:response.cursor}));
+ await published;await tick();
+};
 (window as any).__setRows = (rows: SprintItemWorkspaceTicket[]) => { tickets = rows; };
 (window as any).__setItem = (rows: SprintItemWorkspaceTicket[]) => { principal = {kind:"sprint_item",id:"item one"}; tickets = rows; };
 </script>
-<QueryClientProvider {client}><OrchestratorChildren {principal} {tickets} /></QueryClientProvider>`);
-  await writeFile(files[1], `import { mount } from "svelte"; import Host from "./${stem}.svelte"; import "../../assets/tokens.css"; import "../../assets/app.css"; mount(Host,{target:document.getElementById("app")!});`);
+<QueryClientProvider {client}>{#if mounted}<OrchestratorChildren {principal} {tickets} />{/if}</QueryClientProvider>`);
+  await writeFile(files[1], `globalThis.EventSource=class extends EventTarget {onerror=null;constructor(url){super();if(String(url).startsWith('/api/navigation/events?'))globalThis.__navigationSource=this;}close(){}};import { mount } from "svelte"; import Host from "./${stem}.svelte"; import "../../assets/tokens.css"; import "../../assets/app.css"; mount(Host,{target:document.getElementById("app")!});`);
   await writeFile(files[2], `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
   server = await createServer({root,configFile:false,plugins:[svelte()],server:{host:"127.0.0.1",port:0},logLevel:"error"});
   await server.listen();
   const address = server.httpServer.address();
   assert.ok(address && typeof address === "object");
-  const script = String.raw`
+  const fixturePython=await readFile(join(root,"tests/support/navigation/browser-fixture.py"),"utf8");
+  const script = fixturePython + String.raw`
 import json, os, pathlib, sys
 from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import sync_playwright, expect
@@ -45,23 +61,20 @@ def child(name, stage="needs_implementation", backlogged=False, **facts):
     row.update(facts)
     return row
 requests=[]
+source_rows=[child(f"quiet-{i}",created_at=i//2,activity_at=100-i) for i in range(29)]
+source_rows.extend([child("deferred",backlogged=True,awaiting_approval=True,created_at=30),child("quiet-30",created_at=31),
+    child("Completed workspace history","done",True,awaiting_approval=True,created_at=32)])
+workers={"chief_of_staff":{"label":"Chief of Staff","conversation_id":None},"workers":[]}
 def respond(route):
-    query=parse_qs(urlparse(route.request.url).query)
-    requests.append(query)
-    assert query["orchestrator_kind"] == ["chief"]
-    offset=int(query["offset"][0]); stage=query.get("stage",[None])[0]
-    if stage == "done": rows=[child("Completed workspace history", "done", True, awaiting_approval=True)]; total=1
-    elif stage: rows=[child(stage,stage)]; total=1
-    elif query.get("is_backlogged") == ["true"]: rows=[child("deferred",backlogged=True,awaiting_approval=True)]; total=1
-    else: total=31; rows=[child(f"quiet-{i}") for i in range(offset,min(offset+30,total))]
-    after=max(0,total-offset-len(rows))
-    page=dict(match_count=total,return_count=len(rows),limit=30,offset=offset,omitted_before=min(offset,total),
-        omitted_after=after,complete=offset==0 and after==0,next_offset=offset+len(rows) if after else None)
-    route.fulfill(status=200,content_type="application/json",body=json.dumps(dict(tickets=rows,page=page)))
+    path=urlparse(route.request.url).path
+    requests.append(path)
+    assert path=="/api/navigation/snapshot", "competing summary request: "+path
+    board={"columns":[{"cards":list(reversed(source_rows))}],"sprint_items":[]}
+    route.fulfill(status=200,content_type="application/json",body=json.dumps(navigation_response(board,workers)))
 with sync_playwright() as p:
     browser=p.chromium.launch(headless=True)
     page=browser.new_page(viewport=dict(width=1100,height=900))
-    page.route("**/api/tickets?**",respond)
+    page.route("**/api/**",respond)
     page.goto(sys.argv[1])
     expect(page.locator('[data-sprint-ticket-id]')).to_have_count(30)
     expect(page.get_by_role("link",name="quiet-0",exact=True)).to_have_attribute("href","#/workspace/quiet-0")
@@ -70,7 +83,7 @@ with sync_playwright() as p:
     expect(page.get_by_role("link",name="quiet-30",exact=True)).to_be_visible()
     page.get_by_label("Worker state").select_option("backlogged")
     expect(page.get_by_role("link",name="deferred",exact=True)).to_be_visible()
-    assert requests[-1]["offset"] == ["0"]
+    assert len(requests)==1, "local filter/page changes must not request another summary"
     backlog=page.locator('[data-workspace-group="backlog"]')
     expect(backlog).to_be_visible()
     expect(backlog.locator('summary')).to_contain_text("Backlog")
@@ -81,7 +94,7 @@ with sync_playwright() as p:
     page.wait_for_function("!document.querySelector('[data-workspace-group=backlog]').open")
     before_refresh=len(requests)
     page.evaluate("window.__refresh()")
-    assert len(requests)>before_refresh, "refresh must complete a controlled API read"
+    assert len(requests)>before_refresh, "refresh must publish a controlled source batch"
     assert not backlog.evaluate("node=>node.open")
     for state,stage in [("done","done")]:
         page.get_by_label("Worker state").select_option(state)
@@ -144,6 +157,11 @@ with sync_playwright() as p:
     expect(history).to_have_attribute("href","#/workspace/item/item%20one/Completed%20workspace%20history")
     expect(page.locator('[data-workspace-group="done"]')).to_have_count(0)
     assert len(requests)==count
+    captured=page.evaluate('window.__navigation.captureRenderBoundaries().map(observer=>observer.id)')
+    assert len(captured)==1
+    page.evaluate('window.__unmount()')
+    page.wait_for_function('window.__navigation.captureRenderBoundaries().length===0')
+    assert page.evaluate("window.__navigation.owner.getState().connection==='subscribed'")
     browser.close()
 print("Scoped child browser checks passed")
 `;

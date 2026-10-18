@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { rm, writeFile, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
@@ -18,10 +18,36 @@ try {
   await writeFile(paths[0], `<script lang="ts">
 import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 import BoardRoute from '../src/routes/BoardRoute.svelte';
+import { tick } from 'svelte';
+import { provideNavigationApplication } from '../src/lib/navigation/application.svelte';
+const navigation=provideNavigationApplication();
+(window as any).__navigation=navigation;
+const wait=navigation.owner.waitForVisibility;
+navigation.owner.waitForVisibility=(fence,options)=>{
+ (window as any).__commandWaitStatus='pending';
+ (window as any).__commandRequired=options.requiredObservers.slice();
+ return wait(fence,options).then(result=>{(window as any).__commandWaitStatus=result.status;return result;});
+};
+(window as any).__startAllWait=()=>{
+ const publication=navigation.owner.getState().publication!;
+ (window as any).__allWaitStatus='pending';
+ void navigation.owner.waitForVisibility({...publication.continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic-proof'},
+ {requiredObservers:navigation.captureRenderBoundaries(),timeoutMs:1000}).then(result=>(window as any).__allWaitStatus=result.status);
+};
 import { parseWorkspaceAddress } from '../src/lib/workspaceAddress';
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 let address = $state(parseWorkspaceAddress(window.location.hash)!);
-(window as any).__refresh = () => client.invalidateQueries();
+(window as any).__refresh = async () => {
+ await client.invalidateQueries();
+ const response=await (await fetch('/api/navigation/snapshot')).json();
+ const previous=navigation.owner.getState().publication!;
+ const keys=new Set(response.snapshot.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
+ const batch={...response.snapshot,base_revision:previous.continuity.revision,upserts:response.snapshot.records,
+ deletes:previous.records.filter(row=>!keys.has(JSON.stringify([row.kind,row.id]))).map(row=>({kind:row.kind,id:row.id}))};delete batch.records;
+ const published=new Promise<void>(resolve=>{const unsubscribe=navigation.owner.subscribe(state=>{if(state.publication?.continuity.revision===batch.revision){unsubscribe();resolve();}});});
+ (window as any).__navigationSource.dispatchEvent(new MessageEvent('batch',{data:JSON.stringify({wire_version:response.wire_version,authority:response.authority,batch}),lastEventId:response.cursor}));
+ await published;await tick();
+};
 </script>
 <svelte:window onhashchange={() => address = parseWorkspaceAddress(window.location.hash) ?? address} />
 <div class="shell">
@@ -29,12 +55,13 @@ let address = $state(parseWorkspaceAddress(window.location.hash)!);
   <header class="shell-nav"><nav class="shell-links">Panels · Workspace</nav></header>
   <main class="shell-content"><div class="screen"><QueryClientProvider {client}><BoardRoute {address} /></QueryClientProvider></div></main>
 </div>`);
-  await writeFile(paths[1], `import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, { target: document.getElementById('app')! });`);
+  await writeFile(paths[1], `globalThis.__openStreams=new Set();globalThis.EventSource=class extends EventTarget {onerror=null;constructor(url){super();this.url=String(url);globalThis.__openStreams.add(this.url);if(this.url.startsWith('/api/navigation/events?'))globalThis.__navigationSource=this;}close(){globalThis.__openStreams.delete(this.url);}};import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, { target: document.getElementById('app')! });`);
   await writeFile(paths[2], `<html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
   server = await createServer({ root, configFile: false, plugins: [svelte()], server: { host: "127.0.0.1", port: 0 }, logLevel: "error" });
   await server.listen();
   const { port } = server.httpServer.address();
-  const script = String.raw`
+  const fixturePython=await readFile(join(root,"tests/support/navigation/browser-fixture.py"),"utf8");
+  const script = fixturePython + String.raw`
 import json, os, pathlib, sys
 from playwright.sync_api import sync_playwright, expect
 
@@ -83,18 +110,41 @@ board = dict(columns=[dict(stage="needs_implementation", cards=[t for i in items
 workers = dict(chief_of_staff=dict(label="Chief of Staff", needs_me=False, awaiting_reply=False,
     agent_working=False, latest_turn_ended_sequence=0), workers=[])
 requests = []
+delivered_pointer = "delivered-local"
+content_failure = False
 
 def respond(route):
     path = route.request.url.split("/api/", 1)[1].split("?")[0]
     requests.append(path)
-    if path == "board": result = board
-    elif path == "workers": result = workers
-    elif path.startswith("items/") and path.endswith("/workspace"):
-        result = next(i for i in items if i["id"] == path.split("/")[1])
+    if path == "navigation/snapshot": result = navigation_response(board,workers)
+    elif path == "board": raise AssertionError('competing board summary read')
+    elif path == "workers":
+        assert '#/workspace/chief-of-staff' in route.request.frame.url
+        result = workers
+    elif path == "items/si_focus" and route.request.method == "PATCH":
+        items[0].update(route.request.post_data_json)
+        fence={"version":1,"scope":"fixture-navigation-scope","epoch":"fixture-navigation","schema_version":SCHEMA_VERSION,
+            "semantics":SUPPORTED_SEMANTICS,"revision":str(_navigation_revision+1),"coverage":"complete","witnesses":["a"*64],"signature":"synthetic-proof"}
+        route.fulfill(status=200,content_type='application/json',headers={"Panels-Navigation-Fence":json.dumps(fence)},body='{}')
+        return
+    elif path.startswith("items/") and path.endswith("/conversation/send"):
+        result = {"conversation_id":delivered_pointer,"fate":"started"}
+    elif path.startswith("conversation/conversations/"):
+        identity=path.split('/')[2]
+        if path.endswith('/events'): result={"events":[]}
+        else: result={"conversation_id":identity,"backend_key":"codex","supports_steer":True,"model":"gpt-test",
+            "reasoning_effort":None,"workspace_folder":"/tmp","access":"full","role_text":None,
+            "identity_environment_variable_names":[],"latest_sequence":0,"owner_read_through_sequence":0,
+            "is_running":False,"held_prompts":[],"pending_permission_ask":None,"pending_user_input":None,"composer_catalog":[]}
+    elif path.startswith("items/") and path.endswith("/workspace-content"):
+        if content_failure:
+            route.fulfill(status=503,content_type='application/json',body='{"error":{"code":"content_unavailable","message":"Content unavailable"}}')
+            return
+        result = {key:next(i for i in items if i["id"] == path.split("/")[1])[key] for key in ["body","artifacts","conversation_history"]}
     elif path == "worker-types": result = dict(worker_types=[])
     elif path == "conversation/backends": result = dict(backends=[])
     elif path == "chief/conversation": result = dict(conversation_id=None)
-    elif path.endswith("start-values"): result = dict(backends=[], current=None)
+    elif path.endswith("start-values"): result = dict(backend_key="codex",model=None,reasoning_effort=None)
     elif path == "tickets" and "detail=summary" in route.request.url:
         result = dict(tickets=[], page=dict(match_count=0, return_count=0, limit=30, offset=0,
             omitted_before=0, omitted_after=0, complete=True, next_offset=None))
@@ -126,6 +176,8 @@ with sync_playwright() as p:
     page.route("**/api/**", respond)
     page.goto(sys.argv[1] + "#/workspace/item/si_focus")
     expect(page.locator('[data-workspace-group="agent"]')).to_be_visible()
+    page.evaluate('window.__startAllWait()')
+    page.wait_for_function("window.__allWaitStatus==='included'")
     # Sample actual transition frames: pointer exit must never reveal an accent border.
     selected = page.locator('[data-sprint-item="si_focus"]')
     selected.hover()
@@ -203,6 +255,53 @@ with sync_playwright() as p:
     page.evaluate("window.__refresh()")
     expect(page.locator('[data-sprint-ticket-id="t_agent"] .stage-mark')).to_have_count(0)
     expect(page.locator('[data-workspace-group="agent"] summary .sprint-workspace-count')).to_have_text("1")
+
+    # A delivered local pointer survives unrelated detail refetch and publications.
+    composer=page.locator('[data-conversation-input]')
+    composer.fill('Pointer continuation proof')
+    composer.press('Enter')
+    page.wait_for_function("() => [...window.__openStreams].some(url=>url.includes('delivered-local'))")
+    assert 'conversation/conversations/delivered-local' in requests
+    page.evaluate('window.__refresh()')
+    # The actual composer still belongs to the delivered conversation after an
+    # unchanged canonical pointer and a distinct content-only response.
+    assert page.evaluate("[...window.__openStreams].some(url=>url.includes('delivered-local'))")
+    items[0]['conversation_id']='canonical-next'
+    page.evaluate('window.__refresh()')
+    page.wait_for_function("() => [...window.__openStreams].some(url=>url.includes('canonical-next'))")
+    assert 'conversation/conversations/canonical-next' in requests
+
+    composer.click()
+    page.locator('.chat-overflow > .chat-overflow-btn').click()
+    page.locator('[data-conversation-new-arm]').click()
+    page.locator('[data-conversation-new-confirm]').click()
+    page.wait_for_function("() => ![...window.__openStreams].some(url=>url.includes('canonical-next'))")
+    page.evaluate('window.__refresh()')
+    assert not page.evaluate("[...window.__openStreams].some(url=>url.includes('canonical-next'))"), 'unchanged old pointer must not undo local reset'
+    items[0]['conversation_id']=None
+    page.evaluate('window.__refresh()')
+
+    # Title save preserves its local edit and waits on a fixed set of mounted
+    # real boundaries, independently of the command result and detail refetch.
+    title_edit=page.locator('.sprint-workspace-title [contenteditable]')
+    title_edit.fill('Updated orchestrator title')
+    title_edit.press('Enter')
+    page.wait_for_function("window.__commandWaitStatus==='pending'")
+    assert page.evaluate('window.__commandRequired.length') >= 3
+    page.evaluate('window.__refresh()')
+    page.wait_for_function("window.__commandWaitStatus==='included'")
+    expect(title_edit).to_have_text('Updated orchestrator title')
+    expect(page.locator('[data-sprint-item="si_focus"] .item-title')).to_have_text('Updated orchestrator title')
+
+    # A failed detail read preserves both the shared header and prior body.
+    content_failure=True
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.sprint-item-doc .error-code')).to_have_text('content_unavailable')
+    expect(page.locator('.sprint-workspace-title')).to_contain_text('Updated orchestrator title')
+    expect(page.locator('[data-sprint-item-brief]')).to_contain_text('Shared work and owner decisions')
+    content_failure=False
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.sprint-item-doc .error-line')).to_have_count(0)
 
     # Real rail layout at tall, short, and compact viewports with both lists overflowing.
     for label, width, height in [("tall",1440,1000), ("short",1280,480), ("compact",390,560)]:

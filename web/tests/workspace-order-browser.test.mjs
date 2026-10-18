@@ -155,12 +155,12 @@ def respond(route):
         result = navigation_response(board,workers)
     elif path == "board" or path == "workers": raise AssertionError("summary query remains active: " + path)
     elif path.endswith("/recap-preview"): raise AssertionError("unexpected preview request: " + path)
-    elif path.startswith("items/") and path.endswith("/workspace"):
+    elif path.startswith("items/") and path.endswith("/workspace-content"):
         item_id = path.split("/")[1]
         if item_id == "si_old" and delay_old:
             held.append(route)
             return
-        result = workspace(item_id)
+        result = {key:workspace(item_id)[key] for key in ["body","artifacts","conversation_history"]}
     # The child click exercises the actual TicketRoute boundary without inventing
     # another complete Ticket fixture. A missing Ticket still preserves its address.
     elif path == "tickets":
@@ -216,7 +216,7 @@ with sync_playwright() as p:
     # Python route interception keeps this response pending until selection is proven.
     assert len(held) == 1, "the full workspace request was not delayed"
     delay_old = False
-    fulfill(held.pop(), workspace("si_old"))
+    fulfill(held.pop(), {key:workspace("si_old")[key] for key in ["body","artifacts","conversation_history"]})
     expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, expected)
     rows = page.locator('[data-sprint-item="si_old"] [data-ticket-id]')

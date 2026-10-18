@@ -44,11 +44,11 @@
       displayedPublication = effective.publication;
     }
   });
-  const railObserver = navigation.owner.registerObserver(`workspace-rail:${crypto.randomUUID()}`);
-  onDestroy(() => railObserver.dispose());
+  const railObserver = navigation.registerRenderBoundary(`workspace-rail:${crypto.randomUUID()}`);
+  onDestroy(() => navigation.disposeRenderBoundary(railObserver));
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let opening = $derived(whatTheAddressOpens(address));
-  const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspace(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
+  const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspaceContent(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
   let allCards = $derived(workspace?.tickets ?? []);
   let desiredRail = $derived(buildWorkspaceRail(allCards, workspace?.orchestrators ?? []));
   let rail = $state(buildWorkspaceRail([]));
@@ -190,9 +190,9 @@
   });
   $effect(() => {
     if (!hoverVisible || !hoverElement) return;
-    const observer = navigation.owner.registerObserver(`workspace-hover:${crypto.randomUUID()}`);
+    const observer = navigation.registerRenderBoundary(`workspace-hover:${crypto.randomUUID()}`);
     hoverObserver = observer;
-    return () => { observer.dispose(); hoverObserver = null; };
+    return () => { navigation.disposeRenderBoundary(observer); hoverObserver = null; };
   });
   $effect(() => {
     const publication = displayedPublication;
@@ -222,7 +222,7 @@
     return () => { obsolete = true; };
   });
   async function settle(item: WorkspaceRailItem, settled: boolean): Promise<void> {
-    const requiredObservers = [railObserver,...(hoverObserver ? [hoverObserver] : [])];
+    const requiredObservers = navigation.captureRenderBoundaries();
     const responseMetadata: {headers?: Headers} = {};
     busyItem = item.id; settleError = ""; hoverVisible = false; hover.leave();
     try {

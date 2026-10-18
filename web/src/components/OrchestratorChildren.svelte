@@ -1,19 +1,22 @@
 <script lang="ts">
   import { railPreview } from "../lib/workspaceRailInteraction";
-  import { createQuery } from "@tanstack/svelte-query";
-  import { queries } from "../lib/queryCatalogue";
-  import { filterOrchestratorChildren } from "../lib/orchestratorChildren";
+  import { onDestroy, tick } from "svelte";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { navigationWorkspacePresentation } from "../lib/navigation/presentation";
+  import { childrenDomMatches } from "../lib/navigation/render";
+  import { chiefChildrenPage, filterOrchestratorChildren } from "../lib/orchestratorChildren";
   import { orchestratorPageGroups } from "../lib/orchestratorPage";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import type { OrchestratorPrincipal, OrchestratorChildFilter, SprintItemWorkspaceTicket } from "../lib/types";
+  import type { OrchestratorPrincipal, OrchestratorChildFilter } from "../lib/types";
   import Disclosure from "./Disclosure.svelte";
   import ResourceState from "./ResourceState.svelte";
   import SprintTicketRow from "./SprintTicketRow.svelte";
 
-  let { principal, tickets, onHover = undefined, onLeave = () => undefined }: {
+  let { principal, tickets, publication, onHover = undefined, onLeave = () => undefined }: {
     principal: OrchestratorPrincipal;
-    tickets?: readonly SprintItemWorkspaceTicket[];
+    publication?: import("../lib/navigation/collection").NavigationPublication;
+    tickets?: readonly (WorkItemTicketFacts & {is_backlogged:boolean})[];
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave?: () => void;
   } = $props();
@@ -25,13 +28,16 @@
     { value: "active", label: "Active" }, { value: "backlogged", label: "Backlogged" },
     { value: "done", label: "Done" }
   ];
-  const children = createQuery(() => ({
-    ...queries.orchestratorTicketSummaries(principal, filter, offset),
-    enabled: tickets === undefined
-  }));
-  let rows = $derived(tickets === undefined ? children.data?.tickets ?? [] : filterOrchestratorChildren(tickets, filter));
+  const navigation=navigationApplication();
+  const observer=navigation?.registerRenderBoundary(`orchestrator-children:${crypto.randomUUID()}`);
+  onDestroy(()=>{if(observer) navigation?.disposeRenderBoundary(observer);});
+  let effective=$state.raw<import('../lib/navigation/knowledge').EffectiveNavigationView | undefined>(undefined);
+  $effect(()=>{const view=navigation?.selectors.effective;if(view) effective=view;});
+  let shared=$derived(effective ? navigationWorkspacePresentation(effective) : undefined);
+  let chiefPage=$derived(shared ? chiefChildrenPage(shared.tickets.filter(ticket=>ticket.orchestrator?.kind==='chief'),filter,offset) : undefined);
+  let rows = $derived(tickets === undefined ? chiefPage?.tickets ?? [] : filterOrchestratorChildren(tickets, filter));
   let groups = $derived(orchestratorPageGroups<WorkItemTicketFacts>(rows));
-  let page = $derived(tickets === undefined ? children.data?.page : undefined);
+  let page = $derived(tickets === undefined ? chiefPage?.page : undefined);
   let scope = $derived(`${principal.kind}:${principal.id}`);
   let previousScope = $state("");
   $effect(() => {
@@ -51,6 +57,27 @@
     filter = value as OrchestratorChildFilter;
     offset = 0;
   }
+  $effect(()=>{
+    const view=effective;
+    const root=groupRoot;
+    const generation=navigation?.state.generation;
+    const expectedGroups=groups;
+    const expectedPage=page;
+    const expectedPrincipal=principal;
+    const suppliedPublication=publication;
+    const expectedFilter=filter;
+    const open={...groupOpen};
+    if(!navigation || !observer || !view?.runtimeCurrent || (tickets!==undefined && suppliedPublication!==view.publication) || navigation.selectors.effective!==view || !root || generation===undefined) return;
+    const observation=observer.observeSelectors(view.publication,generation);
+    let obsolete=false;
+    void tick().then(()=>{
+      if(obsolete || !root.isConnected || navigation.state.generation!==generation || navigation.selectors.effective!==view) return;
+      if(childrenDomMatches(root,expectedPrincipal,expectedFilter,expectedGroups,expectedPage,open))
+        observer.acknowledgeRender(view.publication,observation);
+    });
+    return ()=>{obsolete=true;};
+  });
+
 </script>
 
 <section bind:this={groupRoot} class="orchestrator-children" aria-label="Workers" data-orchestrator-children={scope}>
@@ -59,9 +86,9 @@
       {#each filters as option}<option value={option.value}>{option.label}</option>{/each}
     </select>
   </label>
-  <ResourceState error={tickets === undefined ? children.error : null} loading={tickets === undefined && children.isLoading}
-    hasData={tickets !== undefined || children.data !== undefined} loadingText="Loading Workers…">
-    {#each groups as group (group.key)}
+  <ResourceState error={tickets === undefined ? navigation?.state.error : null} loading={tickets === undefined && !shared}
+    hasData={tickets !== undefined || shared !== undefined} loadingText="Loading Workers…">
+    {#each groups as group (`${scope}:${group.key}`)}
       <Disclosure variant="orchestrator-group" class="sprint-workspace-status" data-workspace-group={group.key}
         defaultOpen={groupOpen[group.key] ?? (group.key !== "done")}
         onReaderToggle={(open) => groupOpen[group.key] = open} chevron="none">

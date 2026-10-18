@@ -192,7 +192,7 @@ def respond(route):
     elif path.endswith("/recap-preview"): raise AssertionError("unexpected preview request: " + path)
     elif path == "worker-types": result = manifest
     elif path == "backends": result = {"backends": []}
-    elif path.endswith("/workspace"): result = {**workspace,"tickets":board["sprint_items"][0]["tickets"]}
+    elif path.endswith("/workspace-content"): result = {key:workspace[key] for key in ["body","artifacts","conversation_history"]}
     elif path.endswith("/start-values"): result = {"backend_key":"codex","model":None,"reasoning_effort":None}
     elif path.startswith("tickets/") or path == "tickets": result = ticket
     elif path == "chief/conversation": result = {"conversation_id":None}
