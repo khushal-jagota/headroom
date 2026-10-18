@@ -205,6 +205,7 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         "waiting_to_closeout": facts.waiting_to_closeout,
         "id": str(row["id"]),
         "title": str(row["title"]),
+        "locale": str(row["locale"]),
         "worker_type": str(row["worker_type"]),
         "stage": str(row["stage"]),
         "ticket_status": facts.ticket_status.value,
@@ -278,7 +279,7 @@ def list_ticket_summaries(
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
     searchable_guidance = "tickets.guidance" if filters.search else "NULL"
     rows = conn.execute(
-        "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
+        "SELECT tickets.id, tickets.title, tickets.locale, tickets.worker_type, tickets.stage, "
         "tickets.is_backlogged, "
         "tickets.worker_step_claim, tickets.priority, tickets.recap, "
         "tickets.pending_proposal, "

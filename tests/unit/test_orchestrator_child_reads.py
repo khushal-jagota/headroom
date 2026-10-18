@@ -26,6 +26,7 @@ def seed(
     item: str | None = None,
     backlogged: bool = False,
     stage: str = "needs_brief",
+    locale: str = "vps",
 ) -> str:
     ticket = data.create_ticket(
         conn,
@@ -35,6 +36,7 @@ def seed(
         now=1,
         title_max_chars=200,
         sprint_item_id=item,
+        locale=locale,
     )
     conn.execute(
         "UPDATE tickets SET stage=?, is_backlogged=? WHERE id=?",
@@ -112,7 +114,7 @@ def test_api_scopes_chief_and_item_before_paging_and_rejects_full_scope(tmp_path
     app, path = _make_app(tmp_path)
     conn = connect(str(path))
     item_api = seed_item(conn, "item_api")
-    expected = seed(conn, title="Chief")
+    expected = seed(conn, title="Chief", locale="macos")
     item = seed(conn, title="Item", item=item_api)
     conn.close()
     with TestClient(app) as client:
@@ -124,6 +126,8 @@ def test_api_scopes_chief_and_item_before_paging_and_rejects_full_scope(tmp_path
         full = client.get("/api/tickets?detail=full&orchestrator_kind=chief")
     assert chief.status_code == 200
     assert chief.json()["page"]["match_count"] == 1
+    assert chief.json()["tickets"][0]["locale"] == "macos"
+    assert scoped.json()["tickets"][0]["locale"] == "vps"
     assert chief.json()["tickets"][0]["id"] == expected
     assert scoped.json()["tickets"][0]["id"] == item
     assert empty.json()["tickets"] == []
@@ -142,3 +146,4 @@ def test_summary_preserves_canonical_consequences_wait(tmp_db: Connection) -> No
         sprint_item_id=None,
     )
     assert page.rows[0]["waiting_to_closeout"] is True
+    assert page.rows[0]["locale"] == "vps"
