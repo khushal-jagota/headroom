@@ -79,7 +79,7 @@ jobs:
           echo "$hermes_sha" > "$PANELS_GATE_DIR/hermes-revision.txt"
       - name: Prepare rehearsal runtime
         if: ${{ inputs.rehearsal }}
-        run: |
+        run: &prepare_deployment_runtime |
           python3 -m venv "$PANELS_DEPLOY_VENV"
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install -r requirements.txt
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install --editable .
@@ -138,10 +138,7 @@ jobs:
           node -e 'const major = Number(process.versions.node.split(".")[0]); if (major !== 22) throw new Error("Node 22 is required")'
       - name: Prepare deployment runtime
         if: ${{ !inputs.rehearsal }}
-        run: |
-          python3 -m venv "$PANELS_DEPLOY_VENV"
-          "$PANELS_DEPLOY_VENV/bin/python" -m pip install -r requirements.txt
-          "$PANELS_DEPLOY_VENV/bin/python" -m pip install --editable .
+        run: *prepare_deployment_runtime
       - name: Observe served release and select related checks
         run: |
           mkdir -p "$PANELS_GATE_DIR"
@@ -334,7 +331,7 @@ jobs:
             --claude-home "$PANELS_APP_HOME/.claude"
       - name: Remove production deployment temporary state
         if: ${{ always() && !inputs.rehearsal }}
-        run: python3 scripts/deployment_rehearsal.py cleanup
+        run: &cleanup_deployment_state python3 scripts/deployment_rehearsal.py cleanup
       - name: Finalize deployment lifecycle
         if: always()
         env:
@@ -374,4 +371,4 @@ jobs:
           if-no-files-found: error
       - name: Remove rehearsal temporary state
         if: ${{ always() && inputs.rehearsal }}
-        run: python3 scripts/deployment_rehearsal.py cleanup
+        run: *cleanup_deployment_state

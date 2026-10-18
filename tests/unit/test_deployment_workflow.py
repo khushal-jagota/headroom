@@ -67,6 +67,7 @@ def test_workflow_routes_rehearsal_away_from_production_and_checks_pin_before_su
     assert names.index("Start deployment lifecycle") < names.index("Prepare deployment runtime")
     assert steps["Prepare deployment runtime"]["if"] == "${{ !inputs.rehearsal }}"
     assert steps["Prepare rehearsal runtime"]["if"] == "${{ inputs.rehearsal }}"
+    assert steps["Prepare rehearsal runtime"]["run"] == steps["Prepare deployment runtime"]["run"]
     assert names.index("Prepare rehearsal runtime") < names.index(
         "Start known-good rehearsal release"
     )
@@ -84,6 +85,7 @@ def test_workflow_routes_rehearsal_away_from_production_and_checks_pin_before_su
     rehearsal_cleanup = "Remove rehearsal temporary state"
     assert steps[production_cleanup]["if"] == "${{ always() && !inputs.rehearsal }}"
     assert steps[rehearsal_cleanup]["if"] == "${{ always() && inputs.rehearsal }}"
+    assert steps[production_cleanup]["run"] == steps[rehearsal_cleanup]["run"]
     assert names.index(production_cleanup) < names.index("Finalize deployment lifecycle")
     assert names.index("Finalize deployment lifecycle") < names.index("Collect rehearsal proof")
     assert names.index("Collect rehearsal proof") < names.index("Retain rehearsal proof")
