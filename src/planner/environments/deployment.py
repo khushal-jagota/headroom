@@ -18,6 +18,8 @@ import httpx
 
 from planner.environments.app import AppManifest, AppValidationError, validate_app_manifest
 from planner.environments.backup import SNAPSHOT_METADATA_NAME, is_verified_snapshot
+from planner.environments.deployment_gate import verify_gate_evidence
+from planner.environments.deployment_gate_contracts import GateEvidence
 
 
 class DeploymentError(RuntimeError):
@@ -99,9 +101,10 @@ class SubprocessServiceController:
                 capture_output=True,
                 text=True,
             )
-            if inspection.returncode != 0 or re.search(
-                r"(?m)^\s*pid = \d+\s*$", inspection.stdout
-            ) is None:
+            if (
+                inspection.returncode != 0
+                or re.search(r"(?m)^\s*pid = \d+\s*$", inspection.stdout) is None
+            ):
                 break
             if time.monotonic() >= deadline:
                 raise DeploymentError("user LaunchAgent did not stop cleanly")
@@ -223,6 +226,7 @@ def deploy_app(
     health_timeout_seconds: float = 30.0,
     lock_path: Path | None = None,
     lifecycle_transition: LifecycleTransition | None = None,
+    gate_evidence: GateEvidence | None = None,
 ) -> DeploymentResult:
     """Replace only ``current/app`` and recover the prior app on post-move failure."""
     if health_timeout_seconds <= 0:
@@ -234,6 +238,11 @@ def deploy_app(
     current_app = root / "app"
     effective_lock_path = lock_path or (root.parent / ".panels-app-deploy.lock")
     with deployment_lock(effective_lock_path):
+        if gate_evidence is not None:
+            try:
+                verify_gate_evidence(gate_evidence, root, candidate_app)
+            except (OSError, ValueError) as exc:
+                raise DeploymentError(str(exc)) from exc
         _validate_current_root(root)
         candidate_manifest = _validate_app(
             candidate_app, "candidate app", require_runtime=True
@@ -251,6 +260,7 @@ def deploy_app(
                 now=now,
                 health_timeout_seconds=health_timeout_seconds,
                 lifecycle_transition=lifecycle_transition,
+                expected_digest=gate_evidence["artifact_digest"] if gate_evidence else None,
             )
         if prior_manifest.app_sha == candidate_manifest.app_sha:
             _publish_lifecycle(lifecycle_transition, "verifying")
@@ -278,12 +288,17 @@ def deploy_app(
         _require_unused(fallback)
         try:
             shutil.copytree(candidate_app, staged, symlinks=True)
-            _validate_app(
+            staged_manifest = _validate_app(
                 staged,
                 "staged candidate app",
                 expected_sha=candidate_manifest.app_sha,
                 require_runtime=True,
             )
+            if (
+                gate_evidence
+                and staged_manifest.artifact_digest != gate_evidence["artifact_digest"]
+            ):
+                raise DeploymentError("copied candidate differs from checked artifact")
             try:
                 _publish_lifecycle(lifecycle_transition, "restarting")
                 service.stop()
@@ -447,18 +462,21 @@ def _install_first_app(
     now: Callable[[], float],
     health_timeout_seconds: float,
     lifecycle_transition: LifecycleTransition | None,
+    expected_digest: str | None = None,
 ) -> DeploymentResult:
     current_app.parent.mkdir(parents=True, exist_ok=True)
     staged = current_app.parent / f".app-candidate-{os.getpid()}"
     _require_unused(staged)
     try:
         shutil.copytree(candidate_app, staged, symlinks=True)
-        _validate_app(
+        staged_manifest = _validate_app(
             staged,
             "staged candidate app",
             expected_sha=candidate_manifest.app_sha,
             require_runtime=True,
         )
+        if expected_digest and staged_manifest.artifact_digest != expected_digest:
+            raise DeploymentError("copied candidate differs from checked artifact")
         os.replace(staged, current_app)
         try:
             _publish_lifecycle(lifecycle_transition, "restarting")
