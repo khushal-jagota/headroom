@@ -491,7 +491,18 @@ with sync_playwright() as p:
         page.mouse.move(1200,950)
         page.evaluate("location.hash='#/workspace/item/si_quiet'")
         page.wait_for_timeout(100)
-        expected_destination = page.locator('[data-sprint-item="si_quiet"]').evaluate("e=>getComputedStyle(e).backgroundColor")
+        page.wait_for_function("""() => {
+          const card=document.querySelector('.orchestrator-card.selected'),css=getComputedStyle(card);
+          const color=document.createElement('span').style;color.color=css.getPropertyValue('--accent-bright');
+          return css.borderTopColor===color.color;
+        }""")
+        expected_destination = page.locator('[data-sprint-item="si_quiet"]').evaluate("""node=>{
+          while(node){const color=getComputedStyle(node).backgroundColor;
+            if(color!=='rgba(0, 0, 0, 0)')return color;node=node.parentElement;}
+        }""")
+        selected_card = page.locator('[data-sprint-item="si_quiet"]')
+        selected_before = selected_card.evaluate("e=>({background:getComputedStyle(e).backgroundColor,border:getComputedStyle(e).borderTopColor})")
+        page.screenshot(path=str(artifact_dir/"sidebar-motion-before.png"))
         before_y = mover_row.bounding_box()["y"]
         before_color = mover_row.evaluate("e=>getComputedStyle(e).color")
         before_spinner = mover_row.locator(".stage-mark").evaluate("e=>getComputedStyle(e).borderTopColor")
@@ -512,6 +523,9 @@ with sync_playwright() as p:
             window.__motionEvidence.push({ms:performance.now()-start,y:row?.getBoundingClientRect().y,
               color:css?.color,background:css?.backgroundColor,z:css?.zIndex,
               cardBackground:row&&getComputedStyle(row.closest(".orchestrator-card")).backgroundColor,
+              selectedBorder:getComputedStyle(document.querySelector('.orchestrator-card.selected')).borderTopColor,
+              cardZ:row&&getComputedStyle(row.closest('.orchestrator-card')).zIndex,
+              selectedTravellingCard:row?.closest('.orchestrator-card')?.matches('.selected.rail-travelling-card'),
               spinner:mark&&getComputedStyle(mark).borderTopColor,
               animations,overlaps,top,travelling:row?.classList.contains('rail-travelling'),
               parent:row?.closest('[data-sprint-item]')?.getAttribute('data-sprint-item')});
@@ -525,6 +539,9 @@ with sync_playwright() as p:
         samples = page.evaluate("window.__motionEvidence")
         (artifact_dir/"sidebar-motion-samples.json").write_text(json.dumps(samples,indent=2))
         moving = [x for x in samples if x.get("travelling")]
+        selected_after = selected_card.evaluate("e=>({background:getComputedStyle(e).backgroundColor,border:getComputedStyle(e).borderTopColor})")
+        (artifact_dir/"selected-card-endpoints.json").write_text(json.dumps(dict(before=selected_before,after=selected_after),indent=2))
+        page.screenshot(path=str(artifact_dir/"sidebar-motion-settled.png"))
         assert moving, "No actual cross-parent travelling frames"
         after_y = mover_row.bounding_box()["y"]
         after_color = mover_row.evaluate("e=>getComputedStyle(e).color")
@@ -538,6 +555,10 @@ with sync_playwright() as p:
         assert all(x["background"].startswith("rgb(") for x in moving), "Traveller surface must be immediately opaque"
         assert all(x["background"] == expected_destination for x in moving)
         assert all(x["cardBackground"] == expected_destination for x in moving)
+        assert selected_before['border'] == selected_after['border']
+        assert all(x['selectedBorder'] == selected_before['border'] for x in moving)
+        assert all(x['selectedTravellingCard'] and x['cardZ']=='3' for x in moving)
+        assert selected_before['background'] == selected_after['background'] == 'rgba(0, 0, 0, 0)'
         assert all(int(x["z"])>0 for x in moving)
         timings=[a for x in moving for a in x.get("animations",[])]
         assert timings and all(360<=a["duration"]<=560 for a in timings)
@@ -562,26 +583,25 @@ with sync_playwright() as p:
                 offset+=size+12
             return list(zlib.decompress(compressed)[1:4])
 
-        def surface_motion(name, selection, mutate, selected_background=True, cancel=False):
+        def surface_motion(name, selection, mutate, cancel=False):
             page.evaluate("hash=>location.hash=hash", selection)
             page.wait_for_timeout(100)
             page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+            page.wait_for_function("""() => {
+              const card=document.querySelector('.orchestrator-card.selected');
+              if(!card)return true;
+              const css=getComputedStyle(card),color=document.createElement('span').style;
+              color.color=css.getPropertyValue('--accent-bright');
+              return css.borderTopColor===color.color && css.backgroundColor==='rgba(0, 0, 0, 0)';
+            }""")
             mutate()
-            page.evaluate(r"""remove => {
-              window.__removedSelectedRules=[];
-              if(remove) for(const sheet of document.styleSheets) for(const rule of sheet.cssRules) {
-                if(rule.selectorText?.match(/^\.selected\./) && rule.style.background) {
-                  window.__removedSelectedRules.push([rule,rule.style.cssText]);
-                  rule.style.background='transparent';
-                }
-              }
-              if(remove && !window.__removedSelectedRules.length) throw new Error("Selected surface rule not found");
+            page.evaluate(r"""() => {
               const effective=node=>{
                 while(node) {const color=getComputedStyle(node).backgroundColor;
                   if(color!=='rgba(0, 0, 0, 0)') return color; node=node.parentElement;}
               };
               window.__surfaceExpected=Object.fromEntries([...document.querySelectorAll('.orchestrator-card')].map(card=>
-                [card.dataset.railMotion,{own:effective(card),edge:effective(card.parentElement)}]));
+                [card.dataset.railMotion,{own:effective(card),edge:effective(card.parentElement),border:getComputedStyle(card).borderTopColor}]));
               const active=document.querySelector('.worker-row.ticket-row--active');
               window.__activeFill=active&&effective(active);
               window.__surfaceEvidence=[];
@@ -594,13 +614,48 @@ with sync_playwright() as p:
                   const active=node.classList.contains('ticket-row--active');
                   return {id:node.dataset.railMotion,background:css.backgroundColor,edge:css.outlineColor,
                     expected:active?window.__activeFill:resting.own,expectedEdge:node===card?resting.edge:resting.own,
+                    border:css.borderTopColor,expectedBorder:resting.border,selected:node===card&&card.classList.contains("selected"),
                     opacity:css.opacity,fading:node.getAnimations().some(a=>a.effect.getKeyframes().some(f=>f.opacity!==undefined)),active,width:css.outlineWidth};
                 })});
                 if(performance.now()-start<850)requestAnimationFrame(sample);
               }; requestAnimationFrame(sample); void window.__refresh();
-            }""", not selected_background)
+            }""")
             page.wait_for_function("document.querySelector('.orchestrator-card.rail-moving,.worker-row.rail-moving')")
             page.wait_for_timeout(80)
+            if name=="selected-card-reorder":
+                paint=page.evaluate(r"""() => {
+                  const card=document.querySelector('.orchestrator-card.selected');
+                  for(const animation of document.querySelector('.approved-rail').getAnimations({subtree:true})) animation.pause();
+                  const r=card.getBoundingClientRect(),css=getComputedStyle(card);
+                  const underlay=document.createElement('div');underlay.id='card-paint-underlay';
+                  card.parentElement.style.position='relative';
+                  Object.assign(underlay.style,{position:'absolute',left:(card.offsetLeft+card.offsetWidth-6)+'px',top:card.offsetTop+'px',
+                    width:'12px',height:r.height+'px',transform:css.transform,background:'rgb(255, 0, 255)',zIndex:'0',pointerEvents:'none'});
+                  card.parentElement.append(underlay);
+                  const underlayRect=underlay.getBoundingClientRect();
+                  const rgb=color=>color.match(/\d+/g).slice(0,3).map(Number);
+                  return {interiorX:Math.floor(r.right-3),borderX:Math.floor(r.right-1),outlineX:Math.floor(r.right+2),
+                    underlayX:Math.floor(r.right+5),y:Math.floor(r.top+r.height/2),
+                    underlayRect:{x:underlayRect.x,y:underlayRect.y,width:underlayRect.width,height:underlayRect.height},
+                    cardRect:{x:r.x,y:r.y,width:r.width,height:r.height},
+                    clipRect:card.parentElement.getBoundingClientRect().toJSON(),
+                    borderHit:document.elementFromPoint(r.right-1,r.top+r.height/2)?.closest('[data-rail-motion]')?.getAttribute('data-rail-motion'),
+                    interior:rgb(css.backgroundColor),border:rgb(css.borderLeftColor),outline:rgb(css.outlineColor)};
+                }""")
+                page.screenshot(path=str(artifact_dir/"selected-card-border-paint.png"))
+                paint['actualInterior']=pixel(paint['interiorX'],paint['y'])
+                paint['actualBorder']=pixel(paint['borderX'],paint['y'])
+                paint['actualOutline']=pixel(paint['outlineX'],paint['y'])
+                paint['actualUnderlay']=pixel(paint['underlayX'],paint['y'])
+                (artifact_dir/"selected-card-border-pixels.json").write_text(json.dumps(paint,indent=2))
+                assert paint['actualUnderlay']==[255,0,255], paint
+                assert paint['actualInterior']==paint['interior'], paint
+                assert paint['actualBorder']==paint['border'], paint
+                assert paint['actualOutline']==paint['outline'], paint
+                page.evaluate("""() => {
+                  const underlay=document.querySelector('#card-paint-underlay');underlay.parentElement.style.removeProperty('position');underlay.remove();
+                  for(const animation of document.querySelector('.approved-rail').getAnimations({subtree:true})) animation.play();
+                }""")
             if name=="active-row-group-move":
                 paint=page.evaluate(r"""() => {
                   const row=document.querySelector('[data-ticket-id="t_agent"]');
@@ -640,11 +695,15 @@ with sync_playwright() as p:
                 assert node["background"] == node["expected"], node
                 assert node["edge"] == node["expectedEdge"], node
                 assert node["width"] == "4px", node
+                if node["selected"]: assert node["border"] == node["expectedBorder"], node
                 if not node["fading"]:
                     assert float(node["opacity"]) == 1, node
             assert page.locator(".rail-moving,.rail-travelling,.rail-travelling-card,[style*=\"--rail-motion-\"]").count() == 0
             assert page.locator("[data-rail-motion-busy]").count() == 0
-            page.evaluate("for(const [rule,text] of window.__removedSelectedRules) rule.style.cssText=text")
+
+            selected=page.locator('.orchestrator-card.selected')
+            if selected.count():
+                assert selected.evaluate("e=>getComputedStyle(e).backgroundColor") == 'rgba(0, 0, 0, 0)'
             if cancel: page.emulate_media(reduced_motion="no-preference")
             return nodes
 
@@ -655,8 +714,8 @@ with sync_playwright() as p:
         active=surface_motion("active-row-group-move", "#/workspace/item/si_quiet/t_agent", lambda: mover.update(assigned=False))
         assert any(n["active"] for n in active)
         assert any(n["id"].startswith("heading:") for n in active)
-        # The fix also works if the selected-card background disappears later.
-        surface_motion("transparent-selected-card", "#/workspace/item/si_quiet", lambda: destination.update(created_at=0), selected_background=False)
+        # The real selected state has an accent border and no background fill.
+        surface_motion("selected-card-return", "#/workspace/item/si_quiet", lambda: destination.update(created_at=0))
         surface_motion("cancelled-group-move", "#/workspace/item/si_quiet", lambda: mover.update(assigned=True), cancel=True)
         page.evaluate("location.hash='#/workspace'")
 
