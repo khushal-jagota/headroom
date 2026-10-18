@@ -59,6 +59,10 @@ One screen per part of the system:
   Selection uses the existing bright accent outline without a background fill. The
   outline stays bright through hover and focus. Hover lights unselected card edges and
   titles. Worker rows retain the existing hover wash.
+  The four utility links open Usage and Backends, Settings, Ideas, or Feedback in the
+  right pane. The workspace address preserves these selections across reload and Back.
+  Standalone utility routes remain available. The open utility uses the same accent-bright
+  border as a selected orchestrator card.
   Fine pointers with hover capability reveal a popup after 200 milliseconds. Visible
   keyboard focus reveals it immediately. Touch reveals it after a 400 millisecond hold.
   Movement, release, or cancellation stops an unfinished hold. Taps and clicks select.

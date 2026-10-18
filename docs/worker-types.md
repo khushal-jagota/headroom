@@ -283,6 +283,17 @@ Worker types declare, the Stage ladders they spell out, and the retired skill na
 lists every stored skill naming something absent. It reports; it never rewrites a row.
 `GET /api/skills/stale` serves the same list.
 
+The check also reports unsupported fields in literal Ticket-create examples. It reads
+only a shell code block with one `panels ticket create --input-json -` command, a quoted
+heredoc delimiter, and a complete JSON object. It checks only the object's top-level
+fields against the accepted create fields. Prose, nested fields, dynamic values,
+malformed examples, and blocks with extra shell commands stay outside this check.
+
+This field check reads both stored skills and packaged seeds. A stored skill can omit
+an example that the seed still teaches to a fresh database. The report identifies
+stored examples as `ticket_create_field` and seed examples as
+`packaged_ticket_create_field`. Other checks read stored skills only.
+
 A Stage is named two ways, and the check reads them differently on purpose. Its id,
 `needs_something`, is unmistakable anywhere. Its label is an ordinary phrase: `approach` is
 an English word and `kickoff` names the live `--kickoff-note` option, so searching prose for
