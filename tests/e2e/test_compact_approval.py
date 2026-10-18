@@ -37,7 +37,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     api: ApiHelper,
 ) -> None:
     server = rail_server
-    project = api.direct_post(server, "/api/projects", {"name": "Approval proof", "priority": "P1"})
+    project = api.direct_post(server, "/api/projects", {"name": "Approval proof"})
     item = api.direct_post(
         server,
         "/api/items",

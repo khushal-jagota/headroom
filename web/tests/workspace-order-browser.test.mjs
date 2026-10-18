@@ -63,15 +63,14 @@ from playwright.sync_api import sync_playwright, expect
 
 def card(ticket_id, item_id, item_title, **values):
     row = {
-        "id": ticket_id, "title": ticket_id, "priority": "P1", "deadline": None,
+        "id": ticket_id, "title": ticket_id, "deadline": None,
         "project_id": None, "project": None, "group_project_id": None, "group_project": None,
         "activity_at": 0, "has_pending_proposal": False, "ticket_status": "empty",
         "worker_type": "coding", "employee_backend": "codex", "stage": "needs_implementation",
         "stage_label": "Implementation", "gating_field": "implementation",
         "gating_field_label": "Implementation", "is_done": False, "blocked": False,
         "conversation_id": None, "waiting_to_closeout": False,
-        "sprint_item_id": item_id, "sprint_item_title": item_title, "sprint_item_priority": "P1",
-        "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
+        "sprint_item_id": item_id, "sprint_item_title": item_title, "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
         "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
     }
     row.update(values)
@@ -101,8 +100,7 @@ children = [old, card("t_older", "si_old", "Old Item", assigned=True, activity_a
 def workspace(item_id):
     title = {"si_old": "Old Item", "si_peer": "Peer Item", "si_newer": "Newer Item", "si_direct": "Direct Item"}[item_id]
     rows = children if item_id == "si_old" else [card("t_" + item_id, item_id, title)]
-    return {**item(item_id), "title": title, "body": "", "priority": "P1",
-            "project_id": None, "project": None, "created_at": {"si_old": 1, "si_peer": 2, "si_newer": 3, "si_direct": 4}[item_id],
+    return {**item(item_id), "title": title, "body": "", "project_id": None, "project": None, "created_at": {"si_old": 1, "si_peer": 2, "si_newer": 3, "si_direct": 4}[item_id],
             "updated_at": 1, "committed_sprints": [], "planning_day_id": "day_test",
             "today_ticket_ids": ["t_done"] if item_id == "si_old" else [],
             "tickets": rows, "artifacts": [], "conversation_history": [],
@@ -112,7 +110,7 @@ def workspace(item_id):
 
 for summary in board["sprint_items"]:
     detail = workspace(summary["id"])
-    summary.update(title=detail["title"], priority=detail["priority"], tickets=detail["tickets"])
+    summary.update(title=detail["title"], tickets=detail["tickets"])
 workers = {"chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "awaiting_reply": False,
     "agent_working": False, "latest_turn_ended_sequence": 0}, "workers": []}
 held = []
@@ -194,9 +192,9 @@ with sync_playwright() as p:
     expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, expected)
 
-    # Priority still moves an Item. Child activity changes do not reorder the
+    # Creation order still moves an Item. Child activity changes do not reorder the
     # sidebar: persistent group entry order survives invalidation and selection.
-    board["sprint_items"][1]["priority"] = "P0"
+    board["sprint_items"][1]["created_at"] = 0
     page.evaluate("window.__refresh()")
     order(page, ["si_peer", "si_old", "si_newer"])
     children[1]["activity_at"] = 30

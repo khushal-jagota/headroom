@@ -76,11 +76,11 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     api: ApiHelper,
 ) -> None:
     EVIDENCE.mkdir(parents=True, exist_ok=True)
-    project = _post(server, "/api/projects", {"name": "Message proof", "priority": "P1"})
+    project = _post(server, "/api/projects", {"name": "Message proof"})
     item = _post(
         server,
         "/api/items",
-        {"title": "Approval and message proof", "priority": "P1", "project_id": project["id"]},
+        {"title": "Approval and message proof", "project_id": project["id"]},
     )
     tickets = []
     for title, holder in (

@@ -43,14 +43,13 @@ quiet = dict(awaiting_reply=False, awaiting_answer=False, awaiting_approval=Fals
              awaiting_agent_approval=False, assigned=False, agent_state="idle")
 
 def ticket(id, parent="si_focus", **overrides):
-    row = dict(id=id, title=id.replace("_", " "), priority="P2", deadline=None,
+    row = dict(id=id, title=id.replace("_", " "), deadline=None,
         project_id=None, project=None, group_project_id=None, group_project=None,
         activity_at=1, has_pending_proposal=False, ticket_status="agent",
         worker_type="coding", employee_backend="codex", stage="needs_implementation",
         stage_label="Implementation", gating_field="implementation", gating_field_label="Implementation",
         is_done=False, blocked=False, conversation_id="conv-" + id, waiting_to_closeout=False,
-        sprint_item_id=parent, sprint_item_title=parent, sprint_item_priority="P2",
-        day_ids=[], sprint_id=None, sprint_name=None, is_backlogged=False, **quiet)
+        sprint_item_id=parent, sprint_item_title=parent, day_ids=[], sprint_id=None, sprint_name=None, is_backlogged=False, **quiet)
     row.update(overrides)
     return row
 
@@ -61,8 +60,7 @@ focus_tickets = [ticket("t_approval", awaiting_approval=True), ticket("t_answer"
     ticket("t_done", stage="done", ticket_status="", is_done=True, awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True))]
 
 def item(id, title, rows=None, **overrides):
-    row = dict(id=id, title=title, body="Shared work and owner decisions", priority="P2",
-        project_id=None, project=None, created_at=1, updated_at=1, settled=False,
+    row = dict(id=id, title=title, body="Shared work and owner decisions", project_id=None, project=None, created_at=1, updated_at=1, settled=False,
         conversation_id=None, conversation_history=[], tickets=rows or [], artifacts=[],
         ticket_rollup=dict(quiet), supervisor=dict(agent_key="sprint_item:" + id,
             conversation_id=None, launch_configuration=dict(employee_backend="codex",

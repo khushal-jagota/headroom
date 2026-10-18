@@ -72,7 +72,7 @@
         <div class="sprint-workspace-status-body">
           {#each group.tickets as ticket (ticket.id)}
             <div use:railPreview={onHover ? {show:(element, immediate) => onHover?.(element, ticket.id, immediate), leave:onLeave} : null}>
-            <SprintTicketRow priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
+            <SprintTicketRow title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
               quiet={ticket.stage === "done"}
               href={workspaceAddress(principal.kind === "sprint_item"
                 ? { kind: "ticket", id: ticket.id, openedFromItemId: principal.id } : { kind: "ticket", id: ticket.id })}

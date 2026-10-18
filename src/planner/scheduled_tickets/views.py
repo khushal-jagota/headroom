@@ -34,7 +34,6 @@ def schedule_json(
         "title": schedule.template.title,
         "worker_type": schedule.template.worker_type,
         "kickoff_note": schedule.template.kickoff_note,
-        "priority": schedule.template.priority.value,
         "deadline": schedule.template.deadline,
         "project_id": schedule.template.project_id,
         "sprint_id": schedule.template.sprint_id,

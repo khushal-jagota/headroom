@@ -74,15 +74,14 @@ LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this
 
 def card(ticket_id, item_id, item_title, **values):
     row = {
-        "id": ticket_id, "title": ticket_id, "is_backlogged": False, "priority": "P1", "deadline": None,
+        "id": ticket_id, "title": ticket_id, "is_backlogged": False, "deadline": None,
         "project_id": None, "project": None, "group_project_id": None, "group_project": None,
         "activity_at": 0, "has_pending_proposal": False, "ticket_status": "empty",
         "worker_type": "coding", "employee_backend": "codex", "stage": "needs_implementation",
         "stage_label": "Implementation", "gating_field": "implementation",
         "gating_field_label": "Implementation", "is_done": False, "blocked": False,
         "conversation_id": None, "waiting_to_closeout": False, "recap_preview": "A concise recap from the current projection.",
-        "sprint_item_id": item_id, "sprint_item_title": item_title, "sprint_item_priority": "P1",
-        "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
+        "sprint_item_id": item_id, "sprint_item_title": item_title, "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
         "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
     }
     row.update(values)
@@ -126,7 +125,6 @@ board = {
 for summary in board["sprint_items"]:
     summary["tickets"] = [row for column in board["columns"] for row in column["cards"] if row["sprint_item_id"] == summary["id"]]
     summary["title"] = summary["tickets"][0]["sprint_item_title"]
-    summary["priority"] = "P1"
     summary["recap_preview"] = ORCHESTRATOR_RECAP
 workers = {
     "chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "awaiting_reply": False, "agent_working": False, "latest_turn_ended_sequence": 0},
@@ -146,14 +144,13 @@ manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=s
 ticket = dict(project_id='project_one', project='One', sprint_id=None, sprint_item_id=None,
     id='t_approval', title='Open ticket', worker_type='coding', employee_backend='claude',
     employee_launch_model=None, employee_launch_reasoning_effort=None,
-    employee_configuration_editable=False, stage='needs_what_changes', ceiling='done', priority='P2',
-    resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': None},
+    employee_configuration_editable=False, stage='needs_what_changes', ceiling='done', sprint_item_title=None,
     ticket_status='agent', ceiling_holder={'kind': 'owner', 'id': 'owner'}, conversation_id=None,
     conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': []},
     recap='Orientation', guidance='', pending_proposal=None,
     field_values={'brief': 'The request', 'success_condition': 'What done means', 'what_changes': 'The change'})
 
-workspace = dict(id="si_needs_him",title="Needs him",body="The orchestrator brief",priority="P1",project_id=None,project=None,
+workspace = dict(id="si_needs_him",title="Needs him",body="The orchestrator brief",project_id=None,project=None,
     created_at=0,updated_at=0,supervisor=dict(agent_key="sprint_item:si_needs_him",conversation_id=None),
     tickets=[],artifacts=[],conversation_history=[],ticket_rollup={},settled=False)
 

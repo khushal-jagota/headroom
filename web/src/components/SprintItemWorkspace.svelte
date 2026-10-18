@@ -91,7 +91,7 @@
       .catch(() => undefined);
   });
 
-  function saveItem(field: "title" | "body" | "priority", value: string): Promise<unknown> {
+  function saveItem(field: "title" | "body", value: string): Promise<unknown> {
     return mutateJson(`/api/items/${encodeURIComponent(itemId)}`, {
       method: "PATCH",
       body: { [field]: value }

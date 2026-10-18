@@ -8,7 +8,6 @@ from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import cast
 
-from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.scheduled_tickets.contracts import (
@@ -22,7 +21,7 @@ from planner.scheduled_tickets.contracts import (
 from planner.tickets.contracts import TicketLocale
 
 _SCHEDULE_COLUMNS = (
-    "id, enabled, cadence, local_time, title, worker_type, kickoff_note, priority, "
+    "id, enabled, cadence, local_time, title, worker_type, kickoff_note, "
     "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
     "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, locale, "
     "created_at, updated_at"
@@ -74,7 +73,6 @@ def _row_to_schedule(row: sqlite3.Row) -> ScheduledTicketSchedule:
             title=str(row["title"]),
             worker_type=str(row["worker_type"]),
             kickoff_note=str(row["kickoff_note"]),
-            priority=Priority(str(row["priority"])),
             deadline=None if row["deadline"] is None else str(row["deadline"]),
             project_id=None if row["project_id"] is None else str(row["project_id"]),
             sprint_id=None if row["sprint_id"] is None else str(row["sprint_id"]),
@@ -118,11 +116,11 @@ def create_schedule(
     with transaction(conn):
         conn.execute(
             "INSERT INTO scheduled_ticket_schedules ("
-            "id, enabled, cadence, local_time, title, worker_type, kickoff_note, priority, "
+            "id, enabled, cadence, local_time, title, worker_type, kickoff_note, "
             "deadline, project_id, sprint_id, placement_mode, sprint_item_id, employee_backend, "
             "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, locale, "
             "created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 schedule_id,
                 int(enabled),
@@ -131,7 +129,6 @@ def create_schedule(
                 template.title,
                 template.worker_type,
                 template.kickoff_note,
-                template.priority.value,
                 template.deadline,
                 template.project_id,
                 template.sprint_id,
@@ -191,7 +188,6 @@ _UPDATABLE_COLUMNS = frozenset(
         "title",
         "worker_type",
         "kickoff_note",
-        "priority",
         "deadline",
         "project_id",
         "sprint_id",
@@ -222,9 +218,6 @@ def update_schedule(
     cadence = encoded.get("cadence")
     if isinstance(cadence, ScheduleCadence):
         encoded["cadence"] = cadence.value
-    priority = encoded.get("priority")
-    if isinstance(priority, Priority):
-        encoded["priority"] = priority.value
     placement_mode = encoded.get("placement_mode")
     if isinstance(placement_mode, ScheduledTicketPlacementMode):
         encoded["placement_mode"] = placement_mode.value

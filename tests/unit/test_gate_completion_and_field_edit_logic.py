@@ -6,11 +6,9 @@ import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.retired_workers import historical_definition
 
-from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets.contracts import (
     PendingTicketProposal,
-    ResolvedTicketPriorityAnchors,
     Ticket,
     TicketStatus,
     WorkerStepClaim,
@@ -27,14 +25,13 @@ def _ticket(*, stage: str = "needs_success_condition") -> Ticket:
         worker_type="coding",
         employee_backend="hermes",
         stage=stage,
-        priority=Priority.P3,
         deadline=None,
         project_id=None,
         project_name=None,
         sprint_id=None,
         sprint_item_id=None,
         effective_sprint_id=None,
-        resolved_priority_anchors=ResolvedTicketPriorityAnchors(sprint_item=None, project=None),
+        sprint_item_title=None,
         recap="",
         guidance="keep this guidance",
         ceiling="done",

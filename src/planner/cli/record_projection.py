@@ -61,9 +61,7 @@ def project_record(
             }
         return {"header": dict(header), "manifest": manifest}
 
-    duplicates = tuple(
-        dict.fromkeys(name for name in requested if requested.count(name) > 1)
-    )
+    duplicates = tuple(dict.fromkeys(name for name in requested if requested.count(name) > 1))
     if duplicates:
         valid = ", ".join(parts)
         raise ValueError(
@@ -72,9 +70,7 @@ def project_record(
     unknown = tuple(name for name in requested if name not in parts)
     if unknown:
         valid = ", ".join(parts)
-        raise ValueError(
-            f"unknown part names: {', '.join(unknown)}; valid part names: {valid}"
-        )
+        raise ValueError(f"unknown part names: {', '.join(unknown)}; valid part names: {valid}")
     return {
         "header": dict(header),
         "parts": {name: parts[name] for name in requested},

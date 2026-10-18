@@ -41,7 +41,6 @@ from planner.tickets.contracts import TicketLocale
 from planner.worker_types.contracts import BRIEF_FIELD_ID
 
 _LOCALES = [locale.value for locale in TicketLocale]
-_PRIORITIES = ["P0", "P1", "P2", "P3"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
 _ACTOR_ENV = "PLAN_ACTOR"
 _SPRINT_ITEM_ID_ENV = "PLAN_SPRINT_ITEM_ID"
@@ -106,7 +105,6 @@ _TICKET_SET_FIELDS = {
     "ceiling-holder": "ceiling_holder",
     "title": "title",
     "kickoff-note": "brief",
-    "priority": "priority",
     "deadline": "deadline",
     "project": "project",
     "project-id": "project_id",
@@ -125,7 +123,6 @@ _SPRINT_FIELDS = {
 _ITEM_FIELDS = {
     "title": "title",
     "body": "body",
-    "priority": "priority",
     "project": "project",
     "project-id": "project_id",
 }
@@ -134,7 +131,6 @@ _PROJECT_FIELDS = {
     "requires-macos": "requires_macos",
     "folder-path": "folder_path",
     "name": "name",
-    "priority": "priority",
     "summary": "summary",
 }
 
@@ -146,7 +142,6 @@ _SCHEDULE_FIELDS = {
     "title": "title",
     "worker-type": "worker_type",
     "kickoff-note": "kickoff_note",
-    "priority": "priority",
     "deadline": "deadline",
     "project-id": "project_id",
     "sprint-item": "sprint_item_id",
@@ -290,7 +285,6 @@ def _ticket_record(
         "ticket_status",
         "is_backlogged",
         "record_sha256",
-        "priority",
         "deadline",
         "project_id",
         "sprint_item_id",
@@ -325,7 +319,6 @@ def _sprint_item_record(
         "committed_sprints",
         "project_id",
         "project",
-        "priority",
     )
     header = {key: data[key] for key in header_keys if key in data}
     # The Sprint Item's agent is part of the Sprint Item record. It used to be a read of its
@@ -359,11 +352,7 @@ def _project_record(
     data: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, RecordPart]]:
     return (
-        {
-            key: data[key]
-            for key in ("id", "name", "priority", "folder_path", "requires_macos")
-            if key in data
-        },
+        {key: data[key] for key in ("id", "name", "folder_path", "requires_macos") if key in data},
         {"summary": part(data["summary"])},
     )
 
@@ -412,7 +401,7 @@ def sprint_value_for_write(raw: str | None, as_json: bool) -> str | None:
 def _format_tickets(tickets: list[dict[str, Any]]) -> str:
     return _lines(
         tickets,
-        lambda t: f"{t['id']} {t['stage']} {t['priority']} {t['title']}",
+        lambda t: f"{t['id']} {t['stage']} {t['title']}",
     )
 
 
@@ -421,7 +410,7 @@ def _format_ticket_summaries(tickets: list[dict[str, Any]]) -> str:
         tickets,
         lambda ticket: (
             f"{ticket['id']} {ticket['stage']} {ticket['ticket_status']} "
-            f"{ticket['priority']} {ticket['title']}"
+            f"{ticket['title']}"
             + (" | backlogged" if ticket.get("is_backlogged") else "")
             + (f" | {ticket['project']}" if ticket["project"] else "")
             + (f"\n  {ticket['recap_preview']}" if ticket["recap_preview"] else "")
@@ -696,7 +685,6 @@ def schedule_group() -> None:
     show_default=True,
 )
 @click.option("--enabled/--disabled", default=True, help="Whether the schedule may run.")
-@click.option("--priority", type=click.Choice(_PRIORITIES), default=None)
 @click.option("--deadline", default=None, help="Ticket deadline in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
 @click.option("--project-id", default=None, help="Project id.")
@@ -720,7 +708,6 @@ def schedule_create(
     locale: str | None,
     cadence: str,
     enabled: bool,
-    priority: str | None,
     deadline: str | None,
     project: str | None,
     project_id: str | None,
@@ -747,8 +734,6 @@ def schedule_create(
         body["kickoff_note"] = _read_source(kickoff_note_file, as_json)
     elif kickoff_note is not None:
         body["kickoff_note"] = kickoff_note
-    if priority is not None:
-        body["priority"] = priority
     if deadline is not None:
         body["deadline"] = deadline
     add_project_selectors(
@@ -839,7 +824,6 @@ def schedule_set(
             "title",
             "worker-type",
             "kickoff-note",
-            "priority",
             "enabled",
             "locale",
             "placement",
@@ -862,10 +846,6 @@ def schedule_set(
                 f"cadence must be one of: {', '.join(_SCHEDULE_CADENCES)}", as_json
             )
         body_value = new_value.replace("-", "_")
-    elif field == "priority":
-        if new_value not in _PRIORITIES:
-            http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
-        body_value = new_value
     elif field == "sprint-item":
         api_field = "orchestrator"
         body_value = (
@@ -1022,25 +1002,18 @@ def project_show(project_id: str, part_names: str | None, as_json: bool) -> None
 
 @project_group.command("create")
 @click.option("--name", required=True, help="Project display name.")
-@click.option(
-    "--priority",
-    type=click.Choice(_PRIORITIES),
-    required=True,
-    help="Assessed Project priority.",
-)
 @click.option("--summary", default=None, help="Optional project summary text.")
 @click.option("--folder-path", default=None, help="Optional absolute Project folder path.")
 @click.option("--requires-macos/--no-requires-macos", default=None)
 @json_option
 def project_create(
     name: str,
-    priority: str,
     summary: str | None,
     folder_path: str | None,
     requires_macos: bool | None,
     as_json: bool,
 ) -> None:
-    body: dict[str, Any] = {"name": name, "priority": priority}
+    body: dict[str, Any] = {"name": name}
     if requires_macos is not None:
         body["requires_macos"] = requires_macos
     if summary is not None:
@@ -1073,10 +1046,8 @@ def project_set(
 ) -> None:
     api_field = _PROJECT_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"name", "priority"} and new_value is None:
+    if field in {"name"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
-    if field == "priority" and new_value not in _PRIORITIES:
-        http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
     if field == "requires-macos":
         if new_value not in {"true", "false"}:
             http.fail_validation("requires-macos must be true or false", as_json)
@@ -1187,7 +1158,6 @@ def ticket() -> None:
     default=None,
     hidden=True,
 )
-@click.option("--priority", type=click.Choice(_PRIORITIES), default=None, hidden=True)
 @click.option("--deadline", default=None, hidden=True)
 @click.option("--project", default=None, hidden=True)
 @click.option("--project-id", default=None, hidden=True)
@@ -1216,7 +1186,6 @@ def ticket_create(
     worker_type: str | None,
     employee_backend: str | None,
     employee_launch_model: str | None,
-    priority: str | None,
     deadline: str | None,
     project: str | None,
     project_id: str | None,
@@ -1236,7 +1205,6 @@ def ticket_create(
         worker_type,
         employee_backend,
         employee_launch_model,
-        priority,
         deadline,
         project,
         project_id,
@@ -1287,8 +1255,6 @@ def ticket_create(
         body["brief"] = _read_source(kickoff_note_file, as_json)
     elif kickoff_note is not None:
         body["brief"] = kickoff_note
-    if priority is not None:
-        body["priority"] = priority
     if deadline is not None:
         body["deadline"] = deadline
     add_project_selectors(
@@ -1517,10 +1483,8 @@ def ticket_set(
 ) -> None:
     api_field = _TICKET_SET_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority", "ceiling", "ceiling-holder"} and new_value is None:
+    if field in {"title", "ceiling", "ceiling-holder"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
-    if field == "priority" and new_value not in _PRIORITIES:
-        http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
     if field == "kickoff-note" and new_value is None:
         new_value = ""
     body: dict[str, Any]
@@ -2029,14 +1993,12 @@ def sprint_item() -> None:
 @click.option("--project", default=None, help="Project name.")
 @click.option("--project-id", default=None, help="Project id.")
 @click.option("--body-file", default=None, help="Optional body file, or - for stdin.")
-@click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @json_option
 def sprint_item_create(
     title: str,
     project: str | None,
     project_id: str | None,
     body_file: str | None,
-    priority: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {
@@ -2046,8 +2008,6 @@ def sprint_item_create(
     add_project_selectors(
         body, project=project, project_id=project_id, required=True, as_json=as_json
     )
-    if priority is not None:
-        body["priority"] = priority
     data = http.send("POST", "/api/items", as_json=as_json, json_body=body)
     item_id = data["id"]
     startup = data.get("startup")
@@ -2113,7 +2073,7 @@ def sprint_item_list(
         _format_bounded(
             _lines(
                 data["items"],
-                lambda i: f"{i['id']} {i['priority']} {i['title']}",
+                lambda i: f"{i['id']} {i['title']}",
             ),
             data["page"],
         ),
@@ -2169,10 +2129,8 @@ def sprint_item_set(
 ) -> None:
     api_field = _ITEM_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority", "project", "project-id"} and new_value is None:
+    if field in {"title", "project", "project-id"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
-    if field == "priority" and new_value not in _PRIORITIES:
-        http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
     data = http.send(
         "PATCH",
         f"/api/items/{item_id}",

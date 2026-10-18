@@ -46,13 +46,15 @@ One screen per part of the system:
   attention facts. Unread alone does not change a row’s category, order, or tone.
   The rail omits the Messages group. The sidebar preserves all facts, global unread
   discovery, and the shared classifier on other surfaces.
-  Empty cards say “Nothing in this list.” Priority is not displayed in the rail.
+  Empty cards say “Nothing in this list.”
 
   Attention rows are bright. Ongoing rows and their working spinners are dim.
   Unread message dots stay bright and take precedence over working spinners.
   Single-line titles clip before a reserved mark column. Existing category members keep
   their displayed order across refreshes and selection. Entries and re-entries append
-  within their category. Orchestrator priority and creation order remain unchanged.
+  within their category. Ordinary orchestrators use oldest-created order, then identifier.
+  Active and Settled remain separate categories. Worker groups use most recent activity
+  first, then title and identifier, before the rail preserves displayed positions.
 
   A card opens its orchestrator. A row opens its Worker. The address preserves selection
   across reload and Back. Opening a detail pane never replaces rail classification.
@@ -186,8 +188,6 @@ One screen per part of the system:
   board, because the Ticket resource answers for it rather than the board card.
 - **Worker** — one document with a clickable Project and human-readable Ticket type above its title and
   recap. The title is 28px, recap 17px, body 15px, labels 13px, and quiet text 11px.
-  Priority does not appear here. Priority keeps its stored
-  resolution, order, API/CLI controls, and the existing Review edit path.
 
   One card holds the current step. A pending proposal names its reviewer and keeps
   one editable ceiling/reviewer picker that opens directly with one click. A ceiling choice followed by a reviewer choice completes the gesture. An explicit raise past the visible pending stage accepts that exact
@@ -492,10 +492,6 @@ hand-rolling the same shapes per screen. Each does one job:
 - **Button** — the one button (or link), in a primary, quiet, or pill look.
 - **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
 - **Chip** — the small project tag, and the plain tag with no variant.
-- **PriorityTile** — the shared always-coloured P0–P3 square. It appears in the
-  Workspace Item's eyebrow, the editable Ticket and Review identity control,
-  both Sprint priority positions, and once in each Backlog priority group heading.
-  Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
 - **WorkerProposalCard** — the single approval card on both the Ticket and Review
   screens: editable proposal, reviewer heading, Approve, and send-back action. Approve
@@ -505,7 +501,7 @@ hand-rolling the same shapes per screen. Each does one job:
   A new proposal revision resets the draft; an unrelated refresh preserves it.
   Review supplies its existing voice revision box through the card.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
-  the priority control on a Brief, the approval control, and the send-back box. It is named by a
+  the approval control and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen mounts it.
@@ -570,7 +566,7 @@ hand-rolling the same shapes per screen. Each does one job:
   into the draft. Sending and transcript display still use ordinary text. Codex resolves
   that text at its adapter boundary. The browser does not store vendor identifiers or
   construct structured Codex input.
-- **SegmentedControl** — a small set of toggle options (Backlog Project/priority).
+- **SegmentedControl** — a small set of toggle options.
 - **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
   may go, and who reviews it — sit in a rail on the left, so either can be edited on its
   own. A half-finished choice stays in the open panel: dismissing it writes nothing and

@@ -30,7 +30,7 @@ try {
     checkpoint: "Original checkpoint", review: "Original review", created_at: 1, updated_at: 1
   };
   const requests: Array<{ path: string; method: string; body: unknown }> = [];
-  const outcome = { id: "outcome_existing", title: "Ship it", priority: "P1", deadline: null, project_id: "project_one", project: "One", created_at: 1, updated_at: 1 };
+  const outcome = { id: "outcome_existing", title: "Ship it", deadline: null, project_id: "project_one", project: "One", created_at: 1, updated_at: 1 };
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
     status, headers: { "Content-Type": "application/json" }
   });
@@ -41,11 +41,11 @@ try {
     if (path === "/files/tickets/t_history/artifacts/plan.md") return new Response("Historical artifact proof", { headers:{ "Content-Type":"text/markdown" } });
     if (path === "/api/sprints/sp_test/tracking") return json({
       sprint, planning_date: "2026-09-08", outcome_groups: [{ outcome, committed: true, tickets: [
-        { id: "t_one", title: "Move me", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
-        { id: "t_done", title: "Leave done", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false }
+        { id: "t_one", title: "Move me", stage: "needs_plan", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false },
+        { id: "t_done", title: "Leave done", stage: "done", ticket_status: "empty", project_id: "project_one", sprint_item_id: outcome.id, waiting_to_closeout: false }
       ] }], unclassified_tickets: [
-        { id: "t_loose_one", title: "Loose from One", stage: "needs_plan", priority: "P1", ticket_status: "empty", project_id: "project_one", sprint_item_id: null, waiting_to_closeout: false },
-        { id: "t_loose_two", title: "Loose from Two", stage: "done", priority: "P2", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false }
+        { id: "t_loose_one", title: "Loose from One", stage: "needs_plan", ticket_status: "empty", project_id: "project_one", sprint_item_id: null, waiting_to_closeout: false },
+        { id: "t_loose_two", title: "Loose from Two", stage: "done", ticket_status: "empty", project_id: "project_two", sprint_item_id: null, waiting_to_closeout: false }
       ]
     });
     // A retired live calendar and absent current catalogue must never hide this record.

@@ -25,7 +25,6 @@ from planner.core.contracts import (
     OWNER_PRINCIPAL,
     Principal,
     PrincipalKind,
-    Priority,
 )
 from planner.tickets.contracts import Ticket
 from planner.tickets.data import (
@@ -321,7 +320,7 @@ def test_orchestrator_correction_preserves_identity_and_blocks_stale_receipt(
     from planner.sprints import data as sprints
 
     seed_resolution(tmp_db)
-    project = create_project(tmp_db, name="Corrections", priority=Priority.P3, summary="", now=1)
+    project = create_project(tmp_db, name="Corrections", summary="", now=1)
     item = sprints.create_item(
         tmp_db, title="An orchestrator", project_id=project.id, clock=fake_clock
     )

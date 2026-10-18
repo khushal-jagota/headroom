@@ -25,7 +25,7 @@ const mirror = new URLSearchParams(location.search).has('mirror');
 import type { SprintItemWorkspaceTicket } from '../src/lib/types';
 const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
 const tickets = ['done','needs_implementation'].map((stage, i) => ({
- id:'t_'+i,title:stage,stage,is_backlogged:false,priority:'P2',activity_at:1,
+ id:'t_'+i,title:stage,stage,is_backlogged:false,activity_at:1,
  ticket_status:'empty',waiting_to_closeout:false,has_pending_proposal:false,gating_field:null,
  blocked:false,worker_type:'coding',day_ids:[],sprint_id:null,sprint_name:null,
  awaiting_reply:false,awaiting_answer:false,awaiting_approval:false,
@@ -71,7 +71,6 @@ def workspace_ticket():
         "id": ticket["id"],
         "title": "Mirror Ticket",
         "stage": "needs_brief",
-        "priority": "P1",
         "activity_at": 20,
         "ticket_status": "empty",
         "waiting_to_closeout": False,
@@ -91,7 +90,6 @@ def workspace_payload():
         "id": item["id"],
         "title": "Mirror Item",
         "body": "[Open proof](/files/sprint-items/si_mirror/artifacts/proof.md)",
-        "priority": "P1",
         "project_id": project["id"],
         "project": "Mirror project",
         "created_at": 10,
@@ -128,13 +126,11 @@ def board_payload():
         "orchestrator": {"kind": "sprint_item", "id": item["id"]},
         "sprint_item_id": item["id"],
         "sprint_item_title": "Mirror Item",
-        "sprint_item_priority": "P1",
-    }
+        }
     summary = {
         "id": item["id"],
         "created_at": 10,
         "title": "Mirror Item",
-        "priority": "P1",
         "tickets": [workspace_ticket()],
         "conversation_id": None,
         "ticket_rollup": attention(),

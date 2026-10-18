@@ -33,14 +33,6 @@ from planner.tickets.logic import fields_codec, machine
 from planner.tickets.logic.recap import recap_preview
 from planner.worker_types.configuration import configured_worker_type_registry
 
-# §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
-_PRIORITY_RANK = ("P0", "P1", "P2", "P3")
-
-
-def _prio_rank(priority: str) -> int:
-    return _PRIORITY_RANK.index(priority)
-
-
 # --- serializers ---------------------------------------------------------------
 
 
@@ -71,7 +63,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "employee_launch_model": ticket.employee_launch_model,
         "employee_launch_reasoning_effort": ticket.employee_launch_reasoning_effort,
         "stage": str(ticket.stage),
-        "priority": ticket.priority.value,
         "deadline": ticket.deadline,
         "project_id": ticket.project_id,
         "project": ticket.project_name,
@@ -82,30 +73,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             "id": ticket.sprint_item_id if ticket.orchestrator_kind == "sprint_item" else "chief",
         },
         "effective_sprint_id": ticket.effective_sprint_id,
-        "resolved_priority_anchors": {
-            "sprint_item": (
-                {
-                    "id": ticket.resolved_priority_anchors.sprint_item.id,
-                    "title": ticket.resolved_priority_anchors.sprint_item.title,
-                    "priority": ticket.resolved_priority_anchors.sprint_item.priority.value,
-                }
-                if ticket.resolved_priority_anchors.sprint_item is not None
-                else None
-            ),
-            "project": (
-                {
-                    "id": ticket.resolved_priority_anchors.project.id,
-                    "name": ticket.resolved_priority_anchors.project.name,
-                    "priority": (
-                        ticket.resolved_priority_anchors.project.priority.value
-                        if ticket.resolved_priority_anchors.project.priority is not None
-                        else None
-                    ),
-                }
-                if ticket.resolved_priority_anchors.project is not None
-                else None
-            ),
-        },
+        "sprint_item_title": ticket.sprint_item_title,
         "recap": ticket.recap,
         "guidance": ticket.guidance,
         "ceiling": str(ticket.ceiling),
@@ -201,7 +169,6 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         "worker_type": str(row["worker_type"]),
         "stage": str(row["stage"]),
         "ticket_status": facts.ticket_status.value,
-        "priority": str(row["priority"]),
         "project_id": (
             str(row["effective_project_id"]) if row["effective_project_id"] is not None else None
         ),
@@ -273,7 +240,7 @@ def list_ticket_summaries(
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
         "tickets.is_backlogged, "
-        "tickets.worker_step_claim, tickets.priority, tickets.recap, "
+        "tickets.worker_step_claim, tickets.recap, "
         "tickets.pending_proposal, "
         + searchable_guidance
         + " AS guidance, "
@@ -442,7 +409,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     return (
         f"{ticket.title}\n"
         f"stage: {str(ticket.stage)}\n"
-        f"priority: {ticket.priority.value}\n"
         f"employee_backend: {ticket.employee_backend}\n"
         "owner: "
         f"{ownership.value if ownership is not None else '(none)'}\n"
@@ -467,14 +433,13 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
     Every represented orchestrator carries its complete children and conversation.
     """
     rows = conn.execute(
-        "SELECT tickets.id, tickets.title, tickets.recap, tickets.stage, tickets.priority, "
+        "SELECT tickets.id, tickets.title, tickets.recap, tickets.stage, "
         "tickets.deadline, "
         "tickets.is_backlogged, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "tickets.orchestrator_kind, "
         "sprint_items.project_id AS parent_project_id, "
         "sprint_items.title AS sprint_item_title, "
-        "sprint_items.priority AS sprint_item_priority, "
         "parent_projects.name AS parent_project_name, "
         "tickets.pending_proposal, tickets.worker_type, "
         "tickets.employee_backend, "
@@ -489,12 +454,11 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
     coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
-    by_stage: dict[str, list[tuple[tuple[int, int, str, int], BoardCardSource]]] = {
+    by_stage: dict[str, list[tuple[tuple[int, str, int], BoardCardSource]]] = {
         sid: [] for sid in column_order
     }
     for row in rows:
         stage = str(row["stage"])
-        priority = str(row["priority"])
         deadline = str(row["deadline"]) if row["deadline"] is not None else None
         worker_type = str(row["worker_type"])
         worker_type_definition = registry.require(worker_type)
@@ -530,7 +494,6 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
             },
             "title": str(row["title"]),
             "recap_preview": recap_preview(str(row["recap"])),
-            "priority": priority,
             "deadline": deadline,
             "project_id": group_project_id,
             "project": group_project_name,
@@ -561,14 +524,8 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
             "sprint_item_title": (
                 str(row["sprint_item_title"]) if row["sprint_item_title"] is not None else None
             ),
-            "sprint_item_priority": (
-                str(row["sprint_item_priority"])
-                if row["sprint_item_priority"] is not None
-                else None
-            ),
         }
         sort_key = (
-            _prio_rank(priority),
             0 if deadline is not None else 1,
             deadline or "",
             int(row["created_at"]),
@@ -611,7 +568,7 @@ def _board_sprint_items(
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        f"SELECT i.id, i.title, i.body, i.priority, i.project_id, p.name AS project, "
+        f"SELECT i.id, i.title, i.body, i.project_id, p.name AS project, "
         f"i.created_at, i.settled FROM sprint_items i JOIN projects p ON p.id=i.project_id "
         f"WHERE i.id IN ({placeholders})",
         item_ids,
@@ -624,7 +581,6 @@ def _board_sprint_items(
             id=str(row["id"]),
             title=str(row["title"]),
             recap_preview=recap_preview(str(row["body"])),
-            priority=str(row["priority"]),
             settled=bool(row["settled"]),
             project_id=str(row["project_id"]),
             project=str(row["project"]),

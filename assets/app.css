@@ -2919,16 +2919,6 @@ select {
   margin-bottom: 0;
 }
 
-.review-kickoff-priority {
-  flex: none;
-  font-family: var(--font-sans);
-  font-size: var(--type-sm);
-}
-
-.review-kickoff-priority [data-review-priority-error] {
-  margin-top: var(--space-2);
-}
-
 /* On the review screen the Notes row is a quiet uppercase label, not a serif
  * heading — the ask below is the one thing on screen. */
 [data-screen="review"] .disclosure--support > .disclosure-summary {
@@ -3433,7 +3423,7 @@ select {
   font-size: var(--type-sm);
 }
 
-/* One ticket row grammar — priority tile, title, condition mark — shared by the
+/* One ticket row grammar — title, condition mark — shared by the
  * workspace rail and the Sprint Item detail sections (SprintTicketRow.svelte). */
 .ticket-row {
   width: 100%;
@@ -3510,49 +3500,6 @@ select {
  * neither a reply nor active work exists. Error does not introduce another mark. */
 .board-workspace-stage-mark[data-workspace-mark="none"] {
   visibility: hidden;
-}
-
-/* --- Priority tile ------------------------------------------------------- */
-
-.priority-tile {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  min-width: var(--priority-tile-standard-width);
-  height: var(--priority-tile-height);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-ui);
-  font-size: var(--type-xs);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-  line-height: 1.5;
-  white-space: nowrap;
-}
-
-.priority-tile--p0 {
-  color: var(--priority-p0-ink);
-  background: var(--priority-p0-fill);
-  font-weight: 800;
-  letter-spacing: 0.06em;
-}
-
-.priority-tile--p1 {
-  color: var(--priority-p1-ink);
-  background: var(--priority-p1-fill);
-}
-
-.priority-tile--p2 {
-  color: var(--priority-p2-ink);
-  background: var(--priority-p2-fill);
-}
-
-.priority-tile--p3 {
-  color: var(--priority-p3-ink);
-  background: var(--priority-p3-fill);
 }
 
 /* --- Ticket screen (T16) ------------------------------------------------- */
@@ -4326,11 +4273,6 @@ select {
   border-bottom-color: var(--accent-bright);
   outline: var(--border-hairline) solid var(--accent-bright);
   outline-offset: 2px;
-}
-
-.ticket-identity-priority {
-  padding-bottom: 0;
-  border-bottom: 0;
 }
 
 .ticket-identity-separator {
@@ -5164,7 +5106,6 @@ a.artifact-chip:hover,
   white-space: nowrap;
 }
 
-[data-screen="sprint"] .sprint-ticket-priority,
 [data-screen="sprint"] .sprint-ticket-row--settled .list-row-title,
 [data-screen="sprint"] .sprint-ticket-row--settled .sprint-ticket-state {
   color: var(--text-faintest);
@@ -5200,7 +5141,6 @@ a.artifact-chip:hover,
     -webkit-line-clamp: 2;
   }
 
-  [data-screen="sprint"] .sprint-item-row .priority-tile,
   [data-screen="sprint"] .sprint-item-rollup,
   [data-screen="sprint"] .sprint-ticket-row .stage-mark,
   [data-screen="sprint"] .sprint-ticket-state {

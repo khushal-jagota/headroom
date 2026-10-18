@@ -66,7 +66,7 @@ def _snapshot(db_path: Path) -> tuple[str, ...]:
             "employee_launch_reasoning_effort",
         ),
         ({"kickoff_note": "private legacy brief"}, "kickoff_note"),
-        ({"kickoff_note": "private legacy brief", "brief": "real brief"}, "kickoff_note"),
+        ({"priority": "P0"}, "priority"),
         ({"first_unknown": "private first", "second_unknown": "private second"}, "first_unknown"),
     ],
 )
@@ -102,7 +102,6 @@ def test_unknown_keys_reject_without_writer_or_database_changes(
         {"worker_type": {"invalid": "type"}},
         {"worker_type": "coding", "brief": 42},
         {"worker_type": "coding", "title": ["invalid"]},
-        {"worker_type": "coding", "priority": {"invalid": "priority"}},
         {"worker_type": "coding", "locale": "invalid"},
     ],
 )
@@ -225,7 +224,6 @@ def test_create_accepts_and_preserves_the_supported_optional_keys(
         "worker_type": "coding",
         "title": "All supported create keys",
         "brief": "Settle this Brief at creation.",
-        "priority": "P1",
         "deadline": "2026-12-31",
         "project": "Vylo",
         "project_id": "project_vylo",
@@ -242,7 +240,7 @@ def test_create_accepts_and_preserves_the_supported_optional_keys(
     assert response.status_code == 200, response.text
     created = response.json()
     for field in (
-        "title", "priority", "deadline", "project_id", "orchestrator", "ceiling",
+        "title", "deadline", "project_id", "orchestrator", "ceiling",
         "ceiling_holder", "locale", "employee_backend", "employee_launch_model",
     ):
         assert created[field] == body[field]

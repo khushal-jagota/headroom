@@ -76,7 +76,6 @@ def _ticket_record(ticket_id: str) -> dict[str, Any]:
         "worker": "panels-worker-coding",
         "stage": "needs_success_condition",
         "ticket_status": "agent",
-        "priority": "P1",
         "ceiling": "needs_success_condition",
         "field_values": {"brief": "The brief."},
         "pending_proposal": None,
@@ -187,7 +186,6 @@ def test_batch_edit_forwards_one_existing_patch_body(
 
     monkeypatch.setattr(http, "send", fake_send)
     body = {
-        "priority": "P1",
         "recap": "Ready.",
         "guidance_append": "Keep the route exact.",
         "field_values": {"success_condition": "Done means done."},

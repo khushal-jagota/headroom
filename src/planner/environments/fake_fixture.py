@@ -9,7 +9,7 @@ from pathlib import Path
 
 from planner.core import db
 from planner.core.clock import Clock
-from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind, Priority
+from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.days import data as days_data
 from planner.files.logic.paths import ticket_files_root
 from planner.projects import data as projects_data
@@ -135,14 +135,12 @@ def _create_projects(conn: sqlite3.Connection, *, now: int) -> tuple[Project, Pr
         projects_data.create_project(
             conn,
             name="Northstar Demo",
-            priority=Priority.P1,
             summary="Fictional product workspace for environment isolation.",
             now=now,
         ),
         projects_data.create_project(
             conn,
             name="Harbor Ops",
-            priority=Priority.P2,
             summary="Fictional operations workspace for staging testing.",
             now=now,
         ),
@@ -161,7 +159,6 @@ def _create_items(
             conn,
             title="Prepare isolated runtime story",
             body="Small representative plan for fictional staging work.",
-            priority=Priority.P1,
             project_id=project_ids[0],
             clock=clock,
         ),
@@ -169,7 +166,6 @@ def _create_items(
             conn,
             title="Review fake environment behavior",
             body="Fictional review item with child tickets in multiple states.",
-            priority=Priority.P2,
             project_id=project_ids[1],
             clock=clock,
         ),
@@ -278,7 +274,6 @@ def _create_tickets(
         title_max_chars=TITLE_MAX_CHARS,
         brief="Keep this pending to show approval state.",
         project_id=project_id,
-        priority=Priority.P2,
         sprint_id=sprint_id,
         worker_type="initiative_planning",
     )

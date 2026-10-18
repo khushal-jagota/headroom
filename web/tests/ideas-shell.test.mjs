@@ -27,7 +27,6 @@ try {
     id,
     title: "Brief " + id,
     status: "active",
-    priority: "P2",
     deadline: null,
     project_id: "project_tribe",
     project: "Tribe",

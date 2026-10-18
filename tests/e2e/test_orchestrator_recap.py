@@ -28,7 +28,7 @@ def test_recap_save_reload_and_durable_context_previews(
     server = rail_server
     evidence = Path(os.environ.get("PANELS_RECAP_EVIDENCE_DIR", str(tmp_path)))
     project = api.direct_post(
-        server, "/api/projects", {"name": "Synthetic recap proof", "priority": "P2"}
+        server, "/api/projects", {"name": "Synthetic recap proof"}
     )
     original = "Original synthetic brief: preserve the agreed scope and every prior decision."
     item = api.direct_post(
@@ -37,7 +37,6 @@ def test_recap_save_reload_and_durable_context_previews(
         {
             "title": "Keep review context easy to recover",
             "project_id": project["id"],
-            "priority": "P2",
             "body": original,
         },
     )

@@ -34,9 +34,7 @@ def values_from_json(raw: str, field_ids: tuple[str, ...]) -> TicketFieldValues:
     return MappingProxyType({key: value[key] for key in field_ids if key in value})
 
 
-def replace_declared_values(
-    raw: str, values: TicketFieldValues, field_ids: tuple[str, ...]
-) -> str:
+def replace_declared_values(raw: str, values: TicketFieldValues, field_ids: tuple[str, ...]) -> str:
     """Replace current values without deleting text outside the current declaration."""
     _require(all(key in field_ids and isinstance(body, str) for key, body in values.items()))
     stored = stored_values_from_json(raw)

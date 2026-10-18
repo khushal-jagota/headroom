@@ -593,9 +593,9 @@ def _link_test_ticket_to_conversation(
     try:
         with conn:
             conn.execute(
-                "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,priority,"
+                "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,"
                 "ceiling,conversation_id,field_values,created_at,updated_at,ceiling_holder) "
-                "VALUES (?,?,?,'codex','needs_implementation','P2','needs_implementation',"
+                "VALUES (?,?,?,'codex','needs_implementation','needs_implementation',"
                 "?,'{}',1,1,?)",
                 (
                     ticket_id,
