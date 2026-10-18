@@ -152,7 +152,9 @@ Code paths: `navigation/proof.py`, `navigation/proof_contracts.py`, `navigation/
 
 ## Browser synchronization boundary
 
-The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary orchestrator headers and children, Chief child pagination, Review queue, and shell work count use it. Ordinary orchestrator content and exact-identity proposal bodies remain separate detail reads. Ticket masthead and remaining conversation adoption are pending. Unconverted surfaces retain their existing reads until their cutover removes the overlap.
+The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary orchestrator headers and children, Chief child pagination, Review queue, shell work count, and Ticket masthead use it. Ordinary orchestrator content and exact-identity proposal bodies remain separate detail reads. Ticket current-stage sections and remaining conversation adoption are pending. Unconverted surfaces retain their existing reads until their cutover removes the overlap.
+
+Ticket masthead Project names follow the existing parent-or-own Project rule. The masthead never rewrites the full detail object used by actions, fields, proposals, blockers, and configuration. Missing source membership cannot credit a retained masthead as current. Shared read errors appear once in a composed workspace. Distinct failed content or detail reads retain their own error lines.
 
 The Review and shell count deduplicates current Ticket, Chief, and existing orchestrator conversation pointers. Historical-only and unlinked conversations do not contribute. The exact unfiltered Worker out-claim count remains a separate fact. Unknown runtime count is null and omits the runtime mark or count line. Known zero preserves the existing behavior.
 

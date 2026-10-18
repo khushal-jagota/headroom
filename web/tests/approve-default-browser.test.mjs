@@ -57,7 +57,7 @@ const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }
 let hostKind = $state<'ticket' | 'review'>('ticket');
 let ticketId = $state('t_coding');
 let field = $state('success_condition');
-(window as any).__showTicket = (id: string) => { hostKind = 'ticket'; ticketId = id; };
+(window as any).__showTicket = async (id: string) => { if(!navigation.owner.getState().publication?.records.some(record=>record.kind==='ticket' && record.id===id)) await navigation.owner.recover(); hostKind = 'ticket'; ticketId = id; };
 (window as any).__showReview = async (id: string, nextField: string) => { await navigation.owner.recover(); hostKind = 'review'; ticketId = id; field = nextField; };
 (window as any).__refresh = () => Promise.all([
   client.refetchQueries({ queryKey: ['ticket'] }),
@@ -138,7 +138,7 @@ def ticket(ticket_id, worker_type, stage, field, body, created_at):
         'employee_launch_model': None, 'employee_launch_reasoning_effort': None,
         'employee_configuration_editable': False, 'stage': stage, 'ceiling': stage,
         'priority': 'P2', 'resolved_priority_anchors': {
-            'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'},
+            'project': {'id': 'project_one', 'name': 'Panels', 'priority': 'P2'},
             'sprint_item': {'id': 'item_one', 'title': 'Outcome', 'priority': 'P2'}
         },
         'ticket_status': 'awaiting_approval',
@@ -169,7 +169,8 @@ accept_attempts = []
 read_count = 0
 
 def navigation_snapshot():
-    response=navigation_response({'columns':[{'cards':list(tickets.values())}],'sprint_items':[]},
+    parent={'id':'item_one','title':'Outcome','priority':'P2','created_at':1,'project_id':'project_one','project':'Panels','conversation_id':None,'tickets':[]}
+    response=navigation_response({'columns':[{'cards':list(tickets.values())}],'sprint_items':[parent]},
         {'chief_of_staff':{'label':'Chief of Staff','conversation_id':None}})
     for record in response['snapshot']['records']:
         if record['kind']=='ticket':

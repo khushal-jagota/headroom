@@ -46,10 +46,12 @@
     itemId,
     sprintName,
     backHref = "#/sprint",
-    workspaceResource = null
+    workspaceResource = null,
+    navigationErrorHandledByParent = false
     // A host that is already a way back can pass null so the line is not drawn.
   }: {
     itemId: string;
+    navigationErrorHandledByParent?: boolean;
     sprintName: string;
     backHref?: string | null;
     workspaceResource?: SprintItemWorkspaceResource | null;
@@ -72,7 +74,7 @@
   let publicItem=$derived(shared?.orchestrators.find(item=>item.id===itemId));
   let content=$derived(workspaceResource ?? ownWorkspace);
   let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
-    error:content.error ?? navigation.state.error,isLoading:content.isLoading || !publicItem});
+    error:content.error ?? (navigationErrorHandledByParent ? null : navigation.state.error),isLoading:content.isLoading || !publicItem});
   const manifests=createQuery(()=>queries.workerTypeManifests());
   let headerElement=$state<HTMLElement | null>(null);
   let hoverElement=$state<HTMLDivElement | null>(null);

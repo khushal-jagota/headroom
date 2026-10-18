@@ -187,7 +187,7 @@ describe("orchestrator rail projection", () => {
 // Shared-publication adoption: these are browser adapters, not a new Signal policy.
 import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
-import { navigationWorkspacePresentation, navigationReviewPresentation, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
+import { navigationWorkspacePresentation, navigationTicketMasthead, navigationReviewPresentation, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
 import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
@@ -204,6 +204,23 @@ const sourceRecords:NavigationRecord[]=[sourceTicket,conversation('conversation'
   {kind:'address',id:'address',value:{owner_kind:'ticket',owner_id:'source-ticket',conversation_id:'conversation',current:true,parent_kind:'orchestrator',parent_id:'item'}}];
 
 describe('canonical navigation workspace presentation',()=>{
+  it('joins masthead Project through the assigned parent without a raw Ticket fallback',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    try {
+      const read=(records:NavigationRecord[])=>{
+        adapter.publishSnapshot(currentSnapshot({...continuity,records}),'masthead');
+        return navigationTicketMasthead(knowledge.accept(adapter.getPublication()!),sourceTicket.id);
+      };
+      expect(read(sourceRecords)).toMatchObject({id:sourceTicket.id,title:'Source Ticket',project:'Project',conversation_id:'conversation',
+        conversation_signal:{working:true,message_for_owner:true}});
+      const distinctParent:NavigationRecord[]=sourceRecords.map(record=>record.kind==='orchestrator' ? {...record,value:{...record.value,project_id:'parent-project'}} : record);
+      distinctParent.push({kind:'project',id:'parent-project',value:{name:'Parent Project',priority:null}});
+      expect(read(distinctParent)?.project).toBe('Parent Project');
+      expect(read(sourceRecords.filter(record=>record.kind!=='orchestrator'))).toBeUndefined();
+      expect(read(sourceRecords.map(record=>record.kind==='ticket' ? {...record,value:{...record.value,sprint_item_id:null,orchestrator_kind:'chief'}} : record))?.project).toBe('Project');
+      expect(read(sourceRecords.filter(record=>record.kind!=='ticket'))).toBeUndefined();
+    } finally {adapter.destroy();}
+  });
   it('preserves independent canonical structural facts and exact known/unknown conversation values',()=>{
     const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
     try {

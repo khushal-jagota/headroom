@@ -290,6 +290,7 @@
           {:else if opening.markedTicketId}
             {#key opening.markedTicketId}
               <TicketRoute
+                navigationErrorHandledByParent
                 id={opening.markedTicketId}
                 openFile={address.openFile}
                 onOpenFile={openFileOnTicket}
@@ -298,6 +299,7 @@
           {:else if itemPane && opening.openItemId}
             {#key opening.openItemId}
               <SprintItemWorkspace
+                navigationErrorHandledByParent
                 itemId={opening.openItemId}
                 sprintName="Workspace"
                 backHref="#/workspace"

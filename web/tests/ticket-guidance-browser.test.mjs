@@ -38,11 +38,18 @@ import ShellStatus from '../src/components/ShellStatus.svelte';
 import { provideNavigationApplication } from '../src/lib/navigation/application.svelte';
 const navigation=provideNavigationApplication();
 (window as any).__navigation=navigation;
+const wait=navigation.owner.waitForVisibility;
+navigation.owner.waitForVisibility=(fence,options)=>{
+ (window as any).__commandWait='pending';
+ (window as any).__commandObservers=options.requiredObservers.slice();
+ return wait(fence,options).then(result=>{(window as any).__commandWait=result.status;return result;});
+};
 (window as any).__refresh=()=>navigation.owner.recover().catch(()=>undefined);
 (window as any).__batch=async()=>{
  const response=await (await fetch('/api/navigation/snapshot')).json();
  const previous=navigation.owner.getState().publication!;
- const batch={...response.snapshot,base_revision:previous.continuity.revision,upserts:response.snapshot.records,deletes:[]};delete batch.records;
+ const keys=new Set(response.snapshot.records.map((record:any)=>JSON.stringify([record.kind,record.id])));
+ const batch={...response.snapshot,base_revision:previous.continuity.revision,upserts:response.snapshot.records,deletes:previous.records.filter(record=>!keys.has(JSON.stringify([record.kind,record.id]))).map(record=>({kind:record.kind,id:record.id}))};delete batch.records;
  const published=new Promise<void>(resolve=>{const unsubscribe=navigation.owner.subscribe(state=>{if(state.publication?.continuity.revision===batch.revision){unsubscribe();resolve();}});});
  (window as any).__navigationSource.dispatchEvent(new MessageEvent('batch',{data:JSON.stringify({wire_version:response.wire_version,authority:response.authority,batch}),lastEventId:response.cursor}));
  await published;
@@ -54,6 +61,7 @@ const navigation=provideNavigationApplication();
 };
 import ConfigRoute from '../src/routes/ConfigRoute.svelte';
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+(window as any).__detail=()=>client.invalidateQueries({queryKey:['ticket']});
 (window as any).__manifest=()=>client.invalidateQueries({queryKey:['worker-types']});
 let review = $state(false);
 let config = $state(false);
@@ -83,6 +91,7 @@ ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprin
 stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode='worker' if f else None) for s,l,f in [('needs_brief','Kickoff','brief'),('needs_success_condition','Success','success_condition'),('done','Done',None)]]
 personal_stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode=o) for s,l,f,o in [('needs_brief','Kickoff','brief','user'),('needs_outcome','Outcome','outcome','user'),('needs_consequences','Closeout','consequences','worker'),('done','Done',None,None)]]
 manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, advance={'needs_brief': 'needs_success_condition', 'needs_success_condition': 'done'}, ceiling_range=['needs_brief','needs_success_condition','done'], default_ceiling='needs_success_condition', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'}, {'id':'success_condition','label':'Success'}]), dict(worker_type='personal', label='Personal', stages=personal_stages, advance={'needs_brief':'needs_outcome','needs_outcome':'needs_consequences','needs_consequences':'done'}, ceiling_range=['needs_brief','needs_outcome','needs_consequences','done'], default_ceiling='needs_brief', worker_profile_id='panels-worker-personal-task', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'},{'id':'outcome','label':'Outcome'},{'id':'consequences','label':'Closeout'}])]}
+canonical_worker_types=json.loads(json.dumps(manifest['worker_types']))
 worker_detail = {'manifest': manifest['worker_types'][0], 'settings': {'worker_type': 'coding', 'specialist_skill': {'name': 'panels-worker-coding', 'description': 'Coding worker', 'markdown_body': '# Coding'}, 'launch_defaults': {'employee_backend': 'codex', 'employee_launch_model': None, 'employee_launch_reasoning_effort': None}}}
 writes=[]
 placement_writes=[]
@@ -90,21 +99,49 @@ ceiling_writes=[]
 approvals=[]
 held_details=[]
 hold_detail=False
-snapshot_unavailable=False
+snapshot_unavailable=True
 runtime_working=False
 server_revision=None
 navigation_proposal=None
-# This host retains all old Ticket assertions and adds the actual Review route.
+source_deleted=False
+retained_conversation=None
+parent_project={'id':'project_one','name':'One'}
+# Each variant is an independent authored Ticket, not an alias of later main edits.
+variant_seed=json.loads(json.dumps(ticket))
+# Both canonical navigation and exact detail use these authored backing identities.
+def fixture_ticket(identity):
+    if identity=='t_personal':
+        return {**variant_seed,'id':identity,'worker_type':'personal','stage':'needs_outcome','ceiling':'needs_outcome',
+            'field_values':{'brief':'Context'},'pending_proposal':None,'ticket_status':'empty','assigned':True}
+    if identity=='t_kickoff':
+        return {**variant_seed,'id':identity,'stage':'needs_brief','ceiling':'needs_brief','ceiling_holder':{'kind':'chief','id':'chief'},
+            'sprint_item_id':None,'resolved_priority_anchors':{**variant_seed['resolved_priority_anchors'],'sprint_item':None},
+            'pending_proposal':{'field':'brief','body':'Opened for somebody else','proposed_by':'chief','created_at':1,'revision':1},'field_values':{}}
+    if identity=='t_with_session': return {**variant_seed,'id':identity,'conversation_id':'existing-worker-session'}
+    if identity=='t_open': return {**variant_seed,'id':identity,'ticket_status':'empty','pending_proposal':None,'ceiling_holder':{'kind':'owner','id':'owner'}}
+    if identity=='t_done': return {**variant_seed,'id':identity,'stage':'done','ticket_status':'empty','pending_proposal':None}
+    return ticket
+
 def review_snapshot():
-    response=navigation_response({'columns':[{'cards':[ticket]}],'sprint_items':[]},
+    global retained_conversation
+    source=[fixture_ticket(identity) for identity in ['t_guidance','t_personal','t_kickoff','t_with_session','t_open','t_done'] if identity!='t_guidance' or not source_deleted]
+    parent={'id':'outcome_kept','title':'Kept outcome','priority':'P2','created_at':1,'project_id':parent_project['id'],'project':parent_project['name'],'conversation_id':None,'tickets':[]}
+    response=navigation_response({'columns':[{'cards':source}],'sprint_items':[parent]},
       {'chief_of_staff':{'label':'Chief of Staff','conversation_id':None}})
+    rows={row['id']:row for row in source}
     for record in response['snapshot']['records']:
         if record['kind']=='ticket':
-            proposal=navigation_proposal or ticket['pending_proposal']
-            record['value'].update(ceiling_holder=ticket['ceiling_holder'],gating_field='success_condition',
+            row=rows[record['id']]
+            proposal=navigation_proposal if row['id']=='t_guidance' and navigation_proposal else row['pending_proposal']
+            definition=next(worker for worker in canonical_worker_types if worker['worker_type']==row['worker_type'])
+            stage=next(stage for stage in definition['stages'] if stage['id']==row['stage'])
+            record['value'].update(ceiling_holder=row['ceiling_holder'],gating_field=stage['gating_field'],stage_ownership=stage['ownership_mode'],terminal=stage['is_terminal'],
               proposal_field=proposal['field'] if proposal else None,proposal_created_at=proposal['created_at'] if proposal else None,proposal_revision=proposal['revision'] if proposal else 0)
-        elif record['kind']=='conversation':
+        elif record['kind']=='conversation' and record['id']==ticket['conversation_id']:
             record['value']['attention']['current']['signal']['working']=runtime_working
+            retained_conversation=json.loads(json.dumps(record))
+    if source_deleted and retained_conversation is not None:
+        response['snapshot']['records'].append(retained_conversation)
     return response
 
 def respond(route):
@@ -140,6 +177,11 @@ def respond(route):
                 placement_writes.append(body)
                 ticket.update(body)
         result=ticket
+        if route.request.method=='PATCH' and 'title' in route.request.post_data_json:
+            fence={'version':1,'epoch':'fixture-navigation','scope':'fixture-navigation-scope','schema_version':SCHEMA_VERSION,
+                'semantics':SUPPORTED_SEMANTICS,'revision':str(_navigation_revision+1),'coverage':'complete','witnesses':['a'*64],'signature':'synthetic'}
+            route.fulfill(status=200,content_type='application/json',headers={'Panels-Navigation-Fence':json.dumps(fence)},body=json.dumps(result))
+            return
     elif path == 'tickets/t_open' and route.request.method == 'PATCH':
         body=route.request.post_data_json
         ceiling_writes.append(body)
@@ -149,18 +191,8 @@ def respond(route):
         body=route.request.post_data_json
         writes.append({'personal_outcome': body})
         result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_consequences', 'ceiling':'needs_consequences', 'field_values':{'brief':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':False}
-    elif path == 'tickets/t_personal':
-        # assigned is what the route reads to decide the owner may edit this Stage.
-        # The server puts it on every Ticket payload, so this stand-in carries it too.
-        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_outcome', 'ceiling':'needs_outcome', 'field_values':{'brief':'Context'}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':True}
-    elif path == 'tickets/t_kickoff':
-        result={**ticket, 'id': 't_kickoff', 'stage': 'needs_brief', 'ceiling': 'needs_brief', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}, 'sprint_item_id': None, 'resolved_priority_anchors': {**ticket['resolved_priority_anchors'], 'sprint_item': None}, 'pending_proposal': {'field': 'brief', 'body': 'Opened for somebody else', 'proposed_by': 'chief', 'created_at': 1}, 'field_values': {}}
-    elif path == 'tickets/t_with_session':
-        result={**ticket, 'id': 't_with_session', 'conversation_id':'existing-worker-session'}
-    elif path == 'tickets/t_open':
-        result={**ticket, 'id': 't_open', 'ticket_status': 'empty', 'pending_proposal': None, 'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}
-    elif path == 'tickets/t_done':
-        result={**ticket, 'id': 't_done', 'stage': 'done', 'ticket_status': 'empty', 'pending_proposal': None}
+    elif path in ['tickets/t_personal','tickets/t_kickoff','tickets/t_with_session','tickets/t_open','tickets/t_done']:
+        result=fixture_ticket(path.split('/')[1])
     elif path.endswith('/accept/success_condition'):
         assert route.request.method == 'POST'
         approval=route.request.post_data_json
@@ -182,8 +214,72 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: print(str(e), flush=True))
     page.route('**/api/**', respond)
     page.goto(sys.argv[1])
+    expect(page.locator('.error-line')).to_have_count(1)
+    expect(page.locator('.error-code')).to_have_text('unavailable')
+    expect(page.locator('.quiet-line',has_text='Loading ticket')).to_have_count(0)
+    snapshot_unavailable=False
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.error-line')).to_have_count(0)
     assert page.evaluate('window.__badgeProof()')==dict(emptyHidden=True,emptyVisible=False,nonemptyHidden=False,positiveVisible=True,wrongCount=False,positiveHidden=False,absent=False)
     expect(page.locator('[data-project-fact]')).to_have_text('One')
+    expect(page.locator('[data-ticket-identity]')).to_have_text('One · Coding')
+    assert page.evaluate('window.__wait()')['status']=='included'
+    snapshot_unavailable=True
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.error-line')).to_have_count(1)
+    expect(page.locator('.error-code')).to_have_text('unavailable')
+    expect(page.locator('.ticket-title [contenteditable]')).to_have_text('Guidance ticket')
+    snapshot_unavailable=False
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.error-line')).to_have_count(0)
+    # Canonical header changes atomically while the already-read action/detail
+    # document remains untouched. A stale detail Signal never rewrites this mark.
+    original=dict(ticket)
+    ticket.update(title='Canonical masthead',worker_type='personal',stage='needs_outcome',ticket_status='empty',
+        pending_proposal=None,conversation_id='masthead-current',conversation_signal={'working':True,'message_for_owner':True})
+    parent_project={'id':'project_current','name':'Current Project'}
+    runtime_working=True
+    page.evaluate('window.__batch()')
+    expect(page.locator('.ticket-title [contenteditable]')).to_have_text('Canonical masthead')
+    expect(page.locator('[data-ticket-identity]')).to_have_text('Current Project · Personal')
+    expect(page.locator('.ticket-title [data-conversation-id]')).to_have_attribute('data-conversation-id','masthead-current')
+    expect(page.locator('.ticket-title [data-conversation-signal]')).to_have_attribute('data-conversation-signal','message')
+    expect(page.locator('[data-approval-block] [contenteditable]')).to_have_text('A result')
+    assert page.evaluate('window.__wait()')['status']=='included'
+    ticket['conversation_signal']['message_for_owner']=False
+    page.evaluate('window.__batch()')
+    expect(page.locator('.ticket-title [data-conversation-signal]')).to_have_attribute('data-conversation-signal','working')
+    source_deleted=True
+    page.evaluate('window.__batch()')
+    expect(page.locator('.ticket-title [contenteditable]')).to_have_text('Canonical masthead')
+    assert page.evaluate('window.__wait()')['status']=='unknown', 'retained deleted header cannot certify current paint'
+    expect(page.locator('.ticket-title [data-conversation-signal]')).to_have_attribute('data-conversation-signal','working')
+    snapshot_unavailable=True
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.ticket-title [data-conversation-signal]')).to_have_count(0)
+    expect(page.locator('.ticket-title [contenteditable]')).to_have_text('Canonical masthead')
+    # The independently existing conversation can acquire a durable message while
+    # its former Ticket stays deleted. Loss preserves only that exact known dot.
+    retained_conversation['value']['attention']['current']['signal']['message_for_owner']=True
+    retained_conversation['value']['attention']['durable']['message_for_owner']=True
+    retained_conversation['value']['latest_sequence']=21
+    snapshot_unavailable=False
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.ticket-title [data-conversation-signal]')).to_have_attribute('data-conversation-signal','message')
+    snapshot_unavailable=True
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.ticket-title [data-conversation-signal]')).to_have_attribute('data-conversation-signal','message')
+    expect(page.locator('.ticket-title [data-conversation-id]')).to_have_attribute('data-conversation-id','masthead-current')
+    retained_conversation=None
+    snapshot_unavailable=False
+    page.evaluate('window.__refresh()')
+    expect(page.locator('.ticket-title [data-conversation-signal]')).to_have_count(0)
+    assert not page.evaluate("window.__navigation.selectors.effective.conversations.has('masthead-current')")
+    source_deleted=False
+    ticket.clear();ticket.update(original)
+    parent_project={'id':'project_one','name':'One'}
+    runtime_working=False
+    page.evaluate('window.__batch()')
     expect(page.locator('[data-ticket-identity]')).to_have_text('One · Coding')
     expect(page.locator('[data-parent-link]')).to_have_count(0)
     assert page.locator('[data-project-control], [data-outcome-control], [data-sprint-control]').count() == 0
@@ -308,6 +404,18 @@ with sync_playwright() as p:
     assert_ticket_layout(390)
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.evaluate("window.__showTicket('t_guidance')")
+    # Editing remains local until the normal title write, and actual DOM divergence
+    # cannot acquire render credit for an unrelated canonical publication.
+    title_editor=page.locator('.ticket-title [contenteditable]')
+    title_editor.fill('Local masthead edit')
+    page.evaluate('window.__batch()')
+    assert page.evaluate('window.__wait()')['status']=='unknown'
+    title_editor.press('Enter')
+    page.wait_for_function("window.__commandWait==='pending'")
+    assert len(page.evaluate('window.__commandObservers.map(observer=>observer.id)'))==1
+    page.evaluate('window.__batch()')
+    page.wait_for_function("window.__commandWait==='included'")
+    expect(title_editor).to_have_text('Local masthead edit')
     page.locator('[data-ticket-id="t_guidance"]').wait_for()
     assert page.locator('[data-accept]').count() == 1
     proposal=page.locator('[data-approval-block][data-field="success_condition"] [contenteditable]')

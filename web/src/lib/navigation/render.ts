@@ -125,3 +125,11 @@ export function reviewBadgeDomMatches(root:HTMLElement,count:number):boolean {
   return count > 0 ? badge?.textContent===String(count) && !badge.classList.contains('hidden')
     : badge?.classList.contains('hidden')===true && badge.textContent==='';
 }
+
+export function ticketMastheadDomMatches(root:HTMLElement,header:import('./presentation').NavigationTicketMasthead,typeLabel:string):boolean {
+  return root.dataset.ticketMastheadId===header.id
+    && root.querySelector('[data-project-fact]')?.textContent===(header.project || 'No project')
+    && root.querySelector('[data-ticket-type]')?.textContent===typeLabel
+    && root.querySelector('.ticket-title [contenteditable]')?.textContent===header.title
+    && JSON.stringify(actualMark(root.querySelector('.ticket-title')!))===JSON.stringify(expectedMark(header.conversation_signal,header.conversation_id));
+}

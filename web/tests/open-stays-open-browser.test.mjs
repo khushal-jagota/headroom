@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { writeFile, rm } from "node:fs/promises";
+import { writeFile, rm, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
@@ -98,9 +98,12 @@ try {
     `<script lang="ts">
 import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
+import { provideNavigationApplication } from '../src/lib/navigation/application.svelte';
+const navigation=provideNavigationApplication();
+globalThis.EventSource=class extends EventTarget {onerror=null;close(){}} as typeof EventSource;
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 // What the change stream does when the server says something changed.
-(window as any).__refresh = () => client.invalidateQueries();
+(window as any).__refresh = () => Promise.all([client.invalidateQueries(),navigation.owner.recover()]);
 </script>
 <QueryClientProvider {client}><TicketRoute id="t_open" /></QueryClientProvider>`
   );
@@ -146,7 +149,8 @@ const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }
   const { port } = server.httpServer.address();
   const address = (path) => `http://127.0.0.1:${port}/${path}`;
 
-  const browserScript = String.raw`
+  const fixturePython=await readFile(join(webRoot,"tests/support/navigation/browser-fixture.py"),"utf8");
+  const browserScript = fixturePython + String.raw`
 import json, sys
 from urllib.parse import parse_qs
 from playwright.sync_api import sync_playwright
@@ -177,7 +181,10 @@ def serve_ticket(route):
     path = route.request.url.split('/api/', 1)[1]
     if path.startswith('tickets?'):
         path = 'tickets/' + parse_qs(path.split('?', 1)[1])['id'][0]
-    if path == '__advance':
+    if path.split('?')[0]=='navigation/snapshot':
+        result=navigation_response({'columns':[{'cards':[ticket]}],'sprint_items':[]},{'chief_of_staff':{'label':'Chief of Staff','conversation_id':None}})
+        result['snapshot']['records'].append({'kind':'project','id':'project_one','value':{'name':'One','priority':'P2'}})
+    elif path == '__advance':
         ticket['stage'] = 'needs_plan'
         result = {'ok': True}
     elif path == 'tickets/t_open':

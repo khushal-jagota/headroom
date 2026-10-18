@@ -217,6 +217,14 @@ with sync_playwright() as p:
     assert len(held) == 1, "the full workspace request was not delayed"
     delay_old = False
     fulfill(held.pop(), {key:workspace("si_old")[key] for key in ["body","artifacts","conversation_history"]})
+    expect(page.locator('[data-sprint-item-workspace="si_old"] .sprint-workspace-title')).to_contain_text('Old Item')
+    snapshot_failure=True
+    page.evaluate('window.__recover()')
+    expect(page.locator('.error-line')).to_have_count(1)
+    expect(page.locator('[data-sprint-item-workspace="si_old"] .sprint-workspace-title')).to_contain_text('Old Item')
+    snapshot_failure=False
+    page.evaluate('window.__recover()')
+    expect(page.locator('.error-line')).to_have_count(0)
     expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
     order(page, expected)
     rows = page.locator('[data-sprint-item="si_old"] [data-ticket-id]')
@@ -226,6 +234,15 @@ with sync_playwright() as p:
     page.locator('[data-sprint-item="si_old"] [data-ticket-id="t_recent"]').click()
     page.wait_for_function("() => location.hash === '#/workspace/item/si_old/t_recent'")
     order(page, expected)
+    expect(page.locator('.ticket-screen .error-line')).to_have_count(1)
+    snapshot_failure=True
+    page.evaluate('window.__recover()')
+    expect(page.locator('.error-line')).to_have_count(2)
+    expect(page.locator('.error-code',has_text='unavailable')).to_have_count(1)
+    expect(page.locator('.ticket-screen .error-line')).to_have_count(1)
+    snapshot_failure=False
+    page.evaluate('window.__recover()')
+    expect(page.locator('.error-line')).to_have_count(1)
     expect(page.locator('[data-sprint-item="si_old"] [data-ticket-id="t_recent"]')).to_have_class(re.compile(r"\bticket-row--active\b"))
     assert page.locator('.orchestrator-card.selected').count() == 0
     page.go_back()

@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { navigationConversationSignal, navigationTicketMasthead, type NavigationTicketMasthead } from "../lib/navigation/presentation";
+  import { ticketMastheadDomMatches } from "../lib/navigation/render";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { labelize } from "../lib/ui";
   import {
@@ -50,14 +53,30 @@
     // the way to write it there. The Workspace supplies both; without them, the screen
     // holds the value itself.
     openFile = null,
-    onOpenFile = null
+    onOpenFile = null,
+    navigationErrorHandledByParent = false
   }: {
     id: string;
+    navigationErrorHandledByParent?: boolean;
     openFile?: ManagedFileTarget | null;
     onOpenFile?: ((file: ManagedFileTarget | null) => void) | null;
   } = $props();
   const stableId = untrack(() => id);
 
+  const navigation=(()=>{
+    const context=navigationApplication();
+    if(!context) throw new Error('Ticket masthead requires the application navigation owner');
+    return context;
+  })();
+  const mastheadObserver=navigation.registerRenderBoundary(`ticket-masthead:${crypto.randomUUID()}`);
+  onDestroy(()=>navigation.disposeRenderBoundary(mastheadObserver));
+  let mastheadElement=$state<HTMLElement | null>(null);
+  let currentView=$derived(navigation.selectors.effective);
+  let currentMasthead=$derived(currentView ? navigationTicketMasthead(currentView,stableId) : undefined);
+  let heldMasthead=$state.raw<NavigationTicketMasthead | undefined>(undefined);
+  $effect(()=>{if(currentMasthead) heldMasthead=currentMasthead;});
+  let masthead=$derived(heldMasthead ? {...heldMasthead,
+    conversation_signal:navigationConversationSignal(currentView,heldMasthead.conversation_id)} : undefined);
   const ticket = createQuery(() => queries.ticket(stableId));
   // What a conversation for this Ticket's worker would start on, asked of the server
   // because the server is what resolves it: the Worker type's launch defaults and
@@ -247,8 +266,14 @@
     await mutateJson(`/api/tickets/${stableId}/conversation/reset`, { method: "POST" });
   }
 
-  function patch(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
+  async function patch(body: Record<string, unknown>): Promise<unknown> {
+    const requiredObservers=navigation.captureRenderBoundaries();
+    const responseMetadata:{headers?:Headers}={};
+    const result=await mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body,responseMetadata });
+    let fence:unknown;
+    try {fence=JSON.parse(responseMetadata.headers?.get('Panels-Navigation-Fence') ?? 'null');} catch {fence=null;}
+    void navigation.owner.waitForVisibility(fence,{requiredObservers});
+    return result;
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
@@ -330,6 +355,24 @@
       headerError = err;
     }
   }
+  let mastheadTypeLabel=$derived(masthead ? lifecycleFor(manifest.data,masthead.worker_type)?.workerTypeLabel ?? labelize(masthead.worker_type) : '');
+  $effect(()=>{
+    const view=currentView;
+    const source=currentMasthead;
+    const header=masthead;
+    const root=mastheadElement;
+    const generation=navigation.state.generation;
+    const typeLabel=mastheadTypeLabel;
+    if(!view?.runtimeCurrent || !source || source!==heldMasthead || !header || !root) return;
+    const observation=mastheadObserver.observeSelectors(view.publication,generation);
+    let obsolete=false;
+    void tick().then(()=>{
+      if(obsolete || !root.isConnected || navigation.state.generation!==generation || navigation.selectors.effective!==view) return;
+      if(ticketMastheadDomMatches(root,header,typeLabel)) mastheadObserver.acknowledgeRender(view.publication,observation);
+    });
+    return ()=>{obsolete=true;};
+  });
+
 </script>
 
 <svelte:window onkeydown={closeFileOnEscape} />
@@ -347,32 +390,32 @@
   data-stage={ticket.data?.stage}
   onclick={openManagedFileInPlace}
 >
-  <ResourceState error={ticket.error} loading={ticket.isFetching} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
+  <ResourceState error={ticket.error ?? (navigationErrorHandledByParent ? null : navigation.state.error)} loading={ticket.isFetching || !masthead} hasData={Boolean(ticket.data && masthead)} loadingText="Loading ticket...">
     {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
           error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${ticket.data.worker_type}"` }}
         />
       </div>
-    {:else if ticket.data}
+    {:else if ticket.data && masthead}
       {@const detail = ticket.data}
       <div class="ticket-page">
       <div class="ticket-reading">
       <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
-        <header class="ticket-head">
+        <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id}>
           <div class="worker-eyebrow" data-ticket-identity>
-            <span data-project-fact>{detail.project || "No project"}</span>
+            <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
-            <span data-ticket-type>{conversationWorkerTypeLabel(detail)}</span>
+            <span data-ticket-type>{mastheadTypeLabel}</span>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title" data-feedback-page-title>
               <InlineEdit
-                value={detail.title}
+                value={masthead.title}
                 placeholder="Untitled"
                 onSave={(raw) => patch({ title: raw })}
               />
-              <ConversationSignalMark signal={detail.conversation_signal} conversationId={detail.conversation_id} />
+              <ConversationSignalMark signal={masthead.conversation_signal} conversationId={masthead.conversation_id} />
             </div>
             <ClampedText
               contentKey={detail.recap}

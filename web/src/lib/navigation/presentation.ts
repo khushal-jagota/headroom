@@ -141,3 +141,34 @@ export function reviewProposalDetailMatches(item: import('../types').NavigationR
   return detail.id === item.ticket_id && proposal !== null && proposal.field === item.proposal_field
     && proposal.created_at === item.waiting_since && proposal.revision === item.proposal_revision;
 }
+
+/** Retained metadata never retains authority for a conversation fact. */
+export function navigationConversationSignal(view:EffectiveNavigationView | null | undefined,conversationId:string | null):Partial<ConversationSignal> {
+  return signal(conversationId===null ? undefined : view?.conversations.get(conversationId));
+}
+
+/** Masthead facts never become an actionable TicketDetail. */
+export type NavigationTicketMasthead = {
+  readonly id:string;
+  readonly title:string;
+  readonly worker_type:string;
+  readonly project:string | null;
+  readonly conversation_id:string | null;
+  readonly conversation_signal:Partial<ConversationSignal>;
+};
+export function navigationTicketMasthead(view:EffectiveNavigationView,id:string):NavigationTicketMasthead | undefined {
+  const records=view.publication.records;
+  const record=records.find(record=>record.kind==='ticket' && record.id===id);
+  if(record?.kind!=='ticket') return undefined;
+  const row=record.value;
+  let projectId=row.project_id;
+  if(row.sprint_item_id!==null) {
+    const parent=records.find(record=>record.kind==='orchestrator' && record.id===row.sprint_item_id);
+    if(parent?.kind!=='orchestrator') return undefined;
+    projectId=parent.value.project_id;
+  }
+  const project=projectId===null ? undefined : records.find(record=>record.kind==='project' && record.id===projectId);
+  if(projectId!==null && project?.kind!=='project') return undefined;
+  return {id,title:row.title,worker_type:row.worker_type,project:project?.kind==='project' ? project.value.name : null,
+    conversation_id:row.conversation_id,conversation_signal:navigationConversationSignal(view,row.conversation_id)};
+}
