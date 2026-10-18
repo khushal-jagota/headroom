@@ -57,8 +57,7 @@ focus_tickets = [ticket("t_approval", awaiting_approval=True), ticket("t_answer"
     ticket("t_yours", assigned=True), ticket("t_error", agent_state="errored"),
     ticket("t_empty", ticket_status=""), ticket("t_blocked", ticket_status="blocked"),
     ticket("t_agent", awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True)),
-    ticket("t_done", stage="done", ticket_status="", is_done=True, awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True)),
-    ticket("t_cancelled", stage="cancelled", ticket_status="")]
+    ticket("t_done", stage="done", ticket_status="", is_done=True, awaiting_reply=True, conversation_signal=dict(working=False,message_for_owner=True))]
 
 def item(id, title, rows=None, **overrides):
     row = dict(id=id, title=title, body="Shared work and owner decisions", priority="P2",
@@ -165,7 +164,7 @@ with sync_playwright() as p:
     unfinished = ["awaiting_approval", "awaiting_answer", "assigned", "errored", "empty", "blocked", "agent"]
     for key in unfinished:
         assert opened(page, key), key + " unfinished group did not open by default"
-    for key in ["done", "cancelled"]:
+    for key in ["done"]:
         expect(page.locator('[data-workspace-group="' + key + '"]')).to_have_count(0)
     for key in unfinished:
         count = page.locator('[data-workspace-group="' + key + '"] summary .sprint-workspace-count')
@@ -178,7 +177,7 @@ with sync_playwright() as p:
         expect(row.locator('[data-conversation-signal="message"]')).to_have_count(1)
         expect(row.locator('.stage-mark[aria-label="Unread message"]')).to_have_count(1)
         expect(row).to_have_attribute("href", "#/workspace/item/si_focus/" + id)
-    for state, key in [("done", "done"), ("retired", "cancelled")]:
+    for state, key in [("done", "done")]:
         page.get_by_label("Worker state").select_option(state)
         assert not opened(page, key), key + " terminal group opened by default"
         page.locator('[data-workspace-group="' + key + '"] summary').click()
@@ -192,7 +191,7 @@ with sync_playwright() as p:
     page.evaluate("window.__refresh()")
     expect(page.locator('[data-sprint-ticket-id="t_agent"] .ticket-row-title')).to_have_text("Updated Worker title")
     assert not opened(page, "agent")
-    for state, key in [("done", "done"), ("retired", "cancelled"), ("active", "assigned")]:
+    for state, key in [("done", "done"), ("active", "assigned")]:
         page.get_by_label("Worker state").select_option(state)
         assert opened(page, key)
         count = page.locator('[data-workspace-group="' + key + '"] summary .sprint-workspace-count')

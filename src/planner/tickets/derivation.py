@@ -62,8 +62,6 @@ def derive_ticket_status(stored: StoredTicketFacts) -> TicketStatus:
     a blocker, because a Ticket whose step is out is not resting. What is left is a
     Ticket at rest, and ``blocked`` is what rest is called while another Ticket blocks it.
     """
-    if stored.stage == "cancelled":
-        return TicketStatus.empty
     if stored.worker_step_claim is WorkerStepClaim.errored:
         return TicketStatus.errored
     if stored.has_pending_proposal:
@@ -91,7 +89,7 @@ def derive_ticket_facts(stored: StoredTicketFacts) -> TicketFacts:
     return TicketFacts(
         ticket_id=stored.ticket_id,
         ticket_status=ticket_status,
-        blocked=stored.has_live_blocker and stored.stage != "cancelled",
+        blocked=stored.has_live_blocker,
         waiting_to_closeout=(
             gating_field == CONSEQUENCES_FIELD_ID and ticket_status is TicketStatus.empty
         ),
@@ -114,7 +112,7 @@ def agent_state(
         return AgentState.working
     if ticket_status is TicketStatus.errored:
         return AgentState.errored
-    if last_turn_failed and stage not in {"done", "cancelled"}:
+    if last_turn_failed and stage != "done":
         return AgentState.errored
     return AgentState.idle
 

@@ -35,6 +35,7 @@ from planner.cli.record_projection import (
 )
 from planner.environments.cli import environment as environment_group
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.maintenance.cli import maintenance as maintenance_group
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets.contracts import TicketLocale
 from planner.worker_types.contracts import BRIEF_FIELD_ID
@@ -301,8 +302,6 @@ def _ticket_record(
     parts = {
         field["id"]: part(data["field_values"].get(field["id"])) for field in manifest["fields"]
     }
-    if "retirement" in data["field_values"]:
-        parts["retirement"] = part(data["field_values"]["retirement"])
     parts["proposal"] = part(data.get("pending_proposal"))
     parts["recap"] = part(data.get("recap", ""))
     parts["guidance"] = part(data.get("guidance", ""))
@@ -508,6 +507,7 @@ def main() -> None:
 
 
 main.add_command(environment_group)
+main.add_command(maintenance_group)
 environment_group.hidden = True
 
 
@@ -1428,7 +1428,7 @@ def ticket_delete(ticket_id: str | None, yes: bool, force: bool, as_json: bool) 
     "--include-terminal",
     is_flag=True,
     default=False,
-    help="Include done and historical cancelled Tickets.",
+    help="Include done Tickets.",
 )
 @click.option("--search", default=None, help="Case-insensitive Ticket text search.")
 @click.option("--project", default=None, help="Only show project name.")

@@ -11,9 +11,8 @@ A missing Day returns not found. A read never creates a Day.
 are retired, as are the HTTP write routes.
 
 The morning, midday, and Sprint planning schedules no longer supply work. Their old
-Tickets and receipts remain historical records. Retirement cancels only the reviewed
-obsolete planning cohort through an explicit forward migration. It does not mark that
-work Done or cancel ordinary unfinished work.
+receipts remain historical records. Retired planning types cannot create new Tickets;
+existing ordinary Tickets keep their current Stage and approval rules.
 
 The old `day_YYYY-MM-DD` identifiers and planning-date helper remain meaningful for
 historical links. New useful daily schedules use the local calendar date for receipts.

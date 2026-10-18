@@ -42,7 +42,7 @@ One screen per part of the system:
   Each active card shows attention and ongoing work in the shared group order: Needs your
   approval, Needs your answer, Yours, Errored, Agent, Waiting on Consequences,
   Awaiting an agent's approval, then Other. Other is the sidebar name for the shared Empty
-  group. Done, Backlog, Blocked, and Cancelled stay outside this list, even if they carry
+  group. Done, Backlog, and Blocked stay outside this list, even if they carry
   attention facts. Unread alone does not change a row’s category, order, or tone.
   The rail omits the Messages group. The sidebar preserves all facts, global unread
   discovery, and the shared classifier on other surfaces.
@@ -100,7 +100,7 @@ One screen per part of the system:
   The existing history filters still determine which Tickets reach full lists.
   Historical Day counts and Feedback labels keep their separate rules.
 
-  Unfinished groups on the orchestrator page start open. Done and Cancelled start closed.
+  Unfinished groups on the orchestrator page start open. Done starts closed.
   Manual choices survive ordinary data refreshes in that page, including a group that
   disappears and returns. They do not persist across visits. These rounded group headers
   show ordinary Worker counts without unread suffixes. The unread facts and row dots
@@ -190,11 +190,10 @@ One screen per part of the system:
 
   Steps and Artifacts are closed bands below the live card. Steps retain their circular progress marks. Each step opens its own
   text. Future stages, guidance, and a separate historical record do not appear.
-  Cancelled work retains truthful historical content without actionable
-  approval controls. Artifacts remain accessible even when no inline link exists,
+  Artifacts remain accessible even when no inline link exists,
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
-  Backlog and Resume remain the deferral controls. There is no Retire control.
+  Backlog and Resume remain the deferral controls.
 - **Orchestrator** — project and parent navigation, title, recap, and a Settle control
   above closed Worker bands. Worker rows show title and an exact-conversation dot.
   Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
@@ -206,7 +205,7 @@ One screen per part of the system:
 - **Historical Sprint** — retained dated links and documents remain readable. These
   screens do not supply planning or change Worker continuation. See `sprints.md`.
 - **Chief children** — the existing Chief workspace provides a scoped, bounded child
-  section with Active, Backlogged, Done, and Cancelled views. It reuses the child
+  section with Active, Backlogged, and Done views. It reuses the child
   groups and rows. Ordinary orchestrators retain their own scoped children and filters.
   The standalone Workers page is removed. Former `#/backlog` addresses redirect to
   Workspace. Project facts remain text. The browser New Ticket form and global
@@ -621,4 +620,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-10-16._
+_Last verified: 2026-10-18._

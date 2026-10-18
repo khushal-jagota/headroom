@@ -115,7 +115,6 @@ board = {
         card("t_parent_blocked", "si_needs_him", "Needs him", title="Blocked ordinary Worker",ticket_status="blocked",blocked=True),
         card("t_quiet", "si_quiet", "Quiet", ticket_status="blocked", blocked=True),
         card("t_done_overlap", "si_needs_him", "Needs him", stage="done", is_done=True, awaiting_approval=True),
-        card("t_cancelled_overlap", "si_needs_him", "Needs him", ticket_status="cancelled", awaiting_answer=True),
         card("t_blocked_overlap", "si_needs_him", "Needs him", ticket_status="blocked", blocked=True, assigned=True),
         card("t_agent", "si_needs_him", "Needs him", ticket_status="agent", conversation_signal=dict(working=True,message_for_owner=False)),
         card("t_consequences", "si_needs_him", "Needs him", waiting_to_closeout=True),
@@ -214,7 +213,7 @@ with sync_playwright() as p:
         # Ongoing agent work is visible beside owner attention. Ineligible rows
         # stay absent even when stale attention flags overlap.
         expect(needs_him.locator('[data-ticket-id="t_agents_approval"]')).to_have_count(1)
-        for excluded in ["t_done_overlap", "t_cancelled_overlap", "t_blocked_overlap", "t_parent_blocked"]:
+        for excluded in ["t_done_overlap", "t_blocked_overlap", "t_parent_blocked"]:
             expect(needs_him.locator('[data-ticket-id="'+excluded+'"]')).to_have_count(0)
         expect(needs_him.locator('[data-bucket-key="empty"]')).to_contain_text("Other")
 

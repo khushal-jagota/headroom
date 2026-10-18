@@ -23,10 +23,10 @@ describe("exact unread conversation discovery", () => {
     const parent = item("parent", {settled:true, awaiting_reply:true});
     const rows = workspaceMessageConversations([
       card("done", {awaiting_reply:true, stage:"done", sprint_item_id:parent.id}),
-      card("cancelled", {awaiting_reply:true, stage:"cancelled", ticket_status:"cancelled", sprint_item_id:parent.id})
+      card("unfinished", {awaiting_reply:true, stage:"needs_implementation", ticket_status:"agent", sprint_item_id:parent.id})
     ], [parent], chief({awaiting_reply:true}));
     expect(rows.map((row) => [row.kind,row.id,row.settled])).toEqual([
-      ["ticket","done",true], ["ticket","cancelled",true], ["sprint_item","parent",true], ["chief","chief",false]
+      ["ticket","done",true], ["ticket","unfinished",true], ["sprint_item","parent",true], ["chief","chief",false]
     ]);
     expect(rows[0].parentTitle).toBe("parent");
     expect(workspaceSettledUnreadCount(rows)).toBe(3);
@@ -36,11 +36,11 @@ describe("exact unread conversation discovery", () => {
     const rows = [card("owner", { is_backlogged:true, awaiting_reply:true, awaiting_approval:true }),
       card("supervisor", { is_backlogged:true, awaiting_reply:true, awaiting_agent_approval:true }),
       card("done", { is_backlogged:true, awaiting_reply:true, stage:"done" }),
-      card("cancelled", { is_backlogged:true, awaiting_reply:true, stage:"cancelled", ticket_status:"cancelled" })];
+      card("unfinished", { is_backlogged:true, awaiting_reply:true, stage:"needs_implementation", ticket_status:"agent" })];
     const parent = item("ordinary", { tickets:rows });
     expect(buildWorkspaceRail(rows, [parent]).items[0].groups.map((group) => group.key)).toEqual([]);
     expect(workspaceMessageConversations(rows, [parent]).map((row) => row.id))
-      .toEqual(["owner", "supervisor", "done", "cancelled"]);
+      .toEqual(["owner", "supervisor", "done", "unfinished"]);
     expect(workspaceUnreadConversationCount(rows)).toBe(4);
     expect(workspaceMessageConversations(rows.map((row) => ({ ...row, awaiting_reply:false })), []))
       .toEqual([]);
@@ -143,23 +143,27 @@ describe("exact unread conversation discovery", () => {
   it("nests exact child conversations beneath their parent without supervisor or Chief rows", () => {
     const parent = item("settled", {settled:true,awaiting_reply:true,tickets:[
       card("done",{stage:"done",ticket_status:"empty",awaiting_reply:true}),
-      card("cancelled",{stage:"cancelled",ticket_status:"empty",awaiting_reply:true})]});
+      card("unfinished",{stage:"needs_implementation",ticket_status:"empty",awaiting_reply:true})]});
     const rows = workspaceMessageConversations([], [parent], chief({awaiting_reply:true}));
-    expect(workspaceChildMessageConversations(rows,parent).map((row)=>row.id)).toEqual(["done","cancelled"]);
+    expect(workspaceChildMessageConversations(rows,parent).map((row)=>row.id)).toEqual(["done","unfinished"]);
     expect(workspaceSettledUnreadCount(rows,[parent])).toBe(3);
     expect(workspaceChildMessageConversations(rows,item("other"))).toEqual([]);
     const read = {...parent,awaiting_reply:false,tickets:parent.tickets.map((ticket)=>({...ticket,awaiting_reply:false}))};
     expect(workspaceChildMessageConversations(workspaceMessageConversations([], [read]),read)).toEqual([]);
   });
 
-  it("keeps active and Chief terminal/cancelled unread access in their existing nested Messages", () => {
+  it("keeps completed unread discovery independent of unfinished sidebar categories", () => {
     const activeTickets = [card("active-done",{stage:"done",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"sprint_item",id:"active"}}),
-      card("active-cancelled",{stage:"cancelled",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"sprint_item",id:"active"}})];
+      card("active-unfinished",{stage:"needs_implementation",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"sprint_item",id:"active"}})];
     const chiefTickets = [card("chief-done",{stage:"done",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"chief",id:"chief"}}),
-      card("chief-cancelled",{stage:"cancelled",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"chief",id:"chief"}})];
+      card("chief-unfinished",{stage:"needs_implementation",ticket_status:"empty",awaiting_reply:true,orchestrator:{kind:"chief",id:"chief"}})];
     const rail = buildWorkspaceRail([...activeTickets,...chiefTickets],[item("active",{tickets:activeTickets})]);
-    expect(rail.items[0].groups.find((group)=>group.key==="awaiting_reply")?.cards.map((row)=>row.id)).toEqual(["active-cancelled","active-done"]);
-    expect(rail.chiefGroups.find((group)=>group.key==="awaiting_reply")?.cards.map((row)=>row.id)).toEqual(["chief-cancelled","chief-done"]);
+    expect(rail.items[0].groups.map((group)=>[group.key,group.cards.map((row)=>row.id)]))
+      .toEqual([["empty",["active-unfinished"]]]);
+    expect(rail.chiefGroups.map((group)=>[group.key,group.cards.map((row)=>row.id)]))
+      .toEqual([["empty",["chief-unfinished"]]]);
+    expect(workspaceMessageConversations([...activeTickets,...chiefTickets],[]).map((row)=>row.id))
+      .toEqual(["active-done","active-unfinished","chief-done","chief-unfinished"]);
   });
 
   it("keeps explicit Chief assignment above a stale same-Ticket parent while retaining different Ticket aliases", () => {

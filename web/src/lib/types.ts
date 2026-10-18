@@ -205,7 +205,7 @@ export type Principal = {
 };
 
 export type OrchestratorPrincipal = Principal & { kind: "chief" | "sprint_item" };
-export type OrchestratorChildFilter = "active" | "backlogged" | "done" | "retired";
+export type OrchestratorChildFilter = "active" | "backlogged" | "done";
 
 export type BlockedByTicket = {
   ticket_id: string;

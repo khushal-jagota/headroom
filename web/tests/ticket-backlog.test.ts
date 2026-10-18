@@ -2,7 +2,6 @@ import { render } from "svelte/server";
 import { describe, expect, it, vi } from "vitest";
 import TicketLifecycleControls from "../src/components/TicketLifecycleControls.svelte";
 import { queries } from "../src/lib/queryCatalogue";
-import { retirementReason } from "../src/lib/ticketRetirement";
 import type { TicketDetail } from "../src/lib/types";
 
 const ticket = (overrides: Partial<TicketDetail> = {}): TicketDetail => ({
@@ -40,24 +39,7 @@ describe("explicit ticket lifecycle controls", () => {
       expect(controls(value)).toContain("Resume ticket");
       expect(value.pending_proposal?.revision).toBe(3);
     }
-    for (const stage of ["done", "cancelled"]) {
-      expect(controls(ticket({ stage, is_backlogged:true }), true)).not.toContain("data-ticket-backlog-action");
-    }
-  });
-
-  it("shows escaped historical reason and no lifecycle action on a cancelled ticket", () => {
-    const value = ticket({ stage: "cancelled", field_values: { retirement: JSON.stringify({ reason: "Obsolete <script>" }) } });
-    const markup = controls(value, true);
-    expect(markup).toContain("Cancelled");
-    expect(markup).toContain("Obsolete &lt;script>");
-    expect(markup).not.toContain("data-ticket-backlog-action");
-    expect(markup).not.toContain("data-ticket-retire-action");
-    expect(controls(ticket({ stage: "done" }), true)).not.toContain("data-ticket-backlog-action");
-  });
-
-  it("does not invent a retirement reason for malformed or nonterminal provenance", () => {
-    expect(retirementReason(ticket({ stage: "cancelled", field_values: { retirement: "invalid" } }))).toBeNull();
-    expect(retirementReason(ticket({ field_values: { retirement: '{"reason":"old"}' } }))).toBeNull();
+    expect(controls(ticket({ stage:"done", is_backlogged:true }), true)).not.toContain("data-ticket-backlog-action");
   });
 });
 
@@ -71,8 +53,7 @@ describe("bounded orchestrator ticket discovery", () => {
       for (const [principal, filter, offset, suffix] of [
         [chief, "active", 0, "&orchestrator_kind=chief"],
         [item, "backlogged", 30, "&orchestrator_kind=sprint_item&orchestrator_id=item%20one&is_backlogged=true"],
-        [chief, "done", 0, "&orchestrator_kind=chief&include_terminal=true&stage=done"],
-        [chief, "retired", 0, "&orchestrator_kind=chief&include_terminal=true&stage=cancelled"]
+        [chief, "done", 0, "&orchestrator_kind=chief&include_terminal=true&stage=done"]
       ] as const) {
         const query = queries.orchestratorTicketSummaries(principal, filter, offset);
         if (typeof query.queryFn !== "function") throw new Error("Expected fetch function");

@@ -27,7 +27,15 @@ def test_ordinary_help_exposes_orchestrators_and_retires_calendar_writes() -> No
     visible_roots = [name for name, command in main.commands.items() if not command.hidden]
     leaves = _visible_leaves(main, ("panels",))
 
-    assert visible_roots == ["send-message", "project", "day", "ticket", "sprint", "orchestrator"]
+    assert visible_roots == [
+        "send-message",
+        "project",
+        "day",
+        "ticket",
+        "sprint",
+        "orchestrator",
+        "model-corrections",
+    ]
     assert ("panels", "orchestrator", "settle") in leaves
     assert ("panels", "ticket", "assign") in leaves
     assert ("panels", "day", "set") not in leaves
@@ -41,6 +49,7 @@ def test_ordinary_help_exposes_orchestrators_and_retires_calendar_writes() -> No
 def test_administrative_and_legacy_paths_are_hidden_but_registered() -> None:
     for root in (
         "environment",
+        "maintenance",
         "feedback",
         "schedule",
         "worker-type",

@@ -72,7 +72,7 @@ def test_http_backlog_contact_and_resume(tmp_path: Path) -> None:
         assert resumed.json()["is_backlogged"] is False
 
 
-@pytest.mark.parametrize("stage", ["needs_brief", "cancelled", "done"])
+@pytest.mark.parametrize("stage", ["needs_brief", "done"])
 def test_retire_route_is_absent_and_preserves_records(tmp_path: Path, stage: str) -> None:
     db_path = tmp_path / "historical.db"
     conn = connect(str(db_path))
@@ -108,15 +108,6 @@ def test_retire_route_is_absent_and_preserves_records(tmp_path: Path, stage: str
             assert original["stage"] == "needs_brief"
             values = json.loads(original["field_values"])
             assert "retirement" not in values
-            if stage == "cancelled":
-                values["retirement"] = json.dumps(
-                    {
-                        "reason": "Historical disposition",
-                        "original_record": original,
-                        "original_stage": original["stage"],
-                        "original_pending_proposal_json": original["pending_proposal"],
-                    }
-                )
             # Seed historical terminal records without recreating a cancellation action.
             conn.execute(
                 "UPDATE tickets SET stage=?,pending_proposal=?,field_values=? WHERE id=?",
@@ -151,16 +142,5 @@ def test_retire_route_is_absent_and_preserves_records(tmp_path: Path, stage: str
                     dict(conn.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone())
                     == before
                 )
-            if stage == "cancelled":
-                historical = client.get(
-                    "/api/tickets",
-                    params={
-                        "detail": "summary",
-                        "include_terminal": True,
-                        "stage": "cancelled",
-                    },
-                )
-                assert historical.status_code == 200, historical.text
-                assert [row["id"] for row in historical.json()["tickets"]] == [tid]
     finally:
         conn.close()

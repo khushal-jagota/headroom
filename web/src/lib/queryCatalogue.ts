@@ -59,7 +59,7 @@ export const queries = {
   orchestratorTicketSummaries: (principal: OrchestratorPrincipal, filter: OrchestratorChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
       ["tickets", "orchestrator", { principal, filter, offset, limit }],
-      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&orchestrator_kind=${principal.kind}${principal.kind === "sprint_item" ? `&orchestrator_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : filter === "retired" ? "&include_terminal=true&stage=cancelled" : ""}`
+      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&orchestrator_kind=${principal.kind}${principal.kind === "sprint_item" ? `&orchestrator_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : ""}`
     ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   feedback: () => jsonQuery<FeedbackResponse>(["feedback"], "/api/feedback"),

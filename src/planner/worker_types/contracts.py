@@ -15,8 +15,6 @@ from planner.tickets.contracts import StageOwnershipMode
 CONSEQUENCES_FIELD_ID = "consequences"
 BRIEF_FIELD_ID = "brief"
 NEEDS_BRIEF_STAGE_ID = f"needs_{BRIEF_FIELD_ID}"
-CANCELLED_STAGE_ID: Final = "cancelled"
-RETIREMENT_FIELD_ID: Final = "retirement"
 RETIRED_PLANNING_WORKER_TYPES: Final = frozenset(
     {"planning-day", "planning-midday-check", "planning-sprint"}
 )
@@ -78,8 +76,6 @@ class WorkerTypeDefinition:
             ) from exc
 
     def stage_definition(self, stage: str) -> StageDefinition:
-        if stage == CANCELLED_STAGE_ID:
-            return StageDefinition(CANCELLED_STAGE_ID, "Cancelled", None, True, None)
         for stage_definition in self.stages:
             if stage_definition.id == stage:
                 return stage_definition
@@ -90,7 +86,7 @@ class WorkerTypeDefinition:
         )
 
     def is_known_stage(self, stage: str) -> bool:
-        return stage in self.stage_ids() or (stage == CANCELLED_STAGE_ID)
+        return stage in self.stage_ids()
 
     def is_terminal(self, stage: str) -> bool:
         return self.stage_definition(stage).is_terminal

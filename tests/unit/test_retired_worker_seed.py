@@ -92,6 +92,9 @@ def test_reopen_preserves_installed_retired_definitions_and_owner_specialists(
         (Path(__file__).parents[1] / "support" / "retired_worker_types.json").read_text()
     )
     for position, definition in enumerate(historical, start=100):
+        definition["fields"] = [
+            field for field in definition["fields"] if field["id"] != "retirement"
+        ]
         conn.execute(
             "INSERT INTO worker_types (worker_type, position, definition_json, updated_at) "
             "VALUES (?,?,?,?)",

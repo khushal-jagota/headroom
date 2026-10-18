@@ -1,14 +1,12 @@
 <script lang="ts">
   import type { TicketDetail } from "../lib/types";
   import { mutateJson } from "../lib/mutate";
-  import { retirementReason } from "../lib/ticketRetirement";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
   let { ticket, terminal }: { ticket: TicketDetail; terminal: boolean } = $props();
   let busy = $state(false);
   let error = $state<unknown>(null);
-  let savedReason = $derived(retirementReason(ticket));
 
   async function change(action: "backlog" | "resume"): Promise<void> {
     if (busy) return;
@@ -30,10 +28,7 @@
 </script>
 
 <div class="ticket-lifecycle" data-ticket-lifecycle>
-  {#if ticket.stage === "cancelled"}
-    <p class="state" data-ticket-cancelled>Cancelled</p>
-    {#if savedReason}<p class="reason" data-retirement-reason>{savedReason}</p>{/if}
-  {:else if !terminal}
+  {#if !terminal}
     <div class="actions">
       {#if ticket.is_backlogged}<span class="state" data-ticket-backlogged>Backlogged</span>{/if}
       {#if ticket.is_backlogged}
@@ -54,6 +49,5 @@
   .text-action:hover { color:var(--text-strong); }
   .text-action:disabled { cursor:default; opacity:.5; }
   .state { color:var(--text-strong); font-weight:600; }
-  .hint, .reason { margin:var(--space-2) 0; line-height:1.6; }
-  .reason { white-space:pre-wrap; }
+  .hint { margin:var(--space-2) 0; line-height:1.6; }
 </style>

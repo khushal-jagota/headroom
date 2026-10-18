@@ -139,7 +139,7 @@ describe("the shared Item and Ticket presentation", () => {
     { awaiting_answer: true }, { assigned: true }, { awaiting_reply: true },
     { agent_state: "errored" }, { agent_state: "working" },
     { waiting_to_closeout: true }, { ticket_status: "blocked" },
-    { stage: "done" }, { stage: "cancelled", ticket_status: "cancelled" }
+    { stage: "done" }
   ] as const)("gives supplied backlogged work one group while preserving %o", (facts) => {
     const row = ticket("backlogged", { ...facts, is_backlogged: true });
     const original = { ...row };

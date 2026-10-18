@@ -23,7 +23,7 @@
   let groupRoot = $state<HTMLElement | null>(null);
   const filters: { value: OrchestratorChildFilter; label: string }[] = [
     { value: "active", label: "Active" }, { value: "backlogged", label: "Backlogged" },
-    { value: "done", label: "Done" }, { value: "retired", label: "Cancelled" }
+    { value: "done", label: "Done" }
   ];
   const children = createQuery(() => ({
     ...queries.orchestratorTicketSummaries(principal, filter, offset),
@@ -63,7 +63,7 @@
     hasData={tickets !== undefined || children.data !== undefined} loadingText="Loading Workers…">
     {#each groups as group (group.key)}
       <Disclosure variant="orchestrator-group" class="sprint-workspace-status" data-workspace-group={group.key}
-        defaultOpen={groupOpen[group.key] ?? (group.key !== "done" && group.key !== "cancelled")}
+        defaultOpen={groupOpen[group.key] ?? (group.key !== "done")}
         onReaderToggle={(open) => groupOpen[group.key] = open} chevron="none">
         {#snippet summary()}
           <span class="sprint-workspace-status-label">{group.label}</span>
@@ -73,7 +73,7 @@
           {#each group.tickets as ticket (ticket.id)}
             <div use:railPreview={onHover ? {show:(element, immediate) => onHover?.(element, ticket.id, immediate), leave:onLeave} : null}>
             <SprintTicketRow priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
-              quiet={ticket.stage === "done" || ticket.stage === "cancelled"}
+              quiet={ticket.stage === "done"}
               href={workspaceAddress(principal.kind === "sprint_item"
                 ? { kind: "ticket", id: ticket.id, openedFromItemId: principal.id } : { kind: "ticket", id: ticket.id })}
               data-sprint-ticket-id={ticket.id} />

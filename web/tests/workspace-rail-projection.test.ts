@@ -38,12 +38,11 @@ describe("orchestrator rail projection", () => {
       card("ordinary", { orchestrator: { kind: "sprint_item", id: "ordinary" }, sprint_item_id: "ordinary", assigned: true })
     ], [item("ordinary", { tickets: [
       card("complete-child", { awaiting_approval: true }), card("agent-child"),
-      card("historical", { stage: "done", ticket_status: "empty" }),
-      card("obsolete", { ticket_status: "cancelled", awaiting_approval: true })
+      card("historical", { stage: "done", ticket_status: "empty" })
     ] })]);
     expect(rail.chiefGroups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["legacy-chief", "explicit-chief"]);
     expect(rail.items[0].groups.flatMap((group) => group.cards.map((row) => row.id))).toEqual(["complete-child", "agent-child"]);
-    expect(rail.items[0].tickets).toHaveLength(4);
+    expect(rail.items[0].tickets).toHaveLength(3);
     expect(rail.items[0].conversationSignal).toBeUndefined();
   });
 
@@ -52,8 +51,7 @@ describe("orchestrator rail projection", () => {
       card("supervisor", { is_backlogged:true, awaiting_agent_approval:true }),
       card("message", { is_backlogged:true, awaiting_reply:true }),
       card("quiet", { is_backlogged:true }),
-      card("done", { is_backlogged:true, stage:"done", ticket_status:"empty" }),
-      card("cancelled", { is_backlogged:true, stage:"cancelled", ticket_status:"cancelled" })];
+      card("done", { is_backlogged:true, stage:"done", ticket_status:"empty" })];
     const rail = buildWorkspaceRail(rows, [item("ordinary", { tickets:rows }), item("settled", { tickets:rows, settled:true })]);
     for (const groups of [rail.chiefGroups, rail.items[0].groups, rail.settledItems[0].groups]) {
       expect(groups).toEqual([]);
@@ -72,9 +70,9 @@ describe("orchestrator rail projection", () => {
       card("closeout", { ticket_status:"empty", waiting_to_closeout:true }),
       card("agent-review", { ticket_status:"empty", awaiting_agent_approval:true }),
       card("idle", { ticket_status:"empty" }),
-      ...["done", "backlog", "blocked", "cancelled"].map((id) => card(id, {
+      ...["done", "backlog", "blocked"].map((id) => card(id, {
         awaiting_approval:true, stage:id === "done" ? "done" : "needs_plan",
-        is_backlogged:id === "backlog", blocked:id === "blocked", ticket_status:id === "cancelled" ? "cancelled" : "agent"
+        is_backlogged:id === "backlog", blocked:id === "blocked", ticket_status:"agent"
       }))];
     const rail = buildWorkspaceRail(rows);
     expect(rail.chiefGroups.map((group) => [group.label, group.cards.map((row) => row.id)]))

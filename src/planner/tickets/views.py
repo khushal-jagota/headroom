@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Collection, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
 
@@ -460,37 +460,12 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 # --- board (§10.3) -------------------------------------------------------------
 
 
-def ticket_ids_for_conversations(
-    conn: sqlite3.Connection, conversation_ids: Collection[str]
-) -> frozenset[str]:
-    """Which Tickets own these conversations.
-
-    The caller holds conversations, not Tickets, and a conversation can belong to a
-    Sprint Item's supervisor instead. This matches in Python over one unparameterised
-    scan, so the whole conversation record can be asked about without a bound parameter
-    for each conversation in it.
-    """
-    wanted = frozenset(conversation_ids)
-    if not wanted:
-        return frozenset()
-    rows = conn.execute(
-        "SELECT id, conversation_id FROM tickets WHERE conversation_id IS NOT NULL"
-    ).fetchall()
-    return frozenset(str(row["id"]) for row in rows if str(row["conversation_id"]) in wanted)
-
-
-def board_view(
-    conn: sqlite3.Connection,
-    *,
-    ticket_ids_holding_unread_owner_message: Collection[str] = (),
-) -> JsonDict:
+def board_view(conn: sqlite3.Connection) -> JsonDict:
     """All ordinary Workers, with messages discoverable on historical Workers too.
 
     Orchestrator settlement controls presentation, never approval or message discovery.
     Every represented orchestrator carries its complete children and conversation.
     """
-    named_ticket_ids = tuple(dict.fromkeys(ticket_ids_holding_unread_owner_message))
-    named_placeholders = ",".join("?" for _ in named_ticket_ids)
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.recap, tickets.stage, tickets.priority, "
         "tickets.deadline, "
@@ -508,10 +483,7 @@ def board_view(
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
-        "WHERE tickets.stage != 'cancelled'"
-        + (f" OR tickets.id IN ({named_placeholders})" if named_ticket_ids else ""),
-        named_ticket_ids,
+        "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id ",
     ).fetchall()
     registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)
@@ -671,7 +643,7 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
     rows = conn.execute(
         "SELECT id, title, stage, worker_type, worker_step_claim, "
         "pending_proposal, ceiling_holder FROM tickets "
-        "WHERE stage != 'cancelled' ORDER BY id",
+        "ORDER BY id",
     ).fetchall()
     registry = configured_worker_type_registry()
     blocked_ticket_ids = ticket_blocks.blocked_ticket_ids(conn)

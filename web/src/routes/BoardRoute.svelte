@@ -125,7 +125,7 @@
     hover.enter({ target, title:item.title, kicker:item.project ?? "Orchestrator", itemId:item.id }, immediate);
   }
   function hoverWorkerRow(target: HTMLElement, worker: WorkItemTicketFacts, immediate = false): void {
-    hover.enter({ target, title:worker.title, kicker:worker.stage === "cancelled" ? "Cancelled Worker" : "Worker", worker }, immediate);
+    hover.enter({ target, title:worker.title, kicker:"Worker", worker }, immediate);
   }
   function hoverMessageRow(target: HTMLElement, message: WorkspaceMessageConversation, immediate = false): void {
     if (message.kind === "chief") { hover.enter({target,title:message.title,kicker:"Chief of Staff",chief:true}, immediate); return; }

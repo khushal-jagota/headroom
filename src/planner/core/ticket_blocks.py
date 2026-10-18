@@ -10,10 +10,16 @@ from planner.core.errors import ErrorCode, PlannerError
 
 # What makes a block live, as one SQL predicate. Every question about blocking asks it,
 # under the alias ``blocker`` for the Ticket doing the blocking.
-LIVE_BLOCKER_PREDICATE = "blocker.stage NOT IN ('done','cancelled')"
+LIVE_BLOCKER_PREDICATE = "blocker.stage != 'done'"
 
 
-def touch_blocked_ticket(conn: sqlite3.Connection, blocked_ticket_id: str, now: int) -> None:
+def touch_blocked_ticket(
+    conn: sqlite3.Connection,
+    blocked_ticket_id: str,
+    now: int,
+    *,
+    capture_attention: bool = True,
+) -> None:
     """A block arriving or leaving is activity on the Ticket it holds.
 
     Nothing about the blocked Ticket's own state is written: what it reads as is derived
@@ -25,6 +31,8 @@ def touch_blocked_ticket(conn: sqlite3.Connection, blocked_ticket_id: str, now: 
         "UPDATE tickets SET updated_at = ? WHERE id = ?",
         (now, blocked_ticket_id),
     )
+    if not capture_attention:
+        return
     # The blocker row and its attention share the caller transaction.
     from planner.notifications.attention import capture_ticket_attention
 
@@ -33,7 +41,7 @@ def touch_blocked_ticket(conn: sqlite3.Connection, blocked_ticket_id: str, now: 
 
 def _ticket_is_active(conn: sqlite3.Connection, ticket_id: str) -> bool:
     row = conn.execute("SELECT stage FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
-    return row is not None and str(row["stage"]) not in {"done", "cancelled"}
+    return row is not None and str(row["stage"]) != "done"
 
 
 def _require_ticket(conn: sqlite3.Connection, ticket_id: str, field: str) -> None:
@@ -182,7 +190,7 @@ def blocker_summary(conn: sqlite3.Connection, ticket_id: str) -> BlockerSummary:
             ticket_id=str(row["id"]),
             title=str(row["title"]),
             stage=str(row["stage"]),
-            active=str(row["stage"]) not in {"done", "cancelled"},
+            active=str(row["stage"]) != "done",
             href=f"#/workspace/{row['id']}",
         )
         for row in incoming_rows
