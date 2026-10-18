@@ -10,7 +10,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+from tests.support.server import ApiHelper, JsonObject, ServerHandle
 
 from planner.environments.app import _write_app_entrypoints
 

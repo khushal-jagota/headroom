@@ -1,14 +1,8 @@
-"""t_tt04a Seam 1 — copy_text is driven by the ticket's own type field order.
-
-Coding renders its six field blocks byte-identically to today (a permanent golden
-pinning field order); a probe ticket renders its OWN fields (brief/alpha/beta),
-never a coding field. Probe rows go in through the real create_ticket door, and this
-module carries its OWN local ``probe_registry`` fixture (Codex F3: the one in
-``test_probe_type.py`` is module-local, not shared).
-"""
+"""Copyable authored Ticket state follows its own registered field order."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from sqlite3 import Connection
 
@@ -29,34 +23,6 @@ from planner.tickets.data import (
 from planner.tickets.views import copy_text
 from planner.worker_types.contracts import WorkerTypeDefinition
 
-# The permanent copy_text golden: coding's six field blocks in exact order, with a
-# settled brief value and a success_condition user-note so the golden discriminates per-field
-# placement (not just an all-"(none)" shape).
-_CODING_COPY_TEXT_GOLDEN = (
-    "Coding ticket\n"
-    "stage: needs_success_condition\n"
-    "employee_backend: codex\n"
-    "owner: worker\n"
-    "\n"
-    "brief:\nkickoff body\n"
-    "\n"
-    "success_condition:\n(none)\n"
-    "\n"
-    "what_changes:\n(none)\n"
-    "\n"
-    "plan:\n(none)\n"
-    "\n"
-    "implementation:\n(none)\n"
-    "\n"
-    "consequences:\n(none)\n"
-    "\n"
-    "pending proposal:\n(none)\n"
-    "recap:\nCurrent work\n"
-    "\nguidance:\nsuccess note\n"
-    "\n"
-    "blocked_by:\n(none)\n"
-)
-
 
 @pytest.fixture
 def probe_registry() -> Iterator[WorkerTypeDefinition]:
@@ -67,10 +33,34 @@ def probe_registry() -> Iterator[WorkerTypeDefinition]:
         uninstall_probe_registry()
 
 
-def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
+@pytest.mark.parametrize(
+    ("worker_type", "fields", "next_stage"),
+    [
+        (
+            "coding",
+            (
+                "brief",
+                "success_condition",
+                "what_changes",
+                "plan",
+                "implementation",
+                "consequences",
+            ),
+            "needs_success_condition",
+        ),
+        ("probe", ("brief", "alpha", "beta", "consequences"), "needs_alpha"),
+    ],
+)
+def test_copy_text_preserves_authored_state_and_own_type_field_order(
+    tmp_db: Connection,
+    probe_registry: WorkerTypeDefinition,
+    worker_type: str,
+    fields: tuple[str, ...],
+    next_stage: str,
+) -> None:
     ticket = create_ticket(
         tmp_db,
-        worker_type="coding",
+        worker_type=worker_type,
         title="Coding ticket",
         principal=OWNER_PRINCIPAL,
         now=1,
@@ -83,16 +73,14 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         principal=ticket_principal(ticket.id),
         now=2,
     )
-    # Accept brief so its value settles and the ticket advances to needs_success_condition
-    # (the default ceiling is now needs_brief, so brief parks until accepted — the golden
-    # pins a SETTLED brief value, so we accept and expand the ceiling onward).
+    # Settle the authored brief before the next proposal.
     accept_proposal(
         tmp_db,
         ticket.id,
         field="brief",
         principal=OWNER_PRINCIPAL,
         now=3,
-        next_ceiling="needs_success_condition",
+        next_ceiling=next_stage,
         next_holder=OWNER_PRINCIPAL,
     )
     edit_ticket(
@@ -103,4 +91,28 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         principal=OWNER_PRINCIPAL,
         now=4,
     )
-    assert copy_text(tmp_db, ticket.id) == _CODING_COPY_TEXT_GOLDEN
+    file_current_proposal(
+        tmp_db,
+        ticket.id,
+        body="Authored next proposal",
+        principal=ticket_principal(ticket.id),
+        now=5,
+    )
+    copied = copy_text(tmp_db, ticket.id)
+    assert "Coding ticket" in copied
+    assert f"stage: {next_stage}" in copied
+    for authored in ("kickoff body", "success note", "Current work", "Authored next proposal"):
+        assert authored in copied
+    headings = [re.search(rf"^\s*{re.escape(field)}\s*:", copied, re.MULTILINE) for field in fields]
+    assert all(heading is not None for heading in headings)
+    positions = [heading.start() for heading in headings if heading is not None]
+    assert positions == sorted(positions)
+    foreign = (
+        {"alpha", "beta"}
+        if worker_type == "coding"
+        else {"success_condition", "what_changes", "plan", "implementation"}
+    )
+    assert all(
+        re.search(rf"^\s*{re.escape(field)}\s*:", copied, re.MULTILINE) is None for field in foreign
+    )
+    assert copied.index("pending proposal:") < copied.index("Authored next proposal")

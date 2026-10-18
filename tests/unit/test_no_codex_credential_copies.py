@@ -324,25 +324,6 @@ def test_allows_safe_patterns_and_keeps_scope_and_statement_boundaries(source: s
     assert _credential_copy_failures(source) == []
 
 
-@pytest.mark.parametrize(
-    "source",
-    [
-        # Whole-home copies are the closest uncaught relative of the original incident.
-        "import shutil\nshutil.copytree(real_home, scratch_home)\n"
-        'os.environ["CODEX_HOME"] = scratch_home',
-        "import shutil\np = get_login_path()\nshutil.copy2(p, scratch)",
-        "import shutil\nshutil.copy2(holder.login, scratch)",
-        "import shutil\nshutil.copy2(paths[0], scratch)",
-        'import shutil\npaths = (home / "auth.json", scratch)\nshutil.copy2(*paths)',
-        '(scratch / "auth.json").write_bytes(canonical.read_bytes())',
-        'import subprocess\nsubprocess.run(["cp", "auth.json", "scratch/auth.json"])',
-        'import shutil\nif condition:\n p = home / "auth.json"\nshutil.copy2(p, scratch)',
-    ],
-)
-def test_documents_accepted_blind_spots(source: str) -> None:
-    assert _credential_copy_failures(source) == []
-
-
 @pytest.mark.parametrize("source", ['import shutil\nshutil.copy2("auth.json",', 'x = "\x00"'])
 def test_unparseable_module_fails_closed(source: str) -> None:
     failures = _credential_copy_failures(source, "broken.py")

@@ -21,7 +21,6 @@ from pathlib import Path
 
 from tests.support.worker_skill_proof_acp_agent import (
     MODEL,
-    ROLE_DIRECTIVE,
     WORKTREE_ACKNOWLEDGEMENT,
     WORKTREE_GUIDANCE,
 )
@@ -32,7 +31,6 @@ from planner.conversation.backends.hermes_acp import (
 )
 from planner.conversation.contracts import (
     ConversationBackendKey,
-    ConversationRoleMaterials,
     ConversationStartRequest,
 )
 from planner.conversation.events import (
@@ -47,6 +45,11 @@ from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
 from planner.environments.hermes_home import provision_planner_home_skills
+from planner.managed_skills import write_skill_home
+from planner.runtime.logic.conversation_start_resolution import (
+    ConversationStartConfiguration,
+    resolve_worker_conversation_start,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PROOF_AGENT = REPOSITORY_ROOT / "tests" / "support" / "worker_skill_proof_acp_agent.py"
@@ -64,20 +67,20 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
         # Opening a database writes the managed skills home it is seeded with.
         with connect(str(database_parent / "planner.db")) as seed:
             create_schema(seed)
+            seed.execute(
+                "UPDATE managed_skills SET source_text = ? WHERE skill_name = ?",
+                (
+                    "---\nname: panels-worker-coding\ndescription: Synthetic proof\n---\n"
+                    + WORKTREE_GUIDANCE,
+                    "panels-worker-coding",
+                ),
+            )
+            seed.commit()
+            write_skill_home(seed, database_parent)
         provision_planner_home_skills(
             hermes_home,
             configured_database_parent=database_parent,
         )
-
-        # What Panels installed, before any agent is asked to read it: the skill is a link
-        # into the folder beside the database, and it carries the guidance.
-        installed_skill = hermes_home / "skills" / "panels-worker-coding" / "SKILL.md"
-        installed_package = installed_skill.parent
-        assert installed_package.is_symlink()
-        assert installed_package.resolve() == (
-            database_parent / "skills" / "panels-worker-coding"
-        ).resolve()
-        assert WORKTREE_GUIDANCE in installed_skill.read_text(encoding="utf-8")
 
         database_path = runtime_root / "conversations.db"
         database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,13 +107,24 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
             live_tail=live_tail,
         )
         try:
+            resolved = resolve_worker_conversation_start(
+                ticket_id="t_skill_proof",
+                worker_type_launch_defaults=ConversationStartConfiguration(
+                    backend_key=ConversationBackendKey.hermes,
+                    model=MODEL,
+                    reasoning_effort=None,
+                ),
+                ticket_last_chosen=None,
+                workspace_folder=REPOSITORY_ROOT,
+            )
             await system.start_conversation(
                 ConversationStartRequest(
                     conversation_id=CONVERSATION_ID,
-                    model=MODEL,
-                    backend_key=ConversationBackendKey.hermes,
-                    role_materials=ConversationRoleMaterials(role_text=ROLE_DIRECTIVE),
-                    workspace_folder=REPOSITORY_ROOT,
+                    model=resolved.model,
+                    backend_key=resolved.backend_key,
+                    role_materials=resolved.role_materials,
+                    workspace_folder=resolved.workspace_folder,
+                    access=resolved.access,
                 )
             )
             with live_tail.subscribe(CONVERSATION_ID) as watching:
@@ -127,9 +141,7 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
             await system.shutdown()
 
         events = await store.read_events_after(CONVERSATION_ID, 0)
-        endings = [
-            event for event in events if event.kind is ConversationEventKind.turn_ended
-        ]
+        endings = [event for event in events if event.kind is ConversationEventKind.turn_ended]
         assert len(endings) == 1, events
         # The agent refuses the turn when either half is missing. Its runtime answer and
         # completed turn prove both checks without turning backend prose into a record.

@@ -37,6 +37,14 @@ def test_retired_types_are_refused_by_all_creation_and_schedule_writers(
     worker_type: str,
 ) -> None:
     for create in (
+        lambda: data.create_ticket(
+            tmp_db,
+            title="Retired direct writer",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=200,
+            worker_type=worker_type,
+        ),
         lambda: actions.create_ticket(
             tmp_db,
             title="Retired",
@@ -139,9 +147,7 @@ def test_catalog_keeps_historical_manifests_but_omits_them_from_supported_config
             assert client.get(f"/api/worker-types/{name}").status_code == 200
             response = client.post("/api/tickets", json={"title": "Retired", "worker_type": name})
             assert response.status_code == 400
-        unknown = client.post(
-            "/api/tickets", json={"title": "Unknown", "worker_type": "unknown"}
-        )
+        unknown = client.post("/api/tickets", json={"title": "Unknown", "worker_type": "unknown"})
         assert unknown.status_code == 400
         assert not RETIRED_WORKER_TYPES.intersection(
             unknown.json()["error"]["detail"]["worker_types"]

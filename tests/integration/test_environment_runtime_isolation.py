@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from tests.e2e.harness import BOOT_BUDGET_S, PLAN_BIN
+from tests.support.server import BOOT_BUDGET_S, PLAN_BIN
 
 _STAGING_URL_RE = re.compile(r"staging (?P<url>http://127\.0\.0\.1:\d+)")
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]

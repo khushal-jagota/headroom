@@ -388,3 +388,83 @@ def test_move_http_checks_record_precondition_and_authority_before_locale_only_w
             dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket.id,)).fetchone())
             == after
         )
+
+
+def test_public_http_locale_refusals_override_noop_and_schedule_preservation(
+    tmp_db: Connection, tmp_path: Path, fake_clock: ClockForTest
+) -> None:
+    """The socket-free HTTP boundary retains the retired locale host's contracts."""
+    from fastapi.testclient import TestClient
+
+    from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+    from planner.core.config import load_config
+    from planner.core.db import connect
+    from planner.core.server import create_app
+
+    db_path = tmp_db.execute("PRAGMA database_list").fetchone()[2]
+    config = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": db_path})
+    app = create_app(
+        config,
+        fake_clock,
+        lambda: connect(db_path),
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
+    with TestClient(app) as client:
+        project = client.post(
+            "/api/projects", json={"name": "Mac requirement", "requires_macos": True}
+        )
+        assert project.status_code == 200, project.text
+        project_id = project.json()["id"]
+        request = {"title": "Locale transfer", "worker_type": "coding", "brief": "Scope."}
+        for choices in ({"locale": "macos"}, {"project_id": project_id}):
+            before = [tuple(row) for row in tmp_db.execute("SELECT * FROM tickets ORDER BY id")]
+            refusal = client.post("/api/tickets", json={**request, **choices})
+            assert refusal.status_code == 400, refusal.text
+            error = refusal.json()["error"]
+            assert error["detail"]["locale"] == "macos"
+            assert error["detail"]["employee_backend"]
+            assert error["detail"]["reason"]
+            assert "macos" in error["message"]
+            assert [
+                tuple(row) for row in tmp_db.execute("SELECT * FROM tickets ORDER BY id")
+            ] == before
+        explicit = client.post(
+            "/api/tickets", json={**request, "project_id": project_id, "locale": "vps"}
+        )
+        assert explicit.status_code == 200, explicit.text
+        ticket_id = explicit.json()["id"]
+        assert explicit.json()["locale"] == "vps"
+        assert explicit.json()["project_id"] == project_id
+        before_move = dict(
+            tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+        )
+        moved = client.post(f"/api/tickets/{ticket_id}/move", json={"locale": "vps"})
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["locale"] == "vps"
+        assert (
+            dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone())
+            == before_move
+        )
+        detail = client.get(f"/api/tickets?detail=full&id={ticket_id}")
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["locale"] == "vps"
+        schedule = client.post(
+            "/api/schedules",
+            json={
+                "title": "Locale schedule",
+                "worker_type": "coding",
+                "kickoff_note": "Scope.",
+                "project_id": project_id,
+                "locale": "vps",
+                "enabled": False,
+                "cadence": "daily",
+                "local_time": "23:59",
+            },
+        )
+        assert schedule.status_code == 200, schedule.text
+        schedule_id = schedule.json()["id"]
+        assert schedule.json()["locale"] == "vps"
+        assert client.get(f"/api/schedules/{schedule_id}").json()["locale"] == "vps"
+        edited = client.patch(f"/api/schedules/{schedule_id}", json={"title": "Edited title"})
+        assert edited.status_code == 200, edited.text
+        assert edited.json()["locale"] == "vps"

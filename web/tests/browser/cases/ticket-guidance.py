@@ -130,8 +130,11 @@ def run(browser, urls):
     placement_writes = []
     ceiling_writes = []
     approvals = []
+    revisions = []
+    session_revised = False
 
     def respond(route):
+        nonlocal session_revised
         path = route.request.url.split("/api/", 1)[1]
         # A single object is read through its collection address now: tickets?detail=full&id=X.
         if path.startswith("tickets?"):
@@ -172,6 +175,23 @@ def run(browser, urls):
                 "ticket_status": "empty",
                 "assigned": False,
             }
+        elif path == "tickets/t_personal_pending":
+            result = {
+                **ticket,
+                "id": "t_personal_pending",
+                "worker_type": "personal",
+                "stage": "needs_outcome",
+                "ceiling": "needs_outcome",
+                "ceiling_holder": {"kind": "owner", "id": "owner"},
+                "field_values": {"brief": "Original personal brief"},
+                "pending_proposal": {
+                    "field": "outcome",
+                    "body": "Original personal outcome proposal",
+                    "revision": 1,
+                    "proposed_by": "agent",
+                    "created_at": 1,
+                },
+            }
         elif path == "tickets/t_personal":
             # assigned is what the route reads to decide the owner may edit this Stage.
             # The server puts it on every Ticket payload, so this stand-in carries it too.
@@ -209,6 +229,10 @@ def run(browser, urls):
                 "id": "t_artifacts",
                 "title": "Artifact links in place",
                 "conversation_id": "artifact-conversation",
+                "conversation_history": [
+                    {"conversation_id": "past-artifact-conversation", "created_at": 1},
+                    {"conversation_id": "artifact-conversation", "created_at": 2},
+                ],
                 "field_values": {
                     "brief": "Saved [HTML plan](/files/sprint-items/si_artifacts/artifacts/plan.html?mode=read#summary). "
                     "[Ticket document](/files/tickets/t_artifacts/artifacts/plan.md) "
@@ -266,11 +290,17 @@ def run(browser, urls):
         elif path.endswith("/tail"):
             route.fulfill(status=200, content_type="text/event-stream", body="")
             return
+        elif path == "tickets/t_with_session/reject":
+            assert route.request.method == "POST"
+            revisions.append(route.request.post_data_json)
+            session_revised = True
+            result = {**ticket, "id": "t_with_session", "pending_proposal": None}
         elif path == "tickets/t_with_session":
             result = {
                 **ticket,
                 "id": "t_with_session",
                 "conversation_id": "existing-worker-session",
+                "pending_proposal": None if session_revised else ticket["pending_proposal"],
             }
         elif path == "tickets/t_open":
             result = {
@@ -556,10 +586,28 @@ def run(browser, urls):
     expect(page.locator("[data-return-unavailable]")).to_have_count(0)
     page.locator("[data-send-back]").click()
     expect(page.locator("[data-revision-note]")).to_be_visible()
+    exact_revision = "Keep the agreed scope.\nPreserve the attributed details."
+    page.locator("[data-revision-note]").fill(exact_revision)
+    page.locator("[data-revision-send]").click()
+    expect(
+        page.locator('[data-ticket-id="t_with_session"] [data-approval-block][data-mode="pending"]')
+    ).to_have_count(0)
+    assert revisions == [{"message": exact_revision}]
+
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()
     assert page.locator("[data-copy]").count() == 0
     assert page.locator(".ticket-operating").count() == 0
+    page.evaluate("window.__showTicket('t_personal_pending')")
+    historical = page.locator('[data-ticket-id="t_personal_pending"]')
+    expect(historical).to_have_attribute("data-stage", "needs_outcome")
+    expect(historical).to_contain_text("Original personal outcome proposal")
+    expect(page.locator("[data-ticket-manifest-error]")).to_have_count(0)
+    page.evaluate("window.__showReview('t_personal_pending', 'outcome')")
+    historical_review = page.locator('[data-review-card][data-ticket-id="t_personal_pending"]')
+    expect(historical_review).to_have_attribute("data-field", "outcome")
+    expect(historical_review).to_contain_text("Original personal outcome proposal")
+    expect(page.locator("[data-review-manifest-error]")).to_have_count(0)
     page.evaluate("window.__showReview()")
     expect(page.locator("[data-ticket-guidance]")).to_have_count(1)
     guidance = page.locator("[data-ticket-guidance]")
@@ -606,6 +654,14 @@ def run(browser, urls):
     artifact_started = time.monotonic()
     page.evaluate("window.__showTicket('t_artifacts')")
     page.locator('[data-ticket-id="t_artifacts"]').wait_for()
+    page.locator("[data-conversation-rest-bar]").click()
+    page.locator('[data-conversation-lens-choice="full"]').click()
+    expect(page.locator("[data-conversation-input]")).to_be_visible()
+    expect(page.get_by_role("button", name="Conversation options")).to_be_visible()
+    page.get_by_role("button", name="Conversation options").click()
+    expect(page.locator("[data-conversation-history]")).to_have_count(0)
+    page.keyboard.press("Escape")
+
     page.locator("[data-stage-fold]").evaluate("(element) => element.open = true")
     page.locator('[data-stage-fold] [data-field="brief"]').evaluate(
         "(element) => element.open = true"

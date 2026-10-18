@@ -1299,3 +1299,65 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             assert response.json()["error"]["code"] == "agent_forbidden", response.text
         assert client.get(f"/api/tickets?detail=full&id={theirs['id']}").json() == before
         assert client.get(f"/api/items?detail=full&id={other['id']}").json()["body"] == ""
+
+
+def test_recap_public_patch_readback_preserves_archived_files(tmp_path: Path) -> None:
+    """Recap transport and durable archives do not require a connected browser."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client, "Synthetic recap")
+        item_id = item["id"]
+        original = "Original synthetic brief: preserve the agreed scope."
+        replacement = "The recap keeps this review easy to recover."
+        notes = "Decision: retain the existing body."
+        files = db_path.parent / "files" / "sprint-items" / item_id / "artifacts"
+        files.mkdir(parents=True)
+        (files / "original-brief.md").write_text(original, encoding="utf-8")
+        (files / "working-notes.md").write_text(notes, encoding="utf-8")
+        saved = client.patch(f"/api/items/{item_id}", json={"body": replacement})
+        assert saved.status_code == 200, saved.text
+        assert client.get(f"/api/items/{item_id}/workspace").json()["body"] == replacement
+        for name, content in (("original-brief.md", original), ("working-notes.md", notes)):
+            archived = client.get(f"/files/sprint-items/{item_id}/artifacts/{name}")
+            assert archived.status_code == 200, archived.text
+            assert archived.text == content
+
+
+def test_workspace_history_keeps_exact_current_and_past_supervisor_identities(
+    tmp_path: Path,
+) -> None:
+    """History selection consumes persisted ownership, not a second active conversation."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client, "Supervisor history")
+        with connect(str(db_path)) as conn:
+            identity = json.dumps(
+                [
+                    ["PLAN_ACTOR", "sprint_item_supervisor"],
+                    ["PLAN_SPRINT_ITEM_ID", item["id"]],
+                ]
+            )
+            for name, created_at in (("past-supervisor", 10), ("current-supervisor", 20)):
+                conn.execute(
+                    "INSERT INTO conversations (conversation_id,backend_key,model,workspace_folder,"
+                    "identity_environment_variables,access,latest_sequence,created_at) "
+                    "VALUES (?,'codex','gpt-5.6-sol','/tmp',?,'full',0,?)",
+                    (name, identity, created_at),
+                )
+            conn.execute(
+                "UPDATE agents SET conversation_id=? WHERE agent_key=?",
+                (
+                    "current-supervisor",
+                    item["supervisor"]["agent_key"],
+                ),
+            )
+            conn.commit()
+        response = client.get(f"/api/items/{item['id']}/workspace")
+        assert response.status_code == 200, response.text
+        workspace = response.json()
+        assert workspace["supervisor"]["conversation_id"] == "current-supervisor"
+        assert workspace["conversation_history"] == [
+            {"conversation_id": "past-supervisor", "created_at": 10},
+            {"conversation_id": "current-supervisor", "created_at": 20},
+        ]
+        assert workspace["id"] == item["id"]

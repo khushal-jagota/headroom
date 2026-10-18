@@ -10,7 +10,6 @@ from planner.conversation.contracts import ConversationAccess, ConversationBacke
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
-    WORKER_ROLE_TEXT,
     ConversationStartConfiguration,
     ConversationStartOverrides,
     resolve_worker_conversation_start,
@@ -71,12 +70,10 @@ def test_a_worker_start_carries_the_worker_role_and_its_ticket_identity() -> Non
         workspace_folder=_WORKSPACE,
     )
 
-    assert values.role_materials.role_text == WORKER_ROLE_TEXT
+    # The real ACP child proof owns usable role text, independent of implementation constants.
     assert values.role_materials.identity_environment_variables == (
         ("PLAN_ACTOR", "worker"),
         ("PLAN_TICKET_ID", "t_abc"),
     )
     assert values.workspace_folder == _WORKSPACE
     assert values.access is ConversationAccess.full
-
-
