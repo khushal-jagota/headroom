@@ -24,6 +24,7 @@ from planner.navigation.lifecycle_summary import INDEXES, read_summary
 from planner.navigation.schema import SCHEMA
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
 from planner.tickets.derivation import StoredTicketFacts, derive_ticket_status
+from planner.tickets.logic.fields_codec import proposal_from_json
 from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.store import definition_from_json
 
@@ -76,7 +77,7 @@ def attach(conn: sqlite3.Connection) -> None:
 def create_schema(conn: sqlite3.Connection, *, schema_version: int = SCHEMA_VERSION) -> None:
     if not conn.in_transaction:
         raise RuntimeError("navigation schema requires a transaction")
-    if schema_version not in (1, SCHEMA_VERSION):
+    if schema_version not in (1, 2, SCHEMA_VERSION):
         raise ValueError("unsupported navigation schema version")
     attach(conn)
     for statement in SCHEMA:
@@ -115,7 +116,7 @@ def create_schema(conn: sqlite3.Connection, *, schema_version: int = SCHEMA_VERS
                 + capture
                 + " END"
             )
-    if schema_version == SCHEMA_VERSION:
+    if schema_version >= 2:
         for statement in INDEXES:
             conn.execute(statement)
     rebuild(conn)
@@ -128,7 +129,16 @@ def upgrade_compact_lifecycle(conn: sqlite3.Connection) -> None:
         raise RuntimeError("compact lifecycle upgrade requires navigation schema 1")
     for statement in INDEXES:
         conn.execute(statement)
-    conn.execute("UPDATE navigation_meta SET schema_version=?", (SCHEMA_VERSION,))
+    conn.execute("UPDATE navigation_meta SET schema_version=2")
+    rebuild(conn)
+
+
+def upgrade_consumer_metadata(conn: sqlite3.Connection) -> None:
+    if not conn.in_transaction:
+        raise RuntimeError("navigation upgrade requires a transaction")
+    if conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] != 2:
+        raise RuntimeError("consumer metadata upgrade requires navigation schema 2")
+    conn.execute("UPDATE navigation_meta SET schema_version=3")
     rebuild(conn)
 
 
@@ -325,6 +335,16 @@ def _derive(
             terminal=stage.is_terminal,
             stage_ownership=None if stage.ownership_mode is None else stage.ownership_mode.value,
         )
+        if version >= 3:
+            validated_proposal = proposal_from_json(t["pending_proposal"])
+            value.update(
+                updated_at=t["updated_at"],
+                proposal_created_at=(
+                    None if validated_proposal is None else validated_proposal.created_at
+                ),
+                worker_step_claim_out=t["worker_step_claim"] == WorkerStepClaim.out,
+                blocked=live,
+            )
         records.append(_record(kind, identity, value))
     elif kind in ("orchestrator", "chief"):
         if kind == "orchestrator":
@@ -339,6 +359,9 @@ def _derive(
                 "project_id": t["project_id"],
                 "settled": bool(t["settled"]),
             }
+            version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+            if version >= 3:
+                value.update(priority=t["priority"], created_at=t["created_at"])
         else:
             key = "chief_of_staff"
             deps.add(("chief_settings", key))

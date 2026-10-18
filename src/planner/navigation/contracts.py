@@ -1,11 +1,11 @@
-"""Generic navigation v2. Signal-derived semantics remain explicitly unsupported."""
+"""Generic navigation v3. Signal-derived semantics remain explicitly unsupported."""
 
 from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-SCHEMA_VERSION = 2
-SUPPORTED_SEMANTICS = "generic-source-facts-v2"
+SCHEMA_VERSION = 3
+SUPPORTED_SEMANTICS = "generic-source-facts-v3"
 RecordKind = Literal[
     "ticket", "orchestrator", "chief", "conversation", "address", "totals", "project"
 ]
@@ -26,6 +26,9 @@ class TicketValue(TypedDict):
     worker_type: str
     stage: str
     ticket_status: str
+    blocked: bool
+    updated_at: int
+    worker_step_claim_out: bool
     priority: str
     deadline: str | None
     project_id: str | None
@@ -37,6 +40,7 @@ class TicketValue(TypedDict):
     ceiling_holder: PrincipalValue
     proposal_field: str | None
     proposal_revision: int
+    proposal_created_at: int | None
     stage_ownership: str | None
     terminal: bool
     locale: str
@@ -44,6 +48,8 @@ class TicketValue(TypedDict):
 
 class OrchestratorValue(TypedDict):
     title: str
+    priority: str
+    created_at: int
     project_id: str
     settled: bool
     conversation_id: str | None
@@ -166,7 +172,7 @@ type NavigationRecord = (
 class Continuity(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["generic-source-facts-v2"]
+    semantics: Literal["generic-source-facts-v3"]
     epoch: str
     revision: str
 
@@ -178,7 +184,7 @@ class Snapshot(Continuity):
 class RevisionBatch(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["generic-source-facts-v2"]
+    semantics: Literal["generic-source-facts-v3"]
     epoch: str
     base_revision: str
     revision: str

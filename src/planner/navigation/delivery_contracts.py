@@ -1,4 +1,4 @@
-"""Versioned navigation transport; record semantics remain navigation schema 2."""
+"""Versioned navigation transport; record semantics remain navigation schema 3."""
 
 from __future__ import annotations
 

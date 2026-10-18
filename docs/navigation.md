@@ -2,7 +2,7 @@
 
 Navigation is a derived view of canonical database facts. It does not own Ticket or conversation state.
 
-The generic contract has schema version 2. It contains Ticket metadata, canonical status, assignment, approval references, orchestrator metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
+The generic contract has schema version 3. It contains Ticket metadata, canonical status, assignment, approval references, orchestrator metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
 
 Signal compatibility remains unsatisfied. This contract omits public activity, unread, request, failure, work, and attention semantics and their dependent counts. An omitted fact is unknown under this contract. It is not false or zero. Raw lifecycle and read positions do not prove those public semantics. Downstream consumers cannot cut over dependent views from this contract alone.
 
@@ -28,15 +28,21 @@ All records have `kind`, `id`, and `value`. `navigation/contracts.py` declares a
 
 | Tag | Value fields |
 | --- | --- |
-| `ticket` | `title`, `worker_type`, `stage`, `ticket_status`, `priority`, `deadline`, effective `project_id`, `orchestrator_kind`, `sprint_item_id`, `conversation_id`, `is_backlogged`, `ceiling`, `ceiling_holder`, `proposal_field`, `proposal_revision`, `stage_ownership`, `terminal`, `locale` |
-| `orchestrator` | `title`, `project_id`, `settled`, current `conversation_id` |
+| `ticket` | `title`, `worker_type`, `stage`, `ticket_status`, `priority`, `deadline`, effective `project_id`, `orchestrator_kind`, `sprint_item_id`, `conversation_id`, `is_backlogged`, `ceiling`, `ceiling_holder`, `proposal_field`, `proposal_revision`, `proposal_created_at`, `updated_at`, `worker_step_claim_out`, `blocked`, `stage_ownership`, `terminal`, `locale` |
+| `orchestrator` | `title`, `priority`, `created_at`, `project_id`, `settled`, current `conversation_id` |
 | `chief` | `label`, current `conversation_id` |
 | `project` | `name`, `priority` |
 | `conversation` | raw `latest_sequence`, `owner_read_through_sequence`, `latest_agent_activity_sequence`, `latest_agent_activity_at`, `error_acknowledged_through_sequence`, `lifecycle_summary` |
 | `address` | `owner_kind`, `owner_id`, `conversation_id`, `current`, `parent_kind`, `parent_id` |
 | `totals` | `child_count`, `distinct_conversation_count` |
 
-Ticket status uses the canonical pure status rule. Stage ownership and terminal state use the Worker definition from the same database transaction. Approval data contains the field, revision, and holder. It excludes the proposal body and field values.
+Ticket status uses the canonical pure status rule. Stage ownership and terminal state use the Worker definition from the same database transaction. Approval data contains the field, revision, creation time, and holder. It excludes the proposal body and field values.
+
+Schema 3 adds six required source facts. Orchestrator `priority` and `created_at` come from the corresponding `sprint_items` columns. Ticket `updated_at` comes from its stored timestamp. `proposal_created_at` comes from the strict canonical proposal decoder and is null exactly when no proposal exists. `worker_step_claim_out` is true exactly when the stored claim is `out`. Summing that flag across all Ticket records matches the existing unfiltered Worker claim count, including terminal, blocked, and backlogged Tickets. These fields preserve existing ordering by orchestrator priority/creation time, Ticket update time, and proposal creation time. Conversation activity never substitutes for these values.
+
+Ticket `blocked` is the canonical live-blocker predicate, independently of status precedence. A proposal, an outstanding claim, or an errored claim can mask the blocked status without clearing this fact. Existing dependency capture handles edge changes and blocker completion, reopening, or deletion in the same source transaction. No blocker identities or names enter navigation.
+
+The explicit schema 2 to 3 migration rebuilds the projection in one transaction. It rotates the epoch and clears the journal once through the existing rebuild operation. Wire version, command fence version, and the lifecycle input contract remain version 1. Historical schema 1 and 2 projections retain their original layouts and historical cancelled/blocker rules. The compact lifecycle migration stays explicitly version 2. Schema 3 uses the accepted current source rules. Current public reads reject historical schemas. Failed migrations restore all source and projection rows and continuity. Separate recap previews remain detail reads.
 
 Conversation lifecycle entries contain the compact raw summary described below. They preserve uncertainty. They do not imply provider capability, active public Signal state, or automatic recovery. Detailed lifecycle identities remain in the canonical source, outside navigation.
 
@@ -44,7 +50,7 @@ Address IDs are canonical JSON arrays of owner kind, owner ID, and conversation 
 
 ## Snapshots and replay
 
-`navigation.snapshot(conn)` returns scope, schema version, `semantics`, epoch, revision, and records in one read transaction. `semantics` is exactly `generic-source-facts-v2`. It explicitly marks the limited compatible fields. Reads reject a caller transaction that contains pending canonical changes. They do not finalize it early.
+`navigation.snapshot(conn)` returns scope, schema version, `semantics`, epoch, revision, and records in one read transaction. `semantics` is exactly `generic-source-facts-v3`. It explicitly marks the limited compatible fields. Reads reject a caller transaction that contains pending canonical changes. They do not finalize it early.
 
 `navigation.journal(conn, epoch, after_revision, limit)` returns the same continuity plus complete batches and `has_more`. Limits range from 1 to 1,000 batches. Each batch contains scope, schema version, semantics, epoch, `base_revision`, resulting `revision`, typed upserts, and typed deletion keys. Revisions use exact canonical decimal strings. A relevant transaction creates one batch even when the public delta is empty. Unrelated transactions create none.
 
@@ -78,7 +84,7 @@ The output contains one optional fact and six integer counts. It has a fixed num
 
 The latest-turn partial index covers conversation identity, descending turn number, descending identity, and status for turn rows. The unresolved-status partial index covers conversation identity, kind, and status for the exact six counted groups. The query and index share one predicate. Navigation does not scan irrelevant settled history for sequence, read, or lifecycle updates. Exact count work remains proportional to the number of unresolved source rows. The canonical lifecycle writer separately reads its source history. This change does not make that writer constant-cost.
 
-The original migration explicitly creates schema 1 and uses a private, frozen conversation list helper. Current typed snapshot and journal reads reject schema 1. The additive schema 2 migration installs both indexes, changes metadata, and rebuilds records atomically. It replaces the epoch and journal while preserving workspace scope. A failed upgrade restores the original schema version, epoch, records, and journal. A second current-schema open does not replace continuity.
+The original migration explicitly creates schema 1 and uses a private, frozen conversation list helper. Current typed snapshot and journal reads reject historical schemas 1 and 2. The additive schema 2 migration installs both indexes, changes metadata, and rebuilds records atomically. It replaces the epoch and journal while preserving workspace scope. A failed upgrade restores the original schema version, epoch, records, and journal. A second current-schema open does not replace continuity.
 
 Synthetic proof adds 1,000 and 10,000 irrelevant settled turn, request, and attempt facts while preserving the same latest turn and unresolved facts. Sequence and read finalization each use 1,025 SQLite VM instructions at both sizes. Lifecycle finalization uses 1,011 at both sizes. Each full conversation record is 448 bytes. The lifecycle source write occurs before this VM measurement. A separate fixture preserves all 5,001 unknown outcomes in the exact count. Its summary uses 250 bytes and 45,173 VM instructions, versus 173 with the small unresolved set. These observations prove the stated projection boundary only.
 

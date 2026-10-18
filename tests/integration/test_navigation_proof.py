@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic.script import ScriptDirectory
@@ -12,6 +14,25 @@ from alembic.script import ScriptDirectory
 from planner.core import db
 from planner.navigation import rebuild, snapshot
 from planner.navigation.proof import capture_command_commits, certify, response_fence
+
+
+def historical_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Historical rows remain inspectable while current public reads reject schema 2."""
+    scope, version, epoch, revision = conn.execute(
+        "SELECT scope,schema_version,epoch,revision FROM navigation_meta"
+    ).fetchone()
+    return {
+        "scope": scope,
+        "schema_version": version,
+        "epoch": epoch,
+        "revision": str(revision),
+        "records": [
+            {"kind": kind, "id": identity, "value": json.loads(value)}
+            for kind, identity, value in conn.execute(
+                "SELECT kind,id,value FROM navigation_records ORDER BY kind,id"
+            )
+        ],
+    }
 
 
 def historical_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
@@ -42,7 +63,7 @@ def test_additive_upgrade_second_open_and_rebuild_preserve_witnesses(
 ) -> None:
     conn = historical_database(tmp_path, monkeypatch)
     insert_project(conn, "before")
-    before = snapshot(conn)
+    before = historical_snapshot(conn)
     assert (
         conn.execute(
             "SELECT 1 FROM sqlite_master WHERE name='navigation_commit_witnesses'"
@@ -109,7 +130,7 @@ def test_failed_additive_migration_rolls_back_storage(
 ) -> None:
     conn = historical_database(tmp_path, monkeypatch)
     insert_project(conn, "preserved")
-    before = snapshot(conn)
+    before = historical_snapshot(conn)
     shipped = db.MIGRATIONS_DIRECTORY
     tree = tmp_path / "failed-migrations"
     shutil.copytree(shipped, tree)
@@ -126,7 +147,7 @@ def test_failed_additive_migration_rolls_back_storage(
         patch.setattr(db, "MIGRATIONS_DIRECTORY", tree)
         with pytest.raises(RuntimeError, match="synthetic migration failure"):
             db.create_schema(conn)
-    assert snapshot(conn) == before
+    assert historical_snapshot(conn) == before
     assert (
         conn.execute("SELECT 1 FROM sqlite_master WHERE name='incomplete_delivery'").fetchone()
         is None

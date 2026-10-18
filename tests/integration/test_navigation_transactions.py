@@ -1,5 +1,6 @@
 """All fixtures use synthetic SQLite files in pytest temporary directories."""
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any, cast
@@ -283,9 +284,217 @@ def test_definition_and_approval_metadata_use_current_transaction(tmp_path: Path
     assert record["stage_ownership"] == "user"
     assert record["proposal_field"] == "implementation"
     assert record["proposal_revision"] == 7
+    assert record["proposal_created_at"] == 0
     assert record["ticket_status"] == "awaiting_approval"
     assert record["ceiling_holder"] == {"kind": "owner", "id": "owner"}
     assert "SECRET BODY" not in json.dumps(snapshot(conn))
+    before = snapshot(conn)
+    proposal["created_at"] = 42
+    proposal["body"] = "REPLACEMENT BODY"
+    conn.execute("BEGIN")
+    conn.execute(
+        "UPDATE tickets SET pending_proposal=?,pending_proposal_revision=8 WHERE id='t'",
+        (json.dumps(proposal),),
+    )
+    conn.commit()
+    replacement = values(conn)["ticket", "t"]
+    assert replacement["proposal_field"] == "implementation"
+    assert replacement["proposal_created_at"] == 42
+    assert replacement["proposal_revision"] == 8
+    assert journal(conn, before["epoch"], before["revision"])["batches"][0]["upserts"] == [
+        {"kind": "ticket", "id": "t", "value": replacement}
+    ]
+    conn.execute("BEGIN")
+    conn.execute("UPDATE tickets SET pending_proposal=NULL WHERE id='t'")
+    conn.commit()
+    assert values(conn)["ticket", "t"]["proposal_created_at"] is None
+    conn.close()
+
+
+def test_metadata_edits_publish_source_values_without_status_changes(tmp_path: Path) -> None:
+    conn = database(tmp_path)
+    conn.execute("BEGIN")
+    add_parent(conn, "a")
+    add_ticket(conn, "t", "a")
+    conn.commit()
+    before = snapshot(conn)
+    conn.execute("BEGIN")
+    conn.execute("UPDATE sprint_items SET priority='P0',created_at=88 WHERE id='a'")
+    conn.execute("UPDATE tickets SET updated_at=99 WHERE id='t'")
+    conn.commit()
+    actual = values(conn)
+    assert actual["orchestrator", "a"]["priority"] == "P0"
+    assert actual["orchestrator", "a"]["created_at"] == 88
+    assert actual["ticket", "t"]["updated_at"] == 99
+    assert actual["ticket", "t"]["ticket_status"] == "empty"
+    batch = journal(conn, before["epoch"], before["revision"])["batches"]
+    assert len(batch) == 1
+    assert {(r["kind"], r["id"]) for r in batch[0]["upserts"]} == {
+        ("ticket", "t"),
+        ("orchestrator", "a"),
+    }
+    stable = snapshot(conn)
+    conn.execute("BEGIN")
+    conn.execute("UPDATE tickets SET updated_at=100 WHERE id='t'")
+    conn.execute("DELETE FROM tickets WHERE id='t'")
+    conn.execute("DELETE FROM sprint_items WHERE id='a'")
+    conn.rollback()
+    assert snapshot(conn) == stable
+    conn.execute("BEGIN")
+    rebuild(conn)
+    conn.commit()
+    assert snapshot(conn)["records"] == stable["records"]
+    conn.close()
+
+
+def test_claim_fact_counts_every_stored_out_without_status_or_membership_filter(
+    tmp_path: Path,
+) -> None:
+    conn = database(tmp_path)
+    conn.execute("BEGIN")
+    for identity, stage, claim, backlog in (
+        ("ordinary", "needs_implementation", "out", 0),
+        ("done", "done", "out", 0),
+        ("backlog", "needs_implementation", "out", 1),
+        ("proposal", "needs_implementation", "out", 0),
+        ("errored", "needs_implementation", "errored", 0),
+        ("none", "needs_implementation", "none", 0),
+    ):
+        add_ticket(conn, identity)
+        conn.execute(
+            "UPDATE tickets SET stage=?,worker_step_claim=?,is_backlogged=? WHERE id=?",
+            (stage, claim, backlog, identity),
+        )
+    conn.execute(
+        "UPDATE tickets SET pending_proposal=? WHERE id='proposal'",
+        (
+            json.dumps(
+                {
+                    "field": "implementation",
+                    "body": "body",
+                    "proposed_by": "worker",
+                    "created_at": 1,
+                }
+            ),
+        ),
+    )
+    conn.execute("INSERT INTO ticket_blocks VALUES('none','ordinary')")
+    conn.commit()
+    tickets = {key[1]: value for key, value in values(conn).items() if key[0] == "ticket"}
+    assert sum(record["worker_step_claim_out"] for record in tickets.values()) == 4
+    assert tickets["proposal"]["ticket_status"] == "awaiting_approval"
+    assert tickets["ordinary"]["blocked"] is True
+    assert tickets["ordinary"]["ticket_status"] == "agent"
+    assert tickets["done"]["worker_step_claim_out"] is True
+    assert tickets["errored"]["worker_step_claim_out"] is False
+    assert tickets["none"]["worker_step_claim_out"] is False
+    before = snapshot(conn)
+    conn.execute("BEGIN")
+    conn.execute("DELETE FROM tickets WHERE id='done'")
+    conn.commit()
+    batch = journal(conn, before["epoch"], before["revision"])["batches"][0]
+    assert {"kind": "ticket", "id": "done"} in batch["deletes"]
+    assert sum(v["worker_step_claim_out"] for k, v in values(conn).items() if k[0] == "ticket") == 3
+    conn.close()
+
+
+@pytest.mark.parametrize("masked", ["proposal", "out", "errored"])
+def test_live_blocker_is_independent_and_captures_all_edge_transitions(
+    tmp_path: Path,
+    masked: str,
+) -> None:
+    conn = database(tmp_path)
+    conn.execute("BEGIN")
+    for identity in ("held", "a", "b"):
+        add_ticket(conn, identity)
+    if masked == "proposal":
+        conn.execute(
+            "UPDATE tickets SET pending_proposal=? WHERE id='held'",
+            (
+                json.dumps(
+                    {
+                        "field": "implementation",
+                        "body": "body",
+                        "proposed_by": "worker",
+                        "created_at": 1,
+                    }
+                ),
+            ),
+        )
+    else:
+        conn.execute("UPDATE tickets SET worker_step_claim=? WHERE id='held'", (masked,))
+    conn.commit()
+    expected_status = {"proposal": "awaiting_approval", "out": "agent", "errored": "errored"}[
+        masked
+    ]
+
+    def transition(sql: str, blocked: bool) -> None:
+        before = snapshot(conn)
+        conn.execute("BEGIN")
+        conn.execute(sql)
+        conn.commit()
+        record = values(conn)["ticket", "held"]
+        assert record["blocked"] is blocked
+        assert record["ticket_status"] == expected_status
+        batch = journal(conn, before["epoch"], before["revision"])["batches"][0]
+        changed = [r for r in batch["upserts"] if r["kind"] == "ticket" and r["id"] == "held"]
+        # Equal public values yield no upsert, but retain a complete atomic batch.
+        assert changed == (
+            []
+            if values_before[0] == blocked
+            else [{"kind": "ticket", "id": "held", "value": record}]
+        )
+        values_before[0] = blocked
+
+    values_before = [False]
+    transition("INSERT INTO ticket_blocks VALUES('a','held')", True)
+    transition("INSERT INTO ticket_blocks VALUES('b','held')", True)
+    transition("DELETE FROM ticket_blocks WHERE blocking_ticket_id='a'", True)
+    stable = snapshot(conn)
+    conn.execute("BEGIN")
+    conn.execute("DELETE FROM tickets WHERE id='b'")
+    conn.rollback()
+    assert snapshot(conn) == stable
+    transition("UPDATE tickets SET stage='done' WHERE id='b'", False)
+    transition("UPDATE tickets SET stage='needs_implementation' WHERE id='b'", True)
+    transition("DELETE FROM tickets WHERE id='b'", False)
+    conn.execute("BEGIN")
+    rebuild(conn)
+    conn.commit()
+    assert values(conn)["ticket", "held"]["blocked"] is False
+    conn.close()
+
+
+@pytest.mark.parametrize("timestamp", [True, None, "12"])
+def test_invalid_proposal_timestamp_rolls_back_instead_of_defaulting(
+    tmp_path: Path,
+    timestamp: object,
+) -> None:
+    from planner.core.contracts import PlannerError
+
+    conn = database(tmp_path)
+    conn.execute("BEGIN")
+    add_ticket(conn, "t")
+    conn.commit()
+    before = snapshot(conn)
+    conn.execute("BEGIN")
+    conn.execute(
+        "UPDATE tickets SET pending_proposal=? WHERE id='t'",
+        (
+            json.dumps(
+                {
+                    "field": "implementation",
+                    "body": "body",
+                    "proposed_by": "worker",
+                    "created_at": timestamp,
+                }
+            ),
+        ),
+    )
+    with pytest.raises(PlannerError, match="corrupt ticket field state"):
+        conn.commit()
+    assert snapshot(conn) == before
+    assert conn.execute("SELECT pending_proposal FROM tickets WHERE id='t'").fetchone()[0] is None
     conn.close()
 
 
@@ -541,7 +750,8 @@ def test_project_rename_and_private_timestamps_avoid_ticket_roots(
     derived: list[tuple[str, str]] = []
 
     def capture(
-        connection: sqlite3.Connection, root: tuple[str, str],
+        connection: sqlite3.Connection,
+        root: tuple[str, str],
         definitions: dict[str, WorkerTypeDefinition] | None = None,
     ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
         derived.append(root)
@@ -586,7 +796,8 @@ def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
     derived: list[tuple[str, str]] = []
 
     def capture(
-        connection: sqlite3.Connection, root: tuple[str, str],
+        connection: sqlite3.Connection,
+        root: tuple[str, str],
         definitions: dict[str, WorkerTypeDefinition] | None = None,
     ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
         derived.append(root)

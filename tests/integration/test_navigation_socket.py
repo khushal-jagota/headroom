@@ -33,7 +33,7 @@ def prepare(path: Path) -> None:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(
             "CREATE TABLE navigation_meta(singleton,scope,schema_version,epoch,revision);"
-            "INSERT INTO navigation_meta VALUES(1,'socket-fixture',2,'epoch',0);"
+            "INSERT INTO navigation_meta VALUES(1,'socket-fixture',3,'epoch',0);"
             "CREATE TABLE navigation_records(kind,id,value);"
             "CREATE TABLE navigation_dirty(kind,id);"
             "CREATE TABLE navigation_journal(revision INTEGER PRIMARY KEY,body TEXT);"
@@ -45,8 +45,8 @@ def prepare(path: Path) -> None:
 def append(path: Path, revision: int, title: str) -> None:
     continuity: Continuity = {
         "scope": "socket-fixture",
-        "schema_version": 2,
-        "semantics": "generic-source-facts-v2",
+        "schema_version": 3,
+        "semantics": "generic-source-facts-v3",
         "epoch": "epoch",
         "revision": str(revision),
     }

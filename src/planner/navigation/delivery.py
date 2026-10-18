@@ -16,6 +16,7 @@ from planner.core import change_signal
 from planner.core.sse import register_open_stream_closer
 from planner.navigation.configuration import DeliveryConfig
 from planner.navigation.contracts import (
+    SCHEMA_VERSION,
     SUPPORTED_SEMANTICS,
     Continuity,
     RevisionBatch,
@@ -70,7 +71,7 @@ def read_page(path: Path, cursor: Cursor, config: DeliveryConfig) -> ReplayPage:
             continuity: Continuity = {
                 "scope": scope,
                 "schema_version": schema,
-                "semantics": cast(Literal["generic-source-facts-v2"], SUPPORTED_SEMANTICS),
+                "semantics": cast(Literal["generic-source-facts-v3"], SUPPORTED_SEMANTICS),
                 "epoch": epoch,
                 "revision": str(current),
             }
@@ -80,7 +81,7 @@ def read_page(path: Path, cursor: Cursor, config: DeliveryConfig) -> ReplayPage:
                     dict(cursor)[key] != dict(continuity)[key]
                     for key in ("scope", "schema_version", "semantics", "epoch")
                 )
-                or schema != 2
+                or schema != SCHEMA_VERSION
             ):
                 raise ResetRequired("incompatible_continuity")
             after = parse_revision(cursor["revision"])

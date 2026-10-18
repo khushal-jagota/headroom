@@ -32,7 +32,7 @@ def journal_db(tmp_path: Path) -> Path:
     with sqlite3.connect(path) as conn:
         conn.executescript(
             "CREATE TABLE navigation_meta(singleton,scope,schema_version,epoch,revision);"
-            "INSERT INTO navigation_meta VALUES(1,'workspace',2,'epoch',0);"
+            "INSERT INTO navigation_meta VALUES(1,'workspace',3,'epoch',0);"
             "CREATE TABLE navigation_records(kind,id,value);"
             "CREATE TABLE navigation_dirty(kind,id);"
             "CREATE TABLE navigation_journal(revision INTEGER PRIMARY KEY,body TEXT);"
@@ -45,8 +45,8 @@ def journal_db(tmp_path: Path) -> Path:
 def continuity(revision: str = "0") -> Continuity:
     return {
         "scope": "workspace",
-        "schema_version": 2,
-        "semantics": "generic-source-facts-v2",
+        "schema_version": 3,
+        "semantics": "generic-source-facts-v3",
         "epoch": "epoch",
         "revision": revision,
     }

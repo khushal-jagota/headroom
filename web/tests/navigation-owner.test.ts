@@ -6,7 +6,7 @@ import { createNavigationOwner } from '../src/lib/navigation/owner';
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { Continuity, Fence, SnapshotResponse, RevisionBatch } from '../src/lib/navigation/contracts';
 import type { NavigationStreamHandlers, NavigationTransport } from '../src/lib/navigation/transport';
-const continuity: Continuity = {scope:'workspace',schema_version:2,semantics:'generic-source-facts-v2',epoch:'e1',revision:'0'};
+const continuity: Continuity = {scope:'workspace',schema_version:3,semantics:'generic-source-facts-v3',epoch:'e1',revision:'0'};
 function snapshot(revision = '0', epoch = 'e1', proof: SnapshotResponse['proof'] = null): SnapshotResponse {
   const value = {...continuity, revision, epoch};
   return {wire_version:1,cursor:encodeCursor(value),snapshot:{...value,records:[{kind:'project',id:'p',value:{name:`name-${revision}`,priority:null}}]},proof};

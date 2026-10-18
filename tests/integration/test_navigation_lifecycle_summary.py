@@ -70,8 +70,8 @@ def test_summary_preserves_all_old_uncertainty_without_history_arrays(tmp_path: 
     record = next(r for r in snapshot(conn)["records"] if r["kind"] == "conversation")
     assert "lifecycle" not in record["value"]
     assert record["value"]["lifecycle_summary"] == _summary_expected()
-    assert snapshot(conn)["semantics"] == "generic-source-facts-v2"
-    assert snapshot(conn)["schema_version"] == 2
+    assert snapshot(conn)["semantics"] == "generic-source-facts-v3"
+    assert snapshot(conn)["schema_version"] == 3
     conn.close()
 
 
@@ -275,6 +275,7 @@ def test_actual_v1_list_upgrade_and_failure_preserve_old_continuity(
     with pytest.raises(RuntimeError, match="current schema"):
         journal(conn, str(before[3]), "0")
     conn.close()
+
     original = navigation_data.rebuild
 
     def fail_rebuild(conn: sqlite3.Connection) -> None:
@@ -310,7 +311,7 @@ def test_actual_v1_list_upgrade_and_failure_preserve_old_continuity(
     conn = connect(str(path))
     after = snapshot(conn)
     assert after["scope"] == before[1]
-    assert after["schema_version"] == 2
+    assert after["schema_version"] == 3
     assert after["epoch"] != before[3]
     assert after["revision"] == "0"
     value = next(r for r in after["records"] if r["kind"] == "conversation")["value"]
@@ -320,4 +321,114 @@ def test_actual_v1_list_upgrade_and_failure_preserve_old_continuity(
         journal(conn, str(before[3]), "0")
     create_schema(conn)
     assert snapshot(conn) == after
+    conn.close()
+
+
+def test_schema_two_metadata_upgrade_is_atomic_and_rejects_old_protocol(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.navigation import data, proof
+    from planner.navigation.configuration import DeliveryConfig
+    from planner.navigation.delivery import read_page
+    from planner.navigation.delivery_contracts import ResetRequired, decode_cursor, encode_cursor
+    from planner.projects.data import seed_default_projects
+    from planner.worker_types.shipped import seed_chief_settings, seed_shipped_worker_types
+
+    path = tmp_path / "schema-two.db"
+    engine = _migration_engine(str(path), 1000)
+    with engine.begin() as connection:
+        command.upgrade(_alembic_config(connection), "reconcile_navigation_staging")
+        raw = cast(sqlite3.Connection, connection.connection.driver_connection)
+        seed_default_projects(raw)
+        seed_shipped_worker_types(raw)
+        seed_chief_settings(raw)
+        raw.execute(
+            "INSERT OR IGNORE INTO projects(id,name,created_at,updated_at) "
+            "VALUES('project_panels','Synthetic Panels',0,0)"
+        )
+        raw.execute(
+            "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
+            "priority,created_at,updated_at) "
+            "VALUES('o','Orchestrator','project_panels','codex','synthetic','P1',17,18)"
+        )
+        raw.execute(
+            "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
+            "field_values,created_at,updated_at,worker_step_claim) "
+            "VALUES('held','Ticket','coding','codex','needs_plan','done','{}',19,20,'out')"
+        )
+        raw.execute(
+            "INSERT INTO tickets(id,title,worker_type,employee_backend,stage,ceiling,"
+            "field_values,created_at,updated_at) "
+            "VALUES('blocker','Blocker','coding','codex','needs_plan','done','{}',19,20)"
+        )
+        raw.execute("INSERT INTO ticket_blocks VALUES('blocker','held')")
+        data.finalize(raw)
+        records = [
+            json.loads(row[0])
+            for row in raw.execute("SELECT value FROM navigation_records WHERE kind='ticket'")
+        ]
+        assert all("updated_at" not in value and "blocked" not in value for value in records)
+        assert "priority" not in json.loads(
+            raw.execute(
+                "SELECT value FROM navigation_records WHERE kind='orchestrator'"
+            ).fetchone()[0]
+        )
+        scope, version, epoch, revision = raw.execute(
+            "SELECT scope,schema_version,epoch,revision FROM navigation_meta"
+        ).fetchone()
+        assert version == 2
+        old_continuity = {
+            "scope": scope,
+            "schema_version": 2,
+            "epoch": epoch,
+            "revision": str(revision),
+            "semantics": "generic-source-facts-v2",
+        }
+        old_cursor = decode_cursor(encode_cursor(old_continuity))  # type: ignore[arg-type]
+        old_fence = {"version": 1, **old_continuity, "coverage": "complete", "witnesses": []}
+        old_fence["signature"] = proof._signature(raw, old_fence)
+        before = list(raw.iterdump())
+    real_rebuild = data.rebuild
+    calls = 0
+
+    def fail_after_rebuild(conn: sqlite3.Connection) -> None:
+        nonlocal calls
+        calls += 1
+        real_rebuild(conn)
+        raise RuntimeError("metadata rebuild failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(data, "rebuild", fail_after_rebuild)
+        with pytest.raises(RuntimeError, match="metadata rebuild failure"):
+            with engine.begin() as connection:
+                command.upgrade(_alembic_config(connection), "head")
+    assert calls == 1
+    with engine.begin() as connection:
+        raw = cast(sqlite3.Connection, connection.connection.driver_connection)
+        assert list(raw.iterdump()) == before
+        command.upgrade(_alembic_config(connection), "head")
+        current = snapshot(raw)
+        assert current["schema_version"] == 3
+        assert current["scope"] == scope
+        assert current["epoch"] != epoch
+        assert current["revision"] == "0"
+        assert raw.execute("SELECT COUNT(*) FROM navigation_journal").fetchone()[0] == 0
+        held = next(
+            r["value"] for r in current["records"] if r["kind"] == "ticket" and r["id"] == "held"
+        )
+        assert held["updated_at"] == 20
+        assert held["proposal_created_at"] is None
+        assert held["worker_step_claim_out"] is True
+        assert held["blocked"] is True
+        assert proof.certify(raw, old_fence) == {
+            "status": "unknown",
+            "reason": "incompatible_scope",
+        }
+    engine.dispose()
+    with pytest.raises(ResetRequired, match="incompatible_continuity"):
+        read_page(path, old_cursor, DeliveryConfig())
+    conn = connect(str(path))
+    create_schema(conn)
+    assert snapshot(conn) == current
     conn.close()

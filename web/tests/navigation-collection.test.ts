@@ -2,9 +2,46 @@ import { createTransaction } from '@tanstack/db';
 import { describe, expect, it } from 'vitest';
 import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { encodeCursor } from '../src/lib/navigation/validation';
-import type { Snapshot } from '../src/lib/navigation/contracts';
-const snapshot = (revision:string, ids:string[]):Snapshot => ({scope:'navigation',schema_version:2,semantics:'generic-source-facts-v2',epoch:'a',revision,records:ids.map(id => ({kind:'project',id,value:{name:id,priority:null}}))});
+import type { Snapshot, TicketRecord } from '../src/lib/navigation/contracts';
+import { railTicketEligible } from '../src/lib/workspaceRail';
+import type { WorkItemTicketFacts } from '../src/lib/workItemPresentation';
+const snapshot = (revision:string, ids:string[]):Snapshot => ({scope:'navigation',schema_version:3,semantics:'generic-source-facts-v3',epoch:'a',revision,records:ids.map(id => ({kind:'project',id,value:{name:id,priority:null}}))});
 describe('TanStack source publication', () => {
+  it('publishes masked status and independent blockers together for the accepted rail classifier', () => {
+    // Amendment/classifier boundary only: synthetic attention facts do not prove Signal parity.
+    const adapter = createNavigationCollection();
+    const record: TicketRecord = {kind:'ticket',id:'t',value:{
+      title:'Ticket',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',
+      blocked:false,updated_at:10,worker_step_claim_out:false,priority:'P2',deadline:null,
+      project_id:null,orchestrator_kind:'chief',sprint_item_id:null,conversation_id:null,
+      is_backlogged:false,ceiling:'needs_implementation',ceiling_holder:{kind:'owner',id:'owner'},
+      proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',
+      terminal:false,locale:'en'
+    }};
+    const known: WorkItemTicketFacts = {id:'t',title:'Ticket',priority:'P2',stage:'needs_implementation',
+      ticket_status:'empty',awaiting_reply:false,awaiting_answer:false,awaiting_approval:false,
+      awaiting_agent_approval:false,assigned:false,agent_state:'idle'};
+    const observed: Array<[string,boolean,boolean]> = [];
+    adapter.subscribe(publication => {
+      const current = publication.records.find((r): r is TicketRecord => r.kind === 'ticket')!;
+      const {ticket_status,blocked} = current.value;
+      observed.push([ticket_status,blocked,railTicketEligible({...known,ticket_status,blocked})]);
+    });
+    const initial = {...snapshot('0',[]),records:[record]};
+    adapter.publishSnapshot(initial,encodeCursor(initial));
+    for (const [index,status] of ['awaiting_approval','agent','errored'].entries()) {
+      const revision=String(index+1);
+      const {records: _,...continuity}={...initial,revision};
+      adapter.publishBatch({...continuity,base_revision:String(index),
+        upserts:[{...record,value:{...record.value,ticket_status:status,blocked:true}}],deletes:[]},
+      encodeCursor(continuity));
+    }
+    const {records: _,...last}={...initial,revision:'4'};
+    adapter.publishBatch({...last,base_revision:'3',upserts:[record],deletes:[]},encodeCursor(last));
+    expect(observed).toEqual([['empty',false,true],['awaiting_approval',true,false],
+      ['agent',true,false],['errored',true,false],['empty',false,true]]);
+    adapter.destroy();
+  });
   it('does not announce accepted writes until TanStack publishes the transaction', async () => {
     const adapter = createNavigationCollection();
     const first = snapshot('1', ['x']);
