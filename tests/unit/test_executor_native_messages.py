@@ -23,7 +23,7 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.clock import RealClock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     ChildCommand,
     ChildOperation,
@@ -71,7 +71,9 @@ def test_help_replay_after_domain_commit_keeps_original_holder_and_source_turn(
     async def run() -> None:
         path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
         store = ExecutorStore(path)
-        identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 1, "incarnation", 1)
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
+        )
         store.begin_connection(identity, 1000)
         store.mark_ready(identity, 1001)
         ticket = data.create_ticket(
@@ -265,7 +267,9 @@ def test_idle_target_steer_records_actual_started_fate_before_receipt_and_replay
     async def run() -> None:
         path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
         store = ExecutorStore(path)
-        identity = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 1, "incarnation", 1)
+        identity = ExecutorIdentity(
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1
+        )
         store.begin_connection(identity, 1000)
         store.mark_ready(identity, 1001)
         target = data.create_ticket(

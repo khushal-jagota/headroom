@@ -1,4 +1,4 @@
-"""Immutable artifact snapshots and bounded byte transfer without a local database."""
+"""Immutable artifact snapshots and bounded byte transfer."""
 
 from __future__ import annotations
 

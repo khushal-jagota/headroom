@@ -424,7 +424,7 @@ class MacExecutor:
                 future.set_result(receipt)
 
     async def _reconcile(self) -> None:
-        inventory = self.registry.inventory(self.identity)
+        inventory = self.registry.inventory(self.identity, include_pending=False)
         # Stream children and retained outcomes, never the potentially unbounded spool.
         # VPS aggregates these within the fenced generation before ready admission.
         batches = []

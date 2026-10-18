@@ -26,7 +26,7 @@ from planner.conversation.contracts import (
 from planner.conversation.events import ConversationTurnEnding
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AcceptanceReceipt,
     AskReference,
@@ -48,7 +48,7 @@ from planner.executor.contracts import (
 from planner.executor.journal import FilesystemSpool
 from planner.executor.runtime import NativeChildRegistry
 
-IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 1, "incarnation", 1)
+IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
 
 
 class Native(ScriptedChild):

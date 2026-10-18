@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from planner.executor.configuration import PROTOCOL_VERSION
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AcceptanceReceipt,
     EnvelopeKind,
@@ -138,7 +138,7 @@ def test_strict_identity_refuses_coercion_unknown_fields_and_short_sha() -> None
 
     valid: dict[str, object] = {
         "protocol_version": PROTOCOL_VERSION,
-        "spool_format_version": 1,
+        "spool_format_version": SPOOL_FORMAT_VERSION,
         "application_revision": "a" * 40,
         "executor_incarnation": str(uuid4()),
         "connection_generation": 1,
@@ -250,7 +250,7 @@ def test_version_one_permission_spool_payload_reads_unchanged_under_new_protocol
     from planner.executor.contracts import AnswerApplication, AskKind
 
     spool = FilesystemSpool(tmp_path / "spool")
-    # Exact old payload shape: no AskReference.kind field, spool format stays 1.
+    # Exact old payload shape: no AskReference.kind field. Format 2 preserves payloads.
     payload: JsonObject = {
         "answer_id": "legacy-answer",
         "applied_at_mac_ms": 10,
