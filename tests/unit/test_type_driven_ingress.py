@@ -14,6 +14,7 @@ filter, which compares stored data directly without resolving a Worker type, and
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
@@ -336,6 +337,16 @@ def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> 
         assert settled.status_code == 200, settled.json()
         assert settled.json()["field_values"] == {"brief": "quinvex"}
 
+        # Historical fields remain stored, but do not break reads or enter search.
+        with connect(str(_db)) as conn:
+            conn.execute(
+                "UPDATE tickets SET field_values=? WHERE id=?",
+                (json.dumps({"brief": "quinvex", "removed": "historicalword"}), in_a_field_value),
+            )
+        full = client.get(f"/api/tickets?detail=full&id={in_a_field_value}")
+        assert full.status_code == 200, full.json()
+        assert full.json()["field_values"] == {"brief": "quinvex"}
+
         # This one's proposal stays pending, which is the other half of the same source.
         in_a_pending_proposal = _create(client, "coding")
         _propose(client, in_a_pending_proposal, "tarnabel")
@@ -347,6 +358,7 @@ def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> 
             ("quinvex", [in_a_field_value]),
             ("tarnabel", [in_a_pending_proposal]),
             ("nobodywrotethis", []),
+            ("historicalword", []),
         ):
             found = client.get(f"/api/tickets?detail=summary&search={term}")
             assert found.status_code == 200, found.json()

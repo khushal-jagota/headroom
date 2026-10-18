@@ -105,6 +105,10 @@ the write transaction. The browser sends that precondition automatically.
 Delete removes a Ticket's record. Files under `/files/tickets/<ticket-id>` survive
 Ticket deletion. Backlog is the reversible way to pause work while keeping the Ticket.
 The Stage ladder ends only at Done; there is no retirement state or retirement field.
+Historical text for a field that the Worker type no longer declares stays in storage.
+Ticket reads and search show only declared fields. Later edits and approvals preserve
+historical text, but new writes and proposals must use declared fields. Invalid stored
+values still fail validation, even when their fields are no longer declared.
 
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can

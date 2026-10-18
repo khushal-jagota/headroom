@@ -254,3 +254,39 @@ def test_launch_default_save_refuses_disabled_model_without_partial_write(
     response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=alternative)
     assert response.status_code == 200, response.text
     assert response.json()["launch_defaults"] == alternative
+
+
+def test_chief_recap_is_owner_editable_durable_and_exact(
+    client: tuple[TestClient, Path],
+) -> None:
+    """The new write must persist alone and refuse agent writes or malformed payloads."""
+    test_client, db_path = client
+    settings_path = "/api/workers/chief-of-staff/settings"
+    write_path = "/api/workers/chief-of-staff/recap"
+    before = test_client.get(settings_path).json()
+    assert before["recap"] == ""
+    recap = "Own the shared direction.\n\nKeep **decisions** visible."
+    expected = dict(before, recap=recap)
+    response = test_client.put(write_path, json={"recap": recap})
+    assert response.status_code == 200, response.text
+    assert response.json() == expected
+    assert test_client.get(settings_path).json() == expected
+    assert test_client.get("/api/workers").json()["chief_of_staff"]["recap"] == recap
+    with connect(str(db_path)) as conn:
+        assert conn.execute("SELECT recap FROM chief_settings").fetchone()[0] == recap
+
+    for headers in (
+        {"X-Plan-Actor": "chief"},
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_recap"},
+        {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_recap"},
+    ):
+        response = test_client.put(write_path, json={"recap": "unauthorized"}, headers=headers)
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "agent_forbidden"
+    for payload in ({}, {"recap": None}, {"recap": 1}, {"recap": "bad", "label": "bad"}):
+        response = test_client.put(write_path, json=payload)
+        assert response.status_code == 400, response.text
+    assert test_client.get(settings_path).json() == expected
+    response = test_client.put(write_path, json={"recap": ""})
+    assert response.status_code == 200, response.text
+    assert response.json() == before

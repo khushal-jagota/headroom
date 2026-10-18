@@ -575,6 +575,21 @@ def _release_ticket_blocks(
         ticket_blocks.touch_blocked_ticket(conn, blocked_ticket_id, now)
 
 
+def _field_values_for_storage(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    values: TicketFieldValues,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> str:
+    """Retain historical text while replacing the declared values inside the write transaction."""
+    row = conn.execute("SELECT field_values FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+    assert row is not None
+    return fields_codec.replace_declared_values(
+        row["field_values"], values, worker_type_definition.field_ids()
+    )
+
+
 def _apply_decision(
     conn: sqlite3.Connection,
     ticket: Ticket,
@@ -620,7 +635,10 @@ def _apply_decision(
         "pending_proposal_revision = pending_proposal_revision + ?, "
         "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ? WHERE id = ?",
         (
-            fields_codec.values_to_json(decision.field_values),
+            _field_values_for_storage(
+                conn, ticket.id, decision.field_values,
+                worker_type_definition=worker_type_definition,
+            ),
             fields_codec.proposal_to_json(decision.pending_proposal),
             int(proposal_changed),
             str(new_stage),
@@ -1844,7 +1862,10 @@ def edit_ticket(
                     "field_values",
                     "field_values",
                     fields_codec.values_to_json(ticket.field_values),
-                    fields_codec.values_to_json(edited_values),
+                    _field_values_for_storage(
+                        conn, ticket.id, edited_values,
+                        worker_type_definition=worker_type_definition,
+                    ),
                 )
             )
 
