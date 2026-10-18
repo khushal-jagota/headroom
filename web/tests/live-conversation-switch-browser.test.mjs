@@ -24,6 +24,11 @@ try {
     hostPath,
     String.raw`<script lang="ts">
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
+  import { provideNavigationApplication, navigationApplication } from "../src/lib/navigation/application.svelte";
+
+  const navigation = provideNavigationApplication();
+  (window as any).__navigation = navigation;
+  (window as any).__sameNavigation = navigationApplication() === navigation;
 
   let conversationId = $state("conversation-a");
   let conversationState = $state<"rest" | "peeked" | "opened">("opened");
@@ -52,7 +57,12 @@ try {
   );
   await writeFile(
     mainPath,
-    String.raw`const snapshots: Record<string, any> = Object.fromEntries(
+    String.raw`import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from "../src/lib/navigation/contracts";
+import { encodeCursor } from "../src/lib/navigation/validation";
+(globalThis as any).__navigationSnapshots = 0;
+(globalThis as any).__navigationStreams = 0;
+(globalThis as any).__closedNavigationStreams = 0;
+const snapshots: Record<string, any> = Object.fromEntries(
   ["conversation-a", "conversation-b"].map((conversationId) => [conversationId, {
     conversation_id: conversationId,
     backend_key: "codex",
@@ -106,6 +116,13 @@ const recordedBRows: unknown[] = [];
 (globalThis as any).__releaseDelayedASnapshot = () => releaseDelayedASnapshot?.();
 (globalThis as any).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
+  if (url === "/api/navigation/snapshot") {
+    (globalThis as any).__navigationSnapshots += 1;
+    const continuity = {scope: "workspace", schema_version: SCHEMA_VERSION,
+      semantics: SUPPORTED_SEMANTICS, epoch: "read-fixture", revision: "0"};
+    return Response.json({wire_version: 1, cursor: encodeCursor(continuity),
+      snapshot: {...continuity, records: []}, proof: null});
+  }
   const ownerReadMatch = url.match(/conversations\/(conversation-[ab])\/owner-read$/);
   if (ownerReadMatch) {
     const body = JSON.parse(String(init?.body));
@@ -153,7 +170,10 @@ class FakeEventSource {
   static sources = new Map<string, FakeEventSource>();
   listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
 
+  navigation: boolean;
   constructor(url: string) {
+    this.navigation = url.startsWith("/api/navigation/events?");
+    if (this.navigation) (globalThis as any).__navigationStreams += 1;
     const conversationId = url.match(/conversations\/(conversation-[ab])\/tail/)?.[1];
     if (conversationId) FakeEventSource.sources.set(conversationId, this);
   }
@@ -170,7 +190,9 @@ class FakeEventSource {
 
   // Deliberately keep queued callbacks callable after close. This models a browser event
   // that was already dispatched when the pane switched conversations.
-  close(): void {}
+  close(): void {
+    if (this.navigation) (globalThis as any).__closedNavigationStreams += 1;
+  }
 }
 
 (globalThis as any).EventSource = FakeEventSource;
@@ -188,9 +210,10 @@ async function start(): Promise<void> {
     (globalThis as any).__readRefreshes += 1;
     return invalidate(...args);
   };
-  const { mount } = await import("svelte");
+  const { mount, unmount } = await import("svelte");
   const { default: Host } = await import("./${hostPath.split("/").at(-1)}");
-  mount(Host, { target: document.getElementById("app")! });
+  const host = mount(Host, { target: document.getElementById("app")! });
+  (globalThis as any).__unmountHost = () => unmount(host);
 }
 void start();
 `,
@@ -240,6 +263,10 @@ with sync_playwright() as playwright:
     page.set_default_timeout(5_000)
     page.goto(sys.argv[1], wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
+    page.wait_for_function("window.__navigation?.state.connection === 'subscribed'")
+    assert page.evaluate("window.__sameNavigation") is True
+    assert page.evaluate("window.__navigationSnapshots") == 1
+    assert page.evaluate("window.__navigationStreams") == 1
     full_choice = page.locator('[data-conversation-lens-choice="full"]')
     focus_choice_first = page.locator('[data-conversation-lens-choice="focus"]')
     assert focus_choice_first.get_attribute("aria-pressed") == "true"
@@ -277,6 +304,7 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(100)
     assert page.get_by_text("stale A row", exact=True).count() == 0
     assert page.evaluate("window.__ownerReads") == []
+    assert page.evaluate("window.__navigationSnapshots") == 1
 
     page.evaluate("""window.__emitConversationRow('conversation-b', {
       conversation_id: 'conversation-b',
@@ -374,6 +402,7 @@ with sync_playwright() as playwright:
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 10")
 
     page.wait_for_function("window.__readRefreshes === 7")
+    page.wait_for_function("window.__navigationSnapshots === 8")
 
     def emit_tool(sequence):
         page.evaluate("""sequence => window.__emitConversationRow('conversation-b', {
@@ -391,8 +420,10 @@ with sync_playwright() as playwright:
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 12")
     assert page.evaluate("window.__readRefreshes") == 7
     page.evaluate("window.__finishRead(12)")
+    page.wait_for_function("window.__navigationSnapshots === 9")
     page.wait_for_function("window.__readRefreshes === 8")
     page.evaluate("window.__finishRead(11)")
+    page.wait_for_function("window.__navigationSnapshots === 10")
     page.wait_for_timeout(100)
     assert page.evaluate("window.__readRefreshes") == 8
     assert page.evaluate("window.__ownerReads.filter(r => r.sequence === 12).length") == 1
@@ -400,6 +431,8 @@ with sync_playwright() as playwright:
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 13")
     page.wait_for_timeout(100)
     assert page.evaluate("window.__readRefreshes") == 8
+    # A quiet tool read still recovers navigation despite no Query invalidation.
+    page.wait_for_function("window.__navigationSnapshots === 11")
 
     # A failed earlier request must not suppress refresh when the overlapping request
     # succeeds, or erase that newer request's pending marker.
@@ -411,11 +444,13 @@ with sync_playwright() as playwright:
     page.evaluate("window.__finishRead(14, false)")
     page.wait_for_timeout(100)
     assert page.evaluate("window.__readRefreshes") == 8
+    assert page.evaluate("window.__navigationSnapshots") == 11
     page.evaluate("window.__setAttention(true,true)")
     page.wait_for_timeout(100)
     assert page.evaluate("window.__ownerReads.filter(r => r.sequence === 15).length") == 1
     page.evaluate("window.__finishRead(15)")
     page.wait_for_function("window.__readRefreshes === 9")
+    page.wait_for_function("window.__navigationSnapshots === 12")
 
     # A successful response still refreshes canonical mounted queries after switching.
     # It does not write B's watermark into A or assume a reply-required dot cleared.
@@ -426,6 +461,7 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(100)
     page.evaluate("window.__finishRead(16)")
     page.wait_for_function("window.__readRefreshes === 10")
+    page.wait_for_function("window.__navigationSnapshots === 13")
     page.evaluate("""window.__emitConversationRow('conversation-a', {
       conversation_id: 'conversation-a', sequence: 1, kind: 'message_to_owner',
       payload: {text: 'A first message', sender_label: 'Ticket A',
@@ -434,6 +470,11 @@ with sync_playwright() as playwright:
     })""")
     page.wait_for_function("window.__ownerReads.at(-1).conversationId === 'conversation-a' && window.__ownerReads.at(-1).sequence === 1")
     page.wait_for_function("window.__readRefreshes === 11")
+    page.wait_for_function("window.__navigationSnapshots === 14")
+    assert page.evaluate("window.__navigationStreams - window.__closedNavigationStreams") == 1
+    page.evaluate("window.__unmountHost()")
+    assert page.evaluate("window.__navigation.state.connection") == "disposed"
+    assert page.evaluate("window.__navigationStreams - window.__closedNavigationStreams") == 0
 
     page.reload(wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")

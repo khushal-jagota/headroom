@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { provideNavigationApplication } from "./lib/navigation/application.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
@@ -36,6 +37,8 @@
     // the address, so moving around the Workspace does not remount the screen.
     workspace?: WorkspaceAddress;
   };
+
+  provideNavigationApplication();
 
   const review = createQuery(() => queries.review());
   const feedbackCount = createQuery(() => queries.feedbackCount());

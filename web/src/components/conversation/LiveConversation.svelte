@@ -42,6 +42,7 @@
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
   import { queryClient } from "../../lib/queryClient";
+  import { navigationApplication } from "../../lib/navigation/application.svelte";
   import { connectionStatus } from "../../lib/changeStream";
   import {
     afterTheRecordHasBeenRead,
@@ -210,6 +211,7 @@
   ));
   let ask = $derived(liveAskFrom(visibleRows));
   let userInput = $derived(liveUserInputFrom(visibleRows));
+  const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
@@ -241,6 +243,9 @@
       advancingRead = request;
       void advanceOwnerRead(reading.conversation_id, eligibleSequence)
         .then((advanced) => {
+          // Every confirmed read refreshes the shared replica, even after a pane switch
+          // or when the existing Query optimization finds no new owner message.
+          void navigation?.owner.recover().catch(() => undefined);
           const previouslyReadThrough = Math.max(
             reading.owner_read_through_sequence,
             refreshedReadThrough.get(reading.conversation_id) ?? 0

@@ -1,6 +1,10 @@
 # Browser navigation interface
 
-This module supplies the shared browser replica. Production consumers still use their existing Query paths.
+This module supplies the shared browser replica. `App.svelte` calls `provideNavigationApplication()` above its routes. The provider creates one collection, transport, owner, and coherent selector set. It starts the owner on mount and disposes the owner before the collection on application destruction.
+
+`navigationApplication()` reads that context. An isolated component host without the provider receives `undefined`. It never creates another owner. Every successful existing `advanceOwnerRead` response triggers shared-owner recovery before the unread-message optimization or current-conversation check. Failed reads retain their existing behavior.
+
+Production summary consumers still use their existing Query paths. Their adoption and actual DOM proof remain pending the exact Signal contract. This prerequisite does not establish a completed cutover, UI parity, or application speed improvement.
 
 Create one collection with `createNavigationCollection()`. Create one owner with `createNavigationOwner({adapter, transport: createNavigationTransport()})` above routes and panes. Call `start()` once. On application disposal, dispose the owner, then destroy the collection.
 
@@ -39,6 +43,6 @@ node tests/navigation-browser.test.mjs
 
 The harness uses an isolated synthetic runtime. Its comparator is not the original browser baseline. Production consumer parity and the complete baseline/candidate performance comparison remain downstream.
 
-**NO PUSH AND NO MERGE until the owner inspects and explicitly decides.** No deployment, push-triggered CI, staging/main advancement, cherry-pick, rebase, reset, or patch assembly. Tests, reviews, completion, and agent approvals cannot release this gate.
+The owner permits merges of staging into the local feature branch, local conflict resolution, implementation, and isolated validation. No rebuild push or merge into staging/main, deployment, or push-triggered CI is authorized. Retain the local candidate for owner inspection. Tests, reviews, completion, and agent approvals do not authorize publication. No rebase, cherry-pick, reset, or patch assembly is authorized.
 
 Migration tests never open `/home/vps/Deployments/Panels/current/data/planner.db` writable. Isolate whole runtimes. Use synthetic databases or consistent copies from explicitly read-only sources. No live fallback or real agent-home fixtures.
