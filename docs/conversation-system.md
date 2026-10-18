@@ -51,7 +51,10 @@ Caller cancellation does not cancel that owned settlement. A proven callback wri
 failure restores the pending request only after its failure facts commit.
 
 One runtime holds an exclusive lock beside the canonical database. A second runtime
-fails before reconciliation and cannot invalidate the first runtime's live work.
+fails before schema changes or reconciliation and cannot invalidate the first runtime's live work.
+The application acquires this lock in its lifespan thread before migrations. The
+conversation system then accepts that exact handle. Startup failures release the
+handle through its current owner. Shutdown stops local writers before release.
 Startup converts lost turns and requests to unavailable facts and incomplete attempts
 to unknown facts before admissions, subscriptions, the janitor, or worker loops.
 It creates no provider ending, answer, or missing-reply marker. Historical notebook

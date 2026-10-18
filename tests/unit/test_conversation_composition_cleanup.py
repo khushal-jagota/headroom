@@ -133,3 +133,104 @@ def test_application_stack_drains_failure_before_runtime_return(
     with pytest.raises(CompositionFailure):
         asyncio.run(enter())
     assert events == ["drained"]
+
+
+@pytest.mark.parametrize("after_transfer", [False, True])
+def test_actual_bootstrap_owner_cleanup_before_and_after_system_transfer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, after_transfer: bool
+) -> None:
+    """The actual borrowed lease must survive only until its assigned cleanup owner."""
+    from planner.conversation.contracts import ConversationBackendKey
+    from planner.conversation.lifecycle_storage import acquire_runtime_ownership
+    from planner.conversation.runtime_composition import SignalRuntimeComposition
+
+    path = str(tmp_path / "actual-owner.db")
+    composition = SignalRuntimeComposition(path, 100)
+    composition.bootstrap()
+    borrowed = composition.ownership
+    assert borrowed is not None
+
+    def no_child(**kwargs: Any) -> Any:
+        pytest.fail("No provider child belongs in composition cleanup")
+
+    if after_transfer:
+
+        def fail_sign_in(**kwargs: Any) -> Any:
+            raise CompositionFailure("after actual ownership transfer")
+
+        monkeypatch.setattr(api, "CodexSignInService", fail_sign_in)
+
+    async def compose() -> None:
+        async with AsyncExitStack() as cleanup:
+            cleanup.callback(composition.close)
+            api.build_conversation_runtime(
+                db_path=path,
+                db_busy_timeout_ms=100,
+                sse_heartbeat_ms=100,
+                backend_child_factories=(
+                    {key: no_child for key in ConversationBackendKey} if after_transfer else {}
+                ),
+                signal_composition=composition,
+                cleanup=cleanup,
+            )
+            pytest.fail("Composition failure must not return a runtime")
+
+    error = CompositionFailure if after_transfer else ValueError
+    with pytest.raises(error):
+        asyncio.run(compose())
+    assert borrowed.closed
+    # This acquires the real lock without an unguarded source reconciliation.
+    successor = acquire_runtime_ownership(path)
+    successor.close()
+
+
+def test_idle_managed_connection_refreshes_functions_across_runtime_generations(
+    tmp_path: Path,
+) -> None:
+    """Admission must replace absent and stale callbacks before protected source SQL."""
+    from planner.conversation.runtime_composition import SignalRuntimeComposition
+    from planner.core.db import connect
+    from planner.navigation.delivery import create_delivery_runtime
+    from planner.navigation.signal_runtime import SignalNavigationBinding
+
+    path = str(tmp_path / "retained-connection.db")
+    idle = connect(path)
+    epochs: list[str] = []
+    try:
+        for identity in ("first", "second"):
+            composition = SignalRuntimeComposition(path, 100)
+            composition.bootstrap()
+            composition.coordinator.bind_runtime(lambda _identity: None)
+            composition.initialize()
+            binding = SignalNavigationBinding(
+                composition.coordinator, create_delivery_runtime(path)
+            )
+            try:
+                binding.attach()
+                composition.coordinator.admit_runtime()
+                idle.execute("BEGIN IMMEDIATE")
+                with pytest.raises(RuntimeError, match="active transaction"):
+                    composition.close()
+                assert not composition._closed
+                assert composition.ownership is not None and not composition.ownership.closed
+                idle.execute(
+                    "INSERT INTO conversations"
+                    "(conversation_id,backend_key,workspace_folder,access,created_at) "
+                    "VALUES(?,'codex','/synthetic','full',0)",
+                    (identity,),
+                )
+                idle.commit()
+                publication = idle.execute(
+                    "SELECT runtime_epoch FROM navigation_signal_publications "
+                    "WHERE conversation_id=?",
+                    (identity,),
+                ).fetchone()
+                assert publication is not None
+                assert publication[0] == composition.coordinator.runtime_epoch
+                epochs.append(str(publication[0]))
+            finally:
+                binding.close()
+                composition.close()
+        assert epochs[0] != epochs[1]
+    finally:
+        idle.close()

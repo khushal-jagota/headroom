@@ -22,6 +22,7 @@ from planner.conversation.api import router as conversation_router
 from planner.conversation.backend_state import DurableCodexLoginRejection
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.production_backends import production_backend_child_factories
+from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
 from planner.conversation.usage.api import router as recorded_usage_router
 from planner.conversation.usage.pricing import UsagePricingService
@@ -51,9 +52,9 @@ from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
-from planner.navigation import data as navigation_data
 from planner.navigation.delivery import create_delivery_runtime
 from planner.navigation.middleware import NavigationCommandFenceMiddleware
+from planner.navigation.signal_runtime import SignalNavigationBinding
 from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
@@ -146,6 +147,14 @@ def create_app(
             Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
             from planner.tickets import data as tickets_data
 
+            signal_composition = SignalRuntimeComposition(config.db_path, config.db_busy_timeout_ms)
+            cleanup.callback(signal_composition.close)
+            signal_composition.bootstrap()
+            signal_binding = SignalNavigationBinding(
+                signal_composition.coordinator, navigation_delivery
+            )
+            cleanup.callback(signal_binding.close)
+
             # The conversation system, built before anything that sends into one. It composes
             # the three real agents on this machine, and spawns none of them until a
             # conversation has something to send. Everything that starts or steers a worker
@@ -171,10 +180,14 @@ def create_app(
                 ),
                 remembered_codex_login_rejection=remembered_codex_login_rejection,
                 cleanup=cleanup,
+                signal_composition=signal_composition,
             )
             lifecycle_observer: asyncio.Task[None] | None = None
             loops: Any = None
             try:
+                signal_composition.initialize()
+                signal_binding.attach()
+                signal_composition.coordinator.admit_runtime()
                 audit_conn = conn_factory()
                 try:
                     tickets_data.audit_ticket_registry_integrity(audit_conn)
@@ -204,16 +217,6 @@ def create_app(
                 # The real runtime already reconciled under its exclusive lease, even
                 # when tests inject a conversation facade. No schema open grants this.
                 conversation.system.require_runtime_ownership()
-                publication_conn = conn_factory()
-                try:
-                    publication_conn.execute("BEGIN IMMEDIATE")
-                    navigation_data.reset_epoch(publication_conn)
-                    publication_conn.commit()
-                except BaseException:
-                    publication_conn.rollback()
-                    raise
-                finally:
-                    publication_conn.close()
                 await navigation_delivery.start()
                 await conversation.system.start_idle_child_janitor()
                 lifecycle_observer = asyncio.create_task(
@@ -224,6 +227,7 @@ def create_app(
                 yield
 
             finally:
+                signal_composition.coordinator.invalidate("shutdown")
                 app.state.conversation = None
                 try:
                     try:

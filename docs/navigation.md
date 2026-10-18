@@ -170,22 +170,30 @@ _Last verified: 2026-10-18._
 
 ## Retained adapters for Signal publication
 
-The local consumer branch contains adapters for the reviewed Signal publication
-interface. They do not connect a producer or change a screen's data source.
+The application connects the reviewed Signal producer to private navigation storage
+and delivery admission. Screens keep their existing data sources. The public
+attention contract and consumer cutover remain separate work.
 
 `core.db` accepts a registered transaction guard before an outer transaction starts.
 The same admission covers managed connections and raw migration transactions. Guard
 settlement precedes commit observers. Closed or failed registrations reject later
 transactions. Scoped admission tokens also cover schema initialization after migrations.
 
-The shared transaction-control guard preserves nested restrictions. A configured
-guard uses it around finalizers. The existing lifecycle finalizer still needs its
-Signal-owned call-site amendment before configured production use. The unconfigured
-path retains its existing behavior.
+The shared transaction-control guard preserves nested restrictions around both
+lifecycle callbacks and finalizers. Each commit runs Signal first, then the commit
+witness, then navigation. Admission refreshes producer functions on an idle
+connection, including a connection retained from an earlier runtime.
 
-Conversation composition registers successful system construction with the lifespan's
-cleanup stack before it constructs later components. A later failure drains that
-system. This cleanup does not establish lease transfer or bootstrap authority.
+Startup acquires the actual conversation lock before migrations in the application
+lifespan thread. The same thread performs reconciliation, initialization and complete
+installation. No producer gate spans an await. Installation rebuilds navigation and
+creates the startup epoch before delivery or background loops start.
+
+The conversation system accepts the exact borrowed lock handle. Successful system
+construction enters the cleanup stack before later components. Earlier failures
+release the bootstrap handle. Later failures drain the system before release.
+Shutdown invalidates delivery, drains writers, then detaches the participant and
+closes registrations. A refused guard drain retains module hooks and ownership.
 
 Navigation delivery accepts injected authority checks. A configured but absent
 attachment rejects delivery. Each snapshot and stream retains its original permit.
@@ -193,10 +201,11 @@ Installation checks use the SQL snapshot. Authoritative checks occur after SQL r
 close. Invalidation fences later sends and cancels admitted sends. Bytes already
 accepted by the network cannot be recalled. No producer gate spans a network wait.
 
-These adapters use isolated injected fixtures. Producer gate and undo semantics,
-lease adoption, bootstrap phases, configured finalizer order, and combined recovery
-remain separate acceptance requirements. Public attention payloads and consumer
-cutover remain outside this adapter evidence.
+Focused isolated tests connect the actual producer, retained connections, runtime
+lease and delivery adapter. They cover bootstrap order, thread affinity, ownership
+transfer, stale idle connections and failure cleanup. This bounded evidence does
+not establish whole-application recovery, public attention payloads or consumer
+cutover.
 
 `navigation.signal_publication` stores complete typed publications and their producer
 cursor in private tables. Installation checks every conversation in the same source
@@ -206,9 +215,11 @@ records retain version fences. Association-only batches advance the producer cur
 
 This private installation does not add attention fields to the public schema3
 payload. Its typed attachment binder maps unavailable errors and checks installation
-identity inside SQL snapshots. Production attachment registration and recovery remain
-uncomposed. Private table creation occurs inside installation; production startup and
-migration integration still require combined proof.
+identity inside SQL snapshots. Startup registers the actual producer attachment
+before delivery admission. A caller must establish exact domain repair before a
+complete replacement attachment. The binding never retries domain operations.
+Private table creation occurs inside installation. Public attention and degraded
+consumer behavior still require their reviewed contract and combined proof.
 
 A successful registered admission supplies an opaque reconciliation handle before
 SQLite begins. An uncertain result carries that same object through commit paths

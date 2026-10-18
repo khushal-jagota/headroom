@@ -15,17 +15,17 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.navigation import snapshot
 
 
 def make_app(tmp_path: Path, *, test_mode: bool = True) -> FastAPI:
     path = tmp_path / "planner.db"
-    conn = connect(str(path))
-    create_schema(conn)
-    from tests.support.model_catalogue import seed_test_model_catalogue
+    if not path.exists():
+        conn = connect(str(path))
+        create_schema(conn)
+        from tests.support.model_catalogue import seed_test_model_catalogue
 
-    seed_test_model_catalogue(conn)
-    conn.close()
+        seed_test_model_catalogue(conn)
+        conn.close()
     config = load_config(
         path=None,
         env={
@@ -49,9 +49,12 @@ def make_app(tmp_path: Path, *, test_mode: bool = True) -> FastAPI:
 
 
 def epoch(tmp_path: Path) -> str:
-    conn = connect(str(tmp_path / "planner.db"))
+    import sqlite3
+
+    path = tmp_path / "planner.db"
+    conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
     try:
-        return snapshot(conn)["epoch"]
+        return str(conn.execute("SELECT epoch FROM navigation_meta").fetchone()[0])
     finally:
         conn.close()
 
@@ -74,7 +77,7 @@ def test_real_owner_rejects_second_injected_runtime_before_epoch_rotation(tmp_pa
         assert epoch(tmp_path) != started
 
 
-def test_audit_failure_keeps_epoch_and_releases_owner(
+def test_audit_failure_never_admits_delivery_and_releases_owner(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.tickets import data
@@ -90,7 +93,7 @@ def test_audit_failure_keeps_epoch_and_releases_owner(
     with pytest.raises(RuntimeError, match="synthetic audit failure"):
         with TestClient(app):
             pass
-    assert epoch(tmp_path) == before
+    assert epoch(tmp_path) != before  # Complete installation precedes the failing audit.
     assert not app.state.navigation_delivery.ready
     monkeypatch.setattr(data, "audit_ticket_registry_integrity", original)
     with TestClient(make_app(tmp_path)):
@@ -110,7 +113,7 @@ def test_notifications_reconcile_before_epoch_and_task_admission(
     start = BackgroundLoops.start
 
     def observe_reconcile(self: NotificationLoop) -> None:
-        assert epoch(tmp_path) == before
+        assert epoch(tmp_path) != before  # Installation precedes background reconciliation.
         assert not app.state.navigation_delivery.ready
         seen.append("reconcile")
         reconcile(self)
@@ -145,7 +148,7 @@ def test_lost_lifecycle_reconciliation_precedes_epoch(
     )
     conn.commit()
     conn.close()
-    original = data.reset_epoch
+    original = data.rebuild
     observed: list[str] = []
 
     def reset_after_reconciliation(connection: Any) -> Any:
@@ -156,7 +159,7 @@ def test_lost_lifecycle_reconciliation_precedes_epoch(
         observed.append(status)
         return original(connection)
 
-    monkeypatch.setattr(data, "reset_epoch", reset_after_reconciliation)
+    monkeypatch.setattr(data, "rebuild", reset_after_reconciliation)
     with TestClient(app):
         assert observed == ["unavailable"]
 
@@ -246,3 +249,56 @@ def test_older_backup_fresh_runtime_resets_cursor_and_proves_only_surviving_comm
         assert "Survives the backup" in names
         assert "Absent from the older backup" not in names
     assert not restored_app.state.navigation_delivery.ready
+
+
+def test_actual_bootstrap_owns_before_schema_and_keeps_phase_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real TestClient startup must attach raw migrations under one live lease."""
+    import sqlite3
+    import threading
+
+    from planner import database_modules
+    from planner.conversation import runtime_composition
+    from planner.conversation.lifecycle_storage import acquire_runtime_ownership
+    from planner.conversation.publication.coordinator import SignalPublicationCoordinator
+    from planner.core import db
+
+    app = make_app(tmp_path)
+    path = str(tmp_path / "planner.db")
+    phases: list[tuple[str, int]] = []
+    raw_attached: list[bool] = []
+    schema = db.create_schema
+    attach = database_modules.attach
+    initialize = SignalPublicationCoordinator.initialize
+
+    def observe_schema(connection: sqlite3.Connection, *, migration_admission: object) -> None:
+        with pytest.raises(ConversationRuntimeAlreadyOwned):
+            acquire_runtime_ownership(path)
+        phases.append(("schema", threading.get_ident()))
+        schema(connection, migration_admission=migration_admission)
+
+    def observe_attach(connection: sqlite3.Connection) -> Any:
+        participants = attach(connection)
+        if isinstance(connection, db._MigrationConnection):
+            assert connection.execute("SELECT signal_publication_admitted()").fetchone()[0] == 0
+            raw_attached.append(True)
+        return participants
+
+    def observe_initialize(
+        self: SignalPublicationCoordinator, connection: sqlite3.Connection
+    ) -> None:
+        phases.append(("initialize", threading.get_ident()))
+        initialize(self, connection)
+
+    monkeypatch.setattr(runtime_composition, "create_schema", observe_schema)
+    monkeypatch.setattr(database_modules, "attach", observe_attach)
+    monkeypatch.setattr(SignalPublicationCoordinator, "initialize", observe_initialize)
+    with TestClient(app) as client:
+        assert client.get("/api/navigation/snapshot").status_code == 200
+        assert app.state.navigation_delivery.admission.configured
+        assert app.state.navigation_delivery.admission.capture() is not None
+    assert raw_attached == [True]
+    assert [name for name, _thread in phases] == ["schema", "initialize"]
+    assert len({thread for _name, thread in phases}) == 1
+    assert phases[0][1] != threading.get_ident()  # The TestClient lifespan owns both tokens.

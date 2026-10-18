@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 from tests.unit.test_conversation_system import _Harness, _start
 
 from planner.conversation.lifecycle import LifecycleKind, LifecycleStatus
+from planner.conversation.lifecycle_storage import acquire_runtime_ownership
 from planner.conversation.message_content import text_message_content
-from planner.conversation.storage import ConversationStore
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -126,6 +126,6 @@ def test_startup_failure_releases_exclusive_ownership(
     app = create_app(config, build_clock(config), conn_factory)
     with pytest.raises(RuntimeError, match="synthetic startup audit failure"), TestClient(app):
         pytest.fail("startup unexpectedly admitted requests")
-    ownership = ConversationStore(str(db_path)).claim_runtime()
+    ownership = acquire_runtime_ownership(str(db_path))
     ownership.close()
     assert app.state.conversation is None

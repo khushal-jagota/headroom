@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from contextlib import closing
 from pathlib import Path
 from types import FrameType
 
@@ -12,7 +11,7 @@ import uvicorn
 
 from planner.core.clock import build_clock
 from planner.core.config import HOST, load_config
-from planner.core.db import connect, create_schema
+from planner.core.db import connect
 from planner.core.server import create_app
 from planner.core.sse import close_open_change_streams
 
@@ -37,9 +36,6 @@ def run_application_process() -> None:
     config = load_config(os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")))
     os.makedirs(os.path.dirname(config.db_path) or ".", exist_ok=True)
     os.makedirs(config.logs_dir, exist_ok=True)
-    with closing(connect(config.db_path, config.db_busy_timeout_ms)) as bootstrap:
-        create_schema(bootstrap)
-
     clock = build_clock(config)
 
     def conn_factory() -> sqlite3.Connection:

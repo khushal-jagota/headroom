@@ -106,6 +106,11 @@ from planner.conversation.model_corrections.contracts import (
 from planner.conversation.model_corrections.service import apply_corrections, preview_corrections
 from planner.conversation.model_resolution.data import ModelResolutionStore
 from planner.conversation.model_resolution.service import ModelResolutionService
+from planner.conversation.runtime_composition import (
+    SignalRuntimeComposition,
+    bind_admission,
+    transaction_control,
+)
 from planner.conversation.snapshot import (
     BackendSnapshot,
     BackendSnapshotService,
@@ -179,9 +184,19 @@ def build_conversation_runtime(
     backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory],
     remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
     cleanup: AsyncExitStack | None = None,
+    signal_composition: SignalRuntimeComposition | None = None,
 ) -> ConversationRuntime:
     """Compose the conversation system, its record, the files it keeps, and the tail."""
-    store = ConversationStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
+    store = ConversationStore(
+        db_path,
+        busy_timeout_ms=db_busy_timeout_ms,
+        signal_coordinator=None if signal_composition is None else signal_composition.coordinator,
+        bind_signal_admission=None if signal_composition is None else bind_admission,
+        runtime_reconciliation_admission=(
+            None if signal_composition is None else signal_composition.initialization
+        ),
+        transaction_control_guard=None if signal_composition is None else transaction_control,
+    )
     live_tail = ConversationLiveTail()
     message_files = ConversationMessageFiles(db_path)
     backend_snapshots = BackendSnapshotService(
@@ -211,7 +226,10 @@ def build_conversation_runtime(
         message_files=message_files,
         live_tail=live_tail,
         model_resolver=model_resolution,
+        runtime_ownership=None if signal_composition is None else signal_composition.ownership,
     )
+    if signal_composition is not None:
+        signal_composition.transfer_ownership()
     runtime: ConversationRuntime | None = None
 
     async def shutdown_composed_runtime() -> None:
