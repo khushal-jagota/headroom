@@ -70,6 +70,19 @@ class SprintItemDeletion:
     sprint_ids: tuple[str, ...]
 
 
+class ItemWorkspaceDocument(TypedDict):
+    """Content only; the canonical history reader owns its existing entry shape."""
+
+    body: str
+    conversation_history: list[dict[str, str | int]]
+
+
+class ItemWorkspaceContent(ItemWorkspaceDocument):
+    """Exact content door; managed-file serialization owns artifact entry shapes."""
+
+    artifacts: list[dict[str, object]]
+
+
 # --- request bodies (§9 wire shapes) ---
 # Every key is optional on the wire: an absent key takes the documented default,
 # unknown keys are ignored except for Sprint creation, which rejects them.
