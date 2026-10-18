@@ -129,7 +129,7 @@ def _create_findings(text: str) -> list[dict[str, str]]:
 
 
 def test_create_fields_follow_the_contract_and_report_only_unknown_top_level_keys() -> None:
-    payload = {key: None for key in CreateTicketBody.__annotations__}
+    payload: dict[str, object] = {key: None for key in CreateTicketBody.__annotations__}
     payload.update({"z_unknown": {}, "a_unknown": 1})
     payload["orchestrator"] = {"kickoff_note": "a nested field is not a create field"}
     example = _create_example(json.dumps(payload))
@@ -182,6 +182,9 @@ def test_create_example_reports_the_old_intake_field_and_accepts_brief(
             "\nJSON\n", "\nJSON\necho done\n"
         ),
         "````text\n" + _create_example('{"kickoff_note": "nested fence"}') + "````\n",
+        '~~~markdown title="~"\n' + _create_example('{"kickoff_note": "nested"}') + "~~~\n",
+        '~~~markdown title="`"\n' + _create_example('{"kickoff_note": "nested"}') + "~~~\n",
+        '````markdown title="~"\n' + _create_example('{"kickoff_note": "nested"}') + "````\n",
         _create_example(
             '{"brief": "kickoff_note is only text", "orchestrator": {"kickoff_note": 1}}'
         ),

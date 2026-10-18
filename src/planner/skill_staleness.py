@@ -52,7 +52,7 @@ STAGE_REFERENCE: Final = re.compile(r"needs(?:\\_|_)([a-z](?:[a-z]|\\_|_)*)")
 # taught sequence from any other arrow in the text. A span may wrap across a line.
 LADDER_SPAN: Final = re.compile(r"\*\*([^*]*?\u2192[^*]*?)\*\*", re.S)
 LADDER_ARROW: Final = "\u2192"
-FENCE_OPEN: Final = re.compile(r"^ {0,3}(`{3,}|~{3,})([^`~]*)$")
+FENCE_OPEN: Final = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 TICKET_CREATE_HEREDOC: Final = re.compile(
     r"panels[ \t]+ticket[ \t]+create[ \t]+--input-json[ \t]+-[ \t]+"
     r"<<(?P<quote>['\"])(?P<delimiter>[A-Za-z_][A-Za-z_0-9]*)(?P=quote)[ \t]*"
@@ -169,6 +169,10 @@ def shell_fences(source_text: str) -> Iterator[str]:
         if opening is None:
             continue
         marker, language = opening.groups()
+        # CommonMark forbids backticks in a backtick fence's info string. Tilde
+        # fences allow them, and either kind can contain tildes in its info string.
+        if marker[0] == "`" and "`" in language:
+            continue
         closing = re.compile(
             r" {0,3}" + re.escape(marker[0]) + "{" + str(len(marker)) + r",}[ \t]*"
         )
