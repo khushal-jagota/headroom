@@ -267,6 +267,7 @@ class MacExecutor:
                         if not self._handshake_accepted or message.payload != {"ready": True}:
                             raise ProtocolRefused("invalid reconciliation acknowledgment")
                         # Admit opens after the ready acknowledgment in wire order.
+                        self.lost_at_ms = None
                         self.state = ConnectionState.ready
                     future.set_result(message)
 
@@ -288,45 +289,51 @@ class MacExecutor:
 
     async def _replay(self) -> None:
         blocked: set[str] = set()
-        for envelope in await asyncio.to_thread(self.spool.pending):
-            if envelope.conversation_id in blocked:
-                continue
-            try:
-                await self._replay_envelope(envelope)
-            except (ConnectionError, BrokenPipeError):
-                raise
-            except (ValueError, OSError):
-                # Keep that conversation's order while allowing independent work to drain.
-                blocked.add(envelope.conversation_id)
-                logging.getLogger(__name__).exception(
-                    "executor conversation replay blocked: %s", envelope.conversation_id
-                )
+        while True:
+            heads = await asyncio.to_thread(self.spool.pending_heads)
+            ready = tuple(row for row in heads if row.conversation_id not in blocked)
+            if not ready:
+                return
+            for envelope in ready:
+                try:
+                    await self._replay_envelope(envelope)
+                except (ConnectionError, BrokenPipeError):
+                    raise
+                except (ValueError, OSError):
+                    # Keep that conversation's order while independent work drains.
+                    blocked.add(envelope.conversation_id)
+                    logging.getLogger(__name__).exception(
+                        "executor conversation replay blocked: %s", envelope.conversation_id
+                    )
 
     async def _replay_envelope(self, envelope: QueuedEnvelope) -> None:
-        for snapshot in self.spool.snapshots(envelope.submission_id):
-            payload = envelope.payload
-            child = payload.get("child")
-            if child is None:
-                ask = cast(JsonObject, payload.get("ask", {}))
-                child = ask.get("child")
-            if child is None:
-                raise ValueError("file publication lacks assigned child")
-            publication: JsonObject = {"manifest": as_object(snapshot.manifest), "child": child}
-            response = await self._request(WireMessageKind.file_manifest, publication)
-            if response.kind != WireMessageKind.file_accepted:
-                for chunk in file_chunks(snapshot):
-                    response = await self._request(WireMessageKind.file_chunk, as_object(chunk))
-                    validate_file_chunk_ack(response, chunk)
-                await self._request(WireMessageKind.file_complete, publication)
-        response = await self._request(WireMessageKind.envelope, as_object(envelope))
-        receipt = TypeAdapter(AcceptanceReceipt).validate_python(response.payload)
-        await asyncio.to_thread(self.spool.acknowledge, receipt)
-        future = self._receipts.get(envelope.submission_id)
-        if future is not None and not future.done():
-            future.set_result(receipt)
+        # A pin protects immutable bytes through receipt cleanup and cancellation.
+        # It holds no database transaction while the transport awaits the peer.
+        with self.spool.pin_snapshots(envelope.submission_id) as snapshots:
+            for snapshot in snapshots:
+                payload = envelope.payload
+                child = payload.get("child")
+                if child is None:
+                    ask = cast(JsonObject, payload.get("ask", {}))
+                    child = ask.get("child")
+                if child is None:
+                    raise ValueError("file publication lacks assigned child")
+                publication: JsonObject = {"manifest": as_object(snapshot.manifest), "child": child}
+                response = await self._request(WireMessageKind.file_manifest, publication)
+                if response.kind != WireMessageKind.file_accepted:
+                    for chunk in file_chunks(snapshot):
+                        response = await self._request(WireMessageKind.file_chunk, as_object(chunk))
+                        validate_file_chunk_ack(response, chunk)
+                    await self._request(WireMessageKind.file_complete, publication)
+            response = await self._request(WireMessageKind.envelope, as_object(envelope))
+            receipt = TypeAdapter(AcceptanceReceipt).validate_python(response.payload)
+            await asyncio.to_thread(self.spool.acknowledge, receipt)
+            future = self._receipts.get(envelope.submission_id)
+            if future is not None and not future.done():
+                future.set_result(receipt)
 
     async def _reconcile(self) -> None:
-        inventory = self.registry.inventory(self.identity)
+        inventory = self.registry.inventory(self.identity, include_pending=False)
         # Stream children and retained outcomes, never the potentially unbounded spool.
         # VPS aggregates these within the fenced generation before ready admission.
         batches = []

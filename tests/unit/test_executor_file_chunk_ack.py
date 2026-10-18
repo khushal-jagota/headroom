@@ -121,7 +121,7 @@ def test_old_protocol_three_mac_is_refused_by_protocol_four_vps_before_work(
             return await super().accept_envelope(envelope, identity)
 
     async def run() -> None:
-        assert PROTOCOL_VERSION == 4 and SPOOL_FORMAT_VERSION == 1
+        assert PROTOCOL_VERSION == 4 and SPOOL_FORMAT_VERSION == 2
         database_path = str(tmp_path / "vps.sqlite")
         connection = connect(database_path)
         create_schema(connection)

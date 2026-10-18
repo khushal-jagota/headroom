@@ -32,7 +32,7 @@ from planner.conversation.events import ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, ExecutorPaths
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, ExecutorPaths
 from planner.executor.contracts import (
     AuthorizedAction,
     ChildCommand,
@@ -160,7 +160,7 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
         identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, 1, reference.executor_incarnation, 2
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 2
         )
         ask = registry.inventory(identity).children[0].pending_asks[0]
         assert native.answers == []  # absence of an answer remains a wait
@@ -242,7 +242,7 @@ def test_stale_quiesce_rejects_restart_and_exit_is_identity_bound(tmp_path: Path
 def test_incompatible_spool_does_not_mutate_any_path(tmp_path: Path) -> None:
     root = tmp_path / "spool"
     root.mkdir()
-    (root / "metadata.json").write_text(json.dumps({"format": 999}))
+    (root / "metadata.json").write_text(json.dumps({"format": 999, "sender_id": str(uuid4())}))
     before = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*")}
     with pytest.raises(ValueError, match="incompatible"):
         FilesystemSpool(root)
@@ -423,7 +423,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
         identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, 1, reference.executor_incarnation, 1
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
         )
         ask = registry.inventory(identity).children[0].pending_asks[0]
         answer = DurableAnswer("answer", ask, "allow", 1)
@@ -913,7 +913,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
             turn, BackendPermissionAsk("same", "Allow?", None, ())
         )
         identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, 1, reference.executor_incarnation, 2
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 2
         )
         inventory = registry.inventory(identity).children[0]
         assert inventory.active_turn == turn
@@ -1116,6 +1116,66 @@ def test_controlled_stop_wakes_pending_handshake_without_peer_response(tmp_path:
             if not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
+            executor.spool.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("case", ["valid", "no_handshake", "bad_payload", "stale_request"])
+def test_ready_ack_clears_loss_before_fulfilling_current_request(
+    tmp_path: Path, case: str
+) -> None:
+    from planner.executor.contracts import ConnectionState, WireMessage, WireMessageKind
+    from planner.executor.wire import ProtocolRefused, encode_frame
+
+    async def run() -> None:
+        executor = MacExecutor(
+            paths=ExecutorPaths(tmp_path),
+            revision="a" * 40,
+            ssh_argv=("false",),
+            panels_server_url="http://unused",
+        )
+        executor.state = ConnectionState.reconciling
+        executor.lost_at_ms = 123
+        executor._handshake_accepted = case != "no_handshake"
+        observed: list[tuple[ConnectionState, int | None]] = []
+
+        class ObservedFuture(asyncio.Future[WireMessage]):
+            def set_result(self, result: WireMessage) -> None:
+                # Observe synchronously before fulfillment can resume the session.
+                observed.append((executor.state, executor.lost_at_ms))
+                super().set_result(result)
+
+        pending = ObservedFuture()
+        executor._pending["current-request"] = pending
+        reader = asyncio.StreamReader()
+        reader.feed_data(
+            encode_frame(
+                WireMessage(
+                    WireMessageKind.reconciliation_ready,
+                    "old-request" if case == "stale_request" else "current-request",
+                    {"ready": False} if case == "bad_payload" else {"ready": True},
+                )
+            )
+        )
+        reader.feed_eof()
+        try:
+            if case in ("no_handshake", "bad_payload"):
+                with pytest.raises(ProtocolRefused, match="invalid reconciliation"):
+                    await executor._read_loop(reader)
+            else:
+                with pytest.raises(asyncio.IncompleteReadError):
+                    await executor._read_loop(reader)
+            if case == "valid":
+                assert observed == [(ConnectionState.ready, None)]
+                assert pending.done()
+            else:
+                assert observed == []
+                assert not pending.done()
+                assert executor.state == ConnectionState.reconciling
+                assert executor.lost_at_ms == 123
+        finally:
+            pending.cancel()
             executor.spool.close()
 
     asyncio.run(run())

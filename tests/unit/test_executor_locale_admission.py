@@ -13,7 +13,7 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.conversation.message_content import text_message_content
 from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import PlannerError
-from planner.executor.configuration import PROTOCOL_VERSION
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import ExecutorIdentity
 from planner.executor.store import ExecutorStore
 from planner.runtime.conversation_start import send_to_ticket_conversation
@@ -22,7 +22,7 @@ from planner.tickets import data, locale_configuration
 from planner.tickets.contracts import Ticket, TicketLocale
 from planner.worker_types.configuration import configured_worker_type_registry
 
-IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 1, "incarnation", 1)
+IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
 
 
 class StartObservingSystem(InMemoryConversationSystem):

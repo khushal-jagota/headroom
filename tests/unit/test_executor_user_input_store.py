@@ -208,7 +208,7 @@ def test_input_callback_liveness_is_exact_and_answer_survives_missing_callback(
     )
 
 
-def test_spool_format_one_preserves_old_permission_payload_without_kind(tmp_path: Path) -> None:
+def test_current_spool_preserves_old_permission_payload_without_kind(tmp_path: Path) -> None:
     root = tmp_path / "spool"
     spool = FilesystemSpool(root)
     old_payload: JsonObject = {

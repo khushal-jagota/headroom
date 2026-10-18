@@ -193,7 +193,11 @@ See [Mac executor packages](environments.md#mac-executor-packages) for the locks
 
 Preview forwarding requires protocol 4 on both peers. The existing full planner
 source closure includes `src/planner/previews/` and the executor stream handlers.
-Build both peers from the same reviewed revision. The journal format stays at 1.
+Build both peers from the same reviewed revision. Fresh Mac installations use the
+SQLite outbox in spool format 2. Ordinary deployment refuses incompatible formats
+or protocols before mutation. Automatic or in-place upgrades between formats and
+rollback across conversion are unsupported. A stopped-process offline converter
+provides the explicit legacy conversion procedure described in [Executor](executor.md).
 Protocol 3 peers refuse the handshake before work or preview admission.
 
 The Mac target requires native ordinary CPython 3.14.3 on Apple Silicon. The actual

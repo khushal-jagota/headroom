@@ -1,18 +1,27 @@
-"""Immutable artifact snapshots and bounded byte transfer without a local database."""
+"""Immutable artifact snapshots and bounded byte transfer."""
 
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import os
 import re
 import stat
+import sys
 import tempfile
 from pathlib import Path
 from uuid import uuid4
 
 from planner.executor.configuration import FILE_CHUNK_BYTES, ExecutorPaths
 from planner.executor.contracts import FileChunk, FileManifest, FileScope, FileSnapshot
+
+
+def fsync_file(descriptor: int) -> None:
+    """Persist regular-file bytes, including the drive cache on macOS."""
+    os.fsync(descriptor)
+    if sys.platform == "darwin":
+        fcntl.fcntl(descriptor, fcntl.F_FULLFSYNC)
 
 
 def fsync_directory(path: Path) -> None:
@@ -71,7 +80,7 @@ def snapshot_file(
     with os.fdopen(temporary_descriptor, "wb") as snapshot:
         snapshot.write(contents)
         snapshot.flush()
-        os.fsync(snapshot.fileno())
+        fsync_file(snapshot.fileno())
     return FileSnapshot(
         FileManifest(
             publication_id=uuid4().hex,
@@ -170,7 +179,7 @@ class IncomingFiles:
         )
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with temporary.open("rb") as stream:
-            os.fsync(stream.fileno())
+            fsync_file(stream.fileno())
         os.replace(temporary, target)
         fsync_directory(target.parent)
         self._manifests.pop(manifest.publication_id)

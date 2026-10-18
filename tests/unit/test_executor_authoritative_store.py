@@ -14,7 +14,7 @@ from planner.conversation.backends.contracts import TurnToken
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect
 from planner.core.migrations.versions.executor_authoritative_acceptance import STATEMENTS
-from planner.executor.configuration import PROTOCOL_VERSION
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 from planner.executor.contracts import (
     AnswerApplication,
     AskReachability,
@@ -37,7 +37,7 @@ from planner.executor.journal import envelope_payload_digest
 from planner.executor.publication import PublicationReceiver
 from planner.executor.store import ExecutorStore
 
-IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, 1, "incarnation", 1)
+IDENTITY = ExecutorIdentity(PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, "incarnation", 1)
 CHILD = ChildReference("incarnation", "child", "conversation")
 ASK = AskReference(CHILD, TurnToken("conversation", 1), "ask")
 

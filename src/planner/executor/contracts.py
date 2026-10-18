@@ -9,6 +9,7 @@ retain command outcomes and report uncertainty without automatic redispatch.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -392,7 +393,21 @@ class DurableSpool(Protocol):
 
     def pending(self) -> tuple[QueuedEnvelope, ...]: ...
 
+    def pending_heads(self) -> tuple[QueuedEnvelope, ...]:
+        """First pending submission per conversation, retaining conversation order."""
+        ...
+
+    def pending_count(self) -> int: ...
+
+    def has_pending(self, conversation_id: str | None = None) -> bool: ...
+
     def snapshots(self, submission_id: str) -> tuple[FileSnapshot, ...]: ...
+
+    def pin_snapshots(
+        self, submission_id: str
+    ) -> AbstractContextManager[tuple[FileSnapshot, ...]]:
+        """Retain immutable paths until exit without a network-spanning transaction."""
+        ...
 
     def acknowledge(self, receipt: AcceptanceReceipt) -> None:
         """Delete only matching sender/ID/digest after a durable VPS first result."""
