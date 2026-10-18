@@ -15,8 +15,12 @@ const item = (id:string, values:Partial<BoardSprintItem> = {}): BoardSprintItem 
   ticket_rollup:quiet, tickets:[], ...values
 });
 const chief = (values:Partial<ChiefManagementSettings> = {}):ChiefManagementSettings => ({
-  label:"Chief of Staff", conversation_id:"chief-conversation", awaiting_reply:false, ...values
-} as ChiefManagementSettings);
+  employee_id:"chief", label:"Chief of Staff", recap:"",
+  skill:{name:"panels-chief-of-staff", description:"Chief role", markdown_body:"# Chief"},
+  launch_defaults:{employee_backend:"codex", employee_launch_model:null, employee_launch_reasoning_effort:null},
+  conversation_id:"chief-conversation", needs_me:false, awaiting_reply:false, agent_working:false,
+  latest_turn_ended_sequence:0, owner_read_through_sequence:0, ...values
+});
 
 describe("exact unread conversation discovery", () => {
   it("includes own supervisor, Chief and Workers even under settled parents or terminal stages", () => {
