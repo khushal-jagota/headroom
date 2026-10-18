@@ -332,6 +332,9 @@ jobs:
             --hermes-home "$PANELS_APP_HOME/.hermes" \
             --codex-home "$PANELS_APP_HOME/.codex" \
             --claude-home "$PANELS_APP_HOME/.claude"
+      - name: Remove production deployment temporary state
+        if: ${{ always() && !inputs.rehearsal }}
+        run: python3 scripts/deployment_rehearsal.py cleanup
       - name: Finalize deployment lifecycle
         if: always()
         env:
@@ -369,6 +372,6 @@ jobs:
           name: deploy-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.PANELS_GATE_DIR }}
           if-no-files-found: error
-      - name: Remove temporary deployment state
-        if: always()
+      - name: Remove rehearsal temporary state
+        if: ${{ always() && inputs.rehearsal }}
         run: python3 scripts/deployment_rehearsal.py cleanup

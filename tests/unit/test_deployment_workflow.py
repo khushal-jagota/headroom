@@ -78,7 +78,14 @@ def test_workflow_routes_rehearsal_away_from_production_and_checks_pin_before_su
                   "PANELS_LIFECYCLE_PATH", "PANELS_APP_HOME"):
         assert value in deploy
     assert "inputs.rehearsal" in steps["Retain rehearsal proof"]["if"]
-    assert steps["Remove temporary deployment state"]["if"] == "always()"
+    production_cleanup = "Remove production deployment temporary state"
+    rehearsal_cleanup = "Remove rehearsal temporary state"
+    assert steps[production_cleanup]["if"] == "${{ always() && !inputs.rehearsal }}"
+    assert steps[rehearsal_cleanup]["if"] == "${{ always() && inputs.rehearsal }}"
+    assert names.index(production_cleanup) < names.index("Finalize deployment lifecycle")
+    assert names.index("Finalize deployment lifecycle") < names.index("Collect rehearsal proof")
+    assert names.index("Collect rehearsal proof") < names.index("Retain rehearsal proof")
+    assert names.index("Retain rehearsal proof") < names.index(rehearsal_cleanup)
     hermes = steps["Provision offline Hermes packaging prerequisite"]
     assert hermes["if"] == "${{ inputs.rehearsal }}"
     assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in hermes["run"]
