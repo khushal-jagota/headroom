@@ -204,7 +204,14 @@ concurrency group. Production runs remain on the dedicated self-hosted runner an
 accept the workflow control revision from `main`.
 
 The hosted setup installs Python 3.12, Node 22, Chromium's runtime dependencies,
-bubblewrap, and a real systemd user manager and bus. It creates a unique user service,
+bubblewrap, FFmpeg, and a real systemd user manager and bus. The required offline Hermes
+extension-packaging checks use a separate interpreter in the runner's home, provisioned
+from official `NousResearch/hermes-agent` revision
+`76d832d3857551a029c4b39c23945eb47c16fe5b` (Hermes 0.20.0), with only its core and ACP
+extra. This matches the deployed Hermes source used to validate that packaging boundary;
+it enables no provider tests and receives no credentials. Installation logs and the exact
+revision are retained with the rehearsal proof, and cleanup removes that interpreter.
+This test prerequisite is separate from the disposable app's private agent homes. It creates a unique user service,
 available loopback port, private home, fresh database with dispatch disabled, backup
 root and agent homes. No production secrets or private-network access are used.
 Temporary paths deliberately sit below `/home/vps/Deployments/Panels` to exercise the

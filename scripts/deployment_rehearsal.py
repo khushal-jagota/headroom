@@ -230,6 +230,9 @@ def cleanup() -> None:
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
         subprocess.run(["git", "worktree", "remove", "--force", str(root / "baseline-source")],
                        check=False)
+        hermes_root = os.environ.get("PANELS_REHEARSAL_HERMES_ROOT")
+        if hermes_root and Path(hermes_root).exists():
+            shutil.rmtree(hermes_root)
     subprocess.run(["git", "worktree", "remove", "--force",
                     os.environ["PANELS_CANDIDATE_SOURCE"]], check=False)
     shutil.rmtree(root, ignore_errors=False)

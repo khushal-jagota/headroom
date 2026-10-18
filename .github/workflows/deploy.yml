@@ -48,7 +48,7 @@ jobs:
         if: ${{ inputs.rehearsal }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap dbus-user-session
+          sudo apt-get install -y bubblewrap dbus-user-session ffmpeg
           # Hosted Ubuntu's AppArmor policy otherwise denies unprivileged bwrap.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo loginctl enable-linger "$USER"
@@ -59,6 +59,24 @@ jobs:
           sudo chown "$(id -u):$(id -g)" /home/vps/Deployments/Panels
       - name: Set deployment paths
         run: python3 scripts/deployment_rehearsal.py configure
+      - name: Provision offline Hermes packaging prerequisite
+        if: ${{ inputs.rehearsal }}
+        run: |
+          set -o pipefail
+          # Only the real core + ACP package is needed; never provider credentials/extras.
+          hermes_source="$HOME/.hermes/hermes-agent"
+          hermes_sha=76d832d3857551a029c4b39c23945eb47c16fe5b
+          test ! -e "$hermes_source"
+          echo "PANELS_REHEARSAL_HERMES_ROOT=$hermes_source" >> "$GITHUB_ENV"
+          git init "$hermes_source"
+          git -C "$hermes_source" remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C "$hermes_source" fetch --depth=1 origin "$hermes_sha"
+          git -C "$hermes_source" checkout --detach FETCH_HEAD
+          test "$(git -C "$hermes_source" rev-parse HEAD)" = "$hermes_sha"
+          python3 -m venv "$hermes_source/venv"
+          "$hermes_source/venv/bin/python" -m pip install --editable "$hermes_source[acp]" \
+            2>&1 | tee "$PANELS_GATE_DIR/hermes-install.log"
+          echo "$hermes_sha" > "$PANELS_GATE_DIR/hermes-revision.txt"
       - name: Prepare rehearsal runtime
         if: ${{ inputs.rehearsal }}
         run: |

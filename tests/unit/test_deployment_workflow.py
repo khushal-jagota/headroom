@@ -79,6 +79,11 @@ def test_workflow_routes_rehearsal_away_from_production_and_checks_pin_before_su
         assert value in deploy
     assert "inputs.rehearsal" in steps["Retain rehearsal proof"]["if"]
     assert steps["Remove temporary deployment state"]["if"] == "always()"
+    hermes = steps["Provision offline Hermes packaging prerequisite"]
+    assert hermes["if"] == "${{ inputs.rehearsal }}"
+    assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in hermes["run"]
+    assert '"$hermes_source[acp]"' in hermes["run"]
+    assert "ffmpeg" in steps["Bootstrap disposable hosted runner"]["run"]
 
 
 def test_e2e_report_survives_real_shadow_mount_and_remains_host_parseable(tmp_path: Path) -> None:
