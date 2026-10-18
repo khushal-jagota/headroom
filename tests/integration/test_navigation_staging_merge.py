@@ -14,7 +14,6 @@ from sqlalchemy import Engine
 
 from planner.core.db import _alembic_config, _migration_engine
 from planner.navigation import data
-from planner.navigation.contracts import HistoryUnavailable
 from planner.projects.data import seed_default_projects
 from planner.worker_types.shipped import seed_chief_settings, seed_shipped_worker_types
 
@@ -101,7 +100,7 @@ def test_source_rewrite_and_projection_rebuild_roll_back_together(
         assert list(raw.iterdump()) == before
         assert historical_snapshot(raw) == old
         command.upgrade(_alembic_config(connection), "head")
-        current = data.snapshot(raw)
+        current = historical_snapshot(raw)
         assert current["scope"] == old["scope"]
         assert current["epoch"] != old["epoch"]
         assert current["revision"] == "0"
@@ -116,10 +115,10 @@ def test_source_rewrite_and_projection_rebuild_roll_back_together(
         assert "retirement" not in {field["id"] for field in definition["fields"]}
         assert "cancelled" not in {stage["id"] for stage in definition["stages"]}
         assert raw.execute("SELECT COUNT(*) FROM navigation_dirty").fetchone()[0] == 0
-        with pytest.raises(HistoryUnavailable):
+        with pytest.raises(RuntimeError, match="current schema"):
             data.journal(raw, old["epoch"], old["revision"])
         data.rebuild(raw)
-        assert data.snapshot(raw)["records"] == current["records"]
+        assert historical_snapshot(raw)["records"] == current["records"]
     engine.dispose()
 
 

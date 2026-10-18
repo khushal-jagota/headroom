@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from tests.integration.test_navigation_staging_merge import historical_snapshot
+from tests.support.navigation_current import (
+    current_navigation_database,
+    prepared_navigation_database,
+)
 
 from planner.core.db import connect, create_schema
 from planner.navigation import journal, rebuild, snapshot
@@ -42,92 +47,92 @@ def test_durable_batch_survives_closed_connection_without_wake(
 ) -> None:
     from planner.core import change_signal
 
-    conn = database(tmp_path)
-    baseline = snapshot(conn)
-    monkeypatch.setattr(change_signal, "emit", lambda: None)
-    add_conversation(conn)
-    current = snapshot(conn)
-    assert int(current["revision"]) == int(baseline["revision"]) + 1
-    conn.close()
-    conn = connect(str(tmp_path / "planner.db"))
-    page = journal(conn, baseline["epoch"], baseline["revision"])
-    assert len(page["batches"]) == 1
-    assert any(
-        r["kind"] == "conversation" and r["id"] == "c" for r in page["batches"][0]["upserts"]
-    )
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        baseline = snapshot(conn)
+        monkeypatch.setattr(change_signal, "emit", lambda: None)
+        add_conversation(conn)
+        current = snapshot(conn)
+        assert int(current["revision"]) == int(baseline["revision"]) + 1
+        conn.close()
+        conn = connect(str(tmp_path / "planner.db"))
+        page = journal(conn, baseline["epoch"], baseline["revision"])
+        assert len(page["batches"]) == 1
+        assert any(
+            r["kind"] == "conversation" and r["id"] == "c" for r in page["batches"][0]["upserts"]
+        )
+        conn.close()
 
 
 def test_rollback_and_savepoint_restore_dirty_rows_and_revision(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    add_conversation(conn)
-    baseline = snapshot(conn)
-    conn.execute("BEGIN")
-    conn.execute("SAVEPOINT inner")
-    conn.execute("UPDATE conversations SET latest_sequence=9 WHERE conversation_id='c'")
-    conn.execute(
-        "INSERT INTO conversation_lifecycle_facts VALUES"
-        "('c','attempt','receipt',1,'prompt','unknown',NULL)"
-    )
-    conn.execute("ROLLBACK TO inner")
-    conn.execute("RELEASE inner")
-    conn.commit()
-    assert snapshot(conn) == baseline
-    assert conn.execute("SELECT COUNT(*) FROM conversation_lifecycle_facts").fetchone()[0] == 0
-    conn.execute("BEGIN")
-    conn.execute("UPDATE conversations SET latest_sequence=9 WHERE conversation_id='c'")
-    with pytest.raises(RuntimeError, match="pending source writes"):
-        snapshot(conn)
-    conn.rollback()
-    assert snapshot(conn) == baseline
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        baseline = snapshot(conn)
+        conn.execute("BEGIN")
+        conn.execute("SAVEPOINT inner")
+        conn.execute("UPDATE conversations SET latest_sequence=9 WHERE conversation_id='c'")
+        conn.execute(
+            "INSERT INTO conversation_lifecycle_facts VALUES"
+            "('c','attempt','receipt',1,'prompt','unknown',NULL)"
+        )
+        conn.execute("ROLLBACK TO inner")
+        conn.execute("RELEASE inner")
+        conn.commit()
+        assert snapshot(conn) == baseline
+        assert conn.execute("SELECT COUNT(*) FROM conversation_lifecycle_facts").fetchone()[0] == 0
+        conn.execute("BEGIN")
+        conn.execute("UPDATE conversations SET latest_sequence=9 WHERE conversation_id='c'")
+        with pytest.raises(RuntimeError, match="pending source writes"):
+            snapshot(conn)
+        conn.rollback()
+        assert snapshot(conn) == baseline
+        conn.close()
 
 
 def test_rebuild_resets_epoch_preserves_scope_and_canonical_read_facts(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    add_conversation(conn)
-    conn.execute("BEGIN")
-    conn.execute(
-        "UPDATE conversations SET latest_sequence=8,owner_read_through_sequence=5 "
-        "WHERE conversation_id='c'"
-    )
-    conn.commit()
-    baseline = snapshot(conn)
-    conn.execute("BEGIN")
-    rebuild(conn)
-    conn.commit()
-    current = snapshot(conn)
-    assert current["scope"] == baseline["scope"]
-    assert current["epoch"] != baseline["epoch"]
-    assert current["revision"] == "0"
-    assert current["records"] == baseline["records"]
-    with pytest.raises(HistoryUnavailable):
-        journal(conn, baseline["epoch"], baseline["revision"])
-    assert values(conn)["conversation", "c"]["owner_read_through_sequence"] == 5
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE conversations SET latest_sequence=8,owner_read_through_sequence=5 "
+            "WHERE conversation_id='c'"
+        )
+        conn.commit()
+        baseline = snapshot(conn)
+        conn.execute("BEGIN")
+        rebuild(conn)
+        conn.commit()
+        current = snapshot(conn)
+        assert current["scope"] == baseline["scope"]
+        assert current["epoch"] != baseline["epoch"]
+        assert current["revision"] == "0"
+        assert current["records"] == baseline["records"]
+        with pytest.raises(HistoryUnavailable):
+            journal(conn, baseline["epoch"], baseline["revision"])
+        assert values(conn)["conversation", "c"]["owner_read_through_sequence"] == 5
+        conn.close()
 
 
 def test_private_cursor_update_does_not_allocate_revision(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    add_conversation(conn)
-    baseline = snapshot(conn)
-    conn.execute("BEGIN")
-    conn.execute(
-        "UPDATE conversations SET vendor_session_cursor='private' WHERE conversation_id='c'"
-    )
-    conn.commit()
-    assert snapshot(conn) == baseline
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        baseline = snapshot(conn)
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE conversations SET vendor_session_cursor='private' WHERE conversation_id='c'"
+        )
+        conn.commit()
+        assert snapshot(conn) == baseline
+        conn.close()
 
 
 def test_schema_availability_refreshes_and_relevant_autocommit_fails_closed(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    conn.close()
-    # A raw connection can read, but cannot bypass composition for canonical writes.
-    raw = sqlite3.connect(tmp_path / "planner.db", isolation_level=None)
-    with pytest.raises(sqlite3.OperationalError, match="navigation_transaction_active"):
-        raw.execute("INSERT INTO projects(id,name,created_at,updated_at) VALUES('x','X',0,0)")
-    raw.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.close()
+        # A raw connection can read, but cannot bypass composition for canonical writes.
+        raw = sqlite3.connect(tmp_path / "planner.db", isolation_level=None)
+        with pytest.raises(sqlite3.OperationalError, match="navigation_transaction_active"):
+            raw.execute("INSERT INTO projects(id,name,created_at,updated_at) VALUES('x','X',0,0)")
+        raw.close()
 
 
 def add_ticket(conn: sqlite3.Connection, identity: str, parent: str | None = None) -> None:
@@ -153,263 +158,220 @@ def add_parent(conn: sqlite3.Connection, identity: str) -> None:
 
 
 def test_aliases_historical_memberships_moves_and_deletes(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    add_conversation(conn)
-    conn.execute("BEGIN")
-    add_parent(conn, "a")
-    add_parent(conn, "b")
-    add_parent(conn, "middle")
-    add_ticket(conn, "t", "a")
-    conn.execute("UPDATE tickets SET conversation_id='c' WHERE id='t'")
-    conn.execute("INSERT INTO ticket_conversations VALUES('c','t')")
-    conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_a','c')")
-    conn.commit()
-    actual = values(conn)
-    assert actual["totals", "orchestrator:a"] == {
-        "child_count": 1,
-        "distinct_conversation_count": 1,
-    }
-    assert len([k for k in actual if k[0] == "address"]) == 2
-    assert actual["ticket", "t"]["ticket_status"] == "empty"
-    assert actual["ticket", "t"]["stage_ownership"] == "worker"
-    conn.execute("BEGIN")
-    conn.execute("UPDATE tickets SET sprint_item_id='middle' WHERE id='t'")
-    conn.execute("UPDATE tickets SET sprint_item_id='b',conversation_id=NULL WHERE id='t'")
-    conn.commit()
-    actual = values(conn)
-    assert actual["totals", "orchestrator:a"] == {
-        "child_count": 0,
-        "distinct_conversation_count": 1,
-    }
-    assert actual["totals", "orchestrator:b"] == {
-        "child_count": 1,
-        "distinct_conversation_count": 1,
-    }
-    assert actual["totals", "orchestrator:middle"] == {
-        "child_count": 0,
-        "distinct_conversation_count": 0,
-    }
-    assert actual["totals", "workspace"] == {"child_count": 1, "distinct_conversation_count": 1}
-    ticket_address = [
-        value
-        for key, value in actual.items()
-        if key[0] == "address" and value["owner_kind"] == "ticket"
-    ][0]
-    assert ticket_address["current"] is False
-    assert ticket_address["parent_id"] == "b"
-    conn.execute("BEGIN")
-    conn.execute("DELETE FROM tickets WHERE id='t'")
-    conn.commit()
-    actual = values(conn)
-    assert ("ticket", "t") not in actual
-    assert actual["totals", "orchestrator:b"] == {
-        "child_count": 0,
-        "distinct_conversation_count": 0,
-    }
-    assert len([k for k in actual if k[0] == "address"]) == 1
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        conn.execute("BEGIN")
+        add_parent(conn, "a")
+        add_parent(conn, "b")
+        add_parent(conn, "middle")
+        add_ticket(conn, "t", "a")
+        conn.execute("UPDATE tickets SET conversation_id='c' WHERE id='t'")
+        conn.execute("INSERT INTO ticket_conversations VALUES('c','t')")
+        conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_a','c')")
+        conn.commit()
+        actual = values(conn)
+        assert actual["totals", "orchestrator:a"] == {
+            "child_count": 1,
+            "distinct_conversation_count": 1,
+        }
+        assert len([k for k in actual if k[0] == "address"]) == 2
+        assert actual["ticket", "t"]["ticket_status"] == "empty"
+        assert actual["ticket", "t"]["stage_ownership"] == "worker"
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET sprint_item_id='middle' WHERE id='t'")
+        conn.execute("UPDATE tickets SET sprint_item_id='b',conversation_id=NULL WHERE id='t'")
+        conn.commit()
+        actual = values(conn)
+        assert actual["totals", "orchestrator:a"] == {
+            "child_count": 0,
+            "distinct_conversation_count": 1,
+        }
+        assert actual["totals", "orchestrator:b"] == {
+            "child_count": 1,
+            "distinct_conversation_count": 1,
+        }
+        assert actual["totals", "orchestrator:middle"] == {
+            "child_count": 0,
+            "distinct_conversation_count": 0,
+        }
+        assert actual["totals", "workspace"] == {"child_count": 1, "distinct_conversation_count": 1}
+        ticket_address = [
+            value
+            for key, value in actual.items()
+            if key[0] == "address" and value["owner_kind"] == "ticket"
+        ][0]
+        assert ticket_address["current"] is False
+        assert ticket_address["parent_id"] == "b"
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM tickets WHERE id='t'")
+        conn.commit()
+        actual = values(conn)
+        assert ("ticket", "t") not in actual
+        assert actual["totals", "orchestrator:b"] == {
+            "child_count": 0,
+            "distinct_conversation_count": 0,
+        }
+        assert len([k for k in actual if k[0] == "address"]) == 1
+        conn.close()
 
 
 def test_blocker_status_old_dependencies_and_same_transaction_definition(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    conn.execute("BEGIN")
-    add_ticket(conn, "blocker")
-    add_ticket(conn, "held")
-    conn.execute("INSERT INTO ticket_blocks VALUES('blocker','held')")
-    conn.commit()
-    assert values(conn)["ticket", "held"]["ticket_status"] == "blocked"
-    conn.execute("BEGIN")
-    conn.execute("UPDATE tickets SET stage='done' WHERE id='blocker'")
-    conn.commit()
-    assert values(conn)["ticket", "held"]["ticket_status"] == "empty"
-    conn.execute("BEGIN")
-    conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id='blocker'")
-    conn.execute("DELETE FROM tickets WHERE id='blocker'")
-    conn.commit()
-    assert values(conn)["ticket", "held"]["ticket_status"] == "empty"
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.execute("BEGIN")
+        add_ticket(conn, "blocker")
+        add_ticket(conn, "held")
+        conn.execute("INSERT INTO ticket_blocks VALUES('blocker','held')")
+        conn.commit()
+        assert values(conn)["ticket", "held"]["ticket_status"] == "blocked"
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET stage='done' WHERE id='blocker'")
+        conn.commit()
+        assert values(conn)["ticket", "held"]["ticket_status"] == "empty"
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id='blocker'")
+        conn.execute("DELETE FROM tickets WHERE id='blocker'")
+        conn.commit()
+        assert values(conn)["ticket", "held"]["ticket_status"] == "empty"
+        conn.close()
 
 
 def test_historical_supervisor_identity_survives_current_pointer_reset(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    add_conversation(conn)
-    conn.execute("BEGIN")
-    add_parent(conn, "a")
-    conn.execute(
-        "UPDATE conversations SET identity_environment_variables=? WHERE conversation_id='c'",
-        ('[["PLAN_ACTOR","sprint_item_supervisor"],["PLAN_SPRINT_ITEM_ID","a"]]',),
-    )
-    conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_a','c')")
-    conn.commit()
-    conn.execute("BEGIN")
-    conn.execute(
-        "UPDATE agents SET conversation_id=NULL WHERE agent_key='sprint_item_supervisor_a'"
-    )
-    conn.commit()
-    actual = values(conn)
-    address = [value for key, value in actual.items() if key[0] == "address"][0]
-    assert address["current"] is False
-    assert actual["totals", "orchestrator:a"]["distinct_conversation_count"] == 1
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        conn.execute("BEGIN")
+        add_parent(conn, "a")
+        conn.execute(
+            "UPDATE conversations SET identity_environment_variables=? WHERE conversation_id='c'",
+            ('[["PLAN_ACTOR","sprint_item_supervisor"],["PLAN_SPRINT_ITEM_ID","a"]]',),
+        )
+        conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_a','c')")
+        conn.commit()
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE agents SET conversation_id=NULL WHERE agent_key='sprint_item_supervisor_a'"
+        )
+        conn.commit()
+        actual = values(conn)
+        address = [value for key, value in actual.items() if key[0] == "address"][0]
+        assert address["current"] is False
+        assert actual["totals", "orchestrator:a"]["distinct_conversation_count"] == 1
+        conn.close()
 
 
 def test_definition_and_approval_metadata_use_current_transaction(tmp_path: Path) -> None:
     import json
 
-    conn = database(tmp_path)
-    conn.execute("BEGIN")
-    add_ticket(conn, "t")
-    raw = conn.execute(
-        "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
-    ).fetchone()[0]
-    definition = json.loads(raw)
-    stage = next(s for s in definition["stages"] if s["id"] == "needs_implementation")
-    stage["ownership_mode"] = "user"
-    conn.execute(
-        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
-        (json.dumps(definition),),
-    )
-    proposal = {
-        "field": "implementation",
-        "body": "SECRET BODY",
-        "proposed_by": "worker",
-        "created_at": 0,
-    }
-    conn.execute(
-        "UPDATE tickets SET pending_proposal=?,pending_proposal_revision=7 WHERE id='t'",
-        (json.dumps(proposal),),
-    )
-    conn.commit()
-    record = values(conn)["ticket", "t"]
-    assert record["stage_ownership"] == "user"
-    assert record["proposal_field"] == "implementation"
-    assert record["proposal_revision"] == 7
-    assert record["proposal_created_at"] == 0
-    assert record["ticket_status"] == "awaiting_approval"
-    assert record["ceiling_holder"] == {"kind": "owner", "id": "owner"}
-    assert "SECRET BODY" not in json.dumps(snapshot(conn))
-    before = snapshot(conn)
-    proposal["created_at"] = 42
-    proposal["body"] = "REPLACEMENT BODY"
-    conn.execute("BEGIN")
-    conn.execute(
-        "UPDATE tickets SET pending_proposal=?,pending_proposal_revision=8 WHERE id='t'",
-        (json.dumps(proposal),),
-    )
-    conn.commit()
-    replacement = values(conn)["ticket", "t"]
-    assert replacement["proposal_field"] == "implementation"
-    assert replacement["proposal_created_at"] == 42
-    assert replacement["proposal_revision"] == 8
-    assert journal(conn, before["epoch"], before["revision"])["batches"][0]["upserts"] == [
-        {"kind": "ticket", "id": "t", "value": replacement}
-    ]
-    conn.execute("BEGIN")
-    conn.execute("UPDATE tickets SET pending_proposal=NULL WHERE id='t'")
-    conn.commit()
-    assert values(conn)["ticket", "t"]["proposal_created_at"] is None
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.execute("BEGIN")
+        add_ticket(conn, "t")
+        raw = conn.execute(
+            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
+        ).fetchone()[0]
+        definition = json.loads(raw)
+        stage = next(s for s in definition["stages"] if s["id"] == "needs_implementation")
+        stage["ownership_mode"] = "user"
+        conn.execute(
+            "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+            (json.dumps(definition),),
+        )
+        proposal = {
+            "field": "implementation",
+            "body": "SECRET BODY",
+            "proposed_by": "worker",
+            "created_at": 0,
+        }
+        conn.execute(
+            "UPDATE tickets SET pending_proposal=?,pending_proposal_revision=7 WHERE id='t'",
+            (json.dumps(proposal),),
+        )
+        conn.commit()
+        record = values(conn)["ticket", "t"]
+        assert record["stage_ownership"] == "user"
+        assert record["proposal_field"] == "implementation"
+        assert record["proposal_revision"] == 7
+        assert record["proposal_created_at"] == 0
+        assert record["ticket_status"] == "awaiting_approval"
+        assert record["ceiling_holder"] == {"kind": "owner", "id": "owner"}
+        assert "SECRET BODY" not in json.dumps(snapshot(conn))
+        before = snapshot(conn)
+        proposal["created_at"] = 42
+        proposal["body"] = "REPLACEMENT BODY"
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE tickets SET pending_proposal=?,pending_proposal_revision=8 WHERE id='t'",
+            (json.dumps(proposal),),
+        )
+        conn.commit()
+        replacement = values(conn)["ticket", "t"]
+        assert replacement["proposal_field"] == "implementation"
+        assert replacement["proposal_created_at"] == 42
+        assert replacement["proposal_revision"] == 8
+        assert journal(conn, before["epoch"], before["revision"])["batches"][0]["upserts"] == [
+            {"kind": "ticket", "id": "t", "value": replacement}
+        ]
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET pending_proposal=NULL WHERE id='t'")
+        conn.commit()
+        assert values(conn)["ticket", "t"]["proposal_created_at"] is None
+        conn.close()
 
 
 def test_metadata_edits_publish_source_values_without_status_changes(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    conn.execute("BEGIN")
-    add_parent(conn, "a")
-    add_ticket(conn, "t", "a")
-    conn.commit()
-    before = snapshot(conn)
-    conn.execute("BEGIN")
-    conn.execute("UPDATE sprint_items SET priority='P0',created_at=88 WHERE id='a'")
-    conn.execute("UPDATE tickets SET updated_at=99 WHERE id='t'")
-    conn.commit()
-    actual = values(conn)
-    assert actual["orchestrator", "a"]["priority"] == "P0"
-    assert actual["orchestrator", "a"]["created_at"] == 88
-    assert actual["ticket", "t"]["updated_at"] == 99
-    assert actual["ticket", "t"]["ticket_status"] == "empty"
-    batch = journal(conn, before["epoch"], before["revision"])["batches"]
-    assert len(batch) == 1
-    assert {(r["kind"], r["id"]) for r in batch[0]["upserts"]} == {
-        ("ticket", "t"),
-        ("orchestrator", "a"),
-    }
-    stable = snapshot(conn)
-    conn.execute("BEGIN")
-    conn.execute("UPDATE tickets SET updated_at=100 WHERE id='t'")
-    conn.execute("DELETE FROM tickets WHERE id='t'")
-    conn.execute("DELETE FROM sprint_items WHERE id='a'")
-    conn.rollback()
-    assert snapshot(conn) == stable
-    conn.execute("BEGIN")
-    rebuild(conn)
-    conn.commit()
-    assert snapshot(conn)["records"] == stable["records"]
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.execute("BEGIN")
+        add_parent(conn, "a")
+        add_ticket(conn, "t", "a")
+        conn.commit()
+        before = snapshot(conn)
+        conn.execute("BEGIN")
+        conn.execute("UPDATE sprint_items SET priority='P0',created_at=88 WHERE id='a'")
+        conn.execute("UPDATE tickets SET updated_at=99 WHERE id='t'")
+        conn.commit()
+        actual = values(conn)
+        assert actual["orchestrator", "a"]["priority"] == "P0"
+        assert actual["orchestrator", "a"]["created_at"] == 88
+        assert actual["ticket", "t"]["updated_at"] == 99
+        assert actual["ticket", "t"]["ticket_status"] == "empty"
+        batch = journal(conn, before["epoch"], before["revision"])["batches"]
+        assert len(batch) == 1
+        assert {(r["kind"], r["id"]) for r in batch[0]["upserts"]} == {
+            ("ticket", "t"),
+            ("orchestrator", "a"),
+        }
+        stable = snapshot(conn)
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET updated_at=100 WHERE id='t'")
+        conn.execute("DELETE FROM tickets WHERE id='t'")
+        conn.execute("DELETE FROM sprint_items WHERE id='a'")
+        conn.rollback()
+        assert snapshot(conn) == stable
+        conn.execute("BEGIN")
+        rebuild(conn)
+        conn.commit()
+        assert snapshot(conn)["records"] == stable["records"]
+        conn.close()
 
 
 def test_claim_fact_counts_every_stored_out_without_status_or_membership_filter(
     tmp_path: Path,
 ) -> None:
-    conn = database(tmp_path)
-    conn.execute("BEGIN")
-    for identity, stage, claim, backlog in (
-        ("ordinary", "needs_implementation", "out", 0),
-        ("done", "done", "out", 0),
-        ("backlog", "needs_implementation", "out", 1),
-        ("proposal", "needs_implementation", "out", 0),
-        ("errored", "needs_implementation", "errored", 0),
-        ("none", "needs_implementation", "none", 0),
-    ):
-        add_ticket(conn, identity)
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.execute("BEGIN")
+        for identity, stage, claim, backlog in (
+            ("ordinary", "needs_implementation", "out", 0),
+            ("done", "done", "out", 0),
+            ("backlog", "needs_implementation", "out", 1),
+            ("proposal", "needs_implementation", "out", 0),
+            ("errored", "needs_implementation", "errored", 0),
+            ("none", "needs_implementation", "none", 0),
+        ):
+            add_ticket(conn, identity)
+            conn.execute(
+                "UPDATE tickets SET stage=?,worker_step_claim=?,is_backlogged=? WHERE id=?",
+                (stage, claim, backlog, identity),
+            )
         conn.execute(
-            "UPDATE tickets SET stage=?,worker_step_claim=?,is_backlogged=? WHERE id=?",
-            (stage, claim, backlog, identity),
-        )
-    conn.execute(
-        "UPDATE tickets SET pending_proposal=? WHERE id='proposal'",
-        (
-            json.dumps(
-                {
-                    "field": "implementation",
-                    "body": "body",
-                    "proposed_by": "worker",
-                    "created_at": 1,
-                }
-            ),
-        ),
-    )
-    conn.execute("INSERT INTO ticket_blocks VALUES('none','ordinary')")
-    conn.commit()
-    tickets = {key[1]: value for key, value in values(conn).items() if key[0] == "ticket"}
-    assert sum(record["worker_step_claim_out"] for record in tickets.values()) == 4
-    assert tickets["proposal"]["ticket_status"] == "awaiting_approval"
-    assert tickets["ordinary"]["blocked"] is True
-    assert tickets["ordinary"]["ticket_status"] == "agent"
-    assert tickets["done"]["worker_step_claim_out"] is True
-    assert tickets["errored"]["worker_step_claim_out"] is False
-    assert tickets["none"]["worker_step_claim_out"] is False
-    before = snapshot(conn)
-    conn.execute("BEGIN")
-    conn.execute("DELETE FROM tickets WHERE id='done'")
-    conn.commit()
-    batch = journal(conn, before["epoch"], before["revision"])["batches"][0]
-    assert {"kind": "ticket", "id": "done"} in batch["deletes"]
-    assert sum(v["worker_step_claim_out"] for k, v in values(conn).items() if k[0] == "ticket") == 3
-    conn.close()
-
-
-@pytest.mark.parametrize("masked", ["proposal", "out", "errored"])
-def test_live_blocker_is_independent_and_captures_all_edge_transitions(
-    tmp_path: Path,
-    masked: str,
-) -> None:
-    conn = database(tmp_path)
-    conn.execute("BEGIN")
-    for identity in ("held", "a", "b"):
-        add_ticket(conn, identity)
-    if masked == "proposal":
-        conn.execute(
-            "UPDATE tickets SET pending_proposal=? WHERE id='held'",
+            "UPDATE tickets SET pending_proposal=? WHERE id='proposal'",
             (
                 json.dumps(
                     {
@@ -421,48 +383,94 @@ def test_live_blocker_is_independent_and_captures_all_edge_transitions(
                 ),
             ),
         )
-    else:
-        conn.execute("UPDATE tickets SET worker_step_claim=? WHERE id='held'", (masked,))
-    conn.commit()
-    expected_status = {"proposal": "awaiting_approval", "out": "agent", "errored": "errored"}[
-        masked
-    ]
-
-    def transition(sql: str, blocked: bool) -> None:
+        conn.execute("INSERT INTO ticket_blocks VALUES('none','ordinary')")
+        conn.commit()
+        tickets = {key[1]: value for key, value in values(conn).items() if key[0] == "ticket"}
+        assert sum(record["worker_step_claim_out"] for record in tickets.values()) == 4
+        assert tickets["proposal"]["ticket_status"] == "awaiting_approval"
+        assert tickets["ordinary"]["blocked"] is True
+        assert tickets["ordinary"]["ticket_status"] == "agent"
+        assert tickets["done"]["worker_step_claim_out"] is True
+        assert tickets["errored"]["worker_step_claim_out"] is False
+        assert tickets["none"]["worker_step_claim_out"] is False
         before = snapshot(conn)
         conn.execute("BEGIN")
-        conn.execute(sql)
+        conn.execute("DELETE FROM tickets WHERE id='done'")
         conn.commit()
-        record = values(conn)["ticket", "held"]
-        assert record["blocked"] is blocked
-        assert record["ticket_status"] == expected_status
         batch = journal(conn, before["epoch"], before["revision"])["batches"][0]
-        changed = [r for r in batch["upserts"] if r["kind"] == "ticket" and r["id"] == "held"]
-        # Equal public values yield no upsert, but retain a complete atomic batch.
-        assert changed == (
-            []
-            if values_before[0] == blocked
-            else [{"kind": "ticket", "id": "held", "value": record}]
+        assert {"kind": "ticket", "id": "done"} in batch["deletes"]
+        assert (
+            sum(v["worker_step_claim_out"] for k, v in values(conn).items() if k[0] == "ticket")
+            == 3
         )
-        values_before[0] = blocked
+        conn.close()
 
-    values_before = [False]
-    transition("INSERT INTO ticket_blocks VALUES('a','held')", True)
-    transition("INSERT INTO ticket_blocks VALUES('b','held')", True)
-    transition("DELETE FROM ticket_blocks WHERE blocking_ticket_id='a'", True)
-    stable = snapshot(conn)
-    conn.execute("BEGIN")
-    conn.execute("DELETE FROM tickets WHERE id='b'")
-    conn.rollback()
-    assert snapshot(conn) == stable
-    transition("UPDATE tickets SET stage='done' WHERE id='b'", False)
-    transition("UPDATE tickets SET stage='needs_implementation' WHERE id='b'", True)
-    transition("DELETE FROM tickets WHERE id='b'", False)
-    conn.execute("BEGIN")
-    rebuild(conn)
-    conn.commit()
-    assert values(conn)["ticket", "held"]["blocked"] is False
-    conn.close()
+
+@pytest.mark.parametrize("masked", ["proposal", "out", "errored"])
+def test_live_blocker_is_independent_and_captures_all_edge_transitions(
+    tmp_path: Path,
+    masked: str,
+) -> None:
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.execute("BEGIN")
+        for identity in ("held", "a", "b"):
+            add_ticket(conn, identity)
+        if masked == "proposal":
+            conn.execute(
+                "UPDATE tickets SET pending_proposal=? WHERE id='held'",
+                (
+                    json.dumps(
+                        {
+                            "field": "implementation",
+                            "body": "body",
+                            "proposed_by": "worker",
+                            "created_at": 1,
+                        }
+                    ),
+                ),
+            )
+        else:
+            conn.execute("UPDATE tickets SET worker_step_claim=? WHERE id='held'", (masked,))
+        conn.commit()
+        expected_status = {"proposal": "awaiting_approval", "out": "agent", "errored": "errored"}[
+            masked
+        ]
+
+        def transition(sql: str, blocked: bool) -> None:
+            before = snapshot(conn)
+            conn.execute("BEGIN")
+            conn.execute(sql)
+            conn.commit()
+            record = values(conn)["ticket", "held"]
+            assert record["blocked"] is blocked
+            assert record["ticket_status"] == expected_status
+            batch = journal(conn, before["epoch"], before["revision"])["batches"][0]
+            changed = [r for r in batch["upserts"] if r["kind"] == "ticket" and r["id"] == "held"]
+            # Equal public values yield no upsert, but retain a complete atomic batch.
+            assert changed == (
+                []
+                if values_before[0] == blocked
+                else [{"kind": "ticket", "id": "held", "value": record}]
+            )
+            values_before[0] = blocked
+
+        values_before = [False]
+        transition("INSERT INTO ticket_blocks VALUES('a','held')", True)
+        transition("INSERT INTO ticket_blocks VALUES('b','held')", True)
+        transition("DELETE FROM ticket_blocks WHERE blocking_ticket_id='a'", True)
+        stable = snapshot(conn)
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM tickets WHERE id='b'")
+        conn.rollback()
+        assert snapshot(conn) == stable
+        transition("UPDATE tickets SET stage='done' WHERE id='b'", False)
+        transition("UPDATE tickets SET stage='needs_implementation' WHERE id='b'", True)
+        transition("DELETE FROM tickets WHERE id='b'", False)
+        conn.execute("BEGIN")
+        rebuild(conn)
+        conn.commit()
+        assert values(conn)["ticket", "held"]["blocked"] is False
+        conn.close()
 
 
 @pytest.mark.parametrize("timestamp", [True, None, "12"])
@@ -472,88 +480,90 @@ def test_invalid_proposal_timestamp_rolls_back_instead_of_defaulting(
 ) -> None:
     from planner.core.contracts import PlannerError
 
-    conn = database(tmp_path)
-    conn.execute("BEGIN")
-    add_ticket(conn, "t")
-    conn.commit()
-    before = snapshot(conn)
-    conn.execute("BEGIN")
-    conn.execute(
-        "UPDATE tickets SET pending_proposal=? WHERE id='t'",
-        (
-            json.dumps(
-                {
-                    "field": "implementation",
-                    "body": "body",
-                    "proposed_by": "worker",
-                    "created_at": timestamp,
-                }
-            ),
-        ),
-    )
-    with pytest.raises(PlannerError, match="corrupt ticket field state"):
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.execute("BEGIN")
+        add_ticket(conn, "t")
         conn.commit()
-    assert snapshot(conn) == before
-    assert conn.execute("SELECT pending_proposal FROM tickets WHERE id='t'").fetchone()[0] is None
-    conn.close()
+        before = snapshot(conn)
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE tickets SET pending_proposal=? WHERE id='t'",
+            (
+                json.dumps(
+                    {
+                        "field": "implementation",
+                        "body": "body",
+                        "proposed_by": "worker",
+                        "created_at": timestamp,
+                    }
+                ),
+            ),
+        )
+        with pytest.raises(PlannerError, match="corrupt ticket field state"):
+            conn.commit()
+        assert snapshot(conn) == before
+        assert (
+            conn.execute("SELECT pending_proposal FROM tickets WHERE id='t'").fetchone()[0] is None
+        )
+        conn.close()
 
 
 def test_real_projection_failure_rolls_back_source_and_journal(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    add_conversation(conn)
-    baseline = snapshot(conn)
-    conn.execute(
-        "CREATE TRIGGER fail_nav BEFORE INSERT ON navigation_journal "
-        "BEGIN SELECT RAISE(ABORT,'injected nav failure'); END"
-    )
-    conn.execute("BEGIN")
-    conn.execute("UPDATE conversations SET latest_sequence=9 WHERE conversation_id='c'")
-    conn.execute(
-        "INSERT INTO conversation_lifecycle_facts VALUES"
-        "('c','attempt','receipt',1,'prompt','unknown',NULL)"
-    )
-    with pytest.raises(sqlite3.IntegrityError, match="injected nav failure"):
-        conn.commit()
-    assert not conn.in_transaction
-    assert (
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        baseline = snapshot(conn)
         conn.execute(
-            "SELECT latest_sequence FROM conversations WHERE conversation_id='c'"
-        ).fetchone()[0]
-        == 0
-    )
-    assert snapshot(conn) == baseline
-    assert conn.execute("SELECT COUNT(*) FROM conversation_lifecycle_facts").fetchone()[0] == 0
-    conn.close()
+            "CREATE TRIGGER fail_nav BEFORE INSERT ON navigation_journal "
+            "BEGIN SELECT RAISE(ABORT,'injected nav failure'); END"
+        )
+        conn.execute("BEGIN")
+        conn.execute("UPDATE conversations SET latest_sequence=9 WHERE conversation_id='c'")
+        conn.execute(
+            "INSERT INTO conversation_lifecycle_facts VALUES"
+            "('c','attempt','receipt',1,'prompt','unknown',NULL)"
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="injected nav failure"):
+            conn.commit()
+        assert not conn.in_transaction
+        assert (
+            conn.execute(
+                "SELECT latest_sequence FROM conversations WHERE conversation_id='c'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert snapshot(conn) == baseline
+        assert conn.execute("SELECT COUNT(*) FROM conversation_lifecycle_facts").fetchone()[0] == 0
+        conn.close()
 
 
 def test_journal_pages_gap_cursor_empty_delta_and_delete(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    baseline = snapshot(conn)
-    add_conversation(conn)
-    conn.execute("BEGIN")
-    conn.execute(
-        "UPDATE conversations SET latest_sequence=latest_sequence WHERE conversation_id='c'"
-    )
-    conn.commit()
-    page = journal(conn, baseline["epoch"], baseline["revision"], 1)
-    assert len(page["batches"]) == 1 and page["has_more"]
-    after = page["batches"][0]["revision"]
-    tail = journal(conn, baseline["epoch"], after)
-    assert tail["batches"][0]["upserts"] == []
-    assert tail["batches"][0]["deletes"] == []
-    conn.execute("BEGIN")
-    conn.execute("DELETE FROM conversations WHERE conversation_id='c'")
-    conn.commit()
-    tail = journal(conn, baseline["epoch"], tail["revision"])
-    assert {"kind": "conversation", "id": "c"} in tail["batches"][0]["deletes"]
-    with pytest.raises(HistoryUnavailable):
-        journal(conn, baseline["epoch"], str(int(tail["revision"]) + 1))
-    with pytest.raises(ValueError):
-        journal(conn, baseline["epoch"], "00")
-    conn.execute("DELETE FROM navigation_journal WHERE revision=?", (int(after) + 1,))
-    with pytest.raises(HistoryUnavailable, match="missing"):
-        journal(conn, baseline["epoch"], after)
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        baseline = snapshot(conn)
+        add_conversation(conn)
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE conversations SET latest_sequence=latest_sequence WHERE conversation_id='c'"
+        )
+        conn.commit()
+        page = journal(conn, baseline["epoch"], baseline["revision"], 1)
+        assert len(page["batches"]) == 1 and page["has_more"]
+        after = page["batches"][0]["revision"]
+        tail = journal(conn, baseline["epoch"], after)
+        assert tail["batches"][0]["upserts"] == []
+        assert tail["batches"][0]["deletes"] == []
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM conversations WHERE conversation_id='c'")
+        conn.commit()
+        tail = journal(conn, baseline["epoch"], tail["revision"])
+        assert {"kind": "conversation", "id": "c"} in tail["batches"][0]["deletes"]
+        with pytest.raises(HistoryUnavailable):
+            journal(conn, baseline["epoch"], str(int(tail["revision"]) + 1))
+        with pytest.raises(ValueError):
+            journal(conn, baseline["epoch"], "00")
+        conn.execute("DELETE FROM navigation_journal WHERE revision=?", (int(after) + 1,))
+        with pytest.raises(HistoryUnavailable, match="missing"):
+            journal(conn, baseline["epoch"], after)
+        conn.close()
 
 
 def test_synthetic_old_head_migration_backfills_and_failure_rolls_back(
@@ -598,7 +608,10 @@ def test_synthetic_old_head_migration_backfills_and_failure_rolls_back(
         command.upgrade(_alembic_config(connection), "head")
     engine.dispose()
     conn = connect(str(path))
-    actual = values(conn)
+    actual = {
+        (record["kind"], record["id"]): record["value"]
+        for record in historical_snapshot(conn)["records"]
+    }
     assert actual["conversation", "historical"] == {
         "latest_sequence": 12,
         "owner_read_through_sequence": 4,
@@ -613,64 +626,67 @@ def test_synthetic_old_head_migration_backfills_and_failure_rolls_back(
         },
     }
     assert actual["totals", "workspace"] == {"child_count": 0, "distinct_conversation_count": 0}
-    before = snapshot(conn)
+    before = historical_snapshot(conn)
     conn.close()
     conn = connect(str(path))
-    assert snapshot(conn) == before
+    assert historical_snapshot(conn) == before
     conn.close()
 
 
 def test_snapshot_is_consistent_while_another_connection_commits(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    add_conversation(conn)
-    reader = connect(str(tmp_path / "planner.db"))
-    reader.execute("BEGIN")
-    old = snapshot(reader)
-    conn.execute("BEGIN")
-    conn.execute("UPDATE conversations SET latest_sequence=17 WHERE conversation_id='c'")
-    conn.commit()
-    assert snapshot(reader) == old
-    reader.rollback()
-    new = snapshot(reader)
-    assert int(new["revision"]) == int(old["revision"]) + 1
-    conversation = next(r for r in new["records"] if r["kind"] == "conversation")
-    assert conversation["value"]["latest_sequence"] == 17
-    reader.close()
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        reader = sqlite3.connect(
+            (tmp_path / "planner.db").as_uri() + "?mode=ro", uri=True, isolation_level=None
+        )
+        reader.execute("PRAGMA query_only=ON")
+        reader.execute("BEGIN")
+        old = snapshot(reader)
+        conn.execute("BEGIN")
+        conn.execute("UPDATE conversations SET latest_sequence=17 WHERE conversation_id='c'")
+        conn.commit()
+        assert snapshot(reader) == old
+        reader.rollback()
+        new = snapshot(reader)
+        assert int(new["revision"]) == int(old["revision"]) + 1
+        conversation = next(r for r in new["records"] if r["kind"] == "conversation")
+        assert conversation["value"]["latest_sequence"] == 17
+        reader.close()
+        conn.close()
 
 
 def test_second_schema_open_keeps_continuity_identical(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    add_conversation(conn)
-    baseline = snapshot(conn)
-    create_schema(conn)
-    assert snapshot(conn) == baseline
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        baseline = historical_snapshot(conn)
+    # A new bootstrap lease performs the physical second open before installation.
+    with prepared_navigation_database(tmp_path / "planner.db") as conn:
+        assert historical_snapshot(conn) == baseline
 
 
 def test_two_ticket_aliases_count_one_conversation_per_parent(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    add_conversation(conn)
-    conn.execute("BEGIN")
-    add_parent(conn, "a")
-    add_ticket(conn, "first", "a")
-    add_ticket(conn, "second", "a")
-    conn.execute("UPDATE tickets SET conversation_id='c' WHERE id IN ('first','second')")
-    conn.commit()
-    actual = values(conn)
-    assert actual["totals", "orchestrator:a"] == {
-        "child_count": 2,
-        "distinct_conversation_count": 1,
-    }
-    assert actual["totals", "workspace"] == {"child_count": 2, "distinct_conversation_count": 1}
-    assert len([key for key in actual if key[0] == "address"]) == 2
-    baseline = snapshot(conn)
-    conn.execute(
-        "INSERT OR IGNORE INTO conversations(conversation_id,backend_key,workspace_folder,"
-        "access,created_at) VALUES('c','codex','/synthetic','full',0)"
-    )
-    assert snapshot(conn) == baseline
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        conn.execute("BEGIN")
+        add_parent(conn, "a")
+        add_ticket(conn, "first", "a")
+        add_ticket(conn, "second", "a")
+        conn.execute("UPDATE tickets SET conversation_id='c' WHERE id IN ('first','second')")
+        conn.commit()
+        actual = values(conn)
+        assert actual["totals", "orchestrator:a"] == {
+            "child_count": 2,
+            "distinct_conversation_count": 1,
+        }
+        assert actual["totals", "workspace"] == {"child_count": 2, "distinct_conversation_count": 1}
+        assert len([key for key in actual if key[0] == "address"]) == 2
+        baseline = snapshot(conn)
+        conn.execute(
+            "INSERT OR IGNORE INTO conversations(conversation_id,backend_key,workspace_folder,"
+            "access,created_at) VALUES('c','codex','/synthetic','full',0)"
+        )
+        assert snapshot(conn) == baseline
+        conn.close()
 
 
 def test_lifecycle_upsert_and_repeated_updates_capture_one_dirty_key(tmp_path: Path) -> None:
@@ -682,57 +698,57 @@ def test_lifecycle_upsert_and_repeated_updates_capture_one_dirty_key(tmp_path: P
     )
     from planner.conversation.lifecycle_storage import apply_facts
 
-    conn = database(tmp_path)
-    add_conversation(conn)
-    baseline = snapshot(conn)
-    conn.execute("BEGIN")
-    intent = LifecycleFact(
-        LifecycleKind.attempt,
-        "a",
-        1,
-        LifecycleOperation.prompt,
-        LifecycleStatus.intent,
-    )
-    unknown = LifecycleFact(
-        LifecycleKind.attempt,
-        "a",
-        1,
-        LifecycleOperation.prompt,
-        LifecycleStatus.unknown,
-    )
-    apply_facts(conn, "c", (intent,))
-    apply_facts(conn, "c", (unknown,))
-    apply_facts(conn, "c", (unknown,))
-    conn.execute("UPDATE conversations SET latest_sequence=1 WHERE conversation_id='c'")
-    conn.execute("UPDATE conversations SET latest_sequence=2 WHERE conversation_id='c'")
-    conn.commit()
-    actual = snapshot(conn)
-    assert int(actual["revision"]) == int(baseline["revision"]) + 1
-    conversation = next(r for r in actual["records"] if r["kind"] == "conversation")
-    assert conversation["value"]["lifecycle_summary"]["attempt_status_counts"]["unknown"] == 1
-    assert conversation["value"]["latest_sequence"] == 2
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn)
+        baseline = snapshot(conn)
+        conn.execute("BEGIN")
+        intent = LifecycleFact(
+            LifecycleKind.attempt,
+            "a",
+            1,
+            LifecycleOperation.prompt,
+            LifecycleStatus.intent,
+        )
+        unknown = LifecycleFact(
+            LifecycleKind.attempt,
+            "a",
+            1,
+            LifecycleOperation.prompt,
+            LifecycleStatus.unknown,
+        )
+        apply_facts(conn, "c", (intent,))
+        apply_facts(conn, "c", (unknown,))
+        apply_facts(conn, "c", (unknown,))
+        conn.execute("UPDATE conversations SET latest_sequence=1 WHERE conversation_id='c'")
+        conn.execute("UPDATE conversations SET latest_sequence=2 WHERE conversation_id='c'")
+        conn.commit()
+        actual = snapshot(conn)
+        assert int(actual["revision"]) == int(baseline["revision"]) + 1
+        conversation = next(r for r in actual["records"] if r["kind"] == "conversation")
+        assert conversation["value"]["lifecycle_summary"]["attempt_status_counts"]["unknown"] == 1
+        assert conversation["value"]["latest_sequence"] == 2
+        conn.close()
 
 
 def test_replace_unique_collision_deletes_old_identity(tmp_path: Path) -> None:
-    conn = database(tmp_path)
-    conn.execute(
-        "INSERT INTO projects(id,name,created_at,updated_at) VALUES('old','Replacement',0,0)"
-    )
-    baseline = snapshot(conn)
-    conn.execute("BEGIN")
-    conn.execute(
-        "INSERT OR REPLACE INTO projects(id,name,created_at,updated_at) "
-        "VALUES('new','Replacement',0,0)"
-    )
-    conn.commit()
-    actual = values(conn)
-    assert ("project", "old") not in actual
-    assert actual["project", "new"] == {"name": "Replacement", "priority": None}
-    delta = journal(conn, baseline["epoch"], baseline["revision"])["batches"][0]
-    assert {"kind": "project", "id": "old"} in delta["deletes"]
-    assert actual["totals", "workspace"] == {"child_count": 0, "distinct_conversation_count": 0}
-    conn.close()
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.execute(
+            "INSERT INTO projects(id,name,created_at,updated_at) VALUES('old','Replacement',0,0)"
+        )
+        baseline = snapshot(conn)
+        conn.execute("BEGIN")
+        conn.execute(
+            "INSERT OR REPLACE INTO projects(id,name,created_at,updated_at) "
+            "VALUES('new','Replacement',0,0)"
+        )
+        conn.commit()
+        actual = values(conn)
+        assert ("project", "old") not in actual
+        assert actual["project", "new"] == {"name": "Replacement", "priority": None}
+        delta = journal(conn, baseline["epoch"], baseline["revision"])["batches"][0]
+        assert {"kind": "project", "id": "old"} in delta["deletes"]
+        assert actual["totals", "workspace"] == {"child_count": 0, "distinct_conversation_count": 0}
+        conn.close()
 
 
 def test_project_rename_and_private_timestamps_avoid_ticket_roots(
@@ -740,44 +756,47 @@ def test_project_rename_and_private_timestamps_avoid_ticket_roots(
 ) -> None:
     from planner.navigation import data as navigation_data
 
-    conn = database(tmp_path)
-    conn.execute("BEGIN")
-    add_parent(conn, "a")
-    for index in range(5):
-        add_ticket(conn, f"t{index}", "a")
-    conn.commit()
-    original = navigation_data._derive
-    derived: list[tuple[str, str]] = []
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.execute("BEGIN")
+        add_parent(conn, "a")
+        for index in range(5):
+            add_ticket(conn, f"t{index}", "a")
+        conn.commit()
+        original = navigation_data._derive
+        derived: list[tuple[str, str]] = []
 
-    def capture(
-        connection: sqlite3.Connection,
-        root: tuple[str, str],
-        definitions: dict[str, WorkerTypeDefinition] | None = None,
-    ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
-        derived.append(root)
-        return original(connection, root, definitions)
+        def capture(
+            connection: sqlite3.Connection,
+            root: tuple[str, str],
+            definitions: dict[str, WorkerTypeDefinition] | None = None,
+        ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
+            derived.append(root)
+            return original(connection, root, definitions)
 
-    monkeypatch.setattr(navigation_data, "_derive", capture)
-    baseline = snapshot(conn)
-    conn.execute("UPDATE projects SET name='Renamed Synthetic' WHERE id='project_panels'")
-    assert derived == [("project", "project_panels")]
-    assert values(conn)["project", "project_panels"]["name"] == "Renamed Synthetic"
-    assert len(journal(conn, baseline["epoch"], baseline["revision"])["batches"][0]["upserts"]) == 1
-    assert (
-        conn.execute(
-            "SELECT COUNT(*) FROM navigation_dependencies "
-            "WHERE source_kind='projects' AND kind='ticket'"
-        ).fetchone()[0]
-        == 0
-    )
-    derived.clear()
-    baseline = snapshot(conn)
-    conn.execute("UPDATE projects SET updated_at=updated_at+1 WHERE id='project_panels'")
-    conn.execute("UPDATE worker_types SET updated_at=updated_at+1 WHERE worker_type='coding'")
-    conn.execute("UPDATE chief_settings SET employee_launch_model='private-change'")
-    assert derived == []
-    assert snapshot(conn) == baseline
-    conn.close()
+        monkeypatch.setattr(navigation_data, "_derive", capture)
+        baseline = snapshot(conn)
+        conn.execute("UPDATE projects SET name='Renamed Synthetic' WHERE id='project_panels'")
+        assert derived == [("project", "project_panels")]
+        assert values(conn)["project", "project_panels"]["name"] == "Renamed Synthetic"
+        assert (
+            len(journal(conn, baseline["epoch"], baseline["revision"])["batches"][0]["upserts"])
+            == 1
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM navigation_dependencies "
+                "WHERE source_kind='projects' AND kind='ticket'"
+            ).fetchone()[0]
+            == 0
+        )
+        derived.clear()
+        baseline = snapshot(conn)
+        conn.execute("UPDATE projects SET updated_at=updated_at+1 WHERE id='project_panels'")
+        conn.execute("UPDATE worker_types SET updated_at=updated_at+1 WHERE worker_type='coding'")
+        conn.execute("UPDATE chief_settings SET employee_launch_model='private-change'")
+        assert derived == []
+        assert snapshot(conn) == baseline
+        conn.close()
 
 
 def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
@@ -787,40 +806,40 @@ def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
 
     from planner.navigation import data as navigation_data
 
-    conn = database(tmp_path)
-    conn.execute("BEGIN")
-    add_ticket(conn, "first")
-    add_ticket(conn, "second")
-    conn.commit()
-    original = navigation_data._derive
-    derived: list[tuple[str, str]] = []
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        conn.execute("BEGIN")
+        add_ticket(conn, "first")
+        add_ticket(conn, "second")
+        conn.commit()
+        original = navigation_data._derive
+        derived: list[tuple[str, str]] = []
 
-    def capture(
-        connection: sqlite3.Connection,
-        root: tuple[str, str],
-        definitions: dict[str, WorkerTypeDefinition] | None = None,
-    ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
-        derived.append(root)
-        return original(connection, root, definitions)
+        def capture(
+            connection: sqlite3.Connection,
+            root: tuple[str, str],
+            definitions: dict[str, WorkerTypeDefinition] | None = None,
+        ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
+            derived.append(root)
+            return original(connection, root, definitions)
 
-    monkeypatch.setattr(navigation_data, "_derive", capture)
-    definition = json.loads(
+        monkeypatch.setattr(navigation_data, "_derive", capture)
+        definition = json.loads(
+            conn.execute(
+                "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
+            ).fetchone()[0]
+        )
+        next(stage for stage in definition["stages"] if stage["id"] == "needs_implementation")[
+            "ownership_mode"
+        ] = "user"
         conn.execute(
-            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
-        ).fetchone()[0]
-    )
-    next(stage for stage in definition["stages"] if stage["id"] == "needs_implementation")[
-        "ownership_mode"
-    ] = "user"
-    conn.execute(
-        "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
-        (json.dumps(definition),),
-    )
-    assert sorted(derived) == [("ticket", "first"), ("ticket", "second")]
-    actual = values(conn)
-    assert actual["ticket", "first"]["stage_ownership"] == "user"
-    assert actual["ticket", "second"]["stage_ownership"] == "user"
-    conn.close()
+            "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+            (json.dumps(definition),),
+        )
+        assert sorted(derived) == [("ticket", "first"), ("ticket", "second")]
+        actual = values(conn)
+        assert actual["ticket", "first"]["stage_ownership"] == "user"
+        assert actual["ticket", "second"]["stage_ownership"] == "user"
+        conn.close()
 
 
 def test_isolated_old_head_restore_discards_later_fixture_commit(tmp_path: Path) -> None:
@@ -859,7 +878,14 @@ def test_isolated_old_head_restore_discards_later_fixture_commit(tmp_path: Path)
         "UPDATE conversations SET latest_sequence=19 WHERE conversation_id='fixture-conversation'"
     )
     candidate.commit()
-    assert values(candidate)["project", "fixture-project"]["name"] == "Later fixture commit"
+    assert (
+        next(
+            record["value"]["name"]
+            for record in historical_snapshot(candidate)["records"]
+            if record["kind"] == "project" and record["id"] == "fixture-project"
+        )
+        == "Later fixture commit"
+    )
     candidate.close()
     # Restore to another isolated target after every candidate runtime handle closes.
     with closing(sqlite3.connect(backup_path.as_uri() + "?mode=ro", uri=True)) as backup:

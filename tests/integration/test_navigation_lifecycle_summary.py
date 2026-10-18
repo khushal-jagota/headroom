@@ -9,10 +9,12 @@ from typing import cast
 
 import pytest
 from alembic import command
+from tests.integration.test_navigation_staging_merge import historical_snapshot
+from tests.support.navigation_current import current_navigation_database
 
 from planner.core.db import _alembic_config, _migration_engine, connect, create_schema
 from planner.navigation import journal, snapshot
-from planner.navigation.contracts import HistoryUnavailable, LifecycleSummary
+from planner.navigation.contracts import LifecycleSummary
 from planner.navigation.lifecycle_summary import (
     LATEST_TURN_SQL,
     UNRESOLVED_COUNTS_SQL,
@@ -20,14 +22,11 @@ from planner.navigation.lifecycle_summary import (
 )
 
 
-def _database(path: Path) -> sqlite3.Connection:
-    conn = connect(str(path))
-    create_schema(conn)
+def _add_conversation(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) "
         "VALUES('c','codex','/synthetic','full',0)"
     )
-    return conn
 
 
 def _summary_expected() -> LifecycleSummary:
@@ -64,15 +63,16 @@ def _add_history(conn: sqlite3.Connection, size: int) -> None:
 
 
 def test_summary_preserves_all_old_uncertainty_without_history_arrays(tmp_path: Path) -> None:
-    conn = _database(tmp_path / "facts.db")
-    _add_history(conn, 10)
-    assert read_summary(conn, "c") == _summary_expected()
-    record = next(r for r in snapshot(conn)["records"] if r["kind"] == "conversation")
-    assert "lifecycle" not in record["value"]
-    assert record["value"]["lifecycle_summary"] == _summary_expected()
-    assert snapshot(conn)["semantics"] == "generic-source-facts-v3"
-    assert snapshot(conn)["schema_version"] == 3
-    conn.close()
+    with current_navigation_database(tmp_path / "facts.db") as conn:
+        _add_conversation(conn)
+        _add_history(conn, 10)
+        assert read_summary(conn, "c") == _summary_expected()
+        record = next(r for r in snapshot(conn)["records"] if r["kind"] == "conversation")
+        assert "lifecycle" not in record["value"]
+        assert record["value"]["lifecycle_summary"] == _summary_expected()
+        assert snapshot(conn)["semantics"] == "attention-knowledge-v4"
+        assert snapshot(conn)["schema_version"] == 4
+        conn.close()
 
 
 def test_settled_history_does_not_grow_packet_or_update_vm_work(tmp_path: Path) -> None:
@@ -90,69 +90,72 @@ def test_settled_history_does_not_grow_packet_or_update_vm_work(tmp_path: Path) 
         "lifecycle": [],
     }
     for size in (1000, 10000):
-        conn = _database(tmp_path / f"history-{size}.db")
-        _add_history(conn, size)
-        plans = [
-            str(row[3])
-            for sql in (LATEST_TURN_SQL, UNRESOLVED_COUNTS_SQL)
-            for row in conn.execute("EXPLAIN QUERY PLAN " + sql, ("c",))
-        ]
-        assert any("navigation_lifecycle_latest_turn" in plan for plan in plans)
-        assert any("navigation_lifecycle_unresolved" in plan for plan in plans)
-        assert all("SCAN conversation_lifecycle_facts" not in plan for plan in plans)
-        for scenario in measured:
-            conn.execute("BEGIN")
-            if scenario == "sequence":
-                conn.execute("UPDATE conversations SET latest_sequence=7 WHERE conversation_id='c'")
-            elif scenario == "read":
-                conn.execute(
-                    "UPDATE conversations SET owner_read_through_sequence=3 "
-                    "WHERE conversation_id='c'"
-                )
-            else:
-                # The canonical writer reads source history. Its separate cost is not
-                # part of this measurement of navigation finalization after the write.
-                apply_facts(
-                    conn,
-                    "c",
-                    (
-                        LifecycleFact(
-                            LifecycleKind.attempt,
-                            "old-intent",
-                            1,
-                            LifecycleOperation.prompt,
-                            LifecycleStatus.unknown,
+        with current_navigation_database(tmp_path / f"history-{size}.db") as conn:
+            _add_conversation(conn)
+            _add_history(conn, size)
+            plans = [
+                str(row[3])
+                for sql in (LATEST_TURN_SQL, UNRESOLVED_COUNTS_SQL)
+                for row in conn.execute("EXPLAIN QUERY PLAN " + sql, ("c",))
+            ]
+            assert any("navigation_lifecycle_latest_turn" in plan for plan in plans)
+            assert any("navigation_lifecycle_unresolved" in plan for plan in plans)
+            assert all("SCAN conversation_lifecycle_facts" not in plan for plan in plans)
+            for scenario in measured:
+                conn.execute("BEGIN")
+                if scenario == "sequence":
+                    conn.execute(
+                        "UPDATE conversations SET latest_sequence=7 WHERE conversation_id='c'"
+                    )
+                elif scenario == "read":
+                    conn.execute(
+                        "UPDATE conversations SET owner_read_through_sequence=3 "
+                        "WHERE conversation_id='c'"
+                    )
+                else:
+                    # The canonical writer reads source history. Its separate cost is not
+                    # part of this measurement of navigation finalization after the write.
+                    apply_facts(
+                        conn,
+                        "c",
+                        (
+                            LifecycleFact(
+                                LifecycleKind.attempt,
+                                "old-intent",
+                                1,
+                                LifecycleOperation.prompt,
+                                LifecycleStatus.unknown,
+                            ),
                         ),
-                    ),
-                )
-            instructions = 0
+                    )
+                instructions = 0
 
-            def progress() -> int:
-                nonlocal instructions
-                instructions += 1
-                return 0
+                def progress() -> int:
+                    nonlocal instructions
+                    instructions += 1
+                    return 0
 
-            conn.set_progress_handler(progress, 1)
-            conn.commit()
-            conn.set_progress_handler(None, 0)
-            record = next(r for r in snapshot(conn)["records"] if r["kind"] == "conversation")
-            packet = json.dumps(record, sort_keys=True, separators=(",", ":"))
-            expected = _summary_expected()
-            if scenario == "lifecycle":
-                expected["attempt_status_counts"] = {"intent": 0, "unknown": 2}
-            assert record["value"]["lifecycle_summary"] == expected
-            measured[scenario].append((packet, instructions, len(packet.encode())))
-            print(
-                json.dumps(
-                    {
-                        "scenario": scenario,
-                        "settled_rows": size,
-                        "finalize_vm_instructions": instructions,
-                        "record_bytes": len(packet.encode()),
-                    }
+                conn.set_progress_handler(progress, 1)
+                conn.commit()
+                conn.set_progress_handler(None, 0)
+                record = next(r for r in snapshot(conn)["records"] if r["kind"] == "conversation")
+                packet = json.dumps(record, sort_keys=True, separators=(",", ":"))
+                expected = _summary_expected()
+                if scenario == "lifecycle":
+                    expected["attempt_status_counts"] = {"intent": 0, "unknown": 2}
+                assert record["value"]["lifecycle_summary"] == expected
+                measured[scenario].append((packet, instructions, len(packet.encode())))
+                print(
+                    json.dumps(
+                        {
+                            "scenario": scenario,
+                            "settled_rows": size,
+                            "finalize_vm_instructions": instructions,
+                            "record_bytes": len(packet.encode()),
+                        }
+                    )
                 )
-            )
-        conn.close()
+            conn.close()
     for scenario, samples in measured.items():
         assert samples[0][0] == samples[1][0], scenario
         assert samples[0][2] == samples[1][2], scenario
@@ -161,64 +164,66 @@ def test_settled_history_does_not_grow_packet_or_update_vm_work(tmp_path: Path) 
 
 
 def test_unknown_history_is_counted_without_a_packet_history_list(tmp_path: Path) -> None:
-    conn = _database(tmp_path / "uncertainty.db")
-    _add_history(conn, 0)
-    before = read_summary(conn, "c")
-    instructions = 0
+    with current_navigation_database(tmp_path / "uncertainty.db") as conn:
+        _add_conversation(conn)
+        _add_history(conn, 0)
+        before = read_summary(conn, "c")
+        instructions = 0
 
-    def progress() -> int:
-        nonlocal instructions
-        instructions += 1
-        return 0
+        def progress() -> int:
+            nonlocal instructions
+            instructions += 1
+            return 0
 
-    conn.set_progress_handler(progress, 1)
-    read_summary(conn, "c")
-    conn.set_progress_handler(None, 0)
-    small_work = instructions
-    conn.execute("BEGIN")
-    conn.executemany(
-        "INSERT INTO conversation_lifecycle_facts "
-        "VALUES('c','attempt',?,1,'prompt','unknown',NULL)",
-        [(f"unknown-{index}",) for index in range(5000)],
-    )
-    conn.commit()
-    instructions = 0
-    conn.set_progress_handler(progress, 1)
-    after = read_summary(conn, "c")
-    conn.set_progress_handler(None, 0)
-    assert after["attempt_status_counts"] == {"intent": 1, "unknown": 5001}
-    assert after["latest_turn"] == before["latest_turn"]
-    assert set(after) == set(before)
-    assert len(json.dumps(after)) < len(json.dumps(before)) + 16
-    assert instructions > small_work + 5000
-    print(
-        json.dumps(
-            {
-                "unknown_rows": 5001,
-                "summary_vm_instructions": instructions,
-                "small_summary_vm_instructions": small_work,
-                "summary_bytes": len(json.dumps(after)),
-            }
+        conn.set_progress_handler(progress, 1)
+        read_summary(conn, "c")
+        conn.set_progress_handler(None, 0)
+        small_work = instructions
+        conn.execute("BEGIN")
+        conn.executemany(
+            "INSERT INTO conversation_lifecycle_facts "
+            "VALUES('c','attempt',?,1,'prompt','unknown',NULL)",
+            [(f"unknown-{index}",) for index in range(5000)],
         )
-    )
-    conn.close()
+        conn.commit()
+        instructions = 0
+        conn.set_progress_handler(progress, 1)
+        after = read_summary(conn, "c")
+        conn.set_progress_handler(None, 0)
+        assert after["attempt_status_counts"] == {"intent": 1, "unknown": 5001}
+        assert after["latest_turn"] == before["latest_turn"]
+        assert set(after) == set(before)
+        assert len(json.dumps(after)) < len(json.dumps(before)) + 16
+        assert instructions > small_work + 5000
+        print(
+            json.dumps(
+                {
+                    "unknown_rows": 5001,
+                    "summary_vm_instructions": instructions,
+                    "small_summary_vm_instructions": small_work,
+                    "summary_bytes": len(json.dumps(after)),
+                }
+            )
+        )
+        conn.close()
 
 
 def test_latest_turn_uses_deterministic_identity_tie_and_absence(tmp_path: Path) -> None:
-    conn = _database(tmp_path / "latest.db")
-    assert read_summary(conn, "c")["latest_turn"] is None
-    conn.execute("BEGIN")
-    conn.executemany(
-        "INSERT INTO conversation_lifecycle_facts VALUES('c','turn',?,8,'turn',?,NULL)",
-        [("a", "failed"), ("z", "interrupted")],
-    )
-    conn.commit()
-    assert read_summary(conn, "c")["latest_turn"] == {
-        "identity": "z",
-        "turn_number": 8,
-        "status": "interrupted",
-    }
-    conn.close()
+    with current_navigation_database(tmp_path / "latest.db") as conn:
+        _add_conversation(conn)
+        assert read_summary(conn, "c")["latest_turn"] is None
+        conn.execute("BEGIN")
+        conn.executemany(
+            "INSERT INTO conversation_lifecycle_facts VALUES('c','turn',?,8,'turn',?,NULL)",
+            [("a", "failed"), ("z", "interrupted")],
+        )
+        conn.commit()
+        assert read_summary(conn, "c")["latest_turn"] == {
+            "identity": "z",
+            "turn_number": 8,
+            "status": "interrupted",
+        }
+        conn.close()
 
 
 def test_actual_v1_list_upgrade_and_failure_preserve_old_continuity(
@@ -309,7 +314,7 @@ def test_actual_v1_list_upgrade_and_failure_preserve_old_continuity(
         command.upgrade(_alembic_config(connection), "head")
     engine.dispose()
     conn = connect(str(path))
-    after = snapshot(conn)
+    after = historical_snapshot(conn)
     assert after["scope"] == before[1]
     assert after["schema_version"] == 3
     assert after["epoch"] != before[3]
@@ -317,10 +322,10 @@ def test_actual_v1_list_upgrade_and_failure_preserve_old_continuity(
     value = next(r for r in after["records"] if r["kind"] == "conversation")["value"]
     assert value["lifecycle_summary"]["attempt_status_counts"]["unknown"] == 1
     assert "lifecycle" not in value
-    with pytest.raises(HistoryUnavailable):
+    with pytest.raises(RuntimeError, match="current schema"):
         journal(conn, str(before[3]), "0")
     create_schema(conn)
-    assert snapshot(conn) == after
+    assert historical_snapshot(conn) == after
     conn.close()
 
 
@@ -408,7 +413,7 @@ def test_schema_two_metadata_upgrade_is_atomic_and_rejects_old_protocol(
         raw = cast(sqlite3.Connection, connection.connection.driver_connection)
         assert list(raw.iterdump()) == before
         command.upgrade(_alembic_config(connection), "head")
-        current = snapshot(raw)
+        current = historical_snapshot(raw)
         assert current["schema_version"] == 3
         assert current["scope"] == scope
         assert current["epoch"] != epoch
@@ -423,12 +428,12 @@ def test_schema_two_metadata_upgrade_is_atomic_and_rejects_old_protocol(
         assert held["blocked"] is True
         assert proof.certify(raw, old_fence) == {
             "status": "unknown",
-            "reason": "incompatible_scope",
+            "reason": "invalid_fence",
         }
     engine.dispose()
     with pytest.raises(ResetRequired, match="incompatible_continuity"):
         read_page(path, old_cursor, DeliveryConfig())
     conn = connect(str(path))
     create_schema(conn)
-    assert snapshot(conn) == current
+    assert historical_snapshot(conn) == current
     conn.close()
