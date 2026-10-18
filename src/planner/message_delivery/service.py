@@ -154,6 +154,7 @@ async def send_message(
     runs_under: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
+    retain_created_conversation: bool = False,
 ) -> MessageDeliveryResult:
     """Send one text message to one resolved Panels conversation owner."""
     label = sender_label(ctx)
@@ -291,6 +292,7 @@ async def send_message(
                     recipient=recipient,
                     reply_requested=not is_reply,
                     required_sprint_item_id=item_id,
+                    retain_created_conversation=retain_created_conversation,
                 )
                 if sender.kind is PrincipalKind.owner and (
                     (current is None and delivered.conversation_id is not None)

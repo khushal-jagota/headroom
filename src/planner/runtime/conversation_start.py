@@ -322,9 +322,11 @@ async def _send_with_addressed_receipt(
     sender: Principal | None,
     recipient: Principal | None,
     reply_requested: bool,
+    record_refusal: bool = False,
 ) -> AddressedPromptDeliveryReceipt:
     """Use the internal freshness receipt only for an addressed employee send."""
     if sender is not None and recipient is not None:
+        refusal_options = {"record_refusal": True} if record_refusal else {}
         return await system.send_with_receipt(
             conversation_id,
             content,
@@ -337,6 +339,7 @@ async def _send_with_addressed_receipt(
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            **refusal_options,
         )
     fate = await system.send(
         conversation_id,
@@ -802,13 +805,15 @@ async def send_to_agent_conversation(
     recipient: Principal | None = None,
     reply_requested: bool = True,
     required_sprint_item_id: str | None = None,
+    retain_created_conversation: bool = False,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
 
     The Ticket door's rules, for an agent that is not a Ticket: the message names the
     conversation it is for and is refused if that is not the one the agent is in, and a
     message sent with no conversation brings one into being on the values it says it runs
-    under. If it does not land, the conversation goes with it.
+    under. If it does not land, the conversation goes with it, unless the caller
+    retains the initial attempt as the saved work's recovery conversation.
 
     ``values`` can be absent only for a registered agent that already has a conversation.
     Such an agent can receive a message, but Panels cannot invent a role or launch
@@ -846,15 +851,18 @@ async def send_to_agent_conversation(
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    record_refusal=retain_created_conversation,
                 )
                 fate = receipt.fate
             except BaseException:
-                await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
+                if not retain_created_conversation:
+                    await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
                 raise
             if isinstance(fate, PromptDeliveryRefused):
-                await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
+                if not retain_created_conversation:
+                    await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
                 return DeliveredMessage(
-                    conversation_id=None,
+                    conversation_id=making if retain_created_conversation else None,
                     fate=fate,
                     newly_accepted=receipt.newly_accepted,
                 )
@@ -888,6 +896,7 @@ async def send_to_agent_conversation(
         sender=sender,
         recipient=recipient,
         reply_requested=reply_requested,
+        record_refusal=retain_created_conversation,
     )
     return DeliveredMessage(
         conversation_id=sending_into,

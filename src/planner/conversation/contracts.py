@@ -559,12 +559,15 @@ class ConversationSystem(Protocol):
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Run the canonical send and expose replay freshness to addressed-send wiring.
 
         Ordinary callers use ``send`` and receive only the stable public fate. This
         receipt exists so Send Message can credit a reply only for the first accepted
         delivery of a sender-minted message id.
+        A caller that retains a refused initial message sets ``record_refusal`` and
+        supplies a sender message id. Its refusal remains visible in the conversation.
         """
         ...
 

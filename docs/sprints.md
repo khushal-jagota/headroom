@@ -52,8 +52,11 @@ Each orchestrator owns one supervisor identity derived from its Item ID. Panels 
 its launch configuration with the item. Existing items received the same fixed
 configuration during migration. Former loose Workers now explicitly name Chief.
 
-The supervisor conversation starts when the user sends it a message or when Panels
-delivers a manager wake. A reset kills current work and clears the agent link.
+Creation with a nonblank brief saves the orchestrator, then starts its supervisor with
+that brief. Creation without a brief leaves it idle. Later messages and manager wakes
+also start the supervisor conversation. Startup failure does not delete the orchestrator.
+Use the saved orchestrator to recover. An uncertain delivery gets no automatic replay.
+A reset kills current work and clears the agent link.
 Conversation records and message files remain as history. The existing orchestrator body
 holds its short current recap. Original briefs and detailed context belong in its existing
 artifacts, after a separately authorized conversion that preserves the original text.

@@ -455,6 +455,7 @@ class SqliteProcessConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Send a message in. See the contract; the two sender-minted fields are extra.
 
@@ -463,6 +464,8 @@ class SqliteProcessConversationSystem:
         that mints neither — every caller inside Panels today — leaves both absent and
         nothing about its rows changes.
         """
+        if record_refusal and sender_message_id is None:
+            raise ValueError("record_refusal requires a sender_message_id")
         state = await self._conversation_state(conversation_id)
         if state is None:
             return AddressedPromptDeliveryReceipt(
@@ -482,6 +485,7 @@ class SqliteProcessConversationSystem:
                 sender=sender,
                 recipient=recipient,
                 reply_requested=reply_requested,
+                record_refusal=record_refusal,
             ),
         )
 
@@ -499,6 +503,7 @@ class SqliteProcessConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         """Send a message in. See the contract; the two sender-minted fields are extra.
 
@@ -665,6 +670,30 @@ class SqliteProcessConversationSystem:
                     reply_requested,
                     owner_read_through_sequence,
                 )
+            if (
+                record_refusal
+                and isinstance(fate, PromptDeliveryRefused)
+                and sender_message_id is not None
+                and await self._store.sender_message_outcome(conversation_id, sender_message_id)
+                is None
+            ):
+                # A server-originated first send has no browser sender cache. Preserve
+                # its refusal here, unless recovery already recorded the same message.
+                async with state.lock:
+                    await self._append_event(
+                        state,
+                        PromptDeliveryRefusedEventPayload(
+                            content=content,
+                            sender_label=sender_label,
+                            mode=mode,
+                            refusal_reason=fate.refusal_reason,
+                            sender_message_id=sender_message_id,
+                            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                            sender=sender,
+                            recipient=recipient,
+                        ),
+                        owner_read_through_sequence=owner_read_through_sequence,
+                    )
             return AddressedPromptDeliveryReceipt(
                 fate=fate,
                 newly_accepted=not isinstance(fate, PromptDeliveryRefused),

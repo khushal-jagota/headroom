@@ -144,6 +144,15 @@ again.
 `orchestrator create/list/show/set/workspace` keeps the existing Item identity and
 conversation. `sprint item` remains an alias. Artifact operations keep their existing
 managed roots. `send-message --sprint-item` keeps its stable recipient address.
+`orchestrator create --body-file <brief-file>` starts the supervisor with the brief.
+A blank or absent brief leaves it idle. The result reports the saved orchestrator and
+startup outcome. Refused, failed, or uncertain startup still leaves the orchestrator saved.
+Inspect it and recover on that same orchestrator instead of creating another one.
+Uncertain startup gets no automatic replay. For failed or uncertain startup, check the
+conversation before any resend.
+`--json` preserves the complete creation response, including `startup`. As with message
+sends, a successful HTTP response exits zero. Check the startup fate for delivery success.
+
 Existing ordinary orchestrator supervisors can use it to coordinate with one another.
 The permission sends a message; approvals, ceilings, assignments, and other writes
 keep their existing authority requirements. Workers cannot use it to address an

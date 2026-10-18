@@ -32,6 +32,7 @@ from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
+from planner.sprints import startup as sprints_startup
 from planner.sprints import views as sprints_views
 from planner.sprints.contracts import (
     SPRINT_DOCUMENT_FIELDS,
@@ -86,7 +87,9 @@ def _marshal_create_idea(raw: JsonDict) -> CreateIdeaBody:
 
 
 @router.post("/items")
-async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+async def create_item(
+    raw: dict[str, Any], conn: DbConn, clk: Clk, ctx: Ctx, conversations: Conversations
+) -> JsonDict:
     body = _marshal_create_item(raw)
     project = projects_data.resolve_project(
         conn, project_id=body["project_id"], project_name=body["project"], required=True
@@ -105,7 +108,8 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
         priority=priority,
         clock=clk,
     )
-    return sprints_views.item_detail(conn, item.id)
+    startup = await sprints_startup.start_created_orchestrator(conversations, conn, clk, ctx, item)
+    return {**sprints_views.item_detail(conn, item.id), "startup": startup}
 
 
 @router.get("/items")

@@ -2049,7 +2049,33 @@ def sprint_item_create(
     if priority is not None:
         body["priority"] = priority
     data = http.send("POST", "/api/items", as_json=as_json, json_body=body)
-    http.emit(data, as_json, f"{data['id']}")
+    item_id = data["id"]
+    startup = data.get("startup")
+    human_result = f"Created orchestrator {item_id}."
+    if startup is None:
+        human_result += " Idle (no brief)."
+    else:
+        fate = startup["fate"]
+        human_result += f" Startup {fate}."
+        if fate == "queued" and startup.get("queue_position") is not None:
+            human_result += f" Queue position: {startup['queue_position']}."
+        if fate in {"refused", "uncertain", "failed"}:
+            reason = startup.get("refusal_reason") or startup.get("error")
+            if reason:
+                human_result += f" {reason}"
+            human_result += (
+                f"\nThe orchestrator is saved. Inspect: panels orchestrator show {item_id}"
+            )
+            if fate in {"uncertain", "failed"}:
+                human_result += (
+                    "\nCheck its conversation before any resend. Do not create it again."
+                )
+            else:
+                human_result += (
+                    f"\nRetry on this orchestrator: panels send-message --sprint-item {item_id}"
+                    ' --message "<brief>"'
+                )
+    http.emit(data, as_json, human_result)
 
 
 @sprint_item.command("list")

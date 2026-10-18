@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, TypedDict
+from typing import Final, Literal, NotRequired, TypedDict
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import Priority
@@ -85,6 +85,20 @@ class CreateItemBody(TypedDict, total=False):  # POST /items
     project_id: str | None
     body: str  # default ""
     priority: str | None  # Priority value; default P3
+
+
+class OrchestratorStartupResult(TypedDict):
+    """Creation returns item detail plus startup: this result, or null for a blank brief.
+
+    The orchestrator is saved even when delivery fails. A conversation id identifies
+    the attempted first message, not proof that the supervisor received the brief.
+    """
+
+    conversation_id: str | None
+    fate: Literal["started", "queued", "injected", "refused", "uncertain", "failed"]
+    refusal_reason: NotRequired[str]
+    queue_position: NotRequired[int]
+    error: NotRequired[str]
 
 
 class CreateIdeaBody(TypedDict, total=False):  # POST /ideas
