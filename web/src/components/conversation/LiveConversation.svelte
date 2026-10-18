@@ -16,6 +16,10 @@
    * a person has to get themselves out of before they can type.
    */
   import { onMount, untrack, type Snippet } from "svelte";
+  import { createQuery } from "@tanstack/svelte-query";
+  import { queries } from "../../lib/queryCatalogue";
+  import { macActivityKnown, type TicketLocale } from "../../lib/ticketMachines";
+  import { currentExecutorAskRecord, executorAnswerAvailable, executorAnswerSentence, executorUnavailableSentence } from "../../lib/conversation/executorEvidence";
   import ConversationPane from "./ConversationPane.svelte";
   import {
     conversationLiveness,
@@ -105,7 +109,8 @@
     onNewConversation,
     readOnly = false,
     pastConversations = [],
-    selectedPastConversationId = $bindable(null)
+    selectedPastConversationId = $bindable(null),
+    locale
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     conversationId?: string | null;
@@ -145,9 +150,19 @@
     /** Which earlier conversation the owner picked, or null for the current one. The
      *  caller opens what this names by passing it back as ``conversationId``. */
     selectedPastConversationId?: string | null;
+    locale?: TicketLocale;
   } = $props();
 
   let view = $state<ConversationView | null>(null);
+  let remote = $derived(locale === "macos" || view?.executor_context != null);
+  const healthQuery = createQuery(() => ({ ...queries.executorHealth(), enabled: remote }), () => queryClient);
+  let health = $derived(healthQuery.isError ? undefined : healthQuery.data);
+  let healthKey = $derived(remote
+    ? `${healthQuery.isError}:${health?.identity?.executor_incarnation}:${health?.identity?.connection_generation}:${health?.connection_state}:${health?.reconciliation_ready}`
+    : "local");
+  let snapshotHealthKey = $state("");
+  let latestAskBoundary = $state(0);
+  let activityUncertain = $derived(remote && !macActivityKnown(health));
   let feed = $state<ConversationFeed>(emptyConversationFeed());
   /** How many frames have said the conversation is alive. Only its movement is read, and
    *  it is held apart from the feed so that saying "still working" costs the thread
@@ -164,6 +179,7 @@
   let visibleFateNote = $derived(recordedMessageFateSentence(feed.events, fateNoteMessageId, fateNote));
   let errorNote = $state<string | null>(null);
   let askNote = $state<string | null>(null);
+  let askNoteKey = $state<string | null>(null);
   let busy = $state(false);
   let opening = $state(false);
   let lens = $state<ConversationLens>(conversationLensPreference());
@@ -210,6 +226,22 @@
   ));
   let ask = $derived(liveAskFrom(visibleRows));
   let userInput = $derived(liveUserInputFrom(visibleRows));
+  let permissionAvailable = $derived(executorAnswerAvailable(view, "permission", ask?.askId, health, locale, snapshotHealthKey === healthKey && (view?.latest_sequence ?? -1) >= latestAskBoundary));
+  let userInputAvailable = $derived(executorAnswerAvailable(view, "user_input", userInput?.requestId, health, locale, snapshotHealthKey === healthKey && (view?.latest_sequence ?? -1) >= latestAskBoundary));
+  let permissionRecord = $derived(currentExecutorAskRecord(view, "permission", ask?.askId));
+  let userInputRecord = $derived(currentExecutorAskRecord(view, "user_input", userInput?.requestId));
+  let permissionNote = $derived(executorAnswerSentence(permissionRecord) ?? (askNoteKey === `permission:${ask?.askId}` ? askNote : null) ?? (remote && !permissionAvailable ? executorUnavailableSentence(permissionRecord?.evidence ?? view?.pending_permission_ask?.executor_evidence) : null));
+  let userInputNote = $derived(executorAnswerSentence(userInputRecord) ?? (askNoteKey === `user_input:${userInput?.requestId}` ? askNote : null) ?? (remote && !userInputAvailable ? executorUnavailableSentence(userInputRecord?.evidence ?? view?.pending_user_input?.executor_evidence) : null));
+  $effect.pre(() => {
+    // Polls read evidence; the receipt timestamp itself says nothing about a callback.
+    void healthKey;
+    void healthQuery.dataUpdatedAt;
+    const id = openedId;
+    if (remote && id !== null) {
+      snapshotHealthKey = "";
+      untrack(() => void refreshView(id));
+    }
+  });
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
@@ -351,6 +383,7 @@
     openedId = id;
     view = null;
     feed = emptyConversationFeed();
+    latestAskBoundary = 0;
     // A reload can happen after the first request reached the server but before its
     // response moved this tab's recovery pointer. Reconcile the owner's stable identity
     // into the canonical Conversation before looking for remembered messages there.
@@ -394,6 +427,7 @@
     if (openedId !== id) return;
     opening = true;
     let snapshot: ConversationView;
+    const readingHealthKey = healthKey;
     try {
       snapshot = await readConversation(id);
     } catch (error) {
@@ -411,6 +445,7 @@
     }
     if (openedId !== id) return;
     view = snapshot;
+    snapshotHealthKey = readingHealthKey;
     connectionTrouble = false;
     let theOpenAlreadyReadTheView = true;
     let localStream: ConversationStream;
@@ -421,7 +456,14 @@
         openTail: (tailId, after, handlers) =>
           openConversationTail(tailId, after, {
             onCommittedEvent: (event) => {
-              if (openedId === id && stream === localStream) handlers.onCommittedEvent(event);
+              if (openedId === id && stream === localStream) {
+                handlers.onCommittedEvent(event);
+                if (["permission_asked", "permission_answered", "user_input_requested", "user_input_answered", "user_input_failed", "turn_ended", "prompt"].includes(event.kind)) {
+                  latestAskBoundary = event.sequence;
+                  snapshotHealthKey = "";
+                  void refreshView(id);
+                }
+              }
             },
             onLiveFrame: (frame) => {
               if (openedId === id && stream === localStream) handlers.onLiveFrame(frame);
@@ -509,11 +551,16 @@
     const inFlight = viewBeingRead;
     const read = async (): Promise<void> => {
       if (openedId !== requestedId) return;
+      const readingHealthKey = healthKey;
       try {
         const refreshed = await readConversation(requestedId);
-        if (openedId === requestedId) view = refreshed;
+        if (openedId === requestedId) {
+          view = refreshed;
+          snapshotHealthKey = readingHealthKey;
+        }
       } catch {
-        // The rows are the record; a snapshot that did not come back changes nothing.
+        // Keep the request visible, but an unsuccessful read cannot authorize an answer.
+        if (openedId === requestedId) snapshotHealthKey = "";
       }
     };
     const reading =
@@ -775,14 +822,16 @@
 
   async function answer(optionId: string): Promise<void> {
     const askId = ask?.askId;
-    if (readOnly || askId === undefined || openedId === null) return;
+    if (readOnly || busy || !permissionAvailable || askId === undefined || openedId === null) return;
+    askNoteKey = `permission:${askId}`;
     askNote = null;
     busy = true;
     try {
       const { landed } = await answerPermissionAsk(openedId, askId, optionId);
       askNote = landed
-        ? null
+        ? remote ? "Answer recorded on VPS; application on Mac is unconfirmed." : null
         : "The backend did not take that answer. Cancelling the turn always works.";
+      await refreshView();
     } catch (error) {
       askNote = sentenceFor(error);
     } finally {
@@ -792,14 +841,16 @@
 
   async function submitUserInput(answers: UserInputAnswers): Promise<void> {
     const requestId = userInput?.requestId;
-    if (readOnly || requestId === undefined || openedId === null) return;
+    if (readOnly || busy || !userInputAvailable || requestId === undefined || openedId === null) return;
+    askNoteKey = `user_input:${requestId}`;
     askNote = null;
     busy = true;
     try {
       const { landed } = await answerUserInput(openedId, requestId, answers);
       askNote = landed
-        ? null
+        ? remote ? "Answer recorded on VPS; application on Mac is unconfirmed." : null
         : "The backend did not take those answers. You can try again or stop the turn.";
+      await refreshView();
     } catch (error) {
       askNote = sentenceFor(error);
     } finally {
@@ -911,10 +962,15 @@
   supportsSteer={view?.supports_steer ?? false}
   ownSenderLabel={senderLabel}
   {livenessPulse}
+  {activityUncertain}
+  executorAsks={view?.executor_asks ?? []}
   {running}
   {ask}
   {userInput}
-  {askNote}
+  askNote={permissionNote}
+  userInputNote={userInputNote}
+  permissionAvailable={permissionAvailable}
+  userInputAvailable={userInputAvailable}
   {current}
   models={backendSnapshot?.available_models ?? []}
   effortOptions={backendSnapshot?.reasoning_effort_options ?? []}

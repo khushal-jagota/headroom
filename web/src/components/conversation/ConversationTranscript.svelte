@@ -29,6 +29,7 @@
     TURN_STOPPED_SENTENCE
   } from "../../lib/conversation/transcript";
   import { modelDisplayName } from "../../lib/conversation/composer";
+  import { executorAnswerSentence, historicalExecutorAskRecord } from "../../lib/conversation/executorEvidence";
   import type { BackendModel } from "../../lib/conversation/wire";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
 
@@ -39,7 +40,9 @@
     conversationId,
     models = [],
     ownSenderLabel = null,
-    livenessPulse = 0
+    livenessPulse = 0,
+    activityUncertain = false,
+    executorAsks = []
   }: {
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
@@ -50,6 +53,8 @@
     models?: readonly BackendModel[];
     /** Moves whenever a live frame arrives, so a running turn can say it is alive. */
     livenessPulse?: number;
+    activityUncertain?: boolean;
+    executorAsks?: readonly import("../../lib/conversation/wire").ExecutorAskRecord[];
     /** The label this pane sends under. Messages carrying it are yours, and yours are
      *  not labelled — you know who wrote them. Everyone else's still are. */
     ownSenderLabel?: string | null;
@@ -94,12 +99,20 @@
   }
 
   function askStateLine(row: Extract<TranscriptRow, { kind: "permission_ask" }>): string {
+    const recorded = executorAnswerSentence(historicalExecutorAskRecord(executorAsks, "permission", row.askId,
+      rows.filter((candidate) => candidate.kind === "permission_ask" && candidate.askId === row.askId).length));
+    if (recorded) return recorded;
+    if (activityUncertain && row.state === "live") return "pending · availability on Mac unknown";
     if (row.state === "answered") return `answered · ${row.answeredOptionLabel ?? ""}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);
     return "waiting for you";
   }
 
   function userInputStateLine(row: Extract<TranscriptRow, { kind: "user_input" }>): string {
+    const recorded = executorAnswerSentence(historicalExecutorAskRecord(executorAsks, "user_input", row.requestId,
+      rows.filter((candidate) => candidate.kind === "user_input" && candidate.requestId === row.requestId).length));
+    if (recorded) return recorded;
+    if (activityUncertain && row.state === "live") return "pending · availability on Mac unknown";
     if (row.state === "answered") return "answered";
     if (row.state === "failed") return `failed · ${row.failureDetail ?? "the answer could not be delivered"}`;
     if (row.state === "dead") return askDeadSentence(row.deadReason);
@@ -121,6 +134,7 @@
         foldedMessageCount={item.foldedMessageCount}
         expanded={lens === "full" || expandedTurns[item.turnKey] === true}
         {livenessPulse}
+        {activityUncertain}
         onToggle={lens === "full" ? undefined : () => toggleTurn(item.turnKey)}
       />
     {:else if item.kind === "work_group"}
@@ -130,6 +144,7 @@
         entries={item.entries}
         hidden={lens !== "full" && item.settled && expandedTurns[item.turnKey] !== true}
         showAll={lens === "full"}
+        {activityUncertain}
         {conversationId}
       />
     {:else if item.row.kind === "prompt"}

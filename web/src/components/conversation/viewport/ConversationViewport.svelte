@@ -32,6 +32,8 @@
     models,
     ownSenderLabel,
     livenessPulse,
+    activityUncertain = false,
+    executorAsks = [],
     conversationState,
     emptyState
   }: {
@@ -43,6 +45,8 @@
     models: readonly BackendModel[];
     ownSenderLabel: string | null;
     livenessPulse: number;
+    activityUncertain?: boolean;
+    executorAsks?: readonly import("../../../lib/conversation/wire").ExecutorAskRecord[];
     conversationState: ConversationState | null;
     emptyState?: Snippet;
   } = $props();
@@ -466,6 +470,8 @@
       {models}
       {ownSenderLabel}
       {livenessPulse}
+      {activityUncertain}
+      {executorAsks}
       {conversationId}
     />
     {#each outgoingMessages as message (message.messageId)}

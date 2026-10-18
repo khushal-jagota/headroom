@@ -40,6 +40,7 @@
     foldedMessageCount = 0,
     expanded = false,
     livenessPulse = 0,
+    activityUncertain = false,
     onToggle
   }: {
     settled?: boolean;
@@ -58,6 +59,7 @@
     expanded?: boolean;
     /** Moves whenever a live frame arrives. Only its movement is read. */
     livenessPulse?: number;
+    activityUncertain?: boolean;
     onToggle?: () => void;
   } = $props();
 
@@ -144,17 +146,17 @@
     {:else if !settled}
       <div
         class="c2-alive"
-        class:is-fresh={fresh}
+        class:is-fresh={fresh && !activityUncertain}
         data-conversation-alive
-        data-conversation-alive-fresh={fresh ? "true" : "false"}
+        data-conversation-alive-fresh={fresh && !activityUncertain ? "true" : "false"}
         role="status"
       >
         <span
           class="c2-alive-word"
-          class:live-text-shimmer={fresh}
+          class:live-text-shimmer={fresh && !activityUncertain}
           data-conversation-alive-word
         >
-          {workingSentence(elapsedSeconds)}
+          {activityUncertain ? "Activity unknown. Last progress remains below." : workingSentence(elapsedSeconds)}
         </span>
       </div>
     {/if}

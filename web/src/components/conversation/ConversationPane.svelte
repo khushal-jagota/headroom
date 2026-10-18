@@ -47,6 +47,11 @@
     ask = null,
     userInput = null,
     askNote = null,
+    userInputNote = null,
+    permissionAvailable = true,
+    userInputAvailable = true,
+    activityUncertain = false,
+    executorAsks = [],
     current = { model: null, reasoningEffort: null },
     models = [],
     backends = $bindable([]),
@@ -108,6 +113,11 @@
       questions: readonly UserInputQuestion[];
     } | null;
     askNote?: string | null;
+    userInputNote?: string | null;
+    permissionAvailable?: boolean;
+    userInputAvailable?: boolean;
+    activityUncertain?: boolean;
+    executorAsks?: readonly import("../../lib/conversation/wire").ExecutorAskRecord[];
     current?: RunValues;
     models?: readonly BackendModel[];
     /** Every backend this machine reported. The composer's rail chooses from them while
@@ -179,14 +189,14 @@
   let headerException = $derived.by(() => {
     if (readOnly) return { text: "past · read only", accent: false };
     if (ask || userInput) return { text: "waiting for you", accent: true };
-    if (running) return { text: "working", accent: false };
+    if (running) return { text: activityUncertain ? "activity unknown" : "working", accent: false };
     return null;
   });
 
   // Only at rest is there a bar to put it in. Peeked and opened have the turn head.
   let rowsForLens = $derived(visibleRows ?? rows);
   let taskProgress = $derived(taskProgressFrom(rowsForLens));
-  let restLine = $derived(
+  let recordedRestLine = $derived(
     conversationState === "rest"
       ? restLineFrom(
           rows,
@@ -197,6 +207,10 @@
         )
       : null
   );
+
+  let restLine = $derived(recordedRestLine && activityUncertain && running
+    ? { ...recordedRestLine, text: recordedRestLine.waiting ? recordedRestLine.text : "Activity unknown. Last progress remains in the transcript.", workingSinceUnixMilliseconds: null, marks: { ...recordedRestLine.marks, running: false } }
+    : recordedRestLine);
 
   /** The one control through the states, and what it means where it is standing.
    *
@@ -440,6 +454,8 @@
     {models}
     {ownSenderLabel}
     {livenessPulse}
+    {activityUncertain}
+    {executorAsks}
     {conversationState}
     {emptyState}
   />
@@ -449,7 +465,7 @@
       progress={taskProgress}
       variant="strip"
       {running}
-      moving={running && ask === null && userInput === null}
+      moving={running && !activityUncertain && ask === null && userInput === null}
       composerGap={conversationState === "opened"}
     />
   {/if}
@@ -471,6 +487,9 @@
       {running}
       {ask}
       {askNote}
+      {userInputNote}
+      {permissionAvailable}
+      {userInputAvailable}
       {current}
       {models}
       bind:backends

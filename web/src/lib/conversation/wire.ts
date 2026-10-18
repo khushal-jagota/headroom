@@ -132,7 +132,36 @@ export type PermissionAskOption = {
   option_kind: string;
 };
 
-export type PendingPermissionAsk = {
+export type ExecutorChildReference = {
+  executor_incarnation: string;
+  child_id: string;
+  conversation_id: string;
+};
+export type ExecutorTurn = { conversation_id: string; turn_number: number };
+export type ExecutorAskReference = {
+  child: ExecutorChildReference;
+  turn: ExecutorTurn;
+  ask_id: string;
+  kind: "permission" | "user_input";
+};
+export type ExecutorAskEvidence = {
+  ask: ExecutorAskReference;
+  connection_generation: number;
+  reachability: "uncertain" | "reachable" | "child_gone" | "callback_gone";
+  observed_at_ms: number;
+  answer_id: string | null;
+  applied_at_mac_ms: number | null;
+};
+export type ExecutorAskRecord = {
+  evidence: ExecutorAskEvidence;
+  answer: { answer_id: string; ask: ExecutorAskReference; accepted_at_vps_ms: number } | null;
+};
+type ExecutorAskStatus = {
+  answer_available?: boolean;
+  executor_evidence?: ExecutorAskEvidence | null;
+};
+
+export type PendingPermissionAsk = ExecutorAskStatus & {
   ask_id: string;
   title: string;
   detail: string | null;
@@ -155,7 +184,7 @@ export type UserInputQuestion = {
 
 export type UserInputAnswers = Record<string, { answers: string[] }>;
 
-export type PendingUserInput = {
+export type PendingUserInput = ExecutorAskStatus & {
   request_id: string;
   questions: UserInputQuestion[];
 };
@@ -198,6 +227,8 @@ export type ConversationView = {
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
+  executor_context?: { child: ExecutorChildReference; turn: ExecutorTurn | null } | null;
+  executor_asks?: ExecutorAskRecord[];
   composer_catalog: ComposerCatalogEntry[];
 };
 

@@ -108,6 +108,20 @@ One screen per part of the system:
   with a hidden automatic prompt has no Focus turn head. Its visible owner result rows
   still appear.
 
+  Mac requests stay visible when their current availability is unknown. Permission
+  answers and multi-question answers require the exact request, child, turn, and
+  connection generation in the server evidence. A fresh connection alone does not
+  enable them. The controls and their send handlers apply the same check. Mounted
+  screens share the executor health read and refresh request snapshots after changes.
+  Unknown or failed health reads replace claims of current activity with uncertainty.
+  The transcript keeps the last recorded progress and confirmed completions.
+
+  An answer recorded on the VPS remains distinct from an answer applied on Mac.
+  Historical request rows retain both facts through disconnects and reloads when their
+  request identity is unambiguous. Reused identifiers keep their canonical transcript
+  history without an auxiliary executor summary. A measured
+  contact time proves receipt of an executor frame, not activity or answer delivery.
+
   The client advances the read position while either lens is selected, the conversation
   pane is open, the document is visible, and the window has focus. It advances through
   the newest delivered row that this browser received, even when a newer conversation
