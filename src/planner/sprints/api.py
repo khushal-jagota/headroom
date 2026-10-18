@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
 from planner.conversation.contracts import require_conversation_backend_key
@@ -110,6 +110,12 @@ async def create_item(
     )
     startup = await sprints_startup.start_created_orchestrator(conversations, conn, clk, ctx, item)
     return {**sprints_views.item_detail(conn, item.id), "startup": startup}
+
+
+@router.get("/items/{item_id}/recap-preview")
+async def read_item_recap_preview(item_id: str, conn: DbConn, response: Response) -> JsonDict:
+    response.headers["Cache-Control"] = "no-store"
+    return sprints_views.item_recap_preview(conn, item_id)
 
 
 @router.get("/items")

@@ -23,7 +23,7 @@ from enum import StrEnum
 from functools import partial
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from planner.conversation.api import (
@@ -529,7 +529,8 @@ async def create_ticket(
 ) -> JsonDict:
     body = _marshal_create_ticket(raw)
     await warm_ticket_creation_model(
-        conn, model_resolver,
+        conn,
+        model_resolver,
         worker_type=body["worker_type"],
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
@@ -574,6 +575,12 @@ async def create_ticket(
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
+
+
+@router.get("/tickets/{ticket_id}/recap-preview")
+async def read_ticket_recap_preview(ticket_id: str, conn: DbConn, response: Response) -> JsonDict:
+    response.headers["Cache-Control"] = "no-store"
+    return tickets_views.ticket_recap_preview(conn, ticket_id)
 
 
 @router.get("/tickets")

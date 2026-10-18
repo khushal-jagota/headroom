@@ -9,6 +9,7 @@ from contextlib import contextmanager
 
 from planner.core import ticket_blocks
 from planner.core.contracts import JsonDict
+from planner.core.errors import ErrorCode, PlannerError
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
@@ -30,6 +31,13 @@ _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
 
 def _prio_rank(priority: str) -> int:
     return _PRIORITY_RANK.index(priority)
+
+
+def item_recap_preview(conn: sqlite3.Connection, item_id: str) -> JsonDict:
+    row = conn.execute("SELECT body FROM sprint_items WHERE id=?", (item_id,)).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.not_found, "sprint item not found", {"id": item_id})
+    return {"recap_preview": recap_preview(str(row[0]))}
 
 
 # --- serializers ---------------------------------------------------------------
