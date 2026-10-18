@@ -63,8 +63,6 @@ export type SprintsResponse = {
   sprints: SprintSummary[];
 };
 
-export type Priority = "P0" | "P1" | "P2" | "P3";
-
 export type AgentState = "working" | "idle" | "errored";
 
 // `awaiting_approval` is a proposal the owner holds; `awaiting_agent_approval` is one
@@ -99,7 +97,6 @@ export type TicketSummary = WorkAttention & {
   worker_type: string;
   stage: string;
   ticket_status: string;
-  priority: Priority;
   project_id: string | null;
   project: string | null;
   sprint_item_id: string | null;
@@ -118,7 +115,6 @@ export type OutcomeSummary = WorkAttention & {
   settled?: boolean;
   id: string;
   title: string;
-  priority: Priority;
   project_id: string;
   project: string;
   created_at: number;
@@ -144,7 +140,6 @@ export type ProjectSummary = {
   id: string;
   name: string;
   summary: string;
-  priority: Priority | null;
   created_at: number;
   updated_at: number;
 };
@@ -171,7 +166,6 @@ export type ScheduledTask = {
   title: string;
   worker_type: string;
   kickoff_note: string;
-  priority: Priority;
   deadline: string | null;
   project_id: string | null;
   sprint_id: string | null;
@@ -197,7 +191,6 @@ export type PendingTicketProposal = {
   created_at: number;
   revision: number;
 };
-
 
 export type Principal = {
   kind: "owner" | "chief" | "sprint_item" | "ticket";
@@ -269,6 +262,7 @@ export type ChiefManagementSettings = {
   conversation_signal?: ConversationSignal;
   employee_id: string;
   label: string;
+  recap: string;
   skill: ManagedSkill;
   launch_defaults: EmployeeConfigurationSnapshot;
   conversation_id: string | null;
@@ -289,19 +283,6 @@ export type WorkerManagementSettings = {
 export type WorkerManagementDetail = {
   manifest: WorkerTypeManifest;
   settings: WorkerManagementSettings;
-};
-
-export type ResolvedTicketPriorityAnchors = {
-  sprint_item: {
-    id: string;
-    title: string;
-    priority: string;
-  } | null;
-  project: {
-    id: string;
-    name: string;
-    priority: string | null;
-  } | null;
 };
 
 export type TicketConversationHistoryEntry = {
@@ -325,14 +306,13 @@ export type TicketDetail = {
   stage: string;
   ceiling: string;
   ceiling_holder: Principal;
-  priority: string;
   deadline?: string | null;
   project_id?: string | null;
   project?: string | null;
   sprint_id?: string | null;
   effective_sprint_id?: string | null;
   sprint_item_id?: string | null;
-  resolved_priority_anchors: ResolvedTicketPriorityAnchors;
+  sprint_item_title: string | null;
   ticket_status?: string;
   conversation_id: string | null;
   conversation_history: TicketConversationHistoryEntry[];
@@ -387,7 +367,6 @@ export type SprintTicketSummary = WorkAttention & {
   id: string;
   title: string;
   stage: string;
-  priority: Priority;
   ticket_status: string;
   project_id: string | null;
   sprint_item_id: string | null;
@@ -429,7 +408,6 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
   title: string;
   recap_preview: string;
   stage: string;
-  priority: Priority;
   activity_at: number;
   ticket_status: string;
   waiting_to_closeout: boolean;
@@ -445,7 +423,6 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
 export type SprintItemWorkspace = SprintItemSummary & {
   conversation_signal?: ConversationSignal;
   body: string;
-  priority: Priority;
   supervisor: {
     agent_key: string;
     conversation_id: string | null;
@@ -502,7 +479,6 @@ export type BoardSprintItem = {
   id: string;
   title: string;
   recap_preview: string;
-  priority: Priority;
   tickets: SprintItemWorkspaceTicket[];
   created_at: number;
   conversation_id: string | null;
@@ -522,7 +498,6 @@ export type BoardCard = WorkAttention & {
   id: string;
   title: string;
   recap_preview: string;
-  priority: Priority;
   deadline: string | null;
   project_id: string | null;
   project: string | null;
@@ -543,7 +518,6 @@ export type BoardCard = WorkAttention & {
   waiting_to_closeout: boolean;
   sprint_item_id: string | null;
   sprint_item_title: string | null;
-  sprint_item_priority: Priority | null;
 };
 
 export type DayTicket = AnyRecord & {
@@ -573,7 +547,6 @@ export type DayResponse = {
   midday_reconciliation?: string | null;
   tickets: DayTicket[];
 };
-
 
 export type IdeasResponse = {
   ideas: AnyRecord[];

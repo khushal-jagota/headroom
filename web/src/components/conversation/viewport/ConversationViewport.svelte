@@ -48,384 +48,327 @@
   } = $props();
 
   let threadElement = $state<HTMLDivElement | null>(null);
+  let contentElement = $state<HTMLDivElement | null>(null);
   let reservedSpaceElement = $state<HTMLDivElement | null>(null);
-  /** The room kept under a message you have just sent, for the answer to arrive into. */
   let reservedSpacePixels = $state(0);
-  /** The view is keeping the newest line in sight rather than staying where it is. */
   let following = $state(true);
   let jumpVisible = $state(false);
-  /** Where the thread's last piece of content ends, in the thread's scroll coordinates.
-   *  Scrolling does not change it, so the hot scroll path reads this cached value. */
   let newestLineBottomPixels = 0;
-  /** The thread's own size, watched because rewrapping changes its content geometry. */
-  let threadWidthPixels = $state(0);
-  let threadHeightPixels = $state(0);
   let settledOnOpening = false;
-  let scrollRenderRequest = 0;
   let settledMessageIds = new Set<string>();
-  let readerDrivingUntilMilliseconds = 0;
-  let readerPointerIsDown = false;
-  /** How far open the viewport was last drawn. */
+  let conversationOnScreen: string | null = null;
   let stateOnScreen: ConversationState | null = null;
   let stateHasBeenDrawn = false;
-  /** A reader's view held for the whole trip through a zero-height rest state. */
-  let viewHeldAcrossTheMove: HeldView | null = null;
-  /** The thread changed while nobody was looking, so it has not been measured for it. */
-  let unmeasuredWhileHidden = false;
+  let savedView: HeldView | null = null;
+  let savedShape: string | null = null;
+  let pendingLayerMove = false;
+  let layerWasFollowing = true;
+  let pendingOpen = false;
+  let pendingLatest = false;
+  let sentMessageToPlace: string | null = null;
+  let answerRoomMessageId: string | null = null;
+  let dirty = false;
+  let queued = false;
+  let disposed = false;
+  let generation = 0;
+  let readerInputRevision = 0;
+  let readerDrivingUntilMilliseconds = 0;
+  let readerPointerIsDown = false;
+  let nativePositionWins = false;
+  let ownScrollTarget: number | null = null;
 
-  /** Whether nobody is looking at this tab.
-   *
-   * Every measurement below walks the whole thread and forces the browser to lay it out
-   * there and then, which is the same work whether or not there is anybody to see the
-   * result. A hidden tab has nowhere for a reader to be and nothing to keep them at, so
-   * arriving rows are drawn and left unmeasured until the tab comes back. */
   function nobodyIsLookingAtTheTab(): boolean {
     return document.visibilityState === "hidden";
   }
 
-  /** What a message says about the way it was sent, in the transcript's own words. */
+  /** Rest and hidden tabs keep dirty work, but never measure an invisible thread. */
+  function canMeasure(): boolean {
+    return !disposed && !nobodyIsLookingAtTheTab() && conversationState !== "rest";
+  }
+
   function modeChip(mode: PromptDeliveryMode): string | null {
     if (mode === "send_now") return "sent now";
     if (mode === "steer") return "steered";
     return "queued";
   }
 
-  /** Move only far enough that the newest line is in sight, and only ever forwards. */
+  /** Size checks do not walk the transcript on the ordinary scroll path. */
+  function currentShape(thread: HTMLDivElement): string {
+    return `${thread.clientWidth}/${thread.clientHeight}/${contentElement?.offsetHeight ?? 0}/${thread.scrollHeight}`;
+  }
+
+  function moveTheThread(thread: HTMLDivElement, wanted: number): void {
+    const clamped = Math.max(0, Math.min(wanted, thread.scrollHeight - thread.clientHeight));
+    if (Math.abs(thread.scrollTop - clamped) >= 0.5) thread.scrollTop = clamped;
+    // Record the position the browser accepted, including its own integer rounding.
+    ownScrollTarget = thread.scrollTop;
+  }
+
   function keepTheNewestLineInSight(thread: HTMLDivElement): void {
-    const least = threadGeometry(
-      thread,
-      reservedSpaceElement
-    ).newestLineScrollTop(newestLineBottomPixels);
-    if (least > thread.scrollTop) thread.scrollTop = least;
+    const least = threadGeometry(thread, reservedSpaceElement)
+      .newestLineScrollTop(newestLineBottomPixels);
+    if (least > thread.scrollTop) moveTheThread(thread, least);
   }
 
   function takeTheReading(reading: ThreadReading): void {
     newestLineBottomPixels = reading.newestLineBottomPixels;
-    if (reading.remainingReservedSpacePixels < reservedSpacePixels) {
-      reservedSpacePixels = reading.remainingReservedSpacePixels;
-    }
     jumpVisible = !reading.newestLineIsInSight;
   }
 
-  /** Read the thread's full shape again after something other than scrolling changes it. */
-  function readTheThreadAgain(thread: HTMLDivElement): void {
-    takeTheReading(threadGeometry(thread, reservedSpaceElement).read(reservedSpacePixels));
+  function saveTheSettledView(thread: HTMLDivElement): void {
+    const geometry = threadGeometry(thread, reservedSpaceElement);
+    takeTheReading(geometry.read(reservedSpacePixels));
+    savedView = geometry.holdView();
+    savedShape = currentShape(thread);
   }
 
-  /** The same, for a thread that has only been scrolled since it was last measured: where
-   *  its last line ends has not moved, so it is not looked for again. */
-  function readTheThreadAgainAfterScrollingOnly(thread: HTMLDivElement): void {
-    takeTheReading(
-      threadGeometry(thread, reservedSpaceElement).readFromNewestLineBottom(
-        newestLineBottomPixels,
-        reservedSpacePixels
-      )
-    );
-  }
-
-  function readerIsDrivingTheScroll(): boolean {
-    return readerPointerIsDown || performance.now() <= readerDrivingUntilMilliseconds;
-  }
-
-  /** A wheel, a finger, or a key: the reader working the thread themselves. */
+  /** A new action during pending layout supersedes the older placement decision. */
   function readerDroveTheThread(): void {
+    ownScrollTarget = null;
+    readerInputRevision += 1;
     readerDrivingUntilMilliseconds = performance.now() + READER_DRIVING_MILLISECONDS;
+    const thread = threadElement;
+    // Native input can precede ResizeObserver delivery for an already changed DOM.
+    // Its position then owns the new geometry, rather than the previous anchors.
+    if (dirty || queued || (thread !== null && canMeasure() && savedShape !== currentShape(thread))) {
+      nativePositionWins = true;
+    }
+  }
+
+  function onThreadKeydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.altKey || event.metaKey) return;
+    if (event.ctrlKey && event.key !== "Home" && event.key !== "End") return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    // Editing and selection controls own their navigation keys. Plain transcript
+    // links and buttons still let PageUp/PageDown/Home/End scroll their container.
+    if ((target instanceof HTMLElement && target.isContentEditable) || target.closest(
+      'input, textarea, select, [role="textbox"], [role="combobox"], [role="listbox"], [role="menu"], [role="slider"], [role="spinbutton"], [role="tree"], [role="grid"], [role="tablist"]'
+    )) return;
+    if (target.closest('button, [role="button"]') && event.key === " ") return;
+    if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+      readerDroveTheThread();
+    }
+  }
+
+  function onThreadPointermove(event: PointerEvent): void {
+    if (readerPointerIsDown && (event.movementX !== 0 || event.movementY !== 0)) {
+      readerDroveTheThread();
+    }
   }
 
   function onThreadScroll(): void {
     const thread = threadElement;
-    if (thread === null) return;
-    const inSight = threadGeometry(
-      thread,
-      reservedSpaceElement
-    ).newestLineIsInSight(newestLineBottomPixels);
-    // Only a person's own scrolling says anything about what they want. This code moves
-    // the position too, and reading intent out of that would mistake following for intent.
-    if (readerIsDrivingTheScroll()) following = inSight;
+    if (thread === null || !canMeasure()) return;
+    if (ownScrollTarget !== null && Math.abs(thread.scrollTop - ownScrollTarget) < 0.5) {
+      ownScrollTarget = null;
+      return;
+    }
+    ownScrollTarget = null;
+    // Native layout clamps can arrive during a recent wheel gesture. Preserve the
+    // old anchors until both the content and viewport match a settled reading.
+    if (dirty || queued || savedShape !== currentShape(thread)) {
+      requestReconciliation();
+      return;
+    }
+    const geometry = threadGeometry(thread, reservedSpaceElement);
+    const inSight = geometry.newestLineIsInSight(newestLineBottomPixels);
     jumpVisible = !inSight;
+    if (performance.now() > readerDrivingUntilMilliseconds) return;
+    following = inSight;
+    savedView = geometry.holdView();
+    savedShape = currentShape(thread);
   }
 
-  /** The reader asking for the newest line. The one move allowed to go backwards. */
-  async function jumpToTheNewestLine(): Promise<void> {
-    following = true;
-    await tick();
-    const thread = threadElement;
-    if (thread === null) return;
-    thread.scrollTop = Math.max(
-      0,
-      threadGeometry(
-        thread,
-        reservedSpaceElement
-      ).newestLineScrollTop(newestLineBottomPixels)
-    );
-    readTheThreadAgain(thread);
+  function jumpToTheNewestLine(): void {
+    pendingLatest = true;
+    nativePositionWins = false;
+    requestReconciliation();
   }
 
-  /** Measure answer room against the height the thread has now. */
-  function measureTheRoomAgainstTheHeightWeHaveNow(thread: HTMLDivElement): void {
-    if (reservedSpacePixels === 0) return;
-    const geometry = threadGeometry(thread, reservedSpaceElement);
-    const asking = geometry.answerRoomMessage();
-    if (asking === null) return;
-    reservedSpacePixels = geometry.answerRoomPixels(asking);
-  }
-
-  /** Put a message that has just been sent near the top, with answer room beneath it. */
-  async function settleTheSentMessage(messageId: string): Promise<boolean> {
-    const thread = threadElement;
-    if (thread === null) return false;
-    const geometry = threadGeometry(thread, reservedSpaceElement);
-    const sent = geometry.sentMessage(messageId);
-    if (sent === null) return false;
-    following = true;
-    reservedSpacePixels = geometry.answerRoomPixels(sent);
-    await tick();
-    const currentThread = threadElement;
-    if (currentThread === null) return false;
-    const currentGeometry = threadGeometry(currentThread, reservedSpaceElement);
-    const stillThere = sent.isConnected
-      ? sent
-      : currentGeometry.sentMessage(messageId);
-    if (stillThere === null) return false;
-    currentThread.scrollTop = currentGeometry.sentMessageScrollTop(stillThere);
-    return true;
-  }
-
-  /** The row a request that needs this person is on, when one is waiting.
-   *
-   * Opening on it is the one exception to landing at the end: a request nobody has
-   * answered is the reason the conversation was opened, and it is not always the last
-   * thing in the thread. The newest of them wins, because that is the one still asked. */
   function requestWaitingOnThePerson(thread: HTMLDivElement): HTMLElement | null {
     const waiting = thread.querySelectorAll<HTMLElement>(
       '[data-conversation-ask-state="live"], [data-conversation-user-input-state="live"]'
     );
-    return waiting.length === 0 ? null : (waiting[waiting.length - 1] ?? null);
+    return waiting[waiting.length - 1] ?? null;
   }
 
-  /** What an open lands on: the end of the conversation, or the request still asked. */
   function landTheOpen(thread: HTMLDivElement): void {
     const geometry = threadGeometry(thread, reservedSpaceElement);
     const end = Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels));
     const request = requestWaitingOnThePerson(thread);
-    if (request === null) {
-      following = true;
-      thread.scrollTop = end;
-      return;
+    moveTheThread(thread, request === null ? end : Math.min(end, geometry.elementAtTheTopScrollTop(request)));
+    following = request === null || geometry.newestLineIsInSight(newestLineBottomPixels);
+  }
+
+  function restoreTheReader(thread: HTMLDivElement, held: HeldView): void {
+    const wanted = threadGeometry(thread, reservedSpaceElement).restoredScrollTop(held);
+    moveTheThread(thread, wanted ?? held.scrollTop);
+    if (wanted === null) following = false;
+  }
+
+  /** All causes retain their intent until one pass settles the latest DOM. */
+  function requestReconciliation(): void {
+    dirty = true;
+    if (queued || !canMeasure()) return;
+    queued = true;
+    const startedIn = generation;
+    void reconcileTheThread(startedIn);
+  }
+
+  async function reconcileTheThread(startedIn: number): Promise<void> {
+    try {
+      while (dirty && startedIn === generation && canMeasure()) {
+        // Svelte and managed Markdown finish their DOM writes before the reading.
+        await tick();
+        if (startedIn !== generation || !canMeasure()) return;
+        const thread = threadElement;
+        if (thread === null || !threadGeometry(thread, reservedSpaceElement).hasShape()) {
+          // The first nonzero observation resumes this work without a microtask loop.
+          dirty = false;
+          return;
+        }
+        dirty = false;
+        const inputAtStart = readerInputRevision;
+        let geometry = threadGeometry(thread, reservedSpaceElement);
+        takeTheReading(geometry.read(reservedSpacePixels));
+
+        const newest = outgoingMessages[outgoingMessages.length - 1];
+        if (newest !== undefined && !settledMessageIds.has(newest.messageId)) {
+          const sent = geometry.sentMessage(newest.messageId);
+          if (sent !== null) {
+            settledMessageIds.add(newest.messageId);
+            answerRoomMessageId = newest.messageId;
+            sentMessageToPlace = newest.messageId;
+            reservedSpacePixels = geometry.answerRoomPixels(sent);
+            following = true;
+          }
+        } else if (reservedSpacePixels > 0 && answerRoomMessageId !== null) {
+          const asking = geometry.sentMessage(answerRoomMessageId);
+          if (asking !== null) reservedSpacePixels = geometry.answerRoomPixels(asking);
+        }
+
+        // Space is part of layout. Place only after its final DOM height is present.
+        await tick();
+        if (startedIn !== generation || !canMeasure() || thread !== threadElement) return;
+        geometry = threadGeometry(thread, reservedSpaceElement);
+        if (!geometry.hasShape()) return;
+        takeTheReading(geometry.read(reservedSpacePixels));
+        const readerTookOver = nativePositionWins || readerInputRevision !== inputAtStart;
+        if (readerTookOver) {
+          // A newer gesture owns its native position against the fresh geometry.
+          following = geometry.newestLineIsInSight(newestLineBottomPixels);
+        } else if (!settledOnOpening || pendingOpen) {
+          landTheOpen(thread);
+        } else if (pendingLatest) {
+          following = true;
+          moveTheThread(thread, geometry.newestLineScrollTop(newestLineBottomPixels));
+        } else if (pendingLayerMove) {
+          following = layerWasFollowing;
+          if (savedView !== null) restoreTheReader(thread, savedView);
+          if (following) keepTheNewestLineInSight(thread);
+        } else if (sentMessageToPlace !== null) {
+          const sent = geometry.sentMessage(sentMessageToPlace);
+          if (sent !== null) moveTheThread(thread, geometry.sentMessageScrollTop(sent));
+        } else if (following) {
+          keepTheNewestLineInSight(thread);
+        } else if (savedView !== null) {
+          restoreTheReader(thread, savedView);
+        }
+        settledOnOpening = true;
+        pendingOpen = false;
+        pendingLayerMove = false;
+        pendingLatest = false;
+        sentMessageToPlace = null;
+        nativePositionWins = false;
+        // A native clamp can queue its scroll event before settlement, even when our
+        // final placement needs no write. Its acknowledgment is still layout work.
+        ownScrollTarget = readerTookOver ? null : thread.scrollTop;
+        saveTheSettledView(thread);
+      }
+    } finally {
+      queued = false;
+      if (dirty && canMeasure()) requestReconciliation();
     }
-    thread.scrollTop = Math.min(end, geometry.elementAtTheTopScrollTop(request));
-    // Landing on a request that is already at the end is still being at the end.
-    following = geometry.newestLineIsInSight(newestLineBottomPixels);
   }
 
-  /** Restore from the first held line that survived, if there is one. */
-  function keepTheReaderWhereTheyWere(
-    thread: HTMLDivElement,
-    held: HeldView
-  ): boolean {
-    const wanted = threadGeometry(
-      thread,
-      reservedSpaceElement
-    ).restoredScrollTop(held);
-    if (wanted === null) return false;
-    if (wanted !== thread.scrollTop) thread.scrollTop = wanted;
-    return true;
-  }
-
-  function messageToSettleOn(): string | null {
-    const newest = outgoingMessages[outgoingMessages.length - 1];
-    if (newest === undefined || settledMessageIds.has(newest.messageId)) return null;
-    return newest.messageId;
-  }
-
-  /** A different conversation is a different conversation, and you arrive at its end.
-   *
-   * The viewport is not rebuilt when the pane is handed another one, so without this it
-   * would keep the last one's held lines — which belong to a thread that is no longer
-   * there — and leave the new conversation wherever the old one happened to be. */
-  let conversationOnScreen: string | null = null;
   $effect.pre(() => {
     const wanted = conversationId;
     untrack(() => {
       if (conversationOnScreen === wanted) return;
+      generation += 1;
       conversationOnScreen = wanted;
       settledOnOpening = false;
-      viewHeldAcrossTheMove = null;
+      settledMessageIds = new Set();
+      reservedSpacePixels = 0;
+      answerRoomMessageId = null;
+      sentMessageToPlace = null;
+      savedView = null;
+      savedShape = null;
+      pendingLayerMove = false;
+      pendingOpen = true;
+      pendingLatest = false;
+      nativePositionWins = false;
+      ownScrollTarget = null;
       following = true;
+      requestReconciliation();
     });
   });
 
-  // Keep this first: rows and optimistic messages settle before size or layer-state work.
   $effect.pre(() => {
     rows;
+    visibleRows;
+    lens;
     outgoingMessages;
-    const thread = threadElement;
-    if (thread === null) return;
-    if (outgoingMessages.length === 0) settledMessageIds = new Set();
-    if (nobodyIsLookingAtTheTab()) {
-      unmeasuredWhileHidden = true;
-      return;
-    }
-    // A thread at rest has no view, room, or message position to measure.
-    if (!untrack(() => threadGeometry(thread, reservedSpaceElement).hasShape())) return;
-    const justSent = untrack(() => messageToSettleOn());
-    const wasFollowing = untrack(() => following);
-    // Holding the view walks the whole thread, and only one of the four ways this can end
-    // restores from it. A reader following the newest line, or one whose own message is
-    // about to be settled, is never put back on a line they were reading.
-    const held =
-      settledOnOpening && justSent === null && !wasFollowing
-        ? untrack(() => threadGeometry(thread, reservedSpaceElement).holdView())
-        : null;
-    const request = ++scrollRenderRequest;
-    void tick().then(async () => {
-      const currentThread = threadElement;
-      if (request !== scrollRenderRequest || currentThread === null) return;
-      const currentGeometry = threadGeometry(currentThread, reservedSpaceElement);
-      if (!currentGeometry.hasShape()) return;
-      newestLineBottomPixels = currentGeometry.read(
-        reservedSpacePixels
-      ).newestLineBottomPixels;
-      // Settling a sent message changes the thread's own height as well as its position.
-      // Every other ending here moves the scroll and nothing else.
-      let theContentMovedToo = false;
-      if (!settledOnOpening) {
-        // Opening a conversation puts you at the end of it, wherever that is — unless
-        // something in it is still waiting on you, which is what you came for.
-        settledOnOpening = true;
-        landTheOpen(currentThread);
-      } else if (justSent !== null) {
-        if (await settleTheSentMessage(justSent)) settledMessageIds.add(justSent);
-        theContentMovedToo = true;
-      } else if (wasFollowing) {
-        keepTheNewestLineInSight(currentThread);
-      } else if (held !== null) {
-        keepTheReaderWhereTheyWere(currentThread, held);
-      }
-      if (request !== scrollRenderRequest || threadElement === null) return;
-      if (theContentMovedToo) readTheThreadAgain(threadElement);
-      else readTheThreadAgainAfterScrollingOnly(threadElement);
-    });
+    threadElement;
+    untrack(requestReconciliation);
   });
 
-  /** The thread changed shape, or media in it finished arriving.
-   *
-   * There is deliberately no held-line correction here. A reader who was following keeps
-   * the newest line visible; a reader who was not following receives no deliberate move.
-   */
-  function theThreadIsADifferentShapeNow(): void {
-    const thread = threadElement;
-    if (thread === null) return;
-    if (nobodyIsLookingAtTheTab()) {
-      unmeasuredWhileHidden = true;
-      return;
-    }
-    if (!threadGeometry(thread, reservedSpaceElement).hasShape()) return;
-    settleTheViewAfterAChangeOfShape(thread, null);
-  }
-
-  /** A changed viewport gets the same opening, restoration, and following policy.
-   *
-   * `opening` is the move out of rest. It is not a change of height like the others: the
-   * conversation was not on the screen at all, so there is no place to keep. Opening puts
-   * the reader at the end of the conversation, which is where they asked to be. */
-  function settleTheViewAfterAChangeOfShape(
-    thread: HTMLDivElement,
-    held: HeldView | null,
-    opening = false
-  ): void {
-    newestLineBottomPixels = threadGeometry(
-      thread,
-      reservedSpaceElement
-    ).read(reservedSpacePixels).newestLineBottomPixels;
-    if (!settledOnOpening || opening) {
-      settledOnOpening = true;
-      landTheOpen(thread);
-    } else {
-      if (held !== null && !keepTheReaderWhereTheyWere(thread, held)) following = true;
-      if (following) keepTheNewestLineInSight(thread);
-    }
-    readTheThreadAgain(thread);
-  }
-
-  // Keep this second: generic resize/media behavior follows row settlement.
-  $effect(() => {
-    threadWidthPixels;
-    threadHeightPixels;
-    if (threadElement === null) return;
-    // After the rewrapping the new size caused, not before it.
-    void tick().then(theThreadIsADifferentShapeNow);
-  });
-
-  /** Hold and restore the reader's place across rest, peeked, and opened heights. */
-  // Keep this third: a layer move landing with a row gets the final placement decision.
   $effect.pre(() => {
     const wanted = conversationState;
-    const thread = threadElement;
-    if (thread === null) return;
     untrack(() => {
       const previous = stateOnScreen;
-      const isAMove = stateHasBeenDrawn && previous !== wanted;
-      stateOnScreen = wanted;
+      const moved = stateHasBeenDrawn && previous !== wanted;
       stateHasBeenDrawn = true;
-      if (!isAMove) return;
-      if (threadGeometry(thread, reservedSpaceElement).hasShape()) {
-        viewHeldAcrossTheMove = threadGeometry(
-          thread,
-          reservedSpaceElement
-        ).holdView();
-      }
-      const held = viewHeldAcrossTheMove;
-      if (wanted === "rest") return;
-      viewHeldAcrossTheMove = null;
-      // Coming out of rest is an open, not a change of height: land at the end rather
-      // than put the reader back where they were before they closed it.
-      const opening = previous === "rest";
-      const request = ++scrollRenderRequest;
-      void tick().then(async () => {
-        const currentThread = threadElement;
-        if (request !== scrollRenderRequest || currentThread === null) return;
-        if (!threadGeometry(currentThread, reservedSpaceElement).hasShape()) return;
-        measureTheRoomAgainstTheHeightWeHaveNow(currentThread);
-        await tick();
-        if (request !== scrollRenderRequest || threadElement === null) return;
-        if (!threadGeometry(threadElement, reservedSpaceElement).hasShape()) return;
-        settleTheViewAfterAChangeOfShape(threadElement, opening ? null : held, opening);
-      });
+      stateOnScreen = wanted;
+      if (!moved) return;
+      if (!pendingLayerMove) layerWasFollowing = following;
+      pendingLayerMove = true;
+      if (previous === "rest" && wanted !== "rest") pendingOpen = true;
+      requestReconciliation();
     });
   });
 
-  /** A fold changes height without a row arriving, so hold before the click takes effect. */
-  // Keep this after all effects: it preserves their existing source and scheduling order.
   function onThreadClick(): void {
-    const thread = threadElement;
-    if (thread === null) return;
-    const held = threadGeometry(thread, reservedSpaceElement).holdView();
-    const wasFollowing = following;
-    void tick().then(() => {
-      const currentThread = threadElement;
-      if (currentThread === null) return;
-      newestLineBottomPixels = threadGeometry(
-        currentThread,
-        reservedSpaceElement
-      ).read(reservedSpacePixels).newestLineBottomPixels;
-      keepTheReaderWhereTheyWere(currentThread, held);
-      if (wasFollowing) keepTheNewestLineInSight(currentThread);
-      readTheThreadAgain(currentThread);
-    });
+    requestReconciliation();
   }
 
-  // Everything that arrived while the tab was away is measured once, on the way back, and
-  // it is the same settlement a change of shape gets: a reader who was following keeps the
-  // newest line, and a reader who was not is not moved.
+  $effect(() => {
+    const thread = threadElement;
+    const content = contentElement;
+    if (thread === null || content === null) return;
+    const observer = new ResizeObserver(() => {
+      if (!canMeasure()) {
+        dirty = true;
+        return;
+      }
+      if (savedShape !== currentShape(thread)) requestReconciliation();
+    });
+    observer.observe(thread);
+    observer.observe(content);
+    return () => observer.disconnect();
+  });
+
   onMount(() => {
     const onVisible = (): void => {
-      if (document.visibilityState !== "visible" || !unmeasuredWhileHidden) return;
-      unmeasuredWhileHidden = false;
-      void tick().then(theThreadIsADifferentShapeNow);
+      if (document.visibilityState === "visible" && dirty) requestReconciliation();
     };
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    return () => {
+      disposed = true;
+      generation += 1;
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   });
 </script>
 
@@ -445,17 +388,17 @@
     aria-label="Conversation"
     tabindex="0"
     bind:this={threadElement}
-    bind:clientWidth={threadWidthPixels}
-    bind:clientHeight={threadHeightPixels}
-    onloadcapture={theThreadIsADifferentShapeNow}
+    onloadcapture={requestReconciliation}
     onscroll={onThreadScroll}
     onwheel={readerDroveTheThread}
     ontouchstart={readerDroveTheThread}
     ontouchmove={readerDroveTheThread}
-    onkeydown={readerDroveTheThread}
+    onkeydown={onThreadKeydown}
+    onpointermove={onThreadPointermove}
     onpointerdown={() => (readerPointerIsDown = true)}
     onclick={onThreadClick}
   >
+    <div class="chat-thread-content" data-conversation-content bind:this={contentElement}>
     {#if emptyState && rows.length === 0 && outgoingMessages.length === 0}
       {@render emptyState()}
     {/if}
@@ -481,6 +424,7 @@
         <MessagePieces content={message.content} {conversationId} />
       </article>
     {/each}
+    </div>
     {#if reservedSpacePixels > 0}
       <div
         class="c2-reserved"

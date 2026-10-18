@@ -198,7 +198,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 return cast(dict[str, Any], response.json())
 
             project = await post(
-                "project", "/api/projects", {"name": "Isolated Luna proof", "priority": "P2"}
+                "project", "/api/projects", {"name": "Isolated Luna proof"}
             )
             item = await post(
                 "orchestrator",

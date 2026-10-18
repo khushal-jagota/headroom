@@ -56,7 +56,6 @@ from planner.core.contracts import (
     JsonDict,
     Principal,
     PrincipalKind,
-    Priority,
 )
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
@@ -358,7 +357,6 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         worker_type=_require_create_worker_type(raw),
         title=body_str(raw, "title"),
         brief=body_str(raw, "brief"),
-        priority=body_opt_str(raw, "priority"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
@@ -529,7 +527,8 @@ async def create_ticket(
 ) -> JsonDict:
     body = _marshal_create_ticket(raw)
     await warm_ticket_creation_model(
-        conn, model_resolver,
+        conn,
+        model_resolver,
         worker_type=body["worker_type"],
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
@@ -539,9 +538,6 @@ async def create_ticket(
         _parse_orchestrator(body["orchestrator"])
         if "orchestrator" in raw
         else Principal(PrincipalKind.chief, "chief")
-    )
-    priority = (
-        parse_enum(Priority, body["priority"], "priority") if body["priority"] is not None else None
     )
     project = projects_data.resolve_project(
         conn,
@@ -556,7 +552,6 @@ async def create_ticket(
         title_max_chars=TITLE_MAX_CHARS,
         brief=body["brief"],
         project_id=project.id if project is not None else None,
-        priority=priority,
         deadline=body["deadline"],
         sprint_item_id=(
             orchestrator.id if orchestrator.kind is PrincipalKind.sprint_item else None
@@ -983,7 +978,6 @@ async def patch_ticket(
 ) -> JsonDict:
     recognized = (
         "title",
-        "priority",
         "deadline",
         "project",
         "project_id",
@@ -1012,8 +1006,6 @@ async def patch_ticket(
     edit = TicketEdit()
     if "title" in body:
         edit["title"] = body_str(body, "title")
-    if "priority" in body:
-        edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
         edit["deadline"] = body_opt_str(body, "deadline")
 

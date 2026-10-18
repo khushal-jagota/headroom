@@ -12,10 +12,7 @@
     scheduledTaskCadenceLabel,
     type ScheduledTaskForm
   } from "../lib/scheduledTasks";
-  import type {
-    Priority,
-    ScheduledTask
-  } from "../lib/types";
+  import type { ScheduledTask } from "../lib/types";
   import Button from "../components/Button.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
@@ -28,8 +25,6 @@
   const sprintItems = createQuery(() => queries.sprintItems());
   const workerTypes = createQuery(() => queries.workerTypeManifests());
   const supportedWorkerTypes = createQuery(() => queries.supportedWorkerTypeManifests());
-
-  const priorities: Priority[] = ["P0", "P1", "P2", "P3"];
 
   let formOpen = $state(false);
   let editingId = $state<string | null>(null);
@@ -80,10 +75,6 @@
 
   function setWorkerType(event: Event): void {
     draft.worker_type = selectValue(event);
-  }
-
-  function setPriority(event: Event): void {
-    draft.priority = selectValue(event) as Priority;
   }
 
   function setProject(event: Event): void {
@@ -233,18 +224,6 @@
                 {#if historical}<option value={draft.worker_type}>{workerTypes.data?.worker_types.find((workerType) => workerType.worker_type === draft.worker_type)?.label ?? labelize(draft.worker_type)}</option>{/if}
                 {#each creatableWorkerTypes as workerType}
                   <option value={workerType.worker_type}>{workerType.label}</option>
-                {/each}
-              </select>
-              <span class="scheduled-task-separator" aria-hidden="true">·</span>
-              <select
-                class="scheduled-task-quiet-control"
-                aria-label="Priority"
-                value={draft.priority}
-                onchange={setPriority}
-                data-input="priority"
-              >
-                {#each priorities as priority}
-                  <option value={priority}>{priority}</option>
                 {/each}
               </select>
             </div>

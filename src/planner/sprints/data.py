@@ -14,7 +14,7 @@ from planner.conversation.contracts import ConversationBackendKey
 from planner.core import authority
 from planner.core.authority import require_above
 from planner.core.clock import Clock
-from planner.core.contracts import Principal, Priority
+from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.sprints.contracts import (
@@ -35,7 +35,7 @@ class ItemRead(NamedTuple):
     item: SprintItem
 
 
-_ITEM_PLAIN_FIELDS: frozenset[str] = frozenset({"title", "body", "priority", "project_id"})
+_ITEM_PLAIN_FIELDS: frozenset[str] = frozenset({"title", "body", "project_id"})
 _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(SPRINT_DOCUMENT_FIELDS + ("primary_bet", "name"))
 PERSONAL_PROJECT_ID = "project_personal"
 
@@ -93,7 +93,6 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
         id=row["id"],
         title=row["title"],
         body=row["body"],
-        priority=Priority(row["priority"]),
         project_id=row["project_id"],
         project_name=row["project_name"],
         settled=bool(row["settled"]),
@@ -224,7 +223,6 @@ def create_item(
     title: str,
     project_id: str,
     body: str = "",
-    priority: Priority = Priority.P3,
     clock: Clock,
 ) -> SprintItem:
     if not title:
@@ -240,15 +238,14 @@ def create_item(
         defaults = SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
         conn.execute(
             "INSERT INTO sprint_items ("
-            "id, title, body, priority, project_id, "
+            "id, title, body, project_id, "
             "supervisor_backend, supervisor_model, "
             "supervisor_reasoning_effort, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item_id,
                 title,
                 body,
-                priority.value,
                 project_id,
                 defaults.employee_backend.value,
                 defaults.employee_launch_model,
@@ -339,16 +336,6 @@ def update_item(
             {"field": invalid_fields[0]},
         )
     stored_edits = dict(edits)
-    if "priority" in stored_edits:
-        raw_priority = stored_edits["priority"]
-        if raw_priority is None:
-            raise PlannerError(ErrorCode.validation, "invalid priority", {"value": None})
-        try:
-            stored_edits["priority"] = Priority(raw_priority).value
-        except ValueError as exc:
-            raise PlannerError(
-                ErrorCode.validation, "invalid priority", {"value": raw_priority}
-            ) from exc
     now = clock.now_unix()
     with _tx(conn):
         if admit is not None:

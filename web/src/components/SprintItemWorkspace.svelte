@@ -14,11 +14,11 @@
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
-  import ClampedText from "./ClampedText.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import ResourceState from "./ResourceState.svelte";
-  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import OrchestratorHeader from "./OrchestratorHeader.svelte";
+  import OrchestratorWorkspace from "./OrchestratorWorkspace.svelte";
   import ArtifactsBand from "./ArtifactsBand.svelte";
   import ArtifactPreview from "./ArtifactPreview.svelte";
   import {
@@ -91,7 +91,7 @@
       .catch(() => undefined);
   });
 
-  function saveItem(field: "title" | "body" | "priority", value: string): Promise<unknown> {
+  function saveItem(field: "title" | "body", value: string): Promise<unknown> {
     return mutateJson(`/api/items/${encodeURIComponent(itemId)}`, {
       method: "PATCH",
       body: { [field]: value }
@@ -127,17 +127,6 @@
       { method: "POST" }
     );
     conversationId = null;
-  }
-
-  function dismissConversation(event: MouseEvent): void {
-    const target = event.target;
-    if (target instanceof Element && target.closest("[data-conversation-pane]") === null) {
-      conversationState = "rest";
-    }
-  }
-
-  function dismissConversationToRest(): void {
-    conversationState = "rest";
   }
 
   let artifactRows = $derived(
@@ -186,16 +175,12 @@
 
 <svelte:window onkeydown={closeFileOnEscape} />
 
-<div
-  class="sprint-item-page"
+<OrchestratorWorkspace
+  bind:conversationState
   data-sprint-item-workspace={itemId}
   data-sprint-item-view={itemId}
+  onDocumentClick={openManagedFileInPlace}
 >
-  <div class="sprint-item-reading">
-  <!-- Links keep their keyboard behavior. This catcher only redirects plain clicks. -->
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <main class="sprint-item-doc" onclickcapture={dismissConversationToRest} onclick={openManagedFileInPlace}>
     <ResourceState
       error={workspace.error}
       loading={workspace.isLoading}
@@ -204,8 +189,9 @@
     >
       {#if workspace.data}
         {@const item = workspace.data}
-        <div class="sprint-item-column">
-          <header class="sprint-workspace-head">
+          <OrchestratorHeader signal={item.conversation_signal} conversationId={item.supervisor.conversation_id}
+            recap={item.body} onSaveRecap={(value) => saveItem("body", value)}>
+            {#snippet eyebrow()}
             <div class="page-eyebrow">
               <span>{item.project}</span>
               {#if backHref !== null}<span aria-hidden="true">/</span><a href={backHref} aria-label={`Back to ${sprintName}`}>↖</a>{/if}
@@ -214,30 +200,15 @@
               </button>
             </div>
             {#if settleError}<p role="alert">{settleError}</p>{/if}
-            <h1 class="sprint-workspace-title" data-feedback-page-title>
+            {/snippet}
+            {#snippet title()}
               <InlineEdit
                 value={item.title}
                 placeholder="(untitled Outcome)"
                 onSave={(value) => saveItem("title", value)}
               />
-              <ConversationSignalMark signal={item.conversation_signal} conversationId={item.supervisor.conversation_id} class="sprint-workspace-title-mark" />
-            </h1>
-            <ClampedText
-              class="sprint-workspace-brief"
-              contentKey={item.body}
-              moreControlAttributes={{ "data-sprint-item-brief-toggle": "" }}
-              data-sprint-item-brief
-            >
-              <InlineEdit
-                value={item.body}
-                markdown
-                multiline
-                ariaLabel="Orchestrator recap"
-                placeholder="Write a concise recap for this orchestrator…"
-                onSave={(value) => saveItem("body", value)}
-              />
-            </ClampedText>
-          </header>
+            {/snippet}
+          </OrchestratorHeader>
 
           <section class="orchestrator-workers" aria-label="Workers">
             <OrchestratorChildren principal={{ kind: "sprint_item", id: itemId }} tickets={item.tickets}
@@ -247,10 +218,9 @@
               }} onLeave={() => hover.leave()} />
           </section>
           <div class="orchestrator-artifacts"><ArtifactsBand items={artifactRows} /></div>
-        </div>
       {/if}
     </ResourceState>
-  </main>
+  {#snippet readingAside()}
   {#if shownFile}
     <ArtifactPreview
       target={shownFile}
@@ -260,9 +230,8 @@
       onClose={() => showFile(null)}
     />
   {/if}
-  </div>
-  <div class="conversation-layer" onclickcapture={dismissConversation}>
-    <div class="conversation-column">
+  {/snippet}
+  {#snippet conversation()}
       <LiveConversation
         bind:conversationState
         conversationId={selectedConversationId}
@@ -278,24 +247,18 @@
         {sendMessage}
         onNewConversation={newConversation}
       />
-    </div>
-  </div>
-</div>
+  {/snippet}
+</OrchestratorWorkspace>
 
 <WorkspaceRailHover visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Orchestrator"} worker={hoverWorker} cards={[]} rail={hoverTarget} />
 <style>
-  .sprint-item-doc { scrollbar-gutter:auto; }
-  .sprint-item-column { font-family:var(--font-ui); font-size:15px; line-height:1.6; width:min(100%, 768px); max-width:768px; margin-inline:auto; padding-inline:var(--space-5); }
-  .sprint-workspace-head { padding-top:var(--space-7); }
   .page-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .page-eyebrow a { color:inherit; text-decoration:none; }
   .page-eyebrow a:hover { color:var(--text-strong); }
   .page-settle { margin-left:auto; display:inline-flex; align-items:center; gap:6px; padding:3px 8px; margin-right:-8px; border:0; border-radius:var(--radius-sm); background:none; color:inherit; font:inherit; cursor:pointer; opacity:0; }
   .page-settle svg { width:13px; height:13px; }
-  .sprint-item-doc:hover .page-settle, .page-settle:focus-visible { opacity:1; }
+  :global(.sprint-item-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
   .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .sprint-workspace-title { font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-0.014em; margin-top:var(--space-3); overflow-wrap:anywhere; }
-  .sprint-workspace-head :global(.sprint-workspace-brief) { font-family:var(--font-ui); font-size:17px; line-height:1.6; margin-top:var(--space-3); max-width:66ch; }
   .orchestrator-workers { margin-top:var(--space-5); }
   .orchestrator-artifacts { margin-top:var(--space-5); }
   a:focus-visible, button:focus-visible, .orchestrator-workers :global(summary:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }

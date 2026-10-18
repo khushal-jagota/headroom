@@ -10,7 +10,6 @@ from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.probe import shipped_definition
 from tests.support.ticket_progress import advance_ticket
 
-from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
 from planner.projects import data as projects_data
@@ -200,7 +199,7 @@ def test_lanes_in_different_projects_or_worker_types_are_independent(tmp_path: P
     conn = _db(tmp_path)
     try:
         other_project_id = projects_data.create_project(
-            conn, name="Client Work", priority=Priority.P2, now=0
+            conn, name="Client Work", now=0
         ).id
         occupying = _ticket(conn, planning_day_id=None, project_id=other_project_id)
         other_project = _ticket(conn)

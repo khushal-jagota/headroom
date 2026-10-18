@@ -29,9 +29,9 @@ def _historical_definitions(db: Path) -> None:
 
         conn.execute(
             "INSERT INTO scheduled_ticket_schedules "
-            "(id,enabled,cadence,local_time,title,worker_type,priority,created_at,updated_at) "
+            "(id,enabled,cadence,local_time,title,worker_type,created_at,updated_at) "
             "VALUES ('historical-personal-daily',0,'daily','09:00',"
-            "'Historical daily personal task','personal','P2',0,0)"
+            "'Historical daily personal task','personal',0,0)"
         )
 
 

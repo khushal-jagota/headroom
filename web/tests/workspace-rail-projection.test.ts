@@ -4,20 +4,20 @@ import { tick } from "svelte";
 import type { BoardCard, BoardSprintItem, SprintItemWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
 import { buildWorkspaceRail, refreshWorkspaceRailSignals, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
-import { createRailMotionController } from "../src/lib/workspaceRailMotion";
+import { createRailMotionController, type WorkspaceRailPresentation } from "../src/lib/workspaceRailMotion";
 
 const quiet = {
   awaiting_reply: false, awaiting_answer: false, awaiting_approval: false,
   awaiting_agent_approval: false, assigned: false, agent_state: "idle" as const
 };
 const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & SprintItemWorkspaceTicket => ({
-  id, title: id, is_backlogged:false, priority: "P2", activity_at: 0, stage: "needs_implementation",
+  id, title: id, is_backlogged:false, activity_at: 0, stage: "needs_implementation",
   ticket_status: "agent", worker_type: "coding", sprint_item_id: null,
   day_ids: [], sprint_id: null, sprint_name: null,
   ...quiet, ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id: string, values: Partial<BoardSprintItem> = {}): BoardSprintItem => ({
-  id, title: id, recap_preview: "", priority: "P2", created_at: 1, tickets: [], conversation_id: null,
+  id, title: id, recap_preview: "", created_at: 1, tickets: [], conversation_id: null,
   ticket_rollup: quiet, ...quiet, ...values
 });
 
@@ -143,22 +143,42 @@ describe("orchestrator rail projection", () => {
     expect(frozen.chiefGroups[0].cards[2]).toEqual({...reentered.chiefGroups[0].cards[2],
       conversation_id:"rebound", conversation_signal:{working:true,message_for_owner:false}});
     // A pointer can arrive after drain captures the answer but before exits settle.
-    let presented = reentered;
+    let presented: WorkspaceRailPresentation = {rail:reentered, settledOpen:false, settledMessages:{}};
     const motion = createRailMotionController(() => null, () => presented, (next) => presented = next);
-    motion.update(updated);
+    motion.update({...presented, rail:updated});
     motion.freeze(true);
     await tick();
-    expect(presented).toEqual(frozen);
+    expect(presented.rail).toEqual(frozen);
     motion.freeze(false);
     await tick();
-    expect(presented).toEqual(stabilizeWorkspaceRail(updated, frozen));
+    expect(presented.rail).toEqual(stabilizeWorkspaceRail(updated, frozen));
     motion.dispose();
+    // A frozen message can disappear from discovery after it is read or its
+    // parent reopens. Membership waits, but facts come from the complete rail.
+    const child = card("child", {conversation_id:"old-conversation",
+      conversation_signal:{working:true, message_for_owner:true}});
+    presented = {rail:buildWorkspaceRail([], [item("settled", {settled:true, tickets:[child]})]),
+      settledOpen:true, settledMessages:{settled:[{kind:"ticket", id:"child", title:"Original title",
+        parentId:"settled", parentTitle:"Original parent", settled:true,
+        conversationId:"old-conversation", conversationSignal:child.conversation_signal}]}};
+    const childMotion = createRailMotionController(() => null, () => presented, (next) => presented = next);
+    childMotion.freeze(true);
+    childMotion.update({rail:buildWorkspaceRail([], [item("reopened", {tickets:[{...child,
+      title:"Changed title", conversation_id:"new-conversation",
+      conversation_signal:{working:false, message_for_owner:false}}]})]), settledOpen:true, settledMessages:{}});
+    expect(presented.settledMessages.settled).toEqual([{kind:"ticket", id:"child", title:"Original title",
+      parentId:"settled", parentTitle:"Original parent", settled:true, conversationId:"new-conversation",
+      conversationSignal:{working:false, message_for_owner:false}}]);
+    childMotion.freeze(false);
+    await tick();
+    expect(presented.settledMessages).toEqual({});
+    childMotion.dispose();
   });
 
-  it("preserves priority order and exact direct-conversation message marks", () => {
+  it("preserves creation and ID order and exact direct-conversation message marks", () => {
     const rail = buildWorkspaceRail([], [
       item("newer", { created_at: 20 }), item("older", { created_at: 10 }),
-      item("urgent", { priority: "P0", awaiting_reply: true, conversation_signal: {working:true,message_for_owner:true} }),
+      item("urgent", { created_at: 0, awaiting_reply: true, conversation_signal: {working:true,message_for_owner:true} }),
       item("children-message", { ticket_rollup: { ...quiet, awaiting_reply: true } })
     ]);
     expect(rail.items.map((row) => row.id)).toEqual(["urgent", "children-message", "older", "newer"]);

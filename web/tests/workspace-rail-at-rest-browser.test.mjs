@@ -65,7 +65,7 @@ onMount(() => {
   assert.ok(address && typeof address === "object");
 
   const script = String.raw`
-import json, os, pathlib, sys, time, re
+import json, os, pathlib, sys, time, re, struct, zlib
 from playwright.sync_api import sync_playwright, expect
 from tests.e2e.harness import browser_failure_evidence
 
@@ -74,15 +74,14 @@ LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this
 
 def card(ticket_id, item_id, item_title, **values):
     row = {
-        "id": ticket_id, "title": ticket_id, "is_backlogged": False, "priority": "P1", "deadline": None,
+        "id": ticket_id, "title": ticket_id, "is_backlogged": False, "deadline": None,
         "project_id": None, "project": None, "group_project_id": None, "group_project": None,
         "activity_at": 0, "has_pending_proposal": False, "ticket_status": "empty",
         "worker_type": "coding", "employee_backend": "codex", "stage": "needs_implementation",
         "stage_label": "Implementation", "gating_field": "implementation",
         "gating_field_label": "Implementation", "is_done": False, "blocked": False,
         "conversation_id": None, "waiting_to_closeout": False, "recap_preview": "A concise recap from the current projection.",
-        "sprint_item_id": item_id, "sprint_item_title": item_title, "sprint_item_priority": "P1",
-        "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
+        "sprint_item_id": item_id, "sprint_item_title": item_title, "awaiting_reply": False, "awaiting_answer": False, "awaiting_approval": False,
         "awaiting_agent_approval": False, "assigned": False, "agent_state": "idle",
     }
     row.update(values)
@@ -126,7 +125,6 @@ board = {
 for summary in board["sprint_items"]:
     summary["tickets"] = [row for column in board["columns"] for row in column["cards"] if row["sprint_item_id"] == summary["id"]]
     summary["title"] = summary["tickets"][0]["sprint_item_title"]
-    summary["priority"] = "P1"
     summary["recap_preview"] = ORCHESTRATOR_RECAP
 workers = {
     "chief_of_staff": {"label": "Chief of Staff", "needs_me": False, "awaiting_reply": False, "agent_working": False, "latest_turn_ended_sequence": 0},
@@ -146,14 +144,13 @@ manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=s
 ticket = dict(project_id='project_one', project='One', sprint_id=None, sprint_item_id=None,
     id='t_approval', title='Open ticket', worker_type='coding', employee_backend='claude',
     employee_launch_model=None, employee_launch_reasoning_effort=None,
-    employee_configuration_editable=False, stage='needs_what_changes', ceiling='done', priority='P2',
-    resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': None},
+    employee_configuration_editable=False, stage='needs_what_changes', ceiling='done', sprint_item_title=None,
     ticket_status='agent', ceiling_holder={'kind': 'owner', 'id': 'owner'}, conversation_id=None,
     conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': []},
     recap='Orientation', guidance='', pending_proposal=None,
     field_values={'brief': 'The request', 'success_condition': 'What done means', 'what_changes': 'The change'})
 
-workspace = dict(id="si_needs_him",title="Needs him",body="The orchestrator brief",priority="P1",project_id=None,project=None,
+workspace = dict(id="si_needs_him",title="Needs him",body="The orchestrator brief",project_id=None,project=None,
     created_at=0,updated_at=0,supervisor=dict(agent_key="sprint_item:si_needs_him",conversation_id=None),
     tickets=[],artifacts=[],conversation_history=[],ticket_rollup={},settled=False)
 
@@ -162,6 +159,10 @@ def respond(route):
     if path == "board": result = board
     elif path == "workers": result = workers
     elif path == "worker-types": result = manifest
+    elif path == "skills": result = {"skills": []}
+    elif path == "feedback": result = {"open": [], "open_count": 0, "handled_groups": []}
+    elif path == "conversation/backends/codex/sign-in": result = {"sign_in": None}
+    elif path.startswith("conversation/backends"): result = {"backends": []}
     elif path == "backends": result = {"backends": []}
     elif path.endswith("/workspace"): result = {**workspace,"tickets":board["sprint_items"][0]["tickets"]}
     elif path.endswith("/start-values"): result = {"backend_key":"codex","model":None,"reasoning_effort":None}
@@ -178,7 +179,7 @@ with sync_playwright() as p:
         page = browser.new_page(viewport={"width": 1280, "height": 900})
         page.context.tracing.start(screenshots=True,snapshots=True,sources=True)
         page.on("pageerror",lambda error:(errors.append(str(error)),print("Page error:",error,flush=True)))
-        page.route("**/api/**", respond)
+        page.context.route("**/api/**", respond)
         page.goto(sys.argv[1])
 
         needs_him = page.locator('[data-sprint-item="si_needs_him"]')
@@ -433,6 +434,57 @@ with sync_playwright() as p:
         page.mouse.move(1200, 950)
         expect(panel).to_have_attribute("aria-hidden", "true")
 
+        # Each utility opens in the workspace pane, restores from a reloadable
+        # address, and opens from that copied address in a second page.
+        utility_cases = [
+            ("Usage and Backends", "usage", "backends"),
+            ("Settings", "settings", "settings"),
+            ("Ideas", "ideas", "ideas"),
+            ("Feedback", "feedback", "feedback"),
+        ]
+        for label, utility, screen in utility_cases:
+            link = page.locator('.rail-utilities a[aria-label="'+label+'"]')
+            link.click()
+            pane = page.locator('.board-workspace-right [data-screen="'+screen+'"], .board-workspace-right [data-settings]')
+            expect(pane).to_be_visible()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            expect(link).to_have_attribute("aria-current", "page")
+            expect(page.locator('.rail-utilities a[aria-current="page"]')).to_have_count(1)
+            accent_border = page.evaluate("""() => {
+                const probe = document.createElement('span');
+                probe.style.borderColor = 'var(--accent-bright)';
+                document.body.append(probe);
+                const color = getComputedStyle(probe).borderTopColor;
+                probe.remove();
+                return color;
+            }""")
+            assert link.evaluate("element => getComputedStyle(element).borderTopColor") == accent_border
+            link.hover()
+            assert link.evaluate("element => getComputedStyle(element).borderTopColor") == accent_border
+            page.mouse.move(1200, 900)
+            assert link.evaluate("element => getComputedStyle(element).borderTopColor") == accent_border
+            assert page.evaluate("location.hash") == "#/workspace/utility/" + utility
+            copied_address = page.url
+            page.reload()
+            pane = page.locator('.board-workspace-right [data-screen="'+screen+'"], .board-workspace-right [data-settings]')
+            expect(pane).to_be_visible()
+            expect(page.locator('.rail-utilities a[aria-label="'+label+'"]')).to_have_attribute("aria-current", "page")
+            shared_context = browser.new_context(viewport={"width": 1280, "height": 900})
+            shared_context.route("**/api/**", respond)
+            shared_page = shared_context.new_page()
+            shared_page.goto(copied_address)
+            expect(shared_page.locator('.board-workspace-right [data-screen="'+screen+'"], .board-workspace-right [data-settings]')).to_be_visible()
+            expect(shared_page.locator('.rail-utilities a[aria-label="'+label+'"][aria-current="page"]')).to_be_visible()
+            shared_context.close()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+        # The utility content stacks with the rail on a compact viewport and
+        # remains inside the viewport without horizontal scrolling.
+        page.set_viewport_size(dict(width=820,height=1000))
+        expect(page.locator('.board-workspace-right [data-screen="feedback"]')).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.set_viewport_size(dict(width=1440,height=1000))
+
         # Hover freezes structure through a live refetch. Leaving applies the latest
         # answer, and a row that rejoins a group enters below its existing members.
         ordinary = next(r for r in board["columns"][0]["cards"] if r["id"] == "t_parent_quiet")
@@ -489,6 +541,20 @@ with sync_playwright() as p:
         mover_row = page.locator('[data-ticket-id="t_agent"]').first
         mover_row.scroll_into_view_if_needed()
         page.mouse.move(1200,950)
+        page.evaluate("location.hash='#/workspace/item/si_quiet'")
+        page.wait_for_timeout(100)
+        page.wait_for_function("""() => {
+          const card=document.querySelector('.orchestrator-card.selected'),css=getComputedStyle(card);
+          const color=document.createElement('span').style;color.color=css.getPropertyValue('--accent-bright');
+          return css.borderTopColor===color.color;
+        }""")
+        expected_destination = page.locator('[data-sprint-item="si_quiet"]').evaluate("""node=>{
+          while(node){const color=getComputedStyle(node).backgroundColor;
+            if(color!=='rgba(0, 0, 0, 0)')return color;node=node.parentElement;}
+        }""")
+        selected_card = page.locator('[data-sprint-item="si_quiet"]')
+        selected_before = selected_card.evaluate("e=>({background:getComputedStyle(e).backgroundColor,border:getComputedStyle(e).borderTopColor})")
+        page.screenshot(path=str(artifact_dir/"sidebar-motion-before.png"))
         before_y = mover_row.bounding_box()["y"]
         before_color = mover_row.evaluate("e=>getComputedStyle(e).color")
         before_spinner = mover_row.locator(".stage-mark").evaluate("e=>getComputedStyle(e).borderTopColor")
@@ -508,6 +574,10 @@ with sync_playwright() as p:
             const top=rect&&document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2)?.closest('[data-ticket-id]')?.getAttribute('data-ticket-id');
             window.__motionEvidence.push({ms:performance.now()-start,y:row?.getBoundingClientRect().y,
               color:css?.color,background:css?.backgroundColor,z:css?.zIndex,
+              cardBackground:row&&getComputedStyle(row.closest(".orchestrator-card")).backgroundColor,
+              selectedBorder:getComputedStyle(document.querySelector('.orchestrator-card.selected')).borderTopColor,
+              cardZ:row&&getComputedStyle(row.closest('.orchestrator-card')).zIndex,
+              selectedTravellingCard:row?.closest('.orchestrator-card')?.matches('.selected.rail-travelling-card'),
               spinner:mark&&getComputedStyle(mark).borderTopColor,
               animations,overlaps,top,travelling:row?.classList.contains('rail-travelling'),
               parent:row?.closest('[data-sprint-item]')?.getAttribute('data-sprint-item')});
@@ -521,6 +591,9 @@ with sync_playwright() as p:
         samples = page.evaluate("window.__motionEvidence")
         (artifact_dir/"sidebar-motion-samples.json").write_text(json.dumps(samples,indent=2))
         moving = [x for x in samples if x.get("travelling")]
+        selected_after = selected_card.evaluate("e=>({background:getComputedStyle(e).backgroundColor,border:getComputedStyle(e).borderTopColor})")
+        (artifact_dir/"selected-card-endpoints.json").write_text(json.dumps(dict(before=selected_before,after=selected_after),indent=2))
+        page.screenshot(path=str(artifact_dir/"sidebar-motion-settled.png"))
         assert moving, "No actual cross-parent travelling frames"
         after_y = mover_row.bounding_box()["y"]
         after_color = mover_row.evaluate("e=>getComputedStyle(e).color")
@@ -532,6 +605,12 @@ with sync_playwright() as p:
         assert before_spinner != after_spinner
         assert any(x["spinner"] not in [before_spinner,after_spinner] for x in moving)
         assert all(x["background"].startswith("rgb(") for x in moving), "Traveller surface must be immediately opaque"
+        assert all(x["background"] == expected_destination for x in moving)
+        assert all(x["cardBackground"] == expected_destination for x in moving)
+        assert selected_before['border'] == selected_after['border']
+        assert all(x['selectedBorder'] == selected_before['border'] for x in moving)
+        assert all(x['selectedTravellingCard'] and x['cardZ']=='3' for x in moving)
+        assert selected_before['background'] == selected_after['background'] == 'rgba(0, 0, 0, 0)'
         assert all(int(x["z"])>0 for x in moving)
         timings=[a for x in moving for a in x.get("animations",[])]
         assert timings and all(360<=a["duration"]<=560 for a in timings)
@@ -540,6 +619,157 @@ with sync_playwright() as p:
         assert crossing, "No measured crossing frames"
         assert all(x.get("top")=="t_agent" for x in crossing), crossing
         page.screenshot(path=str(artifact_dir/"sidebar-motion-settled.png"))
+        assert mover_row.evaluate("e=>getComputedStyle(e).backgroundColor") == "rgba(0, 0, 0, 0)"
+        assert page.locator("[style*=\"--rail-motion-\"]").count() == 0
+
+        # Reuse the live host to exercise a whole-card reorder and in-card group
+        # moves. These expose ancestor contamination and active-row edge halos.
+        def pixel(x,y):
+            # A one-pixel Chromium PNG has no left/above pixel for PNG filters.
+            png=page.screenshot(clip=dict(x=x,y=y,width=1,height=1))
+            offset=8; compressed=b""
+            while offset<len(png):
+                size=struct.unpack(">I",png[offset:offset+4])[0]
+                kind=png[offset+4:offset+8]; data=png[offset+8:offset+8+size]
+                if kind==b"IDAT": compressed+=data
+                offset+=size+12
+            return list(zlib.decompress(compressed)[1:4])
+
+        def surface_motion(name, selection, mutate, cancel=False):
+            page.evaluate("hash=>location.hash=hash", selection)
+            page.wait_for_timeout(100)
+            page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
+            page.wait_for_function("""() => {
+              const card=document.querySelector('.orchestrator-card.selected');
+              if(!card)return true;
+              const css=getComputedStyle(card),color=document.createElement('span').style;
+              color.color=css.getPropertyValue('--accent-bright');
+              return css.borderTopColor===color.color && css.backgroundColor==='rgba(0, 0, 0, 0)';
+            }""")
+            mutate()
+            page.evaluate(r"""() => {
+              const effective=node=>{
+                while(node) {const color=getComputedStyle(node).backgroundColor;
+                  if(color!=='rgba(0, 0, 0, 0)') return color; node=node.parentElement;}
+              };
+              window.__surfaceExpected=Object.fromEntries([...document.querySelectorAll('.orchestrator-card')].map(card=>
+                [card.dataset.railMotion,{own:effective(card),edge:effective(card.parentElement),border:getComputedStyle(card).borderTopColor}]));
+              const active=document.querySelector('.worker-row.ticket-row--active');
+              window.__activeFill=active&&effective(active);
+              window.__surfaceEvidence=[];
+              const start=performance.now();
+              const sample=()=>{
+                const nodes=[...document.querySelectorAll('.orchestrator-card.rail-moving,.bucket-label.rail-moving,.worker-row.rail-moving')];
+                window.__surfaceEvidence.push({ms:performance.now()-start,nodes:nodes.map(node=>{
+                  const css=getComputedStyle(node), card=node.closest('.orchestrator-card');
+                  const resting=window.__surfaceExpected[card.dataset.railMotion];
+                  const active=node.classList.contains('ticket-row--active');
+                  return {id:node.dataset.railMotion,background:css.backgroundColor,edge:css.outlineColor,
+                    expected:active?window.__activeFill:resting.own,expectedEdge:node===card?resting.edge:resting.own,
+                    border:css.borderTopColor,expectedBorder:resting.border,selected:node===card&&card.classList.contains("selected"),
+                    opacity:css.opacity,fading:node.getAnimations().some(a=>a.effect.getKeyframes().some(f=>f.opacity!==undefined)),active,width:css.outlineWidth};
+                })});
+                if(performance.now()-start<850)requestAnimationFrame(sample);
+              }; requestAnimationFrame(sample); void window.__refresh();
+            }""")
+            page.wait_for_function("document.querySelector('.orchestrator-card.rail-moving,.worker-row.rail-moving')")
+            page.wait_for_timeout(80)
+            if name=="selected-card-reorder":
+                paint=page.evaluate(r"""() => {
+                  const card=document.querySelector('.orchestrator-card.selected');
+                  for(const animation of document.querySelector('.approved-rail').getAnimations({subtree:true})) animation.pause();
+                  const r=card.getBoundingClientRect(),css=getComputedStyle(card);
+                  const underlay=document.createElement('div');underlay.id='card-paint-underlay';
+                  card.parentElement.style.position='relative';
+                  Object.assign(underlay.style,{position:'absolute',left:(card.offsetLeft+card.offsetWidth-6)+'px',top:card.offsetTop+'px',
+                    width:'12px',height:r.height+'px',transform:css.transform,background:'rgb(255, 0, 255)',zIndex:'0',pointerEvents:'none'});
+                  card.parentElement.append(underlay);
+                  const underlayRect=underlay.getBoundingClientRect();
+                  const rgb=color=>color.match(/\d+/g).slice(0,3).map(Number);
+                  return {interiorX:Math.floor(r.right-3),borderX:Math.floor(r.right-1),outlineX:Math.floor(r.right+2),
+                    underlayX:Math.floor(r.right+5),y:Math.floor(r.top+r.height/2),
+                    underlayRect:{x:underlayRect.x,y:underlayRect.y,width:underlayRect.width,height:underlayRect.height},
+                    cardRect:{x:r.x,y:r.y,width:r.width,height:r.height},
+                    clipRect:card.parentElement.getBoundingClientRect().toJSON(),
+                    borderHit:document.elementFromPoint(r.right-1,r.top+r.height/2)?.closest('[data-rail-motion]')?.getAttribute('data-rail-motion'),
+                    interior:rgb(css.backgroundColor),border:rgb(css.borderLeftColor),outline:rgb(css.outlineColor)};
+                }""")
+                page.screenshot(path=str(artifact_dir/"selected-card-border-paint.png"))
+                paint['actualInterior']=pixel(paint['interiorX'],paint['y'])
+                paint['actualBorder']=pixel(paint['borderX'],paint['y'])
+                paint['actualOutline']=pixel(paint['outlineX'],paint['y'])
+                paint['actualUnderlay']=pixel(paint['underlayX'],paint['y'])
+                (artifact_dir/"selected-card-border-pixels.json").write_text(json.dumps(paint,indent=2))
+                assert paint['actualUnderlay']==[255,0,255], paint
+                assert paint['actualInterior']==paint['interior'], paint
+                assert paint['actualBorder']==paint['border'], paint
+                assert paint['actualOutline']==paint['outline'], paint
+                page.evaluate("""() => {
+                  const underlay=document.querySelector('#card-paint-underlay');underlay.parentElement.style.removeProperty('position');underlay.remove();
+                  for(const animation of document.querySelector('.approved-rail').getAnimations({subtree:true})) animation.play();
+                }""")
+            if name=="active-row-group-move":
+                paint=page.evaluate(r"""() => {
+                  const row=document.querySelector('[data-ticket-id="t_agent"]');
+                  for(const animation of document.querySelector('.approved-rail').getAnimations({subtree:true})) animation.pause();
+                  const r=row.getBoundingClientRect(),css=getComputedStyle(row);
+                  const underlay=document.createElement('div'); underlay.id='paint-underlay';
+                  Object.assign(underlay.style,{position:'fixed',left:(r.right-45)+'px',top:r.top+'px',
+                    width:'52px',height:r.height+'px',background:'rgb(255, 0, 255)',zIndex:'0',pointerEvents:'none'});
+                  // The sibling underlay exposes any transparent body or edge.
+                  row.parentElement.style.position='relative';
+                  Object.assign(underlay.style,{position:'absolute',left:(row.offsetLeft+row.offsetWidth-45)+'px',
+                    top:row.offsetTop+'px',transform:getComputedStyle(row).transform});
+                  row.parentElement.append(underlay);
+                  const rgb=color=>color.match(/\d+/g).slice(0,3).map(Number);
+                  return {x:Math.floor(r.right-32),edgeX:Math.floor(r.right+2),underlayX:Math.floor(r.right+6),y:Math.floor(r.top+r.height/2),
+                    fill:rgb(css.backgroundColor),edge:rgb(css.outlineColor)};
+                }""")
+                page.screenshot(path=str(artifact_dir/"active-row-paint-proof.png"))
+                paint['actualFill']=pixel(paint['x'],paint['y'])
+                paint['actualEdge']=pixel(paint['edgeX'],paint['y'])
+                assert pixel(paint['underlayX'],paint['y']) == [255,0,255], paint
+                assert paint['actualFill'] == paint['fill'], paint
+                assert paint['actualEdge'] == paint['edge'], paint
+                page.screenshot(path=str(artifact_dir/"active-row-paint-proof.png"))
+                page.evaluate("""() => {
+                  const underlay=document.querySelector('#paint-underlay');underlay.parentElement.style.removeProperty('position');underlay.remove();
+                  for(const animation of document.querySelector('.approved-rail').getAnimations({subtree:true})) animation.play();
+                }""")
+            page.screenshot(path=str(artifact_dir/f"{name}-mid.png"))
+            if cancel: page.emulate_media(reduced_motion="reduce")
+            page.wait_for_timeout(900)
+            values=page.evaluate("window.__surfaceEvidence")
+            (artifact_dir/f"{name}-samples.json").write_text(json.dumps(values,indent=2))
+            nodes=[node for sample in values for node in sample["nodes"]]
+            assert nodes
+            for node in nodes:
+                assert node["background"] == node["expected"], node
+                assert node["edge"] == node["expectedEdge"], node
+                assert node["width"] == "4px", node
+                if node["selected"]: assert node["border"] == node["expectedBorder"], node
+                if not node["fading"]:
+                    assert float(node["opacity"]) == 1, node
+            assert page.locator(".rail-moving,.rail-travelling,.rail-travelling-card,[style*=\"--rail-motion-\"]").count() == 0
+            assert page.locator("[data-rail-motion-busy]").count() == 0
+
+            selected=page.locator('.orchestrator-card.selected')
+            if selected.count():
+                assert selected.evaluate("e=>getComputedStyle(e).backgroundColor") == 'rgba(0, 0, 0, 0)'
+            if cancel: page.emulate_media(reduced_motion="no-preference")
+            return nodes
+
+        # Reverse the real ordering key. The two cards travel as one measured batch.
+        reordered=surface_motion("selected-card-reorder", "#/workspace/item/si_quiet", lambda: destination.update(created_at=-1))
+        assert any(n["id"] == "card:si_quiet" for n in reordered)
+        assert any(n["id"] == "card:si_needs_him" for n in reordered)
+        active=surface_motion("active-row-group-move", "#/workspace/item/si_quiet/t_agent", lambda: mover.update(assigned=False))
+        assert any(n["active"] for n in active)
+        assert any(n["id"].startswith("heading:") for n in active)
+        # The real selected state has an accent border and no background fill.
+        surface_motion("selected-card-return", "#/workspace/item/si_quiet", lambda: destination.update(created_at=0))
+        surface_motion("cancelled-group-move", "#/workspace/item/si_quiet", lambda: mover.update(assigned=True), cancel=True)
+        page.evaluate("location.hash='#/workspace'")
 
         # A departure fades before its space closes. An arrival opens its space
         # before its row fades in; its new heading also fades instead of jumping.

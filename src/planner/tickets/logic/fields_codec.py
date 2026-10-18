@@ -21,11 +21,25 @@ def values_to_json(values: TicketFieldValues) -> str:
     return json.dumps(dict(values), ensure_ascii=False)
 
 
-def values_from_json(raw: str, field_ids: tuple[str, ...]) -> TicketFieldValues:
+def stored_values_from_json(raw: str) -> TicketFieldValues:
+    """Validate the stored string map, including fields no longer declared."""
     value: Any = json.loads(raw)
     _require(isinstance(value, dict))
-    _require(all(key in field_ids and isinstance(body, str) for key, body in value.items()))
+    _require(all(isinstance(body, str) for body in value.values()))
+    return MappingProxyType(value)
+
+
+def values_from_json(raw: str, field_ids: tuple[str, ...]) -> TicketFieldValues:
+    value = stored_values_from_json(raw)
     return MappingProxyType({key: value[key] for key in field_ids if key in value})
+
+
+def replace_declared_values(raw: str, values: TicketFieldValues, field_ids: tuple[str, ...]) -> str:
+    """Replace current values without deleting text outside the current declaration."""
+    _require(all(key in field_ids and isinstance(body, str) for key, body in values.items()))
+    stored = stored_values_from_json(raw)
+    historical = {field: body for field, body in stored.items() if field not in field_ids}
+    return values_to_json({**historical, **values})
 
 
 def proposal_to_json(proposal: PendingTicketProposal | None) -> str | None:

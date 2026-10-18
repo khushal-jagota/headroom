@@ -54,7 +54,7 @@ def test_shell_counts_actual_unique_conversations_without_worker_claims(
     evidence = server.db_path.parent / "shell-count-evidence"
     evidence.mkdir()
     project = api.direct_post(
-        server, "/api/projects", {"name": "Shell count proof", "priority": "P1"},
+        server, "/api/projects", {"name": "Shell count proof"},
     )
     item = api.direct_post(server, "/api/items", {
         "title": "Count supervisor", "project_id": project["id"],

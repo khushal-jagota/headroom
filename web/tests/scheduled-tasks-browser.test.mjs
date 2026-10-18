@@ -23,11 +23,10 @@ try {
 <script lang="ts">
   import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
 
-  const projects = [{ id: "project_other", name: "Other", summary: "", priority: "P2", created_at: 1, updated_at: 1 }, {
+  const projects = [{ id: "project_other", name: "Other", summary: "", created_at: 1, updated_at: 1 }, {
     id: "project_panels",
     name: "Panels",
     summary: "The Panels app",
-    priority: "P3",
     created_at: 1,
     updated_at: 1
   }];
@@ -61,7 +60,6 @@ try {
     title: "Existing daily task",
     worker_type: "coding",
     kickoff_note: "Use the saved schedule.",
-    priority: "P2",
     deadline: null,
     project_id: "project_panels",
     placement_mode: "backlog",
@@ -102,7 +100,6 @@ try {
       title: body.title,
       worker_type: body.worker_type,
       kickoff_note: body.kickoff_note,
-      priority: body.priority,
       deadline: body.deadline,
       project_id: body.project_id,
       placement_mode: "backlog",

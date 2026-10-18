@@ -1,4 +1,5 @@
 import { tick } from "svelte";
+import type { WorkspaceMessageConversation } from "./types";
 import { refreshWorkspaceRailSignals, stabilizeWorkspaceRail, type WorkspaceRail } from "./workspaceRail";
 
 // The approved Glide timing: distance changes duration, never the easing.
@@ -10,12 +11,41 @@ export const RAIL_MOTION = {
 export const railMoveDuration = (distance: number) => Math.round(Math.max(RAIL_MOTION.moveMin,
   Math.min(RAIL_MOTION.moveMax, 300 + Math.abs(distance) * .7)));
 
-type Part = { node: HTMLElement; rect: DOMRect; color: string; mark: string[] | null; parent: string | null };
+/** Rendered structure travels together, including independently discovered messages. */
+export type WorkspaceRailPresentation = {
+  rail: WorkspaceRail;
+  settledOpen: boolean;
+  settledMessages: Record<string, WorkspaceMessageConversation[]>;
+};
+
+type MotionSurface = { background: string; surrounding: string };
+type Part = { surface: MotionSurface; node: HTMLElement; rect: DOMRect; color: string; mark: string[] | null; parent: string | null };
 function snapshot(root: HTMLElement | null): Map<string, Part> {
+  if (!root || typeof document === "undefined") return new Map();
+  // Resolve the complete batch before motion classes alter any ancestor surface.
+  // Canvas composites transparent CSS colors over their real ancestor backgrounds.
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  const context = canvas.getContext("2d", { willReadFrequently: true })!;
+  const backgrounds = new Map<HTMLElement, string>();
+  function background(node: HTMLElement | null): string {
+    if (!node) return "rgb(255, 255, 255)";
+    const cached = backgrounds.get(node);
+    if (cached) return cached;
+    const behind = background(node.parentElement);
+    context.fillStyle = behind;
+    context.fillRect(0, 0, 1, 1);
+    context.fillStyle = getComputedStyle(node).backgroundColor;
+    context.fillRect(0, 0, 1, 1);
+    const [r, g, b] = context.getImageData(0, 0, 1, 1).data;
+    const color = `rgb(${r}, ${g}, ${b})`;
+    backgrounds.set(node, color);
+    return color;
+  }
   return new Map(Array.from(root?.querySelectorAll<HTMLElement>("[data-rail-motion]") ?? []).map((node) => {
     const mark = node.dataset.railMotion?.startsWith("row:") ? node.querySelector<HTMLElement>(".stage-mark--current-running") : null;
     const style = mark && getComputedStyle(mark);
-    return [node.dataset.railMotion!, { node, rect: node.getBoundingClientRect(), color: getComputedStyle(node).color,
+    return [node.dataset.railMotion!, { node, surface: { background: background(node), surrounding: background(node.parentElement) }, rect: node.getBoundingClientRect(), color: getComputedStyle(node).color,
       mark: style ? [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor] : null,
       parent: node.parentElement?.closest<HTMLElement>("[data-rail-motion]")?.dataset.railMotion ?? null }];
   }));
@@ -23,12 +53,18 @@ function snapshot(root: HTMLElement | null): Map<string, Part> {
 
 /** Defer structure during motion or hover; conversation facts stay live during hover. */
 export function createRailMotionController(root: () => HTMLElement | null,
-  read: () => WorkspaceRail, apply: (rail: WorkspaceRail) => void) {
-  let pending: WorkspaceRail | null = null;
+  read: () => WorkspaceRailPresentation, apply: (presentation: WorkspaceRailPresentation) => void) {
+  let pending: WorkspaceRailPresentation | null = null;
   let frozen = false;
   let busy = false;
   let disposed = false;
   const animations = new Set<Animation>();
+  let surfaces = new Map<HTMLElement, MotionSurface>();
+  function measure() {
+    const parts = snapshot(root());
+    surfaces = new Map([...parts.values()].map((part) => [part.node, part.surface]));
+    return parts;
+  }
   let media: MediaQueryList | null = null;
   const motionPreferenceChanged = () => { if (media?.matches) for (const animation of animations) animation.cancel(); };
   const reduced = () => {
@@ -40,6 +76,11 @@ export function createRailMotionController(root: () => HTMLElement | null,
   };
   function animate(node: HTMLElement, frames: Keyframe[], duration: number, delay = 0, travelling = false, easing = RAIL_MOTION.ease): Promise<void> {
     if (reduced() || typeof node.animate !== "function") return Promise.resolve();
+    const surface = surfaces.get(node);
+    if (surface) {
+      node.style.setProperty("--rail-motion-background", surface.background);
+      node.style.setProperty("--rail-motion-surrounding", surface.surrounding);
+    }
     node.classList.add("rail-moving");
     const travellingCard = travelling ? node.closest<HTMLElement>(".orchestrator-card") : null;
     if (travelling) { node.classList.add("rail-travelling"); travellingCard?.classList.add("rail-travelling-card"); }
@@ -47,8 +88,11 @@ export function createRailMotionController(root: () => HTMLElement | null,
     animations.add(animation);
     return animation.finished.catch(() => {}).then(() => {
       animations.delete(animation);
-      if (!Array.from(animations).some((active) => (active.effect as KeyframeEffect)?.target === node))
+      if (!Array.from(animations).some((active) => (active.effect as KeyframeEffect)?.target === node)) {
         node.classList.remove("rail-moving", "rail-travelling");
+        node.style.removeProperty("--rail-motion-background");
+        node.style.removeProperty("--rail-motion-surrounding");
+      }
       if (travellingCard && !Array.from(animations).some((active) => {
         const target = (active.effect as KeyframeEffect)?.target;
         return target instanceof HTMLElement && target.classList.contains("rail-travelling") && travellingCard.contains(target);
@@ -58,15 +102,53 @@ export function createRailMotionController(root: () => HTMLElement | null,
   async function drain(): Promise<void> {
     if (busy || frozen || disposed || !pending) return;
     busy = true;
-    const next = stabilizeWorkspaceRail(pending, read()); pending = null;
-    const first = snapshot(root());
+    const previous = read();
+    const next = {...pending, rail: stabilizeWorkspaceRail(pending.rail, previous.rail)}; pending = null;
+    const railRoot = root();
+    railRoot?.setAttribute("data-rail-motion-busy", "");
+    const section = railRoot?.querySelector<HTMLElement>(".settled");
+    const oldHeight = section?.getBoundingClientRect().height ?? 0;
+    const oldCount = railRoot?.querySelector<HTMLElement>("[data-settled-count]")?.textContent;
+    if (previous.settledOpen && !next.settledOpen && section) {
+      const body = section.querySelector<HTMLElement>("[data-settled-scroll]");
+      const header = section.querySelector<HTMLButtonElement>(".settled-head");
+      if (body?.contains(document.activeElement)) header?.focus();
+      // Keep the body mounted through the fade. Its space and chevron close in
+      // the same beat; a refresh arriving meanwhile waits in the shared queue.
+      const closing: Promise<void>[] = [];
+      section.style.overflow = "hidden";
+      closing.push(animate(section, [{height:`${oldHeight}px`}, {height:`${header?.getBoundingClientRect().height ?? 0}px`}], RAIL_MOTION.space));
+      const chevron = section.querySelector<HTMLElement>(".settled-chevron");
+      if (chevron) closing.push(animate(chevron, [{transform:"rotate(180deg)"}, {transform:"rotate(0deg)"}], RAIL_MOTION.space));
+      if (body) {
+        body.style.opacity = "0";
+        closing.push(animate(body, [{opacity:1}, {opacity:0}], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave));
+      }
+      await Promise.all(closing);
+      section.style.removeProperty("overflow");
+      if (disposed) return;
+      apply({...read(), settledOpen:false});
+      await tick();
+      pending ??= next;
+      busy = false;
+      railRoot?.removeAttribute("data-rail-motion-busy");
+      void drain();
+      return;
+    }
+    const first = measure();
     // Exit while the old space still exists. Headings leave with their last row.
-    const remaining = new Set<string>(["card:chief", ...next.items.map((item) => `card:${item.id}`)]);
-    for (const [id, groups] of [["chief", next.chiefGroups], ...next.items.map((item) => [item.id, item.groups] as const)] as const) {
+    const remaining = new Set<string>(["card:chief", "settled-section", ...next.rail.items.map((item) => `card:${item.id}`)]);
+    for (const [id, groups] of [["chief", next.rail.chiefGroups], ...next.rail.items.map((item) => [item.id, item.groups] as const)] as const) {
       for (const group of groups) {
         remaining.add(`heading:${id}:${group.key}`);
         for (const ticket of group.cards) remaining.add(`row:${ticket.id}`);
       }
+    }
+    if (next.settledOpen) for (const item of next.rail.settledItems) {
+      remaining.add(`settled:${item.id}`);
+      const messages = next.settledMessages[item.id] ?? [];
+      if (messages.length) remaining.add(`settled-heading:${item.id}`);
+      for (const message of messages) remaining.add(`settled-message:${item.id}:${message.conversationId}`);
     }
     const exits = [...first].filter(([key]) => !remaining.has(key));
     await Promise.all(exits.map(([, part]) => animate(part.node, [{ opacity: 1 }, { opacity: 0 }], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave)));
@@ -74,28 +156,57 @@ export function createRailMotionController(root: () => HTMLElement | null,
     // A pointer can arrive during an exit. Restore it, and defer the whole structure.
     if (frozen) {
       pending ??= next;
-      apply(refreshWorkspaceRailSignals(read(), pending));
+      apply(signalsOnly(pending));
       busy = false;
+      railRoot?.removeAttribute("data-rail-motion-busy");
       return;
     }
     apply(next);
     await tick();
     if (disposed) return;
-    const last = snapshot(root());
+    const last = measure();
     const plays: Promise<void>[] = [];
+    if (section) {
+      const newHeight = section.getBoundingClientRect().height;
+      if (Math.abs(oldHeight - newHeight) > .5) {
+        section.style.overflow = "hidden";
+        plays.push(animate(section, [{height:`${oldHeight}px`}, {height:`${newHeight}px`}], RAIL_MOTION.space)
+          .then(() => { section.style.removeProperty("overflow"); }));
+      }
+      if (previous.settledOpen !== next.settledOpen) {
+        const chevron = section.querySelector<HTMLElement>(".settled-chevron");
+        if (chevron) plays.push(animate(chevron,
+          [{transform:`rotate(${previous.settledOpen ? 180 : 0}deg)`}, {transform:`rotate(${next.settledOpen ? 180 : 0}deg)`}], RAIL_MOTION.space));
+      }
+      const count = section.querySelector<HTMLElement>("[data-settled-count]");
+      if (count && oldCount !== undefined && oldCount !== count.textContent) {
+        const outgoing = count.cloneNode(true) as HTMLElement;
+        outgoing.removeAttribute("data-settled-count");
+        outgoing.setAttribute("aria-hidden", "true");
+        outgoing.textContent = oldCount;
+        outgoing.style.position = "absolute";
+        outgoing.style.inset = "0 auto auto 0";
+        count.parentElement?.append(outgoing);
+        plays.push(animate(outgoing, [{opacity:1}, {opacity:0}], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave).then(() => outgoing.remove()));
+        plays.push(animate(count, [{opacity:0}, {opacity:1}], RAIL_MOTION.fadeIn, 0, false, RAIL_MOTION.enter));
+      }
+    }
     let distance = 0;
     for (const [key, part] of last) {
+      if (key === "settled-section") continue;
       const old = first.get(key);
       if (old) distance = Math.max(distance, Math.abs(old.rect.top - part.rect.top));
     }
-    const rowArrival = [...last.keys()].some((key) => key.startsWith("row:") && !first.has(key));
-    const rowExit = [...first.keys()].some((key) => key.startsWith("row:") && !last.has(key));
+    const isRow = (key: string) => key.startsWith("row:") || key.startsWith("settled:") || key.startsWith("settled-message:");
+    const rowArrival = [...last.keys()].some((key) => isRow(key) && !first.has(key));
+    const rowExit = [...first.keys()].some((key) => isRow(key) && !last.has(key));
     const duration = rowExit || rowArrival ? RAIL_MOTION.space : railMoveDuration(distance);
     for (const [key, part] of last) {
+      if (key === "settled-section") continue;
       const old = first.get(key);
       if (!old) {
         plays.push(animate(part.node, [{ opacity: 0, transform: "translateY(-4px)" }, { opacity: 1, transform: "none" }],
-          RAIL_MOTION.fadeIn, key.startsWith("row:") ? RAIL_MOTION.fadeDelay : 0, false, RAIL_MOTION.enter));
+          RAIL_MOTION.fadeIn, isRow(key) ? RAIL_MOTION.fadeDelay : 0, false, RAIL_MOTION.enter));
         continue;
       }
       // Children inherit their card's displacement. Subtract it to avoid double motion.
@@ -118,20 +229,36 @@ export function createRailMotionController(root: () => HTMLElement | null,
     }
     await Promise.all(plays);
     busy = false;
+    railRoot?.removeAttribute("data-rail-motion-busy");
     void drain();
   }
+  function signalsOnly(next: WorkspaceRailPresentation): WorkspaceRailPresentation {
+    const current = read();
+    // Discovery deliberately drops a read message. Read its facts from all
+    // tickets so a row held under the pointer still loses its unread mark.
+    const tickets = new Map([...next.rail.groups.flatMap((group) => group.cards),
+      ...[...next.rail.items, ...next.rail.settledItems].flatMap((item) => item.tickets)]
+      .map((ticket) => [ticket.id, ticket]));
+    return {...current, rail:refreshWorkspaceRailSignals(current.rail, next.rail),
+      settledMessages:Object.fromEntries(Object.entries(current.settledMessages).map(([id, messages]) =>
+        [id, messages.map((message) => {
+          const ticket = tickets.get(message.id);
+          return ticket ? {...message, conversationSignal:ticket.conversation_signal,
+            conversationId:ticket.conversation_id ?? message.conversationId} : message;
+        })]))};
+  }
   return {
-    update(next: WorkspaceRail) {
+    update(next: WorkspaceRailPresentation) {
       if (disposed) return;
       pending = next;
-      if (frozen) apply(refreshWorkspaceRailSignals(read(), next));
+      if (frozen) apply(signalsOnly(next));
       void drain();
     },
     freeze(value: boolean) {
       frozen = value;
-      if (value && pending && !disposed) apply(refreshWorkspaceRailSignals(read(), pending));
+      if (value && pending && !disposed) apply(signalsOnly(pending));
       if (!value) void drain();
     },
-    dispose() { disposed = true; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
+    dispose() { root()?.removeAttribute("data-rail-motion-busy"); disposed = true; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
   };
 }

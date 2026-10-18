@@ -68,7 +68,7 @@ def test_sprint_item_workspace_real_route_is_live_and_keeps_history(
     project = _post(
         server,
         "/api/projects",
-        {"name": "Workspace project", "summary": "", "priority": "P2"},
+        {"name": "Workspace project", "summary": ""},
     )
     item = _post(
         server,
@@ -76,7 +76,6 @@ def test_sprint_item_workspace_real_route_is_live_and_keeps_history(
         {
             "title": "Supervise the outcome",
             "body": "The shared brief stays editable and live.",
-            "priority": "P2",
             "project_id": project["id"],
         },
     )

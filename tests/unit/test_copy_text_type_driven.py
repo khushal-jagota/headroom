@@ -35,7 +35,6 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 _CODING_COPY_TEXT_GOLDEN = (
     "Coding ticket\n"
     "stage: needs_success_condition\n"
-    "priority: P3\n"
     "employee_backend: codex\n"
     "owner: worker\n"
     "\n"

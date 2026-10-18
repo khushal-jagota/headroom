@@ -262,6 +262,26 @@ with sync_playwright() as p:
     settled(page)
     assert height(page)['h'] > wide['h'], (wide,height(page))
 
+    # A trailing newline occupies an empty visual line. Native same-line edits
+    # retain selection/focus while the mirror measures soft wrapping and cap changes.
+    page.goto(sys.argv[1])
+    page.locator(INPUT).fill('one\ntwo\nthree\nfour\nfive\nsix')
+    settled(page)
+    six_lines = height(page)
+    page.locator(INPUT).evaluate('input => {input.focus();input.setSelectionRange(input.value.length,input.value.length)}')
+    page.keyboard.type('x')
+    page.keyboard.press('Backspace')
+    settled(page)
+    assert abs(height(page)['h'] - six_lines['h']) <= 0.1
+    assert page.locator(INPUT).evaluate('input => document.activeElement === input && input.selectionStart === input.value.length && input.selectionEnd === input.value.length')
+    page.keyboard.press('Shift+Enter')
+    settled(page)
+    trailing = height(page)
+    assert abs(trailing['h'] - six_lines['h'] - six_lines['line']) <= 1, (six_lines,trailing)
+    page.keyboard.press('Backspace')
+    settled(page)
+    assert abs(height(page)['h'] - six_lines['h']) <= 0.1
+
     # Native text paste grows the actual textarea; mixed drag/drop and image paste
     # travel through browser events into the same ordered attachment strip.
     page.goto(sys.argv[1])

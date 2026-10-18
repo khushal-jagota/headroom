@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Final, Literal, NotRequired, TypedDict
 
 from planner.conversation.contracts import ConversationBackendKey
-from planner.core.contracts import Priority
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +46,6 @@ class SprintItem:  # §3.2
     id: str
     title: str
     body: str
-    priority: Priority
     project_id: str
     project_name: str
     supervisor_launch_configuration: SprintItemSupervisorLaunchConfiguration
@@ -83,7 +81,6 @@ class CreateItemBody(TypedDict, total=False):  # POST /items
     project: str | None  # legacy project name; route requires project or project_id
     project_id: str | None
     body: str  # default ""
-    priority: str | None  # Priority value; default P3
 
 
 class OrchestratorStartupResult(TypedDict):
@@ -138,7 +135,6 @@ class OutcomeSummary(TypedDict):
     settled: bool
     id: str
     title: str
-    priority: str
     project_id: str
     project: str
     created_at: int
@@ -149,7 +145,6 @@ class SprintTicketSummary(TypedDict):
     id: str
     title: str
     stage: str
-    priority: str
     ticket_status: str
     project_id: str | None
     sprint_item_id: str | None

@@ -87,7 +87,7 @@
     ticket.data?.sprint_item_id
       ? {
           id: ticket.data.sprint_item_id,
-          title: ticket.data.resolved_priority_anchors?.sprint_item?.title || "Sprint Item"
+          title: ticket.data.sprint_item_title || "Sprint Item"
         }
       : null
   );

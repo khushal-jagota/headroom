@@ -6,17 +6,21 @@ import type { BoardCard, BoardSprintItem, ChiefManagementSettings, SprintItemWor
 const quiet = { awaiting_reply:false, awaiting_answer:false, awaiting_approval:false,
   awaiting_agent_approval:false, assigned:false, agent_state:"idle" as const };
 const card = (id:string, values:Partial<BoardCard> = {}): BoardCard & SprintItemWorkspaceTicket => ({
-  ...quiet, id, title:id, priority:"P2", stage:"needs_implementation", ticket_status:"agent",
+  ...quiet, id, title:id, stage:"needs_implementation", ticket_status:"agent",
   conversation_id:`conversation-${id}`, sprint_item_id:null, sprint_item_title:null,
   ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id:string, values:Partial<BoardSprintItem> = {}): BoardSprintItem => ({
-  ...quiet, id, title:id, recap_preview:"", priority:"P2", created_at:1, conversation_id:`supervisor-${id}`,
+  ...quiet, id, title:id, recap_preview:"", created_at:1, conversation_id:`supervisor-${id}`,
   ticket_rollup:quiet, tickets:[], ...values
 });
 const chief = (values:Partial<ChiefManagementSettings> = {}):ChiefManagementSettings => ({
-  label:"Chief of Staff", conversation_id:"chief-conversation", awaiting_reply:false, ...values
-} as ChiefManagementSettings);
+  employee_id:"chief", label:"Chief of Staff", recap:"",
+  skill:{name:"panels-chief-of-staff", description:"Chief role", markdown_body:"# Chief"},
+  launch_defaults:{employee_backend:"codex", employee_launch_model:null, employee_launch_reasoning_effort:null},
+  conversation_id:"chief-conversation", needs_me:false, awaiting_reply:false, agent_working:false,
+  latest_turn_ended_sequence:0, owner_read_through_sequence:0, ...values
+});
 
 describe("exact unread conversation discovery", () => {
   it("includes own supervisor, Chief and Workers even under settled parents or terminal stages", () => {

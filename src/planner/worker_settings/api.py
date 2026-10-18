@@ -14,7 +14,7 @@ from planner.conversation.contracts import ConversationSystem, require_conversat
 from planner.conversation.logic.signals import conversation_signal
 from planner.conversation.signals import read_conversation_signals
 from planner.conversation.storage import ConversationStore
-from planner.core.authctx import RequestContext, request_context
+from planner.core.authctx import RequestContext, request_context, require_owner
 from planner.core.authority import owner_only, require_above
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
@@ -103,6 +103,7 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
     return {
         "employee_id": settings.employee_id,
         "label": settings.label,
+        "recap": settings.recap,
         "skill": _skill_json(settings.skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
@@ -264,6 +265,12 @@ async def patch_skill(
 @router.get("/workers/chief-of-staff/settings")
 async def get_chief_settings(conn: DbConn) -> JsonDict:
     return _chief_json(service.read_chief_settings(conn))
+
+
+@router.put("/workers/chief-of-staff/recap")
+async def put_chief_recap(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDict:
+    require_owner(ctx)
+    return _chief_json(service.update_chief_recap(conn, raw))
 
 
 @router.put("/workers/chief-of-staff/launch-defaults")

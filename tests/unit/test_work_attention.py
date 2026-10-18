@@ -293,7 +293,6 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
         "UPDATE tickets SET ceiling_holder = ? WHERE id = ?",
         (json.dumps({"kind": "chief", "id": "chief"}), rows[3].id),
     )
-    conn.execute("UPDATE sprint_items SET priority = 'P0' WHERE id = ?", (item.id,))
     conn.execute(
         "INSERT INTO conversations "
         "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
@@ -335,7 +334,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     }
     [item_row] = board["sprint_items"]
     assert item_row["title"] == "Complete approval queue"
-    assert item_row["priority"] == "P0"
+    assert "priority" not in item_row
     children = {row["id"]: row for row in item_row["tickets"]}
     assert set(children) == {row.id for row in rows}
     owner_approval = children[rows[1].id]

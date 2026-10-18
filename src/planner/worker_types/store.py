@@ -223,10 +223,10 @@ def _refuse_to_strand_tickets(
 ) -> None:
     """Refuse a rewrite that would leave an unfinished Ticket on a stage or field it lost.
 
-    A Ticket names its Stage, and its saved text is keyed by field id. A removed stage id
-    leaves a Ticket pointing at nothing, and a removed field id drops the text under it
-    the next time the Ticket is read. Neither is recoverable, so the write is refused and
-    the Tickets in the way are named.
+    A removed Stage leaves an unfinished Ticket without its current step. A removed
+    field hides text the unfinished Ticket still needs, although storage preserves it.
+    Refuse these changes and name the affected Tickets. Finished Tickets can retain
+    historical text outside the current definition.
     """
     lost_stages = frozenset(previous.stage_ids()) - frozenset(replacement.stage_ids())
     stranded = _tickets_standing_on(conn, previous.worker_type, lost_stages)

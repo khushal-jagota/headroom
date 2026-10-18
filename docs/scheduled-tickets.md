@@ -10,7 +10,7 @@ schedule → current local minute → ordinary Ticket + occurrence receipt
 ```
 
 New schedules use the `daily` cadence. Their template holds the title, Worker type,
-Brief context, priority, deadline, Project, explicit orchestrator assignment, launch
+Brief context, deadline, Project, explicit orchestrator assignment, launch
 choice, resolved execution locale, and blockers. An assignment is either Chief or one ordinary orchestrator.
 The canonical wire field is `orchestrator`, with `kind` and `id`.
 

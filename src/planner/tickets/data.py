@@ -28,7 +28,6 @@ from planner.core.contracts import (
     OWNER_PRINCIPAL,
     Principal,
     PrincipalKind,
-    Priority,
     principal_legacy_actor,
 )
 from planner.core.errors import ErrorCode, PlannerError
@@ -41,10 +40,7 @@ from planner.tickets.contracts import (
     EmployeeLaunchConfiguration,
     NextCeiling,
     PendingTicketProposal,
-    ProjectPriorityAnchor,
     ResolvedTicketCreationContext,
-    ResolvedTicketPriorityAnchors,
-    SprintItemPriorityAnchor,
     StageOwnershipMode,
     Ticket,
     TicketDeletion,
@@ -200,78 +196,6 @@ def _validate_ticket_creation_placement(
             )
 
 
-def _resolve_priority_anchors(
-    conn: sqlite3.Connection,
-    *,
-    project_id: str | None,
-    sprint_item_id: str | None,
-) -> ResolvedTicketPriorityAnchors:
-    """Load the placement anchors that explain a new Ticket's priority default."""
-    if sprint_item_id is not None:
-        row = conn.execute(
-            "SELECT sprint_items.id AS sprint_item_id, "
-            "sprint_items.title AS sprint_item_title, "
-            "sprint_items.priority AS sprint_item_priority, "
-            "projects.id AS project_id, projects.name AS project_name, "
-            "projects.priority AS project_priority "
-            "FROM sprint_items JOIN projects ON projects.id = sprint_items.project_id "
-            "WHERE sprint_items.id = ?",
-            (sprint_item_id,),
-        ).fetchone()
-        if row is None:
-            raise PlannerError(
-                ErrorCode.not_found,
-                "sprint item not found",
-                {"sprint_item_id": sprint_item_id},
-            )
-        return ResolvedTicketPriorityAnchors(
-            sprint_item=SprintItemPriorityAnchor(
-                id=str(row["sprint_item_id"]),
-                title=str(row["sprint_item_title"]),
-                priority=Priority(str(row["sprint_item_priority"])),
-            ),
-            project=ProjectPriorityAnchor(
-                id=str(row["project_id"]),
-                name=str(row["project_name"]),
-                priority=(
-                    Priority(str(row["project_priority"]))
-                    if row["project_priority"] is not None
-                    else None
-                ),
-            ),
-        )
-    if project_id is not None:
-        row = conn.execute(
-            "SELECT id, name, priority FROM projects WHERE id = ?", (project_id,)
-        ).fetchone()
-        if row is None:
-            raise PlannerError(
-                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
-            )
-        return ResolvedTicketPriorityAnchors(
-            sprint_item=None,
-            project=ProjectPriorityAnchor(
-                id=str(row["id"]),
-                name=str(row["name"]),
-                priority=(Priority(str(row["priority"])) if row["priority"] is not None else None),
-            ),
-        )
-    return ResolvedTicketPriorityAnchors(sprint_item=None, project=None)
-
-
-def _created_ticket_priority(
-    explicit_priority: Priority | None,
-    anchors: ResolvedTicketPriorityAnchors,
-) -> Priority:
-    if explicit_priority is not None:
-        return explicit_priority
-    if anchors.sprint_item is not None:
-        return anchors.sprint_item.priority
-    if anchors.project is not None and anchors.project.priority is not None:
-        return anchors.project.priority
-    return Priority.P3
-
-
 def requested_ticket_launch_configuration(
     worker_type: str,
     *,
@@ -400,7 +324,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         id=row["id"],
         title=row["title"],
         stage=stage,
-        priority=Priority(row["priority"]),
         deadline=row["deadline"],
         project_id=row["effective_project_id"],
         project_name=row["project_name"],
@@ -408,30 +331,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         sprint_item_id=row["sprint_item_id"],
         orchestrator_kind=str(row["orchestrator_kind"]),
         effective_sprint_id=row["sprint_id"],
-        resolved_priority_anchors=ResolvedTicketPriorityAnchors(
-            sprint_item=(
-                SprintItemPriorityAnchor(
-                    id=str(row["sprint_item_id"]),
-                    title=str(row["priority_sprint_item_title"]),
-                    priority=Priority(str(row["priority_sprint_item_priority"])),
-                )
-                if row["sprint_item_id"] is not None
-                else None
-            ),
-            project=(
-                ProjectPriorityAnchor(
-                    id=str(row["effective_project_id"]),
-                    name=str(row["project_name"]),
-                    priority=(
-                        Priority(str(row["priority_project_priority"]))
-                        if row["priority_project_priority"] is not None
-                        else None
-                    ),
-                )
-                if row["effective_project_id"] is not None
-                else None
-            ),
-        ),
+        sprint_item_title=row["sprint_item_title"],
         recap=row["recap"],
         guidance=row["guidance"],
         ceiling=str(row["ceiling"]),
@@ -467,9 +367,7 @@ def _ticket_row(conn: sqlite3.Connection, ticket_id: str) -> sqlite3.Row:
         "SELECT tickets.*, CASE WHEN tickets.sprint_item_id IS NOT NULL "
         "THEN sprint_items.project_id ELSE tickets.project_id END AS effective_project_id, "
         "projects.name AS project_name, "
-        "projects.priority AS priority_project_priority, "
-        "sprint_items.title AS priority_sprint_item_title, "
-        "sprint_items.priority AS priority_sprint_item_priority, "
+        "sprint_items.title AS sprint_item_title, "
         f"{derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects ON projects.id = CASE WHEN tickets.sprint_item_id IS NOT NULL "
@@ -575,6 +473,21 @@ def _release_ticket_blocks(
         ticket_blocks.touch_blocked_ticket(conn, blocked_ticket_id, now)
 
 
+def _field_values_for_storage(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    values: TicketFieldValues,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> str:
+    """Retain historical text while replacing the declared values inside the write transaction."""
+    row = conn.execute("SELECT field_values FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+    assert row is not None
+    return fields_codec.replace_declared_values(
+        row["field_values"], values, worker_type_definition.field_ids()
+    )
+
+
 def _apply_decision(
     conn: sqlite3.Connection,
     ticket: Ticket,
@@ -620,7 +533,12 @@ def _apply_decision(
         "pending_proposal_revision = pending_proposal_revision + ?, "
         "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ? WHERE id = ?",
         (
-            fields_codec.values_to_json(decision.field_values),
+            _field_values_for_storage(
+                conn,
+                ticket.id,
+                decision.field_values,
+                worker_type_definition=worker_type_definition,
+            ),
             fields_codec.proposal_to_json(decision.pending_proposal),
             int(proposal_changed),
             str(new_stage),
@@ -970,7 +888,6 @@ def create_ticket(
     brief: str | None = "",
     project_id: str | None = None,
     sprint_id: str | None = None,
-    priority: Priority | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
     orchestrator_kind: str | None = None,
@@ -1032,10 +949,6 @@ def create_ticket(
             authority.require_above_a_ticket_being_created(
                 conn, principal, ticket_id=ticket_id, parent_outcome_id=sprint_item_id
             )
-        priority_anchors = _resolve_priority_anchors(
-            conn, project_id=project_id, sprint_item_id=sprint_item_id
-        )
-        stored_priority = _created_ticket_priority(priority, priority_anchors)
         ceiling = (
             default_ceiling
             if stated_ceiling is None
@@ -1063,12 +976,12 @@ def create_ticket(
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
-            "employee_launch_reasoning_effort, stage, priority, deadline, "
+            "employee_launch_reasoning_effort, stage, deadline, "
             "project_id, sprint_id, sprint_item_id, orchestrator_kind, "
             "recap, ceiling, ceiling_holder, "
             "conversation_id, field_values, pending_proposal, pending_proposal_revision, "
             "created_at, updated_at, locale) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
             "?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1078,7 +991,6 @@ def create_ticket(
                 launch_configuration.employee_launch_model,
                 launch_configuration.employee_launch_reasoning_effort,
                 stage,
-                stored_priority.value,
                 deadline,
                 None if sprint_item_id is not None else project_id,
                 sprint_id,
@@ -1146,9 +1058,7 @@ def read_ticket_by_conversation_id(conn: sqlite3.Connection, conversation_id: st
         "SELECT tickets.*, CASE WHEN tickets.sprint_item_id IS NOT NULL "
         "THEN sprint_items.project_id ELSE tickets.project_id END AS effective_project_id, "
         "projects.name AS project_name, "
-        "projects.priority AS priority_project_priority, "
-        "sprint_items.title AS priority_sprint_item_title, "
-        "sprint_items.priority AS priority_sprint_item_priority, "
+        "sprint_items.title AS sprint_item_title, "
         f"{derivation.HAS_LIVE_BLOCKER_COLUMN} "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects ON projects.id = CASE WHEN tickets.sprint_item_id IS NOT NULL "
@@ -1745,7 +1655,6 @@ def edit_ticket(
         )
 
         title = edit["title"] if "title" in edit else ticket.title
-        priority = edit["priority"] if "priority" in edit else ticket.priority
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
         sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
         sprint_item_id = (
@@ -1804,7 +1713,6 @@ def edit_ticket(
         )
         candidates: tuple[tuple[str, str, str | int | None, str | int | None], ...] = (
             ("title", "title", ticket.title, title),
-            ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
             ("project_id", "project_id", old_stored_project_id, stored_project_id),
             ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
@@ -1844,7 +1752,12 @@ def edit_ticket(
                     "field_values",
                     "field_values",
                     fields_codec.values_to_json(ticket.field_values),
-                    fields_codec.values_to_json(edited_values),
+                    _field_values_for_storage(
+                        conn,
+                        ticket.id,
+                        edited_values,
+                        worker_type_definition=worker_type_definition,
+                    ),
                 )
             )
 

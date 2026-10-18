@@ -11,7 +11,7 @@ from planner.conversation.contracts import ConversationSystem
 from planner.core import ticket_blocks
 from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
-from planner.core.contracts import Principal, PrincipalKind, Priority
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import service as message_delivery_service
 from planner.tickets import data as tickets_data
@@ -67,7 +67,6 @@ def create_ticket(
     brief: str | None = "",
     project_id: str | None = None,
     sprint_id: str | None = None,
-    priority: Priority | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
     orchestrator_kind: str | None = None,
@@ -103,7 +102,6 @@ def create_ticket(
         brief=brief,
         project_id=project_id,
         sprint_id=sprint_id,
-        priority=priority,
         deadline=deadline,
         sprint_item_id=sprint_item_id,
         orchestrator_kind=orchestrator_kind,

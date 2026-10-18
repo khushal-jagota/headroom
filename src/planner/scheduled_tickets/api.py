@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.contracts import JsonDict, Priority
+from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects import data as projects_data
 from planner.scheduled_tickets import actions, data, views
@@ -39,7 +39,6 @@ _CREATE_KEYS = frozenset(
         "title",
         "worker_type",
         "kickoff_note",
-        "priority",
         "deadline",
         "project",
         "project_id",
@@ -87,7 +86,6 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         project_id=body_opt_str(raw, "project_id"),
         project_name=body_opt_str(raw, "project"),
     )
-    priority_raw = body_opt_str(raw, "priority")
     sprint_item_id = None
     orchestrator = raw.get("orchestrator")
     if orchestrator is not None:
@@ -120,9 +118,6 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         title=body_str(raw, "title"),
         worker_type=worker_type,
         kickoff_note=body_str(raw, "kickoff_note"),
-        priority=(
-            Priority.P3 if priority_raw is None else parse_enum(Priority, priority_raw, "priority")
-        ),
         deadline=body_opt_str(raw, "deadline"),
         project_id=None if project is None else project.id,
         sprint_id=None,
@@ -141,7 +136,9 @@ async def create_schedule(
     _reject_unknown(raw, _CREATE_KEYS)
     template = _template_from_create(raw, conn)
     await warm_ticket_creation_model(
-        conn, model_resolver, worker_type=template.worker_type,
+        conn,
+        model_resolver,
+        worker_type=template.worker_type,
         employee_backend=template.employee_backend,
         employee_launch_model=template.employee_launch_model,
     )
@@ -192,8 +189,6 @@ async def patch_schedule(
             changes[key] = body_str(raw, key)
     if "worker_type" in changes:
         changes["worker_type"] = _require_worker_type(str(changes["worker_type"]))
-    if "priority" in raw:
-        changes["priority"] = parse_enum(Priority, body_str(raw, "priority"), "priority")
     for key in (
         "deadline",
         "project_id",
@@ -222,13 +217,19 @@ async def patch_schedule(
     if {"worker_type", "employee_backend", "employee_launch_model"} & changes.keys():
         existing = data.read_schedule(conn, schedule_id).template
         await warm_ticket_creation_model(
-            conn, model_resolver,
+            conn,
+            model_resolver,
             worker_type=body_str(raw, "worker_type", existing.worker_type),
-            employee_backend=(body_opt_str(raw, "employee_backend")
-                              if "employee_backend" in raw else existing.employee_backend),
-            employee_launch_model=(body_opt_str(raw, "employee_launch_model")
-                                   if "employee_launch_model" in raw
-                                   else existing.employee_launch_model),
+            employee_backend=(
+                body_opt_str(raw, "employee_backend")
+                if "employee_backend" in raw
+                else existing.employee_backend
+            ),
+            employee_launch_model=(
+                body_opt_str(raw, "employee_launch_model")
+                if "employee_launch_model" in raw
+                else existing.employee_launch_model
+            ),
             model_source_is_historical=not (
                 {"employee_backend", "employee_launch_model"} & changes.keys()
             ),

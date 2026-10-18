@@ -99,13 +99,12 @@ def rail_server(tmp_path: Path) -> Iterator[ServerHandle]:
 
 
 def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject, JsonObject]:
-    project = api.direct_post(server, "/api/projects", {"name": "Rail proof", "priority": "P1"})
+    project = api.direct_post(server, "/api/projects", {"name": "Rail proof"})
     item = api.direct_post(
         server,
         "/api/items",
         {
             "title": "Review the connected retirement rail",
-            "priority": "P1",
             "project_id": project["id"],
         },
     )
@@ -114,7 +113,6 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
         "/api/items",
         {
             "title": "Empty orchestrator stays visible",
-            "priority": "P2",
             "project_id": project["id"],
         },
     )
@@ -364,10 +362,10 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
     dots retain unread facts. Terminal rows retain their local lifecycle group.
     """
     server = rail_server
-    project = api.direct_post(server, "/api/projects", {"name": "Settled proof", "priority": "P1"})
+    project = api.direct_post(server, "/api/projects", {"name": "Settled proof"})
     parents = [
         api.direct_post(
-            server, "/api/items", {"title": title, "priority": "P1", "project_id": project["id"]}
+            server, "/api/items", {"title": title, "project_id": project["id"]}
         )
         for title in ("Settled with own message", "Quiet settled parent")
     ]

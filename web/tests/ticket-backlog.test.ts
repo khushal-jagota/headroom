@@ -51,7 +51,7 @@ describe("bounded orchestrator ticket discovery", () => {
       const chief = { kind: "chief", id: "chief" } as const;
       const item = { kind: "sprint_item", id: "item one" } as const;
       for (const [principal, filter, offset, suffix] of [
-        [chief, "active", 0, "&orchestrator_kind=chief"],
+        [chief, "active", 0, "&orchestrator_kind=chief&is_backlogged=false"],
         [item, "backlogged", 30, "&orchestrator_kind=sprint_item&orchestrator_id=item%20one&is_backlogged=true"],
         [chief, "done", 0, "&orchestrator_kind=chief&include_terminal=true&stage=done"]
       ] as const) {

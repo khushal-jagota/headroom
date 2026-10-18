@@ -25,13 +25,6 @@ from planner.tickets import derivation
 from planner.tickets.logic.recap import recap_preview
 from planner.worker_types.configuration import configured_worker_type_registry
 
-_PRIORITY_RANK = ("P0", "P1", "P2", "P3")
-
-
-def _prio_rank(priority: str) -> int:
-    return _PRIORITY_RANK.index(priority)
-
-
 # --- serializers ---------------------------------------------------------------
 
 
@@ -41,7 +34,6 @@ def item_json(item: SprintItem) -> JsonDict:
         "title": item.title,
         "settled": item.settled,
         "body": item.body,
-        "priority": item.priority.value,
         "project_id": item.project_id,
         "project": item.project_name,
         "supervisor": {
@@ -92,7 +84,7 @@ def idea_json(row: sqlite3.Row) -> JsonDict:
 def item_tickets(
     conn: sqlite3.Connection, item_id: str | None, *, sprint_id: str | None = None
 ) -> list[JsonDict]:
-    """Per-item ticket rows for the tracking-page disclosure: id/title/stage/priority
+    """Per-item ticket rows for the tracking-page disclosure: id/title/stage
     plus the board-card signals the sprint ticket row colours off —
     has_pending_proposal, ticket_status, waiting_to_closeout, gating_field, and
     blocked — ordered created_at, id (matching the loose-ticket ordering). A light
@@ -133,7 +125,6 @@ def item_tickets(
                 "sprint_item_id": r["sprint_item_id"],
                 "stage": stage,
                 "is_backlogged": bool(r["is_backlogged"]),
-                "priority": str(r["priority"]),
                 "activity_at": int(r["updated_at"]),
                 "conversation_id": r["conversation_id"],
                 "has_pending_proposal": r["pending_proposal"] is not None,
@@ -160,13 +151,13 @@ def item_tickets(
     return result
 
 
-def _item_row_key(row: sqlite3.Row) -> tuple[int, int, str]:
-    return (_prio_rank(str(row["priority"])), int(row["created_at"]), str(row["id"]))
+def _item_row_key(row: sqlite3.Row) -> tuple[int, str]:
+    return (int(row["created_at"]), str(row["id"]))
 
 
 def list_items(conn: sqlite3.Connection, *, project_id: str | None = None) -> list[JsonDict]:
     rows = conn.execute(
-        "SELECT id, priority, created_at FROM sprint_items"
+        "SELECT id, created_at FROM sprint_items"
         + (" WHERE project_id=?" if project_id is not None else ""),
         (project_id,) if project_id is not None else (),
     ).fetchall()
@@ -248,7 +239,6 @@ def outcome_summary(item: SprintItem) -> OutcomeSummary:
         id=item.id,
         title=item.title,
         settled=item.settled,
-        priority=item.priority.value,
         project_id=item.project_id,
         project=item.project_name,
         created_at=item.created_at,
@@ -274,9 +264,7 @@ def list_item_summaries(
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     count = int(conn.execute("SELECT count(*) FROM sprint_items" + where, params).fetchone()[0])
     rows = conn.execute(
-        "SELECT id FROM sprint_items"
-        + where
-        + " ORDER BY priority, created_at, id LIMIT ? OFFSET ?",
+        "SELECT id FROM sprint_items" + where + " ORDER BY created_at, id LIMIT ? OFFSET ?",
         (*params, page_request.limit, page_request.offset),
     ).fetchall()
     return ListPage(
@@ -340,13 +328,12 @@ def sprint_tracking_view(
         tickets = item_tickets(conn, None, sprint_id=sprint_id)
         outcome_ids = committed | {str(t["sprint_item_id"]) for t in tickets if t["sprint_item_id"]}
         outcomes = [sprints_data.read_item(conn, oid).item for oid in outcome_ids]
-        outcomes.sort(key=lambda item: (_prio_rank(item.priority.value), item.created_at, item.id))
+        outcomes.sort(key=lambda item: (item.created_at, item.id))
         summaries = [
             SprintTicketSummary(
                 id=str(t["id"]),
                 title=str(t["title"]),
                 stage=str(t["stage"]),
-                priority=str(t["priority"]),
                 ticket_status=str(t["ticket_status"]),
                 project_id=t["project_id"],
                 sprint_item_id=t["sprint_item_id"],

@@ -1,4 +1,4 @@
-import type { Priority, ProjectSummary, SprintOutcomeGroup } from "./types";
+import type { ProjectSummary, SprintOutcomeGroup } from "./types";
 import {
   WORK_ITEM_TICKET_GROUPS,
   workItemTicketGroupKey
@@ -10,7 +10,6 @@ export type SprintTicket = {
   id: string;
   title: string;
   stage: string;
-  priority: Priority;
   ticket_status: string;
   is_backlogged?: boolean;
   waiting_to_closeout?: boolean;
@@ -26,7 +25,6 @@ export type SprintTicket = {
 export type SprintProjectGroup = {
   key: string;
   label: string;
-  priority: Priority | null;
   outcomes: SprintOutcomeGroup[];
 };
 
@@ -61,12 +59,11 @@ export type SprintDateRange = {
   date_end: string;
 };
 
-function presentationTicket(ticket: TicketConditionFacts & { id?: string; title?: string; priority?: Priority }) {
+function presentationTicket(ticket: TicketConditionFacts & { id?: string; title?: string }) {
   return {
     ...ticket,
     id: ticket.id ?? "",
     title: ticket.title ?? "",
-    priority: ticket.priority ?? "P3",
     awaiting_answer: Boolean(ticket.awaiting_answer),
     awaiting_agent_approval: Boolean(ticket.awaiting_agent_approval)
   } as const;
@@ -101,17 +98,6 @@ export function sprintDayLabel(sprint: SprintDateRange, planningDate: string): s
   return `day ${day} of ${total}`;
 }
 
-const priorityRank = new Map<Priority, number>([
-  ["P0", 0],
-  ["P1", 1],
-  ["P2", 2],
-  ["P3", 3]
-]);
-
-function rankPriority(priority: Priority | null | undefined): number {
-  return priority ? (priorityRank.get(priority) ?? priorityRank.size) : priorityRank.size;
-}
-
 export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicketCondition {
   const projected = presentationTicket(ticket);
   const key = workItemTicketGroupKey(projected);
@@ -129,8 +115,7 @@ function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTic
         Number(workItemTicketGroupKey(presentationTicket(right)) === "blocked");
       if (blockedDifference !== 0) return blockedDifference;
     }
-    return rankPriority(left.priority) - rankPriority(right.priority) ||
-      left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
+    return left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
       left.id.localeCompare(right.id);
   });
 }
@@ -177,21 +162,19 @@ export function sprintProjectGroups(
     const key = outcome.project_id;
     const project = projectsById.get(outcome.project_id);
     const label = outcome.project || project?.name || "Other";
-    const group = grouped.get(key) || { key, label, priority: project?.priority || null, outcomes: [] };
+    const group = grouped.get(key) || { key, label, outcomes: [] };
     group.outcomes.push(item);
     grouped.set(key, group);
   }
 
   for (const group of grouped.values()) {
     group.outcomes.sort((left, right) =>
-      rankPriority(left.outcome.priority) - rankPriority(right.outcome.priority) ||
       left.outcome.created_at - right.outcome.created_at ||
       left.outcome.id.localeCompare(right.outcome.id)
     );
   }
 
   return [...grouped.values()].sort((left, right) =>
-    rankPriority(left.priority) - rankPriority(right.priority) ||
     fallbackProjectRank(left.label) - fallbackProjectRank(right.label) ||
     left.label.localeCompare(right.label, undefined, { sensitivity: "base" }) ||
     left.key.localeCompare(right.key)

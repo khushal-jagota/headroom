@@ -253,7 +253,6 @@ def test_api_creation_and_default_saves_resolve_current_variant(
 
 
 def test_schedule_occurrence_resolves_a_stored_historical_model(tmp_path: Path) -> None:
-    from planner.core.contracts import Priority
     from planner.scheduled_tickets import actions as schedule_actions
     from planner.scheduled_tickets.contracts import (
         OccurrenceOutcome,
@@ -293,7 +292,6 @@ def test_schedule_occurrence_resolves_a_stored_historical_model(tmp_path: Path) 
             title="Stored choice",
             worker_type="probe",
             kickoff_note="Check current model",
-            priority=Priority.P3,
             deadline=None,
             project_id="project_other",
             placement_mode=ScheduledTicketPlacementMode.backlog,

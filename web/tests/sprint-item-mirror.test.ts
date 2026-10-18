@@ -29,7 +29,6 @@ function ticket(
     title: id,
     recap_preview: "",
     stage: "needs_implementation",
-    priority: "P1",
     activity_at: 1,
     is_backlogged: false,
     ticket_status: "empty",
@@ -66,7 +65,6 @@ function boardCard(row: SprintItemWorkspaceTicket, itemId = "si_mirror"): BoardC
     employee_backend: "codex",
     sprint_item_id: itemId,
     sprint_item_title: "Mirror Item",
-    sprint_item_priority: "P1"
   };
 }
 
@@ -84,7 +82,6 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
     id: "si_mirror",
     title: "Mirror Item",
     body: "",
-    priority: "P1",
     project_id: "project_panels",
     project: "Panels",
     created_at: 1,
@@ -111,7 +108,7 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
 
 function boardItem(rows: SprintItemWorkspaceTicket[]): BoardSprintItem {
   const full = workspace(rows);
-  return { id: full.id, title: full.title, recap_preview: "", priority: full.priority,
+  return { id: full.id, title: full.title, recap_preview: "",
     created_at: full.created_at, conversation_id: null, tickets: rows,
     ticket_rollup: quiet, ...quiet };
 }
@@ -309,15 +306,15 @@ describe("the shared Item and Ticket presentation", () => {
     expect(buildWorkspaceRail([], []).items).toEqual([]);
   });
 
-  it("keeps board membership and priority, age, ID order with complete children", () => {
+  it("keeps board membership and age, ID order with complete children", () => {
     const summaries = [
       { ...boardItem([]), id: "si_newer", created_at: 2 },
       { ...boardItem([ticket("done", { stage: "done" }), ticket("off-day", { assigned: true })]), id: "si_mirror", created_at: 1 },
-      { ...boardItem([]), id: "si_urgent", priority: "P0" as const },
+      { ...boardItem([]), id: "si_oldest", created_at: 0 },
       { ...boardItem([]), id: "si_after", created_at: 1 }
     ];
     const rail = buildWorkspaceRail([], summaries);
-    expect(rail.items.map((item) => item.id)).toEqual(["si_urgent", "si_after", "si_mirror", "si_newer"]);
+    expect(rail.items.map((item) => item.id)).toEqual(["si_oldest", "si_after", "si_mirror", "si_newer"]);
     expect(rail.items.find((item) => item.id === "si_mirror")?.rested).toBe(false);
     expect(rail.items.find((item) => item.id === "si_mirror")?.groups[0].cards[0].id).toBe("off-day");
   });

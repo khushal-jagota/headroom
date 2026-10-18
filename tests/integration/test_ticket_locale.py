@@ -48,8 +48,6 @@ def test_http_mac_refusal_requirements_explicit_override_and_schedule(
         "create",
         "--name",
         "Mac project",
-        "--priority",
-        "P2",
         "--requires-macos",
     )
     request: JsonObject = {

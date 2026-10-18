@@ -104,10 +104,7 @@ def ticket(ticket_id, worker_type, stage, field, body, created_at):
         'worker_type': worker_type, 'employee_backend': 'codex',
         'employee_launch_model': None, 'employee_launch_reasoning_effort': None,
         'employee_configuration_editable': False, 'stage': stage, 'ceiling': stage,
-        'priority': 'P2', 'resolved_priority_anchors': {
-            'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'},
-            'sprint_item': {'id': 'item_one', 'title': 'Outcome', 'priority': 'P2'}
-        },
+        'sprint_item_title': 'Outcome',
         'ticket_status': 'awaiting_approval',
         'ceiling_holder': {'kind': 'sprint_item', 'id': 'item_one'},
         'conversation_id': None, 'conversation_history': [], 'day_ids': [],
@@ -131,18 +128,14 @@ tickets = {
 approvals = []
 scope_writes = []
 review_ticket = 't_coding'
-priority_route = None
 accept_attempts = []
 read_count = 0
 
 def respond(route):
-    global read_count, priority_route
+    global read_count
     path = route.request.url.split('/api/', 1)[1]
     if path.startswith('tickets?'):
         path = 'tickets/' + parse_qs(path.split('?', 1)[1])['id'][0]
-    if path == 'tickets/t_brief' and route.request.method == 'PATCH' and 'priority' in route.request.post_data_json:
-        priority_route = route
-        return
     if path == 'review':
         result = {'items': [{'ticket_id': review_ticket, 'field': tickets[review_ticket]['pending_proposal']['field'], 'title': tickets[review_ticket]['title']}], 'running_worker_count': 0}
     elif path.startswith('tickets/') and path.count('/') == 1 and route.request.method == 'PATCH':
@@ -416,18 +409,13 @@ with sync_playwright() as p:
             page.emulate_media(reduced_motion='no-preference')
             assert mark.evaluate('(element) => getComputedStyle(element).animationName') != 'none'
             page.emulate_media(reduced_motion='reduce')
-    # Brief priority writes cannot race approval in Review.
+    # Brief approval needs no unrelated control write.
     review_ticket = 't_brief'
     page.evaluate("window.__showReview('t_brief', 'brief')")
     expect(block()).to_have_attribute('data-field', 'brief')
     expect(block().locator('[data-send-back]')).to_have_count(0)
-    page.get_by_label('Ticket priority', exact=True).select_option('P1')
-    expect(block().locator('[data-accept]')).to_be_disabled()
-    assert len(approvals) == 5
-    assert priority_route is not None
-    tickets['t_brief']['priority'] = 'P1'
-    priority_route.fulfill(status=200, content_type='application/json', body=json.dumps(tickets['t_brief']))
     expect(block().locator('[data-accept]')).to_be_enabled()
+    assert len(approvals) == 5
     assert errors == [], errors
     if artifact_dir:
         (Path(artifact_dir) / 'frontend-assertions.json').write_text(json.dumps({'hosts': ['TicketRoute', 'ReviewRoute'], 'same_proposal_revision': 1, 'same_reviewer': 'Orchestrator', 'screenshots': evidence, 'browser_errors': errors, 'steps': step_states, 'approval_transactions': approvals, 'scope_transactions': scope_writes}, indent=2))

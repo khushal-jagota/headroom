@@ -26,7 +26,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
 ) -> None:
     server = rail_server
     project = api.direct_post(
-        server, "/api/projects", {"name": "Lifecycle proof", "priority": "P2"}
+        server, "/api/projects", {"name": "Lifecycle proof"}
     )
     item = api.direct_post(
         server, "/api/items", {"title": "Synthetic lifecycle review", "project_id": project["id"]}

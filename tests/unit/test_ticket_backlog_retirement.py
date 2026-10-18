@@ -71,15 +71,14 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
     assert deferred_again.worker_step_claim_revision == claimed.worker_step_claim_revision
 
 
-def test_removed_stage_and_field_are_rejected(tmp_db: Connection) -> None:
+def test_removed_stage_is_rejected_and_historical_field_is_hidden(tmp_db: Connection) -> None:
     from planner.tickets.logic.fields_codec import values_from_json
 
     definition = configured_worker_type_registry().require("coding")
     assert not definition.is_known_stage("cancelled")
     with pytest.raises(PlannerError, match="stage outside the linear order"):
         definition.validate_ticket_position("cancelled", definition.default_ceiling())
-    with pytest.raises(PlannerError, match="corrupt ticket field state"):
-        values_from_json('{"retirement":"Legacy provenance"}', definition.field_ids())
+    assert values_from_json('{"retirement":"Legacy provenance"}', definition.field_ids()) == {}
     assert definition.is_terminal("done")
     assert definition.advance_target("done") is None
 
