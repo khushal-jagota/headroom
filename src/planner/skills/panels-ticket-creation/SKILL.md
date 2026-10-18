@@ -95,7 +95,7 @@ panels ticket create --input-json - <<'JSON'
   "worker_type": "coding",
   "project_id": "project_example",
   "orchestrator": {"kind": "sprint_item", "id": "si_example"},
-  "kickoff_note": "Faithful intake context",
+  "brief": "Faithful intake context",
   "ceiling": "needs_success_condition",
   "ceiling_holder": {"kind": "sprint_item", "id": "si_example"}
 }
