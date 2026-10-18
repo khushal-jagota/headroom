@@ -155,8 +155,9 @@ selects broad default coverage. Missing mapped historical coverage broadens or s
 Documentation-only and empty diffs omit source suites but still require candidate proof.
 The selection records its control revision, requested SHA, baseline, paths, and reasons.
 
-Ruff, mypy, three separate pytest processes, Svelte checks, typechecked Vitest, and
-selected Node browser hosts run directly as selected. Independent check steps report
+Ruff, mypy, three separate pytest processes, Svelte checks, and typechecked Vitest
+run as separate checks. Selected browser entries share one multi-entry Vite build,
+static server, and Chromium process. Independent cases retain fresh contexts. Check steps report
 failures even when another check fails. Missing tools, empty selected collection, and
 unexpected required skips fail the gate. Seven named paid-provider opt-ins remain visible
 without default coverage credit. No provider opt-in is enabled by this workflow.
@@ -194,6 +195,41 @@ Repository landing on staging does not activate a changed production workflow. T
 owner must merge the reviewed revision to main. No production dispatch is required to
 review these checks. Any required-check setting must retain effective protection until
 the replacement is available. Production deployment and restart remain owner actions.
+
+
+### Shared browser selection and receipts
+
+`npm --prefix web run test:browser -- workspace` runs one selected entry. Omit the entry
+name to run the eight-entry catalog. Multiple entry names share one Vite build, HTTP
+server, and Chromium process. Each case retains its own context and network fixtures.
+The catalog lives in `web/tests/browser/catalog.json`.
+
+The deploy selector reads capability from the tracked requested-source catalog. It
+runs all selected entries in one invocation. The control checkout validates that
+invocation's receipt against the requested-source catalog and exact revision. Missing
+entries, duplicate identities, absent cases, empty proof, skips, and failures refuse
+release admission. A receipt from another revision or invocation also refuses admission.
+Workspace motion additionally requires the Node projection cases and the compiler for
+the TypeScript test project. A successful browser process cannot replace that proof.
+
+Rollback source without the catalog retains the original independent commands and exit
+checks. That older format has no per-case receipt obligation. A source that declares the
+new catalog never falls back after a missing, malformed, or failed receipt. An old
+control checkout discovers the new entry wrappers through its existing file inventory.
+The retained direct rail alias can repeat workspace under old control. This is a
+compatibility cost, not a ninth catalog entry.
+
+Unknown impact and a missing selector map broaden to all default suites. Invalid
+catalog declarations refuse admission. Required local tools, including bubblewrap for
+browser selections, remain mandatory. Only the exact provider opt-in skip allowlist
+excludes paid proof. Gate changes require the disposable hosted rehearsal before
+integration into the release branch.
+
+The integration bootstrap case remains. It runs the requested revision's builder
+with real dependencies and checks its installed result. The release gate uses the
+control revision's builder. These can differ during rollback, so the actual candidate
+smoke does not replace that source-builder proof.
+
 
 ## Disposable workflow rehearsal
 

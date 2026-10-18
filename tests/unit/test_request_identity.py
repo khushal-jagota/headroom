@@ -1,33 +1,63 @@
+"""CLI identity reaches its actual outgoing HTTP request."""
+
 from __future__ import annotations
 
+import os
+from typing import Any
+
+import httpx
 import pytest
+from click.testing import CliRunner
 
-from planner.cli import http
+from planner.cli.main import main
 
 
+@pytest.mark.parametrize("actor", ["worker", None])
 def test_cli_headers_say_what_the_environment_says_and_nothing_else(
     monkeypatch: pytest.MonkeyPatch,
+    actor: str | None,
 ) -> None:
-    """One position per process, whichever command was typed.
-
-    A command used to choose between claiming the worker identity and passing the
-    ambient one through, so the same process was a Ticket at one verb and Khushal at
-    the next. A Ticket id with no actor beside it is not a claim to be that Ticket.
-    """
-    monkeypatch.setenv("PLAN_ACTOR", "worker")
+    for key in tuple(os.environ):
+        if key.startswith("PLAN_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("PLAN_SERVER_URL", "http://panels.test")
     monkeypatch.setenv("PLAN_TICKET_ID", "t_worker")
-    assert http._headers() == {
-        "X-Plan-Actor": "worker",
-        "X-Plan-Ticket-ID": "t_worker",
+    if actor is not None:
+        monkeypatch.setenv("PLAN_ACTOR", actor)
+    observed: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        observed.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "projects": [],
+                "page": {
+                    "match_count": 0,
+                    "return_count": 0,
+                    "omitted_before": 0,
+                    "omitted_after": 0,
+                    "complete": True,
+                    "next_offset": None,
+                    "limit": 30,
+                    "offset": 0,
+                },
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+
+        def request(method: str, url: str, **kwargs: Any) -> httpx.Response:
+            return client.request(method, url, **kwargs)
+
+        monkeypatch.setattr(httpx, "request", request)
+        result = CliRunner().invoke(main, ["project", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    assert len(observed) == 1
+    assert observed[0].url.path == "/api/projects"
+    headers = {
+        key.lower(): value
+        for key, value in observed[0].headers.items()
+        if key.lower().startswith("x-plan-")
     }
-
-    monkeypatch.delenv("PLAN_ACTOR")
-    assert http._headers() == {}
-
-
-# require_direct_write and require_planning_write used to be pinned here. Both are gone:
-# who may act is one question now, asked in planner.core.authority and proved by
-# test_authority_rule and the authority matrix. This file keeps its own subject, which is
-# turning headers into a truthful Principal.
-
-
+    assert headers == ({"x-plan-actor": "worker", "x-plan-ticket-id": "t_worker"} if actor else {})

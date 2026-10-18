@@ -18,45 +18,16 @@ from tests.e2e.approval_message_diagnostics import ApprovalMessageDiagnostics
 from tests.e2e.harness import (
     WAIT_MS,
     ApiHelper,
-    JsonObject,
     ServerHandle,
-    _append_rows,
     capture_success,
 )
+from tests.support.connected_rows import _conversation as _conversation
+from tests.support.connected_rows import _message as _message
+from tests.support.connected_rows import _post as _post
 
-from planner.conversation.events import MessageToOwnerEventPayload
-from planner.conversation.message_content import text_message_content
-from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 
 EVIDENCE = Path("data/verification/approval-message-dots")
-
-
-def _post(server: ServerHandle, path: str, body: JsonObject) -> JsonObject:
-    response = httpx.post(server.base + path, json=body, timeout=10)
-    assert response.is_success, response.text
-    value: JsonObject = response.json()
-    return value
-
-
-def _conversation(server: ServerHandle, name: str) -> None:
-    _post(
-        server,
-        "/api/conversation/conversations",
-        {"conversation_id": name, "model": "gpt-6.1-sol", "backend_key": "codex"},
-    )
-
-
-def _message(server: ServerHandle, conversation: str, sender: Principal, text: str) -> None:
-    _append_rows(
-        server,
-        conversation,
-        MessageToOwnerEventPayload(
-            content=text_message_content(text),
-            sender=sender,
-            recipient=OWNER_PRINCIPAL,
-            sender_label="Proof Worker",
-        ),
-    )
 
 
 def _read_position(server: ServerHandle, conversation: str) -> int:
@@ -320,7 +291,15 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         capture_success(page, str(EVIDENCE / "chief-own-message-only.png"))
         page.locator("[data-chief-destination]").click(timeout=WAIT_MS)
-        expect(page.get_by_text("Chief direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
+        expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
+        assert _read_position(server, "dot-chief") == 0
+        page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
+        page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
+        expect(
+            page.locator("[data-conversation-transcript]").get_by_text(
+                "Chief direct message", exact=True
+            )
+        ).to_be_visible(timeout=WAIT_MS)
         expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(
             0, timeout=WAIT_MS
         )

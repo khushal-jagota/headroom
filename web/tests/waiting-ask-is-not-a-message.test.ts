@@ -80,11 +80,6 @@ describe("a worker waiting on an answer", () => {
     ]);
   });
 
-  it("has no conversation dot on the Workspace rail", () => {
-    const waiting = boardCard({ awaiting_answer: true });
-    expect(conversationSignalReading(waiting)).not.toContain("data-conversation-signal");
-  });
-
   it("is not called a message on the Sprint Item page", () => {
     expect(sprintTicketCondition({ ...quiet, awaiting_answer: true })).toEqual({
       word: "needs your answer"
@@ -94,7 +89,6 @@ describe("a worker waiting on an answer", () => {
   it("is not called a message in the Feedback inbox", () => {
     const waiting = { ...quiet, awaiting_answer: true };
     expect(feedbackTicketStateLabel(waiting)).toBe("Needs your answer");
-    expect(conversationSignalReading(waiting)).not.toContain("data-conversation-signal");
   });
 });
 

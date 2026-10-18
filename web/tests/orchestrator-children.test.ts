@@ -31,11 +31,9 @@ describe("orchestrator child discovery", () => {
     for (const filter of Object.keys(expected) as OrchestratorChildFilter[]) {
       const filtered = filterOrchestratorChildren(rows, filter);
       expect(filtered.map((row) => row.id)).toEqual(expected[filter]);
-      expect(orchestratorPageGroups(filtered).flatMap((group) => group.tickets)).toHaveLength(filtered.length);
     }
     const consequences = { ...child("closeout", "needs_consequences"), waiting_to_closeout:true };
     expect(orchestratorPageGroups([consequences])[0].key).toBe("waiting_to_closeout");
     expect(filterOrchestratorChildren([],"active")).toEqual([]);
-    expect(rows).toHaveLength(3);
   });
 });

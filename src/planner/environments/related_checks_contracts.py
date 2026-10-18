@@ -25,6 +25,7 @@ class RelatedSelection(TypedDict):
     e2e: list[str]
     vitest: list[str]
     browser: list[str]
+    browser_format: Literal["legacy", "shared-v1"]
     ruff: bool
     ruff_paths: list[str]
     mypy: bool

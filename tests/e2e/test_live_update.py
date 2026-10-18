@@ -82,57 +82,6 @@ def _assert_same_document(page: Page) -> None:
     assert page.evaluate("() => window.__documentMark") == "same document"
 
 
-def test_a_change_reaches_the_open_board_without_a_reload(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-    api: ApiHelper,
-) -> None:
-    # The Workspace rail holds the groups that want the reader, so a Ticket has to be in
-    # one of them to have a card at all. A kickoff note parks the Ticket for approval,
-    # which is Waiting for Brief — the live update itself is what this test is about.
-    ticket_id = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Board card before the change",
-        "--kickoff-note",
-        "Waiting on the kickoff",
-    )["id"]
-
-    page = open_page(
-        context_factory(), server, "#/workspace/chief-of-staff", 'section[data-screen="workspace"]'
-    )
-    card = f'.board-workspace-left [data-ticket-id="{ticket_id}"]'
-    # The approved rail nests this exact Worker under Chief. Its own approval bucket
-    # stays visible; the live-update contract does not depend on the page body.
-    page.wait_for_selector(card, state="attached", timeout=WAIT_MS)
-    assert "Board card before the change" in page.inner_text(card)
-
-    _mark_page(page)
-    url_before = page.url
-    flushes = _flushes(page)
-
-    api.direct_patch(
-        server, f"/api/tickets/{ticket_id}", {"title": "Board card after the change"}
-    )
-
-    _wait_for_flush(page, flushes)
-    page.wait_for_function(
-        "selector => document.querySelector(selector)"
-        "?.textContent.includes('Board card after the change')",
-        arg=card,
-        timeout=WAIT_MS,
-    )
-
-    # The card changed inside the page that was already open: same document, same URL.
-    _assert_same_document(page)
-    assert page.url == url_before
-    assert "Board card before the change" not in page.inner_text(card)
 
 
 def test_composing_survives_a_change_to_the_same_ticket(

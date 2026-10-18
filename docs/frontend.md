@@ -649,3 +649,43 @@ styling), `web/dist/` (built app served by FastAPI).
 ---
 
 _Last verified: 2026-10-18._
+
+
+## Frontend test commands
+
+`npm --prefix web run test:vitest` runs runtime tests under Node and checks the full
+TypeScript test project. Its normal footer lists the runtime files that ran and names
+absent browser, Python, Svelte, and build proof. A focused successful command prints
+PARTIAL and keeps exit zero. Unlisted runtime files receive no credit from that command.
+
+`npm --prefix web run test:browser` runs the shared browser catalog. Add entry names after
+`--` to select `shell-feedback`, `ticket-review`, `configuration-schedules`, `conversation`,
+`composer-voice`, `workspace`, `artifacts`, or `historical-sprint`. One invocation shares
+the build, static server, and Chromium process. Independent cases keep fresh contexts.
+
+The workspace entry first runs `workspace-rail-projection.test.ts` with typechecked
+Vitest. A missing, empty, skipped, failed, or invalid companion result stops the browser
+setup. The compiler checks the whole frontend test project, including unrelated typed
+fixtures. The retained direct `node web/tests/workspace-rail-at-rest-browser.test.mjs`
+command invokes workspace and carries the same companion requirement.
+
+Other former direct host commands move to their catalog entry. Ideas and feedback use
+`shell-feedback`. Approval, Stage owner, and guidance use `ticket-review`. Worker setup
+and scheduled tasks use `configuration-schedules`. Pane, conversation switches,
+unanswered sends, and open-state cases use `conversation`. Composer and voice use
+`composer-voice`. Rail, order, Settled groups, children, and reader state use `workspace`.
+File preview uses `artifacts`. Sprint documents use `historical-sprint`.
+
+`npm --prefix web test` runs full Vitest and the browser catalog. `test:legacy` remains
+an alias for `test:browser`. Browser output names executed and omitted boundaries and
+never supplies backend or production build credit.
+
+The conversation entry keeps the named position regressions from the conversation fix.
+The composer entry also checks trailing-newline measurement, focus, and selection.
+
+Run `.venv/bin/python web/tests/browser/conversation-position-controls.py OUTPUT_DIRECTORY`
+to replay the same position cases against the pinned unfixed source. This explicit audit
+creates a disposable worktree and its own pinned virtualenv. It requires the eight known
+geometric failures and four preventative passes. An infrastructure error cannot substitute
+for an expected defect. The command records diagnostics and test hashes, then removes the
+worktree. The normal catalog requires all twelve position cases to pass on current source.

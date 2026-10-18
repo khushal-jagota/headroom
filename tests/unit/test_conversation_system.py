@@ -15,6 +15,7 @@ import json
 import logging
 import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1331,8 +1332,14 @@ def test_change_signal_observers_see_the_settled_runtime_transition(
         await _start(harness)
         observed_running: list[bool] = []
 
+        observer_thread = ThreadPoolExecutor(max_workers=1)
+
         def observe() -> None:
-            observed_running.append(harness.system._conversations["c"].running_turn is not None)
+            observed_running.append(
+                observer_thread.submit(asyncio.run, harness.system.is_running("c")).result(
+                    timeout=2
+                )
+            )
 
         unsubscribe = change_signal.subscribe(observe)
         try:
@@ -1349,6 +1356,7 @@ def test_change_signal_observers_see_the_settled_runtime_transition(
             assert ConversationEventKind.message_to_owner not in await harness.recorded_kinds("c")
         finally:
             unsubscribe()
+            observer_thread.shutdown(wait=True)
 
     _run(exercise)
 

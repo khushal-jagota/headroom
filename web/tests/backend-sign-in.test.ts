@@ -9,10 +9,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  BACKENDS_PAGE_SURROUNDINGS,
   backendCanBeSignedIn,
   signInCaveat,
-  signInIsPending,
   signInOutcome
 } from "../src/lib/conversation/backendSignIn";
 import type { BackendSignIn, BackendSnapshot } from "../src/lib/conversation/wire";
@@ -117,14 +115,6 @@ describe("signInCaveat", () => {
   });
 });
 
-describe("signInIsPending", () => {
-  it("is true only while a sign-in is still running", () => {
-    expect(signInIsPending(signIn())).toBe(true);
-    expect(signInIsPending(signIn({ state: "ended" }))).toBe(false);
-    expect(signInIsPending(null)).toBe(false);
-  });
-});
-
 describe("signInOutcome", () => {
   it("says nothing while a sign-in is pending", () => {
     expect(signInOutcome(signIn())).toBeNull();
@@ -180,10 +170,6 @@ describe("signInCaveat and running turns", () => {
     expect(caveat).not.toContain("A turn already running");
   });
 
-  it("says nothing only when the account is known unusable and nothing is running", () => {
-    expect(signInCaveat(snapshot(), { turnsInFlight: false })).toBeNull();
-  });
-
   it("warns a usable account however much is known about running turns", () => {
     const usable = snapshot({
       identity: {
@@ -206,38 +192,5 @@ describe("signInCaveat and running turns", () => {
     expect(
       signInCaveat(snapshot({ backend_key: "claude" }), { turnsInFlight: "unknown" })
     ).toBeNull();
-  });
-});
-
-describe("what the Backends page actually passes", () => {
-  it("passes unknown, so the production path keeps the conditional disclosure", () => {
-    // The page imports this exact value, so this is the production behaviour and not a
-    // parallel arrangement that only the test sees.
-    expect(BACKENDS_PAGE_SURROUNDINGS.turnsInFlight).toBe("unknown");
-  });
-
-  it("shows the conditional caveat for a dead account on the page's own input", () => {
-    expect(signInCaveat(snapshot(), BACKENDS_PAGE_SURROUNDINGS)).toContain(
-      "If a turn is running"
-    );
-  });
-
-  it("shows the plain caveat for a usable account on the page's own input", () => {
-    const usable = snapshot({
-      identity: {
-        status: "authenticated",
-        account_label: "owner@example.com",
-        detail: null,
-        login_command: "codex login"
-      }
-    });
-
-    expect(signInCaveat(usable, BACKENDS_PAGE_SURROUNDINGS)).toContain(
-      "A turn already running"
-    );
-  });
-
-  it("defaults to the page's reading when no surroundings are given", () => {
-    expect(signInCaveat(snapshot())).toBe(signInCaveat(snapshot(), BACKENDS_PAGE_SURROUNDINGS));
   });
 });

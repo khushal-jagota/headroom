@@ -60,7 +60,6 @@ def test_audit_rejects_unknown_worker_type(tmp_db: Connection) -> None:
     with pytest.raises(RuntimeError, match="ticket integrity audit failed: id=t_bad") as exc:
         tickets_data.audit_ticket_registry_integrity(tmp_db)
     assert "unknown worker type" in str(exc.value)
-    assert "unknown worker type" in str(exc.value)
 
 
 def test_audit_rejects_syntactically_invalid_fields_json(tmp_db: Connection) -> None:

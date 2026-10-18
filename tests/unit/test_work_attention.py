@@ -105,13 +105,17 @@ def test_shell_count_tracks_distinct_actual_work_across_all_roles(
     }
     message_sequences = {}
     for conversation_id, sender in senders.items():
-        message = asyncio.run(record.append_message_to_owner(
-            conversation_id,
-            MessageToOwnerEventPayload(
-                content=text_message_content("A message for the owner."),
-                sender=sender, recipient=OWNER_PRINCIPAL, sender_label=conversation_id,
-            ),
-        ))
+        message = asyncio.run(
+            record.append_message_to_owner(
+                conversation_id,
+                MessageToOwnerEventPayload(
+                    content=text_message_content("A message for the owner."),
+                    sender=sender,
+                    recipient=OWNER_PRINCIPAL,
+                    sender_label=conversation_id,
+                ),
+            )
+        )
         message_sequences[conversation_id] = message.sequence
     facts = asyncio.run(record.attention_facts(senders))
     assert all(facts[conversation_id].unread_message_to_owner for conversation_id in senders)
@@ -767,4 +771,111 @@ def test_exact_conversation_signal_is_independent_for_workers_supervisors_and_ch
     assert supervisor["conversation_signal"] == {"working": running, "message_for_owner": False}
     assert worker["conversation_signal"] == expected
     assert chief["conversation_signal"] == expected
+    conn.close()
+
+
+def test_settled_done_message_destinations_survive_reads_without_settlement_writes(
+    tmp_path: Path,
+) -> None:
+    """Durable reads clear exact destinations without changing settled membership."""
+    db_path = tmp_path / "settled-message-projection.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    seed_test_model_catalogue(conn)
+    parents = [
+        sprints_data.create_item(conn, title=title, project_id="project_vylo", clock=RealClock())
+        for title in ("Own supervisor message", "Quiet supervisor")
+    ]
+    children = [
+        tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title=f"Child {index}",
+            principal=OWNER_PRINCIPAL,
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            sprint_item_id=parent.id,
+        )
+        for index, parent in enumerate(parents)
+    ]
+    destinations = ("done-child", "open-child", "settled-supervisor")
+    conn.executemany(
+        "INSERT INTO conversations "
+        "(conversation_id,backend_key,workspace_folder,access,latest_sequence,created_at) "
+        "VALUES (?,'codex','/tmp','full',0,1)",
+        [(identity,) for identity in destinations],
+    )
+    conn.execute(
+        "UPDATE sprint_items SET settled=1 WHERE id IN (?,?)", tuple(p.id for p in parents)
+    )
+    for child, identity in zip(children, destinations[:2], strict=True):
+        conn.execute("UPDATE tickets SET conversation_id=? WHERE id=?", (identity, child.id))
+    conn.execute(
+        "UPDATE tickets SET stage='done',pending_proposal=NULL WHERE id=?", (children[0].id,)
+    )
+    conn.execute(
+        "UPDATE agents SET conversation_id=? WHERE agent_key=?",
+        (
+            destinations[2],
+            parents[0].supervisor_agent_key,
+        ),
+    )
+    conn.commit()
+    record = ConversationStore(str(db_path))
+    principals = [Principal(PrincipalKind.ticket, child.id) for child in children]
+    principals.append(Principal(PrincipalKind.sprint_item, parents[0].id))
+    for identity, principal in zip(destinations, principals, strict=True):
+        for text in ("First durable message", "Second durable message"):
+            asyncio.run(
+                record.append_message_to_owner(
+                    identity,
+                    MessageToOwnerEventPayload(
+                        content=text_message_content(text),
+                        sender=principal,
+                        recipient=OWNER_PRINCIPAL,
+                        sender_label="Synthetic sender",
+                    ),
+                )
+            )
+    before = [tuple(row) for row in conn.execute("SELECT * FROM sprint_items ORDER BY id")]
+
+    def projected() -> dict[str, JsonDict]:
+        board = board_view(conn)
+        asyncio.run(
+            add_conversation_row_signals(
+                conn,
+                board,
+                cast(ConversationSystem, _ConversationFacts()),
+                record,
+            )
+        )
+        return {row["id"]: row for row in board["sprint_items"]}
+
+    rows = projected()
+    assert set(rows) == {parent.id for parent in parents}
+    for parent, child, identity in zip(parents, children, destinations[:2], strict=True):
+        assert rows[parent.id]["settled"] is True
+        [nested] = rows[parent.id]["tickets"]
+        assert nested["id"] == child.id
+        assert nested["conversation_id"] == identity
+        assert nested["conversation_signal"] == {"working": False, "message_for_owner": True}
+        assert rows[parent.id]["ticket_rollup"]["awaiting_reply"] is True
+    assert rows[parents[0].id]["conversation_signal"] == {
+        "working": False,
+        "message_for_owner": True,
+    }
+    assert rows[parents[1].id]["conversation_signal"] == {
+        "working": False,
+        "message_for_owner": False,
+    }
+    assert rows[parents[0].id]["tickets"][0]["stage"] == "done"
+    asyncio.run(record.advance_owner_read_through_sequence("done-child", 2))
+    rows = projected()
+    assert rows[parents[0].id]["tickets"][0]["conversation_signal"] == {
+        "working": False,
+        "message_for_owner": False,
+    }
+    assert rows[parents[0].id]["conversation_signal"]["message_for_owner"] is True
+    assert rows[parents[1].id]["tickets"][0]["conversation_signal"]["message_for_owner"] is True
+    assert [tuple(row) for row in conn.execute("SELECT * FROM sprint_items ORDER BY id")] == before
     conn.close()
