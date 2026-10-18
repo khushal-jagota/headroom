@@ -9,7 +9,7 @@
   } from "../lib/dayPresentation";
   import { queries } from "../lib/queryCatalogue";
   import ResourceState from "../components/ResourceState.svelte";
-  import StageMark from "../components/StageMark.svelte";
+  import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
 
   const day = createQuery(() => queries.todayDay());
 
@@ -74,17 +74,10 @@
               </p>
             {/if}
 
-            <div class="dots" data-day-dots aria-label="Unread Ticket messages">
+            <div class="dots" data-day-dots aria-label="Ticket conversation activity">
               {#each dotTickets as visual (visual.ticket.id)}
-                {#if visual.state}
-                  <StageMark
-                    state={visual.state}
-                    data-day-ticket-dot
-                    data-ticket-id={visual.ticket.id}
-                    data-stage-state={visual.state}
-                    aria-label={`${visual.ticket.title}: ${visual.ariaLabel}`}
-                  />
-                {/if}
+                <ConversationSignalMark signal={visual.ticket.conversation_signal} conversationId={visual.ticket.conversation_id}
+                  data-day-ticket-dot data-ticket-id={visual.ticket.id} />
               {/each}
             </div>
 

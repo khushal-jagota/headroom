@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, TypedDict
+from typing import Final, Literal, NotRequired, TypedDict
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import Priority
@@ -16,11 +16,10 @@ class SprintItemSupervisorLaunchConfiguration:
     employee_launch_reasoning_effort: str | None
 
 
-# This snapshot is part of the Sprint Item domain. Migration code repeats these literal
-# values so an upgrade never reads mutable Worker or Chief settings.
+# The default selects a family; dispatch resolves its current installed version.
 SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS: Final = SprintItemSupervisorLaunchConfiguration(
     employee_backend=ConversationBackendKey.codex,
-    employee_launch_model="gpt-5.6-sol",
+    employee_launch_model="sol",
     employee_launch_reasoning_effort="medium",
 )
 
@@ -87,14 +86,18 @@ class CreateItemBody(TypedDict, total=False):  # POST /items
     priority: str | None  # Priority value; default P3
 
 
-class CreateSprintBody(TypedDict, total=False):  # POST /sprints
-    name: str  # default ""
-    date_start: str  # ISO date; required (default "" is rejected)
-    date_end: str  # ISO date; required (default "" is rejected)
-    primary_bet: str  # default ""
-    kickoff: str  # default ""
-    checkpoint: str  # default ""
-    review: str  # default ""
+class OrchestratorStartupResult(TypedDict):
+    """Creation returns item detail plus startup: this result, or null for a blank brief.
+
+    The orchestrator is saved even when delivery fails. A conversation id identifies
+    the attempted first message, not proof that the supervisor received the brief.
+    """
+
+    conversation_id: str | None
+    fate: Literal["started", "queued", "injected", "refused", "uncertain", "failed"]
+    refusal_reason: NotRequired[str]
+    queue_position: NotRequired[int]
+    error: NotRequired[str]
 
 
 class CreateIdeaBody(TypedDict, total=False):  # POST /ideas
@@ -115,12 +118,6 @@ class Idea:  # §3.5
     updated_at: int
 
 
-@dataclass(frozen=True)
-class SprintOutcomeCommitment:
-    sprint_id: str
-    outcome_id: str
-
-
 class SprintSummary(TypedDict):
     id: str
     name: str
@@ -135,18 +132,6 @@ class SprintWireBody(SprintSummary):
     review: str
     created_at: int
     updated_at: int
-
-
-class CarryOutcomeBody(TypedDict):
-    target_sprint_id: str
-    ticket_ids: list[str]
-
-
-class CarryOutcomeResult(TypedDict):
-    source_sprint_id: str
-    target_sprint_id: str
-    outcome_id: str
-    ticket_ids: list[str]
 
 
 class OutcomeSummary(TypedDict):

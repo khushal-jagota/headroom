@@ -8,6 +8,7 @@ back out of the Ticket row.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from sqlite3 import Connection
@@ -103,6 +104,9 @@ class _LinkWatchingConversationSystem:
         self._ticket_id = ticket_id
         self.link_when_the_conversation_existed: str | None = "not observed"
 
+    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
+        return await self._system.run_if_idle(conversation_id, operation)
+
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         await self._system.start_conversation(request)
         self.link_when_the_conversation_existed = read_ticket(
@@ -152,6 +156,7 @@ class _LinkWatchingConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         return await self._system.send_with_receipt(
             conversation_id,
@@ -165,6 +170,7 @@ class _LinkWatchingConversationSystem:
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            record_refusal=record_refusal,
         )
 
     async def record_message_to_owner(

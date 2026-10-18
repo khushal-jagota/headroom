@@ -11,6 +11,8 @@ from fastapi import APIRouter, Depends
 
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
+from planner.conversation.logic.signals import conversation_signal
+from planner.conversation.signals import read_conversation_signals
 from planner.conversation.storage import ConversationStore
 from planner.core.authctx import RequestContext, request_context
 from planner.core.authority import owner_only, require_above
@@ -24,6 +26,7 @@ from planner.tickets.api import (
     ConversationRecord,
     Conversations,
     DbConn,
+    ModelResolver,
     body_str,
     get_config,
 )
@@ -69,6 +72,7 @@ def _skills_home_json(home: SkillsHome) -> JsonDict:
 def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
     payload: JsonDict = {
         "worker_type": settings.worker_type,
+        "requires_macos": settings.requires_macos,
         "specialist_skill": _skill_json(settings.specialist_skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
@@ -80,6 +84,7 @@ def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
 def _summary_json(summary: WorkerManagementSummary) -> JsonDict:
     return {
         "worker_type": summary.worker_type,
+        "requires_macos": summary.requires_macos,
         "label": summary.label,
         "specialist_skill_name": summary.specialist_skill_name,
         "launch_defaults": _launch_defaults_json(summary.launch_defaults),
@@ -103,19 +108,20 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
     }
 
 
-def _reject_disabled_launch_model(conn: sqlite3.Connection, raw: dict[str, Any]) -> None:
-    if set(raw) != {
-        "employee_backend",
-        "employee_launch_model",
-        "employee_launch_reasoning_effort",
-    }:
-        return
-    backend = raw.get("employee_backend")
-    model = raw.get("employee_launch_model")
-    if not isinstance(backend, str) or not isinstance(model, str):
-        return
-    backend_key = require_conversation_backend_key(backend)
-    require_enabled_model(conn, backend_key, model)
+async def _resolve_launch_defaults(
+    conn: sqlite3.Connection, raw: dict[str, Any], resolver: ModelResolver
+) -> dict[str, Any]:
+    defaults = service.validate_launch_defaults(raw)
+    backend_key = require_conversation_backend_key(defaults.employee_backend)
+    require_enabled_model(conn, backend_key, defaults.employee_launch_model)
+    resolution = await resolver.resolve(
+        backend_key, defaults.employee_launch_model, defaults.employee_launch_reasoning_effort
+    )
+    return {
+        "employee_backend": backend_key.value,
+        "employee_launch_model": resolution.model,
+        "employee_launch_reasoning_effort": resolution.reasoning_effort,
+    }
 
 
 async def add_agent_conversation_signals(
@@ -141,28 +147,22 @@ async def add_agent_conversation_signals(
     owner_read_through = await conversation_record.owner_read_through_sequences(
         conversation_ids.values()
     )
-    attention = await conversation_record.attention_facts(conversation_ids.values())
+    attention = await read_conversation_signals(
+        conversation_system, conversation_record, conversation_ids.values()
+    )
     for agent in agents:
         conversation_id = conversation_ids.get(str(agent["employee_id"]))
         agent["conversation_id"] = conversation_id
-        agent["awaiting_reply"] = (
-            attention[conversation_id].unread_message_to_owner
-            if conversation_id in attention
-            else False
+        facts = attention.get(conversation_id) if conversation_id is not None else None
+        signal = (
+            facts.signal
+            if facts
+            else conversation_signal(is_running=False, unread_message_to_owner=False)
         )
-        agent["agent_working"] = (
-            await conversation_system.is_running(conversation_id)
-            if conversation_id is not None
-            else False
-        )
-        agent["needs_me"] = (
-            (
-                await conversation_system.has_pending_permission_ask(conversation_id)
-                or await conversation_system.has_pending_user_input(conversation_id)
-            )
-            if conversation_id is not None
-            else False
-        )
+        agent["conversation_signal"] = signal
+        agent["awaiting_reply"] = signal["message_for_owner"]
+        agent["agent_working"] = signal["working"]
+        agent["needs_me"] = facts.awaiting_answer if facts else False
         agent["latest_turn_ended_sequence"] = (
             latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
         )
@@ -268,11 +268,11 @@ async def get_chief_settings(conn: DbConn) -> JsonDict:
 
 @router.put("/workers/chief-of-staff/launch-defaults")
 async def put_chief_launch_defaults(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, model_resolver: ModelResolver
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
     del config
-    _reject_disabled_launch_model(conn, raw)
+    raw = await _resolve_launch_defaults(conn, raw, model_resolver)
     return _chief_json(service.update_chief_launch_defaults(conn, raw))
 
 
@@ -307,9 +307,10 @@ async def put_worker_launch_defaults(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    model_resolver: ModelResolver,
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
-    _reject_disabled_launch_model(conn, raw)
+    raw = await _resolve_launch_defaults(conn, raw, model_resolver)
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_worker_launch_defaults(
         conn, registry, worker_type, raw, now=clk.now_unix()
@@ -416,3 +417,20 @@ async def post_worker_type(
     # A type that was just declared has to be one this process can run, at once.
     load_worker_runtime_definitions(conn)
     return cast(JsonDict, json.loads(store.definition_to_json(definition)))
+
+
+@router.patch("/workers/{worker_type}/requirements")
+async def patch_worker_requirements(
+    worker_type: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    require_above(conn, ctx.principal, owner_only("worker settings"))
+    if set(raw) != {"requires_macos"} or type(raw["requires_macos"]) is not bool:
+        raise PlannerError(ErrorCode.validation, "requirements need one requires_macos boolean", {})
+    settings = service.update_worker_requirements(
+        conn,
+        configured_worker_runtime_definitions().worker_type_registry,
+        worker_type,
+        requires_macos=raw["requires_macos"],
+        now=clk.now_unix(),
+    )
+    return _settings_json(settings)

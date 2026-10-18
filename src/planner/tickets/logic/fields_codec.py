@@ -9,7 +9,7 @@ from typing import Any
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import PendingTicketProposal, TicketFieldValues
-from planner.worker_types.contracts import RETIREMENT_FIELD_ID, WorkerTypeDefinition
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 def _require(condition: bool) -> None:
@@ -22,7 +22,6 @@ def values_to_json(values: TicketFieldValues) -> str:
 
 
 def values_from_json(raw: str, field_ids: tuple[str, ...]) -> TicketFieldValues:
-    field_ids = tuple(dict.fromkeys((*field_ids, RETIREMENT_FIELD_ID)))
     value: Any = json.loads(raw)
     _require(isinstance(value, dict))
     _require(all(key in field_ids and isinstance(body, str) for key, body in value.items()))
@@ -53,8 +52,7 @@ def validate_state(
 ) -> None:
     _require(
         all(
-            (worker_type_definition.has_field(key) or key == RETIREMENT_FIELD_ID)
-            and isinstance(body, str)
+            worker_type_definition.has_field(key) and isinstance(body, str)
             for key, body in values.items()
         )
     )

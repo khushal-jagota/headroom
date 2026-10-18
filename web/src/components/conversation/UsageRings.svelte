@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { BackendUsageWindow } from "../../lib/conversation/wire";
-  import { usageIsNearlySpent, usageWindow } from "../../lib/conversation/usagePresentation";
+  import { remainingPercent, usageIsNearlySpent, usageWindow } from "../../lib/conversation/usagePresentation";
 
   let {
     windows,
@@ -23,10 +23,6 @@
 
   function circumference(radius: number): number {
     return 2 * Math.PI * radius;
-  }
-
-  function remainingPercent(usedPercent: number): number {
-    return 100 - Math.min(100, Math.max(0, usedPercent));
   }
 
   function dash(remainingPercent: number, radius: number): string {

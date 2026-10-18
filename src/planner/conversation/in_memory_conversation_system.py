@@ -13,7 +13,7 @@ treated as one.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -220,6 +220,14 @@ class InMemoryConversationSystem:
 
     # --- the contract ---
 
+    async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
+        state = self._conversations.get(conversation_id)
+        if state is not None and (state.running_turn is not None or state.held_prompts):
+            return False
+        # All mutations in this deterministic implementation are synchronous.
+        operation()
+        return True
+
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         resolved = resolve_conversation_start_request(request)
         if resolved.conversation_id in self._conversations:
@@ -274,8 +282,11 @@ class InMemoryConversationSystem:
         sender: Principal | None = None,
         recipient: Principal | None = None,
         reply_requested: bool = True,
+        record_refusal: bool = False,
     ) -> AddressedPromptDeliveryReceipt:
         require_message_content(content)
+        if record_refusal and sender_message_id is None:
+            raise ValueError("record_refusal requires a sender_message_id")
         state = self._conversations.get(conversation_id)
         if state is None:
             return AddressedPromptDeliveryReceipt(

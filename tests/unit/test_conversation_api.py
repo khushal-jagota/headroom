@@ -24,6 +24,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 import planner.conversation.api as conversation_api
@@ -98,7 +99,7 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core import sse
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import PlannerError
+from planner.core.contracts import PlannerError, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.response_compression import (
     CompressExceptEventStreams,
@@ -492,6 +493,7 @@ def harness(tmp_path: Path) -> Iterator[_Harness]:
     db_path = tmp_path / "conversation-api.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     conn.close()
     built = _Harness(db_path)
     yield built
@@ -947,6 +949,7 @@ def test_a_failed_claude_recovery_refusal_remains_after_an_api_reread(
             "sender_label": "owner",
             "mode": "queue",
             "refusal_reason": "session_did_not_load",
+            "refusal_detail": None,
             "sender_message_id": "follow-up-id",
         }
         assert backend.written_texts == ["first"]
@@ -1011,6 +1014,7 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(
                 "sender_label": "owner",
                 "mode": "queue",
                 "refusal_reason": "write_to_backend_failed",
+                "refusal_detail": None,
                 "sender_message_id": "m-2",
                 "sent_at_unix_milliseconds": 1_700_000_000_456,
             }
@@ -1077,6 +1081,33 @@ def test_owner_read_position_persists_and_refuses_employee_updates(
                 assert (await second_device.get("/api/conversation/conversations/c")).json()[
                     "owner_read_through_sequence"
                 ] == 1
+
+            # A stale browser watermark cannot clear a later addressed message.
+            for text in ("earlier owner message", "later owner message"):
+                await harness.system.record_message_to_owner(
+                    "c", text_message_content(text), sender_label="Worker",
+                    sender=Principal(PrincipalKind.ticket, "t_one"),
+                    recipient=OWNER_PRINCIPAL,
+                )
+            events = await harness.store.read_events_after("c", 1)
+            earlier, later = events
+            stale = await client.post(
+                "/api/conversation/conversations/c/owner-read",
+                json={"through_sequence": earlier.sequence},
+            )
+            assert stale.json() == {"owner_read_through_sequence": earlier.sequence}
+            assert (await harness.store.attention_facts(["c"]))["c"].unread_message_to_owner
+            latest = await client.post(
+                "/api/conversation/conversations/c/owner-read",
+                json={"through_sequence": later.sequence},
+            )
+            assert latest.json() == {"owner_read_through_sequence": later.sequence}
+            assert not (await harness.store.attention_facts(["c"]))["c"].unread_message_to_owner
+            older = await client.post(
+                "/api/conversation/conversations/c/owner-read",
+                json={"through_sequence": earlier.sequence},
+            )
+            assert older.json() == {"owner_read_through_sequence": later.sequence}
 
             missing = await client.post(
                 "/api/conversation/conversations/missing/owner-read",
@@ -1895,6 +1926,7 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
     db_path = tmp_path / "wired.db"
     boot = connect(str(db_path))
     create_schema(boot)
+    seed_test_model_catalogue(boot)
     boot.close()
     config = load_config(path=None, env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)})
 
@@ -1909,7 +1941,7 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
             "/api/conversation/conversations",
             json={
                 "conversation_id": "wired",
-                "model": "a-model",
+                "model": "gpt-6.1-sol",
                 "backend_key": "codex",
             },
         )

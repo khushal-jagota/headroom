@@ -9,8 +9,8 @@ recorded alongside it so a reader can go and diff the Rust.
 
 **There are two bundles, and each carries its own pin.** The turn bundle is everything
 the thread-and-turn adapter speaks. The login bundle is the five device-code sign-in
-messages. They are generated separately because they were generated against different
-codex versions, and a shared pin would force one of them to move whenever the other did.
+messages. They retain separate pins so moving either protocol surface is an explicit choice.
+Both currently match the installed codex version.
 The two are safe to keep apart because their definitions do not overlap: the login closure
 shares no definition name with the turn subset, so neither bundle can silently redefine
 anything the other depends on. ``_refuse_overlapping_bundles`` checks that on every run.
@@ -50,14 +50,12 @@ from typing import Any
 
 # What ``codex --version`` must print for the turn bundle to be the one that matches, and
 # the upstream tag that binary was cut from with its commit, so the Rust can be read.
-PINNED_CODEX_CLI_VERSION = "codex-cli 0.153.3"
-PINNED_UPSTREAM_TAG = "rust-v0.153.3"
-PINNED_UPSTREAM_COMMIT = "b1a547b1f73ce86205d9222ac19cff334b3b7a2e"
+PINNED_CODEX_CLI_VERSION = "codex-cli 0.163.0"
+PINNED_UPSTREAM_TAG = "rust-v0.163.0"
+PINNED_UPSTREAM_COMMIT = "83086188ae0614bd882818ff1aa23f3194962012"
 
-# The same three for the login bundle. It is pinned later than the turn bundle on purpose:
-# the device-code sign-in messages did not exist to be vendored at 0.153.3, and moving the
-# turn bundle forward to reach them would change 22 definitions the thread and turn core
-# depends on. That migration is real and is deliberately not part of this bundle.
+# The same three for the login bundle. Its disjoint definitions retain a separate pin
+# even when both bundles target the same installed version.
 LOGIN_PINNED_CODEX_CLI_VERSION = "codex-cli 0.163.0"
 LOGIN_PINNED_UPSTREAM_TAG = "rust-v0.163.0"
 LOGIN_PINNED_UPSTREAM_COMMIT = "83086188ae0614bd882818ff1aa23f3194962012"

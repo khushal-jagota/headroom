@@ -31,12 +31,16 @@ from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
 from planner.tickets.logic.admission import require_creatable_worker_type
+from planner.tickets.logic.locale import require_ticket_locale
 from planner.worker_types.contracts import RETIRED_WORKER_TYPES
 
 _LOG = logging.getLogger(__name__)
 
 
-def _validate_template(conn: sqlite3.Connection, template: ScheduledTicketTemplate) -> None:
+def _validate_template(
+    conn: sqlite3.Connection, template: ScheduledTicketTemplate,
+    *, model_source_is_historical: bool = False,
+) -> ScheduledTicketTemplate:
     require_creatable_worker_type(template.worker_type)
     if template.orchestrator_kind not in {"chief", "sprint_item"} or (
         (template.orchestrator_kind == "sprint_item") != (template.sprint_item_id is not None)
@@ -44,19 +48,22 @@ def _validate_template(conn: sqlite3.Connection, template: ScheduledTicketTempla
         raise PlannerError(
             ErrorCode.validation, "schedule requires an explicit orchestrator assignment"
         )
-    tickets_data.validate_ticket_creation_context(
+    resolved = tickets_data.resolve_ticket_creation_context(
         conn,
+        locale=template.locale,
         title=template.title,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type=template.worker_type,
         employee_backend=template.employee_backend,
         employee_launch_model=template.employee_launch_model,
+        model_source_is_historical=model_source_is_historical,
         project_id=template.project_id,
         sprint_id=None,
         deadline=template.deadline,
         sprint_item_id=template.sprint_item_id,
         blocked_by_ticket_ids=list(template.blocked_by_ticket_ids),
     )
+    return replace(template, locale=resolved.locale, project_id=resolved.project_id)
 
 
 def create_schedule(
@@ -83,7 +90,7 @@ def create_schedule(
                     template,
                     project_id=str(item["project_id"]),
                 )
-        _validate_template(conn, template)
+        template = _validate_template(conn, template)
         return data.create_schedule(
             conn,
             enabled=enabled,
@@ -124,8 +131,7 @@ def _update_schedule_locked(
     # Historical schedules can be disabled, but retired types cannot be reactivated.
     if changes.get("enabled") is True and (
         current.cadence is not ScheduleCadence.daily
-        or current.template.worker_type
-        in RETIRED_WORKER_TYPES
+        or current.template.worker_type in RETIRED_WORKER_TYPES
     ):
         raise PlannerError(ErrorCode.validation, "retired schedules cannot be enabled")
     if set(changes) <= {"enabled"} and changes.get("enabled") is False:
@@ -142,6 +148,7 @@ def _update_schedule_locked(
             normalized_changes["project_id"] = str(item["project_id"])
 
     template_values: dict[str, object] = {
+        "locale": current.template.locale,
         "title": current.template.title,
         "worker_type": current.template.worker_type,
         "kickoff_note": current.template.kickoff_note,
@@ -160,6 +167,11 @@ def _update_schedule_locked(
         if key in normalized_changes:
             template_values[key] = normalized_changes[key]
     template = ScheduledTicketTemplate(
+        locale=(
+            None
+            if template_values["locale"] is None
+            else require_ticket_locale(template_values["locale"])
+        ),
         orchestrator_kind=str(template_values["orchestrator_kind"]),
         title=str(template_values["title"]),
         worker_type=str(template_values["worker_type"]),
@@ -202,8 +214,14 @@ def _update_schedule_locked(
             cast(tuple[str, ...], template_values["blocked_by_ticket_ids"])
         ),
     )
-    _validate_template(conn, template)
+    template = _validate_template(
+        conn, template,
+        model_source_is_historical=not (
+            {"employee_backend", "employee_launch_model"} & changes.keys()
+        ),
+    )
     encoded = normalized_changes
+    encoded["locale"] = template.locale
     if "local_time" in encoded:
         encoded["local_time"] = validate_local_time(str(encoded["local_time"]))
     return data.update_schedule(conn, schedule_id, encoded, now=now)
@@ -230,6 +248,7 @@ def _settle_occurrence(
             project_id = schedule.template.project_id
             ticket = tickets_actions.create_ticket(
                 conn,
+                locale=schedule.template.locale,
                 title=schedule.template.title,
                 principal=OWNER_PRINCIPAL,
                 now=now,
@@ -237,7 +256,8 @@ def _settle_occurrence(
                 worker_type=schedule.template.worker_type,
                 employee_backend=schedule.template.employee_backend,
                 employee_launch_model=schedule.template.employee_launch_model,
-                kickoff_note=schedule.template.kickoff_note,
+                model_source_is_historical=True,
+                brief=schedule.template.kickoff_note,
                 project_id=project_id,
                 sprint_id=None,
                 priority=schedule.template.priority,

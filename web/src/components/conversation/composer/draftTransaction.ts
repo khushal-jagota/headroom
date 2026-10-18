@@ -10,9 +10,11 @@ import {
   type PendingConversationFile
 } from "../../../lib/conversation/pendingFiles";
 import type { SentMessagePiece } from "../../../lib/conversation/wire";
+import type { ComposerAttachmentReference } from "./attachments";
 
 export type ComposerDraft = Readonly<{
   text: string;
+  attachmentOrder?: readonly ComposerAttachmentReference[];
   pendingImages: readonly PendingConversationImage[];
   pendingFiles: readonly PendingConversationFile[];
   pickedModel: string | null;
@@ -37,6 +39,7 @@ export type RefusedComposerSendRestoration = Readonly<{
 function snapshotDraft(draft: ComposerDraft): ComposerDraft {
   return {
     text: draft.text,
+    ...(draft.attachmentOrder === undefined ? {} : { attachmentOrder: [...draft.attachmentOrder] }),
     pendingImages: [...draft.pendingImages],
     pendingFiles: [...draft.pendingFiles],
     pickedModel: draft.pickedModel,
@@ -62,9 +65,20 @@ function samePendingFiles(
   return one.length === other.length && one.every((file, index) => file === other[index]);
 }
 
+function sameAttachmentOrder(
+  one: ComposerDraft["attachmentOrder"],
+  other: ComposerDraft["attachmentOrder"]
+): boolean {
+  if (one === undefined || other === undefined) return one === other;
+  return one.length === other.length && one.every((reference, index) =>
+    reference.kind === other[index]?.kind && reference.id === other[index]?.id
+  );
+}
+
 function draftEquals(one: ComposerDraft, other: ComposerDraft): boolean {
   return (
-    one.compositionRevision === other.compositionRevision
+    sameAttachmentOrder(one.attachmentOrder, other.attachmentOrder)
+    && one.compositionRevision === other.compositionRevision
     && one.text === other.text
     && samePendingImages(one.pendingImages, other.pendingImages)
     && samePendingFiles(one.pendingFiles, other.pendingFiles)
@@ -95,6 +109,7 @@ export function beginComposerSend(
   ];
   const draftAfterSend: ComposerDraft = {
     text: "",
+    ...(draftBeforeSend.attachmentOrder === undefined ? {} : { attachmentOrder: [] }),
     pendingImages: [],
     pendingFiles: [],
     pickedModel: null,
@@ -128,6 +143,15 @@ export function restoreRefusedComposerSend(
     restored: true,
     draft: {
       text: sentText(attempt.content),
+      ...(attempt.draftBeforeSend.attachmentOrder === undefined ? {} : {
+        attachmentOrder: attempt.draftBeforeSend.attachmentOrder.map((reference) => {
+          const before = reference.kind === "image"
+            ? attempt.draftBeforeSend.pendingImages : attempt.draftBeforeSend.pendingFiles;
+          const restored = reference.kind === "image" ? restoredImages.images : restoredFiles.files;
+          const index = before.findIndex((attachment) => attachment.id === reference.id);
+          return { kind: reference.kind, id: restored[index]!.id };
+        })
+      }),
       pendingImages: restoredImages.images,
       pendingFiles: restoredFiles.files,
       pickedModel: attempt.draftBeforeSend.pickedModel,

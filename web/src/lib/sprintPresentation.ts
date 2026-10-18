@@ -1,18 +1,18 @@
-import type { FieldStageVisualState } from "./ui";
 import type { Priority, ProjectSummary, SprintOutcomeGroup } from "./types";
 import {
   WORK_ITEM_TICKET_GROUPS,
-  workItemActivityMark,
-  workItemActivityMarkPresentation,
   workItemTicketGroupKey
 } from "./workItemPresentation";
 
 export type SprintTicket = {
+  conversation_signal?: import("./conversationSignal").ConversationSignal;
+  conversation_id?: string | null;
   id: string;
   title: string;
   stage: string;
   priority: Priority;
   ticket_status: string;
+  is_backlogged?: boolean;
   waiting_to_closeout?: boolean;
   has_pending_proposal?: boolean;
   awaiting_reply: boolean;
@@ -31,17 +31,16 @@ export type SprintProjectGroup = {
 };
 
 export type SprintTicketCondition = {
-  mark: FieldStageVisualState | null;
   word: string;
 };
 
-// The three facts a Ticket's condition is read from. Sprint tickets, Sprint Item
-// workspace tickets and Workspace board cards all carry them, so all three screens
-// name a Ticket's condition the same way. A filed proposal is not one of them: a
-// The shared projection is authoritative even while a proposal stays filed.
+// The shared presentation names the condition from independent Ticket facts.
+// Backlog takes precedence without changing a filed proposal or its reviewer.
 export type TicketConditionFacts = {
+  conversation_signal?: import("./conversationSignal").ConversationSignal;
   stage: string;
   ticket_status: string;
+  is_backlogged?: boolean;
   waiting_to_closeout?: boolean;
   awaiting_reply: boolean;
   awaiting_answer?: boolean;
@@ -115,10 +114,9 @@ function rankPriority(priority: Priority | null | undefined): number {
 
 export function sprintTicketCondition(ticket: TicketConditionFacts): SprintTicketCondition {
   const projected = presentationTicket(ticket);
-  const mark = workItemActivityMarkPresentation(workItemActivityMark(projected)).state;
   const key = workItemTicketGroupKey(projected);
   const label = WORK_ITEM_TICKET_GROUPS.find((group) => group.key === key)?.label ?? key;
-  return { mark, word: label.toLocaleLowerCase() };
+  return { word: label.toLocaleLowerCase() };
 }
 
 function sortedTickets(tickets: SprintTicket[], blockedLast: boolean): SprintTicket[] {

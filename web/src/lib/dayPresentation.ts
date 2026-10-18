@@ -1,15 +1,8 @@
 import type { DayTicket } from "./types";
-import type { FieldStageVisualState } from "./ui";
 import { primaryWorkAttention } from "./workAttentionPresentation";
-import {
-  workItemActivityMark,
-  workItemActivityMarkPresentation
-} from "./workItemPresentation";
 
 export type DayVisualTicket = {
   ticket: DayTicket;
-  state: FieldStageVisualState | null;
-  ariaLabel: string;
   group: string;
 };
 
@@ -40,20 +33,14 @@ export function dayVisualTicket(
   ticket: DayTicket
 ): DayVisualTicket {
   const group = groupKeyFor(ticket);
-  const presentation = workItemActivityMarkPresentation(workItemActivityMark({
-    awaiting_reply: Boolean(ticket.awaiting_reply),
-    awaiting_answer: Boolean(ticket.awaiting_answer),
-    awaiting_approval: Boolean(ticket.awaiting_approval),
-    agent_state: ticket.agent_state ?? "idle"
-  }));
-  return { ticket, state: presentation.state, ariaLabel: presentation.ariaLabel, group };
+  return { ticket, group };
 }
 
-/** Show the exact conversations needing message attention in roster order. */
+/** Show exact conversation work and message marks in roster order. */
 export function dayDotOrder(
   visualTickets: readonly DayVisualTicket[]
 ): DayVisualTicket[] {
-  return visualTickets.filter((visual) => visual.state !== null);
+  return visualTickets.filter((visual) => visual.ticket.conversation_signal?.working || visual.ticket.conversation_signal?.message_for_owner);
 }
 
 export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayActionTile[] {

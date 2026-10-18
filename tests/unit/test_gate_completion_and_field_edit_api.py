@@ -54,7 +54,7 @@ def _passed_ticket(db_path: Path) -> str:
             principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=200,
-            kickoff_note="Agreed brief.",
+            brief="Agreed brief.",
         )
         ticket = accept_proposal(
             conn,
@@ -132,7 +132,7 @@ def test_completing_a_user_owned_gate_advances_the_ticket(
             principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=200,
-            kickoff_note=None,
+            brief=None,
         )
         seed_historical_worker_type(conn, "personal")
         conn.execute("UPDATE tickets SET worker_type='personal' WHERE id=?", (ticket.id,))
@@ -169,7 +169,7 @@ def test_completion_rejects_a_worker_owned_gate_without_changing_the_ticket(
             principal=OWNER_PRINCIPAL,
             now=0,
             title_max_chars=200,
-            kickoff_note=None,
+            brief=None,
         )
     finally:
         conn.close()

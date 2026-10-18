@@ -22,6 +22,7 @@ from planner.sprints.contracts import (
 )
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import derivation
+from planner.tickets.logic.recap import recap_preview
 from planner.worker_types.configuration import configured_worker_type_registry
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -125,11 +126,13 @@ def item_tickets(
             {
                 "id": str(r["id"]),
                 "title": str(r["title"]),
+                "recap_preview": recap_preview(str(r["recap"])),
                 "sprint_id": r["sprint_id"],
                 "sprint_name": r["sprint_name"],
                 "project_id": r["effective_project_id"],
                 "sprint_item_id": r["sprint_item_id"],
                 "stage": stage,
+                "is_backlogged": bool(r["is_backlogged"]),
                 "priority": str(r["priority"]),
                 "activity_at": int(r["updated_at"]),
                 "conversation_id": r["conversation_id"],

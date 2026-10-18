@@ -20,7 +20,7 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any
 
-from tests.unit.test_conversation_codex_scripted_app_server import scripted_app_server_launch
+from tests.support.conversation_codex_scripted_app_server import scripted_app_server_launch
 
 from planner.conversation.backends.codex_app_server.adapter import (
     CodexAppServerBackendChild,

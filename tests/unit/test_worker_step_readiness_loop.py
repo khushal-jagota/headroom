@@ -51,6 +51,7 @@ from planner.runtime.worker_step_readiness_loop import (
     WorkerStepReadinessLoop,
     WorkerStepStartResult,
     start_ready_worker_step,
+    tell_a_worker_it_lost_its_memory,
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback, worker_restart
@@ -82,7 +83,7 @@ class _World:
         self,
         *,
         title: str = "T",
-        kickoff_note: str = "Agreed brief.",
+        brief: str = "Agreed brief.",
         worker_type: str = "coding",
         conversation_id: str | None = None,
         on_today: bool = True,
@@ -93,7 +94,7 @@ class _World:
                 conn,
                 worker_type=worker_type,
                 title=title,
-                kickoff_note=kickoff_note,
+                brief=brief,
                 principal=OWNER_PRINCIPAL,
                 now=0,
                 title_max_chars=200,
@@ -868,7 +869,7 @@ class _QueueingConversationSystem:
 def test_the_opener_carries_only_what_the_worker_cannot_get_for_itself(world: _World) -> None:
     ticket_id = world.ready_ticket(
         title="Ship it",
-        kickoff_note="Use this agreed starting point.",
+        brief="Use this agreed starting point.",
         conversation_id="conv-opener",
     )
     world.start_conversation("conv-opener")
@@ -1137,3 +1138,42 @@ def test_a_wake_makes_the_running_loop_poll_before_its_timer(world: _World) -> N
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
         thread.join(5)
         asyncio_loop.close()
+
+
+
+def test_memory_loss_notice_cannot_start_a_worker_on_the_wrong_machine(world: _World) -> None:
+    ticket_id = world.ready_ticket(title="Remote", conversation_id="conv-remote")
+    world.start_conversation("conv-remote")
+    world.record_compacted_conversation(
+        "conv-remote", last_worker_step_sequence=4, compacted_through=9,
+    )
+    with world.connect() as conn:
+        conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket_id,))
+        conn.commit()
+    assert not asyncio.run(tell_a_worker_it_lost_its_memory(
+        ticket_id,
+        connect_database=world.connect,
+        conversation_system=world.conversations,
+        worker_type_registry=configured_worker_type_registry(),
+        now=world.clock.now_unix,
+    ))
+    assert world.conversations.backend_prompt_writes("conv-remote") == ()
+
+
+@pytest.mark.parametrize("locale", ["vps", "macos"])
+def test_worker_start_runs_only_for_this_machine_locale(world: _World, locale: str) -> None:
+    ticket_id = world.ready_ticket(title="Locale start")
+    with world.connect() as conn:
+        conn.execute("UPDATE tickets SET locale=? WHERE id=?", (locale, ticket_id))
+        conn.commit()
+    started = world.start_step(ticket_id)
+    ticket = world.ticket(ticket_id)
+    if locale == "vps":
+        assert started.started
+        assert ticket.worker_step_claim is WorkerStepClaim.out
+        assert ticket.conversation_id is not None
+        assert len(world.conversations.backend_prompt_writes(ticket.conversation_id)) == 1
+    else:
+        assert not started.started
+        assert ticket.worker_step_claim is WorkerStepClaim.none
+        assert ticket.conversation_id is None

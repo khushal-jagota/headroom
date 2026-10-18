@@ -303,7 +303,7 @@ points at the Worker, so each skill has exactly one editor. Native homes use sym
 managed skills, never copied overlays. Codex and Claude select all Panels skills, and the
 Hermes home links every skill in the managed home.
 
-The browser navigation and settings page is **Config** at `#/config`. It has exactly two
+The Config section lives under **Settings** at `#/settings/config`. It has exactly two
 quiet, whitespace-separated sections. Every destination is a whole-row link showing
 only its human-readable name, its current managed skill description, and a restrained
 arrow. The index does not show structural ids, skill names, launch settings, Stage
@@ -312,22 +312,22 @@ screens.
 
 - **Config** contains Chief of Staff, the Sprint Item supervisor, and the shared Worker
   role skill. Chief
-  opens at `#/config/chief-of-staff` with one picker for its launch defaults
+  opens at `#/settings/config/chief-of-staff` with one picker for its launch defaults
   and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
-  skill opens at `#/config/worker-skill`. It is shown as an Agent-like configurable
+  skill opens at `#/settings/config/worker-skill`. It is shown as an Agent-like configurable
   role because it guides every Ticket worker, although it is not an independent
   runtime. Its name is read-only; its description and Markdown body edit the canonical
   skill through the shared skills home. It has no independent launch, model, reasoning,
   or Stage controls. Sprint Item supervisor opens at
-  `#/config/sprint-item-supervisor`. It uses the same canonical skill editor and has no
+  `#/settings/config/sprint-item-supervisor`. It uses the same canonical skill editor and has no
   global launch or Stage controls. Each Sprint Item owns its supervisor launch snapshot.
 - **Workers** links the configured Worker types. Each supporting line comes from that
   Worker's managed specialist skill. A Worker opens at
-  `#/config/workers/<worker-type>` with its launch defaults, read-only Stage ownership
+  `#/settings/config/workers/<worker-type>` with its launch defaults, read-only Stage ownership
   table, and specialist skill editor. Worker identity and lifecycle structure stay read-only.
 
-Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/config` and
-`#/config/workers/<worker-type>`.
+Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/settings/config` and
+`#/settings/config/workers/<worker-type>`.
 
 Every edit here reads the current record, changes one part of it and writes the whole
 thing back, so each one holds the write lock across that read and write. Two edits landing
@@ -407,13 +407,20 @@ catalog stays fresh for 24 hours across a server restart. Catalogue refresh belo
 Backends screen with the rest of the machine state. A failed ordinary read keeps the saved
 picker value visible and offers a retry.
 
-The stored backend, model and reasoning are the Ticket's last-chosen values. They start
-as the Worker type's defaults and are kept up to date with what its conversation
-actually runs on, so a fresh conversation starts from where the last one ended.
+The stored backend, model and reasoning preserve the Ticket's selected variant and effort.
+Each turn resolves the current enabled model within that variant. Chief and ordinary
+orchestrators use the same rule, including after a server restart. Catalogue failures use
+the last known-good resolution when one exists. See
+[current models within a variant](conversation-system.md#current-models-within-a-variant).
 
-Chief settings use the same managed authority for Backend, Model, and Reasoning. A new Chief
-conversation is started on the then-current trio. An existing one continues on what it was
-started with, including after a server restart.
+On a fresh installation without model evidence, Ticket creation preserves its requested
+model and reasoning effort and reports unavailable resolution. It writes no invented
+catalogue or resolution. Available model evidence still enforces valid selections.
+The next turn follows the ordinary resolution rules.
+
+Saved choices can also be corrected without a Worker restart, including while the Ticket
+is idle or at a user-owned Stage. A correction changes launch choices only. It does not
+grant approval or advance work. See [model correction commands](cli.md#correct-saved-models).
 
 Access is not a launch setting and is never copied onto a Ticket. Every conversation runs
 under full access inside its workspace folder; how each backend realises that belongs to its
@@ -518,4 +525,4 @@ current user-owned Stage. No definition carries separate reconciliation capabili
 
 ---
 
-_Last verified: 2026-08-16._
+_Last verified: 2026-10-18._

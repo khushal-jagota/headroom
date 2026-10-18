@@ -33,9 +33,9 @@ def test_a_folder_with_an_index_is_one_entry_and_hides_what_the_index_loads(
 
 
 def test_a_folder_without_an_index_carries_what_is_directly_inside(tmp_path: Path) -> None:
-    _write(tmp_path, "open/one.md")
-    _write(tmp_path, "open/two.md")
-    _write(tmp_path, "open/deeper/three.md")
+    _write(tmp_path, "open/one.md", modified_at=1000)
+    _write(tmp_path, "open/two.md", modified_at=1000)
+    _write(tmp_path, "open/deeper/three.md", modified_at=2000)
 
     (entry,) = fold_directory(tmp_path)
 

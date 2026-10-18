@@ -359,7 +359,7 @@ export function recordedMessageFateSentence(
     case "prompt":
     case "prompt_discarded": return null;
     case "prompt_delivery_refused":
-      return `not delivered · ${refusalSentence(outcome.payload.refusal_reason)}`;
+      return `not delivered · ${refusalSentence(outcome.payload.refusal_reason, outcome.payload.refusal_detail)}`;
     case "prompt_delivery_uncertain": return "delivery uncertain · do not resend";
     default: return fallback;
   }

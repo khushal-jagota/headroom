@@ -19,6 +19,38 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Exercising permission requests
+
+Real work always runs with full access. There is no selectable ask posture on a
+Ticket, Worker type, creation input, or owner control.
+
+An opt-in test starts conversations directly through the real conversation HTTP
+routes and overrides the native backend mappings inside that test process only.
+Codex uses untrusted approval, the user reviewer, and workspace write on both the
+thread and turn. Claude uses default permission mode with the existing callback.
+Hermes uses default ACP edit approval with YOLO disabled. The exercise observes
+and asserts the settings sent to each real backend; an allowed action alone does
+not prove that the override worked.
+
+Separate allow and deny cases request a harmless unique file action. Each waits
+with the real backend request open and checks repeatedly that no answer or file
+has appeared, then answers through Panels and checks the actual file outcome.
+The request stays visible in conversation text and reaches the existing
+`awaiting_answer` attention state. It has no conversation or work item attention
+dot: those dots mean an unread reply. The earlier inherited claim that an ask had
+its own white mark was false; visible request and attention state coverage replace
+that check.
+
+Run `tests/integration/test_conversation_real_provider_permissions.py` with
+`PANELS_REAL_PERMISSION_TESTS=1`, an absolute `PANELS_PERMISSION_EVIDENCE_ROOT`,
+and the relevant `PANELS_REAL_HERMES_HOME_TEMPLATE` or
+`PANELS_REAL_CLAUDE_CONFIG_TEMPLATE`. These calls use real accounts and model
+usage. The tests save selected request, wait, answer, native configuration,
+version, source revision and file outcome receipts, including partial receipts
+when a case fails. They keep Codex on its existing credential home. Other homes
+isolate test configuration while sharing any rotating credential file instead of
+copying a login grant. These tests do not claim connection-drop recovery coverage.
+
 ## The notebook
 
 Every conversation owns an append-only run of numbered rows in the database —
@@ -79,10 +111,40 @@ announcing each one sends every open tab back for everything it is showing.
 
 The rows anything else reads still announce themselves the ordinary way: a delivered,
 refused, or discarded prompt, a permission ask and its answer, an agent question and
-its answer, a model change, and a turn ending. Those are what the board reads to say
-whether a Ticket is working or needs its owner, so they are what a screen outside the
-conversation is told about. A kind added later announces itself unless somebody
+its answer, a model change, an explicit owner message, and a turn ending. Other screens
+read those facts, so they receive the ordinary change announcement. A kind added later
+announces itself unless somebody
 establishes that nothing outside the conversation shows it.
+
+## Work and messages on other screens
+
+Each Worker, supervisor, and Chief exposes the same `conversation_signal` from its own
+conversation. `working` means that its runtime is running. `message_for_owner` means that
+an explicit `message_to_owner` row is newer than the owner read position. Both can be true
+at once. A conversation with neither fact exposes two false values.
+
+Each conversation shows one indicator: an unread message dot takes precedence over the
+working spinner. Reading the latest message reveals the spinner if work is still running.
+This presentation does not change either fact or the shell's actual-work count.
+
+A turn ending stops work and creates no message mark. Pending approvals, permission asks,
+Ticket stages, and child activity do not define either mark. Child totals remain separate
+from the supervisor's own conversation signal. Existing answer, approval, error, and
+notification facts remain available for their own purposes.
+
+Reading or sending a prompt advances only that conversation's established read position.
+A later explicit message remains unread when an earlier position is acknowledged.
+
+The runtime publishes the ordinary change signal after work starts and after its settled
+end. This publication follows the runtime state transition, so a query cannot retain an
+answer from before the prompt or ending commit settled. The event stream carries no
+payload. Mounted queries fetch the canonical conversation signal again.
+
+The shell's working count sums that same working fact across Worker, supervisor, and
+Chief conversations. Each conversation counts once, even when multiple records refer to
+it. Settled supervisors and backlogged Workers still count when their conversations run.
+Worker-step claims do not define this count. Its existing query uses the same change
+stream refresh as the individual marks.
 
 ## What a message is
 
@@ -221,6 +283,11 @@ conversation cannot send to the owner. Employee recipients use their normal curr
 conversation path, creating it when any send needs one. Every mode starts a turn when the
 recipient is idle. Agent keys remain a private resolution detail. The command adds no
 second transport, queue, or conversation record.
+
+Existing ordinary orchestrator supervisors can address each other through this same
+Send Message path. Both Sprint Items must exist. This grants no authority over the
+recipient's record or Workers. Worker messages and help-recipient overrides retain
+their existing chain boundary.
 
 Every employee-authored send carries canonical sender and recipient principals derived
 from the authenticated request. Panels records that address on every durable outcome,
@@ -407,6 +474,41 @@ message: browsing a picker does nothing, the change lands when the message is
 delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
+
+### Current models within a variant
+
+A model choice selects a variant, such as Sol or Opus. Before each turn, Panels
+resolves that variant against the backend's current catalogue. Codex uses the newest
+enabled version within the selected variant. Claude keeps its native aliases, including
+their context suffixes. Hermes keeps its provider-qualified choices. A provider hint
+cannot select a different variant. Panels preserves an explicit reasoning effort and
+refuses the turn if the resolved model does not support it.
+
+Catalogue failure does not stop a variant with a last known-good resolution. Panels
+uses that resolution and reports that the catalogue is unavailable. Without a last
+known-good resolution, it refuses the turn with a clear error. The shared picker
+shows the selected variant and resolved model, plus the catalogue warning when present.
+
+Ticket creation also tries to resolve its model. If no usable catalogue or cached
+resolution exists, creation preserves the requested model and reasoning effort. It
+reports unavailable resolution without writing a successful cache entry. Missing
+evidence does not block a fresh installation. Available evidence still rejects an
+unknown or disabled selection, or an unsupported effort. This exception applies to
+creation only. A later turn still requires a successful resolution.
+
+This rule covers Workers, Chief, ordinary orchestrators, new conversations, reused
+conversations and queued messages. Steering retains the active turn's model. Saved legacy
+versions resolve within their own variant. New orchestrators use the managed launch
+defaults instead of a model pinned by a database trigger.
+
+An explicit correction action previews saved choices and applies selected corrections.
+It works for idle Workers and user-owned Stages without a restart or a message.
+It preserves backend and reasoning choices. Active turns finish on their current model.
+The next turn resolves the corrected model within the same conversation.
+The action does not approve work, change a Stage, clear a claim, or start a turn.
+See [model correction commands](cli.md#correct-saved-models).
+
+Code: `src/planner/conversation/`, `src/planner/runtime/`.
 
 Hermes new and loaded sessions also return their exact current model through extension
 metadata. Panels omits the legacy model request only when that value exactly matches the
@@ -736,30 +838,85 @@ and the shutdown, and stops showing the code when its own limit passes. It does 
 the code was still valid up to that point.
 
 **The protocol shapes are pinned separately.** The login messages are vendored as their
-own subset, generated against `codex-cli 0.163.0`, with their own pin header. The
-thread-and-turn subset stays pinned where it was. The two are kept apart because
-regenerating everything together would change twenty-two definitions the thread and turn
-core depends on, and the login closure shares none of them — the generator refuses to run
-if the two bundles ever reach the same definition.
+own subset with their own pin header. Both the login and thread-and-turn subsets are
+generated against `codex-cli 0.163.0`, matching the installed runtime. They retain separate
+pins so a future change to either surface is deliberate. Their definitions remain
+disjoint; generating both together refuses if they reach the same definition.
 
-### One home for the codex login
+### One home and one credential per agent
 
-Panels runs one codex account, so the login is one file holding one rotating refresh
-token. Codex refreshes that token in whichever home it is pointed at and writes the new
-one there. A second home holding a copy of the file is therefore a credential with two
-owners: the copy takes the rotation, the original keeps a token the server has already
-spent, and everything using the original fails.
+Each real agent identity has one canonical home and one canonical credential file.
+A rotating refresh token must have one owner: refreshing a copied login in a second
+home can leave the original holding a spent token. Hardlinks are unsafe too: they
+share a file only until a refresh replaces the canonical path by rename.
 
-So Panels refuses to start a codex child whose `CODEX_HOME` holds the same credential as
-the real home. A scratch home with its own login, or with none, is fine. The comparison is
-the credential itself rather than the whole file, because a copy with edited account
-fields still rotates the same token. An unreadable login cannot be shown to be a copy, so
-it is allowed and logged. The guarantee covers the codex children Panels launches — the
-app-server child, the usage read, and the model catalogue read. A check in the test suite
-looks for the shape of the mistake in repository code — a module that both names a login
-file and copies files — which is how the two opt-in real-provider suites that were still
-copying the login were found. It is a scan for a known shape, not a proof that no copy can
-be written.
+Synthetic homes with invented credentials are fine. Tests can also copy configuration
+files while symlinking the credential path to the canonical file. That link follows
+the current credential rather than keeping a second copy. Copying a whole real home
+or a credential first is still unsafe.
+
+**The existing checks cover only part of this rule.** Before launching a Codex child,
+Panels compares its home with the home selected by the server's own environment.
+The same resolved home is allowed. For different homes, a shared refresh token or
+API key causes refusal, even if account metadata differs. An absent or different
+credential is allowed; an unreadable credential is allowed with a warning. The guard
+covers Panels' app-server, usage and model catalogue children, not Hermes, Claude,
+arbitrary shell launches, or copies elsewhere. It also refuses a different Codex home
+whose credential is a symlink to the same login, so Codex tests use the real home.
+
+The repository test inspects Python under `src`, `tests`, `scripts` and `ops`. It
+catches supported copy and hardlink calls when a path names `auth.json` or
+`LOGIN_FILE_NAME`, including import aliases and earlier simple assignments in the
+same scope. Unparseable files fail. It does not trace helper results, attributes,
+containers, assignments across scopes or branches, unpacked arguments, byte transfers,
+or shell copies. It does not recognize Claude's credential filename. Whole-home
+copies naming no credential also pass. A green run proves only that this bounded
+tripwire found no supported pattern.
+
+Matching a copied directory to an agent's later home still cannot establish whether
+its credentials are real: external environment inputs decide what a template contains.
+General coverage would require tracing helpers, branches, filesystem operations and
+launch paths. The bounded checks do not provide that general guarantee; review
+must enforce the invariant.
+
+The steering harness now follows the permission harness's canonical-credential pattern.
+Hermes copies only `config.yaml` and `.env`, and symlinks `auth.json` to the source home.
+Claude copies optional `settings.json`, and symlinks optional `.credentials.json` to its
+source home. Codex continues to use its real home because a copied login loses refresh
+rotation. The former whole-home Hermes copy and Claude credential copy are resolved.
+The current helper explains why credentials stay canonical.
+
+Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
+`tests/unit/test_no_codex_credential_copies.py`,
+`tests/integration/test_conversation_real_provider_{steering,permissions}.py`.
+
+The source tripwire `python scripts/check_agent_home_copies.py` reports copies whose
+destination becomes a selected Hermes, Codex, or Claude home. `--json` produces counts
+and findings; an accusation makes the command exit with status 1.
+
+The root must contain all four searched directories: `src`, `tests`, `scripts`, and
+`ops`. A missing directory produces an error with the resolved root and status 2,
+without a clean finding summary.
+
+Configuration copies of `config.yaml` and `.env` beside a link to the same source's canonical `auth.json` are
+reported as dismissals, not silently excluded. External `.env` contents remain
+unverified. Literal `settings.json` to the same filename is treated as configuration,
+without a dismissal finding; this does not verify its external contents or exempt
+arbitrary filenames.
+
+This is a bounded Python AST check. It follows simple local aliases, literal filename
+loops, imports, direct environment assignments and `setenv` calls within a lexical scope.
+It evaluates proven literal filename equality branches and separates opposite `if`
+branches. It does not infer relationships across functions.
+It does not analyze shell commands, helper returns, object attributes, arbitrary containers,
+conditional alias merges, byte transfers, or runtime paths. Synthetic credential writes
+and skill symlinks are not copies. Reviewers must inspect those omitted routes themselves.
+A clean result does not certify safety.
+
+This standalone command is invoked explicitly rather than enforced in CI. Against the
+current source, it reports zero accusations and two Hermes configuration dismissals,
+exiting with status 0. That result verifies the checked source pattern; it does not
+certify credential safety, external configuration contents, or the omitted copy routes.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
@@ -774,18 +931,17 @@ Tickets. Hermes still offers no Panels reasoning control.
 Panels does not ask Hermes for update advice and does not offer a Hermes update action.
 Hermes version and model catalogue discovery remain available.
 
-Panels keeps the last successful usage reading for each backend in its database.
-Opening the Backends page, reading `GET /backends`, receiving a change signal, or
-refreshing another query only reads that stored answer. None of those actions contacts
-a provider. The one Refresh on the Backends page starts every usage source through
-`POST /backends/refresh`, then resolves those answers against ordinary backend snapshots.
-It does not force model catalogues, versions, identities, or update advice to refresh.
-Codex and Claude usage reads start independently, so catalogue work cannot delay them and
-one provider failure does not discard the other provider's new answer. A failed refresh
-also leaves that backend's prior reading in place. When the Backends page opens, it paints
-an ordinary snapshot first. It then refreshes catalogue and Codex and Claude update
-advice in the background. Cached ordinary reads stay available during that work. The
-page's Refresh action and the shared model picker stop after the usage answer.
+Panels keeps the last successful allowance reading for each backend in its database.
+Ordinary allowance reads use that stored answer without a provider request.
+The Usage page's Refresh starts provider allowance reads and the separate local record
+import in parallel. Allowance reads use ordinary backend snapshots. They do not force
+model catalogues, versions, identities, or update advice to refresh.
+
+Codex and Claude allowance reads start independently. A failure leaves that backend's
+prior reading in place and preserves the other backend's new answer. The page first
+shows an ordinary backend snapshot. Catalogue and supported update advice refresh in
+the background, while cached reads remain available. The shared model picker's Refresh
+reads provider allowances only.
 
 Codex starts one short-lived app-server child and asks its native
 `account/rateLimits/read` method. The request does not start a thread, run a model turn,
@@ -818,7 +974,84 @@ New Chief conversations and Workers without a historical Ticket model also check
 resolved choice after overrides. An enabled override works even if the default is off.
 Chief and Worker default saves refuse an off model. Each refusal names the model and
 requires an enabled choice. Panels never silently substitutes another model.
-Existing Ticket choices and existing conversations remain intact.
+Existing choices retain their selected variant. The current-model rule above governs
+the concrete model used for each turn.
+
+### Recorded local usage
+
+Tokens and Cost describe local Codex and Claude records on this server. They include
+CLI activity outside Panels. They do not describe a complete account bill or allowance
+history. Hermes has no source for these historical charts.
+
+Opening the page, changing its period, or receiving a change signal reads stored usage.
+Only an explicit Refresh imports native files. Each request reads at most 256 MiB
+and cooperatively yields during source reads or parsing after 15 seconds or 2,000 file
+visits. Loading stored snapshots, merging records, serialization, and price refresh
+occur outside that deadline. It is not a hard HTTP response timeout.
+The next request resumes the stored
+queue. Small slices alternate providers and files. Large files and large JSON lines
+remain eligible. The streaming reader discards message and tool bodies as it reads.
+Its checkpoints contain syntax and selected usage fields. Complete block checks detect
+interior rewrites before a candidate replaces verified records. Source changes restart
+that candidate and preserve earlier records. Native files remain read-only.
+
+The queue covers source files modified within 90 days. Directory discovery has a
+100,000-entry and request-time limit. An unreadable or bounded inventory reports partial
+coverage. Progress describes this finite local read, not complete account history.
+SQLite commits the cursor and data together, so a restart resumes the same work.
+Append-only growth preserves the frozen prefix and its read progress. Every metadata
+generation change restarts block verification. A file that changes before every request
+needs a quiet verification window before its candidate enters the totals. Other files
+continue fairly, and its earlier verified records remain visible with partial coverage.
+A verified prefix can enter stored totals before its file finishes. An observed unread
+tail stays in the queue, and its byte count extends the progress total. Files first
+found during a pass wait for the next finite pass. Known pending files keep coverage
+partial and `more_work` true until a later request reads them.
+The same rule covers a completed member whose identity, size, or metadata changes in
+the latest inventory. Progress counts that file once and defers its new version to the
+next pass. Ready means that this latest bounded inventory has no known unvisited work.
+
+Copied records count once across files. Codex counts each stable completed response
+identity once. It keeps the response's original thread and session, even when another
+file contains a copy. Repeated counter updates and cumulative turn or thread totals do
+not add consumption. Old counter records need verified changes. Their producer history
+remains uncertain.
+
+Claude uses message and request identities. Overlapping or conflicting identities
+remain excluded with partial coverage. Conversation events and allowance snapshots do
+not become extra chart records.
+
+Missing required token counts remain unknown. As in T3 Code, an omitted optional Codex
+cache category means zero. An explicit null or invalid category remains unknown.
+The producer reports cache categories separately within inclusive input. A missing
+reasoning breakdown remains unknown and never adds another charge to output.
+A valid zero remains zero. Token totals with an
+unknown contributing value remain unknown. Cost follows T3 Code's price calculation.
+It uses source-reported USD when present. Otherwise it prices uncached input, cache reads,
+cache writes and output from the stored LiteLLM table. Reasoning remains part of output.
+Published fast and ultrafast rates apply to the recorded service tier. A tier without
+published rates uses its standard rates, as in T3 Code.
+
+The full external price document and fetch time remain in SQLite. Summary reads never
+fetch prices. Explicit Refresh can update the table, with T3's 60-second refresh floor,
+24-hour ordinary cache lifetime, a 10-second request timeout and a 16 MiB response bound.
+An unavailable source leaves the stored table available. Unknown model rates remain
+unpriced. Exact names and unambiguous aliases match the table. Bare family names do not
+select an invented generation.
+
+Known cost subtotals remain visible with an Unpriced record count. The data contract
+keeps table-calculated and source-reported USD separate. This value does not establish
+actual account charges. Cost categories, cache savings and speed premiums use the same
+price rules as T3 Code. A source-reported total scales the category split proportionally.
+
+Input already includes cache tokens, and output includes reasoning tokens. Neither
+subset is added twice. Charts show observed periods and leave unrecorded intervals as gaps.
+
+_Code paths:_ `src/planner/conversation/usage/` owns the contract, native adapters,
+bounded import, storage, and summaries. Its `api.py` exposes
+`GET /api/conversation/usage/summary` for stored reads and
+`POST /api/conversation/usage/refresh` for explicit imports. The refresh accepts no
+browser-supplied source paths or credentials.
 
 ## The composer catalog
 
@@ -919,16 +1152,23 @@ where a steer is proved to cross into a live turn.
 
 That fourth exercise asks for more before it will start. It refuses a dirty tree, so
 `git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs two credential
-directories, because it gives hermes and claude a private home rather than borrowing
-yours:
+into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs these source directories
+for the isolated test homes:
 
-- `PANELS_REAL_HERMES_HOME_TEMPLATE` — a copy of `~/.hermes`.
-- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — a directory holding `.credentials.json` and
-  `settings.json`.
+- `PANELS_REAL_HERMES_HOME_TEMPLATE` — the canonical Hermes home itself, normally
+  `~/.hermes`. Do not make a copy. The harness copies `config.yaml` and `.env`
+  into an isolated home and symlinks `auth.json` back to this source. This requires
+  the canonical home: a symlink into a copied home still separates rotating auth
+  from the real login.
+- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — the canonical Claude home itself, normally
+  `~/.claude`. Do not make a copy. The harness copies optional `settings.json`
+  into an isolated home and symlinks optional `.credentials.json` back to this source.
+  A symlink into a copied home still separates rotating credentials from the real login.
+  The copied settings must contain no secrets.
 
-You build those two yourself. Nothing in the repository makes them for you, and a stale
-copy fails as a login problem rather than as a missing file.
+If you followed the old instructions, switch both variables to their canonical homes
+and remove the obsolete copies. Neither source requires a directory that you prepare
+by hand.
 
 Codex is the exception, and deliberately. It keeps one account in one file and refreshes
 that file in whichever home it is pointed at, so a private copy takes the new token with
@@ -1000,4 +1240,4 @@ steer into a turn that was genuinely running, on a receipt from the provider pro
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-09-21._
+_Last verified: 2026-10-18._

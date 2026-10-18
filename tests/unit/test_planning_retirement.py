@@ -10,8 +10,6 @@ import sqlalchemy as sa
 from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.core.migrations import planning_retirement as retirement
-from planner.tickets.contracts import TicketStatus, WorkerStepClaim
-from planner.tickets.derivation import StoredTicketFacts, agent_state, derive_ticket_facts
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -146,23 +144,15 @@ def test_unknown_planning_work_is_not_automatically_retired() -> None:
             retirement.retire_planning_workers(conn)
 
 
-def test_cancelled_is_terminal_without_progression_or_historical_error(tmp_db: Connection) -> None:
+def test_retired_worker_type_no_longer_recognizes_cancelled(tmp_db: Connection) -> None:
+    from planner.core.contracts import PlannerError
+
     seed_historical_worker_type(tmp_db, "planning-day")
     definition = configured_worker_type_registry().require("planning-day")
-    assert definition.is_terminal("cancelled")
-    assert "cancelled" not in definition.ceiling_range()
-    facts = derive_ticket_facts(
-        StoredTicketFacts("retired", "cancelled", "planning-day", WorkerStepClaim.none, False, True)
-    )
-    assert facts.ticket_status == TicketStatus.empty
-    assert not facts.blocked
-    assert (
-        agent_state(
-            facts.ticket_status, stage="cancelled", turn_is_running=False, last_turn_failed=True
-        ).value
-        == "idle"
-    )
-    assert configured_worker_type_registry().require("coding").is_terminal("cancelled")
+    assert not definition.is_known_stage("cancelled")
+    with pytest.raises(PlannerError, match="stage outside the linear order"):
+        definition.is_terminal("cancelled")
+    assert definition.is_terminal("done")
 
 
 def test_changed_proposal_body_aborts_even_when_proposal_still_exists() -> None:

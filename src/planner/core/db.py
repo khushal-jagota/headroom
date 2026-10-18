@@ -16,6 +16,8 @@ The schema itself is not written here. It lives in the migration history under
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Final
 
@@ -208,7 +210,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
     from planner.managed_skills import seed_packaged_skills, write_skill_home
     from planner.notifications import data as notifications_data
     from planner.projects import data as projects_data
-    from planner.scheduled_tickets.data import seed_shipped_schedules
     from planner.worker_types.configuration import load_worker_runtime_definitions
     from planner.worker_types.shipped import seed_chief_settings, seed_shipped_worker_types
     from planner.worker_types.store import worker_types_table_exists
@@ -240,7 +241,6 @@ def create_schema(conn: sqlite3.Connection) -> None:
             seed_packaged_skills(conn)
             seed_shipped_worker_types(conn)
             seed_chief_settings(conn)
-            seed_shipped_schedules(conn)
             notifications_data.seed_shipped_notification_preferences(conn)
         except BaseException:
             conn.execute("ROLLBACK")
@@ -268,18 +268,34 @@ def _busy_timeout_ms(conn: sqlite3.Connection) -> int:
     return int(conn.execute("PRAGMA busy_timeout").fetchone()[0])
 
 
-def _upgrade_to_current_schema(db_path: str, busy_timeout_ms: int) -> None:
-    """Run every migration the database has not seen yet, as one all-or-nothing step."""
+@contextmanager
+def schema_migration_transaction(db_path: str, busy_timeout_ms: int = 5000) -> Iterator[Connection]:
+    """Hold the same all-or-nothing schema writer lease used by application startup.
+
+    Explicit offline maintenance may prepare historical schema on this connection,
+    after archiving the original database. Nothing is upgraded merely by entering.
+    """
     engine = _migration_engine(db_path, busy_timeout_ms)
     try:
         with engine.begin() as connection:
-            _adopt_database_left_by_the_collapsed_chain(connection)
-            command.upgrade(_alembic_config(connection), "head")
+            yield connection
             violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
             if violations:
                 raise RuntimeError(f"migrations left foreign key violations: {violations!r}")
     finally:
         engine.dispose()
+
+
+def upgrade_schema_connection(connection: Connection, revision: str) -> None:
+    """Replay packaged historical revisions within the caller's existing transaction."""
+    _adopt_database_left_by_the_collapsed_chain(connection)
+    command.upgrade(_alembic_config(connection), revision)
+
+
+def _upgrade_to_current_schema(db_path: str, busy_timeout_ms: int) -> None:
+    """Run every migration the database has not seen yet, as one all-or-nothing step."""
+    with schema_migration_transaction(db_path, busy_timeout_ms) as connection:
+        upgrade_schema_connection(connection, "head")
 
 
 def _migration_engine(db_path: str, busy_timeout_ms: int) -> Engine:

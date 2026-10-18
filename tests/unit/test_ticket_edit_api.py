@@ -9,12 +9,15 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.probe import seed_probe_worker_type
 
-from planner.conversation.backend_state import write_model_enablement
+from planner.conversation.backend_state import BackendStateStore, write_model_enablement
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.snapshot import BackendModel, BackendSnapshot
+from planner.conversation.model_resolution.data import ModelResolutionStore
+from planner.conversation.model_resolution.service import ModelResolutionService
+from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -34,6 +37,8 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     # The probe Worker type is stored like any other, so the app reads it from here.
     seed_probe_worker_type(boot)
     load_worker_runtime_definitions(boot)
+    seed_test_model_catalogue(boot)
+    boot.commit()
     boot.close()
     config = load_config(
         path=None,
@@ -67,7 +72,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
             conn,
             worker_type=values.pop("worker_type", "coding"),
             title=values.pop("title", "Before edit"),
-            kickoff_note=values.pop("kickoff_note", "Before note"),
+            brief=values.pop("brief", "Before note"),
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
@@ -334,11 +339,11 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
     with TestClient(app) as client:
         awaiting = client.put(
             f"/api/tickets/{awaiting_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "claude-model"),
+            json=_employee_configuration_body("claude", "opus"),
         )
         empty = client.put(
             f"/api/tickets/{empty_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "claude-model"),
+            json=_employee_configuration_body("claude", "opus"),
         )
 
     assert awaiting.status_code == empty.status_code == 200
@@ -351,7 +356,7 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
             stored = tickets_data.read_ticket(check, ticket_id)
             assert stored.employee_backend == "claude"
             # The new backend's model came with it, so the Ticket says what it runs on.
-            assert stored.employee_launch_model == "claude-model"
+            assert stored.employee_launch_model == "opus"
             assert stored.employee_launch_reasoning_effort is None
     finally:
         check.close()
@@ -374,7 +379,9 @@ def test_employee_configuration_rejects_a_disabled_model_without_a_partial_write
         )
 
     assert response.status_code == 400
-    assert response.json()["error"]["message"] == "Employee model is disabled"
+    assert response.json()["error"]["message"] == (
+        'Model "disabled-model" is disabled. Choose an enabled model.'
+    )
     check = connect(str(db_path))
     try:
         assert (
@@ -403,12 +410,23 @@ def _backend_snapshot(
     )
 
 
-def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
+def test_employee_configuration_preserves_effort_and_validates_each_backend(
     tmp_path: Path,
 ) -> None:
-    class BackendSnapshots:
-        async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
-            del refresh
+    class BackendSnapshots(BackendSnapshotService):
+        async def snapshot(
+            self,
+            backend_key: ConversationBackendKey,
+            *,
+            refresh: bool = False,
+            discover_update_advisory: bool = True,
+        ) -> BackendSnapshot:
+            if backend_key == "claude":
+                return _backend_snapshot(
+                    backend_key,
+                    (BackendModel("opus", reasoning_effort_options=("medium",)),),
+                    ("medium",),
+                )
             return _backend_snapshot(
                 backend_key,
                 (
@@ -430,7 +448,15 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
     with TestClient(app) as client:
         # The lifespan builds the real backend snapshot service on the way up, so the
         # stand-in goes on once the app is running rather than before it starts.
-        app.state.conversation = SimpleNamespace(backend_snapshots=BackendSnapshots())
+        snapshots = BackendSnapshots()
+        app.state.conversation = SimpleNamespace(
+            backend_snapshots=snapshots,
+            model_resolution=ModelResolutionService(
+                snapshots=snapshots,
+                store=ModelResolutionStore(str(db_path)),
+                backend_state=BackendStateStore(str(db_path)),
+            ),
+        )
         selected = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json=_employee_configuration_body("hermes", "openai-codex:gpt-5.6-sol", "high"),
@@ -441,7 +467,7 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         )
         backend_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "claude-model", "medium"),
+            json=_employee_configuration_body("claude", "opus", "medium"),
         )
         switched_back = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
@@ -453,22 +479,15 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         selected.json()["employee_launch_model"],
         selected.json()["employee_launch_reasoning_effort"],
     ) == ("openai-codex:gpt-5.6-sol", "high")
-    assert model_changed.status_code == 200
-    # probe-b takes only "low", and the model changed in the same write, so the effort
-    # that no longer applies falls back to the new model's own rather than being refused.
-    assert (
-        model_changed.json()["employee_launch_model"],
-        model_changed.json()["employee_launch_reasoning_effort"],
-    ) == ("openai-codex:gpt-5.5", None)
-    # A backend change is taken whole. Nothing carries over from the backend being left —
-    # a model id belongs to the backend that named it — so the body is the whole answer,
-    # and there is no catalog of the new backend's to weigh it against here.
+    assert model_changed.status_code == 400
+    assert "reasoning effort" in model_changed.json()["error"]["message"]
+    # An explicit effort survives a model change, or the request refuses.
     assert backend_changed.status_code == 200
     assert (
         backend_changed.json()["employee_backend"],
         backend_changed.json()["employee_launch_model"],
         backend_changed.json()["employee_launch_reasoning_effort"],
-    ) == ("claude", "claude-model", "medium")
+    ) == ("claude", "opus", "medium")
     assert switched_back.status_code == 200
     assert (
         switched_back.json()["employee_backend"],

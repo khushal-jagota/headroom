@@ -1,16 +1,18 @@
-import type { FieldStageVisualState } from "./ui";
 import type { Priority, WorkAttention } from "./types";
-import { conversationSignalPresentation } from "./conversationSignalPresentation";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type WorkItemTicketFacts = WorkAttention & {
+  conversation_signal?: import("./conversationSignal").ConversationSignal;
   id: string;
   title: string;
+  recap_preview?: string;
+  blocked?: boolean;
   priority: Priority;
   stage: string;
   worker_type?: string;
   conversation_id?: string | null;
   ticket_status: string;
+  is_backlogged?: boolean;
   waiting_to_closeout?: boolean;
   gating_field?: string | null;
   activity_at?: number;
@@ -22,6 +24,7 @@ export type WorkItemTicketGroupKey =
   | "assigned"
   | "awaiting_reply"
   | "errored"
+  | "backlog"
   | "agent"
   | "waiting_to_closeout"
   | "status_awaiting_approval"
@@ -41,6 +44,7 @@ export const WORK_ITEM_TICKET_GROUPS: readonly WorkItemTicketGroupDefinition[] =
   { key: "assigned", label: "Yours", quiet: false },
   { key: "awaiting_reply", label: "Messages", quiet: false },
   { key: "errored", label: "Errored", quiet: false },
+  { key: "backlog", label: "Backlog", quiet: false },
   { key: "agent", label: "Agent", quiet: false },
   { key: "waiting_to_closeout", label: "Waiting on Consequences", quiet: true },
   {
@@ -53,19 +57,13 @@ export const WORK_ITEM_TICKET_GROUPS: readonly WorkItemTicketGroupDefinition[] =
   { key: "done", label: "Done", quiet: true }
 ] as const;
 
-export type WorkItemActivityMark = "reply" | null;
-
-export type WorkItemActivityMarkPresentation = {
-  state: FieldStageVisualState | null;
-  ariaLabel: string;
-};
-
 export type WorkItemTicketGroup<T extends WorkItemTicketFacts> =
   WorkItemTicketGroupDefinition & { tickets: T[] };
 
 export function workItemTicketGroupKey(
   ticket: WorkItemTicketFacts
 ): WorkItemTicketGroupKey {
+  if (ticket.is_backlogged) return "backlog";
   const attention = primaryWorkAttention(ticket);
   if (attention !== null) return attention;
   if (ticket.agent_state === "errored") return "errored";
@@ -75,22 +73,6 @@ export function workItemTicketGroupKey(
   if (ticket.ticket_status === "blocked") return "blocked";
   if (ticket.stage === "done") return "done";
   return "empty";
-}
-
-export function workItemActivityMark(
-  facts: Pick<
-    WorkAttention,
-    "awaiting_approval" | "awaiting_answer" | "awaiting_reply" | "agent_state"
-  >
-): WorkItemActivityMark {
-  return conversationSignalPresentation(facts) ? "reply" : null;
-}
-
-export function workItemActivityMarkPresentation(
-  mark: WorkItemActivityMark
-): WorkItemActivityMarkPresentation {
-  return conversationSignalPresentation({ awaiting_reply: mark === "reply" })
-    ?? { state: null, ariaLabel: "" };
 }
 
 export function workItemTicketOrder(

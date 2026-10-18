@@ -15,6 +15,7 @@ import json
 import logging
 import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -92,6 +93,7 @@ from planner.conversation.system import (
     MODEL_THINKING_PULSE_INTERVAL_SECONDS,
     SqliteProcessConversationSystem,
 )
+from planner.core import change_signal
 from planner.core.contracts import (
     CHIEF_PRINCIPAL,
     OWNER_PRINCIPAL,
@@ -1317,6 +1319,96 @@ def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
 
 
 # --- is_running through the lifecycle -----------------------------------------------------
+
+
+@pytest.mark.parametrize("ending", ["completed", "failed", "interrupted"])
+def test_change_signal_observers_see_the_settled_runtime_transition(
+    harness: _Harness, ending: str
+) -> None:
+    """A commit wake can race the live turn. Its final wake must see the new state."""
+
+    async def exercise() -> None:
+        await _start(harness)
+        observed_running: list[bool] = []
+
+        def observe() -> None:
+            observed_running.append(harness.system._conversations["c"].running_turn is not None)
+
+        unsubscribe = change_signal.subscribe(observe)
+        try:
+            await harness.system.send("c", text_message_content("work"), sender_label="owner")
+            assert observed_running and observed_running[-1] is True
+            observed_running.clear()
+            if ending == "completed":
+                await harness.complete_turn("c")
+            elif ending == "failed":
+                await harness.fail_turn("c")
+            else:
+                await harness.system.interrupt("c")
+            assert observed_running and observed_running[-1] is False
+            assert ConversationEventKind.message_to_owner not in await harness.recorded_kinds("c")
+        finally:
+            unsubscribe()
+
+    _run(exercise)
+
+
+def test_live_tokens_do_not_invalidate_the_workspace(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        backend = harness.backend("c")
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        changes: list[None] = []
+        unsubscribe = change_signal.subscribe(lambda: changes.append(None))
+        try:
+            for _ in range(50):
+                await backend.sink.agent_message_delta(token, "piece")
+                await backend.sink.model_thinking_happened(token)
+            assert changes == []
+        finally:
+            unsubscribe()
+
+    _run(exercise)
+
+
+def test_queue_drain_announces_the_next_running_turn(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        observed_running: list[bool] = []
+
+        def observe() -> None:
+            observed_running.append(harness.system._conversations["c"].running_turn is not None)
+
+        unsubscribe = change_signal.subscribe(observe)
+        try:
+            steered = await harness.system.send(
+                "c",
+                text_message_content("steer"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
+            )
+            assert isinstance(steered, PromptDeliveryInjected)
+            queued = await harness.system.send(
+                "c",
+                text_message_content("next"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.queue,
+            )
+            assert isinstance(queued, PromptDeliveryQueued)
+            assert all(observed_running)
+            observed_running.clear()
+            await harness.complete_turn("c")
+            assert False in observed_running
+            assert observed_running[-1] is True
+            assert await harness.system.is_running("c") is True
+            assert ConversationEventKind.message_to_owner not in await harness.recorded_kinds("c")
+        finally:
+            unsubscribe()
+
+    _run(exercise)
 
 
 # --- saying the model is thinking ----------------------------------------------------------
@@ -3064,4 +3156,145 @@ def test_turn_replacement_waits_for_accepted_steer_receipt_and_sender_obligation
         assert harness.backend("c").cancellations == 1
         assert len(harness.backend("c").writes) == (2 if control == "interrupt" else 3)
 
+    _run(exercise)
+
+
+@pytest.mark.parametrize("outstanding", ["running", "held", "reserved", "phase", "admitted",
+                                         "delivering", "steer", "settlement", "lock"])
+def test_idle_write_refuses_every_outstanding_activity(
+    harness: _Harness, outstanding: str,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        state = harness.system._conversations["c"]
+        written: list[str] = []
+        task: asyncio.Task[None] | None = None
+        if outstanding in {"running", "held"}:
+            await harness.system.send("c", text_message_content("work"), sender_label="Owner")
+            if outstanding == "held":
+                await harness.system.send(
+                    "c", text_message_content("waiting"), sender_label="Owner",
+                )
+                # Isolate the waiting-line guard from the running-turn guard. A
+                # delivery settlement can leave a held line before its drain begins.
+                state.running_turn = None
+                state.phase = type(state.phase).idle
+        elif outstanding == "reserved":
+            state.reserved_turn = object()  # type: ignore[assignment]
+        elif outstanding == "phase":
+            state.phase = type(state.phase).draining
+        elif outstanding == "admitted":
+            state.admitted_sender_messages["message"] = object()  # type: ignore[assignment]
+        elif outstanding == "delivering":
+            state.sender_messages_being_delivered["message"] = object()  # type: ignore[assignment]
+        elif outstanding == "steer":
+            state.steer_settlements.add(asyncio.Event())
+        elif outstanding == "settlement":
+            task = asyncio.create_task(asyncio.sleep(60))
+            state.settlement_tasks.add(task)
+        elif outstanding == "lock":
+            await state.lock.acquire()
+        try:
+            assert not await harness.system.run_if_idle("c", lambda: written.append("moved"))
+            assert written == []
+        finally:
+            if outstanding == "lock":
+                state.lock.release()
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+            # Remove deliberately synthetic state before the normal shutdown path.
+            if outstanding == "reserved":
+                state.reserved_turn = None
+            if outstanding == "phase":
+                state.phase = type(state.phase).idle
+            state.admitted_sender_messages.clear()
+            state.sender_messages_being_delivered.clear()
+            state.steer_settlements.clear()
+    _run(exercise)
+
+
+def test_idle_write_refuses_a_send_reserved_before_backend_write(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        backend = harness.backend("c")
+        backend.write_has_begun = asyncio.Event()
+        backend.writes_wait_for_release = asyncio.Event()
+        sending = asyncio.create_task(harness.system.send(
+            "c", text_message_content("work"), sender_label="Owner",
+        ))
+        await backend.write_has_begun.wait()
+        written: list[str] = []
+        assert not await harness.system.run_if_idle("c", lambda: written.append("moved"))
+        assert written == []
+        backend.writes_wait_for_release.set()
+        await sending
+    _run(exercise)
+
+
+def test_idle_write_holds_admission_lock_during_canonical_write(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness)
+        observed: list[bool] = []
+        assert await harness.system.run_if_idle(
+            "c", lambda: observed.append(harness.system._conversations["c"].lock.locked()),
+        )
+        assert observed == [True]
+        assert isinstance(await harness.system.send(
+            "c", text_message_content("work"), sender_label="Owner",
+        ), PromptDeliveryStarted)
+    _run(exercise)
+
+
+def test_held_promotion_and_locale_move_cannot_cross(
+    harness: _Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.core.errors import PlannerError
+    from planner.tickets import data as tickets_data
+    from planner.tickets import locale_configuration
+    from planner.tickets.contracts import TicketLocale
+    from planner.tickets.locale_move import move_ticket_locale
+
+    async def exercise() -> None:
+        await _start(harness)
+        _link_test_ticket_to_conversation(tmp_path / "conversations.db", "c")
+        monkeypatch.setitem(
+            locale_configuration.LOCALE_SUPPORTED_BACKENDS, TicketLocale.macos,
+            frozenset({"codex"}),
+        )
+        conn = connect(str(tmp_path / "conversations.db"))
+        try:
+            await harness.system.send("c", text_message_content("incumbent"), sender_label="Owner")
+            await harness.system.send("c", text_message_content("selected"), sender_label="Owner")
+            held = await harness.system.held_prompts("c")
+            # The move cannot take an already held prompt across machines.
+            with pytest.raises(PlannerError, match="activity or waiting messages"):
+                await move_ticket_locale(
+                    harness.system, conn, "t_failed", locale=TicketLocale.macos,
+                    principal=OWNER_PRINCIPAL, now=2,
+                )
+            backend = harness.backend("c")
+            backend.write_has_begun = asyncio.Event()
+            backend.writes_wait_for_release = asyncio.Event()
+            promoting = asyncio.create_task(harness.system.promote_held_prompt(
+                "c", held[0].held_prompt_id, HeldPromptPromotionMode.send_now,
+            ))
+            await backend.write_has_begun.wait()
+            # Promotion has removed the held prompt and is out at the backend wire.
+            # The locale move must still refuse immediately, before that write settles.
+            state = harness.system._conversations["c"]
+            assert not state.held_prompts
+            assert state.reserved_turn is not None
+            with pytest.raises(PlannerError, match="activity or waiting messages"):
+                await asyncio.wait_for(move_ticket_locale(
+                    harness.system, conn, "t_failed", locale=TicketLocale.macos,
+                    principal=OWNER_PRINCIPAL, now=3,
+                ), timeout=1)
+            assert tickets_data.read_ticket(conn, "t_failed").locale is TicketLocale.vps
+            backend.writes_wait_for_release.set()
+            assert await promoting == PromptDeliveryStarted()
+            assert backend.written_texts() == ("incumbent", "selected")
+        finally:
+            conn.close()
     _run(exercise)

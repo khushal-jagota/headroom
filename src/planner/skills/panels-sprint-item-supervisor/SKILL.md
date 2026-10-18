@@ -141,12 +141,54 @@ Use the same object commands as every other Panels agent:
 - `panels ticket block <ticket-id> --by <blocker-ticket-id>` and the matching `unblock`
   command change blocker links.
 - `panels sprint item artifact list <item-id>` lists Sprint Item artifacts. Use the sibling
-  `write <item-id> <path> --body-file -` and `delete <item-id> <path>` commands to change them.
+  `read <item-id> <path>` command to read text. Use `write <item-id> <path> --body-file -`
+  and `delete <item-id> <path>` to change artifacts. Paths start inside `artifacts/`.
 
 Authority comes from the authenticated supervisor context. Command names do not grant it.
 
 Never expose internal IDs in user-facing communication. Stay within this Sprint Item unless
 the user explicitly expands the scope.
+
+## Keep a concise recap and durable context
+
+Use the existing Item body for a short current recap: intent, current state, and next
+decision or action. Keep detailed context in the existing Item artifacts. Do not replace
+an existing brief without separate authorization for its conversion.
+
+Maintain `artifacts/working-notes.md` as the entry point for durable context. Preserve
+direct user guidance, current state and next steps, decisions and reasons, unresolved
+questions, and links to evidence or deeper notes. After material work or a decision, update
+these notes and the recap.
+If the body still holds an unconverted brief, retain it and update the notes only.
+Use existing Item commands. Do not create another store, lifecycle, or recurring review.
+
+After a reset or loss of context, recover before substantive action:
+
+1. Read `panels orchestrator workspace <item-id> --json` for the body and current Ticket state.
+2. Read `panels orchestrator artifact read <item-id> working-notes.md`.
+3. Read relevant linked notes and current Ticket evidence before decisions or instructions.
+
+If working notes are absent, retain the body as context. Do not invent earlier decisions.
+An unreadable file is not proof that it is absent. The artifact list contains openable
+folded targets, not an exhaustive list of files. Use known paths to read other text artifacts.
+
+Use `panels orchestrator artifact write <item-id> working-notes.md --body-file <notes-file>`
+for notes. Use `panels orchestrator set <item-id> body --body-file <recap-file>` for the recap.
+Artifact command paths start inside `artifacts/`. Reads and writes preserve exact text,
+including whitespace. The `panels sprint item` aliases address the same Item and artifacts.
+
+Only with separate authorization, convert an existing body to a recap:
+
+1. Read the current body and existing working notes. Keep the exact original body text.
+2. Choose an unused archive artifact path. Confirm that no file exists at that path.
+3. Write the original body verbatim there. Read it back and compare the exact text.
+4. Preserve the existing working notes and add a link to the archive.
+5. Read the body again. Stop if it differs from the original, or if any preceding operation failed.
+6. Replace the body with the short recap through the existing body command.
+
+Do not replace the body after a failed archive write, read, comparison, or notes update.
+These separate commands do not provide atomicity or prevent changes between the final read
+and write. Do not claim otherwise. This guidance grants no permission to convert live bodies.
 
 ## Retired calendar machinery
 
@@ -160,5 +202,5 @@ proposal discovery, or messages.
 
 Today membership is retired. Preserve all other continuation rules. Do not create daily
 or Sprint planning Tickets, restore calendar writers, or invent replacement activation
-or recurring review machinery. Historical records remain readable. Cancelled planning
-Workers preserve their original history and proposals without actionable approvals.
+or recurring review machinery. Historical planning documents remain readable.
+Backlog pauses a Ticket; Delete removes its record.

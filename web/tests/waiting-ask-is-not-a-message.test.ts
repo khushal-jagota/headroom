@@ -10,14 +10,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { conversationSignalPresentation } from "../src/lib/conversationSignalPresentation";
+import { workItemTicketGroups } from "../src/lib/workItemPresentation";
+import { conversationSignalReading } from "./support/conversationSignalReading";
 import { dayActionTiles, dayPageState, dayVisualTicket } from "../src/lib/dayPresentation";
-import { feedbackTicketStageState, feedbackTicketStateLabel } from "../src/lib/feedback";
+import { feedbackTicketStateLabel } from "../src/lib/feedback";
 import { sprintTicketCondition } from "../src/lib/sprintPresentation";
-import {
-  workspaceRowMarkPresentation,
-  workspaceTicketRowMark
-} from "../src/lib/workspaceRail";
 import type { BoardCard, DayTicket } from "../src/lib/types";
 
 function dayTicket(values: Partial<DayTicket>): DayTicket {
@@ -69,18 +66,28 @@ function boardCard(values: Partial<BoardCard>): BoardCard {
 }
 
 describe("a worker waiting on an answer", () => {
+  it("appears after approvals and before assignment and unread replies", () => {
+    const groups = workItemTicketGroups([
+      boardCard({ id: "reply", awaiting_reply: true }),
+      boardCard({ id: "assigned", assigned: true, awaiting_reply: true }),
+      boardCard({ id: "answer", awaiting_answer: true, assigned: true, awaiting_reply: true }),
+      boardCard({ id: "approval", awaiting_approval: true, awaiting_answer: true })
+    ]);
+    expect(groups.map(({ label, tickets }) => [label, tickets.map(({ id }) => id)])).toEqual([
+      ["Needs your approval", ["approval"]],
+      ["Needs your answer", ["answer"]],
+      ["Yours", ["assigned"]],
+      ["Messages", ["reply"]]
+    ]);
+  });
+
   it("has no conversation dot on the Workspace rail", () => {
     const waiting = boardCard({ awaiting_answer: true });
-    const mark = workspaceTicketRowMark(waiting);
-    expect(workspaceRowMarkPresentation(mark)).toEqual({
-      state: null,
-      ariaLabel: ""
-    });
+    expect(conversationSignalReading(waiting)).not.toContain("data-conversation-signal");
   });
 
   it("is not called a message on the Sprint Item page", () => {
     expect(sprintTicketCondition({ ...quiet, awaiting_answer: true })).toEqual({
-      mark: null,
       word: "needs your answer"
     });
   });
@@ -88,36 +95,21 @@ describe("a worker waiting on an answer", () => {
   it("is not called a message in the Feedback inbox", () => {
     const waiting = { ...quiet, awaiting_answer: true };
     expect(feedbackTicketStateLabel(waiting)).toBe("Needs your answer");
-    expect(feedbackTicketStageState(waiting)).toBeNull();
-  });
-
-  it("is not called a message on the Agents roster", () => {
-    expect(
-      conversationSignalPresentation({
-        awaiting_reply: false,
-        awaiting_answer: true,
-        agent_state: "working"
-      })
-    ).toBeNull();
+    expect(conversationSignalReading(waiting)).not.toContain("data-conversation-signal");
   });
 });
 
 describe("an unread message", () => {
   it("is still a message on every screen, and keeps its own mark", () => {
-    const withAMessage = boardCard({ awaiting_reply: true });
-    expect(workspaceRowMarkPresentation(workspaceTicketRowMark(withAMessage))).toEqual({
-      state: "current-awaiting-approval",
-      ariaLabel: "Unread reply"
-    });
+    const withAMessage = boardCard({ awaiting_reply: true, conversation_signal: {working:false,message_for_owner:true} });
+    expect(conversationSignalReading(withAMessage)).toContain('data-conversation-signal="message"');
     expect(sprintTicketCondition({ ...quiet, awaiting_reply: true }).word).toBe("messages");
     expect(feedbackTicketStateLabel({ ...quiet, awaiting_reply: true })).toBe("Messages");
   });
 
   it("keeps its message dot while the answer owns the group", () => {
-    const both = boardCard({ awaiting_reply: true, awaiting_answer: true });
-    expect(workspaceRowMarkPresentation(workspaceTicketRowMark(both)).ariaLabel).toBe(
-      "Unread reply"
-    );
+    const both = boardCard({ awaiting_reply: true, awaiting_answer: true, conversation_signal: {working:false,message_for_owner:true} });
+    expect(conversationSignalReading(both)).toContain('data-conversation-signal="message"');
   });
 
   it("still sits below a proposal the owner holds", () => {
@@ -141,9 +133,9 @@ describe("the Day", () => {
   });
 
   it("gives only the unread message a dot", () => {
-    expect(dayVisualTicket(dayTicket({ awaiting_answer: true })).state).toBeNull();
-    expect(dayVisualTicket(dayTicket({ awaiting_reply: true })).state).toBe(
-      "current-awaiting-approval"
-    );
+    const waiting = dayVisualTicket(dayTicket({ awaiting_answer:true }));
+    const message = dayVisualTicket(dayTicket({ conversation_signal:{working:false,message_for_owner:true} }));
+    expect(conversationSignalReading(waiting.ticket)).not.toContain("data-conversation-signal");
+    expect(conversationSignalReading(message.ticket)).toContain('data-conversation-signal="message"');
   });
 });

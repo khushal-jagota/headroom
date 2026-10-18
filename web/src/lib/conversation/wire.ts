@@ -41,6 +41,7 @@ export type ToolCallStatus = "completed" | "failed";
 
 export type PromptDeliveryRefusalReason =
   | "no_such_conversation"
+  | "model_resolution_failed"
   | "backend_did_not_start"
   | "session_did_not_load"
   | "write_to_backend_failed"
@@ -250,6 +251,7 @@ export type ConversationEvent =
         sender_label: string;
         mode: PromptDeliveryMode;
         refusal_reason: PromptDeliveryRefusalReason;
+        refusal_detail?: string | null;
         sender_message_id?: string;
       } & AddressedMessageFields
     >
@@ -375,6 +377,11 @@ export type BackendIdentity = {
 export type BackendModel = {
   model_id: string;
   display_name: string | null;
+  /** Provider-owned variant and its current concrete model. */
+  selected_variant?: string | null;
+  resolved_model_id?: string | null;
+  /** A failed catalogue refresh can leave a last known-good model available. */
+  catalogue_warning?: string | null;
   /** Disabled models remain visible on Backends, but no picker offers them for a run. */
   enabled: boolean;
   /** What this model really is, when the name alone does not say — an alias and the

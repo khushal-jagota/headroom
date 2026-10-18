@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyConversationFeed, feedWithCommittedEvents } from "../src/lib/conversation/feed";
 import { latestMessageOutcomes, type MessageOutcomeEvent } from "../src/lib/conversation/messageOutcome";
-import { recordedMessageFateSentence } from "../src/lib/conversation/composer";
+import { fateSentence, recordedMessageFateSentence } from "../src/lib/conversation/composer";
 import { transcriptRows } from "../src/lib/conversation/transcript";
 import { workspaceAttentionGroups } from "../src/lib/workspaceRail";
 import { ticketFacts } from "./support/screenReadings";
@@ -14,6 +14,31 @@ function outcome(sequence: number, kind: "prompt" | "prompt_delivery_uncertain",
 }
 
 describe("message-specific settlement", () => {
+  it.each([
+    "model catalogue unavailable and no last-known-good resolution exists",
+    "reasoning effort high is unsupported by the resolved model",
+    "resolved model gpt-6.1-sol is disabled"
+  ])("shows a queued model refusal in the transcript and composer: %s", (detail) => {
+    const event: MessageOutcomeEvent = {
+      conversation_id: "settled", sequence: 1, created_at: 1,
+      kind: "prompt_delivery_refused",
+      payload: {
+        content: [{ piece: "text", text: "Queued request" }], sender_label: "owner",
+        mode: "queue", sender_message_id: "queued",
+        refusal_reason: "model_resolution_failed", refusal_detail: detail
+      }
+    };
+    const row = transcriptRows(feedWithCommittedEvents(emptyConversationFeed(), [event]))[0];
+    expect(row.kind).toBe("prompt_refused");
+    if (row.kind === "prompt_refused") expect(row.sentence).toBe(detail);
+    expect(recordedMessageFateSentence([event], "queued", null)).toBe(`not delivered · ${detail}`);
+  });
+
+  it("provides a readable model refusal before its persisted detail arrives", () => {
+    expect(fateSentence({ fate: "refused", refusal_reason: "model_resolution_failed" }))
+      .toBe("not delivered · the selected model could not be resolved");
+  });
+
   it("settles only the referenced unminted uncertain row", () => {
     const original = outcome(1, "prompt_delivery_uncertain", "same text");
     const another = outcome(2, "prompt_delivery_uncertain", "same text");

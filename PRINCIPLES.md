@@ -35,6 +35,8 @@ These are standing rules. They apply unless a live owner decision overrides them
 - Plan the component inventory for the whole flow before writing components. Build few, reuse hard. No near-duplicates.
 
 ## Test discipline
+Test admission: Add a test only when it protects a distinct failure risk that existing coverage does not already prove. State that risk and the coverage gap in the implementation evidence. Use the cheapest layer that faithfully proves the behavior, reuse existing fixtures and browser hosts, and replace redundant assertions or matrix cases rather than accumulating them. A new connected case or browser host needs a concrete explanation of the boundary it proves and its measured execution cost. Retain real browser or backend connections when cheaper tests cannot prove them. Do not add tests that merely mirror implementation, or tests for reversible, low-impact changes without a meaningful failure risk. Test counts and line counts are evidence for review, not quotas.
+
 - Requirements and design decisions are stated concretely — decisions with criteria, never vibes or open qualifiers.
 - Acceptance tests assert specific stated values, never vibes. Tests evolve deliberately with the design; when one changes, the change is intentional and recorded on the owning ticket, never a silent weakening.
 - Verification means running the check fresh and showing full output. Results are never asserted from memory.

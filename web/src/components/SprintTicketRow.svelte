@@ -1,36 +1,32 @@
 <script lang="ts">
-  import type { FieldStageVisualState } from "../lib/ui";
   import type { Priority } from "../lib/types";
   import PriorityTile from "./PriorityTile.svelte";
-  import StageMark from "./StageMark.svelte";
+  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import type { ConversationSignal } from "../lib/conversationSignal";
 
   let {
     priority,
     title,
-    state,
-    ariaLabel,
+    signal = undefined,
+    conversationId = null,
     href = null,
     active = false,
     quiet = false,
     onclick = undefined,
     class: extraClass = "",
-    stageMarkClass = "",
-    stageMarkAttributes = {},
     ...rest
   }: {
     // No priority when the row's own container already answers for it: inside a
     // Sprint Item the tile is repeated noise.
     priority: Priority | null;
     title: string;
-    state: FieldStageVisualState | null;
-    ariaLabel: string;
+    signal?: ConversationSignal;
+    conversationId?: string | null;
     href?: string | null;
     active?: boolean;
     quiet?: boolean;
-    onclick?: (() => void) | undefined;
+    onclick?: ((event: MouseEvent) => void) | undefined;
     class?: string;
-    stageMarkClass?: string;
-    stageMarkAttributes?: Record<string, unknown>;
     [key: string]: unknown;
   } = $props();
 </script>
@@ -38,14 +34,8 @@
 {#snippet content()}
   {#if priority}<PriorityTile {priority} />{/if}
   <span class="ticket-row-title">{title}</span>
-  {#if state}
-    <StageMark
-      {state}
-      class={stageMarkClass}
-      aria-label={ariaLabel}
-      {...stageMarkAttributes}
-    />
-  {/if}
+  <ConversationSignalMark {signal} {conversationId} />
+
 {/snippet}
 
 {#if href === null}
@@ -65,6 +55,7 @@
     class:ticket-row--active={active}
     class:ticket-row--quiet={quiet}
     {href}
+    {onclick}
     {...rest}
   >
     {@render content()}

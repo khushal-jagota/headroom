@@ -7,12 +7,14 @@ it is now a write, and that the write is guarded where the import-time check use
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backend_state import write_model_enablement
@@ -31,6 +33,7 @@ def client(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "worker-types.db"
     with connect(str(db_path)) as boot:
         create_schema(boot)
+        seed_test_model_catalogue(boot)
     config = load_config(
         path=None,
         env={
@@ -143,7 +146,7 @@ def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
             conn,
             worker_type="coding",
             title="Mid flight",
-            kickoff_note="Kickoff",
+            brief="Kickoff",
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
@@ -199,10 +202,9 @@ def test_launch_defaults_are_the_type_and_take_effect_at_once(
     assert response.status_code == 200, response.text
     record = test_client.get("/api/worker-types/coding").json()
     assert record["profile"]["default_backend"] == "claude"
-    assert record["profile"]["default_model"] == "claude-opus-5"
+    assert record["profile"]["default_model"] == "opus"
     assert (
-        configured_worker_type_registry().require("coding").worker_profile.default_model
-        == "claude-opus-5"
+        configured_worker_type_registry().require("coding").worker_profile.default_model == "opus"
     )
 
 
@@ -243,7 +245,12 @@ def test_launch_default_save_refuses_disabled_model_without_partial_write(
     assert model in response.json()["error"]["message"]
     assert "Choose an enabled model" in response.json()["error"]["message"]
     assert test_client.get(settings_path).json() == before
-    alternative = dict(defaults, employee_launch_model="enabled-alternative")
+    with connect(str(db_path)) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO model_variant_resolutions VALUES (?,?,?,?,?)",
+            ("codex", "astra", "gpt-6-astra", json.dumps(["medium", "high"]), int(time.time())),
+        )
+    alternative = dict(defaults, employee_launch_model="gpt-6-astra")
     response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=alternative)
     assert response.status_code == 200, response.text
     assert response.json()["launch_defaults"] == alternative

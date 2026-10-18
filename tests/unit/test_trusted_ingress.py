@@ -111,12 +111,12 @@ def test_wrong_present_origin_rejected_for_unsafe_http_and_absent_origin_allowed
     with TestClient(app) as client:
         wrong = client.post(
             "/api/tickets",
-            json={"title": "Wrong origin", "worker_type": "coding", "kickoff_note": "k"},
+            json={"title": "Wrong origin", "worker_type": "coding", "brief": "k"},
             headers={**REMOTE, "Origin": "https://evil.example"},
         )
         absent = client.post(
             "/api/tickets",
-            json={"title": "Allowed origin", "worker_type": "coding", "kickoff_note": "k"},
+            json={"title": "Allowed origin", "worker_type": "coding", "brief": "k"},
             headers=REMOTE,
         )
 

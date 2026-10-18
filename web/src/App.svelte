@@ -10,18 +10,17 @@
     type WorkspaceAddress,
     type WorkspaceSelection
   } from "./lib/workspaceAddress";
-  import BacklogRoute from "./routes/BacklogRoute.svelte";
+  import SettingsRoute from "./routes/SettingsRoute.svelte";
+  import { canonicalShellHash, parseConfigSelection } from "./lib/shellRouting";
+  import { parseUsageSelection, type UsageTab } from "./lib/usageAddress";
   import BackendsRoute from "./routes/BackendsRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import DayRoute from "./routes/DayRoute.svelte";
   import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
   import IdeasRoute from "./routes/IdeasRoute.svelte";
   import FeedbackRoute from "./routes/FeedbackRoute.svelte";
-  import NotificationsRoute from "./routes/NotificationsRoute.svelte";
   import ReviewRoute from "./routes/ReviewRoute.svelte";
-  import ScheduledTasksRoute from "./routes/ScheduledTasksRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
-  import ConfigRoute from "./routes/ConfigRoute.svelte";
   import ReleaseUpdate from "./components/ReleaseUpdate.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
   import FeedbackCapture from "./components/FeedbackCapture.svelte";
@@ -76,7 +75,9 @@
   }
 
   function parseRoute(): Route {
-    const hash = window.location.hash;
+    const incomingHash = window.location.hash;
+    const hash = canonicalShellHash(incomingHash);
+    if (hash !== incomingHash) window.location.replace(hash);
     if (hash === "" || hash === "#") {
       return redirectToWorkspace({ kind: "chief" });
     }
@@ -107,61 +108,26 @@
       }
       return workspaceRoute(address);
     }
-    if (name === "workers") {
-      const legacyDetail = segments[1]
-        ? `/workers/${encodeURIComponent(decodeRouteSegment(segments[1]))}`
-        : "";
-      window.location.replace(`#/config${legacyDetail}`);
-      return {
-        name: "config",
-        params: segments[1]
-          ? { roleKind: "worker", id: decodeRouteSegment(segments[1]) }
-          : { roleKind: "index" },
-        key: segments[1] ? `config/workers/${segments[1]}` : "config"
-      };
-    }
-    if (name === "agents") {
-      if (segments[1] === "chief-of-staff" && segments.length === 2) {
-        return redirectToWorkspace({ kind: "chief" });
-      } else if (segments[1] === "worker-skill" && segments.length === 2) {
-        window.location.replace("#/config/worker-skill");
-        return {
-          name: "config",
-          params: { roleKind: "skill", id: "panels-worker" },
-          key: "config/worker-skill"
-        };
-      } else if (segments[1] === "workers" && segments[2] && segments.length === 3) {
-        const workerType = decodeRouteSegment(segments[2]);
-        window.location.replace(`#/config/workers/${encodeURIComponent(workerType)}`);
-        return {
-          name: "config",
-          params: { roleKind: "worker", id: workerType },
-          key: `config/workers/${segments[2]}`
-        };
-      } else if (segments.length === 1) {
-        return redirectToWorkspace({ kind: "none" });
+    if (name === "settings") {
+      params.section = segments[1] || "config";
+      const detail = segments.slice(2);
+      if (params.section !== "config") {
+        if (!["notifications", "scheduled-tasks"].includes(params.section) || detail.length) {
+          return { name: "unknown", params: {}, key: "unknown" };
+        }
       } else {
-        return { name: "unknown", params: {}, key: "unknown" };
+        const config = parseConfigSelection(detail);
+        if (config === null) return { name: "unknown", params: {}, key: "unknown" };
+        params.roleKind = config.roleKind;
+        if (config.roleId) params.id = config.roleId;
       }
     }
-    if (name === "config") {
-      if (segments[1] === "chief-of-staff" && segments.length === 2) {
-        params.roleKind = "agent";
-        params.id = "chief_of_staff";
-      } else if (segments[1] === "worker-skill" && segments.length === 2) {
-        params.roleKind = "skill";
-        params.id = "panels-worker";
-      } else if (segments[1] === "sprint-item-supervisor" && segments.length === 2) {
-        params.roleKind = "skill";
-        params.id = "panels-sprint-item-supervisor";
-      } else if (segments[1] === "workers" && segments[2] && segments.length === 3) {
-        params.roleKind = "worker";
-        params.id = decodeRouteSegment(segments[2]);
-      } else if (segments.length === 1) {
-        params.roleKind = "index";
-      } else {
-        params.roleKind = "unknown";
-      }
+    if (name === "backends") {
+      const usage = parseUsageSelection(segments.slice(1));
+      if (usage === null) return { name: "unknown", params: {}, key: "unknown" };
+      params.tab = usage.tab;
+      params.roleKind = usage.roleKind;
+      if (usage.roleId) params.id = usage.roleId;
     }
     if (name === "sprint" && segments[1]) {
       // Legacy sub-routes redirect to the new split: the old two-tab page became a
@@ -182,8 +148,9 @@
     if (name === "sprint" && search.has("sprint")) {
       params.sprint = search.get("sprint") || "";
     }
-    if (name === "backlog") params.project = search.get("project") || "";
-    const screenKey = segments.join("/") || "day";
+    // Usage owns its tab state so period/provider choices survive tab navigation.
+    // Its Config detail keys live inside the page, beside the shared editor mount.
+    const screenKey = name === "backends" ? "backends" : segments.join("/") || "day";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
 
@@ -196,25 +163,22 @@
     if (route.name === "sprint") {
       return !route.params.sub || route.params.sub === "documents";
     }
-    if (route.name === "config") {
+    if (route.name === "settings") {
       return route.params.roleKind !== "unknown";
     }
     return [
       "day",
       "review",
       "workspace",
-      "backlog",
       "ideas",
       "feedback",
-      "scheduled-tasks",
       "backends",
-      "notifications",
       "preview"
     ].includes(route.name);
   }
 
   function secondaryRouteActive(): boolean {
-    return ["sprint", "backlog", "ideas", "feedback", "scheduled-tasks", "config", "backends", "notifications"].includes(
+    return ["sprint", "ideas", "feedback", "settings", "backends"].includes(
       route.name
     );
   }
@@ -323,7 +287,7 @@
         {/if}
       </a>
       <a class:active={currentNav("workspace")} class="nav-link" data-screen="workspace" href="#/workspace">Workspace</a>
-      <div class="shell-more">
+      <div class="shell-more" class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"}>
         <button
           type="button"
           class="nav-link shell-more-trigger"
@@ -345,31 +309,19 @@
           >
             <div class="shell-more-grab" aria-hidden="true"></div>
             <div class="shell-more-group">Work</div>
-            <a class:active={currentNav("backlog")} href="#/backlog" onclick={closeMore}>Workers</a>
-            <a class:active={currentNav("ideas")} href="#/ideas" onclick={closeMore}>Ideas</a>
-            <a class:active={currentNav("feedback")} href="#/feedback" onclick={closeMore}>
+            <a class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"} class:active={currentNav("ideas")} href="#/ideas" onclick={closeMore}>Ideas</a>
+            <a class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"} class:active={currentNav("feedback")} href="#/feedback" aria-label="Feedback" onclick={closeMore}>
               <span>Feedback</span>
               {#if (feedbackCount.data?.open_count || 0) > 0}<span class="fb-count">{feedbackCount.data?.open_count}</span>{/if}
             </a>
             <div class="shell-more-divider"></div>
             <div class="shell-more-group">System</div>
-            <a class:active={currentNav("config")} href="#/config" onclick={closeMore}>
-              <span>Config</span>
+            <a class:active={currentNav("settings")} class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"} href="#/settings" onclick={closeMore}>
+              <span>Settings</span>
             </a>
-            <a class:active={currentNav("backends")} href="#/backends" onclick={closeMore}>
-              <span>Backends</span>
+            <a class:active={currentNav("backends")} class:rail-utility-fallback={route.name === "workspace"} class:rail-utility-fallback--pane={route.workspace?.selection.kind !== "none"} href="#/backends" onclick={closeMore}>
+              <span>Usage and Backends</span>
             </a>
-             <a class:active={currentNav("notifications")} href="#/notifications" onclick={closeMore}>
-               <span>Notifications</span>
-             </a>
-             <a
-               class:active={currentNav("scheduled-tasks")}
-               data-screen="scheduled-tasks"
-               href="#/scheduled-tasks"
-               onclick={closeMore}
-             >
-               <span>Scheduled tasks</span>
-             </a>
            </div>
          {/if}
        </div>
@@ -403,23 +355,14 @@
             <BoardRoute address={route.workspace} />
           {:else if route.name === "sprint"}
             <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} sprintId={route.params.sprint || null} />
-          {:else if route.name === "backlog"}
-            <BacklogRoute projectId={route.params.project || ""} />
           {:else if route.name === "ideas"}
             <IdeasRoute />
           {:else if route.name === "feedback"}
             <FeedbackRoute onDismissed={showDismissedToast} />
-          {:else if route.name === "scheduled-tasks"}
-            <ScheduledTasksRoute />
-          {:else if route.name === "config"}
-            <ConfigRoute
-              roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"}
-              roleId={route.params.id}
-            />
-          {:else if route.name === "notifications"}
-            <NotificationsRoute />
+          {:else if route.name === "settings"}
+            <SettingsRoute section={route.params.section} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />
           {:else if route.name === "backends"}
-            <BackendsRoute />
+            <BackendsRoute tab={route.params.tab as UsageTab} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
           {/if}
@@ -444,3 +387,13 @@
     {/key}
   {/if}
 </div>
+
+<style>
+  /* Keep system destinations reachable when a selected compact pane hides the rail. */
+  .shell-more.rail-utility-fallback,
+  .shell-more-menu a.rail-utility-fallback { display:none; }
+  @media (max-width:960px) {
+    .shell-more.rail-utility-fallback--pane { display:block; }
+    .shell-more-menu a.rail-utility-fallback--pane { display:flex; }
+  }
+</style>

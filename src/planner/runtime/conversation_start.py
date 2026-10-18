@@ -62,6 +62,7 @@ from planner.runtime.logic.conversation_start_resolution import (
     resolve_worker_conversation_start,
 )
 from planner.tickets import data as tickets_data
+from planner.tickets import locale_configuration
 from planner.tickets.contracts import Ticket
 from planner.worker_settings.service import (
     read_chief_settings,
@@ -270,13 +271,22 @@ async def start_ticket_conversation(
         ensure_started_conversation_record(
             conn, resolve_conversation_start_request(request), created_at=now
         )
+        actual_start = conn.execute(
+            "SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
         linked = tickets_data.write_ticket_conversation_start(
             conn,
             ticket.id,
             conversation_id=conversation_id,
+            expected_configuration=tickets_data.employee_launch_configuration(ticket),
             backend=values.backend_key.value,
-            model=values.model,
-            reasoning_effort=values.reasoning_effort,
+            model=values.model if actual_start is None else actual_start["model"],
+            reasoning_effort=(
+                values.reasoning_effort
+                if actual_start is None
+                else actual_start["reasoning_effort"]
+            ),
             now=now,
         )
     except BaseException as start_error:
@@ -321,9 +331,11 @@ async def _send_with_addressed_receipt(
     sender: Principal | None,
     recipient: Principal | None,
     reply_requested: bool,
+    record_refusal: bool = False,
 ) -> AddressedPromptDeliveryReceipt:
     """Use the internal freshness receipt only for an addressed employee send."""
     if sender is not None and recipient is not None:
+        refusal_options = {"record_refusal": True} if record_refusal else {}
         return await system.send_with_receipt(
             conversation_id,
             content,
@@ -336,6 +348,7 @@ async def _send_with_addressed_receipt(
             sender=sender,
             recipient=recipient,
             reply_requested=reply_requested,
+            **refusal_options,
         )
     fate = await system.send(
         conversation_id,
@@ -374,6 +387,9 @@ async def send_to_ticket_conversation(
 ) -> DeliveredMessage:
     """Send a message into this Ticket's conversation, making one if there is none yet.
 
+    The caller holds ``conversation_link_lock(f"ticket:{ticket_id}")`` throughout
+    this operation, so admission cannot cross a locale move or link reset.
+
     ``created_conversation_id`` is the name a conversation made here is given. It is the
     caller's because the caller may already have used it: the files a message carries are
     kept in its conversation's folder, and a first message's files are kept before there is
@@ -407,6 +423,22 @@ async def send_to_ticket_conversation(
     own values.
     """
     ticket = tickets_data.read_ticket(conn, ticket_id)
+    # This locale refusal is a local instance of the general delivery/readiness problem.
+    # A message must always be deliverable and must never start a step that the readiness
+    # machinery would refuse: deliver and hold, do not start. This guard only protects
+    # local execution. The general runtime fix must decide whether it subsumes this
+    # refusal so that separate admission mechanisms do not disagree.
+    if ticket.locale != locale_configuration.CURRENT_EXECUTION_LOCALE:
+        raise PlannerError(
+            ErrorCode.validation,
+            f"the Ticket locale is {ticket.locale.value}, so it cannot start on "
+            f"this {locale_configuration.CURRENT_EXECUTION_LOCALE.value} machine",
+            {
+                "ticket_id": ticket_id,
+                "locale": ticket.locale.value,
+                "machine_locale": locale_configuration.CURRENT_EXECUTION_LOCALE.value,
+            },
+        )
     if conversation_id is None and ticket.conversation_id is None:
         return await _make_a_conversation_and_send_into_it(
             system,
@@ -483,6 +515,8 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
+    captured_ticket = tickets_data.read_ticket(conn, ticket_id)
+    expected_configuration = tickets_data.employee_launch_configuration(captured_ticket)
     receipt = await _send_with_addressed_receipt(
         system,
         sending_into,
@@ -505,6 +539,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
             conn,
             ticket_id,
             expected_conversation_id=sending_into,
+            expected_configuration=expected_configuration,
             model=(ticket.employee_launch_model if runs_under.model is None else runs_under.model),
             reasoning_effort=(
                 ticket.employee_launch_reasoning_effort
@@ -782,13 +817,15 @@ async def send_to_agent_conversation(
     recipient: Principal | None = None,
     reply_requested: bool = True,
     required_sprint_item_id: str | None = None,
+    retain_created_conversation: bool = False,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
 
     The Ticket door's rules, for an agent that is not a Ticket: the message names the
     conversation it is for and is refused if that is not the one the agent is in, and a
     message sent with no conversation brings one into being on the values it says it runs
-    under. If it does not land, the conversation goes with it.
+    under. If it does not land, the conversation goes with it, unless the caller
+    retains the initial attempt as the saved work's recovery conversation.
 
     ``values`` can be absent only for a registered agent that already has a conversation.
     Such an agent can receive a message, but Panels cannot invent a role or launch
@@ -826,15 +863,18 @@ async def send_to_agent_conversation(
                     sender=sender,
                     recipient=recipient,
                     reply_requested=reply_requested,
+                    record_refusal=retain_created_conversation,
                 )
                 fate = receipt.fate
             except BaseException:
-                await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
+                if not retain_created_conversation:
+                    await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
                 raise
             if isinstance(fate, PromptDeliveryRefused):
-                await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
+                if not retain_created_conversation:
+                    await _let_go_of_an_agent_conversation(system, conn, agent_key, making)
                 return DeliveredMessage(
-                    conversation_id=None,
+                    conversation_id=making if retain_created_conversation else None,
                     fate=fate,
                     newly_accepted=receipt.newly_accepted,
                 )
@@ -868,6 +908,7 @@ async def send_to_agent_conversation(
         sender=sender,
         recipient=recipient,
         reply_requested=reply_requested,
+        record_refusal=retain_created_conversation,
     )
     return DeliveredMessage(
         conversation_id=sending_into,

@@ -51,6 +51,7 @@ export function workspaceChildMessageConversations(
     const sameTicket = rows.find((row) => row.kind === "ticket" && row.id === ticket.id);
     if (sameTicket && sameTicket.parentId !== parent.id) continue;
     if (!children.has(conversationId)) children.set(conversationId, {
+      conversationSignal: canonical ? canonical.conversation_signal : ticket.conversation_signal,
       kind:"ticket", id:ticket.id, title:canonical?.title ?? ticket.title, conversationId,
       parentId:parent.id, parentTitle:parent.title, settled:parent.settled === true
     });
@@ -87,6 +88,7 @@ export function workspaceMessageConversations(
     const parentId = ticketParentId(card);
     const parent = byItem.get(parentId);
     add({
+      conversationSignal: card.conversation_signal,
       kind: "ticket", id: card.id, title: card.title, conversationId: card.conversation_id,
       parentId, parentTitle: parentId === "chief" ? chief?.label ?? "Chief of Staff"
         : parent?.title ?? card.sprint_item_title,
@@ -98,16 +100,19 @@ export function workspaceMessageConversations(
     for (const ticket of item.tickets) {
       if (byTicket.has(ticket.id) || !ticket.awaiting_reply || !ticket.conversation_id) continue;
       add({
+        conversationSignal: ticket.conversation_signal,
         kind: "ticket", id: ticket.id, title: ticket.title, conversationId: ticket.conversation_id,
         parentId: item.id, parentTitle: item.title, settled: item.settled === true
       });
     }
     if (item.awaiting_reply && item.conversation_id) add({
+      conversationSignal: item.conversation_signal,
       kind: "sprint_item", id: item.id, title: item.title, conversationId: item.conversation_id,
       parentId: null, parentTitle: null, settled: item.settled === true
     });
   }
   if (chief?.awaiting_reply && chief.conversation_id) add({
+    conversationSignal: chief.conversation_signal,
     kind: "chief", id: "chief", title: chief.label, conversationId: chief.conversation_id,
     parentId: null, parentTitle: null, settled: false
   });

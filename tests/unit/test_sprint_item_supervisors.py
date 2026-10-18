@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import ConversationStartRequest, ConversationSystem
@@ -19,9 +20,11 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import text_message_content
+from planner.core import authority
 from planner.core.clock import RealClock, build_clock, parse_fake_now
 from planner.core.clock import TestClock as MutableClock
 from planner.core.config import load_config
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.loops import BackgroundLoops, start_background_loops
@@ -53,6 +56,7 @@ def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     conn.close()
     env = {
         "PLAN_TEST_MODE": "1",
@@ -86,7 +90,7 @@ def _park_a_proposal(client: TestClient, item_id: str) -> dict[str, Any]:
         json={
             "worker_type": "coding",
             "title": "Supervisor review",
-            "kickoff_note": "Start here.",
+            "brief": "Start here.",
             "orchestrator": {"kind": "sprint_item", "id": item_id},
             "ceiling": "needs_success_condition",
         },
@@ -224,7 +228,7 @@ def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
             json={
                 "worker_type": "coding",
                 "title": "Current child",
-                "kickoff_note": "Start.",
+                "brief": "Start.",
                 "orchestrator": {"kind": "sprint_item", "id": item["id"]},
             },
         ).json()
@@ -279,7 +283,7 @@ def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path)
             json={
                 "worker_type": "coding",
                 "title": "Current child",
-                "kickoff_note": "Start.",
+                "brief": "Start.",
                 "orchestrator": {"kind": "sprint_item", "id": own["id"]},
             },
         ).json()
@@ -484,7 +488,7 @@ def test_restart_rearms_only_the_legacy_idle_revision_shape(tmp_path: Path) -> N
                 conn,
                 worker_type="coding",
                 title=title,
-                kickoff_note="Start here.",
+                brief="Start here.",
                 principal=OWNER_PRINCIPAL,
                 now=1,
                 title_max_chars=200,
@@ -572,7 +576,7 @@ def test_legacy_recovery_does_not_trust_stale_running_bookkeeping(tmp_path: Path
             conn,
             worker_type="coding",
             title="Stale running revision",
-            kickoff_note="Start here.",
+            brief="Start here.",
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
@@ -657,7 +661,7 @@ def test_legacy_recovery_refuses_a_launch_override_before_mutation(tmp_path: Pat
             conn,
             worker_type="coding",
             title="Legacy override refusal",
-            kickoff_note="Start here.",
+            brief="Start here.",
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,
@@ -704,7 +708,7 @@ def test_legacy_recovery_refuses_a_launch_override_before_mutation(tmp_path: Pat
             f"/api/tickets/{ready.id}/restart-worker",
             json={
                 "employee_backend": "claude",
-                "employee_launch_model": "claude-model",
+                "employee_launch_model": "sonnet",
             },
         )
 
@@ -868,7 +872,7 @@ def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the I
         json={
             "worker_type": "coding",
             "title": title,
-            "kickoff_note": "Do the work.",
+            "brief": "Do the work.",
             "orchestrator": {"kind": "sprint_item", "id": item_id},
         },
     )
@@ -930,7 +934,7 @@ def _stranded_child(
         json={
             "worker_type": worker_type,
             "title": "Stranded child",
-            "kickoff_note": "Start here.",
+            "brief": "Start here.",
             "orchestrator": {"kind": "sprint_item", "id": item_id},
         },
     ).json()
@@ -972,7 +976,7 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
         ticket_id = _stranded_child(client, db_path, str(item["id"]))
         configuration = {
             "employee_backend": "claude",
-            "employee_launch_model": "claude-model",
+            "employee_launch_model": "sonnet",
             "employee_launch_reasoning_effort": "medium",
         }
         direct_configuration = client.put(
@@ -1048,7 +1052,7 @@ def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
             json={
                 "worker_type": "coding",
                 "title": "Child",
-                "kickoff_note": "Start.",
+                "brief": "Start.",
                 "orchestrator": {"kind": "sprint_item", "id": own["id"]},
             },
         ).json()
@@ -1085,13 +1089,13 @@ def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -
             json={
                 "worker_type": "coding",
                 "title": "Mine",
-                "kickoff_note": "Start.",
+                "brief": "Start.",
                 "orchestrator": {"kind": "sprint_item", "id": own["id"]},
             },
         ).json()
         stranger = client.post(
             "/api/tickets",
-            json={"worker_type": "coding", "title": "Stranger", "kickoff_note": "Start."},
+            json={"worker_type": "coding", "title": "Stranger", "brief": "Start."},
         ).json()
         itself = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
         into_a_stranger = client.post(
@@ -1173,3 +1177,125 @@ def test_a_conversation_pages_in_the_direction_it_was_asked_for(tmp_path: Path) 
     assert sequences(everything) == [1, 2, 3, 4, 5] and everything["has_more"] is False
     assert one_direction.json()["error"]["code"] == "validation"
     assert too_large.json()["error"]["code"] == "validation"
+
+
+def test_existing_supervisors_can_send_and_reply_without_granting_authority(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        system = cast(InMemoryConversationSystem, app.state.conversation_system)
+        first = _create_item(client, "First")
+        second = _create_item(client, "Second")
+        sent = client.post(
+            "/api/messages/send",
+            json={
+                "target": {"kind": "sprint_item", "id": second["id"]},
+                "message": "Coordinate the shared boundary.",
+            },
+            headers=_supervisor_headers(str(first["id"])),
+        )
+        assert sent.status_code == 200, sent.text
+        received_in = sent.json()["conversation_id"]
+        write = system.backend_prompt_writes(received_in)[-1]
+        assert write.text.startswith("[Authenticated Panels reply requirement]")
+        assert f"panels send-message --sprint-item {first['id']}" in write.text
+        assert write.text.endswith(f"Sprint Item {first['id']}:\nCoordinate the shared boundary.")
+        reply = client.post(
+            "/api/messages/send",
+            json={
+                "target": {"kind": "sprint_item", "id": first["id"]},
+                "message": "Boundary agreed.",
+            },
+            headers=_supervisor_headers(str(second["id"])),
+        )
+        assert reply.status_code == 200, reply.text
+        reply_write = system.backend_prompt_writes(reply.json()["conversation_id"])[-1]
+        assert reply_write.text == f"Sprint Item {second['id']}:\nBoundary agreed."
+        turn = asyncio.run(system.active_turn_reference(received_in))
+        assert turn is not None
+        assert not asyncio.run(
+            system.turn_expects_reply(turn, Principal(PrincipalKind.sprint_item, str(first["id"])))
+        )
+        with connect(str(db_path)) as conn:
+            assert not authority.is_above(
+                conn,
+                Principal(PrincipalKind.sprint_item, str(first["id"])),
+                authority.outcome(str(second["id"])),
+            )
+
+
+@pytest.mark.parametrize("missing", ["sender", "recipient"])
+def test_supervisor_messaging_requires_both_existing_items(tmp_path: Path, missing: str) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        existing = _create_item(client)
+        sender = "si_missing" if missing == "sender" else str(existing["id"])
+        recipient = "si_missing" if missing == "recipient" else str(existing["id"])
+        sent = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "sprint_item", "id": recipient}, "message": "Hello"},
+            headers=_supervisor_headers(sender),
+        )
+        assert sent.json()["error"]["code"] == "not_found"
+        workspace = client.get(f"/api/items/{existing['id']}/workspace").json()
+        assert workspace["supervisor"]["conversation_id"] is None
+
+
+def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        own = _create_item(client, "Own")
+        other = _create_item(client, "Other")
+        mine = _park_a_proposal(client, str(own["id"]))
+        theirs = _park_a_proposal(client, str(other["id"]))
+        before = client.get(f"/api/tickets?detail=full&id={theirs['id']}").json()
+        own_headers = _supervisor_headers(str(own["id"]))
+        worker = {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(mine["id"])}
+        peer = client.post(
+            "/api/messages/send",
+            json={"target": {"kind": "sprint_item", "id": other["id"]}, "message": "Coordinate"},
+            headers=own_headers,
+        )
+        assert peer.status_code == 200, peer.text
+        refused = [
+            client.post(
+                "/api/messages/send",
+                json={"target": {"kind": "ticket", "id": theirs["id"]}, "message": "Act"},
+                headers=own_headers,
+            ),
+            client.post(
+                "/api/messages/send",
+                json={"target": {"kind": "sprint_item", "id": other["id"]}, "message": "Act"},
+                headers=worker,
+            ),
+            client.post(
+                f"/api/tickets/{mine['id']}/request-help",
+                json={"recipient": {"kind": "sprint_item", "id": other["id"]}, "message": "Help"},
+                headers=worker,
+            ),
+            client.patch(
+                f"/api/tickets/{theirs['id']}",
+                json={"ceiling": "needs_plan"},
+                headers=own_headers,
+            ),
+            client.post(
+                f"/api/tickets/{theirs['id']}/accept/success_condition",
+                json={"next_ceiling": "needs_what_changes", "next_holder": _OWNER_HOLDER},
+                headers=own_headers,
+            ),
+            client.put(
+                f"/api/collections/outcome_tickets/{own['id']}/{theirs['id']}",
+                headers=own_headers,
+            ),
+            client.patch(
+                f"/api/items/{other['id']}",
+                json={"body": "Unauthorized change"},
+                headers=own_headers,
+            ),
+        ]
+        for response in refused:
+            assert response.status_code == 400, response.text
+            assert response.json()["error"]["code"] == "agent_forbidden", response.text
+        assert client.get(f"/api/tickets?detail=full&id={theirs['id']}").json() == before
+        assert client.get(f"/api/items?detail=full&id={other['id']}").json()["body"] == ""
