@@ -124,4 +124,40 @@ Capture, response metadata, proof requests, and witness retention are bounded. M
 
 Code paths: `navigation/proof.py`, `navigation/proof_contracts.py`, `navigation/commands.py`, `navigation/middleware.py`, `core/commit_capture.py`, and `core/commit_observers.py`.
 
-_Last verified: 2026-10-17._
+## Browser synchronization boundary
+
+The browser navigation module maintains one shared replica above routes and panes. Production screens retain their existing Query reads until consumer adoption.
+
+```text
+complete snapshot / revision batches
+                |
+       one browser owner
+                |
+     one atomic source collection
+                |
+      coherent shared selectors
+                |
+        rendered consumers
+                |
+    observed command visibility
+```
+
+The owner validates continuity before revision comparisons. Obsolete requests cannot replace newer state. A gap or reset requires a complete snapshot replacement.
+
+The source collection contains records and their publication identity in one atomic update. Recovery retains the last complete view until replacement succeeds.
+
+Local drafts and manual choices remain separate. Transport state does not add visible badges, new loading treatments, or changed command authority.
+
+A successful command and its visible result remain separate facts. A visibility wait requires the specified consumers to observe a coherent publication.
+
+An adapter commit alone does not prove display. A consumer removal or late callback cannot supply missing render evidence.
+
+After an epoch change, the server must certify the issued fence against a replacement snapshot. Missing or expired evidence leaves visibility unknown.
+
+Unknown visibility never causes an automatic command resend. A certified no-op does not imply a relevant visible change.
+
+The isolated browser harness exercises the module against real snapshot and event endpoints. Its measurements do not establish production consumer parity or speedup.
+
+Code paths: `web/src/lib/navigation/`, `web/tests/navigation-*`, and `scripts/navigation_browser_harness.py`.
+
+_Last verified: 2026-10-18._
