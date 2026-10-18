@@ -31,6 +31,13 @@ import SprintTicketRow from "../src/components/SprintTicketRow.svelte";
 import WorkspaceRailCard from "../src/components/WorkspaceRailCard.svelte";
 
 describe("shared conversation signal consumers", () => {
+  it("renders a VPS row without an executor query provider", () => {
+    const html = render(SprintTicketRow, { props: {
+      locale: "vps", priority: null, title: "VPS worker",
+      signal: {working: true, message_for_owner: false}, conversationId: "vps-conversation"
+    } }).body;
+    expect(html).toContain('data-conversation-signal="working"');
+  });
   it.each([
     { working: false, message_for_owner: false },
     { working: true, message_for_owner: false },
