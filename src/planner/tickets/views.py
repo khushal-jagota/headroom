@@ -12,7 +12,6 @@ from dataclasses import asdict
 
 from planner.core import ticket_blocks
 from planner.core.contracts import BlockerSummary, JsonDict
-from planner.core.errors import ErrorCode, PlannerError
 from planner.files.lifecycle import database_path
 from planner.files.logic.listing import entries_as_json, fold_directory
 from planner.files.logic.paths import ticket_files_root
@@ -40,13 +39,6 @@ _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
 
 def _prio_rank(priority: str) -> int:
     return _PRIORITY_RANK.index(priority)
-
-
-def ticket_recap_preview(conn: sqlite3.Connection, ticket_id: str) -> JsonDict:
-    row = conn.execute("SELECT recap FROM tickets WHERE id=?", (ticket_id,)).fetchone()
-    if row is None:
-        raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
-    return {"recap_preview": recap_preview(str(row[0]))}
 
 
 # --- serializers ---------------------------------------------------------------

@@ -16,6 +16,7 @@ export interface PrincipalValue {
 
 export interface TicketValue {
   title: string;
+  recap_preview: string;
   worker_type: string;
   stage: string;
   ticket_status: string;
@@ -43,6 +44,7 @@ export interface TicketValue {
 
 export interface OrchestratorValue {
   title: string;
+  recap_preview: string;
   priority: string;
   created_at: number;
   project_id: string;
@@ -363,6 +365,9 @@ export const wireDescriptors: Record<string, unknown> = {
       "title": {
         "primitive": "string"
       },
+      "recap_preview": {
+        "primitive": "string"
+      },
       "worker_type": {
         "primitive": "string"
       },
@@ -493,6 +498,9 @@ export const wireDescriptors: Record<string, unknown> = {
   "OrchestratorValue": {
     "object": {
       "title": {
+        "primitive": "string"
+      },
+      "recap_preview": {
         "primitive": "string"
       },
       "priority": {

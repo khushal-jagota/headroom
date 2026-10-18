@@ -23,6 +23,7 @@ class PrincipalValue(TypedDict):
 
 class TicketValue(TypedDict):
     title: str
+    recap_preview: str
     worker_type: str
     stage: str
     ticket_status: str
@@ -50,6 +51,7 @@ class TicketValue(TypedDict):
 
 class OrchestratorValue(TypedDict):
     title: str
+    recap_preview: str
     priority: str
     created_at: int
     project_id: str

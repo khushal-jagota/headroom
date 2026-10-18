@@ -113,12 +113,6 @@ async def create_item(
     return {**sprints_views.item_detail(conn, item.id), "startup": startup}
 
 
-@router.get("/items/{item_id}/recap-preview")
-async def read_item_recap_preview(item_id: str, conn: DbConn, response: Response) -> JsonDict:
-    response.headers["Cache-Control"] = "no-store"
-    return sprints_views.item_recap_preview(conn, item_id)
-
-
 @router.get("/items")
 async def read_items(
     conn: DbConn,

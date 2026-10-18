@@ -351,9 +351,39 @@ def test_metadata_edits_publish_source_values_without_status_changes(tmp_path: P
         assert len(batches) == 1
         assert batches[0]["upserts"] == [{"kind": "ticket", "id": "t", "value": changed_ticket}]
         assert batches[0]["deletes"] == []
+        before_preview_edit = snapshot(conn)
+        original_parent = values(conn)["orchestrator", "a"]
+        recap = '\t"雪" \\\n ' + "😀" * 200 + " SOURCE-BODY-TAIL"
+        conn.execute("BEGIN")
+        conn.execute("UPDATE tickets SET recap=? WHERE id='t'", (recap,))
+        conn.execute("UPDATE sprint_items SET body=? WHERE id='a'", ("\n Parent\tline\nRésumé ",))
+        conn.commit()
+        previews = values(conn)
+        assert previews["ticket", "t"] == {
+            **changed_ticket,
+            "recap_preview": '"雪" \\ ' + "😀" * 153 + "…",
+        }
+        assert previews["orchestrator", "a"] == {
+            **original_parent,
+            "recap_preview": "Parent line Résumé",
+        }
+        assert len(previews["ticket", "t"]["recap_preview"]) == 160
+        assert "SOURCE-BODY-TAIL" not in json.dumps(snapshot(conn))
+        batches = journal(conn, before_preview_edit["epoch"], before_preview_edit["revision"])[
+            "batches"
+        ]
+        assert len(batches) == 1
+        assert {(r["kind"], r["id"]) for r in batches[0]["upserts"]} == {
+            ("ticket", "t"),
+            ("orchestrator", "a"),
+        }
+        assert batches[0]["deletes"] == []
         stable = snapshot(conn)
         conn.execute("BEGIN")
-        conn.execute("UPDATE tickets SET updated_at=100,created_at=13 WHERE id='t'")
+        conn.execute(
+            "UPDATE tickets SET updated_at=100,created_at=13,recap='rollback' WHERE id='t'"
+        )
+        conn.execute("UPDATE sprint_items SET body='rollback' WHERE id='a'")
         conn.execute("DELETE FROM tickets WHERE id='t'")
         conn.execute("DELETE FROM sprint_items WHERE id='a'")
         conn.rollback()

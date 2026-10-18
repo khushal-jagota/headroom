@@ -23,7 +23,7 @@ from enum import StrEnum
 from functools import partial
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from planner.conversation.api import (
@@ -575,12 +575,6 @@ async def create_ticket(
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
-
-
-@router.get("/tickets/{ticket_id}/recap-preview")
-async def read_ticket_recap_preview(ticket_id: str, conn: DbConn, response: Response) -> JsonDict:
-    response.headers["Cache-Control"] = "no-store"
-    return tickets_views.ticket_recap_preview(conn, ticket_id)
 
 
 @router.get("/tickets")

@@ -34,13 +34,6 @@ def _prio_rank(priority: str) -> int:
     return _PRIORITY_RANK.index(priority)
 
 
-def item_recap_preview(conn: sqlite3.Connection, item_id: str) -> JsonDict:
-    row = conn.execute("SELECT body FROM sprint_items WHERE id=?", (item_id,)).fetchone()
-    if row is None:
-        raise PlannerError(ErrorCode.not_found, "sprint item not found", {"id": item_id})
-    return {"recap_preview": recap_preview(str(row[0]))}
-
-
 # --- serializers ---------------------------------------------------------------
 
 

@@ -26,6 +26,7 @@ from planner.navigation.schema import SCHEMA
 from planner.tickets.contracts import TicketStatus, WorkerStepClaim
 from planner.tickets.derivation import StoredTicketFacts, derive_ticket_status
 from planner.tickets.logic.fields_codec import proposal_from_json
+from planner.tickets.logic.recap import recap_preview
 from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.store import definition_from_json
 
@@ -349,6 +350,7 @@ def _derive(
         if version >= 4:
             value["gating_field"] = definition.gating_field(t["stage"])
             value["created_at"] = t["created_at"]
+            value["recap_preview"] = recap_preview(str(t["recap"]))
         records.append(_record(kind, identity, value))
     elif kind in ("orchestrator", "chief"):
         if kind == "orchestrator":
@@ -366,6 +368,8 @@ def _derive(
             version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
             if version >= 3:
                 value.update(priority=t["priority"], created_at=t["created_at"])
+            if version >= 4:
+                value["recap_preview"] = recap_preview(str(t["body"]))
         else:
             key = "chief_of_staff"
             deps.add(("chief_settings", key))
