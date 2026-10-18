@@ -15,7 +15,7 @@ from tests.unit.test_conversation_system import (
     _run,
     _start,
 )
-from tests.unit.test_db import _migration_tree_through
+from tests.unit.test_db import _head_revision, _migration_tree_through
 
 from planner.conversation.contracts import PromptDeliveryMode, PromptDeliveryStarted
 from planner.conversation.events import (
@@ -383,10 +383,7 @@ def test_migration_preserves_historical_receipts_without_invented_capability(
         conversation_event_payload_to_canonical_json(historical_prompt)
     )
     create_schema(conn)
-    assert (
-        conn.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        == "navigation_delivery_proof"
-    )
+    assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == _head_revision()
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             "INSERT INTO conversation_lifecycle_facts VALUES "

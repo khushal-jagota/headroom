@@ -70,7 +70,11 @@ def test_failed_lifecycle_observer_still_completes_real_lifespan_cleanup(
 
     def build_isolated_runtime(**kwargs: Any) -> ConversationRuntime:
         kwargs["backend_child_factories"] = {key: fake_child for key in ConversationBackendKey}
-        return real_builder(**kwargs)
+        runtime = real_builder(**kwargs)
+        # The cleanup fixture uses synthetic models and controlled children, as the
+        # ordinary conversation harness does. Catalogue resolution is a separate seam.
+        runtime.system._model_resolver = None
+        return runtime
 
     async def failed_observer(*args: object, **kwargs: object) -> None:
         raise RuntimeError("synthetic lifecycle observer failure")

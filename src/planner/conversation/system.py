@@ -32,10 +32,11 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
-from typing import Any
+from typing import IO, Any
 from uuid import uuid4
 
 from planner.conversation.backends.contracts import (
@@ -134,6 +135,7 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import CurrentModelResolver, ModelResolution
+from planner.conversation.publication.mutations import PlainFieldMutation, SignalRuntimeMutation
 from planner.conversation.storage import (
     ConversationRecord,
     ConversationRecordNamesNoModel,
@@ -385,6 +387,7 @@ class SqliteProcessConversationSystem:
         idle_child_sweep_interval_seconds: float = IDLE_CHILD_SWEEP_INTERVAL_SECONDS,
         unix_time_now: Callable[[], float] = time.time,
         model_resolver: CurrentModelResolver | None = None,
+        runtime_ownership: IO[bytes] | None = None,
     ) -> None:
         missing = sorted(set(ConversationBackendKey) - set(backend_child_factories))
         if missing:
@@ -403,7 +406,10 @@ class SqliteProcessConversationSystem:
         self._conversations: dict[str, _ConversationState] = {}
         self._conversations_lock = asyncio.Lock()
         self._idle_child_janitor: asyncio.Task[None] | None = None
-        self._runtime_ownership = store.claim_runtime()
+        self._signal = store.signal_coordinator
+        self._runtime_ownership = store.claim_runtime(existing_ownership=runtime_ownership)
+        if self._signal is not None:
+            self._signal.bind_runtime(self._runtime_turn)
         self._shutting_down = False
         self._shutdown_task: asyncio.Task[None] | None = None
 
@@ -452,7 +458,8 @@ class SqliteProcessConversationSystem:
         record = await self._store.create_conversation(resolved)
         async with self._conversations_lock:
             if record.conversation_id not in self._conversations:
-                self._conversations[record.conversation_id] = _ConversationState(record=record)
+                with nullcontext() if self._signal is None else self._signal.runtime_registry():
+                    self._conversations[record.conversation_id] = _ConversationState(record=record)
 
     async def send(
         self,
@@ -952,13 +959,15 @@ class SqliteProcessConversationSystem:
         would only make a question the browser asks constantly wait behind a spawn.
         """
         state = await self._conversation_state(conversation_id)
-        return state is not None and state.running_turn is not None
+        with self._signal_read():
+            return state is not None and state.running_turn is not None
 
     async def has_pending_permission_ask(self, conversation_id: str) -> bool:
         state = await self._conversation_state(conversation_id)
-        if state is None or state.running_turn is None:
-            return False
-        return bool(state.running_turn.pending_permission_ask_ids)
+        with self._signal_read():
+            if state is None or state.running_turn is None:
+                return False
+            return bool(state.running_turn.pending_permission_ask_ids)
 
     async def pending_permission_ask_ids(self, conversation_id: str) -> frozenset[str]:
         """Which asks are waiting for an answer right now.
@@ -968,21 +977,24 @@ class SqliteProcessConversationSystem:
         working out for itself which one is still live.
         """
         state = await self._conversation_state(conversation_id)
-        if state is None or state.running_turn is None:
-            return frozenset()
-        return frozenset(state.running_turn.pending_permission_ask_ids)
+        with self._signal_read():
+            if state is None or state.running_turn is None:
+                return frozenset()
+            return frozenset(state.running_turn.pending_permission_ask_ids)
 
     async def has_pending_user_input(self, conversation_id: str) -> bool:
         state = await self._conversation_state(conversation_id)
-        if state is None or state.running_turn is None:
-            return False
-        return bool(state.running_turn.pending_user_input_questions)
+        with self._signal_read():
+            if state is None or state.running_turn is None:
+                return False
+            return bool(state.running_turn.pending_user_input_questions)
 
     async def pending_user_input_request_ids(self, conversation_id: str) -> frozenset[str]:
         state = await self._conversation_state(conversation_id)
-        if state is None or state.running_turn is None:
-            return frozenset()
-        return frozenset(state.running_turn.pending_user_input_questions)
+        with self._signal_read():
+            if state is None or state.running_turn is None:
+                return frozenset()
+            return frozenset(state.running_turn.pending_user_input_questions)
 
     async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
         """Return a stable FIFO snapshot of the messages waiting in this process."""
@@ -1371,8 +1383,17 @@ class SqliteProcessConversationSystem:
                 LifecycleOperation.permission_answer,
                 provider_id,
                 (request_fact,),
+                runtime_mutation=self._runtime_mutation(
+                    state,
+                    PlainFieldMutation(
+                        running,
+                        "pending_permission_ask_ids",
+                        running.pending_permission_ask_ids - {ask_id},
+                    ),
+                ),
             )
-            running.pending_permission_ask_ids.discard(ask_id)
+            if self._signal is None:
+                running.pending_permission_ask_ids.discard(ask_id)
             answered_turn_token = running.token
 
         reached_the_backend = True
@@ -1415,8 +1436,17 @@ class SqliteProcessConversationSystem:
                             replace(request_fact, status=LifecycleStatus.pending),
                         ),
                     ),
+                    runtime_mutation=self._runtime_mutation(
+                        state,
+                        PlainFieldMutation(
+                            running,
+                            "pending_permission_ask_ids",
+                            running.pending_permission_ask_ids | {ask_id},
+                        ),
+                    ),
                 )
-                running.pending_permission_ask_ids.add(ask_id)
+                if self._signal is None:
+                    running.pending_permission_ask_ids.add(ask_id)
                 return False
             await self._append_event(
                 state,
@@ -1496,8 +1526,21 @@ class SqliteProcessConversationSystem:
                 LifecycleOperation.user_input_answer,
                 provider_id,
                 (request_fact,),
+                runtime_mutation=self._runtime_mutation(
+                    state,
+                    PlainFieldMutation(
+                        running,
+                        "pending_user_input_questions",
+                        {
+                            key: value
+                            for key, value in running.pending_user_input_questions.items()
+                            if key != request_id
+                        },
+                    ),
+                ),
             )
-            del running.pending_user_input_questions[request_id]
+            if self._signal is None:
+                del running.pending_user_input_questions[request_id]
             answered_turn_token = running.token
 
         reached_the_backend = True
@@ -1538,8 +1581,17 @@ class SqliteProcessConversationSystem:
                             replace(request_fact, status=LifecycleStatus.pending),
                         ),
                     ),
+                    runtime_mutation=self._runtime_mutation(
+                        state,
+                        PlainFieldMutation(
+                            running,
+                            "pending_user_input_questions",
+                            {**running.pending_user_input_questions, request_id: questions},
+                        ),
+                    ),
                 )
-                running.pending_user_input_questions[request_id] = questions
+                if self._signal is None:
+                    running.pending_user_input_questions[request_id] = questions
                 return False
             await self._append_event(
                 state,
@@ -1561,6 +1613,8 @@ class SqliteProcessConversationSystem:
 
     async def shutdown(self) -> None:
         """Own complete cleanup, retaining the database lease if the caller leaves."""
+        if self._signal is not None:
+            self._signal.invalidate("shutdown")
         self._shutting_down = True
         if self._shutdown_task is None:
             self._shutdown_task = asyncio.create_task(self._shutdown_owned())
@@ -2527,6 +2581,24 @@ class SqliteProcessConversationSystem:
                         ),
                     )
 
+                accepted_turn = _RunningTurn(
+                    token=reservation.token,
+                    automatic_compaction=reservation.automatic_compaction,
+                    prompt_senders={
+                        principal: None
+                        for principal in (
+                            (sender if reply_requested and composed_content_delivered else None),
+                            *(
+                                message.sender
+                                if message.reply_requested and composed_content_delivered
+                                else None
+                                for message in also_delivered
+                            ),
+                        )
+                        if principal is not None
+                    },
+                    automatic_notice=reservation.automatic_notice,
+                )
                 # One transaction: the change, the conversation's new values and the
                 # prompt are one fact about one delivery, and a half-written one would
                 # leave the record saying something that never happened.
@@ -2563,6 +2635,10 @@ class SqliteProcessConversationSystem:
                         ),
                         owner_read_through_sequence=owner_read_through_sequence,
                     ),
+                    runtime_mutation=self._runtime_mutation(
+                        state,
+                        PlainFieldMutation(state, "running_turn", accepted_turn),
+                    ),
                 )
                 self._take_in_written_rows(state, written)
                 owner_prompt_sequences = [
@@ -2591,24 +2667,8 @@ class SqliteProcessConversationSystem:
                         reasoning_effort=carried_change.reasoning_effort,
                     )
                 state.has_delivered_prompt = True
-                state.running_turn = _RunningTurn(
-                    token=reservation.token,
-                    automatic_compaction=reservation.automatic_compaction,
-                    prompt_senders={
-                        principal: None
-                        for principal in (
-                            (sender if reply_requested and composed_content_delivered else None),
-                            *(
-                                message.sender
-                                if message.reply_requested and composed_content_delivered
-                                else None
-                                for message in also_delivered
-                            ),
-                        )
-                        if principal is not None
-                    },
-                    automatic_notice=reservation.automatic_notice,
-                )
+                if self._signal is None:
+                    state.running_turn = accepted_turn
                 self._set_phase(state, _ConversationPhase.running)
                 # The prompt commit can announce before this process-owned state is
                 # visible. Publish again after the runtime transition, so a reader of
@@ -2627,6 +2687,8 @@ class SqliteProcessConversationSystem:
         operation: LifecycleOperation,
         provider_identity: str | None = None,
         related: tuple[LifecycleFact, ...] = (),
+        *,
+        runtime_mutation: SignalRuntimeMutation | None = None,
     ) -> LifecycleFact:
         attempt = LifecycleFact(
             LifecycleKind.attempt,
@@ -2641,6 +2703,7 @@ class SqliteProcessConversationSystem:
             partial(
                 self._store.transition_lifecycle, state.record.conversation_id, (attempt, *related)
             ),
+            runtime_mutation=runtime_mutation,
         )
         return attempt
 
@@ -2656,10 +2719,36 @@ class SqliteProcessConversationSystem:
         task.add_done_callback(state.settlement_tasks.discard)
         return await asyncio.shield(task)
 
+    def _runtime_turn(self, conversation_id: str) -> object | None:
+        state = self._conversations.get(conversation_id)
+        return None if state is None else state.running_turn
+
+    def _signal_read(self) -> AbstractContextManager[None]:
+        return nullcontext() if self._signal is None else self._signal.current_read()
+
+    def _runtime_mutation(
+        self,
+        state: _ConversationState,
+        *operations: PlainFieldMutation,
+    ) -> SignalRuntimeMutation | None:
+        if self._signal is None:
+            return None
+        return SignalRuntimeMutation(
+            conversation_id=state.record.conversation_id,
+            runtime_epoch=self._signal.runtime_epoch,
+            expected_turn=state.running_turn,
+            operations=operations,
+        )
+
     async def _persist[T](
-        self, state: _ConversationState, operation: Callable[[], Coroutine[Any, Any, T]]
+        self,
+        state: _ConversationState,
+        operation: Callable[[], Coroutine[Any, Any, T]],
+        *,
+        runtime_mutation: SignalRuntimeMutation | None = None,
     ) -> T:
-        return await self._store.settle_recording(state.record.conversation_id, operation)
+        with self._store.signal_mutation(runtime_mutation):
+            return await self._store.settle_recording(state.record.conversation_id, operation)
 
     async def _drain_held_prompts(self, state: _ConversationState) -> None:
         await self._own_settlement(state, self._drain_held_prompts_owned(state))
@@ -3073,15 +3162,29 @@ class SqliteProcessConversationSystem:
                     ending is ConversationTurnEnding.failed and not running.automatic_notice
                 ),
             ),
+            runtime_mutation=self._runtime_mutation(
+                state,
+                PlainFieldMutation(running, "ended", True),
+                PlainFieldMutation(running, "pending_permission_ask_ids", set()),
+                PlainFieldMutation(running, "pending_user_input_questions", {}),
+                PlainFieldMutation(running, "permission_provider_ids", {}),
+                PlainFieldMutation(running, "user_input_provider_ids", {}),
+                PlainFieldMutation(state, "last_ended_turn_token", running.token),
+                PlainFieldMutation(
+                    state, "last_ended_turn_was_automatic_compaction", running.automatic_compaction
+                ),
+                PlainFieldMutation(state, "running_turn", None),
+            ),
         )
-        running.ended = True
-        running.pending_permission_ask_ids.clear()
-        running.pending_user_input_questions.clear()
-        running.permission_provider_ids.clear()
-        running.user_input_provider_ids.clear()
-        state.last_ended_turn_token = running.token
-        state.last_ended_turn_was_automatic_compaction = running.automatic_compaction
-        state.running_turn = None
+        if self._signal is None:
+            running.ended = True
+            running.pending_permission_ask_ids.clear()
+            running.pending_user_input_questions.clear()
+            running.permission_provider_ids.clear()
+            running.user_input_provider_ids.clear()
+            state.last_ended_turn_token = running.token
+            state.last_ended_turn_was_automatic_compaction = running.automatic_compaction
+            state.running_turn = None
         self._take_in_written_rows(state, written)
         ended = written[-1]
         if not running.automatic_compaction:
@@ -3432,9 +3535,23 @@ class SqliteProcessConversationSystem:
                     options=ask.options,
                 ),
                 lifecycle=(request_fact,),
+                runtime_mutation=self._runtime_mutation(
+                    state,
+                    PlainFieldMutation(
+                        running,
+                        "pending_permission_ask_ids",
+                        running.pending_permission_ask_ids | {identity},
+                    ),
+                    PlainFieldMutation(
+                        running,
+                        "permission_provider_ids",
+                        {**running.permission_provider_ids, identity: ask.ask_id},
+                    ),
+                ),
             )
-            running.pending_permission_ask_ids.add(identity)
-            running.permission_provider_ids[identity] = ask.ask_id
+            if self._signal is None:
+                running.pending_permission_ask_ids.add(identity)
+                running.permission_provider_ids[identity] = ask.ask_id
         finally:
             state.lock.release()
 
@@ -3467,9 +3584,23 @@ class SqliteProcessConversationSystem:
                 turn_token,
                 UserInputRequestedEventPayload(request_id=identity, questions=request.questions),
                 lifecycle=(request_fact,),
+                runtime_mutation=self._runtime_mutation(
+                    state,
+                    PlainFieldMutation(
+                        running,
+                        "pending_user_input_questions",
+                        {**running.pending_user_input_questions, identity: request.questions},
+                    ),
+                    PlainFieldMutation(
+                        running,
+                        "user_input_provider_ids",
+                        {**running.user_input_provider_ids, identity: request.request_id},
+                    ),
+                ),
             )
-            running.pending_user_input_questions[identity] = request.questions
-            running.user_input_provider_ids[identity] = request.request_id
+            if self._signal is None:
+                running.pending_user_input_questions[identity] = request.questions
+                running.user_input_provider_ids[identity] = request.request_id
         finally:
             state.lock.release()
 
@@ -3686,7 +3817,8 @@ class SqliteProcessConversationSystem:
             if record is None:
                 return None
             state = _ConversationState(record=record)
-            self._conversations[conversation_id] = state
+            with nullcontext() if self._signal is None else self._signal.runtime_registry():
+                self._conversations[conversation_id] = state
             return state
 
     async def _append_event(
@@ -3698,6 +3830,7 @@ class SqliteProcessConversationSystem:
         automatic_compaction_confirmed: bool = False,
         owner_read_through_sequence: int | None = None,
         lifecycle: tuple[LifecycleFact, ...] = (),
+        runtime_mutation: SignalRuntimeMutation | None = None,
     ) -> StoredConversationEvent:
         stored = await self._persist(
             state,
@@ -3710,6 +3843,7 @@ class SqliteProcessConversationSystem:
                 automatic_compaction_confirmed=automatic_compaction_confirmed,
                 owner_read_through_sequence=owner_read_through_sequence,
             ),
+            runtime_mutation=runtime_mutation,
         )
         self._take_in_written_rows(state, (stored,))
         if agent_activity:
@@ -3745,12 +3879,14 @@ class SqliteProcessConversationSystem:
         payload: ConversationEventPayload,
         *,
         lifecycle: tuple[LifecycleFact, ...] = (),
+        runtime_mutation: SignalRuntimeMutation | None = None,
     ) -> StoredConversationEvent:
         """Append durable backend output and move the ordinary activity watermark."""
         return await self._append_event(
             state,
             payload,
             lifecycle=lifecycle,
+            runtime_mutation=runtime_mutation,
             agent_activity=not self._is_automatic_compaction_turn(state, turn_token),
         )
 

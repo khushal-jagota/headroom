@@ -72,11 +72,21 @@ class ConversationAttentionSnapshot:
 
 
 def conversation_attention_snapshot(
-    conn: sqlite3.Connection, conversation_id: str
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    *,
+    transaction_open: bool = False,
 ) -> ConversationAttentionSnapshot | None:
-    """Derive one consistent snapshot before a conversation asks for the write lock."""
+    """Own a short read transaction by default, or borrow the caller's open transaction.
 
-    conn.execute("BEGIN")
+    The borrowed path leaves commit and rollback to the caller, including on read errors.
+    """
+
+    if transaction_open:
+        if not conn.in_transaction:
+            raise RuntimeError("attention snapshot requires an open source transaction")
+    else:
+        conn.execute("BEGIN")
     try:
         conversation = conn.execute(
             "SELECT c.latest_sequence, c.owner_read_through_sequence, c.created_at, "
@@ -93,7 +103,8 @@ def conversation_attention_snapshot(
             (conversation_id,),
         ).fetchall()
     finally:
-        conn.execute("COMMIT")
+        if not transaction_open:
+            conn.execute("COMMIT")
 
     pending_permission_ask_ids: set[str] = set()
     pending_user_input_request_ids: set[str] = set()

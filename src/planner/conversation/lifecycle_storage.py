@@ -5,8 +5,11 @@ from __future__ import annotations
 import fcntl
 import inspect
 import sqlite3
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import IO
+from typing import IO, cast
+from weakref import WeakKeyDictionary
 
 from planner.conversation.lifecycle import (
     ConversationTransactionParticipant,
@@ -17,6 +20,8 @@ from planner.conversation.lifecycle import (
     LifecycleTransition,
 )
 from planner.conversation.logic.lifecycle_transitions import validate_fact, validate_transition
+
+_OWNERSHIP_PATHS: WeakKeyDictionary[IO[bytes], Path] = WeakKeyDictionary()
 
 
 class ConversationRuntimeAlreadyOwned(RuntimeError):
@@ -31,7 +36,16 @@ def acquire_runtime_ownership(db_path: str) -> IO[bytes]:
     except OSError as error:
         lock.close()
         raise ConversationRuntimeAlreadyOwned(str(path)) from error
+    _OWNERSHIP_PATHS[lock] = path
     return lock
+
+
+def validate_runtime_ownership(db_path: str, ownership: IO[bytes]) -> None:
+    """Accept only the exact live handle acquired for this canonical database."""
+    if ownership.closed or _OWNERSHIP_PATHS.get(ownership) != Path(db_path).resolve():
+        raise ConversationRuntimeAlreadyOwned(
+            "runtime ownership handle does not bind this database"
+        )
 
 
 def read_facts(conn: sqlite3.Connection, conversation_id: str) -> tuple[LifecycleFact, ...]:
@@ -89,8 +103,15 @@ def participate(
     conn: sqlite3.Connection,
     participant: ConversationTransactionParticipant | None,
     candidate: LifecycleTransition,
+    *,
+    guard: Callable[[sqlite3.Connection], AbstractContextManager[None]] | None = None,
 ) -> None:
     if participant is None:
+        return
+
+    if guard is not None:
+        with guard(conn):
+            _invoke_participant(conn, participant, candidate)
         return
 
     # Give the participant the actual connection, but retain sole commit ownership.
@@ -109,10 +130,18 @@ def participate(
 
     conn.set_authorizer(authorize)
     try:
-        result = participant(conn, candidate)
-        if inspect.isawaitable(result):
-            if inspect.iscoroutine(result):
-                result.close()
-            raise TypeError("conversation transaction participants must be synchronous")
+        _invoke_participant(conn, participant, candidate)
     finally:
         conn.set_authorizer(None)
+
+
+def _invoke_participant(
+    conn: sqlite3.Connection,
+    participant: ConversationTransactionParticipant,
+    candidate: LifecycleTransition,
+) -> None:
+    result = cast(Callable[..., object], participant)(conn, candidate)
+    if inspect.isawaitable(result):
+        if inspect.iscoroutine(result):
+            result.close()
+        raise TypeError("conversation transaction participants must be synchronous")
