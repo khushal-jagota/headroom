@@ -32,7 +32,7 @@
   });
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
-<section role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button")) onSelect(); }} data-rail-motion={`card:${id}`} class="orchestrator-card" class:chief class:selected onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-sprint-item={chief ? undefined : id}>
+<section role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button")) onSelect(); }} data-rail-motion={`card:${id}`} class="orchestrator-card" class:chief onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-sprint-item={chief ? undefined : id}>
   <div class="identity">
     {#if !chief}<OrchestratorEyebrow {project} {title} rail {busy} {onSettle} />{/if}
     <button type="button" class="item-head" onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={onLeave}>
@@ -56,8 +56,6 @@
   :global(.orchestrator-card) + .orchestrator-card { margin-top:var(--space-3); }
   .orchestrator-card:hover, .orchestrator-card:focus-within { border-color:rgb(from var(--border-color) r g b / .26); }
   .orchestrator-card:hover .item-title { color:var(--accent-needs-me); }
-  /* Selection uses the existing surface; pointer exit must not reveal an accent edge. */
-  .selected { background:var(--surface-2); }
   .item-head { display:flex; align-items:flex-start; gap:var(--space-2); margin-top:var(--space-1); width:100%; padding:0; border:0; background:none; text-align:left; font:inherit; cursor:pointer; }
   .item-title { flex:1; min-width:0; font-size:16px; font-weight:600; line-height:1.35; letter-spacing:-0.002em; color:var(--text-strong); overflow-wrap:anywhere; }
   .chief .item-head { align-items:center; margin-top:0; gap:10px; }
