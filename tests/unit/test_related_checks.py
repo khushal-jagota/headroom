@@ -26,6 +26,7 @@ def history(tmp_path: Path) -> tuple[Path, str, Path]:
         "tests/integration/test_adapter.py", "tests/e2e/test_feedback.py",
         "web/tests/feedback.test.ts", "web/tests/feedback.test.mjs",
         "src/planner/feedback/api.py", "docs/guide.md",
+        "tests/support/conversation_codex_scripted_app_server.py",
     ):
         destination = tmp_path / path
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +101,9 @@ def test_absent_baseline_and_missing_historical_mapping_broaden(
 ) -> None:
     selected = release(history, {}, baseline=None)
     assert selected["broad"]
+    helper = "tests/support/conversation_codex_scripted_app_server.py"
+    assert helper not in selected["unit"]
+    assert helper in selected["ruff_paths"]
     selected = release(history, {"tests/unit/test_feedback.py": None,
                                  "src/planner/feedback/api.py": "changed"})
     assert selected["broad"]

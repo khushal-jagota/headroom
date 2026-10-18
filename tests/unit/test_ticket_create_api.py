@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.model_catalogue import seed_test_model_catalogue
 
+from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -25,6 +29,7 @@ def create_api(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "ticket-create.db"
     with connect(str(db_path)) as conn:
         create_schema(conn)
+        seed_test_model_catalogue(conn)
     config = load_config(
         path=None,
         env={
@@ -188,9 +193,34 @@ def test_omitted_and_blank_briefs_leave_no_proposal_or_field(
 
 
 def test_create_accepts_and_preserves_the_supported_optional_keys(
-    create_api: tuple[TestClient, Path],
+    create_api: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client, db_path = create_api
+    # This test owns a fictional model, so the real resolver gets scripted evidence.
+    # Patch the snapshot boundary after lifespan setup rather than query a local vendor.
+    async def hermes_snapshot(
+        backend_key: ConversationBackendKey, **kwargs: object,
+    ) -> BackendSnapshot:
+        assert backend_key is ConversationBackendKey.hermes
+        return BackendSnapshot(
+            backend_key=backend_key,
+            installed=True,
+            executable_path="/scripted/hermes",
+            version="1.0.0",
+            identity=None,
+            available_models=(BackendModel("hermes-model"),),
+            reasoning_effort_options=(),
+            default_model_id="hermes-model",
+            default_reasoning_effort=None,
+            update_advisory=None,
+            diagnoses=(),
+        )
+
+    monkeypatch.setattr(
+        cast(FastAPI, client.app).state.conversation.backend_snapshots,
+        "snapshot",
+        hermes_snapshot,
+    )
     blocker = client.post("/api/tickets", json={"worker_type": "coding", "title": "Blocker"})
     assert blocker.status_code == 200, blocker.text
     body = {

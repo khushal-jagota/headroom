@@ -7,9 +7,8 @@ starts and resumes threads, runs turns made of whatever the script says, asks fo
 and waits for the answers, and writes down everything it was sent so a test can assert on
 what actually reached it.
 
-It holds no test of its own. The name is ``test_...`` only because this ticket's files are
-its tests, and it is spawned as a script — ``python <this file>`` with the script's path in
-the environment — rather than imported by the code under test.
+It holds no test of its own. It is spawned as a script — ``python <this file>`` with
+the script's path in the environment — rather than imported by the code under test.
 """
 
 from __future__ import annotations

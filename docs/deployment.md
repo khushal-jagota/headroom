@@ -121,7 +121,7 @@ The selection records its control revision, requested SHA, baseline, paths, and 
 Ruff, mypy, three separate pytest processes, Svelte checks, typechecked Vitest, and
 selected Node browser hosts run directly as selected. Independent check steps report
 failures even when another check fails. Missing tools, empty selected collection, and
-unexpected required skips fail the gate. Three named paid-provider opt-ins remain visible
+unexpected required skips fail the gate. Seven named paid-provider opt-ins remain visible
 without default coverage credit. No provider opt-in is enabled by this workflow.
 The required bwrap mount redirects deployment artifacts into temporary storage for
 E2E and Node browser hosts. There is no unisolated fallback.
