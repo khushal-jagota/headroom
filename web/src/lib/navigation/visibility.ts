@@ -1,6 +1,6 @@
 import type { Fence, ProofResult } from './contracts';
 import type { NavigationPublication } from './collection';
-import { compareRevision, parseFence } from './validation';
+import { compareRevision, parseFence, sameAuthority } from './validation';
 import { navigationConfiguration } from './configuration';
 
 export type VisibilityResult = { status: 'included' | 'no_op' | 'unknown'; reason: string | null };
@@ -45,17 +45,21 @@ export function createVisibilityTracker(certify: (fence: Fence) => Promise<Certi
   }
   function inspect(wait: Wait) {
     if (wait.required.some((observer) => !observer.active)) return finish(wait, unknown('observer_removed'));
-    if (!publication) return;
+    if (!publication || publication.mode !== 'current') return;
     const fence = wait.fence;
     const current = publication.continuity;
     if (fence.scope !== current.scope || fence.schema_version !== current.schema_version || fence.semantics !== current.semantics) {
       return finish(wait, unknown('incompatible_scope'));
     }
+    if (wait.certificate && !sameAuthority(publication.authority,wait.certificate.publication.authority)) {
+      wait.certificate = undefined;
+      wait.certificationEpoch = undefined;
+    }
     let status: 'included' | 'no_op' | undefined;
     if (wait.certificate) {
       // A certificate establishes history only at its atomically published snapshot.
       const certified = wait.certificate.publication.continuity;
-      if (current.epoch === certified.epoch && compareRevision(current.revision, certified.revision) >= 0) {
+      if (sameAuthority(publication.authority,wait.certificate.publication.authority) && current.epoch === certified.epoch && compareRevision(current.revision, certified.revision) >= 0) {
         if (wait.certificate.proof.status === 'unknown') return finish(wait, unknown(wait.certificate.proof.reason ?? 'uncertified'));
         status = wait.certificate.proof.status;
       }
@@ -93,7 +97,16 @@ export function createVisibilityTracker(certify: (fence: Fence) => Promise<Certi
         observer.rendered = undefined;
       }
     },
-    publication(value: NavigationPublication) { publication = value; inspectAll(); },
+    loseRuntime() {
+      publication = undefined;
+      for (const observer of observers.values()) {
+        observer.selectors = undefined;
+        observer.rendered = undefined;
+        observer.observation = undefined;
+      }
+
+    },
+    publication(value: NavigationPublication) { publication = value.mode === 'current' ? value : undefined; inspectAll(); },
     registerObserver(id: string): RenderObserver {
       if (disposed) throw new Error('navigation owner is disposed');
       if (activeIds.has(id)) throw new Error(`duplicate navigation observer: ${id}`);
@@ -101,7 +114,7 @@ export function createVisibilityTracker(certify: (fence: Fence) => Promise<Certi
       const handle: RenderObserver = Object.freeze({
         id,
         observeSelectors(value: NavigationPublication, observedGeneration: number) {
-          if (!observer.active || value !== publication || observedGeneration !== generation) return;
+          if (!observer.active || value.mode !== 'current' || value !== publication || observedGeneration !== generation) return;
           observer.generation = generation;
           observer.selectors = value;
           observer.rendered = undefined;

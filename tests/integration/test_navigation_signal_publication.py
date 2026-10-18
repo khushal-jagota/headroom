@@ -37,7 +37,7 @@ from planner.core.sse import open_change_stream_count
 from planner.core.transaction_guards import UncertainTransactionError
 from planner.navigation import snapshot as navigation_snapshot
 from planner.navigation.delivery import DeliveryRuntime
-from planner.navigation.delivery_authority import DeliveryUnavailable
+from planner.navigation.delivery_authority import DeliveryRead, DeliveryUnavailable
 from planner.navigation.signal_publication import (
     SignalInstallationError,
     delivery_authority,
@@ -111,12 +111,18 @@ def install_fixture(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def test_complete_install_and_private_schema_rollback_preserve_public_shape(
+def test_complete_install_activates_attention_and_rollback_restores_historical_shape(
     signal_db: sqlite3.Connection,
 ) -> None:
     conn = signal_db
     before = dump(conn)
-    old_epoch = navigation_snapshot(conn)["epoch"]
+    old_epoch = conn.execute("SELECT epoch FROM navigation_meta").fetchone()[0]
+    assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 3
+    assert "attention" not in json.loads(
+        conn.execute(
+            "SELECT value FROM navigation_records WHERE kind='conversation' AND id='current'"
+        ).fetchone()[0]
+    )
     conn.execute("BEGIN")
     conn.execute("UPDATE tickets SET conversation_id='historical' WHERE id='ticket'")
     install(conn, complete())
@@ -124,8 +130,15 @@ def test_complete_install_and_private_schema_rollback_preserve_public_shape(
     addresses = [value for (kind, _), value in actual.items() if kind == "address"]
     assert any(value["conversation_id"] == "historical" and value["current"] for value in addresses)
     assert navigation_snapshot(conn)["epoch"] != old_epoch
-    assert navigation_snapshot(conn)["schema_version"] == 3
-    assert "attention" not in actual["conversation", "current"]
+    assert navigation_snapshot(conn)["schema_version"] == 4
+    assert actual["conversation", "current"]["attention"] == {
+        "current": {
+            "signal": {"working": True, "message_for_owner": False},
+            "awaiting_answer": False,
+            "last_turn_failed": True,
+        },
+        "durable": {"message_for_owner": False, "last_turn_failed": True},
+    }
     assert conn.execute("SELECT COUNT(*) FROM navigation_signal_publications").fetchone()[0] == 2
     conn.rollback()
     assert dump(conn) == before
@@ -389,8 +402,12 @@ def test_actual_producer_binding_installs_and_accepts_committed_source_boundary(
             ).fetchone()[0]
         )
         assert private["signal"]["message_for_owner"] is True
-        # The private assembly does not widen the public record contract.
-        assert "attention" not in values(conn)["conversation", "actual"]
+        assert (
+            values(conn)["conversation", "actual"]["attention"]["current"]["signal"][
+                "message_for_owner"
+            ]
+            is True
+        )
     finally:
         conn.close()
     assert attachment.capture_permit() == original
@@ -556,8 +573,9 @@ def test_actual_domain_callback_closes_pending_stream_across_complete_recovery(
     async def run() -> None:
         baseline = open_change_stream_count()
         value, read = await host.delivery.current_snapshot()
+        assert value["mode"] == "current" and isinstance(read, DeliveryRead)
         host.delivery.ready = True
-        stream = host.delivery.stream(value["cursor"], read)
+        stream = host.delivery.stream(value["cursor"], read, value["authority"])
         pending = asyncio.ensure_future(anext(stream))
         try:
             for _ in range(50):
@@ -626,7 +644,7 @@ def test_actual_committed_uncertainty_resolves_exact_handle_before_complete_reco
     assert commit_calls == [conn]
     assert producer.signal_availability().state == "unavailable"
     with pytest.raises(DeliveryUnavailable):
-        asyncio.run(host.delivery.current_snapshot())
+        host.delivery.current_read()
     with pytest.raises(SignalUnavailable, match="resolved"):
         host.confirm_repaired()
 
@@ -665,7 +683,7 @@ def test_actual_committed_uncertainty_resolves_exact_handle_before_complete_reco
 
     # Confirming equality alone must not reopen the old attachment or delivery.
     with pytest.raises(DeliveryUnavailable):
-        asyncio.run(host.delivery.current_snapshot())
+        host.delivery.current_read()
     replacement = host.binding.recover()
     assert replacement.capture_permit().installation_id != old_permit.installation_id
     with pytest.raises(SignalUnavailable):

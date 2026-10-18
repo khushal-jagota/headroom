@@ -1,5 +1,15 @@
 """Navigation-owned storage. Source rows remain authoritative."""
 
+SIGNAL_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS navigation_signal_installation ("
+    "singleton INTEGER PRIMARY KEY CHECK(singleton=1),installation_id TEXT NOT NULL,"
+    "scope TEXT NOT NULL,runtime_epoch TEXT NOT NULL,sequence TEXT NOT NULL,"
+    "last_batch TEXT)",
+    "CREATE TABLE IF NOT EXISTS navigation_signal_publications ("
+    "conversation_id TEXT PRIMARY KEY,runtime_epoch TEXT NOT NULL,"
+    "conversation_revision TEXT NOT NULL,attention TEXT)",
+)
+
 SCHEMA = (
     "CREATE TABLE navigation_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), "
     "scope TEXT NOT NULL, schema_version INTEGER NOT NULL, epoch TEXT NOT NULL, "

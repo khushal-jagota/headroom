@@ -1,5 +1,5 @@
-import { wireDescriptors, SCHEMA_VERSION, SUPPORTED_SEMANTICS } from './contracts';
-import type { SnapshotResponse, RevisionBatch, Fence, Cursor, Continuity, Reset } from './contracts';
+import { wireDescriptors, SCHEMA_VERSION, SUPPORTED_SEMANTICS, WIRE_VERSION } from './contracts';
+import type { SnapshotResponse, RevisionBatch, Fence, Cursor, Continuity, Reset, BatchEnvelope, CurrentAuthority, DegradedAuthority, NavigationRecord } from './contracts';
 
 export class NavigationProtocolError extends Error {}
 type Descriptor = {ref?: string; primitive?: string; literal?: unknown[]; array?: Descriptor; union?: Descriptor[]; object?: Record<string, Descriptor>};
@@ -42,7 +42,7 @@ function continuity(value: Omit<Continuity, "semantics"> & {semantics:string}): 
   parseRevision(value.revision);
 }
 export function encodeCursor(value: Continuity): string {
-  const text = JSON.stringify({epoch:value.epoch, revision:value.revision, schema_version:value.schema_version, scope:value.scope, semantics:value.semantics, wire_version:1});
+  const text = JSON.stringify({epoch:value.epoch, revision:value.revision, schema_version:value.schema_version, scope:value.scope, semantics:value.semantics, wire_version:WIRE_VERSION});
   return btoa(String.fromCharCode(...new TextEncoder().encode(text))).replaceAll('+','-').replaceAll('/','_').replace(/=+$/, '');
 }
 export function decodeCursor(raw: string): Cursor {
@@ -58,9 +58,55 @@ export function assertCursorMatches(cursor: string, value: Continuity): void {
   const decoded = decodeCursor(cursor);
   for (const key of ['scope','schema_version','semantics','epoch','revision'] as const) if (decoded[key] !== value[key]) throw new NavigationProtocolError('Cursor mismatch');
 }
+export function sameAuthority(left: CurrentAuthority | DegradedAuthority, right: CurrentAuthority | DegradedAuthority): boolean {
+  return left.delivery_session_id === right.delivery_session_id
+    && left.availability.state === right.availability.state
+    && left.availability.generation === right.availability.generation
+    && left.availability.reason === right.availability.reason
+    && (left.permit === null ? right.permit === null : right.permit !== null
+      && left.permit.scope === right.permit.scope && left.permit.runtime_epoch === right.permit.runtime_epoch
+      && left.permit.installation_id === right.permit.installation_id && left.permit.generation === right.permit.generation);
+}
+function authority(value: CurrentAuthority | DegradedAuthority): void {
+  if (!value.delivery_session_id) throw new NavigationProtocolError('Empty delivery session');
+  parseRevision(value.availability.generation);
+  if (value.permit !== null) {
+    for (const name of ['scope','runtime_epoch','installation_id'] as const) {
+      if (!value.permit[name]) throw new NavigationProtocolError('Empty Signal permit identity');
+    }
+    parseRevision(value.permit.generation);
+    if (value.permit.generation !== value.availability.generation) throw new NavigationProtocolError('Authority generation mismatch');
+  }
+}
+function attentionProfile(records: NavigationRecord[], mode: SnapshotResponse['mode']): void {
+  for (const record of records) {
+    if (!record.id) throw new NavigationProtocolError('Empty record identity');
+    if (record.kind !== 'conversation') continue;
+    const knowledge = record.value.attention;
+    if (mode === 'current') {
+      if (knowledge.current === null
+        || knowledge.current.signal.message_for_owner !== knowledge.durable.message_for_owner
+        || knowledge.current.last_turn_failed !== knowledge.durable.last_turn_failed) {
+        throw new NavigationProtocolError('Incomplete or contradictory current attention');
+      }
+    } else if (knowledge.current !== null) throw new NavigationProtocolError('Runtime attention in degraded view');
+  }
+}
 export function parseSnapshotResponse(raw: unknown): SnapshotResponse {
-  const value = parse<SnapshotResponse>('SnapshotResponse', raw); continuity(value.snapshot); assertCursorMatches(value.cursor, value.snapshot);
-  uniqueKeys(value.snapshot.records); return value;
+  const value = parse<SnapshotResponse>('SnapshotResponse', raw);
+  continuity(value.snapshot); authority(value.authority);
+  if (value.mode === 'current') {
+    assertCursorMatches(value.cursor,value.snapshot);
+  }
+  uniqueKeys(value.snapshot.records); attentionProfile(value.snapshot.records,value.mode);
+  return value;
+}
+export function parseBatchEnvelope(raw: unknown): BatchEnvelope {
+  const value = parse<BatchEnvelope>('BatchEnvelope',raw);
+  authority(value.authority);
+  value.batch = parseRevisionBatch(value.batch);
+  attentionProfile(value.batch.upserts,'current');
+  return value;
 }
 export function recordKey(value: {kind:string; id:string}): string { return JSON.stringify([value.kind,value.id]); }
 function uniqueKeys(records: {kind:string;id:string}[]): void { if (new Set(records.map(recordKey)).size !== records.length) throw new NavigationProtocolError('Duplicate record key'); }

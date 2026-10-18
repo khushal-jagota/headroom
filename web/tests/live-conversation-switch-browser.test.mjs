@@ -59,6 +59,7 @@ try {
     mainPath,
     String.raw`import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from "../src/lib/navigation/contracts";
 import { encodeCursor } from "../src/lib/navigation/validation";
+import { authority } from "../tests/support/navigation/fixtures";
 (globalThis as any).__navigationSnapshots = 0;
 (globalThis as any).__navigationStreams = 0;
 (globalThis as any).__closedNavigationStreams = 0;
@@ -120,7 +121,7 @@ const recordedBRows: unknown[] = [];
     (globalThis as any).__navigationSnapshots += 1;
     const continuity = {scope: "workspace", schema_version: SCHEMA_VERSION,
       semantics: SUPPORTED_SEMANTICS, epoch: "read-fixture", revision: "0"};
-    return Response.json({wire_version: 1, cursor: encodeCursor(continuity),
+    return Response.json({wire_version: 2, mode: 'current', authority: authority(), cursor: encodeCursor(continuity),
       snapshot: {...continuity, records: []}, proof: null});
   }
   const ownerReadMatch = url.match(/conversations\/(conversation-[ab])\/owner-read$/);

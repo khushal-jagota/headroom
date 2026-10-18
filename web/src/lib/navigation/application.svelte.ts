@@ -10,9 +10,9 @@ const applicationContext = Symbol('navigation application');
 export function provideNavigationApplication() {
   const collection = createNavigationCollection();
   const owner = createNavigationOwner({ adapter: collection, transport: createNavigationTransport() });
-  const selectors = createNavigationSelectors(collection);
   let state = $state.raw<NavigationOwnerState>(owner.getState());
   const unsubscribe = owner.subscribe((next) => { state = next; });
+  const selectors = createNavigationSelectors(collection, () => state);
   const application = { owner, selectors, get state() { return state; } };
   setContext(applicationContext, application);
   onMount(() => { void owner.start().catch(() => undefined); });

@@ -1,8 +1,9 @@
 """Synthetic SQLite transport tests, independent of agent homes and live state."""
 
 import asyncio
+import json
 import sqlite3
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -11,7 +12,22 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from starlette.types import Message
+from tests.integration.test_navigation_signal_publication import (
+    _ActualBinding,
+)
+from tests.integration.test_navigation_signal_publication import (
+    actual_binding as actual_binding,
+)
 
+from planner.conversation.contracts import (
+    SignalAttachment,
+    SignalAvailability,
+    SignalInstaller,
+    SignalInvalidation,
+    SignalKnowledge,
+    SignalParticipant,
+    SignalReadPermit,
+)
 from planner.core.sse import open_change_stream_count
 from planner.navigation.api import DeadlineStreamingResponse
 from planner.navigation.configuration import DeliveryConfig
@@ -20,9 +36,11 @@ from planner.navigation.data import snapshot
 from planner.navigation.delivery import DeliveryRuntime, read_page, read_snapshot
 from planner.navigation.delivery_authority import (
     DeliveryAuthority,
+    DeliveryRead,
     DeliveryUnavailable,
 )
 from planner.navigation.delivery_contracts import (
+    CurrentAuthority,
     ResetRequired,
     compact_json,
     decode_cursor,
@@ -31,13 +49,64 @@ from planner.navigation.delivery_contracts import (
 from planner.navigation.retention import prune
 
 
+class InjectedKnowledgeSource:
+    """Empty-domain transport fixture; supplies no real conversation fact policy."""
+
+    def __init__(self) -> None:
+        self.availability = SignalAvailability(1, "current", None)
+
+    def signal_availability(self) -> SignalAvailability:
+        return self.availability
+
+    def read_durable_signal_knowledge(
+        self,
+        connection: sqlite3.Connection,
+        conversation_ids: tuple[str, ...],
+        expected_generation: int,
+        /,
+    ) -> tuple[SignalKnowledge, ...]:
+        assert conversation_ids == ()
+        assert expected_generation == self.availability.generation
+        return ()
+
+    def attach_signal_publication(
+        self,
+        *,
+        install: SignalInstaller,
+        participate: SignalParticipant,
+        unavailable: Callable[[SignalInvalidation], None],
+    ) -> SignalAttachment:
+        raise AssertionError("this fixture never installs a producer")
+
+
+def injected_runtime(path: Path, config: DeliveryConfig | None = None) -> DeliveryRuntime:
+    runtime = DeliveryRuntime(path, config)
+    runtime.bind_signal_source(InjectedKnowledgeSource())
+    runtime.admission.configure(InjectedDeliveryAuthority().callbacks())
+    return runtime
+
+
+def injected_authority() -> CurrentAuthority:
+    return {
+        "delivery_session_id": "injected-session",
+        "availability": {"state": "current", "generation": "1", "reason": None},
+        "permit": {
+            "scope": "source",
+            "runtime_epoch": "runtime",
+            "installation_id": "installed",
+            "generation": "1",
+        },
+    }
+
+
 @pytest.fixture
 def journal_db(tmp_path: Path) -> Path:
     path = tmp_path / "navigation.db"
     with sqlite3.connect(path) as conn:
         conn.executescript(
             "CREATE TABLE navigation_meta(singleton,scope,schema_version,epoch,revision);"
-            "INSERT INTO navigation_meta VALUES(1,'workspace',3,'epoch',0);"
+            "INSERT INTO navigation_meta VALUES(1,'workspace',4,'epoch',0);"
+            "CREATE TABLE conversations(conversation_id TEXT PRIMARY KEY);"
             "CREATE TABLE navigation_records(kind,id,value);"
             "CREATE TABLE navigation_dirty(kind,id);"
             "CREATE TABLE navigation_journal(revision INTEGER PRIMARY KEY,body TEXT);"
@@ -50,8 +119,8 @@ def journal_db(tmp_path: Path) -> Path:
 def continuity(revision: str = "0") -> Continuity:
     return {
         "scope": "workspace",
-        "schema_version": 3,
-        "semantics": "generic-source-facts-v3",
+        "schema_version": 4,
+        "semantics": "attention-knowledge-v4",
         "epoch": "epoch",
         "revision": revision,
     }
@@ -136,16 +205,21 @@ def test_page_count_and_serialized_byte_bounds(journal_db: Path) -> None:
     for revision in range(1, 6):
         append(journal_db, revision)
     config = replace(DeliveryConfig(), frame_bytes=700, page_bytes=1100, page_batch_count=3)
-    page = read_page(journal_db, decode_cursor(encode_cursor(continuity())), config)
+    page = read_page(
+        journal_db,
+        decode_cursor(encode_cursor(continuity())),
+        config,
+        authority=injected_authority(),
+    )
     assert 0 < len(page["batches"]) <= 3
-    assert sum(len(batch_frame(b)) for b in page["batches"]) <= 1100
+    assert sum(len(batch_frame(b, injected_authority())) for b in page["batches"]) <= 1100
     assert page["has_more"]
 
 
 def test_poll_delivers_without_wake_and_shutdown_cleans_registration(journal_db: Path) -> None:
     async def run() -> None:
         baseline = open_change_stream_count()
-        runtime = DeliveryRuntime(journal_db, replace(DeliveryConfig(), poll_seconds=0.01))
+        runtime = injected_runtime(journal_db, replace(DeliveryConfig(), poll_seconds=0.01))
         runtime.ready = True  # synthetic schema intentionally has no source participants
         stream = runtime.stream(encode_cursor(continuity()))
         pending = asyncio.ensure_future(anext(stream))
@@ -154,6 +228,9 @@ def test_poll_delivers_without_wake_and_shutdown_cleans_registration(journal_db:
         frame = await asyncio.wait_for(pending, 0.5)
         assert b"event: batch" in frame
         assert b"quiet commit" in frame
+        envelope = json.loads(frame.split(b"data: ", 1)[1].strip())
+        assert envelope["wire_version"] == 2
+        assert envelope["authority"] == runtime.current_read()[1]
         waiting = asyncio.ensure_future(anext(stream))
         await asyncio.sleep(0.01)
         await runtime.close()
@@ -166,7 +243,7 @@ def test_poll_delivers_without_wake_and_shutdown_cleans_registration(journal_db:
 
 def test_http_snapshot_and_reset_doors_preserve_ingress_identity(journal_db: Path) -> None:
     async def run() -> None:
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         app = FastAPI()
         app.include_router(runtime.router)
         async with httpx.AsyncClient(
@@ -188,7 +265,7 @@ def test_http_snapshot_and_reset_doors_preserve_ingress_identity(journal_db: Pat
 
 def test_send_deadline_releases_iterator_and_other_client_continues(journal_db: Path) -> None:
     async def run() -> None:
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         runtime.ready = True
         append(journal_db, 1)
         baseline = open_change_stream_count()
@@ -259,7 +336,7 @@ def test_delete_is_one_complete_revision_frame(journal_db: Path) -> None:
         }
         conn.execute("UPDATE navigation_journal SET body=?", (compact_json(body),))
     page = read_page(journal_db, decode_cursor(encode_cursor(continuity())), DeliveryConfig())
-    frame = batch_frame(page["batches"][0])
+    frame = batch_frame(page["batches"][0], injected_authority())
     assert frame.count(b"event: batch") == 1
     assert frame.endswith(b"\n\n")
     assert b'"deletes":[{"id":"gone","kind":"project"}]' in frame
@@ -267,7 +344,7 @@ def test_delete_is_one_complete_revision_frame(journal_db: Path) -> None:
 
 def test_send_error_releases_stream_registration(journal_db: Path) -> None:
     async def run() -> None:
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         runtime.ready = True
         append(journal_db, 1)
         baseline = open_change_stream_count()
@@ -335,7 +412,7 @@ class InjectedDeliveryAuthority:
     """Opaque fixture permits exercise delivery, not Signal policy or contracts."""
 
     def __init__(self) -> None:
-        self.permit = object()
+        self.permit = SignalReadPermit("source", "runtime", "installed", 1)
         self.available = True
         self.epoch = "epoch"
 
@@ -357,7 +434,7 @@ class InjectedDeliveryAuthority:
 
 def test_configured_missing_attachment_never_falls_back_to_ready(journal_db: Path) -> None:
     async def run() -> None:
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         runtime.ready = True
         runtime.admission.configure(None)
         app = FastAPI()
@@ -391,14 +468,14 @@ def test_snapshot_discards_old_permit_after_threaded_read_and_rapid_recovery(
     monkeypatch.setattr(delivery, "snapshot", blocked)
 
     async def run() -> None:
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         authority = InjectedDeliveryAuthority()
         runtime.admission.configure(authority.callbacks())
         pending = asyncio.create_task(runtime.current_snapshot())
         try:
             assert await asyncio.to_thread(pinned.wait, 3)
             runtime.admission.invalidate()
-            authority.permit = object()
+            authority.permit = SignalReadPermit("source", "runtime", "replaced", 1)
             runtime.admission.configure(authority.callbacks())
         finally:
             release.set()
@@ -412,7 +489,7 @@ def test_snapshot_discards_old_permit_after_threaded_read_and_rapid_recovery(
 
 def test_installation_check_occurs_in_snapshot_and_page_transactions(journal_db: Path) -> None:
     async def run() -> None:
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         authority = InjectedDeliveryAuthority()
         authority.epoch = "different-installation"
         runtime.admission.configure(authority.callbacks())
@@ -437,7 +514,7 @@ def test_producer_validation_never_enters_the_sql_snapshot_worker(journal_db: Pa
             super().validate(permit)
 
     async def run() -> None:
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         runtime.ready = True
         runtime.admission.configure(ThreadCheckedAuthority().callbacks())
         await runtime.current_snapshot()
@@ -470,7 +547,7 @@ def test_empty_page_invalidation_closes_stream_and_cannot_revive_after_recovery(
 
     async def run() -> None:
         baseline = open_change_stream_count()
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         runtime.ready = True
         authority = InjectedDeliveryAuthority()
         runtime.admission.configure(authority.callbacks())
@@ -491,7 +568,7 @@ def test_empty_page_invalidation_closes_stream_and_cannot_revive_after_recovery(
 
 def test_invalidation_cancels_admitted_send_and_rejects_queued_old_frame(journal_db: Path) -> None:
     async def run() -> None:
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         authority = InjectedDeliveryAuthority()
         runtime.admission.configure(authority.callbacks())
         read = runtime.admission.capture()
@@ -533,10 +610,11 @@ def test_snapshot_send_checks_headers_and_body_and_stream_prestart_returns_unava
     from planner.navigation.api import FencedJSONResponse
 
     async def run() -> None:
-        runtime = DeliveryRuntime(journal_db)
+        runtime = injected_runtime(journal_db)
         authority = InjectedDeliveryAuthority()
         runtime.admission.configure(authority.callbacks())
         value, read = await runtime.current_snapshot()
+        assert value["mode"] == "current" and isinstance(read, DeliveryRead)
         messages: list[Message] = []
 
         async def send(message: Message) -> None:
@@ -565,12 +643,258 @@ def test_snapshot_send_checks_headers_and_body_and_stream_prestart_returns_unava
         assert b'"snapshot"' not in messages[1]["body"]
 
         messages.clear()
-        stream = runtime.stream("bad", read)
+        stream = runtime.stream("bad", read, value["authority"])
         streaming = DeadlineStreamingResponse(
             stream, send_timeout=0.1, admission=runtime.admission, read=read
         )
         await streaming.stream_response(collect)
         assert messages[0]["type"] == "http.response.start"
         assert messages[0]["status"] == 503
+
+    asyncio.run(run())
+
+
+def test_actual_current_and_degraded_snapshots_keep_canonical_durable_facts(
+    actual_binding: _ActualBinding,
+) -> None:
+    host = actual_binding
+    host.binding.attach()
+    conn = host.composition.connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("INSERT INTO conversation_events VALUES('actual',1,'message_to_owner','{}',1)")
+        conn.execute("UPDATE conversations SET latest_sequence=1 WHERE conversation_id='actual'")
+        conn.commit()
+    finally:
+        conn.close()
+    current, _ = asyncio.run(host.delivery.current_snapshot())
+    assert current["mode"] == "current"
+    assert current["wire_version"] == 2
+    assert current["authority"]["permit"]["scope"] != current["snapshot"]["scope"]
+    assert (
+        current["authority"]["permit"]["generation"]
+        == current["authority"]["availability"]["generation"]
+    )
+    host.composition.coordinator.invalidate("publication_failed")
+    degraded, _ = asyncio.run(host.delivery.current_snapshot({"not": "a proof request"}))
+    assert degraded["mode"] == "degraded"
+    assert degraded["cursor"] is None and degraded["proof"] is None
+    assert degraded["authority"]["permit"] is None
+    record = next(
+        value for value in degraded["snapshot"]["records"] if value["kind"] == "conversation"
+    )
+    assert record["kind"] == "conversation"
+    assert record["value"]["attention"] == {
+        "current": None,
+        "durable": {"message_for_owner": True, "last_turn_failed": False},
+    }
+    assert (
+        degraded["authority"]["delivery_session_id"] == current["authority"]["delivery_session_id"]
+    )
+    host.confirm_repaired()
+    host.binding.recover()
+    recovered, _ = asyncio.run(host.delivery.current_snapshot())
+    assert recovered["mode"] == "current"
+    assert recovered["authority"]["permit"] != current["authority"]["permit"]
+    assert recovered["snapshot"]["epoch"] != current["snapshot"]["epoch"]
+
+
+@pytest.mark.parametrize("failure", ["omitted", "null", "malformed", "unequal"])
+def test_actual_failed_coherent_snapshot_returns_503_without_partial_body(
+    actual_binding: _ActualBinding,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    host = actual_binding
+    host.binding.attach()
+    producer = host.composition.coordinator
+    original = producer.read_durable_signal_knowledge
+    if failure in ("omitted", "null"):
+
+        def incomplete(
+            connection: sqlite3.Connection, ids: tuple[str, ...], generation: int, /
+        ) -> tuple[SignalKnowledge, ...]:
+            values = original(connection, ids, generation)
+            return (
+                ()
+                if failure == "omitted"
+                else tuple(replace(value, durable=None) for value in values)
+            )
+
+        monkeypatch.setattr(producer, "read_durable_signal_knowledge", incomplete)
+    else:
+        with sqlite3.connect(host.path) as conn:
+            path = (
+                "$.attention.current"
+                if failure == "malformed"
+                else "$.attention.durable.message_for_owner"
+            )
+            conn.execute(
+                "UPDATE navigation_records SET value=json_set(value,?,json(?)) "
+                "WHERE kind='conversation'",
+                (path, "null" if failure == "malformed" else "true"),
+            )
+    host.delivery.ready = True
+    app = FastAPI()
+    app.include_router(host.delivery.router)
+
+    async def run() -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/api/navigation/snapshot")
+        assert response.status_code == 503
+        assert "snapshot" not in response.json()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("change", ["create", "delete"])
+def test_actual_inventory_race_is_rejected_without_server_retry(
+    actual_binding: _ActualBinding,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+) -> None:
+    from planner.navigation import delivery
+
+    host = actual_binding
+    host.binding.attach()
+    original = delivery._inventory
+    calls = 0
+
+    def changed(path: Path) -> tuple[str, ...]:
+        nonlocal calls
+        calls += 1
+        inventory = original(path)
+        conn = host.composition.connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if change == "create":
+                conn.execute(
+                    "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
+                    "created_at) "
+                    "VALUES('late','codex','/synthetic','full',0)"
+                )
+            else:
+                conn.execute("DELETE FROM conversations WHERE conversation_id='actual'")
+            conn.commit()
+        finally:
+            conn.close()
+        return inventory
+
+    monkeypatch.setattr(delivery, "_inventory", changed)
+    with pytest.raises(DeliveryUnavailable):
+        asyncio.run(host.delivery.current_snapshot())
+    assert calls == 1
+
+
+def test_actual_empty_inventory_is_validated_for_current_and_degraded(
+    actual_binding: _ActualBinding,
+) -> None:
+    host = actual_binding
+    host.binding.attach()
+    conn = host.composition.connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM conversations WHERE conversation_id='actual'")
+        conn.commit()
+    finally:
+        conn.close()
+    current, _ = asyncio.run(host.delivery.current_snapshot())
+    assert current["mode"] == "current"
+    assert not any(record["kind"] == "conversation" for record in current["snapshot"]["records"])
+    host.composition.coordinator.invalidate("publication_failed")
+    degraded, _ = asyncio.run(host.delivery.current_snapshot())
+    assert degraded["mode"] == "degraded"
+    assert not any(record["kind"] == "conversation" for record in degraded["snapshot"]["records"])
+
+
+def test_same_generation_profile_change_after_sql_rejects_degraded_snapshot(
+    journal_db: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from planner.navigation import delivery
+
+    source = InjectedKnowledgeSource()
+    source.availability = SignalAvailability(7, "initializing", "initializing")
+    runtime = DeliveryRuntime(journal_db)
+    runtime.bind_signal_source(source)
+    runtime.admission.configure(None)
+    original = snapshot
+
+    def transition(conn: sqlite3.Connection) -> object:
+        value = original(conn)
+        source.availability = SignalAvailability(7, "current", None)
+        return value
+
+    monkeypatch.setattr(delivery, "snapshot", transition)
+    with pytest.raises(DeliveryUnavailable, match="profile changed"):
+        asyncio.run(runtime.current_snapshot())
+
+
+@pytest.mark.parametrize("after_headers", [False, True])
+def test_same_generation_profile_change_is_checked_at_each_degraded_send(
+    journal_db: Path,
+    after_headers: bool,
+) -> None:
+    from planner.navigation.api import FencedJSONResponse
+
+    source = InjectedKnowledgeSource()
+    source.availability = SignalAvailability(7, "initializing", "initializing")
+    runtime = DeliveryRuntime(journal_db)
+    runtime.bind_signal_source(source)
+    runtime.admission.configure(None)
+
+    async def run() -> None:
+        value, read = await runtime.current_snapshot()
+        assert value["mode"] == "degraded"
+        messages: list[Message] = []
+
+        async def send(message: Message) -> None:
+            messages.append(message)
+            if after_headers and message["type"] == "http.response.start":
+                source.availability = SignalAvailability(7, "current", None)
+
+        async def receive() -> Message:
+            return {"type": "http.disconnect"}
+
+        if not after_headers:
+            source.availability = SignalAvailability(7, "current", None)
+        response = FencedJSONResponse(value, admission=runtime.admission, read=read, headers={})
+        if after_headers:
+            with pytest.raises(DeliveryUnavailable, match="profile changed"):
+                await response({"type": "http"}, receive, send)
+            assert len(messages) == 1 and messages[0]["type"] == "http.response.start"
+        else:
+            await response({"type": "http"}, receive, send)
+            assert messages[0]["type"] == "http.response.start" and messages[0]["status"] == 503
+
+    asyncio.run(run())
+
+
+def test_degraded_read_cannot_cross_delivery_sessions(journal_db: Path) -> None:
+    source = InjectedKnowledgeSource()
+    source.availability = SignalAvailability(7, "unavailable", "synthetic")
+    runtimes = [DeliveryRuntime(journal_db), DeliveryRuntime(journal_db)]
+    for runtime in runtimes:
+        runtime.bind_signal_source(source)
+        runtime.admission.configure(None)
+    first, read = asyncio.run(runtimes[0].current_snapshot())
+    second, _ = asyncio.run(runtimes[1].current_snapshot())
+    assert first["authority"]["delivery_session_id"] != second["authority"]["delivery_session_id"]
+    with pytest.raises(DeliveryUnavailable, match="generation changed"):
+        runtimes[1].admission.validate(read)
+
+
+def test_current_stream_rejects_foreign_authority_before_emitting_frames(journal_db: Path) -> None:
+    runtime = injected_runtime(journal_db)
+    runtime.ready = True
+    read, authority = runtime.current_read()
+    foreign: CurrentAuthority = {**authority, "delivery_session_id": "another-session"}
+
+    async def run() -> None:
+        stream = runtime.stream(encode_cursor(continuity()), read, foreign)
+        with pytest.raises(DeliveryUnavailable, match="profile changed"):
+            await anext(stream)
 
     asyncio.run(run())

@@ -10,6 +10,7 @@ from typing import Any, cast
 from planner.core.ticket_blocks import LIVE_BLOCKER_PREDICATE
 from planner.navigation.contracts import (
     SCHEMA_VERSION,
+    SUPPORTED_SEMANTICS,
     Continuity,
     HistoryUnavailable,
     JournalPage,
@@ -74,10 +75,10 @@ def attach(conn: sqlite3.Connection) -> None:
     conn.create_function("navigation_transaction_active", 0, lambda: int(conn.in_transaction))
 
 
-def create_schema(conn: sqlite3.Connection, *, schema_version: int = SCHEMA_VERSION) -> None:
+def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
     if not conn.in_transaction:
         raise RuntimeError("navigation schema requires a transaction")
-    if schema_version not in (1, 2, SCHEMA_VERSION):
+    if schema_version not in (1, 2, 3):
         raise ValueError("unsupported navigation schema version")
     attach(conn)
     for statement in SCHEMA:
@@ -234,7 +235,9 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
             roots.add(("conversation", str(row[0])))
     elif table == "ticket_blocks":
         roots.add(("ticket", identity))
-    elif table == "ticket_conversations" or table.startswith("conversation"):
+    elif table in ("ticket_conversations", "navigation_signal_publications") or table.startswith(
+        "conversation"
+    ):
         roots.add(("conversation", identity))
     return roots
 
@@ -279,9 +282,7 @@ def _derive(
             conn.execute(
                 "SELECT 1 FROM ticket_blocks JOIN tickets blocker "
                 "ON blocker.id=ticket_blocks.blocking_ticket_id "
-                "WHERE ticket_blocks.blocked_ticket_id=? AND "
-                + blocker_predicate
-                + " LIMIT 1",
+                "WHERE ticket_blocks.blocked_ticket_id=? AND " + blocker_predicate + " LIMIT 1",
                 (identity,),
             ).fetchone()
             is not None
@@ -412,6 +413,11 @@ def _derive(
             value["lifecycle"] = lifecycle_payload(conn, identity)
         else:
             value["lifecycle_summary"] = read_summary(conn, identity)
+        if version >= 4:
+            from planner.navigation.signal_publication import read_current_attention
+
+            deps.add(("navigation_signal_publications", identity))
+            value["attention"] = read_current_attention(conn, identity)
         records.append(_record(kind, identity, value))
         addresses: dict[Key, dict[str, Any]] = {}
         for t in rows(
@@ -600,7 +606,11 @@ def _continuity(conn: sqlite3.Connection) -> dict[str, Any]:
     return {
         "scope": row["scope"],
         "schema_version": row["schema_version"],
-        "semantics": f"generic-source-facts-v{row['schema_version']}",
+        "semantics": (
+            SUPPORTED_SEMANTICS
+            if row["schema_version"] == 4
+            else f"generic-source-facts-v{row['schema_version']}"
+        ),
         "epoch": row["epoch"],
         "revision": str(row["revision"]),
     }

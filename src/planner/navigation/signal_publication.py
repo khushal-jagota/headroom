@@ -1,9 +1,8 @@
 """Internal Signal installation and cursor acceptance on the source transaction.
 
-This adapter stores the producer's exact publications. It does not change public
-navigation records, infer attention, or supply a producer. Private schema creation
-occurs inside complete installation only. Production migration/startup composition
-and public attention projection still require separate integration and proof.
+This adapter stores the producer's exact publications and projects their current
+attention without inferring policy. Physical preparation does not grant runtime
+authority. Only complete installation activates the current public schema.
 """
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
+from typing import cast
 
 from planner.conversation.contracts import (
     ConversationSignalPublicationV1,
@@ -23,17 +23,13 @@ from planner.conversation.contracts import (
     SignalUnavailable,
 )
 from planner.navigation import data
-from planner.navigation.delivery_authority import DeliveryAuthority, DeliveryUnavailable
-
-_SCHEMA = (
-    "CREATE TABLE IF NOT EXISTS navigation_signal_installation ("
-    "singleton INTEGER PRIMARY KEY CHECK(singleton=1),installation_id TEXT NOT NULL,"
-    "scope TEXT NOT NULL,runtime_epoch TEXT NOT NULL,sequence TEXT NOT NULL,"
-    "last_batch TEXT)",
-    "CREATE TABLE IF NOT EXISTS navigation_signal_publications ("
-    "conversation_id TEXT PRIMARY KEY,runtime_epoch TEXT NOT NULL,"
-    "conversation_revision TEXT NOT NULL,attention TEXT)",
+from planner.navigation.contracts import (
+    CompleteAttention,
+    CurrentAttentionKnowledge,
+    parse_revision,
 )
+from planner.navigation.delivery_authority import DeliveryAuthority, DeliveryUnavailable
+from planner.navigation.schema import SIGNAL_SCHEMA
 
 
 class SignalInstallationError(ValueError):
@@ -90,6 +86,75 @@ def _put(conn: sqlite3.Connection, publication: ConversationSignalPublicationV1)
     )
 
 
+def prepare_schema(conn: sqlite3.Connection) -> None:
+    """Prepare private storage without changing public schema or runtime knowledge."""
+    _require_transaction(conn)
+    for statement in SIGNAL_SCHEMA:
+        conn.execute(statement)
+
+
+def _dirty(conn: sqlite3.Connection, conversation_id: str) -> None:
+    conn.execute(
+        "INSERT INTO navigation_dirty(kind,id) "
+        "SELECT 'navigation_signal_publications',? WHERE NOT EXISTS("
+        "SELECT 1 FROM navigation_dirty "
+        "WHERE kind='navigation_signal_publications' AND id=?)",
+        (conversation_id, conversation_id),
+    )
+
+
+def read_current_attention(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+) -> CurrentAttentionKnowledge:
+    """Read exact accepted publication facts. Missing current coverage is an error."""
+    try:
+        row = conn.execute(
+            "SELECT p.runtime_epoch,p.conversation_revision,p.attention,"
+            "i.runtime_epoch,i.installation_id,i.scope FROM navigation_signal_publications p "
+            "JOIN navigation_signal_installation i ON i.singleton=1 WHERE p.conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
+    except sqlite3.OperationalError as exc:
+        raise SignalInstallationError("Signal attention storage is unavailable") from exc
+    if (
+        row is None
+        or row[2] is None
+        or row[0] != row[3]
+        or not all(row[index] for index in (0, 4, 5))
+    ):
+        raise SignalInstallationError("Signal attention lacks current complete coverage")
+    try:
+        parse_revision(row[1])
+        attention = json.loads(row[2])
+        if (
+            not isinstance(attention, dict)
+            or set(attention) != {"signal", "awaiting_answer", "last_turn_failed"}
+            or not isinstance(attention["signal"], dict)
+            or set(attention["signal"]) != {"working", "message_for_owner"}
+            or any(
+                type(value) is not bool
+                for value in (
+                    attention["signal"]["working"],
+                    attention["signal"]["message_for_owner"],
+                    attention["awaiting_answer"],
+                    attention["last_turn_failed"],
+                )
+            )
+        ):
+            raise ValueError("incomplete attention")
+    except (ValueError, TypeError, KeyError) as exc:
+        raise SignalInstallationError("Signal attention requires exact complete facts") from exc
+    current = cast(CompleteAttention, attention)
+    return {
+        "current": current,
+        "durable": {
+            "message_for_owner": current["signal"]["message_for_owner"],
+            "last_turn_failed": current["last_turn_failed"],
+        },
+    }
+
+
 def install(conn: sqlite3.Connection, snapshot: SignalSnapshot, /) -> None:
     """Accept a complete producer snapshot without commit or public producer reads."""
     _require_transaction(conn)
@@ -105,8 +170,7 @@ def install(conn: sqlite3.Connection, snapshot: SignalSnapshot, /) -> None:
     actual = {str(row[0]) for row in conn.execute("SELECT conversation_id FROM conversations")}
     if actual != identities:
         raise SignalInstallationError("Signal snapshot is not the complete conversation set")
-    for statement in _SCHEMA:
-        conn.execute(statement)
+    prepare_schema(conn)
     conn.execute("DELETE FROM navigation_signal_publications")
     for publication in snapshot.values:
         _put(conn, publication)
@@ -119,8 +183,10 @@ def install(conn: sqlite3.Connection, snapshot: SignalSnapshot, /) -> None:
             str(snapshot.cursor.sequence),
         ),
     )
-    # Existing source reads derive current/historical associations in this same
-    # transaction. Public Signal attention is deliberately not projected yet.
+    version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+    if version not in (3, 4):
+        raise SignalInstallationError("Signal installation requires navigation schema 3 or 4")
+    conn.execute("UPDATE navigation_meta SET schema_version=4 WHERE singleton=1")
     data.rebuild(conn)
 
 
@@ -189,11 +255,13 @@ def participate(conn: sqlite3.Connection, batch: SignalBatch, /) -> None:
             raise SignalInstallationError("obsolete Signal conversation fence")
     for publication in batch.replacements:
         _put(conn, publication)
+        _dirty(conn, publication.conversation_id)
     for deletion in batch.deletions:
         conn.execute(
             "INSERT OR REPLACE INTO navigation_signal_publications VALUES(?,?,?,NULL)",
             (deletion.conversation_id, deletion.runtime_epoch, str(deletion.conversation_revision)),
         )
+        _dirty(conn, deletion.conversation_id)
     for association in batch.associations:
         for conversation_id in (
             association.before_conversation_id,

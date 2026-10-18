@@ -20,6 +20,7 @@ class SignalNavigationBinding:
         self.source = source
         self.delivery = delivery
         self._attachment: SignalAttachment | None = None
+        self.delivery.bind_signal_source(source)
         self.delivery.admission.configure(None)
 
     def _unavailable(self, invalidation: SignalInvalidation) -> None:

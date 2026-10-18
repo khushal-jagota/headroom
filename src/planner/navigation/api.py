@@ -13,8 +13,8 @@ from starlette.types import Message, Receive, Scope, Send
 from planner.core.authctx import RequestContext, request_context
 from planner.core.response_compression import answers_with_an_event_stream
 from planner.navigation.delivery_authority import (
+    DeliveryAccess,
     DeliveryAdmission,
-    DeliveryRead,
     DeliveryUnavailable,
 )
 
@@ -28,7 +28,7 @@ class DeadlineStreamingResponse(StreamingResponse):
         *args: Any,
         send_timeout: float,
         admission: DeliveryAdmission | None = None,
-        read: DeliveryRead | None = None,
+        read: DeliveryAccess = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -78,7 +78,7 @@ class FencedJSONResponse(JSONResponse):
         content: object,
         *,
         admission: DeliveryAdmission,
-        read: DeliveryRead | None,
+        read: DeliveryAccess,
         headers: dict[str, str],
     ) -> None:
         super().__init__(content, headers=headers)
@@ -149,13 +149,13 @@ def delivery_router(runtime: DeliveryRuntime) -> APIRouter:
     ) -> StreamingResponse:
         require_ready()
         try:
-            read = runtime.admission.capture()
+            read, authority = runtime.current_read()
         except DeliveryUnavailable as exc:
             raise HTTPException(503, "navigation publication is not ready") from exc
         # EventSource reconnect's Last-Event-ID takes precedence over the initial URL.
         resume = request.headers.get("last-event-id") or cursor or ""
         return DeadlineStreamingResponse(
-            runtime.stream(resume, read),
+            runtime.stream(resume, read, authority),
             media_type="text/event-stream",
             send_timeout=runtime.config.send_timeout_seconds,
             admission=runtime.admission,

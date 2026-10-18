@@ -16,23 +16,23 @@ from planner.navigation.delivery_contracts import (
 def test_cursor_roundtrip_preserves_large_decimal_revision() -> None:
     value: Continuity = {
         "scope": "workspace",
-        "schema_version": 3,
-        "semantics": "generic-source-facts-v3",
+        "schema_version": 4,
+        "semantics": "attention-knowledge-v4",
         "epoch": "epoch",
         "revision": "9007199254740993",
     }
     cursor = decode_cursor(encode_cursor(value))
     assert cursor["revision"] == "9007199254740993"
-    assert cursor["wire_version"] == 1
+    assert cursor["wire_version"] == 2
 
 
 @pytest.mark.parametrize("revision", ["00", "+1", "1.0", 1, True, "١"])
 def test_cursor_rejects_noncanonical_revision(revision: object) -> None:
     raw = {
-        "wire_version": 1,
+        "wire_version": 2,
         "scope": "s",
-        "schema_version": 3,
-        "semantics": "generic-source-facts-v3",
+        "schema_version": 4,
+        "semantics": "attention-knowledge-v4",
         "epoch": "e",
         "revision": revision,
     }

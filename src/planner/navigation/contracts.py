@@ -1,11 +1,11 @@
-"""Generic navigation v3. Signal-derived semantics remain explicitly unsupported."""
+"""Navigation schema 4 with explicit current and independently durable attention."""
 
 from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-SCHEMA_VERSION = 3
-SUPPORTED_SEMANTICS = "generic-source-facts-v3"
+SCHEMA_VERSION = 4
+SUPPORTED_SEMANTICS = "attention-knowledge-v4"
 RecordKind = Literal[
     "ticket", "orchestrator", "chief", "conversation", "address", "totals", "project"
 ]
@@ -88,6 +88,35 @@ class LifecycleSummary(TypedDict):
     attempt_status_counts: AttemptStatusCounts
 
 
+class SignalBits(TypedDict):
+    working: bool
+    message_for_owner: bool
+
+
+class CompleteAttention(TypedDict):
+    signal: SignalBits
+    awaiting_answer: bool
+    last_turn_failed: bool
+
+
+class DurableSignal(TypedDict):
+    message_for_owner: bool
+    last_turn_failed: bool
+
+
+class CurrentAttentionKnowledge(TypedDict):
+    current: CompleteAttention
+    durable: DurableSignal
+
+
+class DurableAttentionKnowledge(TypedDict):
+    current: None
+    durable: DurableSignal
+
+
+type AttentionKnowledge = CurrentAttentionKnowledge | DurableAttentionKnowledge
+
+
 class ConversationValue(TypedDict):
     latest_sequence: int
     owner_read_through_sequence: int
@@ -95,6 +124,7 @@ class ConversationValue(TypedDict):
     latest_agent_activity_at: int | None
     error_acknowledged_through_sequence: int
     lifecycle_summary: LifecycleSummary
+    attention: AttentionKnowledge
 
 
 class AddressValue(TypedDict):
@@ -172,7 +202,7 @@ type NavigationRecord = (
 class Continuity(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["generic-source-facts-v3"]
+    semantics: Literal["attention-knowledge-v4"]
     epoch: str
     revision: str
 
@@ -184,7 +214,7 @@ class Snapshot(Continuity):
 class RevisionBatch(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["generic-source-facts-v3"]
+    semantics: Literal["attention-knowledge-v4"]
     epoch: str
     base_revision: str
     revision: str

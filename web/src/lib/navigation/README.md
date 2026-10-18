@@ -4,7 +4,13 @@ This module supplies the shared browser replica. `App.svelte` calls `provideNavi
 
 `navigationApplication()` reads that context. An isolated component host without the provider receives `undefined`. It never creates another owner. Every successful existing `advanceOwnerRead` response triggers shared-owner recovery before the unread-message optimization or current-conversation check. Failed reads retain their existing behavior.
 
-Production summary consumers still use their existing Query paths. Their adoption and actual DOM proof remain pending the exact Signal contract. This prerequisite does not establish a completed cutover, UI parity, or application speed improvement.
+Production summary consumers still use their existing Query paths. Their adoption and actual DOM proof remain pending. The shared core now accepts schema4 (`attention-knowledge-v4`) through wire2. This prerequisite does not establish a completed cutover, UI parity, or application speed improvement.
+
+Snapshots have current or degraded mode. A current response contains complete attention, an exact authority profile, and a replay cursor. A degraded response contains coherent durable attention only, with a null cursor and proof. Every batch carries the same complete authority profile as its accepted current snapshot. Producer permit scope and navigation cursor scope are independent namespaces. Authority checks precede duplicate suppression.
+
+Collection records and publication metadata enter one TanStack transaction. Metadata includes mode, authority, nullable cursor, and a local admission token. That token identifies pending publication independently of cursor equality. `selectors.effective` exposes the shared fresh, retained, or unknown conversation facts with exact publication and read-boundary provenance. Unknown has no Boolean value. An observed loss suppresses runtime knowledge synchronously before an admitted collection transaction drains. A late old commit cannot restore runtime knowledge.
+
+Durable message and failure knowledge remain independent. `owner.invalidateDurableFact` invalidates only the fact affected by a confirmed operation. An observation must cover its canonical owner-read or error-acknowledgment watermark before it restores fresh knowledge. A late read response preserves a newer fresh observation that already covers that read. No read, failure-acknowledgment, or Signal policy changes here.
 
 Create one collection with `createNavigationCollection()`. Create one owner with `createNavigationOwner({adapter, transport: createNavigationTransport()})` above routes and panes. Call `start()` once. On application disposal, dispose the owner, then destroy the collection.
 
@@ -22,7 +28,7 @@ For command headers, pass a fresh `responseMetadata` object to `fetchJson` or `m
 
 Visibility returns `included`, `no_op`, or `unknown`. `included` proves committed history, not that a later action did not replace its value. `no_op` requires server certification. An unknown result never authorizes a command resend. A timeout, removed observer, or disposal releases the wait conservatively.
 
-Connection state stays internal. `subscribed` means that the owner created a stream, not that the server acknowledged a live connection. The owner retains the last complete view during recovery. It closes transport and stops new admission immediately. An already accepted library transaction completes before the publication generation changes. Obsolete requests cannot enter a new source transaction. The owner resumes from the observed published cursor and replaces missing history with a complete snapshot.
+Connection state stays internal. `subscribed` means that the owner created a stream, not that the server acknowledged a live connection. The owner retains the last complete view during recovery. It closes transport and stops new admission immediately. The local generation and runtime gate change before an already admitted library transaction drains. Obsolete requests cannot enter a new source transaction. Recovery requires a complete current snapshot before a new stream starts. Degraded snapshots retry through the existing recovery schedule and never resume a stream or certify command visibility.
 
 An atomic local publication number distinguishes identical replacement snapshots. It does not advance the server revision. This identity lets live selectors observe a new certified snapshot even when its facts match the previous view.
 
