@@ -18,10 +18,12 @@ from planner.scheduled_tickets.contracts import (
 from planner.tickets.api import (
     Clk,
     DbConn,
+    ModelResolver,
     body_opt_str,
     body_str,
     body_str_list,
     parse_enum,
+    warm_ticket_creation_model,
 )
 from planner.tickets.contracts import TicketLocale
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -133,8 +135,16 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
 
 
 @router.post("/schedules")
-async def create_schedule(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+async def create_schedule(
+    raw: dict[str, Any], conn: DbConn, clk: Clk, model_resolver: ModelResolver
+) -> JsonDict:
     _reject_unknown(raw, _CREATE_KEYS)
+    template = _template_from_create(raw, conn)
+    await warm_ticket_creation_model(
+        conn, model_resolver, worker_type=template.worker_type,
+        employee_backend=template.employee_backend,
+        employee_launch_model=template.employee_launch_model,
+    )
     schedule = actions.create_schedule(
         conn,
         enabled=_body_bool(raw, "enabled", True),
@@ -144,7 +154,7 @@ async def create_schedule(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDi
             "cadence",
         ),
         local_time=body_str(raw, "local_time"),
-        template=_template_from_create(raw, conn),
+        template=template,
         now=clk.now_unix(),
     )
     return views.schedule_json(schedule, [])
@@ -164,7 +174,9 @@ async def get_schedule(schedule_id: str, conn: DbConn) -> JsonDict:
 
 
 @router.patch("/schedules/{schedule_id}")
-async def patch_schedule(schedule_id: str, raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+async def patch_schedule(
+    schedule_id: str, raw: dict[str, Any], conn: DbConn, clk: Clk, model_resolver: ModelResolver
+) -> JsonDict:
     _reject_unknown(raw, _PATCH_KEYS)
     if not raw:
         raise PlannerError(ErrorCode.validation, "no schedule fields to update", {})
@@ -207,5 +219,19 @@ async def patch_schedule(schedule_id: str, raw: dict[str, Any], conn: DbConn, cl
         )
         changes["orchestrator_kind"] = assignment.orchestrator_kind
         changes["sprint_item_id"] = assignment.sprint_item_id
+    if {"worker_type", "employee_backend", "employee_launch_model"} & changes.keys():
+        existing = data.read_schedule(conn, schedule_id).template
+        await warm_ticket_creation_model(
+            conn, model_resolver,
+            worker_type=body_str(raw, "worker_type", existing.worker_type),
+            employee_backend=(body_opt_str(raw, "employee_backend")
+                              if "employee_backend" in raw else existing.employee_backend),
+            employee_launch_model=(body_opt_str(raw, "employee_launch_model")
+                                   if "employee_launch_model" in raw
+                                   else existing.employee_launch_model),
+            model_source_is_historical=not (
+                {"employee_backend", "employee_launch_model"} & changes.keys()
+            ),
+        )
     schedule = actions.update_schedule(conn, schedule_id, changes, now=clk.now_unix())
     return views.schedule_json(schedule, data.list_occurrences(conn, schedule_id))

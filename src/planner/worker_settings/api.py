@@ -26,6 +26,7 @@ from planner.tickets.api import (
     ConversationRecord,
     Conversations,
     DbConn,
+    ModelResolver,
     body_str,
     get_config,
 )
@@ -107,19 +108,20 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
     }
 
 
-def _reject_disabled_launch_model(conn: sqlite3.Connection, raw: dict[str, Any]) -> None:
-    if set(raw) != {
-        "employee_backend",
-        "employee_launch_model",
-        "employee_launch_reasoning_effort",
-    }:
-        return
-    backend = raw.get("employee_backend")
-    model = raw.get("employee_launch_model")
-    if not isinstance(backend, str) or not isinstance(model, str):
-        return
-    backend_key = require_conversation_backend_key(backend)
-    require_enabled_model(conn, backend_key, model)
+async def _resolve_launch_defaults(
+    conn: sqlite3.Connection, raw: dict[str, Any], resolver: ModelResolver
+) -> dict[str, Any]:
+    defaults = service.validate_launch_defaults(raw)
+    backend_key = require_conversation_backend_key(defaults.employee_backend)
+    require_enabled_model(conn, backend_key, defaults.employee_launch_model)
+    resolution = await resolver.resolve(
+        backend_key, defaults.employee_launch_model, defaults.employee_launch_reasoning_effort
+    )
+    return {
+        "employee_backend": backend_key.value,
+        "employee_launch_model": resolution.model,
+        "employee_launch_reasoning_effort": resolution.reasoning_effort,
+    }
 
 
 async def add_agent_conversation_signals(
@@ -266,11 +268,11 @@ async def get_chief_settings(conn: DbConn) -> JsonDict:
 
 @router.put("/workers/chief-of-staff/launch-defaults")
 async def put_chief_launch_defaults(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, model_resolver: ModelResolver
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
     del config
-    _reject_disabled_launch_model(conn, raw)
+    raw = await _resolve_launch_defaults(conn, raw, model_resolver)
     return _chief_json(service.update_chief_launch_defaults(conn, raw))
 
 
@@ -305,9 +307,10 @@ async def put_worker_launch_defaults(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    model_resolver: ModelResolver,
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
-    _reject_disabled_launch_model(conn, raw)
+    raw = await _resolve_launch_defaults(conn, raw, model_resolver)
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_worker_launch_defaults(
         conn, registry, worker_type, raw, now=clk.now_unix()

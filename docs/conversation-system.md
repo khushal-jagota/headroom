@@ -475,6 +475,34 @@ delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
 
+### Current models within a variant
+
+A model choice selects a variant, such as Sol or Opus. Before each turn, Panels
+resolves that variant against the backend's current catalogue. Codex uses the newest
+enabled version within the selected variant. Claude keeps its native aliases, including
+their context suffixes. Hermes keeps its provider-qualified choices. A provider hint
+cannot select a different variant. Panels preserves an explicit reasoning effort and
+refuses the turn if the resolved model does not support it.
+
+Catalogue failure does not stop a variant with a last known-good resolution. Panels
+uses that resolution and reports that the catalogue is unavailable. Without a last
+known-good resolution, it refuses the turn with a clear error. The shared picker
+shows the selected variant and resolved model, plus the catalogue warning when present.
+
+This rule covers Workers, Chief, ordinary orchestrators, new conversations, reused
+conversations and queued messages. Steering retains the active turn's model. Saved legacy
+versions resolve within their own variant. New orchestrators use the managed launch
+defaults instead of a model pinned by a database trigger.
+
+An explicit correction action previews saved choices and applies selected corrections.
+It works for idle Workers and user-owned Stages without a restart or a message.
+It preserves backend and reasoning choices. Active turns finish on their current model.
+The next turn resolves the corrected model within the same conversation.
+The action does not approve work, change a Stage, clear a claim, or start a turn.
+See [model correction commands](cli.md#correct-saved-models).
+
+Code: `src/planner/conversation/`, `src/planner/runtime/`.
+
 Hermes new and loaded sessions also return their exact current model through extension
 metadata. Panels omits the legacy model request only when that value exactly matches the
 requested model. A different model or absent metadata keeps the existing model route.
@@ -940,7 +968,8 @@ New Chief conversations and Workers without a historical Ticket model also check
 resolved choice after overrides. An enabled override works even if the default is off.
 Chief and Worker default saves refuse an off model. Each refusal names the model and
 requires an enabled choice. Panels never silently substitutes another model.
-Existing Ticket choices and existing conversations remain intact.
+Existing choices retain their selected variant. The current-model rule above governs
+the concrete model used for each turn.
 
 ### Recorded local usage
 
@@ -1205,4 +1234,4 @@ steer into a turn that was genuinely running, on a receipt from the provider pro
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-10-17._
+_Last verified: 2026-10-18._

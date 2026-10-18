@@ -288,6 +288,7 @@ class PromptDeliveryRefusalReason(StrEnum):
 
     no_such_conversation = "no_such_conversation"
     backend_did_not_start = "backend_did_not_start"
+    model_resolution_failed = "model_resolution_failed"
     session_did_not_load = "session_did_not_load"
     write_to_backend_failed = "write_to_backend_failed"
     no_running_turn_to_steer_into = "no_running_turn_to_steer_into"

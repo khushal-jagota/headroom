@@ -2748,5 +2748,59 @@ for _retired in ("add", "remove", "carry"):
 main.add_command(sprint_item, "orchestrator")
 
 
+@main.group("model-corrections")
+def model_corrections() -> None:
+    """Preview and correct saved models without a message or restart."""
+
+
+@model_corrections.command("preview")
+@click.option("--ticket", "ticket_ids", multiple=True)
+@click.option("--orchestrator", "orchestrator_ids", multiple=True)
+@click.option("--chief", is_flag=True)
+@click.option("--worker-default", "worker_types", multiple=True)
+@json_option
+def model_corrections_preview(
+    ticket_ids: tuple[str, ...],
+    orchestrator_ids: tuple[str, ...],
+    chief: bool,
+    worker_types: tuple[str, ...],
+    as_json: bool,
+) -> None:
+    targets = [
+        {"kind": kind, "id": identifier}
+        for kind, identifiers in (
+            ("ticket", ticket_ids),
+            ("orchestrator", orchestrator_ids),
+            ("worker-default", worker_types),
+        )
+        for identifier in identifiers
+    ]
+    if chief:
+        targets.append({"kind": "chief", "id": "chief"})
+    if not targets:
+        http.fail_validation("select at least one correction target", as_json)
+    result = http.send(
+        "POST",
+        "/api/conversation/model-corrections/preview",
+        as_json=as_json,
+        json_body={"targets": targets},
+    )
+    http.emit(result, as_json, json.dumps(result, indent=2))
+
+
+@model_corrections.command("apply")
+@json_option
+def model_corrections_apply(as_json: bool) -> None:
+    """Read the complete preview JSON from stdin and compare before each write."""
+    try:
+        preview = json.load(sys.stdin)
+    except ValueError:
+        http.fail_validation("stdin must contain the complete preview JSON", as_json)
+    result = http.send(
+        "POST", "/api/conversation/model-corrections/apply", as_json=as_json, json_body=preview
+    )
+    http.emit(result, as_json, json.dumps(result, indent=2))
+
+
 if __name__ == "__main__":
     main()

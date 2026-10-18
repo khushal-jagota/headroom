@@ -297,11 +297,17 @@ def update_supervisor_launch_configuration(
     *,
     principal: Principal,
     clock: Clock,
+    expected_configuration: SprintItemSupervisorLaunchConfiguration | None = None,
 ) -> SprintItem:
     """Save the complete configuration that an accepted supervisor message used."""
     require_above(conn, principal, authority.outcome(item_id))
     _load_item(conn, item_id)
     with _tx(conn):
+        if (
+            expected_configuration is not None
+            and _load_item(conn, item_id).supervisor_launch_configuration != expected_configuration
+        ):
+            return _load_item(conn, item_id)
         conn.execute(
             "UPDATE sprint_items SET supervisor_backend=?, supervisor_model=?, "
             "supervisor_reasoning_effort=?, updated_at=? WHERE id=?",
@@ -463,3 +469,23 @@ def set_item_settled(
             (int(settled), clock.now_unix(), item_id),
         )
     return _load_item(conn, item_id)
+
+
+def correct_supervisor_model(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    backend: str,
+    old_model: str,
+    reasoning_effort: str | None,
+    new_model: str,
+    now: int,
+) -> bool:
+    """Correct only a model after the service authorizes and resolves its variant."""
+    updated = conn.execute(
+        "UPDATE sprint_items SET supervisor_model=?, updated_at=? "
+        "WHERE id=? AND supervisor_backend=? AND supervisor_model=? "
+        "AND supervisor_reasoning_effort IS ?",
+        (new_model, now, item_id, backend, old_model, reasoning_effort),
+    )
+    return updated.rowcount == 1

@@ -31,14 +31,13 @@ from planner.conversation.api import (
     conversation_message_content,
     delivery_fate_json,
 )
-from planner.conversation.backend_state import model_is_enabled
+from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import (
-    ConversationBackendKey,
     ConversationSystem,
     require_conversation_backend_key,
 )
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.snapshot import BackendSnapshotService
+from planner.conversation.model_resolution.contracts import CurrentModelResolver
 from planner.conversation.storage import ConversationStore
 from planner.core import authority
 from planner.core.authctx import (
@@ -126,6 +125,14 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
+def get_model_resolver(request: Request) -> CurrentModelResolver:
+    runtime = getattr(request.app.state, "conversation", None)
+    resolver = getattr(runtime, "model_resolution", None)
+    if resolver is None:
+        raise PlannerError(ErrorCode.gateway_offline, "the model resolver is unavailable", {})
+    return cast(CurrentModelResolver, resolver)
+
+
 def get_conversation_system(request: Request) -> ConversationSystem:
     return cast(ConversationSystem, request.app.state.conversation_system)
 
@@ -159,6 +166,7 @@ DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
+ModelResolver = Annotated[CurrentModelResolver, Depends(get_model_resolver)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
 MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
@@ -465,6 +473,32 @@ def _parse_next_ceiling(
 # --- ticket routes -------------------------------------------------------------
 
 
+async def warm_ticket_creation_model(
+    conn: sqlite3.Connection,
+    resolver: CurrentModelResolver,
+    *,
+    worker_type: str,
+    employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
+    model_source_is_historical: bool = False,
+) -> None:
+    """Resolve outside the creation transaction so cold catalogues can be awaited."""
+    launch_configuration = tickets_data.requested_ticket_launch_configuration(
+        worker_type,
+        employee_backend=employee_backend,
+        employee_launch_model=employee_launch_model,
+    )
+    assert launch_configuration.employee_launch_model is not None
+    backend_key = require_conversation_backend_key(launch_configuration.employee_backend)
+    if employee_launch_model and not model_source_is_historical:
+        require_enabled_model(conn, backend_key, employee_launch_model)
+    await resolver.resolve(
+        backend_key,
+        launch_configuration.employee_launch_model,
+        launch_configuration.employee_launch_reasoning_effort,
+    )
+
+
 @router.post("/tickets")
 async def create_ticket(
     raw: dict[str, Any],
@@ -472,8 +506,15 @@ async def create_ticket(
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
+    model_resolver: ModelResolver,
 ) -> JsonDict:
     body = _marshal_create_ticket(raw)
+    await warm_ticket_creation_model(
+        conn, model_resolver,
+        worker_type=body["worker_type"],
+        employee_backend=body.get("employee_backend"),
+        employee_launch_model=body.get("employee_launch_model"),
+    )
     now = clk.now_unix()
     orchestrator = (
         _parse_orchestrator(body["orchestrator"])
@@ -672,51 +713,6 @@ async def read_tickets(
     return page.response("tickets")
 
 
-def _backend_snapshots(request: Request) -> BackendSnapshotService:
-    runtime = getattr(request.app.state, "conversation", None)
-    service = getattr(runtime, "backend_snapshots", None) if runtime is not None else None
-    if service is None:
-        raise PlannerError(
-            ErrorCode.gateway_offline,
-            "the agent backends are unavailable",
-            {},
-        )
-    return cast(BackendSnapshotService, service)
-
-
-async def _advertised_launch_options(
-    request: Request,
-    backend_key: ConversationBackendKey,
-    candidate_model: str | None,
-) -> tuple[frozenset[str], frozenset[str]]:
-    """What this backend can actually be launched as: its models, and the efforts for one.
-
-    Reasoning effort belongs to the model that will run rather than to the backend in
-    general — a model that names its own efforts is believed, including when it names
-    none, and a model that names nothing takes the backend's list. That is the same rule
-    the composer applies in the browser, stated once more here because this is the door a
-    saved configuration comes through.
-    """
-    service = _backend_snapshots(request)
-    try:
-        snapshot = await service.snapshot(backend_key)
-    except Exception as error:
-        raise PlannerError(
-            ErrorCode.gateway_offline,
-            "the agent backends are unavailable",
-            {},
-        ) from error
-    efforts = snapshot.reasoning_effort_options
-    for model in snapshot.available_models:
-        if model.model_id == candidate_model:
-            efforts = model.reasoning_effort_options
-            break
-    return (
-        frozenset(model.model_id for model in snapshot.available_models),
-        frozenset(efforts),
-    )
-
-
 @dataclass(frozen=True)
 class ResolvedEmployeeConfiguration:
     """A launch configuration that has passed every check a write can make beforehand.
@@ -745,48 +741,21 @@ async def resolve_employee_configuration(
     employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
 ) -> ResolvedEmployeeConfiguration:
-    """Check a launch configuration against the backend registry and its catalog.
-
-    Every check that can be made without writing is made here: the backend is registered,
-    the model is not disabled, and a same-backend change is measured against what that
-    backend advertises. A backend change carries no catalog, for the reason
-    ``normalize_employee_launch_configuration`` gives — the old backend's catalog is the
-    wrong one to ask.
-    """
+    """Resolve an owner's enabled choice to the current member of its variant."""
     expected = tickets_data.employee_launch_configuration(tickets_data.read_ticket(conn, ticket_id))
     registered_backend = require_conversation_backend_key(employee_backend)
-    advertised_models: frozenset[str] | None = None
-    reasoning_supported: bool | None = None
-    advertised_reasoning_efforts: frozenset[str] | None = None
-    candidate = EmployeeLaunchConfiguration(
-        employee_backend=registered_backend,
-        employee_launch_model=employee_launch_model,
-        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+    require_enabled_model(conn, registered_backend, employee_launch_model)
+    resolved = await get_model_resolver(request).resolve(
+        registered_backend, employee_launch_model, employee_launch_reasoning_effort
     )
-    if not model_is_enabled(conn, registered_backend, employee_launch_model):
-        raise PlannerError(
-            ErrorCode.validation,
-            "Employee model is disabled",
-            {
-                "employee_backend": str(registered_backend),
-                "employee_launch_model": employee_launch_model,
-            },
-        )
-    if registered_backend == expected.employee_backend and candidate != expected:
-        advertised_models, advertised_reasoning_efforts = await _advertised_launch_options(
-            request,
-            registered_backend,
-            employee_launch_model,
-        )
-        reasoning_supported = len(advertised_reasoning_efforts) > 0
     return ResolvedEmployeeConfiguration(
         expected=expected,
-        employee_backend=employee_backend,
-        employee_launch_model=employee_launch_model,
-        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
-        advertised_models=advertised_models,
-        reasoning_supported=reasoning_supported,
-        advertised_reasoning_efforts=advertised_reasoning_efforts,
+        employee_backend=registered_backend,
+        employee_launch_model=resolved.model,
+        employee_launch_reasoning_effort=resolved.reasoning_effort,
+        advertised_models=frozenset({resolved.model}),
+        reasoning_supported=bool(resolved.supported_reasoning_efforts),
+        advertised_reasoning_efforts=frozenset(resolved.supported_reasoning_efforts),
     )
 
 

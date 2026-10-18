@@ -315,6 +315,7 @@ async def send_message(
                         ),
                         principal=sender,
                         clock=clock,
+                        expected_configuration=item.supervisor_launch_configuration,
                     )
     else:
         raise PlannerError(

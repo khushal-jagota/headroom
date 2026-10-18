@@ -25,7 +25,7 @@ REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger a current build holds: the baseline plus what the
 # revisions after it add.
-CURRENT_SCHEMA_OBJECT_COUNT = 66
+CURRENT_SCHEMA_OBJECT_COUNT = 68
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -921,4 +921,44 @@ def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
         ]
         == 0
     )
+    conn.close()
+
+
+def test_model_resolution_migration_preserves_saved_choices_and_removes_pinned_trigger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "native_usage_prices")
+    conn = connect(str(tmp_path / "models.db"))
+    create_schema(conn)
+    project_id = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0]
+    conn.execute(
+        "INSERT INTO agents(agent_key,conversation_id) VALUES ('sprint_item_supervisor_old',NULL)"
+    )
+    conn.execute(
+        "INSERT INTO sprint_items(id,title,body,priority,project_id,supervisor_backend,"
+        "supervisor_model,supervisor_reasoning_effort,created_at,updated_at) "
+        "VALUES ('old','Existing','', 'P3',?,'codex','gpt-5.6-sol','high',1,1)",
+        (project_id,),
+    )
+    conn.execute(
+        "CREATE TRIGGER sprint_items_supervisor_create AFTER INSERT ON sprint_items BEGIN "
+        "UPDATE sprint_items SET supervisor_model='gpt-5.6-sol' WHERE id=NEW.id; END"
+    )
+    before = tuple(conn.execute("SELECT * FROM sprint_items WHERE id='old'").fetchone())
+    shutil.copy(shipped / "versions" / "current_model_variants.py", tree / "versions")
+    create_schema(conn)
+    assert tuple(conn.execute("SELECT * FROM sprint_items WHERE id='old'").fetchone()) == before
+    assert conn.execute(
+        "SELECT agent_key FROM agents WHERE agent_key='sprint_item_supervisor_old'"
+    ).fetchone()
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='trigger' "
+            "AND name='sprint_items_supervisor_create'"
+        ).fetchone()
+        is None
+    )
+    assert conn.execute("SELECT COUNT(*) FROM model_variant_resolutions").fetchone()[0] == 0
     conn.close()
