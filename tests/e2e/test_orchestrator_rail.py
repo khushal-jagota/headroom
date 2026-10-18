@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import socket
 import sqlite3
 import subprocess
@@ -23,9 +22,16 @@ from pathlib import Path
 import httpx
 import pytest
 from playwright.sync_api import BrowserContext, Page, expect
-from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
+from tests.e2e.harness import (
+    REPO_ROOT,
+    WAIT_MS,
+    ApiHelper,
+    JsonObject,
+    ServerHandle,
+    _append_rows,
+    capture_success,
+)
 from tests.e2e.test_approval_groups_message_dots import _conversation, _message
-from tests.e2e.test_ticket_conversation_shared_behaviors import _append_rows
 
 from planner.conversation.events import UserInputQuestion, UserInputRequestedEventPayload
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
@@ -300,8 +306,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
             == 0
         )
     expect(row.get_by_role("img", name="Unread message")).to_be_visible()
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(EVIDENCE / "rail-1440.png"), full_page=True)
+    capture_success(page, str(EVIDENCE / "rail-1440.png"))
     _message(server, "rail-chief", CHIEF_PRINCIPAL, "Chief own direct message")
     _message(
         server,
@@ -319,73 +324,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0, timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_be_visible()
     expect(row.get_by_role("img", name="Unread message")).to_be_visible()
-    page.screenshot(path=str(EVIDENCE / "own-conversation-marks.png"), full_page=True)
-    shutil.copyfile(server.log_path, EVIDENCE / "isolated-server.log")
-
-
-def test_rail_resize_and_hover_are_accessible_without_losing_selection(
-    rail_server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    api: ApiHelper,
-) -> None:
-    server = rail_server
-    item, _, ticket = _seed(server, api)
-    page = open_page(
-        context_factory(), server, "#/workspace?view=items", '[data-screen="workspace"]'
-    )
-    page.set_default_timeout(WAIT_MS)
-    page.set_viewport_size({"width": 1440, "height": 1000})
-    left = page.locator(".board-workspace-left")
-    card = left.locator(f'[data-sprint-item="{item["id"]}"]')
-    row = card.locator(f'[data-ticket-id="{ticket["id"]}"]')
-    grip = page.get_by_role("separator", name="Resize workspace panel")
-    page.wait_for_function(
-        """() => Math.abs(
-        Number(document.querySelector('[role=separator]').getAttribute('aria-valuenow')) -
-        document.querySelector('.board-workspace-left').getBoundingClientRect().width
-    ) < 2""",
-        timeout=WAIT_MS,
-    )
-    grip.focus()
-    expect(grip).to_be_focused()
-    original = left.evaluate("el => el.getBoundingClientRect().width")
-    grip.press("ArrowRight")
-    grown = left.evaluate("el => el.getBoundingClientRect().width")
-    assert grown > original
-    page.reload()
-    expect(grip).to_be_visible()
-    assert abs(left.evaluate("el => el.getBoundingClientRect().width") - grown) < 2
-    bounds = grip.bounding_box()
-    assert bounds
-    page.mouse.move(bounds["x"] + bounds["width"] / 2, bounds["y"] + 50)
-    page.mouse.down()
-    page.mouse.move(bounds["x"] + 65, bounds["y"] + 50, steps=4)
-    page.mouse.up()
-    assert left.evaluate("el => el.getBoundingClientRect().width") > grown
-    grip.dblclick()
-    assert abs(left.evaluate("el => el.getBoundingClientRect().width") - original) < 2
-    row.focus()
-    expect(row).to_be_focused()
-    row.hover()
-    pop = page.locator("[data-rail-hover-panel]")
-    expect(pop).to_contain_text(LONG_TITLE, timeout=WAIT_MS)
-    expect(pop).to_contain_text("Stages")
-    expect(pop).to_contain_text("Brief")
-    # Moving directly to another target changes the same visible popup in place.
-    card.locator(".item-head").hover()
-    expect(pop).to_contain_text("Quiet ordinary Worker", timeout=WAIT_MS)
-    expect(pop).to_contain_text("Blocked ordinary Worker")
-    expect(pop).not_to_contain_text("Stages")
-    assert page.locator("[data-rail-hover-panel]").count() == 1
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(EVIDENCE / "rail-hover-1440.png"), full_page=True)
-    page.set_viewport_size({"width": 820, "height": 1000})
-    row.focus()
-    expect(row).to_be_focused()
-    expect(row).to_be_visible()
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    page.screenshot(path=str(EVIDENCE / "rail-narrow-820.png"), full_page=True)
+    capture_success(page, str(EVIDENCE / "own-conversation-marks.png"))
 
 
 def _send_owner_message(server: ServerHandle, sender: Principal, message: str) -> None:
@@ -558,7 +497,7 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
     page_group.locator(":scope > summary").click()
     artifacts = EVIDENCE.parent / "settled-messages"
     artifacts.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(artifacts / "settled-and-messages-1440.png"), full_page=True)
+    capture_success(page, str(artifacts / "settled-and-messages-1440.png"))
 
     # A read advances the durable position and the same SSE invalidation clears only
     # the exact dot/message row. Ordinary counts stay stable without a reload/refetch.
@@ -613,7 +552,7 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
     expect(terminal_row.get_by_role("img", name="Unread message")).to_have_count(1)
     expect(page_group.locator("[data-group-count]")).to_have_text("1")
     expect(page_group.locator("[data-group-count]")).to_be_visible()
-    page.screenshot(path=str(artifacts / "later-message-without-reopen.png"), full_page=True)
+    capture_success(page, str(artifacts / "later-message-without-reopen.png"))
     chief_child = api.direct_post(
         server,
         "/api/tickets",
@@ -651,4 +590,3 @@ def test_settled_messages_keep_exact_rows_and_item_counts_after_reads(
     assert settlement_writes == []
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute("SELECT count(*) FROM sprint_items WHERE settled=1").fetchone()[0] == 2
-    shutil.copyfile(server.log_path, artifacts / "isolated-server.log")

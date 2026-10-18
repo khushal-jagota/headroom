@@ -10,20 +10,28 @@ one name and one copy, from anywhere.
 
 from __future__ import annotations
 
+import asyncio
+import os
 import subprocess
 import sys
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
-from playwright.sync_api import Page
+from playwright.sync_api import Browser, Page
+
+from planner.conversation.events import ConversationEventPayload
+from planner.conversation.storage import ConversationStore
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_BIN = Path(sys.executable).parent / "panels"
 FAKE_NOW = "2026-07-04T12:00:00"
-WAIT_MS = 10_000          # every Playwright wait
-BOOT_BUDGET_S = 15.0      # server readiness budget
+WAIT_MS = 10_000  # every Playwright wait
+BOOT_BUDGET_S = 15.0  # server readiness budget
 
 # A decoded JSON object, as the API and the CLI's --json hand one back. The values stay
 # ``Any`` on purpose: this is somebody else's JSON, and pretending to know its shape here
@@ -93,3 +101,64 @@ class ApiHelper:
         assert resp.status_code < 300, f"PUT {path} -> {resp.status_code}: {resp.text}"
         answer: JsonObject = resp.json()
         return answer
+
+
+def capture_success(page: Page, path: str | Path) -> None:
+    """Capture a review image only when explicitly requested."""
+    if output := os.environ.get("PANELS_UI_PROOF_DIR"):
+        target = Path(output) / Path(path).name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(target), full_page=True, animations="disabled")
+
+
+@contextmanager
+def browser_failure_evidence(browser: Browser, label: str) -> Iterator[None]:
+    """Retain evidence before a standalone frontend browser exits on failure."""
+    try:
+        yield
+    except Exception:
+        folder = (
+            Path(os.environ.get("PANELS_E2E_FAILURE_DIR", "data/verification/browser-failure"))
+            / label
+        )
+        folder.mkdir(parents=True, exist_ok=True)
+        for context_index, context in enumerate(browser.contexts):
+            for page_index, page in enumerate(context.pages):
+                stem = folder / f"context-{context_index}-page-{page_index}"
+                try:
+                    page.screenshot(
+                        path=str(stem.with_suffix(".png")), full_page=True, timeout=5000
+                    )
+                    stem.with_suffix(".html").write_text(page.content())
+                except Exception as error:
+                    stem.with_suffix(".capture-error.txt").write_text(str(error))
+            try:
+                context.tracing.stop(path=str(folder / f"context-{context_index}-trace.zip"))
+            except Exception:
+                pass
+        raise
+
+
+def _append_rows(
+    server: ServerHandle, conversation_id: str, *payloads: ConversationEventPayload
+) -> None:
+    store = ConversationStore(str(server.db_path))
+
+    async def write() -> None:
+        for payload in payloads:
+            await store.append_event(conversation_id, payload)
+
+    failures: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            asyncio.run(write())
+        except BaseException as error:  # noqa: BLE001 - re-raised on the browser thread
+            failures.append(error)
+
+    writer = threading.Thread(target=run)
+    writer.start()
+    writer.join(timeout=10)
+    assert not writer.is_alive()
+    if failures:
+        raise failures[0]

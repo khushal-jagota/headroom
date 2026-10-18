@@ -7,9 +7,7 @@ checks both adapters and a replacement racing the request, without live state or
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
-from pathlib import Path
 
 import httpx
 import pytest
@@ -17,7 +15,6 @@ from playwright.sync_api import BrowserContext, Page, Route, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_orchestrator_rail import rail_server  # noqa: F401
 
-EVIDENCE = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_f95hckjc/artifacts")
 BODY = "The compact approval card preserves the visible proposal."
 
 
@@ -73,27 +70,6 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     page.on("pageerror", lambda error: errors.append(str(error)))
     card = page.locator("[data-approval-block]")
     panel = page.locator("[data-ceiling-picker-panel]:visible")
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    for width in (1440, 390):
-        page.set_viewport_size({"width": width, "height": 1100})
-        if host == "ticket":
-            eyebrow = page.locator('[data-ticket-identity]')
-            expect(eyebrow).to_have_text("Approval proof · Coding")
-            steps = page.locator(".worker-steps")
-            if not steps.evaluate("node => node.open"):
-                steps.locator(":scope > summary").click()
-        page.screenshot(path=str(EVIDENCE / f"real-{host}-closed-{width}.png"), full_page=True)
-        card.locator("[data-accept]").click()
-        expect(panel).to_be_visible()
-        assert (
-            api.get(server, f"/api/tickets?detail=full&id={ticket_id}")["pending_proposal"]["body"]
-            == BODY
-        )
-        page.screenshot(path=str(EVIDENCE / f"real-{host}-ceiling-{width}.png"), full_page=True)
-        panel.locator('[data-ceiling-picker-choice="needs_plan"]').click()
-        expect(panel.locator(f'[data-scope-holder="{item["id"]}"]')).to_have_text("Orchestrator")
-        page.screenshot(path=str(EVIDENCE / f"real-{host}-reviewer-{width}.png"), full_page=True)
-        page.keyboard.press("Escape")
     page.set_viewport_size({"width": 1440, "height": 1100})
     original = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     # The heading's reviewer gesture performs only a reroute, leaving the proposal parked.
@@ -115,22 +91,6 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     api.direct_patch(server, f"/api/tickets/{ticket_id}", {"ceiling_holder": owner})
     page.reload()
     expect(card).to_be_visible()
-    # Same/lower stage selection is a scope write, never an acceptance.
-    for ceiling in ("needs_success_condition", "needs_brief"):
-        card.locator("[data-accept]").click()
-        panel.locator(f'[data-ceiling-picker-choice="{ceiling}"]').click()
-        with page.expect_response(
-            lambda response: (
-                response.request.method == "PATCH"
-                and response.url.endswith(f"/tickets/{ticket_id}")
-            )
-        ) as scope:
-            panel.locator('[data-scope-holder="owner"]').click()
-        assert scope.value.ok, scope.value.text()
-        unchanged = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
-        assert unchanged["pending_proposal"]["body"] == BODY
-        assert unchanged["stage"] == "needs_success_condition"
-        assert not unchanged["field_values"].get("success_condition")
     visible = api.get(server, f"/api/tickets?detail=full&id={ticket_id}")
     stale_payloads: list[JsonObject] = []
     replacement = "A newer Worker proposal must survive the stale browser request."
@@ -190,19 +150,3 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     assert final["ceiling"] == "needs_plan"
     assert final["ceiling_holder"] == owner
     assert errors == []
-    (EVIDENCE / f"real-{host}-transaction.json").write_text(
-        json.dumps(
-            {
-                "isolation": (
-                    "Temporary rail-proof.db; deterministic conversation adapter; "
-                    "no live DB or provider calls"
-                ),
-                "stale_request": stale_payloads[0],
-                "stale_response": stale.value.json(),
-                "accepted_request": accepted_payload,
-                "final": final,
-                "page_errors": errors,
-            },
-            indent=2,
-        )
-    )

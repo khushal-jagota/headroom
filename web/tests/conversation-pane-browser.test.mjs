@@ -31,6 +31,7 @@ try {
     String.raw`<script lang="ts">
   import { tick } from "svelte";
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
+  import { discardHeldPrompt, promoteHeldPrompt } from "../src/lib/conversation/wire";
   import type { ConversationState } from "../src/lib/conversation/conversationState";
 
   const words = (index: number) =>
@@ -52,6 +53,28 @@ try {
   let supportsSteer = $state(false);
   let composerDisabled = $state(false);
   let ask = $state<any>(null);
+
+  // The connected test proves real writers and automatic SSE. This former E2E
+  // matrix keeps its mock responses, exact request modes, and visibility refresh.
+  let queueMatrixEnabled = $state(false);
+  async function refreshQueueMatrix(): Promise<void> {
+    if (!queueMatrixEnabled) return;
+    const response = await fetch("/api/test/queue-matrix");
+    heldPromptRows = await response.json();
+  }
+  async function actOnQueueMatrix(heldPromptId: string, mode: "discard" | "steer" | "send_now"): Promise<void> {
+    if (mode === "discard") await discardHeldPrompt("browser-fixture", heldPromptId);
+    else await promoteHeldPrompt("browser-fixture", heldPromptId, mode);
+    await refreshQueueMatrix();
+  }
+  document.addEventListener("visibilitychange", () => { void refreshQueueMatrix(); });
+  (window as any).__loadQueueMatrix = async () => {
+    queueMatrixEnabled = true;
+    supportsSteer = true;
+    running = true;
+    conversationState = "opened";
+    await refreshQueueMatrix();
+  };
 
   // Enough command entries to fill the menu, and enough shared letters to narrow it.
   const composerCatalog = [
@@ -400,7 +423,7 @@ try {
   };
 </script>
 
-<main class="fixture-ticket">
+<main class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
   <section class="fixture-document">
     <button type="button" data-ticket-behind onclick={dismissConversation}>Ticket content</button>
   </section>
@@ -439,6 +462,8 @@ try {
         composerDisabled={composerDisabled}
         {composerCatalog}
         onSend={captureSend}
+        onDiscardHeldPrompt={(heldPromptId: string) => actOnQueueMatrix(heldPromptId, "discard")}
+        onPromoteHeldPrompt={(heldPromptId: string, mode: "steer" | "send_now") => actOnQueueMatrix(heldPromptId, mode)}
         onStopDrawingHeldPrompt={(senderMessageId: string) => {
           (window as any).__stoppedDrawing = senderMessageId;
         }}
@@ -474,9 +499,13 @@ try {
   .conversation-layer {
     align-items: center;
   }
-  .conversation-column {
+  .fixture-ticket:not(.ticket-screen) .conversation-column {
     box-sizing: border-box;
     width: min(680px, calc(100% - 96px));
+  }
+  .fixture-ticket.ticket-screen {
+    height: 100%;
+    padding: 0;
   }
 </style>
 `,
@@ -523,6 +552,8 @@ try {
 
   const browserScript = String.raw`
 from playwright.sync_api import sync_playwright
+from contextlib import contextmanager
+from tests.e2e.harness import browser_failure_evidence
 import os
 import sys
 
@@ -573,9 +604,19 @@ def wait_for_anchor(page, held):
     assert abs(restored["top"] - held["top"]) <= 3, (held, restored)
     return restored
 
-with sync_playwright() as playwright:
+@contextmanager
+def conversation_browser(playwright):
     browser = playwright.chromium.launch(headless=True)
-    page = browser.new_page(viewport={"width": 1000, "height": 760})
+    try:
+        with browser_failure_evidence(browser, "conversation-pane-browser"):
+            yield browser
+    finally:
+        browser.close()
+
+with sync_playwright() as playwright, conversation_browser(playwright) as browser:
+    context = browser.new_context(viewport={"width": 1000, "height": 760})
+    context.tracing.start(screenshots=True, snapshots=True, sources=True)
+    page = context.new_page()
     page.set_default_timeout(5_000)
     browser_errors = []
     page.on("pageerror", lambda error: browser_errors.append(str(error)))
@@ -1207,7 +1248,137 @@ with sync_playwright() as playwright:
     assert page.locator(INPUT).input_value() == long_draft
     assert not browser_errors, browser_errors
 
-    browser.close()
+    # Former mocked E2E queue matrix, in this existing build/server/browser host.
+    held = [{
+        "key": f"held-{number}", "heldPromptId": f"held-{number}",
+        "content": [{"piece": "text", "text": f"queued message {number}"}],
+        "senderLabel": "owner", "senderMessageId": f"sender-{number}",
+        "sentAtUnixMilliseconds": 1_700_000_000_000 + number,
+        "state": "held", "queueReason": "requested",
+    } for number in range(1, 7)]
+    actions = []
+    page.context.route("**/api/test/queue-matrix", lambda route: route.fulfill(json=held))
+
+    def queue_api(route):
+        request = route.request
+        path = request.url.split("?", 1)[0]
+        if request.method == "DELETE":
+            held_id = path.rsplit("/", 1)[-1]
+            actions.append([held_id, "discard"])
+            held[:] = [row for row in held if row["heldPromptId"] != held_id]
+            route.fulfill(json={"discarded": True})
+        else:
+            assert request.method == "POST" and path.endswith("/promote"), path
+            held_id = path.rsplit("/", 2)[-2]
+            mode = request.post_data_json["mode"]
+            assert mode in ("steer", "send_now"), mode
+            actions.append([held_id, mode])
+            held[:] = [row for row in held if row["heldPromptId"] != held_id]
+            route.fulfill(json={"promoted": True, "fate": "injected" if mode == "steer" else "started"})
+
+    page.context.route("**/api/conversation/conversations/browser-fixture/held-prompts/**", queue_api)
+    desktop = page.context.new_page()
+    phone = page.context.new_page()
+    phone.set_viewport_size({"width": 390, "height": 844})
+    for queued_page in (desktop, phone):
+        queued_page.on("pageerror", lambda error: browser_errors.append(str(error)))
+        queued_page.goto(sys.argv[1], wait_until="domcontentloaded")
+        state(queued_page, "rest")
+        queued_page.evaluate("window.__loadQueueMatrix()")
+        state(queued_page, "opened")
+        queued_page.wait_for_selector("[data-conversation-held-row]")
+        assert queued_page.locator("[data-conversation-held-row] .chat-qrow-txt").all_inner_texts() == [
+            f"queued message {number}" for number in range(1, 7)
+        ]
+    def control_signature(page):
+        return page.evaluate(
+                """() => {
+              const signature = (button) => {
+                const style = getComputedStyle(button);
+                return {
+                  label: button.getAttribute('aria-label') || button.textContent.trim(),
+                  className: button.className,
+                  borderRadius: style.borderRadius,
+                  fontFamily: style.fontFamily,
+                  fontSize: style.fontSize,
+                  height: style.height,
+                  padding: style.padding,
+                };
+              };
+              const row = document.querySelector('[data-conversation-held-row]');
+              const foot = document.querySelector('.chat-foot');
+              return {
+                queue: [...row.querySelectorAll('button')].map(signature),
+                input: [...foot.querySelectorAll('button')].map(signature),
+                inputWrap: getComputedStyle(foot).flexWrap,
+              };
+            }"""
+            )
+
+    desktop_controls = control_signature(desktop)
+    phone_controls = control_signature(phone)
+    if screenshot_dir:
+        desktop.screenshot(path=os.path.join(screenshot_dir, "queue-desktop.png"))
+        phone.screenshot(path=os.path.join(screenshot_dir, "queue-phone.png"))
+    assert desktop_controls == phone_controls, (desktop_controls, phone_controls)
+    assert desktop_controls["inputWrap"] == "nowrap"
+
+    phone_layout = phone.evaluate(
+            "() => {"
+            " const stack = document.querySelector('.chat-queue-stack');"
+            " const text = document.querySelector('.chat-qrow-txt');"
+            " return {"
+            "   stackHeight: stack.clientHeight,"
+            "   stackScrollHeight: stack.scrollHeight,"
+            "   textWhiteSpace: getComputedStyle(text).whiteSpace,"
+            "   documentWidth: document.documentElement.scrollWidth,"
+            "   viewportWidth: window.innerWidth,"
+            " };"
+            "}"
+        )
+    assert phone_layout["stackScrollHeight"] > phone_layout["stackHeight"]
+    assert phone_layout["textWhiteSpace"] == "nowrap"
+    assert phone_layout["documentWidth"] <= phone_layout["viewportWidth"]
+    # The queue-only host uses TicketRoute's actual named size container and column
+    # rules. A narrow test column must not conceal clipped controls off the phone.
+    phone_bounds = phone.evaluate("""() => {
+        const column = document.querySelector('.conversation-column').getBoundingClientRect();
+        const pane = document.querySelector('[data-conversation-pane]').getBoundingClientRect();
+        const controls = [...document.querySelectorAll(
+            '[data-conversation-held-row] button, .chat-foot button'
+        )].map(button => {
+            const bounds = button.getBoundingClientRect();
+            return { label: button.getAttribute('aria-label') || button.textContent.trim(),
+                left: bounds.left, right: bounds.right, width: bounds.width };
+        });
+        return { columnWidth: column.width, viewportWidth: innerWidth,
+            paneLeft: pane.left, paneRight: pane.right, controls };
+    }""")
+    assert abs(phone_bounds["columnWidth"] - phone_bounds["viewportWidth"]) <= 1, phone_bounds
+    assert 0 <= phone_bounds["paneLeft"] < phone_bounds["paneRight"] <= phone_bounds["viewportWidth"], phone_bounds
+    for control in phone_bounds["controls"]:
+        assert control["width"] > 0, control
+        assert phone_bounds["paneLeft"] <= control["left"] < control["right"] <= phone_bounds["paneRight"], control
+
+    desktop.click('[data-conversation-held-promote="steer"][data-held-prompt-id="held-1"]')
+    desktop.wait_for_function("document.querySelectorAll('[data-conversation-held-row]').length === 5")
+    assert actions[-1] == ["held-1", "steer"]
+    phone.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+    phone.wait_for_function("document.querySelectorAll('[data-conversation-held-row]').length === 5")
+    assert "queued message 1" not in phone.inner_text("[data-conversation-held-stack]")
+    phone.click('[data-conversation-held-discard="held-2"]')
+    phone.wait_for_function("document.querySelectorAll('[data-conversation-held-row]').length === 4")
+    assert actions[-1] == ["held-2", "discard"]
+    desktop.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+    desktop.wait_for_function("document.querySelectorAll('[data-conversation-held-row]').length === 4")
+    desktop.click('[data-conversation-held-promote="send_now"][data-held-prompt-id="held-3"]')
+    desktop.wait_for_function("document.querySelectorAll('[data-conversation-held-row]').length === 3")
+    assert actions[-1] == ["held-3", "send_now"]
+    desktop.close()
+    phone.close()
+    assert not browser_errors, browser_errors
+
+    context.tracing.stop()
 
 print("conversation-pane-browser.test.mjs: all assertions passed")
 `;

@@ -98,7 +98,7 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core import sse
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import PlannerError
+from planner.core.contracts import PlannerError, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.response_compression import (
     CompressExceptEventStreams,
@@ -1077,6 +1077,33 @@ def test_owner_read_position_persists_and_refuses_employee_updates(
                 assert (await second_device.get("/api/conversation/conversations/c")).json()[
                     "owner_read_through_sequence"
                 ] == 1
+
+            # A stale browser watermark cannot clear a later addressed message.
+            for text in ("earlier owner message", "later owner message"):
+                await harness.system.record_message_to_owner(
+                    "c", text_message_content(text), sender_label="Worker",
+                    sender=Principal(PrincipalKind.ticket, "t_one"),
+                    recipient=OWNER_PRINCIPAL,
+                )
+            events = await harness.store.read_events_after("c", 1)
+            earlier, later = events
+            stale = await client.post(
+                "/api/conversation/conversations/c/owner-read",
+                json={"through_sequence": earlier.sequence},
+            )
+            assert stale.json() == {"owner_read_through_sequence": earlier.sequence}
+            assert (await harness.store.attention_facts(["c"]))["c"].unread_message_to_owner
+            latest = await client.post(
+                "/api/conversation/conversations/c/owner-read",
+                json={"through_sequence": later.sequence},
+            )
+            assert latest.json() == {"owner_read_through_sequence": later.sequence}
+            assert not (await harness.store.attention_facts(["c"]))["c"].unread_message_to_owner
+            older = await client.post(
+                "/api/conversation/conversations/c/owner-read",
+                json={"through_sequence": earlier.sequence},
+            )
+            assert older.json() == {"owner_read_through_sequence": later.sequence}
 
             missing = await client.post(
                 "/api/conversation/conversations/missing/owner-read",

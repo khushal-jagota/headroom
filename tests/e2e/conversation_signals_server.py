@@ -18,10 +18,16 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPromptAccepted,
     BackendSteerAccepted,
+    BackendUserInputRequest,
     TurnToken,
 )
 from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
-from planner.conversation.events import ConversationTurnEnding
+from planner.conversation.events import (
+    ConversationTurnEnding,
+    UserInputAnswer,
+    UserInputOption,
+    UserInputQuestion,
+)
 from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
@@ -40,6 +46,7 @@ class ScriptedChild:
     def __init__(self, sink: BackendEventSink) -> None:
         self.sink = sink
         self.token: TurnToken | None = None
+        self.answers: dict[str, tuple[UserInputAnswer, ...]] = {}
 
     async def start(self, *args: Any, **kwargs: Any) -> None:
         pass
@@ -59,8 +66,36 @@ class ScriptedChild:
     async def answer_permission_ask(self, *args: Any, **kwargs: Any) -> None:
         pass
 
-    async def answer_user_input(self, *args: Any, **kwargs: Any) -> None:
-        pass
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...],
+    ) -> None:
+        self.answers[request_id] = answers
+
+    async def request_questions(self) -> None:
+        assert self.token is not None
+        await self.sink.user_input_requested(self.token, BackendUserInputRequest(
+            request_id="input-1",
+            questions=(
+                UserInputQuestion(
+                    question_id="scope", header="Scope",
+                    question="Which surfaces should change?",
+                    options=(
+                        UserInputOption(label="Composer", description="The live composer"),
+                        UserInputOption(label="Transcript", description="Durable history"),
+                    ),
+                    multi_select=True, allow_other=True,
+                ),
+                UserInputQuestion(
+                    question_id="proof", header="Proof",
+                    question="What proof should be required?",
+                    options=(UserInputOption(
+                        label="Browser test", description="Exercise the full flow",
+                    ),),
+                    multi_select=False, allow_other=True,
+                ),
+            ),
+        ))
+        await asyncio.sleep(0)
 
     async def stop(self) -> None:
         self.token = None
@@ -160,6 +195,30 @@ def main() -> None:
             recipient=OWNER_PRINCIPAL,
         )
         return {"ok": True}
+
+    @app.post("/api/test/signals/{conversation_id}/queue")
+    async def queue(conversation_id: str) -> dict[str, bool]:
+        for number in range(1, 3):
+            await system.send(
+                conversation_id, text_message_content(f"queued message {number}"),
+                sender_label="owner", sender_message_id=f"sender-{number}",
+                reply_requested=False,
+            )
+        return {"ok": True}
+
+    @app.post("/api/test/signals/{conversation_id}/questions")
+    async def questions(conversation_id: str) -> dict[str, bool]:
+        await children[conversation_id].request_questions()
+        return {"ok": True}
+
+    @app.get("/api/test/signals/{conversation_id}/answers")
+    async def answers(conversation_id: str) -> dict[str, dict[str, dict[str, list[str]]]]:
+        return {
+            request_id: {
+                answer.question_id: {"answers": list(answer.answers)} for answer in values
+            }
+            for request_id, values in children[conversation_id].answers.items()
+        }
 
     ChangeStreamClosingServer(uvicorn.Config(app, host="127.0.0.1", port=config.port)).run()
 

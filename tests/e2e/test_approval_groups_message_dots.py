@@ -15,8 +15,14 @@ import httpx
 from playwright.sync_api import BrowserContext, Page, Route, expect
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.approval_message_diagnostics import ApprovalMessageDiagnostics
-from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
-from tests.e2e.test_ticket_conversation_shared_behaviors import _append_rows
+from tests.e2e.harness import (
+    WAIT_MS,
+    ApiHelper,
+    JsonObject,
+    ServerHandle,
+    _append_rows,
+    capture_success,
+)
 
 from planner.conversation.events import MessageToOwnerEventPayload
 from planner.conversation.message_content import text_message_content
@@ -225,7 +231,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             expect(group.locator("[data-group-count]")).to_have_text("1")
             expect(group.locator("[data-group-count]")).to_be_visible()
         expect(right.get_by_text(tickets[1]["title"], exact=True)).to_be_visible(timeout=WAIT_MS)
-        page.screenshot(path=str(EVIDENCE / "approvals-child-message.png"), full_page=True)
+        capture_success(page, str(EVIDENCE / "approvals-child-message.png"))
 
         owner_row.click(timeout=WAIT_MS)
         page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
@@ -300,9 +306,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         # Selecting the Item keeps the conversation at rest and does not claim a read.
         expect(page.locator('[data-conversation-state="rest"]')).to_be_visible(timeout=WAIT_MS)
         assert _read_position(server, "dot-supervisor") == 0
-        page.screenshot(
-            path=str(EVIDENCE / "supervisor-own-message-title-and-rail.png"), full_page=True
-        )
+        capture_success(page, str(EVIDENCE / "supervisor-own-message-title-and-rail.png"))
         page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
         expect(right.locator(".sprint-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_have_count(0, timeout=WAIT_MS)
@@ -314,7 +318,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         assert left.locator(".item-head .stage-mark").count() == 0
         expect(owner_row).to_be_visible(timeout=WAIT_MS)
         expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
-        page.screenshot(path=str(EVIDENCE / "chief-own-message-only.png"), full_page=True)
+        capture_success(page, str(EVIDENCE / "chief-own-message-only.png"))
         page.locator("[data-chief-destination]").click(timeout=WAIT_MS)
         expect(page.get_by_text("Chief direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
         expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(

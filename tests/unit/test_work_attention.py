@@ -11,10 +11,12 @@ from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.conversation.contracts import ConversationSystem
+from planner.conversation.events import MessageToOwnerEventPayload
+from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationAttentionFacts, ConversationStore
 from planner.core.clock import RealClock
 from planner.core.config import Config
-from planner.core.contracts import JsonDict
+from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.days.data import add_day_ticket
 from planner.sprints import data as sprints_data
@@ -93,6 +95,30 @@ def test_shell_count_tracks_distinct_actual_work_across_all_roles(
         return asyncio.run(read_running_conversation_count(conn, system, record))
 
     assert count() == 0  # A claim and unrelated agents never mean current role work.
+    # Message-only and owner-read transitions cannot create runtime work.
+    senders = {
+        "worker": Principal(PrincipalKind.ticket, tickets[0].id),
+        "supervisor": Principal(PrincipalKind.sprint_item, item.id),
+        "chief": Principal(PrincipalKind.chief, "chief"),
+    }
+    message_sequences = {}
+    for conversation_id, sender in senders.items():
+        message = asyncio.run(record.append_message_to_owner(
+            conversation_id,
+            MessageToOwnerEventPayload(
+                content=text_message_content("A message for the owner."),
+                sender=sender, recipient=OWNER_PRINCIPAL, sender_label=conversation_id,
+            ),
+        ))
+        message_sequences[conversation_id] = message.sequence
+    facts = asyncio.run(record.attention_facts(senders))
+    assert all(facts[conversation_id].unread_message_to_owner for conversation_id in senders)
+    assert count() == 0
+    for conversation_id, sequence in message_sequences.items():
+        asyncio.run(record.advance_owner_read_through_sequence(conversation_id, sequence))
+        facts = asyncio.run(record.attention_facts([conversation_id]))
+        assert facts[conversation_id].unread_message_to_owner is False
+        assert count() == 0
     for role in ("worker", "supervisor", "chief"):
         runtime.running_ids = {role}
         assert count() == 1

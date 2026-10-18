@@ -15,13 +15,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
 import subprocess
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -47,6 +49,9 @@ __all__ = [
     "JsonObject",
     "ServerHandle",
 ]
+
+
+BROWSER_CHECK_FAILED = pytest.StashKey[bool]()
 
 
 def _free_port() -> int:
@@ -138,18 +143,22 @@ def _start_server(
         env["PLAN_APP_SHA"] = app_sha
     if trusted_ingress_env is not None:
         env.update(
-            trusted_ingress_env(base)
-            if callable(trusted_ingress_env)
-            else trusted_ingress_env
+            trusted_ingress_env(base) if callable(trusted_ingress_env) else trusted_ingress_env
         )
 
     # Hooks are dormant unless the exact proof activates its runtime scope marker.
     # Install at the ordinary startup boundary; never restart/reset a server for tracing.
     env["PANELS_E2E_OWNER_READ_TRACE"] = str(srvdir / "owner-read-trace.jsonl")
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (
-        str(REPO_ROOT / "tests/e2e/approval_message_trace"), str(REPO_ROOT),
-        env.get("PYTHONPATH", ""),
-    )))
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(
+            None,
+            (
+                str(REPO_ROOT / "tests/e2e/approval_message_trace"),
+                str(REPO_ROOT),
+                env.get("PYTHONPATH", ""),
+            ),
+        )
+    )
 
     log = log_path.open("wb")
     try:
@@ -391,17 +400,39 @@ def server(
 
 
 @pytest.fixture
-def context_factory(browser: Browser) -> Iterator[Callable[[], BrowserContext]]:
+def context_factory(
+    browser: Browser, request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[Callable[[], BrowserContext]]:
     contexts: list[BrowserContext] = []
 
     def make() -> BrowserContext:
         ctx = browser.new_context()
+        ctx.tracing.start(screenshots=True, snapshots=True, sources=True)
         contexts.append(ctx)
         return ctx
 
     yield make
 
-    for ctx in contexts:
+    failed = request.node.stash.get(BROWSER_CHECK_FAILED, False)
+    for index, ctx in enumerate(contexts):
+        if failed:
+            folder = Path(
+                os.environ.get("PANELS_E2E_FAILURE_DIR", str(tmp_path / "browser-failure"))
+            )
+            folder = folder / re.sub(r"[^a-zA-Z0-9_.-]", "_", request.node.nodeid)
+            folder.mkdir(parents=True, exist_ok=True)
+            for page_index, page in enumerate(ctx.pages):
+                stem = folder / f"context-{index}-page-{page_index}"
+                try:
+                    page.screenshot(
+                        path=str(stem.with_suffix(".png")), full_page=True, timeout=5000
+                    )
+                    stem.with_suffix(".html").write_text(page.content())
+                except Exception as error:
+                    stem.with_suffix(".capture-error.txt").write_text(str(error))
+            ctx.tracing.stop(path=str(folder / f"context-{index}-trace.zip"))
+        else:
+            ctx.tracing.stop()
         # A route handler can still await route.fetch() after the test's last visible
         # assertion. Wait for those handlers before closing their context, or Playwright
         # can dispose the response while the next test creates its context.
@@ -424,8 +455,7 @@ def open_page() -> Callable[..., Page]:
         # Change-stream gate: wait until the on-open invalidation finishes, so the
         # requested target comes from the reconciled DOM rather than the first read.
         page.wait_for_function(
-            "() => window.__plannerDebug "
-            "&& window.__plannerDebug.sseReconciliations >= 1",
+            "() => window.__plannerDebug && window.__plannerDebug.sseReconciliations >= 1",
             timeout=WAIT_MS,
         )
         page.wait_for_selector(ready_selector, timeout=WAIT_MS)
@@ -478,8 +508,13 @@ def cli() -> Callable[..., JsonObject]:
         if settles_the_intake_gate:
             approve = subprocess.run(
                 [
-                    str(PLAN_BIN), "ticket", "approve", data["id"],
-                    "--ceiling", "none", "--json",
+                    str(PLAN_BIN),
+                    "ticket",
+                    "approve",
+                    data["id"],
+                    "--ceiling",
+                    "none",
+                    "--json",
                 ],
                 capture_output=True,
                 text=True,
@@ -500,3 +535,11 @@ def cli() -> Callable[..., JsonObject]:
 @pytest.fixture
 def api() -> ApiHelper:
     return ApiHelper()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item) -> Generator[None, Any, None]:
+    outcome = yield
+    report = outcome.get_result()
+    if report.when in {"setup", "call"} and report.failed:
+        item.stash[BROWSER_CHECK_FAILED] = True

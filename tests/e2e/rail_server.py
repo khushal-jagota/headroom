@@ -11,8 +11,12 @@ from pathlib import Path
 
 import uvicorn
 
+from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.events import MessageToOwnerEventPayload
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.logic.conversation_start_resolution import (
+    resolve_conversation_start_request,
+)
 from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ConversationStore
 from planner.core.clock import build_clock
@@ -27,6 +31,12 @@ class RailConversations(InMemoryConversationSystem):
     def __init__(self, store: ConversationStore) -> None:
         super().__init__()
         self.store = store
+
+    async def start_conversation(self, request: ConversationStartRequest) -> None:
+        # Browser snapshot routes read the durable record, as the production core writes.
+        # The in-memory contract alone intentionally stores no conversation rows.
+        await super().start_conversation(request)
+        await self.store.create_conversation(resolve_conversation_start_request(request))
 
     async def record_message_to_owner(
         self,

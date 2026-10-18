@@ -14,16 +14,18 @@ from pathlib import Path
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, expect
-from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
+from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle, capture_success
+from tests.e2e.test_orchestrator_rail import rail_server  # noqa: F401
 
 
 def test_recap_save_reload_and_durable_context_previews(
-    server: ServerHandle,
+    rail_server: ServerHandle,  # noqa: F811
     api: ApiHelper,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     tmp_path: Path,
 ) -> None:
+    server = rail_server
     evidence = Path(os.environ.get("PANELS_RECAP_EVIDENCE_DIR", str(tmp_path)))
     project = api.direct_post(
         server, "/api/projects", {"name": "Synthetic recap proof", "priority": "P2"}
@@ -63,8 +65,10 @@ def test_recap_save_reload_and_durable_context_previews(
     replacement = "The recap keeps this review easy to recover. Scope is agreed. Review is next."
     recap.fill(replacement)
     with page.expect_response(
-        lambda response: response.url == server.base + f"/api/items/{item_id}"
-        and response.request.method == "PATCH",
+        lambda response: (
+            response.url == server.base + f"/api/items/{item_id}"
+            and response.request.method == "PATCH"
+        ),
         timeout=WAIT_MS,
     ) as saved:
         recap.press("Control+Enter")
@@ -78,7 +82,7 @@ def test_recap_save_reload_and_durable_context_previews(
     if artifacts.get_attribute("open") is None:
         artifacts.locator(":scope > summary").click(timeout=WAIT_MS)
     evidence.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(evidence / "recap-saved-reloaded.png"), full_page=True)
+    capture_success(page, str(evidence / "recap-saved-reloaded.png"))
 
     for path, content, screenshot in (
         ("working-notes.md", "Decision: retain the existing body.", "recap-working-notes.png"),
@@ -87,7 +91,7 @@ def test_recap_save_reload_and_durable_context_previews(
         artifacts.locator(f'[data-artifact-chip="artifacts/{path}"]').click(timeout=WAIT_MS)
         preview = page.locator("[data-ticket-artifact]")
         expect(preview).to_contain_text(content)
-        page.screenshot(path=str(evidence / screenshot), full_page=True)
+        capture_success(page, str(evidence / screenshot))
         preview.locator("[data-ticket-artifact-close]").click(timeout=WAIT_MS)
         expect(preview).to_have_count(0)
 
