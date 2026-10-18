@@ -36,7 +36,7 @@ class Endpoint:
         self.exit_failure = False
 
     @asynccontextmanager
-    async def preview_forward(self, *, port: int, ticket_id: str):
+    async def preview_forward(self, *, port: int, ticket_id: str) -> AsyncIterator[int]:
         self.calls.append((port, ticket_id))
         if self.failure:
             raise ConnectionError('offline')
@@ -48,8 +48,11 @@ class Endpoint:
             raise ConnectionError("link lost before clean tunnel close")
 
 
+type ProxyFixture = tuple[TestClient, str, Endpoint, list[httpx.Request], Path]
+
+
 @pytest.fixture
-def proxy(tmp_path: Path) -> Iterator[tuple[TestClient, str, Endpoint, list[httpx.Request], Path]]:
+def proxy(tmp_path: Path) -> Iterator[ProxyFixture]:
     db = tmp_path / 'preview.db'
     conn = connect(str(db))
     create_schema(conn)
@@ -92,7 +95,7 @@ def proxy(tmp_path: Path) -> Iterator[tuple[TestClient, str, Endpoint, list[http
         yield client, ticket.id, endpoint, requests, db
 
 
-def test_canonical_locale_selects_mac_or_vps_each_request(proxy) -> None:
+def test_canonical_locale_selects_mac_or_vps_each_request(proxy: ProxyFixture) -> None:
     client, ticket, endpoint, requests, db = proxy
     url = f'/dev/tickets/{ticket}/8791/a%2Fb?v=%2F&v=two'
     headers = {'origin': 'https://panels.test', 'tailscale-user-login': 'owner@example.com',
@@ -129,14 +132,14 @@ def test_canonical_locale_selects_mac_or_vps_each_request(proxy) -> None:
 
 
 @pytest.mark.parametrize('port', ['0', '65536', '-1', '+80', '12x', '١٢', '9' * 5000])
-def test_invalid_ports_never_open_upstream(proxy, port: str) -> None:
+def test_invalid_ports_never_open_upstream(proxy: ProxyFixture, port: str) -> None:
     client, ticket, endpoint, requests, _db = proxy
     assert client.get(f'/dev/tickets/{ticket}/{port}/').status_code == 400
     assert requests == []
     assert endpoint.calls == []
 
 
-def test_missing_ticket_never_opens_upstream(proxy) -> None:
+def test_missing_ticket_never_opens_upstream(proxy: ProxyFixture) -> None:
     client, _ticket, endpoint, requests, _db = proxy
     assert client.get('/dev/tickets/t_missing/8791/').status_code == 404
     assert requests == []
@@ -144,13 +147,16 @@ def test_missing_ticket_never_opens_upstream(proxy) -> None:
 
 
 @pytest.mark.parametrize('failure', ['missing', 'notready', 'offline', 'timeout'])
-def test_mac_failures_have_no_vps_fallback_and_close_lease(proxy, failure: str) -> None:
+def test_mac_failures_have_no_vps_fallback_and_close_lease(
+    proxy: ProxyFixture, failure: str,
+) -> None:
     client, ticket, endpoint, requests, db = proxy
     conn = connect(str(db))
     conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket,))
     conn.commit()
     conn.close()
     if failure == 'missing':
+        assert isinstance(client.app, FastAPI)
         client.app.state.executor_endpoint = None
     endpoint.failure = failure == 'notready'
     path = failure if failure in {'offline', 'timeout'} else ''
@@ -161,7 +167,9 @@ def test_mac_failures_have_no_vps_fallback_and_close_lease(proxy, failure: str) 
     assert endpoint.closed == (1 if failure in {'offline', 'timeout'} else 0)
 
 
-def test_hosted_authority_blocks_disallowed_login_and_cross_origin_write(proxy) -> None:
+def test_hosted_authority_blocks_disallowed_login_and_cross_origin_write(
+    proxy: ProxyFixture,
+) -> None:
     client, ticket, endpoint, requests, _db = proxy
     url = f'/dev/tickets/{ticket}/8791/'
     assert client.get(url, headers={'tailscale-user-login': 'intruder'}).status_code == 403
@@ -170,7 +178,7 @@ def test_hosted_authority_blocks_disallowed_login_and_cross_origin_write(proxy) 
     assert requests == []
 
 
-def test_partial_response_failure_closes_mac_lease(proxy) -> None:
+def test_partial_response_failure_closes_mac_lease(proxy: ProxyFixture) -> None:
     client, ticket, endpoint, _requests, db = proxy
     conn = connect(str(db))
     conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket,))
@@ -182,7 +190,7 @@ def test_partial_response_failure_closes_mac_lease(proxy) -> None:
     assert endpoint.closed == 1
 
 
-def test_lease_exit_failure_replaces_complete_http_response_with_503(proxy) -> None:
+def test_lease_exit_failure_replaces_complete_http_response_with_503(proxy: ProxyFixture) -> None:
     client, ticket, endpoint, _requests, db = proxy
     conn = connect(str(db))
     conn.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket,))
