@@ -197,3 +197,72 @@ def test_http_codex_mac_creation_allowed_offline_but_both_execution_doors_wait(
                 connection.execute("SELECT count(*) FROM conversations").fetchone()[0]
                 == conversations_before
             )
+
+
+def test_creation_context_is_readonly_offline_and_write_revalidates(
+    server: ServerHandle, cli: Callable[..., JsonObject]
+) -> None:
+    from planner.conversation.backend_state import write_model_enablement
+    from planner.conversation.contracts import ConversationBackendKey
+
+    project = cli(
+        server,
+        "project",
+        "create",
+        "--name",
+        "Draft Mac project",
+        "--priority",
+        "P2",
+        "--requires-macos",
+    )
+    draft: JsonObject = {
+        "worker_type": "coding",
+        "project_id": project["id"],
+        "employee_backend": "codex",
+        "employee_launch_model": "draft-model",
+    }
+    before = _stored_tickets(server)
+    response = httpx.post(server.base + "/api/tickets/creation-context", json=draft, timeout=10)
+    assert response.status_code == 200, response.text
+    context = response.json()
+    assert context == {
+        "resolved_locale": "macos",
+        "employee_backend": "codex",
+        "project_id": project["id"],
+        "locale_choices": [
+            {"locale": "vps", "compatible": True, "reason": None},
+            {"locale": "macos", "compatible": True, "reason": None},
+        ],
+    }
+    assert _stored_tickets(server) == before
+    health = httpx.get(server.base + "/api/executor/health", timeout=10)
+    assert health.status_code == 200, health.text
+    assert health.json()["last_contact_at_ms"] is None
+    assert health.json()["last_contact_source"] == "vps_received_valid_executor_frame"
+    invalid = httpx.post(
+        server.base + "/api/tickets/creation-context",
+        json={**draft, "locale": None},
+        timeout=10,
+    )
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["code"] == "validation"
+    assert _stored_tickets(server) == before
+    created = httpx.post(
+        server.base + "/api/tickets",
+        json={**draft, "title": "Accepted offline draft"},
+        timeout=10,
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["locale"] == context["resolved_locale"]
+    with connect(str(server.db_path)) as connection:
+        write_model_enablement(connection, ConversationBackendKey.codex, "draft-model", False)
+        connection.commit()
+    before = _stored_tickets(server)
+    refused = httpx.post(
+        server.base + "/api/tickets",
+        json={**draft, "title": "Changed policy"},
+        timeout=10,
+    )
+    assert refused.status_code == 400, refused.text
+    assert "disabled" in refused.json()["error"]["message"]
+    assert _stored_tickets(server) == before

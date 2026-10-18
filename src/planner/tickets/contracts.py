@@ -28,6 +28,19 @@ class ResolvedTicketCreationContext:
     project_id: str | None
 
 
+class TicketLocaleChoice(TypedDict):
+    locale: str
+    compatible: bool
+    reason: str | None
+
+
+class TicketCreationContextRead(TypedDict):
+    resolved_locale: str
+    employee_backend: str
+    project_id: str | None
+    locale_choices: list[TicketLocaleChoice]
+
+
 class StageOwnershipMode(StrEnum):
     worker = "worker"
     user = "user"
@@ -102,6 +115,7 @@ class BoardCardSource(TypedDict):
     ticket_status: str
     worker_type: str
     employee_backend: str
+    locale: str
     stage: str
     stage_label: str
     gating_field: str | None

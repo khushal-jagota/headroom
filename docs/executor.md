@@ -142,3 +142,25 @@ Deployment and installation belong to the resident work. See
 [runtime environments](environments.md) and [deployment](deployment.md).
 
 _Last verified: 2026-10-17._
+
+## Machine display reads
+
+`GET /api/executor/health` includes `last_contact_at_ms` and
+`last_contact_source: "vps_received_valid_executor_frame"`. This time is the VPS
+receipt time of a strictly decoded frame on the current established executor
+session. A validated initial handshake supplies the first observation. Later
+frames advance it before domain dispatch, including operations that receive a
+refusal. An old writer or generation cannot advance it. `observed_at_ms` keeps
+its original meaning: the handshake observation time.
+
+Contact proves receipt only. It proves neither current activity nor answer
+delivery. After disconnect, the last contact remains historical. Before the first
+observation, or after a VPS restart, it is null. A failed health read leaves the
+current contact unknown. A cached generation cannot authorize an answer.
+There is no timer-based cutoff that turns historical receipt into current activity.
+
+Conversation reads include nullable `executor_context`, with the actual remote
+child reference and current turn token. Pending ask controls require the exact
+child, turn, request kind, request ID, and current connection generation.
+`answer_available` remains the server's per-ask admission read. One callback's
+evidence cannot authorize another callback, including a reused ID on an old child.

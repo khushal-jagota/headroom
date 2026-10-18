@@ -1012,6 +1012,11 @@ async def _conversation_view(runtime: ConversationRuntime, conversation_id: str)
         ],
         "pending_permission_ask": await _pending_permission_ask(runtime, conversation_id),
         "pending_user_input": await _pending_user_input(runtime, conversation_id),
+        "executor_context": (
+            None
+            if runtime.executor_endpoint is None
+            else runtime.executor_endpoint.conversation_context(conversation_id)
+        ),
         "executor_asks": (
             []
             if runtime.executor_endpoint is None

@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol, TypedDict
 
 from planner.conversation.backends.contracts import TurnToken
 from planner.conversation.events import UserInputAnswer
@@ -57,6 +57,19 @@ class ExecutorHealth:
     reconciliation_ready: bool
     observed_at_ms: int
     lost_at_ms: int | None
+
+
+class ExecutorHealthRead(TypedDict):
+    """VPS API projection; receipt time is not activity or answer delivery evidence."""
+
+    identity: JsonObject | None
+    process_id: int | None
+    connection_state: str
+    reconciliation_ready: bool
+    observed_at_ms: int | None
+    lost_at_ms: int | None
+    last_contact_at_ms: int | None
+    last_contact_source: Literal["vps_received_valid_executor_frame"]
 
 
 @dataclass(frozen=True, slots=True)

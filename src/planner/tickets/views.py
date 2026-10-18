@@ -511,7 +511,7 @@ def board_view(
         "sprint_items.priority AS sprint_item_priority, "
         "parent_projects.name AS parent_project_name, "
         "tickets.pending_proposal, tickets.worker_type, "
-        "tickets.employee_backend, "
+        "tickets.employee_backend, tickets.locale, "
         "tickets.conversation_id, "
         "tickets.worker_step_claim, "
         "tickets.created_at, tickets.updated_at FROM tickets "
@@ -580,6 +580,7 @@ def board_view(
             "ticket_status": facts.ticket_status.value,
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
+            "locale": str(row["locale"]),
             "stage": stage,
             "stage_label": worker_type_definition.stage_definition(stage).label,
             "gating_field": gating_field_id,

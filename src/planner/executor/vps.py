@@ -39,6 +39,7 @@ from planner.executor.contracts import (
     CommandOutcome,
     EnvelopeKind,
     ExecutorHealth,
+    ExecutorHealthRead,
     ExecutorIdentity,
     FileChunk,
     FileChunkAcknowledgment,
@@ -109,6 +110,7 @@ class ExecutorEndpoint:
         self.clock_sample: ClockSample | None = None
         self.process_id: int | None = None
         self.observed_at_ms: int | None = None
+        self.last_contact_at_ms: int | None = None
         self.lost_at_ms: int | None = None
         self._file_assignments: dict[str, ChildReference] = {}
 
@@ -469,12 +471,14 @@ class ExecutorEndpoint:
             )
         return data.read_ticket(conn, ticket_id).ceiling_holder
 
-    def health(self) -> JsonObject:
+    def health(self) -> ExecutorHealthRead:
         return {
             "identity": None if self.identity is None else _object(self.identity),
             "process_id": self.process_id,
             "observed_at_ms": self.observed_at_ms,
             "lost_at_ms": self.lost_at_ms,
+            "last_contact_at_ms": self.last_contact_at_ms,
+            "last_contact_source": "vps_received_valid_executor_frame",
             "connection_state": "ready"
             if self.ready
             else "disconnected"
@@ -502,16 +506,27 @@ class ExecutorEndpoint:
             )
         return result
 
+    def conversation_context(self, conversation_id: str) -> JsonObject | None:
+        """Current remote child and turn, independent of historical ask records."""
+        state = self.runtime.system._conversations.get(conversation_id)
+        if state is None or not isinstance(state.child, RemoteBackendChild):
+            return None
+        return {
+            "child": _object(state.child.reference),
+            "turn": None if state.running_turn is None else _object(state.running_turn.token),
+        }
+
     def _current_ask_evidence(
         self, conversation_id: str, ask_id: str, kind: AskKind = AskKind.permission
     ) -> Any:
         state = self.runtime.system._conversations.get(conversation_id)
         running = None if state is None else state.running_turn
-        if running is None:
+        if running is None or not isinstance(state.child, RemoteBackendChild):
             return None
         for evidence in reversed(self.store.evidence_for_conversation(conversation_id)):
             if (
                 evidence.ask.ask_id == ask_id
+                and evidence.ask.child == state.child.reference
                 and evidence.ask.turn == running.token
                 and evidence.ask.kind is kind
             ):
@@ -529,6 +544,7 @@ class ExecutorEndpoint:
             "answer_available": self.ready
             and self.identity is not None
             and evidence.connection_generation == self.identity.connection_generation
+            and evidence.ask.child.executor_incarnation == self.identity.executor_incarnation
             and evidence.reachability.value == "reachable"
             and evidence.answer_id is None,
         }
@@ -602,13 +618,14 @@ class ExecutorEndpoint:
             if type(hello.payload.get("process_id")) is not int or health.process_id < 1:
                 raise ValueError("invalid executor process identity")
             identity = health.identity
-            self.process_id = health.process_id
-            self.observed_at_ms = now_ms()
-            self.lost_at_ms = None
             old_identity = self.identity
             old_writer = self.writer
             self.store.begin_connection(identity, now_ms())
+            self.process_id = health.process_id
+            self.observed_at_ms = now_ms()
+            self.lost_at_ms = None
             self.identity, self.writer, self.ready = identity, writer, False
+            self.last_contact_at_ms = now_ms()
             self._inventory = {}
             self._retained_inventory = {}
             if old_writer is not None and old_writer is not writer:
@@ -635,6 +652,11 @@ class ExecutorEndpoint:
             probe.add_done_callback(self._tasks.discard)
             while self.writer is writer and self.identity == identity:
                 message = await read_frame(reader)
+                # Decode and fence synchronously before domain work can yield.
+                # A valid frame proves receipt even when its operation is refused.
+                if self.writer is not writer or self.identity != identity:
+                    break
+                self.last_contact_at_ms = now_ms()
                 task = asyncio.create_task(self._handle(message, identity, writer))
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)

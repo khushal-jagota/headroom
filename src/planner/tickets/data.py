@@ -269,11 +269,9 @@ def _created_ticket_priority(
     return Priority.P3
 
 
-def resolve_ticket_creation_context(
+def resolve_ticket_draft_context(
     conn: sqlite3.Connection,
     *,
-    title: str,
-    title_max_chars: int,
     worker_type: str,
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
@@ -285,8 +283,7 @@ def resolve_ticket_creation_context(
     blocked_by_ticket_ids: list[str] | None = None,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
 ) -> ResolvedTicketCreationContext:
-    """Resolve and validate every ordinary Ticket creation path before insertion."""
-    admission.validate_title(title, title_max_chars)
+    """Resolve policy-bearing draft fields without final text or compatibility admission."""
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
     admission.require_creatable_worker_type(worker_type)
@@ -334,8 +331,44 @@ def resolve_ticket_creation_context(
         project_requires_macos=bool(project["requires_macos"]) if project is not None else False,
         worker_requires_macos=read_worker_requires_macos(conn, worker_type),
     )
-    require_locale_backend_compatibility(resolved_locale, launch_configuration.employee_backend)
     return ResolvedTicketCreationContext(resolved_locale, launch_configuration, project_id)
+
+
+def resolve_ticket_creation_context(
+    conn: sqlite3.Connection,
+    *,
+    title: str,
+    title_max_chars: int,
+    worker_type: str,
+    locale: TicketLocale | str | None = None,
+    employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
+    project_id: str | None = None,
+    sprint_id: str | None = None,
+    deadline: str | None = None,
+    sprint_item_id: str | None = None,
+    blocked_by_ticket_ids: list[str] | None = None,
+    worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
+) -> ResolvedTicketCreationContext:
+    """Validate final text and admit the same policy context as the draft read."""
+    admission.validate_title(title, title_max_chars)
+    context = resolve_ticket_draft_context(
+        conn,
+        worker_type=worker_type,
+        locale=locale,
+        employee_backend=employee_backend,
+        employee_launch_model=employee_launch_model,
+        project_id=project_id,
+        sprint_id=sprint_id,
+        deadline=deadline,
+        sprint_item_id=sprint_item_id,
+        blocked_by_ticket_ids=blocked_by_ticket_ids,
+        worker_runtime_definitions=worker_runtime_definitions,
+    )
+    require_locale_backend_compatibility(
+        context.locale, context.launch_configuration.employee_backend
+    )
+    return context
 
 
 # Existing callers that validate a future Ticket use the same resolution as insertion.

@@ -492,3 +492,27 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 ---
 
 _Last verified: 2026-08-14._
+
+## Machine choice for a creation draft
+
+`POST /api/tickets/creation-context` is a read-only projection. It accepts the
+creation policy fields: Worker type, Project or Project ID, orchestrator, backend,
+model, and optional locale. It does not require a title or kickoff note.
+It returns `resolved_locale`, `employee_backend`, inherited `project_id`, and
+`locale_choices`. Each choice carries `locale`, `compatible`, and a nullable
+canonical refusal `reason`.
+
+The projection and creation use the same resolver, launch defaults, placement
+validation, model enablement, and locale compatibility rules. A Project inherited
+from an orchestrator participates in resolution. A conflicting supplied Project
+fails validation. Invalid Workers, backends, Projects, orchestrators, models, or
+locales use the existing validation errors. Unknown model IDs follow ordinary
+creation's existing model policy. An explicitly disabled model is refused.
+
+A selected incompatible locale remains in the draft response with a refusal
+reason. It cannot pass full creation. Compatibility does not depend on connection
+reachability, so a supported offline Mac remains a valid destination for new work.
+The read creates no rows. Creation and moves still validate current conditions at
+the authoritative write. A failed or superseded draft read cannot enable creation.
+Locale appears only in the approved machine identity surfaces and structured
+Ticket reads. Curated copy text keeps its established projection.

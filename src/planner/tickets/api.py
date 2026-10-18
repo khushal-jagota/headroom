@@ -92,8 +92,10 @@ from planner.tickets.contracts import (
     ProposalBody,
     RejectionBody,
     Ticket,
+    TicketCreationContextRead,
     TicketEdit,
     TicketListFilters,
+    TicketLocaleChoice,
     TicketStatus,
 )
 from planner.tickets.logic import admission
@@ -333,7 +335,7 @@ def _marshal_settled_field_values(
     return values
 
 
-def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
+def _marshal_create_ticket(raw: JsonDict, *, draft: bool = False) -> CreateTicketBody:
     obsolete = set(raw) & {"sprint_id", "sprint_item_id", "day", "day_id"}
     if obsolete:
         raise PlannerError(
@@ -341,8 +343,8 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         )
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
-        title=body_str(raw, "title"),
-        kickoff_note=body_str(raw, "kickoff_note"),
+        title="" if draft else body_str(raw, "title"),
+        kickoff_note="" if draft else body_str(raw, "kickoff_note"),
         priority=body_opt_str(raw, "priority"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
@@ -509,6 +511,54 @@ def write_create_ticket(
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
     return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/creation-context")
+async def read_ticket_creation_context(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx
+) -> TicketCreationContextRead:
+    """Resolve a partial draft without creating state or requiring final text."""
+    from planner.tickets.contracts import TicketLocale
+    from planner.tickets.locale_configuration import require_locale_backend_compatibility
+
+    # The existing marshaller owns draft input validation as well as final creation.
+    # Text is irrelevant to this projection and is never passed to its resolver.
+    body = _marshal_create_ticket(raw, draft=True)
+    orchestrator = (
+        _parse_orchestrator(body["orchestrator"])
+        if "orchestrator" in raw
+        else Principal(PrincipalKind.chief, "chief")
+    )
+    project = projects_data.resolve_project(
+        conn, project_id=body["project_id"], project_name=body["project"]
+    )
+    context = tickets_data.resolve_ticket_draft_context(
+        conn,
+        worker_type=body["worker_type"],
+        locale=body.get("locale"),
+        employee_backend=body.get("employee_backend"),
+        employee_launch_model=body.get("employee_launch_model"),
+        project_id=project.id if project is not None else None,
+        sprint_item_id=orchestrator.id if orchestrator.kind is PrincipalKind.sprint_item else None,
+        deadline=body["deadline"],
+        blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
+    )
+    choices: list[TicketLocaleChoice] = []
+    for locale in TicketLocale:
+        reason = None
+        try:
+            require_locale_backend_compatibility(
+                locale, context.launch_configuration.employee_backend
+            )
+        except PlannerError as error:
+            reason = error.message
+        choices.append({"locale": locale.value, "compatible": reason is None, "reason": reason})
+    return {
+        "resolved_locale": context.locale.value,
+        "employee_backend": context.launch_configuration.employee_backend,
+        "project_id": context.project_id,
+        "locale_choices": choices,
+    }
 
 
 @router.post("/tickets")
