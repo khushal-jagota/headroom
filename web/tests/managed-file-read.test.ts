@@ -46,9 +46,11 @@ describe("reading a managed file", () => {
 
   it("keeps nothing, so a later read sees a rewritten file", async () => {
     const { calls, gates } = stubFetch();
-    const first = readManagedFile("/f/a.md", reader().signal);
+    const departing = reader();
+    const first = readManagedFile("/f/a.md", departing.signal);
     gates[0].settle(answer("before the rewrite"));
     expect(await first).toBe("before the rewrite");
+    departing.abort();
 
     // Nothing was kept: the next reader has to go and ask again.
     const later = readManagedFile("/f/a.md", reader().signal);
@@ -139,18 +141,6 @@ describe("reading a managed file", () => {
     expect(await arriving).toBe("still here");
     expect(await third).toBe("still here");
     void abandoned.catch(() => undefined);
-  });
-
-  it("unmounting and mounting again reads again", async () => {
-    const { calls, gates } = stubFetch();
-    const first = reader();
-    const read = readManagedFile("/f/i.md", first.signal);
-    gates[0].settle(answer("first time"));
-    expect(await read).toBe("first time");
-    first.abort();
-
-    readManagedFile("/f/i.md", reader().signal);
-    expect(calls).toHaveLength(2);
   });
 
   it("two different files are two reads", async () => {

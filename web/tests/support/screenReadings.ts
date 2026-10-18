@@ -1,4 +1,3 @@
-import { conversationSignalReading } from "./conversationSignalReading";
 import type { ConversationSignal } from "../../src/lib/conversationSignal";
 // One Ticket, read by every screen that says whose it is and whether a worker has it.
 //
@@ -205,20 +204,11 @@ export function feedbackLabel(facts: TicketFacts): string {
   });
 }
 
-export function feedbackMark(facts: TicketFacts): FieldStageVisualState | null {
-  return conversationSignalReading(facts).includes('data-conversation-signal="message"') ? "current-awaiting-approval" : null;
-}
-
 /** The tiles Home shows for a Day holding this one Ticket, as "Label count". */
 export function homeTiles(facts: TicketFacts): string[] {
   return dayActionTiles([dayVisualTicket(dayTicket(facts))]).map(
     (tile) => `${tile.label} ${tile.count}`
   );
-}
-
-/** What Home's dot for this Ticket is announced as. */
-export function homeDotLabel(facts: TicketFacts): string {
-  return conversationSignalReading(facts).includes('data-conversation-signal="message"') ? "Unread message" : "";
 }
 
 /** The mark on the Ticket's own page, against the field its Stage is gated on. */
