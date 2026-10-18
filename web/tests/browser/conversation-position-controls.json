@@ -1,0 +1,18 @@
+{
+  "source_revision": "fd6e95daf52b6488483c4c67f4636a95b2f2e2b9",
+  "cases": {
+    "draft-measurement": "fails",
+    "native-before-observer": "fails",
+    "descendant-keyboard": "fails",
+    "short-message-growth": "fails",
+    "delayed-image-scrollback": "fails",
+    "delayed-markdown-following": "fails",
+    "delayed-markdown-scrollback": "fails",
+    "prose-deltas": "passes",
+    "missing-anchors": "fails",
+    "layer-send": "passes",
+    "answer-room": "passes",
+    "delayed-image-following": "passes"
+  },
+  "composer_newline": "preventative; no historical defect claim"
+}

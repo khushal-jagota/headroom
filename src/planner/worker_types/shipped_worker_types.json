@@ -655,10 +655,6 @@
         "label": "Brief"
       },
       {
-        "id": "best_guess_and_open_options",
-        "label": "Best Guess and Open Options"
-      },
-      {
         "id": "wireframe",
         "label": "Wireframe"
       },
@@ -674,8 +670,8 @@
     "label": "Product Design",
     "profile": {
       "default_backend": "claude",
-      "default_model": "opus[1m]",
-      "default_reasoning_effort": "high",
+      "default_model": "opus",
+      "default_reasoning_effort": "medium",
       "specialist_skill": "panels-worker-product-design",
       "toolset_profile": "default"
     },
@@ -688,25 +684,18 @@
         "ownership_mode": "worker"
       },
       {
-        "gating_field": "best_guess_and_open_options",
-        "id": "needs_best_guess_and_open_options",
-        "is_terminal": false,
-        "label": "Best Guess and Open Options",
-        "ownership_mode": "worker"
-      },
-      {
         "gating_field": "wireframe",
         "id": "needs_wireframe",
         "is_terminal": false,
         "label": "Wireframe",
-        "ownership_mode": "user"
+        "ownership_mode": "worker"
       },
       {
         "gating_field": "design",
         "id": "needs_design",
         "is_terminal": false,
         "label": "Design",
-        "ownership_mode": "user"
+        "ownership_mode": "worker"
       },
       {
         "gating_field": "consequences",
@@ -747,7 +736,7 @@
     "label": "Research",
     "profile": {
       "default_backend": "claude",
-      "default_model": "opus[1m]",
+      "default_model": "opus",
       "default_reasoning_effort": "high",
       "specialist_skill": "panels-worker-research",
       "toolset_profile": "default"

@@ -5,6 +5,7 @@
 def _run(browser, urls):
 
     import os
+    import traceback
 
     # Set this to keep a picture of what the assertions checked. The test proves the same
     # thing with or without it.
@@ -55,6 +56,488 @@ def _run(browser, urls):
         assert restored["text"] == held["text"]
         assert abs(restored["top"] - held["top"]) <= 3, (held, restored)
         return restored
+
+    def settled(page):
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+        )
+
+    def newest_reading(page):
+        return page.locator(THREAD).evaluate("""thread => {
+          const row = [...thread.querySelectorAll('[data-conversation-row]')].at(-1);
+          const bounds = thread.getBoundingClientRect();
+          return {bottom: row.getBoundingClientRect().bottom - bounds.top,
+            height: thread.clientHeight, scrollTop: thread.scrollTop,
+            latest: !!document.querySelector('button[aria-label="Jump to latest message"]')};
+        }""")
+
+    def assert_newest(page):
+        settled(page)
+        reading = newest_reading(page)
+        assert -3 <= reading["bottom"] <= reading["height"] + 3, reading
+        assert not reading["latest"], reading
+        return reading
+
+    def visible_paragraph(page):
+        return page.locator(THREAD).evaluate("""thread => {
+          const top = thread.getBoundingClientRect().top;
+          const paragraph = [...thread.querySelectorAll('[data-conversation-row] p')]
+            .find(node => node.getBoundingClientRect().bottom > top + 1 && node.getBoundingClientRect().top < top + thread.clientHeight);
+          if (!paragraph) throw Error('fixture needs a visible paragraph');
+          window.__heldParagraph = paragraph;
+          return {text: paragraph.textContent, top: paragraph.getBoundingClientRect().top - top};
+        }""")
+
+    def assert_paragraph(page, held):
+        settled(page)
+        actual = page.evaluate("""() => ({connected: window.__heldParagraph.isConnected,
+          text: window.__heldParagraph.textContent,
+          top: window.__heldParagraph.getBoundingClientRect().top - document.querySelector('[data-conversation-thread]').getBoundingClientRect().top})""")
+        assert actual["connected"] and actual["text"] == held["text"], (held, actual)
+        assert abs(actual["top"] - held["top"]) <= 3, (held, actual)
+        assert page.locator('button[aria-label="Jump to latest message"]').is_visible()
+        return actual
+
+    def prepare_scroll_case(page, url, kind, mode):
+        page.goto(url, wait_until="domcontentloaded")
+        page.evaluate("(kind) => window.__setupScrollRegression(kind)", kind)
+        state(page, "peeked")
+        page.locator(INPUT).fill("\n".join("Draft line " + str(n) for n in range(6)))
+        settled(page)
+        if mode == "scrollback":
+            thread = page.locator(THREAD)
+            if kind != "plain":
+                # Read INSIDE a message taller than the viewport. Anchoring its outer
+                # article would leave this paragraph displaced when its preview grows.
+                distance = thread.evaluate("""thread => {
+                  const paragraph = [...thread.querySelectorAll('p')].find(node => node.textContent.startsWith('Tall paragraph 14:'));
+                  return paragraph.getBoundingClientRect().top - thread.getBoundingClientRect().top + 9;
+                }""")
+                thread.hover()
+                page.mouse.wheel(0, distance)
+            else:
+                thread.hover()
+                page.mouse.wheel(0, -550)
+            page.evaluate("window.__lastRegressionWheel = performance.now()")
+            page.wait_for_timeout(80)
+            settled(page)
+            page.locator('button[aria-label="Jump to latest message"]').wait_for()
+            return visible_paragraph(page)
+        assert_newest(page)
+        return None
+
+    def watch_draft(page):
+        page.evaluate("""() => {
+          const thread = document.querySelector('[data-conversation-thread]');
+          const input = document.querySelector('[data-conversation-input]');
+          const newest = [...thread.querySelectorAll('[data-conversation-row]')].at(-1);
+          window.__draftSamples = [];
+          let active = true;
+          const sample = () => window.__draftSamples.push({scroll:thread.scrollTop,
+            newest:newest.getBoundingClientRect().bottom - thread.getBoundingClientRect().top,
+            height:input.getBoundingClientRect().height});
+          const observer = new ResizeObserver(sample);
+          observer.observe(thread);
+          thread.addEventListener('scroll', sample);
+          const frame = () => {if (active) {sample(); requestAnimationFrame(frame);}};
+          frame();
+          window.__stopDraftWatch = () => {active=false;sample();observer.disconnect();thread.removeEventListener('scroll',sample);return window.__draftSamples;};
+        }""")
+
+    def same_line_edits(page):
+        box = page.locator(INPUT)
+        # Focus directly, so the browser does not scroll the transcript to a locator.
+        box.evaluate(
+            "input => {input.focus({preventScroll:true});input.setSelectionRange(input.value.length,input.value.length)}"
+        )
+        for _ in range(3):
+            page.keyboard.type("x")
+            settled(page)
+            page.keyboard.press("Backspace")
+            settled(page)
+
+    def draft_measurement_case(page, url):
+        for mode in ["following", "scrollback"]:
+            held = prepare_scroll_case(page, url, "plain", mode)
+            before = page.locator(INPUT).bounding_box()["height"]
+            watch_draft(page)
+            same_line_edits(page)
+            samples = page.evaluate("window.__stopDraftWatch()")
+            after = page.locator(INPUT).bounding_box()["height"]
+            assert abs(after - before) <= 0.1, (before, after)
+            assert (
+                max(item["height"] for item in samples) - min(item["height"] for item in samples)
+                <= 0.1
+            ), samples
+            assert (
+                max(item["scroll"] for item in samples) - min(item["scroll"] for item in samples)
+                <= 3
+            ), samples
+            assert (
+                max(item["newest"] for item in samples) - min(item["newest"] for item in samples)
+                <= 3
+            ), samples
+            assert page.locator(INPUT).evaluate(
+                "input => document.activeElement === input && input.selectionStart === input.value.length && input.selectionEnd === input.value.length"
+            )
+            if held:
+                assert_paragraph(page, held)
+            else:
+                assert_newest(page)
+
+    def prose_delta_case(page, url):
+        for mode in ["following", "scrollback"]:
+            held = prepare_scroll_case(page, url, "plain", mode)
+            for index in range(3):
+                same_line_edits(page)
+                page.evaluate("(index) => window.__proseDelta(index)", index)
+                settled(page)
+                if held:
+                    assert_paragraph(page, held)
+                else:
+                    assert_newest(page)
+
+    def missing_anchors_case(page, url):
+        prepare_scroll_case(page, url, "plain", "scrollback")
+        before = newest_reading(page)["scrollTop"]
+        page.evaluate("window.__replaceAllScrollRows()")
+        settled(page)
+        after = newest_reading(page)
+        assert abs(after["scrollTop"] - before) <= 3, (before, after)
+        assert after["latest"], after
+        held = visible_paragraph(page)
+        page.evaluate("window.__proseDelta(0)")
+        assert_paragraph(page, held)
+        # All original candidates disappear again, and the saved position now exceeds
+        # the shortened transcript's range. Clamp there, then retain scrollback intent.
+        before = newest_reading(page)["scrollTop"]
+        page.evaluate("window.__replaceAllScrollRows(20)")
+        settled(page)
+        limit = page.locator(THREAD).evaluate("thread => thread.scrollHeight-thread.clientHeight")
+        actual = newest_reading(page)["scrollTop"]
+        assert before > limit and abs(actual - limit) <= 3, (before, limit, actual)
+        held = visible_paragraph(page)
+        page.evaluate(
+            "window.__appendConversationLine();window.__appendConversationLine();window.__appendConversationLine()"
+        )
+        assert_paragraph(page, held)
+
+    def layer_send_case(page, url):
+        held = prepare_scroll_case(page, url, "plain", "scrollback")
+        page.evaluate("window.__sendScrollRegression(true)")
+        state(page, "opened")
+        assert_paragraph(page, held)
+        # A later viewport resize cannot replay the send that lost placement to layer.
+        page.locator(INPUT).fill("one\ntwo\nthree\nfour\nfive")
+        assert_paragraph(page, held)
+        page.evaluate("window.__answerScrollRegression(1)")
+        assert_paragraph(page, held)
+
+    def answer_room_reading(page):
+        return page.locator(THREAD).evaluate("""thread => {
+          const prompt = thread.querySelector('[data-conversation-outgoing], [data-conversation-row="prompt"]');
+          const room = thread.querySelector('[data-conversation-reserved-space]');
+          return {room:room?.getBoundingClientRect().height ?? 0,
+            promptTop:prompt.getBoundingClientRect().top-thread.getBoundingClientRect().top,
+            viewport:thread.clientHeight,scroll:thread.scrollTop};
+        }""")
+
+    def answer_room_case(page, url):
+        page.goto(url, wait_until="domcontentloaded")
+        page.locator(INPUT).click()
+        page.locator("[data-conversation-expand]").click()
+        state(page, "opened")
+        settled(page)
+        page.evaluate("window.__sendScrollRegression(false)")
+        settled(page)
+        sent = answer_room_reading(page)
+        assert 0 <= sent["promptTop"] <= 32, sent
+        assert sent["room"] > 200, sent
+        page.evaluate("window.__answerScrollRegression(1)")
+        settled(page)
+        partial = answer_room_reading(page)
+        assert 0 < partial["room"] < sent["room"] - 30, (sent, partial)
+        page.locator(INPUT).fill("\n".join("Draft line " + str(n) for n in range(6)))
+        settled(page)
+        smaller = answer_room_reading(page)
+        assert smaller["viewport"] < partial["viewport"] - 50, (partial, smaller)
+        assert smaller["room"] <= partial["room"] - 50, (partial, smaller)
+        assert abs(smaller["promptTop"] - partial["promptTop"]) <= 3, (partial, smaller)
+        page.evaluate("window.__answerScrollRegression(20)")
+        settled(page)
+        exhausted = answer_room_reading(page)
+        assert exhausted["room"] == 0, exhausted
+        page.locator(INPUT).fill("")
+        settled(page)
+        grown = answer_room_reading(page)
+        assert grown["room"] == 0, (exhausted, grown)
+        assert_newest(page)
+
+    def install_controlled_image(page):
+        # A capture listener gives the browser genuine input in the same dispatch as
+        # raw content growth, before ResizeObserver can publish its pending notice.
+        page.locator(THREAD).evaluate("""thread => {
+          const image = document.createElement('img');
+          image.alt = 'Controlled geometry race';
+          image.style.cssText = 'display:block;width:1px;height:0px';
+          thread.querySelector('[data-conversation-row]').prepend(image);
+          window.__raceImage = image;
+        }""")
+        settled(page)
+
+    def native_before_observer_case(page, url):
+        prepare_scroll_case(page, url, "plain", "scrollback")
+        install_controlled_image(page)
+        before = newest_reading(page)["scrollTop"]
+        page.locator(THREAD).evaluate("""thread => thread.addEventListener('wheel', () => {
+          window.__raceImage.style.height = '180px';
+          window.__nativeRaceBefore = thread.scrollTop;
+        }, {capture:true, once:true})""")
+        page.locator(THREAD).hover()
+        page.mouse.wheel(0, 120)
+        page.wait_for_timeout(100)
+        settled(page)
+        after = newest_reading(page)
+        assert abs(page.evaluate("window.__nativeRaceBefore") - before) <= 3
+        assert abs(after["scrollTop"] - before - 120) <= 3, (before, after)
+        held = visible_paragraph(page)
+        page.evaluate("window.__raceImage.style.height = '220px'")
+        assert_paragraph(page, held)
+
+    def short_message_growth_case(page, url):
+        prepare_scroll_case(page, url, "plain", "scrollback")
+        page.locator(THREAD).focus()
+        page.keyboard.press("Home")
+        page.wait_for_function(
+            "document.querySelector('[data-conversation-thread]').scrollTop <= 1"
+        )
+        settled(page)
+        install_controlled_image(page)
+        row_height = page.locator("[data-conversation-row]").first.bounding_box()["height"]
+        assert row_height < page.locator(THREAD).evaluate("thread => thread.clientHeight"), (
+            row_height
+        )
+        held = visible_paragraph(page)
+        page.evaluate("window.__raceImage.style.height = '180px'")
+        assert_paragraph(page, held)
+
+    def descendant_keyboard_case(page, url):
+        for key in ["PageDown", "Home", "End", "Control+Home", "Control+End"]:
+            prepare_scroll_case(page, url, "plain", "scrollback")
+            install_controlled_image(page)
+            page.evaluate("""() => {
+              const link = document.createElement('a');
+              link.href = '#keyboard-proof';link.textContent = ' Read';
+              window.__heldParagraph.append(link);
+              link.focus({preventScroll:true});
+            }""")
+            settled(page)
+            before = newest_reading(page)["scrollTop"]
+            page.keyboard.press(key)
+            # Chromium animates native key scrolling. Wait for its actual endpoint
+            # before the independent geometry change, so the held paragraph is settled.
+            if key.endswith("Home"):
+                page.wait_for_function(
+                    "document.querySelector('[data-conversation-thread]').scrollTop <= 1"
+                )
+            elif key.endswith("End"):
+                page.wait_for_function("""() => {
+                  const thread=document.querySelector('[data-conversation-thread]');
+                  return thread.scrollHeight-thread.scrollTop-thread.clientHeight <= 1;
+                }""")
+            else:
+                page.wait_for_timeout(250)
+            settled(page)
+            after = newest_reading(page)
+            if key == "PageDown":
+                assert after["scrollTop"] > before + 50, (key, before, after)
+            if key.endswith("Home"):
+                assert after["scrollTop"] <= 1, (key, before, after)
+            if key.endswith("End"):
+                assert_newest(page)
+            held = visible_paragraph(page)
+            if key.endswith("Home"):
+                # Growth below the reader must retain the native Home baseline.
+                page.evaluate("window.__proseDelta(0)")
+            else:
+                page.evaluate("window.__raceImage.style.height = '180px'")
+            if key.endswith("End"):
+                assert_newest(page)
+            else:
+                assert_paragraph(page, held)
+        # Plain buttons still allow native arrow scrolling, while Space activates.
+        prepare_scroll_case(page, url, "plain", "scrollback")
+        install_controlled_image(page)
+        page.evaluate("""() => {
+          const button=document.createElement('button');button.textContent='Read';
+          button.addEventListener('click',()=>window.__buttonClicks=(window.__buttonClicks??0)+1);
+          window.__heldParagraph.append(button);button.focus({preventScroll:true});
+        }""")
+        settled(page)
+        for key, amount in [("ArrowDown", 180), ("ArrowUp", 220)]:
+            before = newest_reading(page)["scrollTop"]
+            page.keyboard.press(key)
+            page.wait_for_timeout(250)
+            settled(page)
+            after = newest_reading(page)["scrollTop"]
+            assert after > before + 10 if key == "ArrowDown" else after < before - 10, (
+                key,
+                before,
+                after,
+            )
+            held = visible_paragraph(page)
+            page.evaluate('(amount) => window.__raceImage.style.height = amount+"px"', amount)
+            assert_paragraph(page, held)
+        before = newest_reading(page)["scrollTop"]
+        page.keyboard.press("Space")
+        settled(page)
+        assert page.evaluate("window.__buttonClicks") == 1
+        assert abs(newest_reading(page)["scrollTop"] - before) <= 3
+        # An editable nested scroller owns its navigation and scroll position.
+        prepare_scroll_case(page, url, "plain", "scrollback")
+        page.evaluate("""() => {
+          const box = document.createElement('textarea');
+          const bounds=document.querySelector('[data-conversation-thread]').getBoundingClientRect();
+          box.rows=1;box.style.cssText='position:fixed;left:'+bounds.left+'px;top:'+(bounds.top+20)+'px;width:120px;height:24px';
+          box.value=('nested text\\n').repeat(20);
+          window.__heldParagraph.append(box);box.focus({preventScroll:true});
+          box.setSelectionRange(0,0);window.__nestedEditor=box;
+        }""")
+        settled(page)
+        before = newest_reading(page)["scrollTop"]
+        page.keyboard.press("Control+End")
+        settled(page)
+        assert page.evaluate(
+            "window.__nestedEditor.selectionStart === window.__nestedEditor.value.length && window.__nestedEditor.scrollTop > 0"
+        ), page.evaluate(
+            "({start:window.__nestedEditor.selectionStart,length:window.__nestedEditor.value.length,scroll:window.__nestedEditor.scrollTop})"
+        )
+        assert abs(newest_reading(page)["scrollTop"] - before) <= 3, (before, newest_reading(page))
+
+    def delayed_case(page, url, kind, mode):
+        pending = []
+        pattern = (
+            "**/delayed.png"
+            if kind == "image"
+            else "**/files/tickets/t_scrollregression/delayed.md"
+        )
+        page.route(pattern, lambda route: pending.append(route))
+        held = prepare_scroll_case(page, url, kind, mode)
+        page.wait_for_function("() => document.querySelector('[data-conversation-row]') !== null")
+        assert len(pending) == 1, (kind, len(pending))
+        row_count = page.locator("[data-conversation-row]").count()
+        page.locator('[data-conversation-row="agent_message"]').nth(12).evaluate(
+            "row => window.__delayedRow = row"
+        )
+        before = newest_reading(page)
+        if mode == "scrollback":
+            assert page.evaluate("performance.now() - window.__lastRegressionWheel") < 400
+        # This is response release, with no row assignment, replaced message, or app event.
+        if kind == "image":
+            import struct
+            import zlib
+
+            def chunk(name, payload):
+                return (
+                    struct.pack("!I", len(payload))
+                    + name
+                    + payload
+                    + struct.pack("!I", zlib.crc32(name + payload) & 0xFFFFFFFF)
+                )
+
+            image = (
+                b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", struct.pack("!IIBBBBB", 500, 310, 8, 2, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress((b"\x00" + b"\x80\xa0\xb0" * 500) * 310))
+                + chunk(b"IEND", b"")
+            )
+            pending[0].fulfill(status=200, content_type="image/png", body=image)
+            page.wait_for_function(
+                "() => {const image=document.querySelector('[data-conversation-piece=image]');return image?.complete && image.naturalHeight === 310}"
+            )
+        else:
+            pending[0].fulfill(
+                status=200,
+                content_type="text/markdown",
+                body="\n\n".join(
+                    "Delayed preview paragraph "
+                    + str(n)
+                    + ": "
+                    + ("Loaded Markdown changes real content geometry. " * 3)
+                    for n in range(6)
+                ),
+            )
+            page.get_by_text("Delayed preview paragraph 5:", exact=False).wait_for()
+        settled(page)
+        assert page.evaluate("window.__delayedRow.isConnected")
+        assert page.locator("[data-conversation-row]").count() == row_count
+        if held:
+            assert held["text"].startswith("Tall paragraph"), held
+            actual = assert_paragraph(page, held)
+            assert newest_reading(page)["scrollTop"] > before["scrollTop"] + 100, (
+                before,
+                newest_reading(page),
+            )
+        else:
+            actual = assert_newest(page)
+            assert actual["scrollTop"] > before["scrollTop"] + 100, (before, actual)
+        print(
+            "DELAYED_GEOMETRY",
+            kind,
+            mode,
+            {"before": before, "held": held, "after": actual},
+            flush=True,
+        )
+        evidence = os.environ.get("SCROLL_REGRESSION_EVIDENCE_DIR")
+        if evidence:
+            os.makedirs(evidence, exist_ok=True)
+            page.screenshot(path=os.path.join(evidence, "delayed-" + kind + "-" + mode + ".png"))
+
+    # Named cases share this host and run independently. Selection permits every
+    # regression to demonstrate its own failure against the unfixed source.
+    cases = {
+        "draft-measurement": draft_measurement_case,
+        "prose-deltas": prose_delta_case,
+        "missing-anchors": missing_anchors_case,
+        "layer-send": layer_send_case,
+        "answer-room": answer_room_case,
+        "native-before-observer": native_before_observer_case,
+        "descendant-keyboard": descendant_keyboard_case,
+        "short-message-growth": short_message_growth_case,
+        **{
+            f"delayed-{kind}-{mode}": (
+                lambda page, url, kind=kind, mode=mode: delayed_case(page, url, kind, mode)
+            )
+            for kind in ["image", "markdown"]
+            for mode in ["following", "scrollback"]
+        },
+    }
+    selected = os.environ.get("CONVERSATION_SCROLL_CASE")
+    if selected and selected not in cases:
+        raise AssertionError("Unknown CONVERSATION_SCROLL_CASE: " + selected)
+    failures = []
+    for name, run_case in cases.items():
+        if selected and selected != name:
+            continue
+        regression_page = browser.new_page(viewport={"width": 1000, "height": 760})
+        regression_page.set_default_timeout(5_000)
+        try:
+            run_case(regression_page, urls[0])
+            print("SCROLL_CASE PASS " + name, flush=True)
+        except Exception as error:
+            failures.append(name + ": " + str(error))
+            print("SCROLL_CASE FAIL " + name + ": " + str(error), flush=True)
+            print(traceback.format_exc(), flush=True)
+            evidence = os.environ.get("SCROLL_REGRESSION_EVIDENCE_DIR")
+            if evidence:
+                os.makedirs(evidence, exist_ok=True)
+                regression_page.screenshot(path=os.path.join(evidence, name + ".png"))
+        finally:
+            regression_page.close()
+    assert not failures, "\n".join(failures)
+    if selected:
+        print("conversation-pane-browser.test.mjs: all assertions passed")
+        return
 
     context = browser.new_context(viewport={"width": 1000, "height": 760})
     context.tracing.start(screenshots=True, snapshots=True, sources=True)

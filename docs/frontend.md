@@ -538,6 +538,9 @@ hand-rolling the same shapes per screen. Each does one job:
 
   The textarea grows with its content. Its height stops at the smaller of 44% of the
   conversation pane or 12 lines, rounded down to whole lines, then scrolls internally.
+  A hidden textarea measures each draft with the same text layout and scrollbar width.
+  Only the final height and overflow reach the visible input. A same-line edit therefore
+  keeps the transcript in place without a temporary collapse of the composer.
   Pending pictures and files share one horizontal strip in attachment order. Pictures
   show thumbnails; files show their type, name, and size. The footer keeps one row at
   phone widths, with a truncated model name and equal-height controls. Stop keeps its
@@ -549,6 +552,14 @@ hand-rolling the same shapes per screen. Each does one job:
   and the Ticket page is that screen. While an earlier conversation is on screen the pane
   is read only: the actions go, the picker stays, and it is the way back to the current
   conversation.
+
+  The transcript keeps a settled visible paragraph or message as its position reference.
+  Rows, folds, late images, Markdown previews, and viewport size changes share one position
+  decision after layout. A reader who follows the end keeps the newest content in sight.
+  A reader who scrolls back keeps the same visible text. If every saved reference disappears,
+  the view keeps the nearest valid scroll position. Latest reflects the actual content,
+  separately from the answer room below a sent message. Reply content consumes that room.
+  A resize counts the reply already present and cannot recreate exhausted room.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and
@@ -562,8 +573,9 @@ hand-rolling the same shapes per screen. Each does one job:
   or a turn starting never opens it, which is why the line at rest has to carry that news.
   It is a layer and never a mode: nothing is locked, and the ticket underneath stays
   readable and scrollable. And it is one conversation at three heights, never three
-  screens — a move changes how tall it is and nothing else, so the reader keeps their
-  place in the transcript and keeps whatever they had half-typed.
+  screens. A move between peeked and opened keeps the reader's place in the transcript.
+  Reopening from rest lands on the newest unanswered request or the end of the conversation.
+  Every state keeps whatever the person had half-typed.
 
   The Chief and ordinary orchestrators share one layout with this layer and the same
   outside-click dismissal. Both start at rest. The person controls rest, peeked, and
@@ -667,3 +679,13 @@ File preview uses `artifacts`. Sprint documents use `historical-sprint`.
 `npm --prefix web test` runs full Vitest and the browser catalog. `test:legacy` remains
 an alias for `test:browser`. Browser output names executed and omitted boundaries and
 never supplies backend or production build credit.
+
+The conversation entry keeps the named position regressions from the conversation fix.
+The composer entry also checks trailing-newline measurement, focus, and selection.
+
+Run `.venv/bin/python web/tests/browser/conversation-position-controls.py OUTPUT_DIRECTORY`
+to replay the same position cases against the pinned unfixed source. This explicit audit
+creates a disposable worktree and its own pinned virtualenv. It requires the eight known
+geometric failures and four preventative passes. An infrastructure error cannot substitute
+for an expected defect. The command records diagnostics and test hashes, then removes the
+worktree. The normal catalog requires all twelve position cases to pass on current source.

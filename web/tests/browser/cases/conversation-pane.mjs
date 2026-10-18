@@ -32,10 +32,12 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   );
   let visibleRows = $state<any[] | null>(null);
   let nextRowIndex = 28;
+  let scrollReplacementGeneration = 0;
   let running = $state(false);
   let ownerReadThroughSequence = $state(0);
   let heldPromptRows = $state<any[]>([]);
   let supportsSteer = $state(false);
+  let outgoingMessages = $state<any[]>([]);
   let composerDisabled = $state(false);
   let ask = $state<any>(null);
 
@@ -119,6 +121,54 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         content: [{ piece: "text", text: "Newest appended line " + index }]
       }
     ];
+  };
+  // Controlled content replay. Responses stay pending while the reader chooses a
+  // position, then browser-owned image/Markdown completion changes the same rows.
+  (window as any).__setupScrollRegression = (kind: string) => {
+    conversationState = "peeked";
+    lens = "full";
+    running = false;
+    const paragraphs = Array.from({ length: 32 }, (_, index) =>
+      "Tall paragraph " + index + ": " + words(index)).join("\n\n");
+    rows = Array.from({ length: 28 }, (_, index) => ({
+      key: "regression-" + index,
+      kind: "agent_message",
+      sequence: index + 1,
+      createdAt: 1_000 + index,
+      content: index === 12 && kind !== "plain"
+        ? [
+            kind === "image"
+              ? {piece: "image", stored_file_id: "delayed.png", file_name: "delayed.png"}
+              : {piece: "text", text: "[Delayed Markdown](/files/tickets/t_scrollregression/delayed.md)"},
+            {piece: "text", text: paragraphs}
+          ]
+        : [{piece: "text", text: words(index)}]
+    }));
+    visibleRows = null;
+  };
+  (window as any).__replaceAllScrollRows = (count = rows.length) => {
+    scrollReplacementGeneration += 1;
+    rows = rows.slice(0, count).map((row, index) => ({...row, key: "replacement-" + scrollReplacementGeneration + "-" + index,
+      content: [{piece: "text", text: "Replacement " + words(index)}]}));
+  };
+  (window as any).__sendScrollRegression = (moveLayer: boolean) => {
+    outgoingMessages = [{messageId: "scroll-send", content: [{piece: "text", text: "Regression prompt"}],
+      senderLabel: "owner", mode: "queue", sentAtUnixMilliseconds: 20_000, knownFate: "nothing_yet"}];
+    if (moveLayer) conversationState = "opened";
+  };
+  (window as any).__answerScrollRegression = (paragraphCount: number) => {
+    const prompt = {key: "scroll-prompt", kind: "prompt", sequence: 1_000, createdAt: 20_000,
+      content: [{piece: "text", text: "Regression prompt"}], senderLabel: "owner", mode: "queue",
+      senderMessageId: "scroll-send", sentAtUnixMilliseconds: 20_000};
+    rows = [...rows.filter(row => row.sequence < 1_000), prompt,
+      {key: "scroll-reply", kind: "agent_message", sequence: 1_001, createdAt: 20_001,
+        content: [{piece: "text", text: Array.from({length:paragraphCount},(_,index) => words(index)).join("\n\n")}]}];
+    outgoingMessages = [];
+  };
+  (window as any).__proseDelta = (index: number) => {
+    rows = rows.map((row, at) => at === rows.length - 1
+      ? {...row, content: [{piece: "text", text: row.content[0].text + "\n\nControlled prose delta " + index + ": " + words(index)}]}
+      : row);
   };
   (window as any).__dropFirstConversationLines = (count: number) => {
     rows = rows.slice(count);
@@ -442,7 +492,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
             reasoning_effort_options: [] }
         ]}
         effortOptions={["high"]}
-        outgoingMessages={[]}
+        {outgoingMessages}
         ownSenderLabel="owner"
         composerDisabled={composerDisabled}
         {composerCatalog}
