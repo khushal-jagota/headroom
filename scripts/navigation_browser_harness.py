@@ -1,543 +1,871 @@
-"""Real HTTP/SSE + TanStack/Svelte browser proof on a wholly synthetic runtime.
+"""Measure the actual built App through its actual application lifespan.
 
-The rendered host is a harness comparator, never the original production UI baseline.
+Author/review this runner before use. Each invocation launches a fresh sanitized
+child with the selected tree's interpreter. No provider or replacement UI is used.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import contextlib
+import hashlib
+import importlib
 import json
+import os
 import socket
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import parse_qs, urlparse
 
-import uvicorn
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-from measure_navigation_delivery import distribution, isolate, seed
-from playwright.async_api import async_playwright
+from measure_navigation_delivery import (
+    EVIDENCE_SCHEMA,
+    assert_isolated,
+    build_application,
+    distribution,
+    isolated_environment,
+    rss_bytes,
+)
 
-from planner.conversation.storage import ConversationStore
-from planner.core.db import connect
-from planner.navigation import data as navigation
-from planner.navigation.delivery import DeliveryRuntime
-from planner.navigation.proof import capture_command_commits, response_fence
+# Returned as a private remote object, never installed on window or application state.
+DOM_OBSERVER = r"""({ids}) => {
+ const roots=[document.querySelector('.approved-rail'),
+  document.querySelector('[data-orchestrator-children]')];
+ if(roots.some(root=>!root)) throw Error('Actual workspace roots are absent');
+ const marks=[];
+ const read=()=>({at:performance.now(),connected:roots.every(root=>root.isConnected),
+  rows:ids.map(id=>({id,rail:document.querySelector(`[data-ticket-id="${id}"]`)?.textContent?.trim()??null,
+   children:document.querySelector(`[data-sprint-ticket-id="${id}"]`)?.textContent?.trim()??null}))});
+ const observer=new MutationObserver(()=>marks.push(read()));
+ for(const root of roots) observer.observe(root,
+  {subtree:true,childList:true,characterData:true,attributes:true});
+ return {read:()=>read(),marks:()=>marks.slice(),stop:()=>observer.disconnect()};
+}"""
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--mode", choices=("baseline", "candidate"), required=True)
+    parser.add_argument("--runtime-parent", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--tickets", type=int, default=500)
+    parser.add_argument("--trials", type=int, default=10)
+    parser.add_argument("--cold-contexts", type=int, default=3)
+    parser.add_argument("--browser-executable", type=Path)
+    parser.add_argument("--browser-cache", type=Path)
+    parser.add_argument("--isolated-child", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--runtime", type=Path, help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.tickets < 3 or args.trials < 1 or args.cold_contexts < 1:
+        parser.error("at least three Tickets and one warm/cold trial are required")
+    return args
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
     root = args.runtime.resolve()
-    root.mkdir(parents=True, exist_ok=False)
-    isolate(root)  # Strip every inherited PLAN_* before the first database open.
-    path = root / "planner.db"
-    seed(path)
-    runtime = DeliveryRuntime(path)
-    lock = threading.Lock()
-    fanout_admitted = threading.Event()
-    source_samples: list[dict[str, Any]] = []
-    requests: dict[str, dict[str, int]] = {}
+    source = args.source_root.resolve()
+    isolated_paths = assert_isolated(root, source)  # First application import in clean child.
+    # The selected interpreter owns planner; the source root owns its existing
+    # fixtures. Script execution otherwise puts only scripts/ on sys.path.
+    sys.path.insert(0, str(source))
+    import uvicorn
+    from playwright.async_api import async_playwright
 
-    @contextlib.asynccontextmanager
-    async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-        ownership = ConversationStore(str(path)).claim_runtime()
-        try:
-            with contextlib.closing(connect(str(path))) as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                navigation.reset_epoch(conn)
-                conn.commit()
-            await runtime.start()
-            yield
-        finally:
-            await runtime.close()
-            ownership.close()
-
-    app = FastAPI(lifespan=lifespan)
-    app.include_router(runtime.router)
-
-    @app.get("/api/harness/fanout-admitted")
-    def fanout_status() -> dict[str, bool]:
-        return {"admitted": fanout_admitted.is_set()}
+    db = importlib.import_module("planner.core.db")
+    requests: list[dict[str, Any]] = []
+    writes: list[dict[str, Any]] = []
+    writer_lock = threading.Lock()
+    app, fixture = build_application(root, source, args.mode, args.tickets)
 
     @app.post("/api/harness/change")
-    def change(body: dict[str, Any]) -> dict[str, Any]:
-        admitted = time.perf_counter_ns()
-        with lock, capture_command_commits(str(path)) as capture:
-            with contextlib.closing(connect(str(path))) as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                tag = body["tag"]
-                scenario = body.get("scenario", "owner")
-                if scenario == "fanout":
-                    fanout_admitted.set()
-                if scenario == "reset":
-                    navigation.reset_epoch(conn)
-                elif scenario == "delete":
-                    conn.execute("DELETE FROM projects WHERE id='measure_delete'")
-                elif scenario == "no_op":
-                    pass
-                elif scenario in ("fanout", "large"):
-                    text = tag
-                    conn.execute("UPDATE tickets SET title=? || id", (text,))
-                    if scenario == "large":
-                        conn.execute(
-                            "UPDATE projects SET name=? WHERE id='project_other'", ("x" * 600_000,)
-                        )
-                else:
-                    conn.execute(
-                        "UPDATE tickets SET title=? WHERE id IN "
-                        "('t_measure_0000','t_measure_0001')",
-                        (tag,),
-                    )
-                conn.commit()
-                committed = time.perf_counter_ns()
-                fence = response_fence(conn, capture)
-                sample = {
-                    "tag": tag,
-                    "scenario": scenario,
-                    "admitted_ns": admitted,
-                    "commit_return_ns": committed,
-                    "revision": fence["revision"],
-                    "fence": fence,
-                }
-                source_samples.append(sample)
-                return sample
+    def source_change(body: dict[str, Any]) -> dict[str, Any]:
+        # Background writes deliberately use the retained source connection. They
+        # change ordinary source facts, never Signal/public authority records.
+        started = time.perf_counter_ns()
+        ids = fixture["seed"]["tickets"]
+        scenario, tag = body["scenario"], body["tag"]
+        with writer_lock, contextlib.closing(db.connect(str(fixture["path"]))) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if scenario in {"fanout", "large"}:
+                conn.execute("UPDATE tickets SET title=?", (tag,))
+            else:
+                conn.execute("UPDATE tickets SET title=? WHERE id IN (?,?)", (tag, *ids[:2]))
+            conn.commit()
+            committed = time.perf_counter_ns()  # First operation after actual commit returns.
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='navigation_meta'"
+            ).fetchone()
+            continuity = (
+                None
+                if row is None
+                else tuple(conn.execute("SELECT epoch,revision FROM navigation_meta").fetchone())
+            )
+        result = {
+            "scenario": scenario,
+            "tag": tag,
+            "started_ns": started,
+            "commit_return_ns": committed,
+            "continuity": continuity,
+        }
+        writes.append(result)
+        return result
 
-    app.mount("/", StaticFiles(directory=args.static_dir), name="host")
+    @app.post("/api/harness/signal/{index}/{action}")
+    async def signal(index: int, action: str) -> dict[str, Any]:
+        runtime = app.state.conversation
+        ticket_id = fixture["seed"]["tickets"][index]
+        contracts = importlib.import_module("planner.conversation.contracts")
+        content = importlib.import_module("planner.conversation.message_content")
+        tickets = importlib.import_module("planner.tickets.data")
+        principals = importlib.import_module("planner.core.contracts")
+        with contextlib.closing(db.connect(str(fixture["path"]))) as conn:
+            ticket = tickets.read_ticket(conn, ticket_id)
+        conversation_id = ticket.conversation_id
+        if action == "start":
+            if conversation_id is None:
+                conversation_id = f"measured-active-conversation-{index}"
+                await runtime.system.start_conversation(
+                    contracts.ConversationStartRequest(
+                        conversation_id=conversation_id,
+                        backend_key=contracts.ConversationBackendKey(ticket.employee_backend),
+                        model=ticket.employee_launch_model,
+                        workspace_folder=root / "workspace",
+                    )
+                )
+                with contextlib.closing(db.connect(str(fixture["path"]))) as conn:
+                    tickets.write_ticket_conversation_start(
+                        conn,
+                        ticket_id,
+                        conversation_id=conversation_id,
+                        backend=ticket.employee_backend,
+                        model=ticket.employee_launch_model,
+                        reasoning_effort=ticket.employee_launch_reasoning_effort,
+                        now=5000,
+                    )
+            await runtime.system.send(
+                conversation_id,
+                content.text_message_content("Measured turn"),
+                sender_label="owner",
+                reply_requested=False,
+            )
+        elif action == "finish":
+            await fixture["children"][conversation_id].finish()
+        elif action == "message":
+            await runtime.system.record_message_to_owner(
+                conversation_id,
+                content.text_message_content("Measured explicit unread message"),
+                sender_label="Synthetic worker",
+                sender=principals.Principal(principals.PrincipalKind.ticket, ticket_id),
+                recipient=principals.OWNER_PRINCIPAL,
+            )
+        elif action == "invalidate" and args.mode == "candidate":
+            runtime.store.signal_coordinator.invalidate("publication_failed")
+        else:
+            raise ValueError("unsupported controlled action")
+        await runtime.system.wait_until_quiescent()
+        return {"conversation_id": conversation_id, "action": action}
 
     class MeasuredApp:
         async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
             if scope["type"] != "http":
                 await app(scope, receive, send)
                 return
-            key = scope["method"] + " " + scope["path"]
-            counter = requests.setdefault(key, {"requests": 0, "body_bytes": 0})
-            counter["requests"] += 1
+            item = {
+                "method": scope["method"],
+                "path": scope["path"],
+                "started_ns": time.perf_counter_ns(),
+                "body_bytes": 0,
+                "chunks": [],
+                "status": None,
+            }
+            requests.append(item)
 
             async def measured_send(message: Any) -> None:
-                if message["type"] == "http.response.body":
-                    counter["body_bytes"] += len(message.get("body", b""))
+                if message["type"] == "http.response.start":
+                    item["status"] = message["status"]
+                elif message["type"] == "http.response.body":
+                    size = len(message.get("body", b""))
+                    item["body_bytes"] += size
+                    item["chunks"].append({"at_ns": time.perf_counter_ns(), "bytes": size})
                 await send(message)
 
             await app(scope, receive, measured_send)
 
     listener = socket.socket()
-    listener.bind(("127.0.0.1", 0))
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))  # Reserve a surveyed available port atomically.
     listener.listen(128)
     listener.setblocking(False)
     port = listener.getsockname()[1]
     server = uvicorn.Server(
-        uvicorn.Config(MeasuredApp(), log_level="error", lifespan="on", timeout_graceful_shutdown=2)
+        uvicorn.Config(
+            MeasuredApp(),
+            log_level="error",
+            access_log=False,
+            lifespan="on",
+            timeout_graceful_shutdown=2,
+        )
     )
     serving = asyncio.create_task(server.serve(sockets=[listener]))
+    network: list[dict[str, Any]] = []
+    samples: list[dict[str, Any]] = []
+    result: dict[str, Any] = {}
+    browser: Any = None
+    context: Any = None
     try:
-        async with asyncio.timeout(45):
+        async with asyncio.timeout(60):
             while not server.started:
                 if serving.done():
                     await serving
-                    raise RuntimeError("server exited before startup")
+                    raise RuntimeError("actual application failed before startup")
                 await asyncio.sleep(0.01)
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            page.set_default_timeout(10000)
+        seed = fixture["seed"]
+        ids = seed["tickets"]
+        url = f"http://127.0.0.1:{port}/"
+        async with async_playwright() as playwright:
+            launch: dict[str, Any] = {"headless": True}
+            if args.browser_executable:
+                launch["executable_path"] = str(args.browser_executable)
+            browser = await playwright.chromium.launch(**launch)
+            cold: list[dict[str, Any]] = []
+            for index in range(args.cold_contexts):
+                cold_context = await browser.new_context(viewport={"width": 1440, "height": 1000})
+                cold_page = await cold_context.new_page()
+                cdp = await cold_context.new_cdp_session(cold_page)
+                await cdp.send("Network.enable")
+                for event in (
+                    "requestWillBeSent",
+                    "responseReceived",
+                    "dataReceived",
+                    "loadingFinished",
+                    "loadingFailed",
+                    "eventSourceMessageReceived",
+                ):
+                    cdp.on(
+                        "Network." + event,
+                        lambda data, name=event, phase=f"cold-{index}": network.append(
+                            {
+                                "phase": phase,
+                                "event": name,
+                                "observed_ns": time.perf_counter_ns(),
+                                "data": data,
+                            }
+                        ),
+                    )
+                started = time.perf_counter_ns()
+                await cold_page.goto(url + "#/workspace/item/" + seed["items"][0])
+                await cold_page.locator(
+                    "[data-sprint-item-workspace] .sprint-workspace-title"
+                ).wait_for(state="visible")
+                await cold_page.locator(f'[data-sprint-ticket-id="{ids[0]}"]').wait_for(
+                    state="attached"
+                )
+                cold.append(
+                    {
+                        "started_ns": started,
+                        "usable_ns": time.perf_counter_ns(),
+                        "label": "fresh browser context, warm backend/process/OS cache",
+                    }
+                )
+                await cold_context.close()
+            context = await browser.new_context(viewport={"width": 1440, "height": 1000})
+            await context.tracing.start(screenshots=True, snapshots=True, sources=True)
+            page = await context.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda error: errors.append(str(error)))
-            url = f"http://127.0.0.1:{port}/{args.index}"
-            await page.goto(url)
-            try:
-                await page.wait_for_function("window.navigationHarness?.ready()")
-                result = await exercise(page, requests)
-                await page.screenshot(path=str(args.output.parent / "navigation-browser.png"))
-            except Exception:
-                print(
-                    await page.evaluate(
-                        "({html:document.body.innerHTML, "
-                        "state:window.navigationHarness?.state?.(), "
-                        "marks:window.navigationHarness?.renderMarks})"
-                    ),
-                    flush=True,
-                )
-                failure = await page.evaluate(
-                    "({state:window.navigationHarness?.state?.(), "
-                    "marks:window.navigationHarness?.renderMarks, html:document.body.innerHTML})"
-                )
-                args.output.with_suffix(".failure.json").write_text(
-                    json.dumps(
+            cdp = await context.new_cdp_session(page)
+            await cdp.send("Network.enable")
+            await cdp.send("Performance.enable")
+            for event in (
+                "requestWillBeSent",
+                "responseReceived",
+                "dataReceived",
+                "loadingFinished",
+                "loadingFailed",
+                "eventSourceMessageReceived",
+            ):
+                cdp.on(
+                    "Network." + event,
+                    lambda data, name=event: network.append(
                         {
-                            "browser": failure,
-                            "requests": requests,
-                            "source_samples": source_samples,
-                        },
-                        indent=2,
-                    )
+                            "phase": "warm",
+                            "event": name,
+                            "observed_ns": time.perf_counter_ns(),
+                            "data": data,
+                        }
+                    ),
                 )
-                raise
-            finally:
-                await browser.close()
-            assert not errors, errors
-            result["browser_errors"] = errors
-        result.update(
-            {
-                "requests": requests,
-                "source_samples": source_samples,
-                "runtime": str(root),
-                "database": str(path),
-                "method": "Real lease/startup; HTTP snapshot/SSE; TanStack collection; "
-                "Svelte selectors and DOM; server monotonic admission/commit to "
-                "Python-observed browser DOM. Observation polling adds latency.",
-                "limitations": [
-                    "Synthetic harness comparator, not original browser baseline",
-                    "No production UI parity or final speedup claim",
-                    "Browser-reload trials retain the server/runtime, process and OS caches",
-                    "Small samples do not establish sustained capacity",
-                    "Transferred bytes are ASGI response body bytes, not network framing",
-                ],
+            await page.goto(url + "#/workspace/item/" + seed["items"][0])
+            await page.locator(f'[data-sprint-ticket-id="{ids[0]}"]').wait_for(state="attached")
+            await page.locator("details[data-workspace-group]").evaluate_all(
+                "nodes => nodes.forEach(node => { node.open=true; })"
+            )
+            observer = await page.evaluate_handle(DOM_OBSERVER, {"ids": ids[:2]})
+            clocks = []
+            for _index in range(5):
+                before = time.perf_counter_ns()
+                mark = await page.evaluate("performance.now()")
+                after = time.perf_counter_ns()
+                clocks.append(
+                    {
+                        "offset_ns": (before + after) / 2 - mark * 1e6,
+                        "uncertainty_ns": (after - before) / 2,
+                    }
+                )
+            clock = min(clocks, key=lambda item: item["uncertainty_ns"])
+
+            async def change(
+                tag: str, scenario: str = "background", wait: bool = True
+            ) -> dict[str, Any]:
+                response = await page.request.post(
+                    url + "api/harness/change", data={"scenario": scenario, "tag": tag}
+                )
+                assert response.ok, await response.text()
+                sample = await response.json()
+                if wait:
+                    await page.wait_for_function(
+                        "([ids,tag]) => ids.every(id => "
+                        '[`[data-ticket-id="${id}"]`,`[data-sprint-ticket-id="${id}"]`].every('
+                        "selector=>document.querySelector(selector)?.textContent?.includes(tag)))",
+                        arg=[ids[:2], tag],
+                    )
+                    sample["dom_observed_ns"] = time.perf_counter_ns()
+                    marks = await observer.evaluate("observer => observer.marks()")
+                    matched = [
+                        row
+                        for row in marks
+                        if row["connected"]
+                        and all(
+                            tag in (entry["rail"] or "") and tag in (entry["children"] or "")
+                            for entry in row["rows"]
+                        )
+                    ]
+                    if matched:
+                        sample["dom_mark_ns"] = matched[0]["at"] * 1e6 + clock["offset_ns"]
+                        sample["clock_uncertainty_ns"] = clock["uncertainty_ns"]
+                samples.append(sample)
+                return cast(dict[str, Any], sample)
+
+            old_cursor = None
+            if args.mode == "candidate":
+                snapshot_response = await page.request.get(url + "api/navigation/snapshot")
+                assert snapshot_response.ok, await snapshot_response.text()
+                old_cursor = (await snapshot_response.json())["cursor"]
+            paired_window_started_ns = time.perf_counter_ns()
+            for index in range(args.trials):
+                await change(f"paired-warm-{index:03d}")
+            ui_started = time.perf_counter_ns()
+            item_path = "/api/items/" + seed["items"][0]
+            async with page.expect_response(
+                lambda response: (
+                    urlparse(response.url).path == item_path and response.request.method == "PATCH"
+                )
+            ) as pending_ui_response:
+                editor = page.locator(".sprint-workspace-title [contenteditable=true]")
+                await editor.fill("Measured Alpha edited in actual App")
+                await editor.press("Enter")
+            ui_response = await pending_ui_response.value
+            assert ui_response.ok, await ui_response.text()
+            await page.wait_for_function(
+                "(id)=>document.querySelector("
+                '`[data-sprint-item="${id}"] .item-title`)?.textContent === '
+                '"Measured Alpha edited in actual App" && document.querySelector('
+                '".sprint-workspace-title [contenteditable=true]")?.textContent === '
+                '"Measured Alpha edited in actual App"',
+                arg=seed["items"][0],
+            )
+            ui_fence = ui_response.headers.get("panels-navigation-fence")
+            if args.mode == "candidate":
+                assert ui_fence is not None
+            samples.append(
+                {
+                    "scenario": "owner-ui",
+                    "action_started_ns": ui_started,
+                    "dom_observed_ns": time.perf_counter_ns(),
+                    "navigation_fence": ui_fence,
+                    "note": "Actual InlineEdit Enter/blur command to connected pane+rail DOM; "
+                    "not a precise owner commit timestamp or private visibility result.",
+                }
+            )
+            for index in range(args.trials):
+                owner_tag = f"paired-owner-edit-{index:03d}"
+                owner_started = time.perf_counter_ns()
+                owner_response = await page.request.patch(
+                    url + "api/tickets/" + ids[0], data={"title": owner_tag}
+                )
+                assert owner_response.ok, await owner_response.text()
+                await page.wait_for_function(
+                    '([id,tag])=>document.querySelector(`[data-ticket-id="${id}"]`)'
+                    "?.textContent.includes(tag) && "
+                    'document.querySelector(`[data-sprint-ticket-id="${id}"]`)'
+                    "?.textContent.includes(tag)",
+                    arg=[ids[0], owner_tag],
+                )
+                samples.append(
+                    {
+                        "scenario": "owner-api",
+                        "tag": owner_tag,
+                        "request_started_ns": owner_started,
+                        "dom_observed_ns": time.perf_counter_ns(),
+                        "note": (
+                            "Request-to-DOM interval, not an instrumented owner commit timestamp."
+                        ),
+                        "navigation_fence": owner_response.headers.get("panels-navigation-fence"),
+                    }
+                )
+            # One source transaction changes every row. The observer retains the
+            # actual mounted roots; no harness spans stand in for application DOM.
+            await change("paired-fanout", "fanout")
+            await change("paired-large-" + '界🙂"\\\n\t' * 19 + "終", "large")
+            burst_started_ns = time.perf_counter_ns()
+            burst = [
+                asyncio.create_task(change(f"paired-burst-{i:03d}", wait=False)) for i in range(5)
+            ]
+            burst_samples = await asyncio.gather(*burst)
+            latest = max(burst_samples, key=lambda row: row["commit_return_ns"])
+            await page.wait_for_function(
+                "([ids,tag])=>ids.every(id=>"
+                '[`[data-ticket-id="${id}"]`,`[data-sprint-ticket-id="${id}"]`].every('
+                "selector=>document.querySelector(selector)?.textContent?.includes(tag)))",
+                arg=[ids[:2], latest["tag"]],
+            )
+            burst_converged_ns = time.perf_counter_ns()
+            burst_dom = await observer.evaluate("observer=>observer.read()")
+            assert burst_dom["connected"]
+            assert all(
+                latest["tag"] in (row["rail"] or "") and latest["tag"] in (row["children"] or "")
+                for row in burst_dom["rows"]
+            )
+            samples.append(
+                {
+                    "scenario": "burst-convergence",
+                    "writes": len(burst_samples),
+                    "burst_started_ns": burst_started_ns,
+                    "final_commit_return_ns": latest["commit_return_ns"],
+                    "converged_ns": burst_converged_ns,
+                    "latest_tag": latest["tag"],
+                    "connected_dom": burst_dom,
+                    "achieved_commits_per_second": len(burst_samples)
+                    * 1e9
+                    / (latest["commit_return_ns"] - burst_started_ns),
+                }
+            )
+            import httpx
+
+            await context.set_offline(True)
+            reconnect_started = time.perf_counter_ns()
+            async with httpx.AsyncClient(trust_env=False) as external_writer:
+                response = await external_writer.post(
+                    url + "api/harness/change",
+                    json={"scenario": "background", "tag": "paired-offline-update"},
+                )
+                response.raise_for_status()
+                reconnect_write = response.json()
+            online_started = time.perf_counter_ns()
+            await context.set_offline(False)
+            await page.wait_for_function(
+                '(id)=>document.querySelector(`[data-ticket-id="${id}"]`)'
+                '?.textContent.includes("paired-offline-update") && '
+                'document.querySelector(`[data-sprint-ticket-id="${id}"]`)'
+                '?.textContent.includes("paired-offline-update")',
+                arg=ids[0],
+            )
+            samples.append(
+                {
+                    **reconnect_write,
+                    "scenario": "reconnect",
+                    "offline_started_ns": reconnect_started,
+                    "online_started_ns": online_started,
+                    "dom_observed_ns": time.perf_counter_ns(),
+                }
+            )
+            manual = page.locator('select[aria-label="Worker state"]')
+            await manual.select_option("active")
+            await page.locator("details[data-workspace-group]").first.evaluate(
+                "node=>{node.open=false}"
+            )
+            await change("manual-choice-update", wait=False)
+            await page.wait_for_function(
+                '(tag)=>document.querySelector(".approved-rail")?.textContent.includes(tag)',
+                arg="manual-choice-update",
+            )
+            assert not await page.locator("details[data-workspace-group]").first.evaluate(
+                "node=>node.open"
+            )
+            await page.locator("details[data-workspace-group]").first.evaluate(
+                "node=>{node.open=true}"
+            )
+            assert (await observer.evaluate("observer=>observer.read()"))["connected"]
+            await observer.evaluate("observer=>observer.stop()")
+            paired_window_ended_ns = time.perf_counter_ns()
+            paired_memory = {
+                "browser": await cdp.send("Performance.getMetrics"),
+                "python_app_runner_rss_bytes": rss_bytes(os.getpid()),
             }
-        )
-        return result
+            browser_cdp = await browser.new_browser_cdp_session()
+            paired_processes = await browser_cdp.send("SystemInfo.getProcessInfo")
+            for process in paired_processes["processInfo"]:
+                process["rss_bytes"] = rss_bytes(process["id"])
+            paired_memory["processes"] = paired_processes
+            # Exercise actual route/draft state without a product debug accessor.
+            await page.evaluate(
+                "(hash)=>{location.hash=hash}",
+                "#/workspace/item/" + seed["items"][0] + "/" + ids[0],
+            )
+            await page.locator('[data-screen="ticket"]').wait_for()
+            draft = page.locator("[data-conversation-composer] textarea").first
+            draft_check: dict[str, Any] = {
+                "supported": False,
+                "reason": "No editable actual composer exists for this fixture configuration.",
+            }
+            if await draft.count() and await draft.is_enabled():
+                await draft.fill("Measured local draft")
+                response = await page.request.patch(
+                    url + "api/tickets/" + ids[1], data={"title": "draft-preservation-update"}
+                )
+                assert response.ok, await response.text()
+                await page.wait_for_function(
+                    "(id)=>document.querySelector(`.approved-rail "
+                    '[data-ticket-id="${id}"]`)?.textContent.includes("draft-preservation-update")',
+                    arg=ids[1],
+                )
+                assert await draft.input_value() == "Measured local draft"
+                draft_check = {"supported": True, "preserved_after_background_commit": True}
+            await page.evaluate(
+                "(hash)=>{location.hash=hash}", "#/workspace/item/" + seed["items"][0]
+            )
+            await page.locator("[data-orchestrator-children]").wait_for()
+            # Actual runtime facts originate at the controlled backend wire.
+            signal_response = await page.request.post(url + "api/harness/signal/0/start")
+            assert signal_response.ok, await signal_response.text()
+            signal_identity = (await signal_response.json())["conversation_id"]
+            await page.locator(
+                f'[data-conversation-id="{signal_identity}"] [data-conversation-signal="working"]'
+            ).first.wait_for()
+            second_start = await page.request.post(url + "api/harness/signal/1/start")
+            assert second_start.ok, await second_start.text()
+            unread_identity = (await second_start.json())["conversation_id"]
+            response = await page.request.post(url + "api/harness/signal/1/finish")
+            assert response.ok, await response.text()
+            response = await page.request.post(url + "api/harness/signal/1/message")
+            assert response.ok, await response.text()
+            await page.locator(
+                f'[data-conversation-id="{unread_identity}"] [data-conversation-signal="message"]'
+            ).first.wait_for()
+            degraded = None
+            stale_cursor_response = None
+            if args.mode == "candidate":
+                response = await page.request.post(url + "api/harness/signal/0/invalidate")
+                assert response.ok, await response.text()
+                await page.wait_for_function(
+                    "(id)=>!document.querySelector("
+                    '`[data-conversation-id="${id}"] [data-conversation-signal="working"]`)',
+                    arg=signal_identity,
+                )
+                await page.locator(
+                    f'[data-conversation-id="{unread_identity}"] '
+                    '[data-conversation-signal="message"]'
+                ).first.wait_for()
+                degraded_response = await page.request.get(url + "api/navigation/snapshot")
+                degraded = await degraded_response.json()
+                assert degraded.get("mode") == "degraded"
+            # Stop the actual application lifetime and reconnect the same page to
+            # a fresh actual owner. The private binding is not reached or replaced.
+            restart_started = time.perf_counter_ns()
+            server.should_exit = True
+            await serving
+            listener.close()
+            app, fixture = build_application(root, source, args.mode, args.tickets)
+            listener = socket.socket()
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", port))
+            listener.listen(128)
+            listener.setblocking(False)
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    MeasuredApp(),
+                    log_level="error",
+                    access_log=False,
+                    lifespan="on",
+                    timeout_graceful_shutdown=2,
+                )
+            )
+            serving = asyncio.create_task(server.serve(sockets=[listener]))
+            async with asyncio.timeout(60):
+                while not server.started:
+                    if serving.done():
+                        await serving
+                        raise RuntimeError("actual application failed during restart")
+                    await asyncio.sleep(0.01)
+            if args.mode == "candidate":
+                async with httpx.AsyncClient(trust_env=False) as check:
+                    response = await check.get(url + "api/navigation/snapshot")
+                    response.raise_for_status()
+                    recovered_snapshot = response.json()
+                    assert recovered_snapshot["mode"] == "current"
+                    stale_cursor_response = await check.get(
+                        url + "api/navigation/events", params={"cursor": old_cursor}, timeout=10
+                    )
+                    stale_cursor_response.raise_for_status()
+                    assert "event: reset" in stale_cursor_response.text
+                new_epoch = recovered_snapshot["snapshot"]["epoch"]
+
+                def browser_requested_current_stream() -> bool:
+                    for event in network:
+                        if event["event"] != "requestWillBeSent":
+                            continue
+                        request_url = event["data"]["request"]["url"]
+                        parsed = urlparse(request_url)
+                        if parsed.path != "/api/navigation/events":
+                            continue
+                        cursor = parse_qs(parsed.query).get("cursor", [""])[0]
+                        try:
+                            value = json.loads(
+                                base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+                            )
+                        except (ValueError, UnicodeError):
+                            continue
+                        if isinstance(value, dict) and value.get("epoch") == new_epoch:
+                            return True
+                    return False
+
+                async with asyncio.timeout(30):
+                    while not browser_requested_current_stream():
+                        await asyncio.sleep(0.01)
+                await page.wait_for_function(
+                    "(id)=>!document.querySelector("
+                    '`[data-conversation-id="${id}"] [data-conversation-signal="working"]`)',
+                    arg=signal_identity,
+                )
+            await page.locator(
+                f'[data-conversation-id="{unread_identity}"] [data-conversation-signal="message"]'
+            ).first.wait_for()
+            restart_observed = time.perf_counter_ns()
+            # Move and delete an unrelated third row through canonical owner
+            # commands, and check both actually connected parent panes.
+            moved_id = ids[-1]
+            parent_response = await page.request.patch(
+                url + "api/tickets/" + moved_id,
+                data={"orchestrator": {"kind": "sprint_item", "id": seed["items"][1]}},
+            )
+            assert parent_response.ok, await parent_response.text()
+            await page.locator(f'[data-sprint-ticket-id="{moved_id}"]').wait_for(state="detached")
+            await page.evaluate(
+                "hash=>{location.hash=hash}", "#/workspace/item/" + seed["items"][1]
+            )
+            await page.locator(f'[data-sprint-ticket-id="{moved_id}"]').wait_for(state="attached")
+            deletion = await page.request.delete(url + "api/tickets/" + moved_id)
+            assert deletion.ok, await deletion.text()
+            await page.locator(f'[data-sprint-ticket-id="{moved_id}"]').wait_for(state="detached")
+            await page.locator(f'[data-ticket-id="{moved_id}"]').wait_for(state="detached")
+            await page.evaluate(
+                "hash=>{location.hash=hash}", "#/workspace/item/" + seed["items"][0]
+            )
+            await page.locator(f'[data-sprint-ticket-id="{ids[0]}"]').wait_for(state="attached")
+            samples.append({"scenario": "parent-move-and-deletion", "connected_panes": True})
+            displayed = await page.locator("[data-sprint-ticket-id]").evaluate_all(
+                "nodes=>nodes.map(node=>({id:node.dataset.sprintTicketId,"
+                'title:node.querySelector(".ticket-row-title")?.textContent}))'
+            )
+            import sqlite3
+
+            with sqlite3.connect(fixture["path"].as_uri() + "?mode=ro", uri=True) as read_source:
+                canonical = dict(read_source.execute("SELECT id,title FROM tickets"))
+            assert len(displayed) == len(ids) - 1
+            assert all(canonical[row["id"]] == row["title"] for row in displayed)
+            memory = await cdp.send("Performance.getMetrics")
+            process_memory: Any = None
+            try:
+                browser_cdp = await browser.new_browser_cdp_session()
+                process_memory = await browser_cdp.send("SystemInfo.getProcessInfo")
+                for process in process_memory["processInfo"]:
+                    process["rss_bytes"] = rss_bytes(process["id"])
+            except Exception as error:
+                process_memory = {"unavailable": type(error).__name__}
+            await page.screenshot(path=str(args.output.with_suffix(".png")), full_page=True)
+            assert not errors, errors
+            result = {
+                "cold_contexts": cold,
+                "paired_cost_window_ns": [paired_window_started_ns, paired_window_ended_ns],
+                "draft_check": draft_check,
+                "paired_memory": paired_memory,
+                "final_canonical_dom_equality": {"rows": len(displayed), "equal": True},
+                "clocks": clocks,
+                "samples": samples,
+                "degraded": degraded,
+                "browser_errors": errors,
+                "browser_performance_metrics": memory,
+                "process_memory": process_memory,
+                "python_app_runner_rss_bytes": rss_bytes(os.getpid()),
+                "final_connected_dom": await page.locator(".board-screen").inner_text(),
+                "stale_cursor_reset": (
+                    None if stale_cursor_response is None else stale_cursor_response.text
+                ),
+                "restart": {
+                    "started_ns": restart_started,
+                    "dom_observed_ns": restart_observed,
+                    "kind": "actual application restart, same Python process and browser page",
+                },
+                "signal_conversations": {
+                    "working": signal_identity,
+                    "durable_unread": unread_identity,
+                },
+            }
+            await context.tracing.stop(path=str(args.output.with_suffix(".trace.zip")))
+            await context.close()
+            context = None
+            await browser.close()
+            browser = None
+        return {
+            "evidence_schema_version": 1,
+            **result,
+            "source": str(source),
+            "mode": args.mode,
+            "revision": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=source, text=True
+            ).strip(),
+            "source_dirty_state": subprocess.check_output(
+                ["git", "status", "--short"], cwd=source, text=True
+            ),
+            "source_hashes": {
+                str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest()
+                for directory in (source / "src", source / "web/src")
+                for path in directory.rglob("*")
+                if path.is_file() and "__pycache__" not in path.parts
+            },
+            "dependency_hashes": {
+                str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in (source / "requirements.txt", source / "web/package-lock.json")
+            },
+            "runner_hashes": {
+                path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in (
+                    Path(__file__),
+                    Path(__file__).with_name("measure_navigation_delivery.py"),
+                )
+            },
+            "built_asset_hashes": {
+                str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in (source / "web/dist").rglob("*")
+                if path.is_file()
+            },
+            "isolated_paths": isolated_paths,
+            "seed": seed,
+            "requests": requests,
+            "network": network,
+            "writes": writes,
+            "commit_to_dom_ms": distribution(
+                [
+                    (sample["dom_mark_ns"] - sample["commit_return_ns"]) / 1e6
+                    for sample in samples
+                    if "dom_mark_ns" in sample
+                ]
+            ),
+            "limits": [
+                (
+                    "Actual production DOM and application collection path, no "
+                    "private collection timestamp."
+                ),
+                "Fresh browser contexts retain backend/process/OS caches; no OS-cold claim.",
+                (
+                    "Harness writer lock correlates commit/revision; "
+                    "write time includes admission wait."
+                ),
+                (
+                    "CDP dataReceived retains ongoing SSE encoded chunks; "
+                    "loadingFinished also includes completed requests. "
+                    "Do not add overlapping counters."
+                ),
+                (
+                    "ASGI body bytes exclude HTTP/TCP framing; Python RSS includes "
+                    "runner instrumentation."
+                ),
+                (
+                    "Active Signal uses real runtime with controlled backend "
+                    "child/probe adapters, not a real provider."
+                ),
+                (
+                    "No in-process recovery claim: actual application does not "
+                    "expose its lifetime-owned binding for test-driven reinstall."
+                ),
+                (
+                    "No frozen/delayed private collection or visibility-wait "
+                    "settlement claim; existing focused hosts cover those boundaries."
+                ),
+            ],
+        }
     finally:
+        if context is not None:
+            with contextlib.suppress(Exception):
+                await context.tracing.stop(path=str(args.output.with_suffix(".failure.trace.zip")))
+                await context.close()
+        if browser is not None:
+            await browser.close()
         server.should_exit = True
         await serving
         listener.close()
-
-
-async def exercise(page: Any, requests: dict[str, dict[str, int]]) -> dict[str, Any]:
-    samples: list[dict[str, Any]] = []
-    checks: list[str] = []
-    all_marks: list[dict[str, Any]] = []
-    clocks: list[dict[str, float | int]] = []
-    visibility_results: list[dict[str, Any]] = []
-
-    async def calibrate() -> dict[str, float | int]:
-        before = time.perf_counter_ns()
-        browser_ms = await page.evaluate("performance.now()")
-        after = time.perf_counter_ns()
-        clock = {
-            "offset_ns": (before + after) / 2 - browser_ms * 1e6,
-            "uncertainty_ns": (after - before) / 2,
-        }
-        clocks.append(clock)
-        return clock
-
-    clock = await calibrate()
-    costs: list[dict[str, Any]] = []
-
-    def counters() -> dict[str, dict[str, int]]:
-        return {key: value.copy() for key, value in requests.items()}
-
-    async def change(tag: str, scenario: str = "owner", wait: bool = True) -> dict[str, Any]:
-        before = counters()
-        offered = time.perf_counter_ns()
-        if scenario == "background":
-            origin = "/".join(page.url.split("/")[:3])
-            response = await page.request.post(
-                origin + "/api/harness/change", data={"tag": tag, "scenario": scenario}
+        args.output.with_suffix(".raw.json").write_text(
+            json.dumps(
+                {"network": network, "requests": requests, "writes": writes, "samples": samples},
+                indent=2,
             )
-            assert response.ok
-            sample = await response.json()
-        else:
-            sample = await page.evaluate(
-                "([tag,scenario]) => window.navigationHarness.change(tag,scenario)", [tag, scenario]
-            )
-        sample["offered_ns"] = offered
-        if wait:
-            await page.wait_for_function(
-                "expected => { const node=document.querySelector('[data-revision]'); "
-                "return node?.dataset.epoch === expected.epoch && "
-                "BigInt(node.dataset.revision) >= BigInt(expected.revision); }",
-                arg=sample["fence"],
-            )
-            sample["render_observed_ns"] = time.perf_counter_ns()
-            marks = await page.evaluate("window.navigationHarness.renderMarks")
-            relevant = [
-                mark
-                for mark in marks
-                if mark["epoch"] == sample["fence"]["epoch"]
-                and int(mark["revision"]) >= int(sample["revision"])
-            ]
-            if relevant and scenario != "no_op":
-                sample["render_mark_ns"] = relevant[0]["rendered_ms"] * 1e6 + clock["offset_ns"]
-                sample["clock_uncertainty_ns"] = clock["uncertainty_ns"]
-        sample["cost_before"] = before
-        sample["cost_after"] = counters()
-        if wait and scenario in ("owner", "background") and tag.startswith("warm-"):
-            origin = "/".join(page.url.split("/")[:3])
-            refreshed_at = time.perf_counter_ns()
-            refresh = await page.request.get(origin + "/api/navigation/snapshot")
-            assert refresh.ok
-            sample["snapshot_transfer_comparator"] = {
-                "response_body_bytes": len(await refresh.body()),
-                "requests": 1,
-                "request_to_complete_body_ms": (time.perf_counter_ns() - refreshed_at) / 1e6,
-                "label": "Backend snapshot refresh only, not original browser baseline",
-            }
-        samples.append(sample)
-        return cast(dict[str, Any], sample)
-
-    # The parent selects the latest publication while the child keeps its previous DOM.
-    await page.evaluate("window.navigationHarness.holdRender(true)")
-    delayed = await change("delayed-dom", wait=False)
-    await page.wait_for_function(
-        "revision => window.navigationHarness.publishedRevision() === revision",
-        arg=delayed["revision"],
-    )
-    await page.wait_for_timeout(80)
-    assert await page.evaluate("window.navigationHarness.waitStatus()") == "pending"
-    assert await page.locator("[data-left]").inner_text() != "delayed-dom"
-    await page.evaluate("window.navigationHarness.holdRender(false)")
-    await page.wait_for_function("window.navigationHarness.waitStatus() === 'included'")
-    assert await page.locator("[data-left]").inner_text() == "delayed-dom"
-    assert await page.locator("[data-right]").inner_text() == "delayed-dom"
-    checks.append("Command wait remains pending until actual related DOM records update")
-
-    await page.evaluate("window.navigationHarness.holdPublication(true)")
-    delayed = await change("delayed-publication", wait=False)
-    await page.wait_for_timeout(80)
-    assert await page.evaluate("window.navigationHarness.waitStatus()") == "pending"
-    assert await page.locator("[data-left]").inner_text() == "delayed-dom"
-    await page.evaluate("window.navigationHarness.holdPublication(false)")
-    await page.wait_for_function("window.navigationHarness.waitStatus() === 'included'")
-    assert await page.locator("[data-left]").inner_text() == "delayed-publication"
-    checks.append("Delayed collection publication cannot satisfy visibility")
-
-    await page.locator("[data-draft]").fill("local draft survives")
-    await page.locator("[data-choice]").select_option("manual")
-    identity = await page.evaluate("window.navigationHarness.ownerIdentity")
-    route_streams_before = counters()["GET /api/navigation/events"]["requests"]
-    for route in ("#/a", "#/b", "#/a"):
-        old_consumer = await page.locator("[data-consumer]").get_attribute("data-consumer")
-        await page.evaluate("route => location.hash = route", route)
-        await page.wait_for_function(
-            "old => document.querySelector('[data-consumer]').dataset.consumer !== old",
-            arg=old_consumer,
+            + "\n"
         )
-        await change("route-" + route)
-    assert await page.evaluate("window.navigationHarness.ownerIdentity") == identity
-    assert counters()["GET /api/navigation/events"]["requests"] == route_streams_before
-    assert await page.locator("[data-draft]").input_value() == "local draft survives"
-    assert await page.locator("[data-choice]").input_value() == "manual"
-    checks.append("One owner survives route/pane changes and local draft/manual choice")
-
-    await page.evaluate("window.navigationHarness.holdRender(true)")
-    await change("unmount-pending", wait=False)
-    await page.wait_for_timeout(30)
-    await page.evaluate("location.hash = '#/removed-observer'")
-    await page.wait_for_function("window.navigationHarness.waitStatus() === 'unknown'")
-    await page.evaluate("window.navigationHarness.holdRender(false)")
-    checks.append("Unmount of required rendered consumer releases pending wait as unknown")
-
-    for i in range(10):
-        await change(f"warm-{i}", "background" if i % 2 else "owner")
-    before_burst = counters()
-    burst_start = time.perf_counter_ns()
-    tasks = []
-    for i in range(20):
-        await asyncio.sleep(max(0, (burst_start + i * 10_000_000 - time.perf_counter_ns()) / 1e9))
-        tasks.append(asyncio.create_task(change(f"burst-{i}", "burst", wait=False)))
-    burst = await asyncio.gather(*tasks)
-    highest = max(burst, key=lambda s: int(s["revision"]))
-    await page.wait_for_function(
-        "revision => document.querySelector('[data-revision]').dataset.revision === revision",
-        arg=highest["revision"],
-    )
-    burst_end = time.perf_counter_ns()
-    burst_final_backlog = int(highest["revision"]) - int(
-        await page.locator("[data-revision]").get_attribute("data-revision")
-    )
-    burst_marks = await page.evaluate("window.navigationHarness.renderMarks")
-    for index, sample in enumerate(burst):
-        sample["actual_task_start_ns"] = sample["offered_ns"]
-        sample["offered_ns"] = burst_start + index * 10_000_000
-        sample["burst_final_observed_ns"] = burst_end
-        sample["coherent_render_marks_at_or_after_revision"] = [
-            mark for mark in burst_marks if int(mark["revision"]) >= int(sample["revision"])
-        ]
-        relevant = sample["coherent_render_marks_at_or_after_revision"]
-        if relevant:
-            sample["render_mark_ns"] = relevant[0]["rendered_ms"] * 1e6 + clock["offset_ns"]
-            sample["clock_uncertainty_ns"] = clock["uncertainty_ns"]
-    for sample in burst:
-        completed = [
-            int(mark["revision"])
-            for mark in burst_marks
-            if mark["epoch"] == sample["fence"]["epoch"]
-            and mark["rendered_ms"] * 1e6 + clock["offset_ns"] <= sample["commit_return_ns"]
-        ]
-        sample["pending_revisions_at_commit"] = int(sample["revision"]) - max(completed, default=0)
-    costs.append({"scenario": "burst", "before": before_burst, "after": counters()})
-    await page.evaluate("window.navigationHarness.disconnect()")
-    reconnected = await change("disconnected", "reconnect", wait=False)
-    await page.evaluate("window.navigationHarness.reconnect()")
-    await page.wait_for_function(
-        "document.querySelector('[data-left]').textContent === 'disconnected'"
-    )
-    reconnected["render_observed_ns"] = time.perf_counter_ns()
-    reconnect_marks = await page.evaluate("window.navigationHarness.renderMarks")
-    relevant = [
-        mark
-        for mark in reconnect_marks
-        if mark["epoch"] == reconnected["fence"]["epoch"]
-        and int(mark["revision"]) >= int(reconnected["revision"])
-    ]
-    assert relevant
-    reconnected["render_mark_ns"] = relevant[0]["rendered_ms"] * 1e6 + clock["offset_ns"]
-    reconnected["clock_uncertainty_ns"] = clock["uncertainty_ns"]
-    checks.append("Reconnect resumes from published cursor and reaches coherent DOM")
-    await change("noop", "no_op")
-    await page.wait_for_function("window.navigationHarness.waitStatus() === 'no_op'")
-    checks.append("Certified no-op remains distinct from a relevant change")
-    await change("reset", "reset")
-    before_large = counters()
-    await change("large-", "large")
-    after_large = counters()
-    assert (
-        after_large["GET /api/navigation/snapshot"]["requests"]
-        > before_large["GET /api/navigation/snapshot"]["requests"]
-    )
-    costs.append({"scenario": "large", "before": before_large, "after": after_large})
-    assert (await page.locator("[data-left]").inner_text()).startswith("large-")
-    fanout = asyncio.create_task(change("fanout-", "fanout"))
-    origin = "/".join(page.url.split("/")[:3])
-    async with asyncio.timeout(5):
-        while not (await (await page.request.get(origin + "/api/harness/fanout-admitted")).json())[
-            "admitted"
-        ]:
-            await asyncio.sleep(0.001)
-    foreground = asyncio.create_task(change("foreground", "foreground"))
-    fanout_sample, foreground_sample = await asyncio.gather(fanout, foreground)
-    assert (
-        fanout_sample["admitted_ns"]
-        < foreground_sample["admitted_ns"]
-        < fanout_sample["commit_return_ns"]
-    )
-    await page.evaluate("window.navigationHarness.disconnect()")
-    await change("deleted", "delete", wait=False)
-    assert await page.evaluate("window.navigationHarness.hasDeletedProject()") is True
-    await change("delete-reset", "reset", wait=False)
-    await page.evaluate("window.navigationHarness.reconnect()")
-    await page.wait_for_function("window.navigationHarness.hasDeletedProject() === false")
-    assert await page.evaluate("window.navigationHarness.hasDeletedProject()") is False
-    checks.append(
-        "Epoch reset and oversized batch recover through full snapshot. "
-        "Replacement removes absent record"
-    )
-    # Capture each page before reload destroys its DOM marks.
-    all_marks.extend(await page.evaluate("window.navigationHarness.renderMarks"))
-    visibility_results.extend(await page.evaluate("window.navigationHarness.state().waitResults"))
-    for i in range(3):
-        assert await page.evaluate("window.navigationHarness.coherenceErrors") == []
-        await page.reload()
-        await page.wait_for_function("window.navigationHarness?.ready()")
-        clock = await calibrate()
-        await change(f"browser-reload-{i}", "browser-reload")
-        all_marks.extend(await page.evaluate("window.navigationHarness.renderMarks"))
-        visibility_results.extend(
-            await page.evaluate("window.navigationHarness.state().waitResults")
-        )
-    assert await page.evaluate("window.navigationHarness.coherenceErrors") == []
-    marks = await page.evaluate("window.navigationHarness.renderMarks")
-    observed = [s for s in samples if "render_observed_ns" in s]
-    marked = [s for s in samples if "render_mark_ns" in s]
-    for sample in samples:
-        sample["cost_delta"] = {
-            key: {
-                metric: value - sample["cost_before"].get(key, {}).get(metric, 0)
-                for metric, value in counter.items()
-            }
-            for key, counter in sample["cost_after"].items()
-        }
-    return {
-        "checks": checks,
-        "browser_memory": await page.evaluate(
-            "performance.memory ? ({usedJSHeapSize:performance.memory.usedJSHeapSize,"
-            "totalJSHeapSize:performance.memory.totalJSHeapSize,"
-            "jsHeapSizeLimit:performance.memory.jsHeapSizeLimit}) : ({available:false})"
-        ),
-        "samples": samples,
-        "final_render_marks": marks,
-        "all_render_marks": all_marks,
-        "workload_costs": costs,
-        "burst_render_marks": burst_marks,
-        "clock_calibrations": clocks,
-        "visibility_results": visibility_results,
-        "dom_mark_latency_ms": {
-            scenario: {
-                "offered_to_render": distribution(
-                    [
-                        (s["render_mark_ns"] - s["offered_ns"]) / 1e6
-                        for s in marked
-                        if s["scenario"] == scenario
-                    ]
-                ),
-                "admission_to_render": distribution(
-                    [
-                        (s["render_mark_ns"] - s["admitted_ns"]) / 1e6
-                        for s in marked
-                        if s["scenario"] == scenario
-                    ]
-                ),
-                "commit_to_render": distribution(
-                    [
-                        (s["render_mark_ns"] - s["commit_return_ns"]) / 1e6
-                        for s in marked
-                        if s["scenario"] == scenario
-                    ]
-                ),
-            }
-            for scenario in sorted({s["scenario"] for s in marked})
-        },
-        "background_method": "Background commits use an independent HTTP client. Owner commits "
-        "use browser fetch and a command visibility wait. Both use the same isolated writer",
-        "latency_ms": {
-            scenario: {
-                "offered_to_observed_dom": distribution(
-                    [
-                        (s["render_observed_ns"] - s["offered_ns"]) / 1e6
-                        for s in observed
-                        if s["scenario"] == scenario
-                    ]
-                ),
-                "admission_to_observed_dom": distribution(
-                    [
-                        (s["render_observed_ns"] - s["admitted_ns"]) / 1e6
-                        for s in observed
-                        if s["scenario"] == scenario
-                    ]
-                ),
-                "commit_to_observed_dom": distribution(
-                    [
-                        (s["render_observed_ns"] - s["commit_return_ns"]) / 1e6
-                        for s in observed
-                        if s["scenario"] == scenario
-                    ]
-                ),
-            }
-            for scenario in sorted({s["scenario"] for s in observed})
-        },
-        "burst": {
-            "offered_count": 20,
-            "offered_rate_per_second": 100,
-            "achieved_to_last_dom_per_second": 20 / ((burst_end - burst_start) / 1e9),
-            "final_backlog": max(0, burst_final_backlog),
-            "max_pending_revisions_at_commit": max(s["pending_revisions_at_commit"] for s in burst),
-        },
-        "failures": 0,
-    }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--static-dir", type=Path, required=True)
-    parser.add_argument("--index", required=True)
-    parser.add_argument("--runtime", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    result = asyncio.run(run(args))
+    args = parse_args()
+    args.source_root = args.source_root.resolve()
+    args.output = args.output.resolve()
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    if not args.isolated_child:
+        args.runtime_parent.mkdir(parents=True, exist_ok=True)
+        if args.mode == "baseline":
+            revision = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=args.source_root, text=True
+            ).strip()
+            if revision != "f0977a512ba9a6bb1736e15ee9760aa39989a0fc":
+                raise ValueError("Baseline source differs from the selected immutable source")
+        root = Path(tempfile.mkdtemp(prefix="actual-app-", dir=args.runtime_parent)).resolve()
+        env = isolated_environment(root, args.source_root, os.environ)
+        if args.browser_cache:
+            env["PLAYWRIGHT_BROWSERS_PATH"] = str(args.browser_cache.resolve())
+        elif not args.browser_executable:
+            raise ValueError(
+                "Explicit --browser-cache or --browser-executable is required under synthetic HOME"
+            )
+        command = [
+            str(args.source_root / ".venv/bin/python"),
+            str(Path(__file__).resolve()),
+            *sys.argv[1:],
+            "--isolated-child",
+            "--runtime",
+            str(root),
+        ]
+        completed = subprocess.run(
+            command,
+            cwd=args.source_root,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        args.output.with_suffix(".log").write_text(completed.stdout)
+        if completed.returncode:
+            raise SystemExit(completed.returncode)
+        return
+    result = asyncio.run(run(args))
+    from jsonschema import validate  # type: ignore[import-untyped]
+
+    validate(result, EVIDENCE_SCHEMA)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps({"output": str(args.output), "checks": result["checks"], "failures": 0}))
 
 
 if __name__ == "__main__":

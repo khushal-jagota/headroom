@@ -35,6 +35,11 @@ navigation.owner.registerObserver=(name)=>{const observer=register(name);if(name
  {requiredObservers:hoverObservers.slice(-1),timeoutMs:250}).then(result=>(window as any).__hoverWaitStatus=result.status);
 };
 (window as any).__recover=()=>navigation.owner.recover().catch(()=>undefined);
+(window as any).__waitChief=()=>{
+ const publication=navigation.owner.getState().publication!;
+ return navigation.owner.waitForVisibility({...publication.continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic-proof'},
+ {requiredObservers:navigation.captureRenderBoundaries().filter(observer=>observer.id.startsWith('chief-conversation:')),timeoutMs:250});
+};
 import { parseWorkspaceAddress } from "../src/lib/workspaceAddress";
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -142,6 +147,9 @@ workers = {"chief_of_staff": {"conversation_id":"fixture-chief", "label": "Chief
 held = []
 delay_old = True
 snapshot_failure = True
+conversation_reads=[]
+chief_sends=[]
+chief_resets=[]
 
 def fulfill(route, result):
     route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
@@ -153,6 +161,19 @@ def respond(route):
             route.fulfill(status=503, content_type="application/json", body=json.dumps({"error":{"code":"unavailable","message":"Workspace unavailable","detail":None}}))
             return
         result = navigation_response(board,workers)
+    elif path == "chief/conversation": raise AssertionError("competing Chief pointer query remains")
+    elif path == "chief/conversation/send":
+        chief_sends.append(route.request.post_data_json)
+        result={"conversation_id":"chief-delivered","fate":"started"}
+    elif path == "chief/conversation/reset":
+        chief_resets.append(True)
+        result={}
+    elif path.startswith("conversation/conversations/"):
+        identity=path.split("/")[2]
+        if path.endswith("/events"): result={"events":[]}
+        else:
+            conversation_reads.append(identity)
+            result=dict(conversation_id=identity,backend_key="codex",supports_steer=True,model="fixture",reasoning_effort=None,workspace_folder="/tmp",access="full",role_text=None,identity_environment_variable_names=[],latest_sequence=0,owner_read_through_sequence=0,is_running=False,held_prompts=[],pending_permission_ask=None,pending_user_input=None,composer_catalog=[])
     elif path == "board" or path == "workers": raise AssertionError("summary query remains active: " + path)
     elif path.endswith("/recap-preview"): raise AssertionError("unexpected preview request: " + path)
     elif path.startswith("items/") and path.endswith("/workspace-content"):
@@ -214,6 +235,9 @@ with sync_playwright() as p:
     order(page, expected)
     page.wait_for_function("() => document.querySelector('[data-sprint-item-workspace=si_old]') !== null")
     # Python route interception keeps this response pending until selection is proven.
+    for _ in range(100):
+        if held: break
+        page.wait_for_timeout(10)
     assert len(held) == 1, "the full workspace request was not delayed"
     delay_old = False
     fulfill(held.pop(), {key:workspace("si_old")[key] for key in ["body","artifacts","conversation_history"]})
@@ -311,6 +335,73 @@ with sync_playwright() as p:
     expect(panel).to_have_attribute('aria-hidden','false')
     page.evaluate('window.__startHoverWait()')
     page.wait_for_function("window.__hoverWaitStatus==='unknown'")
+    # Chief consumes the same canonical pointer and exact Signal as the rail.
+    workers['chief_of_staff']['conversation_signal']={'working':True,'message_for_owner':False}
+    page.evaluate('window.__refresh()')
+    page.goto(sys.argv[1]+'#/workspace/chief-of-staff')
+    expect(page.locator('.chief-signal [data-conversation-signal]')).to_have_attribute('data-conversation-signal','working')
+    assert page.evaluate('window.__waitChief()')['status']=='included'
+    # A correct signal cannot certify a pane whose actual mounted identity is wrong.
+    page.locator('.chief-conversation [data-conversation-pane]').evaluate("node=>node.dataset.conversationId='wrong-pane'")
+    page.evaluate('window.__refresh()')
+    assert page.evaluate('window.__waitChief()')['status']=='unknown'
+    page.locator('.chief-conversation [data-conversation-pane]').evaluate("node=>node.dataset.conversationId='fixture-chief'")
+    page.evaluate('window.__refresh()')
+    assert page.evaluate('window.__waitChief()')['status']=='included'
+    snapshot_failure=True
+    page.evaluate('window.__recover()')
+    expect(page.locator('.chief-signal [data-conversation-signal]')).to_have_count(0)
+    expect(page.locator('[data-chief-conversation-retry]')).to_have_count(1)
+    expect(page.locator('.error-line')).to_have_count(1)
+    snapshot_failure=False
+    page.locator('[data-chief-conversation-retry]').click()
+    expect(page.locator('.error-line')).to_have_count(0)
+    expect(page.locator('.chief-signal [data-conversation-signal]')).to_have_attribute('data-conversation-signal','working')
+    workers['chief_of_staff']['conversation_signal']={'working':True,'message_for_owner':True}
+    page.evaluate('window.__refresh()')
+    snapshot_failure=True
+    page.evaluate('window.__recover()')
+    expect(page.locator('.chief-signal [data-conversation-signal]')).to_have_attribute('data-conversation-signal','message')
+    snapshot_failure=False
+    page.locator('[data-chief-conversation-retry]').click()
+    expect(page.locator('[data-chief-conversation-retry]')).to_have_count(0)
+    # The delivered conversation wins locally until a real canonical pointer change.
+    composer=page.locator('.chief-conversation [data-conversation-input]')
+    composer.fill('Chief continuation')
+    composer.press('Enter')
+    for _ in range(100):
+        if 'chief-delivered' in conversation_reads: break
+        page.wait_for_timeout(10)
+    assert chief_sends and 'chief-delivered' in conversation_reads
+    # Domain delivery succeeds independently; missing render fence remains diagnostic unknown.
+    evidence=page.evaluate('window.__navigation.commandEvidence.at(-1)')
+    assert evidence['status']=='unknown' and evidence['reason']=='missing_or_invalid_fence'
+    assert evidence['impact']['complete'] is True
+    assert evidence['impact']['records'][0]['kind']=='chief'
+    assert any(identity.startswith('chief-conversation:') for identity in evidence['observers'])
+    assert not any(identity.startswith('orchestrator-children:') for identity in evidence['observers'])
+    assert evidence['domainCompletedAt']>=evidence['startedAt']
+    old_reads=conversation_reads.count('fixture-chief')
+    page.evaluate('window.__refresh()')
+    assert conversation_reads.count('fixture-chief')==old_reads
+    assert page.evaluate('window.__waitChief()')['status']=='unknown'
+    workers['chief_of_staff']['conversation_id']='chief-delivered'
+    page.evaluate('window.__refresh()')
+    assert page.evaluate('window.__waitChief()')['status']=='included'
+    # Reset-null also survives an unrelated publication carrying the same old pointer.
+    page.locator('.chief-conversation [aria-label="Conversation options"]').click()
+    page.locator('[data-conversation-new-arm]').click()
+    page.locator('[data-conversation-new-confirm]').click()
+    for _ in range(100):
+        if chief_resets: break
+        page.wait_for_timeout(10)
+    delivered_reads=conversation_reads.count('chief-delivered')
+    page.evaluate('window.__refresh()')
+    assert chief_resets and conversation_reads.count('chief-delivered')==delivered_reads
+    assert page.evaluate('window.__waitChief()')['status']=='unknown'
+    workers['chief_of_staff']['conversation_id']=None
+    page.evaluate('window.__refresh()')
+    assert page.evaluate('window.__waitChief()')['status']=='included'
     assert not errors, errors
     browser.close()
 `;

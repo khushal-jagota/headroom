@@ -1,13 +1,14 @@
 <script lang="ts">
   import { untrack, tick, onDestroy } from "svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { navigationWorkspacePresentation, type NavigationWorkspacePresentation } from "../lib/navigation/presentation";
+  import { type NavigationPresentation } from "../lib/navigation/presentation";
   import { stabilizeWorkspaceRail } from "../lib/workspaceRail";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import { lifecycleFor } from "../lib/lifecycle";
   import type { RenderObserver } from "../lib/navigation/visibility";
   import type { NavigationPublication } from "../lib/navigation/collection";
-  import { railDomMatches, hoverDomMatches } from "../lib/navigation/render";
+  import { railDomMatches, hoverDomMatches } from "../lib/workspaceRailDom";
+  import { workspaceRailImpact, workspaceHoverImpact, orchestratorSettleImpact } from "../lib/workspaceNavigationImpact";
   import { createRailMotionController } from "../lib/workspaceRailMotion";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
@@ -35,16 +36,18 @@
     return context;
   })();
   const manifests = createQuery(() => queries.workerTypeManifests());
-  let workspace = $state.raw<NavigationWorkspacePresentation | null>(null);
+  let workspace = $state.raw<NavigationPresentation | null>(null);
   let displayedPublication = $state.raw<NavigationPublication | null>(null);
   $effect(() => {
     const effective = navigation.selectors.effective;
     if (effective) {
-      workspace = navigationWorkspacePresentation(effective);
+      workspace = navigation.presentationFor(effective);
       displayedPublication = effective.publication;
     }
   });
-  const railObserver = navigation.registerRenderBoundary(`workspace-rail:${crypto.randomUUID()}`);
+  const railObserver = navigation.registerRenderBoundary(`workspace-rail:${crypto.randomUUID()}`,impact => {
+    const view=navigation.state.effective;return workspaceRailImpact(impact,view ? navigation.presentationFor(view) : undefined,rail,settledOpen);
+  });
   onDestroy(() => navigation.disposeRenderBoundary(railObserver));
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let opening = $derived(whatTheAddressOpens(address));
@@ -190,7 +193,13 @@
   });
   $effect(() => {
     if (!hoverVisible || !hoverElement) return;
-    const observer = navigation.registerRenderBoundary(`workspace-hover:${crypto.randomUUID()}`);
+    const observer = navigation.registerRenderBoundary(`workspace-hover:${crypto.randomUUID()}`,impact => {
+      const kind=hoverWorkerId ? 'ticket' : hoverItemId ? 'orchestrator' : 'chief';
+      const id=hoverWorkerId ?? hoverItemId ?? 'chief';
+      const view=navigation.state.effective;
+      return workspaceHoverImpact(impact,kind,id,hoverWorker?.conversation_id ?? hoverConversationId,view ? navigation.presentationFor(view) : undefined,
+        kind==='chief' || kind==='orchestrator' && !hoveredItem?.recapPreview.trim());
+    });
     hoverObserver = observer;
     return () => { navigation.disposeRenderBoundary(observer); hoverObserver = null; };
   });
@@ -222,14 +231,10 @@
     return () => { obsolete = true; };
   });
   async function settle(item: WorkspaceRailItem, settled: boolean): Promise<void> {
-    const requiredObservers = navigation.captureRenderBoundaries();
-    const responseMetadata: {headers?: Headers} = {};
     busyItem = item.id; settleError = ""; hoverVisible = false; hover.leave();
     try {
-      await mutateJson(`/api/items/${encodeURIComponent(item.id)}/settled`, { method:"PATCH", body:{settled}, responseMetadata });
-      let fence: unknown;
-      try { fence = JSON.parse(responseMetadata.headers?.get('Panels-Navigation-Fence') ?? 'null'); } catch { fence = null; }
-      void navigation.owner.waitForVisibility(fence, {requiredObservers});
+      await navigation.runCommand(orchestratorSettleImpact(item.id),responseMetadata =>
+        mutateJson(`/api/items/${encodeURIComponent(item.id)}/settled`, {method:"PATCH",body:{settled},responseMetadata}),"set orchestrator settled");
     }
     catch (error) { settleError = error instanceof Error ? error.message : "The orchestrator could not be updated."; }
     finally { busyItem = null; }
@@ -259,7 +264,7 @@
                     <button class="settled-title" type="button" onclick={() => selectItem(item.id)} use:railPreview={{show:(target, immediate) => hoverItem(target,item,immediate), leave:() => hover.leave()}}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
                     <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
                   </div>
-                  <WorkspaceMessages conversations={workspaceRailChildMessageConversations(messages, item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
+                  <WorkspaceMessages conversations={workspaceRailChildMessageConversations(workspace?.messagesByParent.get(item.id) ?? [], item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
                   </div>
                 {/each}
                 </div>
@@ -285,7 +290,7 @@
         >
           {#if opening.chiefMarked}
             <div class="board-workspace-chief-conversation">
-              <ChiefConversation />
+              <ChiefConversation showRequestErrorLine={false} />
             </div>
           {:else if opening.markedTicketId}
             {#key opening.markedTicketId}

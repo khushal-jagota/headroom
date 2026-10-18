@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { TicketDetail } from "../lib/types";
+  import type { ResponseMetadata } from "../lib/navigation/commandEvidence";
   import { mutateJson } from "../lib/mutate";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
-  let { ticket, terminal }: { ticket: TicketDetail; terminal: boolean } = $props();
+  let { ticket, terminal, assertCurrent, runCommand }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown> } = $props();
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -13,12 +14,14 @@
     busy = true;
     error = null;
     try {
-      await mutateJson(`/api/tickets/${encodeURIComponent(ticket.id)}/${action}`, {
-        method: "POST",
+      assertCurrent?.();
+      const request=(responseMetadata:ResponseMetadata)=>mutateJson(`/api/tickets/${encodeURIComponent(ticket.id)}/${action}`, {
+        method: "POST",responseMetadata,
         body: {
           ...(ticket.record_sha256 ? { expected_record_sha256: ticket.record_sha256 } : {})
         }
       });
+      await (runCommand ? runCommand(request) : request({}));
     } catch (err) {
       error = err;
     } finally {

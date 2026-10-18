@@ -1,8 +1,8 @@
 <script lang="ts">
   import { tick, onDestroy } from "svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { navigationReviewPresentation } from "../lib/navigation/presentation";
-  import { shellRuntimeDomMatches } from "../lib/navigation/render";
+  import { runtimeCountImpact } from "../lib/reviewNavigationImpact";
+  import { shellRuntimeDomMatches } from "../lib/shellDom";
   import { createQuery } from "@tanstack/svelte-query";
   import type { ConnectionStatus } from "../lib/changeStream";
   import {
@@ -25,12 +25,14 @@
   } = $props();
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Shell requires the application navigation owner"); return value; })();
-  const observer = navigation.registerRenderBoundary(`shell-runtime:${crypto.randomUUID()}`);
+  const observer = navigation.registerRenderBoundary(`shell-runtime:${crypto.randomUUID()}`,impact => {
+    const view=navigation.state.effective;return runtimeCountImpact(impact,view ? navigation.presentationFor(view) : undefined);
+  });
   onDestroy(() => navigation.disposeRenderBoundary(observer));
   let root = $state<HTMLElement | null>(null);
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
-  let runningWorkerCount = $derived(displayed ? navigationReviewPresentation(displayed).runningConversationCount : null);
+  let runningWorkerCount = $derived(displayed ? navigation.presentationFor(displayed).review.runningConversationCount : null);
   $effect(() => {
     const effective = displayed;
     const generation = navigation.state.generation;

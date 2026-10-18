@@ -154,7 +154,11 @@ Code paths: `navigation/proof.py`, `navigation/proof_contracts.py`, `navigation/
 
 ## Browser synchronization boundary
 
-The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary orchestrator headers and children, Chief child pagination, Review queue, shell work count, and Ticket masthead use it. Ordinary orchestrator content and exact-identity proposal bodies remain separate detail reads. Ticket current-stage sections and remaining conversation adoption are pending. Unconverted surfaces retain their existing reads until their cutover removes the overlap.
+The browser navigation module maintains one shared replica above routes and panes. The workspace sidebar, ordinary orchestrator headers and children, Chief child pagination, Review queue, shell work count, Ticket masthead and current-stage section, and Chief conversation pointer use it. Ordinary orchestrator content and exact-identity proposal bodies remain separate detail reads.
+
+One presentation result belongs to each effective view identity. Shared indexes supply parent membership, identity joins, addresses, and Review facts. Knowledge changes invalidate the result even without a new publication. Feature modules own DOM assertions and dependency checks. The application captures relevant mounted observers before each command and retains bounded visibility evidence independently of the domain result.
+
+The current-stage section admits detail only when public identity, control facts, and exact proposal revision match. Worker configuration must describe the canonical stage. Retained detail preserves edits but cannot authorize a gesture against a replaced identity or certify a newer publication. A confirmed read immediately invalidates the exact conversation fact at the returned watermark before recovery.
 
 Ticket masthead Project names follow the existing parent-or-own Project rule. The masthead never rewrites the full detail object used by actions, fields, proposals, blockers, and configuration. Missing source membership cannot credit a retained masthead as current. Shared read errors appear once in a composed workspace. Distinct failed content or detail reads retain their own error lines.
 
@@ -192,7 +196,7 @@ After an epoch change, the server must certify the issued fence against a replac
 
 Unknown visibility never causes an automatic command resend. A certified no-op does not imply a relevant visible change.
 
-Existing frontend browser hosts exercise the converted consumers with strict synthetic source publications. Isolated runtime and socket fixtures exercise actual producer admission and delivery separately. The old comparator harness requires actual wire2 producer lifetime adaptation before further use. These bounded results do not establish complete application recovery, production consumer parity, or speedup.
+Existing frontend browser hosts exercise the converted consumers with strict synthetic source publications. Isolated runtime and socket fixtures exercise actual producer admission and delivery separately. The comparison harness runs the actual built App and application lifetime with synthetic source data and controlled backend adapters. It retains exact source, dependency and asset identities, raw traffic, DOM observations and measurement limits. Separate process runs compare the original browser and candidate under matched workloads. These results require review of their coverage and costs before product acceptance.
 
 Code paths: `web/src/lib/navigation/`, `web/tests/navigation-*`, and `scripts/navigation_browser_harness.py`.
 

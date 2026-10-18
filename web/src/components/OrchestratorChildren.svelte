@@ -2,9 +2,9 @@
   import { railPreview } from "../lib/workspaceRailInteraction";
   import { onDestroy, tick } from "svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { navigationWorkspacePresentation } from "../lib/navigation/presentation";
-  import { childrenDomMatches } from "../lib/navigation/render";
-  import { chiefChildrenPage, filterOrchestratorChildren } from "../lib/orchestratorChildren";
+  import { orchestratorChildrenImpact } from "../lib/workspaceNavigationImpact";
+  import { childrenDomMatches } from "../lib/orchestratorWorkspaceDom";
+  import { chiefChildrenPage, filterOrchestratorChildren, orchestratorGroupDefaultOpen } from "../lib/orchestratorChildren";
   import { orchestratorPageGroups } from "../lib/orchestratorPage";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { workspaceAddress } from "../lib/workspaceAddress";
@@ -13,8 +13,9 @@
   import ResourceState from "./ResourceState.svelte";
   import SprintTicketRow from "./SprintTicketRow.svelte";
 
-  let { principal, tickets, publication, onHover = undefined, onLeave = () => undefined }: {
+  let { principal, tickets, publication, navigationErrorHandledByParent = false, onHover = undefined, onLeave = () => undefined }: {
     principal: OrchestratorPrincipal;
+    navigationErrorHandledByParent?: boolean;
     publication?: import("../lib/navigation/collection").NavigationPublication;
     tickets?: readonly (WorkItemTicketFacts & {is_backlogged:boolean})[];
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
@@ -29,12 +30,15 @@
     { value: "done", label: "Done" }
   ];
   const navigation=navigationApplication();
-  const observer=navigation?.registerRenderBoundary(`orchestrator-children:${crypto.randomUUID()}`);
+  const observer=navigation?.registerRenderBoundary(`orchestrator-children:${crypto.randomUUID()}`,impact => {
+    const view=navigation?.state.effective;
+    return orchestratorChildrenImpact(impact,principal,view && navigation ? navigation.presentationFor(view) : undefined,rows,groups,groupOpen);
+  });
   onDestroy(()=>{if(observer) navigation?.disposeRenderBoundary(observer);});
   let effective=$state.raw<import('../lib/navigation/knowledge').EffectiveNavigationView | undefined>(undefined);
   $effect(()=>{const view=navigation?.selectors.effective;if(view) effective=view;});
-  let shared=$derived(effective ? navigationWorkspacePresentation(effective) : undefined);
-  let chiefPage=$derived(shared ? chiefChildrenPage(shared.tickets.filter(ticket=>ticket.orchestrator?.kind==='chief'),filter,offset) : undefined);
+  let shared=$derived(effective && navigation ? navigation.presentationFor(effective) : undefined);
+  let chiefPage=$derived(shared ? chiefChildrenPage(shared.ticketsByParent.get('chief:chief') ?? [],filter,offset) : undefined);
   let rows = $derived(tickets === undefined ? chiefPage?.tickets ?? [] : filterOrchestratorChildren(tickets, filter));
   let groups = $derived(orchestratorPageGroups<WorkItemTicketFacts>(rows));
   let page = $derived(tickets === undefined ? chiefPage?.page : undefined);
@@ -86,11 +90,11 @@
       {#each filters as option}<option value={option.value}>{option.label}</option>{/each}
     </select>
   </label>
-  <ResourceState error={tickets === undefined ? navigation?.state.error : null} loading={tickets === undefined && !shared}
+  <ResourceState error={tickets === undefined && !navigationErrorHandledByParent ? navigation?.state.error : null} loading={tickets === undefined && !shared}
     hasData={tickets !== undefined || shared !== undefined} loadingText="Loading Workers…">
     {#each groups as group (`${scope}:${group.key}`)}
       <Disclosure variant="orchestrator-group" class="sprint-workspace-status" data-workspace-group={group.key}
-        defaultOpen={groupOpen[group.key] ?? (group.key !== "done")}
+        defaultOpen={groupOpen[group.key] ?? orchestratorGroupDefaultOpen(group.key)}
         onReaderToggle={(open) => groupOpen[group.key] = open} chevron="none">
         {#snippet summary()}
           <span class="sprint-workspace-status-label">{group.label}</span>

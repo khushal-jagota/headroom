@@ -8,9 +8,10 @@
   import WorkspaceRailHover from "./WorkspaceRailHover.svelte";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { navigationWorkspacePresentation } from "../lib/navigation/presentation";
   import type { EffectiveNavigationView } from "../lib/navigation/knowledge";
-  import { hoverDomMatches, workspaceHeaderDomMatches } from "../lib/navigation/render";
+  import { orchestratorHeaderImpact, workspaceHoverImpact, orchestratorEditImpact, orchestratorSettleImpact, conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
+  import { hoverDomMatches } from "../lib/workspaceRailDom";
+  import { workspaceHeaderDomMatches } from "../lib/orchestratorWorkspaceDom";
   import { lifecycleFor } from "../lib/lifecycle";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { RenderObserver } from "../lib/navigation/visibility";
@@ -66,12 +67,14 @@
     if(!context) throw new Error('SprintItemWorkspace requires the application navigation owner');
     return context;
   })();
-  const headerObserver=navigation.registerRenderBoundary(`orchestrator-header:${crypto.randomUUID()}`);
+  const headerObserver=navigation.registerRenderBoundary(`orchestrator-header:${crypto.randomUUID()}`,impact => {
+    const view=navigation.state.effective;return orchestratorHeaderImpact(impact,itemId,view ? navigation.presentationFor(view) : undefined);
+  });
   onDestroy(()=>navigation.disposeRenderBoundary(headerObserver));
   let displayedView=$state.raw<EffectiveNavigationView | undefined>(undefined);
   $effect(()=>{const view=navigation.selectors.effective;if(view) displayedView=view;});
-  let shared=$derived(displayedView ? navigationWorkspacePresentation(displayedView) : undefined);
-  let publicItem=$derived(shared?.orchestrators.find(item=>item.id===itemId));
+  let shared=$derived(displayedView ? navigation.presentationFor(displayedView) : undefined);
+  let publicItem=$derived(shared?.orchestratorsById.get(itemId));
   let content=$derived(workspaceResource ?? ownWorkspace);
   let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
     error:content.error ?? (navigationErrorHandledByParent ? null : navigation.state.error),isLoading:content.isLoading || !publicItem});
@@ -95,7 +98,7 @@
 
   let hoverTarget = $state<HTMLElement | null>(null);
   let hoverWorkerId = $state<string | null>(null);
-  let hoverWorker = $derived(shared?.tickets.find((ticket) => ticket.id === hoverWorkerId && ticket.sprint_item_id===itemId) ?? null);
+  let hoverWorker = $derived(shared?.ticketsByParent.get(`orchestrator:${itemId}`)?.find(ticket=>ticket.id===hoverWorkerId) ?? null);
   let hoverVisible = $state(false);
   let hoverInstant = $state(false);
   const hover = createRailHoverController<{target:HTMLElement; ticket:WorkItemTicketFacts}>((value, instant) => {
@@ -124,19 +127,9 @@
       .catch(() => undefined);
   });
 
-  function commandVisibility(headers:Headers | undefined,requiredObservers:readonly RenderObserver[]):void {
-    let fence:unknown;
-    try {fence=JSON.parse(headers?.get('Panels-Navigation-Fence') ?? 'null');} catch {fence=null;}
-    void navigation.owner.waitForVisibility(fence,{requiredObservers});
-  }
-  async function saveItem(field: "title" | "body" | "priority", value: string): Promise<unknown> {
-    const required=navigation.captureRenderBoundaries();
-    const responseMetadata:{headers?:Headers}={};
-    const result=await mutateJson(`/api/items/${encodeURIComponent(itemId)}`, {
-      method: "PATCH",body: { [field]: value },responseMetadata
-    });
-    commandVisibility(responseMetadata.headers,required);
-    return result;
+  function saveItem(field: "title" | "body" | "priority", value: string): Promise<unknown> {
+    return navigation.runCommand(orchestratorEditImpact(itemId,field),responseMetadata =>
+      mutateJson(`/api/items/${encodeURIComponent(itemId)}`, {method:"PATCH",body:{[field]:value},responseMetadata}),`edit orchestrator ${field}`);
   }
 
   let settleBusy = $state(false);
@@ -144,11 +137,9 @@
   async function setSettled(settled: boolean): Promise<void> {
     settleBusy = true;
     settleError = "";
-    const required=navigation.captureRenderBoundaries();
-    const responseMetadata:{headers?:Headers}={};
     try {
-      await mutateJson(`/api/items/${encodeURIComponent(itemId)}/settled`, { method: "PATCH", body: { settled },responseMetadata });
-      commandVisibility(responseMetadata.headers,required);
+      await navigation.runCommand(orchestratorSettleImpact(itemId),responseMetadata =>
+        mutateJson(`/api/items/${encodeURIComponent(itemId)}/settled`, {method:"PATCH",body:{settled},responseMetadata}),"set orchestrator settled");
     } catch (error) {
       settleError = error instanceof Error ? error.message : "The orchestrator could not be updated.";
     } finally {
@@ -157,19 +148,17 @@
   }
 
   async function sendMessage(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered = await mutateJson<DeliveredMessage>(
-      `/api/items/${encodeURIComponent(itemId)}/conversation/send`,
-      { method: "POST", body }
-    );
+    const view=navigation.state.effective;
+    const delivered = await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'orchestrator',itemId),responseMetadata => mutateJson<DeliveredMessage>(
+      `/api/items/${encodeURIComponent(itemId)}/conversation/send`, {method:"POST",body,responseMetadata}),"send orchestrator message");
     conversationId = delivered.conversation_id;
     return delivered;
   }
 
   async function newConversation(): Promise<void> {
-    await mutateJson(
-      `/api/items/${encodeURIComponent(itemId)}/conversation/reset`,
-      { method: "POST" }
-    );
+    const view=navigation.state.effective;
+    await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'orchestrator',itemId),responseMetadata => mutateJson(
+      `/api/items/${encodeURIComponent(itemId)}/conversation/reset`, {method:"POST",responseMetadata}),"reset orchestrator conversation");
     conversationId = null;
   }
 
@@ -242,7 +231,9 @@
   });
   $effect(()=>{
     if(!hoverVisible || !hoverElement) return;
-    const observer=navigation.registerRenderBoundary(`orchestrator-hover:${crypto.randomUUID()}`);
+    const observer=navigation.registerRenderBoundary(`orchestrator-hover:${crypto.randomUUID()}`,impact => {
+      const view=navigation.state.effective;return hoverWorkerId!==null && workspaceHoverImpact(impact,'ticket',hoverWorkerId,hoverWorker?.conversation_id,view ? navigation.presentationFor(view) : undefined);
+    });
     hoverObserver=observer;
     return ()=>{navigation.disposeRenderBoundary(observer);hoverObserver=null;};
   });
@@ -322,9 +313,9 @@
           </header>
 
           <section class="orchestrator-workers" aria-label="Workers">
-            <OrchestratorChildren principal={{ kind: "sprint_item", id: itemId }} publication={displayedView?.publication} tickets={shared?.tickets.filter(ticket=>ticket.sprint_item_id===itemId) ?? []}
+            <OrchestratorChildren navigationErrorHandledByParent principal={{ kind: "sprint_item", id: itemId }} publication={displayedView?.publication} tickets={shared?.ticketsByParent.get(`orchestrator:${itemId}`) ?? []}
               onHover={(element, id, immediate) => {
-                const ticket = shared?.tickets.find((candidate) => candidate.id === id && candidate.sprint_item_id===itemId);
+                const ticket = shared?.ticketsByParent.get(`orchestrator:${itemId}`)?.find(candidate=>candidate.id===id);
                 if (ticket) hoverRow(element, ticket, immediate);
               }} onLeave={() => hover.leave()} />
           </section>

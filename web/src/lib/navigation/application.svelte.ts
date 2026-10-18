@@ -3,7 +3,10 @@ import { createNavigationCollection } from './collection';
 import { createNavigationOwner, type NavigationOwnerState } from './owner';
 import { createNavigationSelectors } from './selectors.svelte';
 import { createNavigationTransport } from './transport';
-import type { RenderObserver } from './visibility';
+import { createCommandEvidence } from './commandEvidence';
+import { navigationConfiguration } from './configuration';
+import { createNavigationPresentationCache } from './presentation';
+export type { RecordImpact,CommandImpact,CommandEvidence,ResponseMetadata } from './commandEvidence';
 
 const applicationContext = Symbol('navigation application');
 
@@ -14,24 +17,22 @@ export function provideNavigationApplication() {
   let state = $state.raw<NavigationOwnerState>(owner.getState());
   const unsubscribe = owner.subscribe((next) => { state = next; });
   const selectors = createNavigationSelectors(collection, () => state);
-  const boundaries = new Set<RenderObserver>();
+  const commands=createCommandEvidence(owner,navigationConfiguration.maximumCommandEvidence);
+  const presentationFor=createNavigationPresentationCache();
   const application = {
     owner, selectors, get state() { return state; },
-    registerRenderBoundary(name: string) {
-      const observer = owner.registerObserver(name);
-      boundaries.add(observer);
-      return observer;
-    },
-    disposeRenderBoundary(observer: RenderObserver) {
-      boundaries.delete(observer);
-      observer.dispose();
-    },
-    captureRenderBoundaries: () => [...boundaries],
+    presentationFor,
+    registerRenderBoundary:commands.register,
+    disposeRenderBoundary:commands.dispose,
+    captureRenderBoundaries:commands.capture,
+    runCommand:commands.runCommand,
+    get commandEvidence(){return commands.evidence;},
+    subscribeCommandEvidence:commands.subscribe,
   };
   setContext(applicationContext, application);
   onMount(() => { void owner.start().catch(() => undefined); });
   onDestroy(() => {
-    boundaries.clear();
+    commands.clear();
     owner.dispose();
     collection.destroy();
     unsubscribe();

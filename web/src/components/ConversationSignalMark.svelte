@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ConversationSignal } from "../lib/conversationSignal";
+  import { conversationSignalKind, type ConversationSignal } from "../lib/conversationSignal";
   import StageMark from "./StageMark.svelte";
 
   let {
@@ -13,17 +13,18 @@
     class?: string;
     [key: string]: unknown;
   } = $props();
+  const kind = $derived(conversationSignalKind(signal));
 </script>
 
-{#if signal?.working || signal?.message_for_owner}
+{#if kind}
   <span
     class={`conversation-signal-marks${extraClass ? ` ${extraClass}` : ""}`}
     data-conversation-id={conversationId ?? undefined}
     {...rest}
   >
-    {#if signal.message_for_owner}
+    {#if kind === 'message'}
       <StageMark state="current-awaiting-approval" aria-label="Unread message" data-conversation-signal="message" />
-    {:else if signal.working}
+    {:else if kind === 'working'}
       <StageMark state="current-running" aria-label="Working" data-conversation-signal="working" />
     {/if}
   </span>

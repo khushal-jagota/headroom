@@ -173,7 +173,7 @@ ticket = dict(project_id='project_one', project='One', sprint_id=None, sprint_it
     employee_configuration_editable=False, stage='needs_what_changes', ceiling='done', priority='P2',
     resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': None},
     ticket_status='agent', ceiling_holder={'kind': 'owner', 'id': 'owner'}, conversation_id=None,
-    conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': []},
+    conversation_history=[], day_ids=[], blocked=False, is_backlogged=False, blocker_summary={'blocked_by': []},
     recap='Orientation', guidance='', pending_proposal=None,
     field_values={'brief': 'The request', 'success_condition': 'What done means', 'what_changes': 'The change'})
 
@@ -183,6 +183,10 @@ def serve_ticket(route):
         path = 'tickets/' + parse_qs(path.split('?', 1)[1])['id'][0]
     if path.split('?')[0]=='navigation/snapshot':
         result=navigation_response({'columns':[{'cards':[ticket]}],'sprint_items':[]},{'chief_of_staff':{'label':'Chief of Staff','conversation_id':None}})
+        for record in result['snapshot']['records']:
+            if record['kind']=='ticket':
+                stage=next(stage for stage in stages if stage['id']==ticket['stage'])
+                record['value'].update(ceiling=ticket['ceiling'],ceiling_holder=ticket['ceiling_holder'],gating_field=stage['gating_field'],stage_ownership=stage['ownership_mode'],terminal=stage['is_terminal'])
         result['snapshot']['records'].append({'kind':'project','id':'project_one','value':{'name':'One','priority':'P2'}})
     elif path == '__advance':
         ticket['stage'] = 'needs_plan'

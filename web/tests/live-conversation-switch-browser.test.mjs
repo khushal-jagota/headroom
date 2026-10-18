@@ -29,6 +29,13 @@ try {
   const navigation = provideNavigationApplication();
   (window as any).__navigation = navigation;
   (window as any).__sameNavigation = navigationApplication() === navigation;
+  (window as any).__beforeRecover = [];
+  const recover = navigation.owner.recover;
+  navigation.owner.recover = () => {
+    (window as any).__beforeRecover.push(Object.fromEntries(['conversation-a','conversation-b'].map(id =>
+      [id,navigation.state.effective?.conversations.get(id)?.message_for_owner])));
+    return recover();
+  };
 
   let conversationId = $state("conversation-a");
   let conversationState = $state<"rest" | "peeked" | "opened">("opened");
@@ -59,7 +66,7 @@ try {
     mainPath,
     String.raw`import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from "../src/lib/navigation/contracts";
 import { encodeCursor } from "../src/lib/navigation/validation";
-import { authority } from "../tests/support/navigation/fixtures";
+import { authority, conversation } from "../tests/support/navigation/fixtures";
 (globalThis as any).__navigationSnapshots = 0;
 (globalThis as any).__navigationStreams = 0;
 (globalThis as any).__closedNavigationStreams = 0;
@@ -112,6 +119,13 @@ let delayNextASnapshot = false;
 let delayedASnapshotRequested = false;
 let releaseDelayedASnapshot: (() => void) | null = null;
 const recordedBRows: unknown[] = [];
+const navigationBoundaries: Record<string,number> = {'conversation-a':0,'conversation-b':0};
+(globalThis as any).__navigationBoundaries=navigationBoundaries;
+let holdNavigation = false;
+let releaseNavigation: (()=>void) | undefined;
+(globalThis as any).__holdNextNavigation = () => {holdNavigation=true;};
+(globalThis as any).__releaseNavigation = () => releaseNavigation?.();
+
 (globalThis as any).__delayNextASnapshot = () => (delayNextASnapshot = true);
 (globalThis as any).__delayedASnapshotRequested = () => delayedASnapshotRequested;
 (globalThis as any).__releaseDelayedASnapshot = () => releaseDelayedASnapshot?.();
@@ -119,10 +133,15 @@ const recordedBRows: unknown[] = [];
   const url = String(input);
   if (url === "/api/navigation/snapshot") {
     (globalThis as any).__navigationSnapshots += 1;
+    if (holdNavigation) {
+      holdNavigation=false;
+      await new Promise<void>(resolve=>releaseNavigation=resolve);
+      releaseNavigation=undefined;
+    }
     const continuity = {scope: "workspace", schema_version: SCHEMA_VERSION,
-      semantics: SUPPORTED_SEMANTICS, epoch: "read-fixture", revision: "0"};
+      semantics: SUPPORTED_SEMANTICS, epoch: "read-fixture", revision: String((globalThis as any).__navigationSnapshots)};
     return Response.json({wire_version: 2, mode: 'current', authority: authority(), cursor: encodeCursor(continuity),
-      snapshot: {...continuity, records: []}, proof: null});
+      snapshot: {...continuity, records: [conversation("conversation-a",navigationBoundaries["conversation-a"]),conversation("conversation-b",navigationBoundaries["conversation-b"])]}, proof: null});
   }
   const ownerReadMatch = url.match(/conversations\/(conversation-[ab])\/owner-read$/);
   if (ownerReadMatch) {
@@ -473,6 +492,40 @@ with sync_playwright() as playwright:
     page.wait_for_function("window.__readRefreshes === 11")
     page.wait_for_function("window.__navigationSnapshots === 14")
     assert page.evaluate("window.__navigationStreams - window.__closedNavigationStreams") == 1
+    # Real caller boundary: a delayed read for A resolves while B is displayed.
+    # Independent current B knowledge is still known at the instant recovery begins.
+    page.evaluate("Object.assign(window.__navigationBoundaries, {'conversation-a':1,'conversation-b':16})")
+    page.evaluate("window.__navigation.owner.recover()")
+    page.wait_for_function("window.__navigation.state.effective.conversations.get('conversation-b').message_for_owner.state === 'fresh'")
+    page.evaluate("window.__switchConversation('conversation-a')")
+    page.wait_for_function("window.__tailExists('conversation-a')")
+    page.evaluate("window.__holdRead(17); window.__holdRead(18)")
+    for sequence in [17,18]:
+        page.evaluate("""sequence => window.__emitConversationRow('conversation-a', {
+          conversation_id:'conversation-a',sequence,kind:'message_to_owner',
+          payload:{text:'A delayed read '+sequence,sender_label:'Ticket A',sender:{kind:'ticket',id:'a'},recipient:{kind:'owner',id:'owner'}},created_at:sequence})""", sequence)
+        page.wait_for_function("sequence => window.__ownerReads.some(read=>read.conversationId==='conversation-a' && read.sequence===sequence)", arg=sequence)
+    page.evaluate("window.__switchConversation('conversation-b')")
+    page.wait_for_function("window.__tailExists('conversation-b')")
+    page.evaluate("window.__navigationBoundaries['conversation-a']=17; window.__holdNextNavigation(); window.__finishRead(18)")
+    page.wait_for_function("window.__beforeRecover.at(-1)['conversation-a'].state==='unknown'")
+    before_recovery=page.evaluate("window.__beforeRecover.at(-1)")
+    assert before_recovery['conversation-a']['state']=='unknown'
+    assert before_recovery['conversation-b']['state']=='fresh'
+    # The returned durable read boundary17 cannot satisfy confirmed18.
+    page.evaluate("window.__releaseNavigation()")
+    page.wait_for_function("window.__navigation.state.connection==='subscribed'")
+    assert page.evaluate("window.__navigation.state.effective.conversations.get('conversation-a').message_for_owner.state")=='unknown'
+    refreshes=page.evaluate("window.__readRefreshes")
+    previous_snapshots=page.evaluate("window.__navigationSnapshots")
+    page.evaluate("window.__finishRead(17)")
+    page.wait_for_function("count=>window.__navigationSnapshots>count",arg=previous_snapshots)
+    page.wait_for_function("window.__navigation.state.connection==='subscribed'")
+    assert page.evaluate("window.__navigation.state.effective.conversations.get('conversation-a').message_for_owner.state")=='unknown'
+    assert page.evaluate("window.__readRefreshes")==refreshes
+    page.evaluate("window.__navigationBoundaries['conversation-a']=18; window.__navigation.owner.recover()")
+    restored=page.evaluate("window.__navigation.state.effective.conversations.get('conversation-a').message_for_owner")
+    assert restored['state']=='fresh' and restored['provenance']['boundary']==18
     page.evaluate("window.__unmountHost()")
     assert page.evaluate("window.__navigation.state.connection") == "disposed"
     assert page.evaluate("window.__navigationStreams - window.__closedNavigationStreams") == 0

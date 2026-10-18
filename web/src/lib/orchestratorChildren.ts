@@ -25,3 +25,6 @@ export function chiefChildrenPage<T extends {id:string; created_at:number; termi
     omitted_before:before,omitted_after:after,complete:before===0 && after===0,
     next_offset:after ? offset+rows.length : null}};
 }
+
+/** Existing disclosure default; saved/manual choices take precedence. */
+export const orchestratorGroupDefaultOpen = (key:string):boolean => key !== 'done';

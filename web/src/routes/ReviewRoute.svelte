@@ -1,19 +1,22 @@
 <script lang="ts">
   import { tick, onDestroy } from "svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { navigationReviewPresentation, reviewProposalIdentity } from "../lib/navigation/presentation";
-  import { reviewDomMatches } from "../lib/navigation/render";
+  import { reviewProposalIdentity } from "../lib/navigation/presentation";
+  import { reviewQueueImpact, runtimeCountImpact } from "../lib/reviewNavigationImpact";
+  import { reviewDomMatches } from "../lib/reviewDom";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import type { NavigationReviewItem as ReviewItem } from "../lib/types";
   import ResourceState from "../components/ResourceState.svelte";
   import ReviewProposalCard from "../components/ReviewProposalCard.svelte";
 
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review requires the application navigation owner"); return value; })();
-  const observer = navigation.registerRenderBoundary(`review:${crypto.randomUUID()}`);
+  const observer = navigation.registerRenderBoundary(`review:${crypto.randomUUID()}`,impact => {
+    const view=navigation.state.effective;return reviewQueueImpact(impact,view ? navigation.presentationFor(view) : undefined) || currentItem===null && runtimeCountImpact(impact,view ? navigation.presentationFor(view) : undefined);
+  });
   onDestroy(() => navigation.disposeRenderBoundary(observer));
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
-  let review = $derived(displayed ? navigationReviewPresentation(displayed) : null);
+  let review = $derived(displayed ? navigation.presentationFor(displayed).review : null);
 
   let renderedBody = $state(0);
   let skipped = $state<Record<string, boolean>>({});

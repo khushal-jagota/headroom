@@ -243,8 +243,9 @@
       advancingRead = request;
       void advanceOwnerRead(reading.conversation_id, eligibleSequence)
         .then((advanced) => {
-          // Every confirmed read refreshes the shared replica, even after a pane switch
-          // or when the existing Query optimization finds no new owner message.
+          // A confirmed read invalidates its exact conversation before any recovery can
+          // reuse older knowledge, even after a pane switch or the Query optimization.
+          navigation?.owner.invalidateDurableFact(reading.conversation_id, "message_for_owner", advanced);
           void navigation?.owner.recover().catch(() => undefined);
           const previouslyReadThrough = Math.max(
             reading.owner_read_through_sequence,

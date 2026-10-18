@@ -10,6 +10,10 @@
    * It stays separate from the Agents layout because this component owns the canonical
    * Chief conversation while the route owns roster selection and responsive navigation.
    */
+  import { tick, onDestroy } from "svelte";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
+  import { actualMark, expectedMark } from "../lib/conversationSignalDom";
   import { createQuery } from "@tanstack/svelte-query";
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import ErrorLine from "./ErrorLine.svelte";
@@ -24,33 +28,71 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
 
+  let { showRequestErrorLine = true }: { showRequestErrorLine?: boolean } = $props();
+  const navigation = (() => {
+    const value = navigationApplication();
+    if (!value) throw new Error("Chief conversation requires the application navigation owner");
+    return value;
+  })();
+  const observer = navigation.registerRenderBoundary(`chief-conversation:${crypto.randomUUID()}`,impact => {
+    if(impact.kind==='chief') return impact.fields==='*' || impact.fields.includes('conversation_id');
+    return impact.kind==='conversation' && impact.id===chief?.conversation_id && (impact.fields==='*' || impact.fields.includes('attention'));
+  });
+  onDestroy(() => navigation.disposeRenderBoundary(observer));
+  let root = $state<HTMLElement | null>(null);
+  let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
+  $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
+  let chief = $derived(displayed ? navigation.presentationFor(displayed).chief : null);
   let conversationId = $state<string | null>(null);
+  let observedPointer: string | undefined = $state();
   let backends = $state<readonly BackendSnapshot[]>([]);
-  const workers = createQuery(() => queries.workers());
-  const currentConversation = createQuery(() => queries.chiefConversation());
   // What a conversation for the Chief would start on. It is a query rather than a read on
   // arrival because the owner changes it on the Config screen, and this must not go on
   // showing what the Chief was configured on before they did.
   const startValues = createQuery(() => queries.chiefConversationStartValues());
 
   $effect(() => {
-    if (currentConversation.data) {
-      conversationId = currentConversation.data.conversation_id;
+    if (!chief) return;
+    const pointer = JSON.stringify(chief.conversation_id);
+    if (pointer !== observedPointer) {
+      observedPointer = pointer;
+      conversationId = chief.conversation_id;
     }
+  });
+  $effect(() => {
+    const effective = displayed;
+    const generation = navigation.state.generation;
+    const element = root;
+    const source = chief;
+    const localPointer = conversationId;
+    if (!effective?.runtimeCurrent || !element || !source || source.conversation_id !== localPointer) return;
+    const publication = effective.publication;
+    const observation = observer.observeSelectors(publication,generation);
+    let obsolete = false;
+    void tick().then(() => {
+      if (obsolete || !element.isConnected || navigation.selectors.effective !== effective
+        || navigation.state.generation !== generation || conversationId !== source.conversation_id) return;
+      const pane = element.querySelector('.chief-conversation [data-conversation-pane]');
+      if (pane?.getAttribute('data-conversation-id') !== (source.conversation_id ?? '')) return;
+      const region=element.querySelector('.chief-signal');
+      if(JSON.stringify(region ? actualMark(region) : [null,null]) !== JSON.stringify(expectedMark(source.conversation_signal,source.conversation_id))) return;
+      observer.acknowledgeRender(publication,observation);
+    });
+    return () => { obsolete = true; };
   });
 
   async function sendToTheChief(body: OwnerSendBody): Promise<DeliveredMessage> {
-    const delivered = await mutateJson<DeliveredMessage>("/api/chief/conversation/send", {
-      method: "POST",
-      body
-    });
-    if (delivered.conversation_id !== null) conversationId = delivered.conversation_id;
+    const view=navigation.state.effective;
+    const delivered=await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'chief','chief'),responseMetadata =>
+      mutateJson<DeliveredMessage>("/api/chief/conversation/send",{method:"POST",body,responseMetadata}),"send Chief message");
+    if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
     return delivered;
   }
-
-  async function newConversation(): Promise<void> {
-    await mutateJson("/api/chief/conversation/reset", { method: "POST" });
-    conversationId = null;
+  async function newConversation():Promise<void> {
+    const view=navigation.state.effective;
+    await navigation.runCommand(conversationOwnerImpact(view ? navigation.presentationFor(view) : undefined,'chief','chief'),responseMetadata =>
+      mutateJson("/api/chief/conversation/reset",{method:"POST",responseMetadata}),"reset Chief conversation");
+    conversationId=null;
   }
 
   $effect(() => {
@@ -62,25 +104,25 @@
   });
 </script>
 
-<div class="chief-workspace">
-  {#if workers.data?.chief_of_staff.conversation_signal?.working || workers.data?.chief_of_staff.conversation_signal?.message_for_owner}
-    <div class="chief-signal"><ConversationSignalMark signal={workers.data?.chief_of_staff.conversation_signal} conversationId={workers.data?.chief_of_staff.conversation_id} /></div>
+<div class="chief-workspace" bind:this={root}>
+  {#if chief?.conversation_signal?.working || chief?.conversation_signal?.message_for_owner}
+    <div class="chief-signal"><ConversationSignalMark signal={chief?.conversation_signal} conversationId={chief?.conversation_id} /></div>
   {/if}
-  <div class="chief-workers"><OrchestratorChildren principal={{ kind: "chief", id: "chief" }} /></div>
+  <div class="chief-workers"><OrchestratorChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} /></div>
   <div class="chief-conversation">
-{#if currentConversation.error}
+{#if navigation.state.error}
   <div class="chief-conversation-resource" data-chief-conversation-error>
-    <ErrorLine error={currentConversation.error} />
+    {#if showRequestErrorLine}<ErrorLine error={navigation.state.error} />{/if}
     <button
       type="button"
       class="button button--quiet"
       data-chief-conversation-retry
-      onclick={() => currentConversation.refetch()}
+      onclick={() => navigation.owner.recover().catch(() => undefined)}
     >
       Retry
     </button>
   </div>
-{:else if currentConversation.isFetching && !currentConversation.data}
+{:else if !chief}
   <div class="quiet-line chief-conversation-resource" data-chief-conversation-loading>
     Loading conversation...
   </div>

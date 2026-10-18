@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
   import { provideNavigationApplication } from "./lib/navigation/application.svelte";
-  import { navigationReviewPresentation } from "./lib/navigation/presentation";
-  import { reviewBadgeDomMatches } from "./lib/navigation/render";
+  import { reviewBadgeImpact } from "./lib/reviewNavigationImpact";
+  import { reviewBadgeDomMatches } from "./lib/shellDom";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
@@ -43,8 +43,8 @@
   const navigation = provideNavigationApplication();
   let displayed = $state.raw<import("./lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
-  let reviewItems = $derived(displayed ? navigationReviewPresentation(displayed).items : []);
-  const reviewBadgeObserver = navigation.registerRenderBoundary(`review-badge:${crypto.randomUUID()}`);
+  let reviewItems = $derived(displayed ? navigation.presentationFor(displayed).review.items : []);
+  const reviewBadgeObserver = navigation.registerRenderBoundary(`review-badge:${crypto.randomUUID()}`,reviewBadgeImpact);
   onDestroy(() => navigation.disposeRenderBoundary(reviewBadgeObserver));
   let reviewLink = $state<HTMLElement | null>(null);
   $effect(() => {

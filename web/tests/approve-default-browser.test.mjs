@@ -144,7 +144,7 @@ def ticket(ticket_id, worker_type, stage, field, body, created_at):
         'ticket_status': 'awaiting_approval',
         'ceiling_holder': {'kind': 'sprint_item', 'id': 'item_one'},
         'conversation_id': None, 'conversation_history': [], 'day_ids': [],
-        'blocked': False, 'blocker_summary': {'blocked_by': []}, 'recap': 'Orientation',
+        'blocked': False, 'is_backlogged': False, 'blocker_summary': {'blocked_by': []}, 'recap': 'Orientation',
         'guidance': '', 'field_values': {'brief': 'Request'},
         'pending_proposal_revision': 1,
         'pending_proposal': {
@@ -178,7 +178,7 @@ def navigation_snapshot():
             proposal=row['pending_proposal']
             definition=next(worker for worker in manifest['worker_types'] if worker['worker_type']==row['worker_type'])
             stage=next(stage for stage in definition['stages'] if stage['id']==row['stage'])
-            record['value'].update(ceiling_holder=row['ceiling_holder'],gating_field=stage['gating_field'],
+            record['value'].update(ceiling=row['ceiling'],ceiling_holder=row['ceiling_holder'],gating_field=stage['gating_field'],
                 stage_ownership=stage['ownership_mode'],terminal=stage['is_terminal'],
                 proposal_field=None if proposal is None else proposal['field'],
                 proposal_created_at=None if proposal is None else proposal['created_at'],
@@ -197,12 +197,17 @@ def respond(route):
     elif path=='review': raise AssertionError('competing Review summary read')
     elif path.startswith('tickets/') and path.count('/') == 1 and route.request.method == 'PATCH':
         scope_writes.append(route.request.post_data_json)
-        tickets[path.split('/')[1]].update(route.request.post_data_json)
+        target=tickets[path.split('/')[1]]
+        change=route.request.post_data_json
+        if 'ceiling_holder' in change and change['ceiling_holder']!=target['ceiling_holder'] and target['pending_proposal'] is not None:
+            target['pending_proposal']['revision']+=1
+            target['pending_proposal_revision']=target['pending_proposal']['revision']
+        target.update(change)
         result = tickets[path.split('/')[1]]
     elif path == 'test/replace-coding':
         tickets['t_coding']['pending_proposal'] = {
             'field': 'success_condition', 'body': 'Replacement result',
-            'proposed_by': 'agent', 'created_at': 1, 'revision': 2
+            'proposed_by': 'agent', 'created_at': 1, 'revision': tickets['t_coding']['pending_proposal']['revision']+1
         }
         result = {}
     elif path == 'test/replace-review':
@@ -343,11 +348,12 @@ with sync_playwright() as p:
     page.get_by_role('listbox').press('Escape')
     assert approvals == [] and scope_writes == []
     page.evaluate("window.__showTicket('t_coding')")
-    # Reviewer heading only reroutes; pending proposal and revision stay intact.
+    # Reviewer heading reroutes without accepting. Canonical readdress advances its revision.
     block().locator('[data-reviewer-heading]').click()
     expect(page.get_by_role('listbox')).to_have_attribute('aria-label', 'Who holds the ceiling')
     page.locator('[data-ceiling-picker-choice="chief"]').click()
     wait_count(scope_writes, 1)
+    page.evaluate('window.__refresh()')
     assert scope_writes[-1] == {'ceiling_holder': {'kind': 'chief', 'id': 'chief'}}
     assert approvals == []
     # Opening Approve then changing only the reviewer never accepts a proposal.
@@ -355,11 +361,14 @@ with sync_playwright() as p:
     page.locator('[data-ceiling-part="holder"]').click()
     page.locator('[data-ceiling-picker-choice="owner"]').click()
     wait_count(scope_writes, 2)
+    page.evaluate('window.__refresh()')
     assert scope_writes[-1] == {'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}
     assert approvals == []
     # Same and lower boundaries never approve, even from Approve.
-    for stage in ['needs_success_condition', 'needs_brief']:
+    for index, stage in enumerate(['needs_success_condition', 'needs_brief'],start=3):
         choose(stage)
+        wait_count(scope_writes,index)
+        page.evaluate('window.__refresh()')
     wait_count(scope_writes, 4)
     assert scope_writes[-1] == {'ceiling': 'needs_brief', 'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}
     assert approvals == []
@@ -392,9 +401,10 @@ with sync_playwright() as p:
     expect(proposal).to_have_text('Replacement result')
     expect(page.get_by_role('listbox')).to_have_count(0)
     assert approvals == []
+    expected_revision=tickets['t_coding']['pending_proposal']['revision']
     choose('needs_what_changes')
     wait_count(approvals, 1)
-    assert approvals[-1]['body'] == {'next_ceiling': 'needs_what_changes', 'next_holder': {'kind': 'owner', 'id': 'owner'}, 'expected_proposal_revision': 2}
+    assert approvals[-1]['body'] == {'next_ceiling': 'needs_what_changes', 'next_holder': {'kind': 'owner', 'id': 'owner'}, 'expected_proposal_revision': expected_revision}
 
     tickets['t_findings']['ceiling_holder']={'kind':'owner','id':'owner'}
     page.evaluate("window.__showReview('t_findings', 'findings')")

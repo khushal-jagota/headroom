@@ -17,8 +17,10 @@
   import { queries } from "../lib/queryCatalogue";
   import { lifecycleFor } from "../lib/lifecycle";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { navigationReviewPresentation, reviewProposalIdentity, reviewProposalDetailMatches } from "../lib/navigation/presentation";
-  import { reviewProposalDomMatches } from "../lib/navigation/render";
+  import { reviewProposalIdentity, reviewProposalDetailMatches } from "../lib/navigation/presentation";
+  import { reviewProposalImpact } from "../lib/reviewNavigationImpact";
+  import { ticketCommandImpact, type TicketNavigationOperation } from "../lib/ticketNavigationImpact";
+  import { reviewProposalDomMatches } from "../lib/reviewDom";
   import type { NavigationReviewItem, TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
@@ -84,7 +86,7 @@
   // The Ticket behind the proposal on screen. The key follows the Ticket, so
   // moving to the next ask switches the query rather than re-opening a handle.
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review proposal requires the application navigation owner"); return value; })();
-  const observer = navigation.registerRenderBoundary(`review-proposal:${crypto.randomUUID()}`);
+  const observer = navigation.registerRenderBoundary(`review-proposal:${crypto.randomUUID()}`,impact => reviewProposalImpact(impact,ticketId));
   onDestroy(() => navigation.disposeRenderBoundary(observer));
   let cardElement = $state<HTMLElement | null>(null);
   const detail = createQuery(() => queries.reviewProposal(identity));
@@ -149,18 +151,13 @@
 
   function currentIdentity(): boolean {
     const effective = navigation.state.effective;
-    return Boolean(effective && navigationReviewPresentation(effective).items.some(item => reviewProposalIdentity(item) === currentKey));
+    return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => reviewProposalIdentity(item) === currentKey));
   }
 
-  async function write(path: string, options: Parameters<typeof mutateJson>[1]): Promise<unknown> {
+  async function write(path: string, options: Parameters<typeof mutateJson>[1], operation:TicketNavigationOperation): Promise<unknown> {
     if (!currentIdentity() || !detail.data || isStale(detail.data)) throw new Error("the visible proposal changed; read it again before accepting");
-    const requiredObservers = navigation.captureRenderBoundaries();
-    const responseMetadata: {headers?: Headers} = {};
-    const result = await mutateJson(path,{...options,responseMetadata});
-    let fence: unknown;
-    try { fence = JSON.parse(responseMetadata.headers?.get('Panels-Navigation-Fence') ?? 'null'); } catch { fence = null; }
-    void navigation.owner.waitForVisibility(fence,{requiredObservers});
-    return result;
+    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,ticketId,operation),responseMetadata =>
+      mutateJson(path,{...options,responseMetadata}),`review proposal ${operation}`);
   }
 
   /** One announcement per proposal, whichever way it left the queue. */
@@ -217,7 +214,7 @@
     const result = await write(`/api/tickets/${ticketId}/accept/${acceptField}`, {
       method: "POST",
       body: payload
-    });
+    },"stage");
     announceResolved();
     return result;
   }
@@ -226,7 +223,7 @@
     return write(`/api/tickets/${ticketId}`, {
       method: "PATCH",
       body: { title: raw }
-    });
+    },"title");
   }
 
   async function savePriority(
@@ -240,7 +237,7 @@
       await write(`/api/tickets/${ticketId}`, {
         method: "PATCH",
         body: { priority }
-      });
+      },"priority");
     } catch (err) {
       priorityError = err;
       select.value = previousPriority;
@@ -258,7 +255,7 @@
       await write(`/api/tickets/${ticketId}/reject`, {
         method: "POST",
         body: { message }
-      });
+      },"stage");
       revisionDraft = "";
       announceResolved();
     } catch (err) {
@@ -365,8 +362,8 @@
               ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} sprintItem={reviewSprintItem}
               disabled={revisionBusy || (acceptField === "brief" && priorityBusy)} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
-              onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
-              onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
+              onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body },"scope"); }}
+              onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } },"stage"); announceResolved(); }}
               {revisionEditor} />
             {/key}
           {/if}

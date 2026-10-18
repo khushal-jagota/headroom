@@ -21,7 +21,7 @@ try {
 import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
 import ReviewRoute from '../src/routes/ReviewRoute.svelte';
-import { reviewBadgeDomMatches } from '../src/lib/navigation/render';
+import { reviewBadgeDomMatches } from '../src/lib/shellDom';
 (window as any).__badgeProof=()=>{
  const link=document.createElement('a');const badge=document.createElement('span');link.append(badge);
  badge.className='nav-badge hidden';
@@ -75,7 +75,7 @@ let ticketId = $state('t_guidance');
 {:else if review}<ShellStatus connectionState="connected" /><ReviewRoute />
 {:else}{#key ticketId}<TicketRoute id={ticketId} />{/key}{/if}
 </QueryClientProvider>`);
-  await writeFile(main, `globalThis.EventSource=class extends EventTarget{onerror=null;constructor(url){super();if(String(url).startsWith('/api/navigation/events?'))globalThis.__navigationSource=this;}close(){}}; import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
+  await writeFile(main, `globalThis.__openStreams=new Set();globalThis.EventSource=class extends EventTarget{onerror=null;constructor(url){super();this.url=String(url);globalThis.__openStreams.add(this.url);if(this.url.startsWith('/api/navigation/events?'))globalThis.__navigationSource=this;}close(){globalThis.__openStreams.delete(this.url);}}; import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
   await writeFile(index, `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
   server = await createServer({ root, configFile: false, plugins: [svelte()], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
   await server.listen();
@@ -87,16 +87,18 @@ import json, sys
 from urllib.parse import parse_qs
 from playwright.sync_api import sync_playwright, expect
 
-ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success_condition', ceiling='needs_success_condition', priority='P2', resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': {'id': 'outcome_kept', 'title': 'Kept outcome', 'priority': 'P2'}}, ticket_status='awaiting_approval', ceiling_holder={'kind': 'chief', 'id': 'chief'}, conversation_id=None, conversation_history=[], day_ids=[], blocked=False, blocker_summary={'blocked_by': []}, recap='Orientation', guidance='Original **constraint**', field_values={'brief': 'Request'}, pending_proposal={'field': 'success_condition', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1, 'revision': 1})
+ticket = dict(project_id='project_one', project='One', sprint_id='sp_old', sprint_item_id='outcome_kept', id='t_guidance', title='Guidance ticket', worker_type='coding', employee_backend='codex', employee_launch_model=None, employee_launch_reasoning_effort=None, employee_configuration_editable=False, stage='needs_success_condition', ceiling='needs_success_condition', priority='P2', resolved_priority_anchors={'project': {'id': 'project_one', 'name': 'One', 'priority': 'P2'}, 'sprint_item': {'id': 'outcome_kept', 'title': 'Kept outcome', 'priority': 'P2'}}, ticket_status='awaiting_approval', ceiling_holder={'kind': 'chief', 'id': 'chief'}, conversation_id=None, conversation_history=[], day_ids=[], blocked=False, is_backlogged=False, blocker_summary={'blocked_by': []}, recap='Orientation', guidance='Original **constraint**', field_values={'brief': 'Request'}, pending_proposal={'field': 'success_condition', 'body': 'A result', 'proposed_by': 'agent', 'created_at': 1, 'revision': 1})
 stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode='worker' if f else None) for s,l,f in [('needs_brief','Kickoff','brief'),('needs_success_condition','Success','success_condition'),('done','Done',None)]]
 personal_stages = [dict(id=s, label=l, gating_field=f, is_terminal=f is None, ownership_mode=o) for s,l,f,o in [('needs_brief','Kickoff','brief','user'),('needs_outcome','Outcome','outcome','user'),('needs_consequences','Closeout','consequences','worker'),('done','Done',None,None)]]
 manifest = {'worker_types': [dict(worker_type='coding', label='Coding', stages=stages, advance={'needs_brief': 'needs_success_condition', 'needs_success_condition': 'done'}, ceiling_range=['needs_brief','needs_success_condition','done'], default_ceiling='needs_success_condition', worker_profile_id='panels-worker-coding', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'}, {'id':'success_condition','label':'Success'}]), dict(worker_type='personal', label='Personal', stages=personal_stages, advance={'needs_brief':'needs_outcome','needs_outcome':'needs_consequences','needs_consequences':'done'}, ceiling_range=['needs_brief','needs_outcome','needs_consequences','done'], default_ceiling='needs_brief', worker_profile_id='panels-worker-personal-task', default_backend='codex', default_model=None, default_reasoning_effort=None, fields=[{'id':'brief','label':'Kickoff'},{'id':'outcome','label':'Outcome'},{'id':'consequences','label':'Closeout'}])]}
 canonical_worker_types=json.loads(json.dumps(manifest['worker_types']))
 worker_detail = {'manifest': manifest['worker_types'][0], 'settings': {'worker_type': 'coding', 'specialist_skill': {'name': 'panels-worker-coding', 'description': 'Coding worker', 'markdown_body': '# Coding'}, 'launch_defaults': {'employee_backend': 'codex', 'employee_launch_model': None, 'employee_launch_reasoning_effort': None}}}
+requests=[]
 writes=[]
 placement_writes=[]
 ceiling_writes=[]
 approvals=[]
+backlog_writes=[]
 held_details=[]
 hold_detail=False
 snapshot_unavailable=True
@@ -109,7 +111,9 @@ parent_project={'id':'project_one','name':'One'}
 # Each variant is an independent authored Ticket, not an alias of later main edits.
 variant_seed=json.loads(json.dumps(ticket))
 # Both canonical navigation and exact detail use these authored backing identities.
+fixture_overrides={}
 def fixture_ticket(identity):
+    if identity in fixture_overrides: return fixture_overrides[identity]
     if identity=='t_personal':
         return {**variant_seed,'id':identity,'worker_type':'personal','stage':'needs_outcome','ceiling':'needs_outcome',
             'field_values':{'brief':'Context'},'pending_proposal':None,'ticket_status':'empty','assigned':True}
@@ -135,7 +139,7 @@ def review_snapshot():
             proposal=navigation_proposal if row['id']=='t_guidance' and navigation_proposal else row['pending_proposal']
             definition=next(worker for worker in canonical_worker_types if worker['worker_type']==row['worker_type'])
             stage=next(stage for stage in definition['stages'] if stage['id']==row['stage'])
-            record['value'].update(ceiling_holder=row['ceiling_holder'],gating_field=stage['gating_field'],stage_ownership=stage['ownership_mode'],terminal=stage['is_terminal'],
+            record['value'].update(ceiling=row['ceiling'],ceiling_holder=row['ceiling_holder'],gating_field=stage['gating_field'],stage_ownership=stage['ownership_mode'],terminal=stage['is_terminal'],
               proposal_field=proposal['field'] if proposal else None,proposal_created_at=proposal['created_at'] if proposal else None,proposal_revision=proposal['revision'] if proposal else 0)
         elif record['kind']=='conversation' and record['id']==ticket['conversation_id']:
             record['value']['attention']['current']['signal']['working']=runtime_working
@@ -147,6 +151,7 @@ def review_snapshot():
 def respond(route):
     global navigation_proposal
     path=route.request.url.split('/api/',1)[1]
+    requests.append(path)
     # A single object is read through its collection address now: tickets?detail=full&id=X.
     if path.startswith('tickets?'):
         path='tickets/'+parse_qs(path.split('?',1)[1])['id'][0]
@@ -155,6 +160,17 @@ def respond(route):
             route.fulfill(status=503,content_type='application/json',body=json.dumps({'error':{'code':'unavailable','message':'Workspace unavailable','detail':None}}))
             return
         result=review_snapshot()
+    elif path.startswith('conversation/conversations/'):
+        identity=path.split('/')[2]
+        if path.split('?')[0].endswith('/events'): result={'events':[]}
+        elif path.endswith('/owner-read'): result={'owner_read_through_sequence':0}
+        else: result={'conversation_id':identity,'backend_key':'codex','supports_steer':True,'model':'gpt-test',
+            'reasoning_effort':None,'workspace_folder':'/tmp','access':'full','role_text':None,
+            'identity_environment_variable_names':[],'latest_sequence':0,'owner_read_through_sequence':0,
+            'is_running':False,'held_prompts':[],'pending_permission_ask':None,'pending_user_input':None,'composer_catalog':[]}
+    elif path=='tickets/t_guidance/conversation/send': result={'conversation_id':'ticket-delivered-local','fate':'started'}
+    elif path=='tickets/t_guidance/conversation/reset': result={}
+    elif path.endswith('/conversation/start-values'): result={'backend_key':'codex','model':None,'reasoning_effort':None}
     elif path == 'review': raise AssertionError('competing review summary query remains')
     elif path.startswith('navigation/events'): return
     elif path == 'tickets/t_guidance':
@@ -172,6 +188,8 @@ def respond(route):
                 ticket['field_values'].update(body['field_values'])
             elif 'ceiling' in body or 'ceiling_holder' in body:
                 ceiling_writes.append(body)
+                if 'ceiling_holder' in body and body['ceiling_holder']!=ticket['ceiling_holder'] and ticket['pending_proposal'] is not None:
+                    ticket['pending_proposal']['revision']+=1
                 ticket.update(body)
             else:
                 placement_writes.append(body)
@@ -182,15 +200,25 @@ def respond(route):
                 'semantics':SUPPORTED_SEMANTICS,'revision':str(_navigation_revision+1),'coverage':'complete','witnesses':['a'*64],'signature':'synthetic'}
             route.fulfill(status=200,content_type='application/json',headers={'Panels-Navigation-Fence':json.dumps(fence)},body=json.dumps(result))
             return
+    elif path in ['tickets/t_guidance/backlog','tickets/t_guidance/resume']:
+        assert route.request.method=='POST'
+        backlog_writes.append({'action':path.rsplit('/',1)[1],'body':route.request.post_data_json})
+        ticket['is_backlogged']=path.endswith('/backlog')
+        fence={'version':1,'epoch':'fixture-navigation','scope':'fixture-navigation-scope','schema_version':SCHEMA_VERSION,
+            'semantics':SUPPORTED_SEMANTICS,'revision':str(_navigation_revision+1),'coverage':'complete','witnesses':['a'*64],'signature':'synthetic'}
+        route.fulfill(status=200,content_type='application/json',headers={'Panels-Navigation-Fence':json.dumps(fence)},body=json.dumps(ticket))
+        return
     elif path == 'tickets/t_open' and route.request.method == 'PATCH':
         body=route.request.post_data_json
         ceiling_writes.append(body)
-        result={**ticket, 'id': 't_open', 'ticket_status': 'empty', 'pending_proposal': None}
+        result={**fixture_ticket('t_open'),**body}
+        fixture_overrides['t_open']=result
     elif path == 'tickets/t_personal/complete/outcome':
         assert route.request.method == 'POST'
         body=route.request.post_data_json
         writes.append({'personal_outcome': body})
-        result={**ticket, 'id':'t_personal', 'worker_type':'personal', 'stage':'needs_consequences', 'ceiling':'needs_consequences', 'field_values':{'brief':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':False}
+        result={**fixture_ticket('t_personal'), 'stage':'needs_consequences', 'ceiling':'needs_consequences', 'field_values':{'brief':'Context','outcome':body['body']}, 'pending_proposal':None, 'ticket_status':'empty', 'assigned':False}
+        fixture_overrides['t_personal']=result
     elif path in ['tickets/t_personal','tickets/t_kickoff','tickets/t_with_session','tickets/t_open','tickets/t_done']:
         result=fixture_ticket(path.split('/')[1])
     elif path.endswith('/accept/success_condition'):
@@ -232,10 +260,39 @@ with sync_playwright() as p:
     snapshot_unavailable=False
     page.evaluate('window.__refresh()')
     expect(page.locator('.error-line')).to_have_count(0)
+    # A lifecycle fence cannot receive section credit before its actual control DOM.
+    expect(page.locator('[data-ticket-backlog-action]')).to_have_text('Backlog ticket')
+    page.locator('[data-ticket-backlog-action]').click()
+    page.wait_for_function("window.__commandWait==='pending'")
+    assert backlog_writes==[{'action':'backlog','body':{}}]
+    expect(page.locator('[data-ticket-backlog-action]')).to_have_text('Backlog ticket')
+    page.evaluate('window.__batch()')
+    expect(page.locator('[data-ticket-backlogged]')).to_have_text('Backlogged')
+    expect(page.locator('[data-ticket-backlog-action]')).to_have_text('Resume ticket')
+    page.wait_for_function("window.__commandWait==='included'")
+    page.locator('[data-ticket-backlog-action]').click()
+    page.wait_for_function("window.__commandWait==='pending'")
+    assert backlog_writes[-1]=={'action':'resume','body':{}}
+    page.evaluate("""() => {
+      const control=document.querySelector('[data-ticket-lifecycle]');
+      window.__heldLifecycle={control,parent:control.parentNode,next:control.nextSibling};control.remove();
+    }""")
+    page.evaluate('window.__batch()')
+    assert page.evaluate('window.__wait()')['status']=='unknown', 'detached lifecycle controls cannot certify section paint'
+    page.evaluate("""() => {
+      const held=window.__heldLifecycle;held.parent.insertBefore(held.control,held.next);
+    }""")
+    page.evaluate('window.__batch()')
+    expect(page.locator('[data-ticket-backlogged]')).to_have_count(0)
+    expect(page.locator('[data-ticket-backlog-action]')).to_have_text('Backlog ticket')
+    page.wait_for_function("window.__commandWait==='included'")
     # Canonical header changes atomically while the already-read action/detail
     # document remains untouched. A stale detail Signal never rewrites this mark.
+    page.locator('[data-stage-fold]').evaluate('(element)=>element.open=true')
+    page.locator('[data-stage-fold] [data-field=brief]').evaluate('(element)=>element.open=true')
     original=dict(ticket)
-    ticket.update(title='Canonical masthead',worker_type='personal',stage='needs_outcome',ticket_status='empty',
+    hold_detail=True
+    ticket.update(title='Canonical masthead',worker_type='personal',stage='needs_consequences',ceiling='needs_consequences',ticket_status='empty',field_values={'brief':'Request','outcome':'Canonical user outcome'},
         pending_proposal=None,conversation_id='masthead-current',conversation_signal={'working':True,'message_for_owner':True})
     parent_project={'id':'project_current','name':'Current Project'}
     runtime_working=True
@@ -245,6 +302,39 @@ with sync_playwright() as p:
     expect(page.locator('.ticket-title [data-conversation-id]')).to_have_attribute('data-conversation-id','masthead-current')
     expect(page.locator('.ticket-title [data-conversation-signal]')).to_have_attribute('data-conversation-signal','message')
     expect(page.locator('[data-approval-block] [contenteditable]')).to_have_text('A result')
+    assert page.evaluate('window.__wait()')['status']=='unknown', 'a new header cannot certify the retained old section'
+    expect(page.locator('[data-ticket-section]')).to_have_attribute('data-section-stage','needs_success_condition')
+    expect(page.locator('[data-worker-live-card] h2')).to_contain_text('Success')
+    assert page.locator('[data-stage-fold]').evaluate('(element)=>element.open')
+    assert page.locator('[data-stage-fold] [data-field=brief]').evaluate('(element)=>element.open')
+    # A gesture on the visibly retained old controls cannot write against a new tuple.
+    page.locator('[data-reviewer-heading]').click()
+    page.locator('[data-ceiling-picker-choice=owner]').click()
+    expect(page.locator('[data-approval-block] .error-line')).to_contain_text('the Ticket changed; read it again before this action')
+    expect(page.locator('[data-approval-block] .error-code')).to_have_text('validation')
+    assert ceiling_writes==[] and approvals==[]
+    for _ in range(100):
+        if held_details: break
+        page.wait_for_timeout(10)
+    assert held_details
+    for stage in manifest['worker_types'][1]['stages']:
+        if stage['id']=='needs_consequences': stage['gating_field']='outcome'
+    page.evaluate('window.__manifest()')
+    hold_detail=False
+    for route in held_details:
+        if route.request.failure is None:
+            route.fulfill(status=200,content_type='application/json',body=json.dumps(ticket))
+    held_details.clear()
+    expect(page.locator('[data-ticket-section]')).to_have_attribute('data-section-stage','needs_success_condition')
+    expect(page.locator('[data-approval-block] [contenteditable]')).to_have_text('A result')
+    for stage in manifest['worker_types'][1]['stages']:
+        if stage['id']=='needs_consequences': stage['gating_field']='consequences'
+    page.evaluate('window.__manifest()')
+    expect(page.locator('[data-ticket-section]')).to_have_attribute('data-section-stage','needs_consequences')
+    expect(page.locator('[data-worker-live-card] h2')).to_have_text('Currently working on Closeout')
+    expect(page.locator('[data-approval-block]')).to_have_count(0)
+    assert page.locator('[data-stage-fold]').evaluate('(element)=>element.open')
+    assert page.locator('[data-stage-fold] [data-field=brief]').evaluate('(element)=>element.open')
     assert page.evaluate('window.__wait()')['status']=='included'
     ticket['conversation_signal']['message_for_owner']=False
     page.evaluate('window.__batch()')
@@ -257,6 +347,7 @@ with sync_playwright() as p:
     snapshot_unavailable=True
     page.evaluate('window.__refresh()')
     expect(page.locator('.ticket-title [data-conversation-signal]')).to_have_count(0)
+    expect(page.locator('[data-worker-live-card] h2')).to_have_text('Waiting at Closeout')
     expect(page.locator('.ticket-title [contenteditable]')).to_have_text('Canonical masthead')
     # The independently existing conversation can acquire a durable message while
     # its former Ticket stays deleted. Loss preserves only that exact known dot.
@@ -277,6 +368,11 @@ with sync_playwright() as p:
     assert not page.evaluate("window.__navigation.selectors.effective.conversations.has('masthead-current')")
     source_deleted=False
     ticket.clear();ticket.update(original)
+    hold_detail=False
+    for route in held_details:
+        if route.request.failure is None:
+            route.fulfill(status=200,content_type='application/json',body=json.dumps(ticket))
+    held_details.clear()
     parent_project={'id':'project_one','name':'One'}
     runtime_working=False
     page.evaluate('window.__batch()')
@@ -307,6 +403,7 @@ with sync_playwright() as p:
         if ceiling_writes: break
         page.wait_for_timeout(50)
     assert ceiling_writes == [{'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}]
+    page.evaluate('window.__batch()')
     assert approvals == []
 
     page.evaluate("window.__showTicket('t_open')")
@@ -354,6 +451,7 @@ with sync_playwright() as p:
         if len(ceiling_writes) == 2: break
         page.wait_for_timeout(50)
     assert ceiling_writes[-1] == {'ceiling': 'done', 'ceiling_holder': {'kind': 'chief', 'id': 'chief'}}, ceiling_writes
+    page.evaluate('window.__batch()')
 
     # A reviewer changed on its own writes the reviewer alone. The ceiling is not sent,
     # so a Ticket cannot have its ceiling moved by a reader who only changed the queue.
@@ -366,6 +464,7 @@ with sync_playwright() as p:
         if len(ceiling_writes) == 3: break
         page.wait_for_timeout(50)
     assert ceiling_writes[-1] == {'ceiling_holder': {'kind': 'owner', 'id': 'owner'}}, ceiling_writes
+    page.evaluate('window.__batch()')
 
     # A reviewer chosen and then abandoned is discarded too, and letters typed at one
     # half never join letters typed at the other.
@@ -379,7 +478,7 @@ with sync_playwright() as p:
     expect(leash.get_by_role('listbox')).to_have_count(0)
     page.wait_for_timeout(200)
     assert len(ceiling_writes) == 3, ceiling_writes
-    assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Approved until Success, then User reviews'
+    assert leash.locator('[data-scope-ceiling]').get_attribute('aria-label') == 'Approved until Done, then User reviews'
     leash.locator('[data-scope-ceiling]').click()
     page.locator('.ticket-title').click()
     expect(leash.get_by_role('listbox')).to_have_count(0)
@@ -416,6 +515,30 @@ with sync_playwright() as p:
     page.evaluate('window.__batch()')
     page.wait_for_function("window.__commandWait==='included'")
     expect(title_editor).to_have_text('Local masthead edit')
+    # Local delivery/reset continuation is independent of unrelated detail and
+    # same-pointer publications. A changed canonical pointer remains authoritative.
+    composer=page.locator('[data-conversation-input]')
+    composer.fill('Ticket pointer continuation')
+    composer.press('Enter')
+    page.wait_for_function("() => [...window.__openStreams].some(url=>url.includes('ticket-delivered-local'))")
+    assert 'conversation/conversations/ticket-delivered-local' in requests
+    expect(page.locator('[data-conversation-pane]')).to_have_attribute('data-conversation-id','ticket-delivered-local')
+    page.evaluate('window.__detail()')
+    page.evaluate('window.__batch()')
+    assert page.evaluate("[...window.__openStreams].some(url=>url.includes('ticket-delivered-local'))")
+    ticket['conversation_id']='ticket-canonical-next'
+    page.evaluate('window.__batch()')
+    page.wait_for_function("() => [...window.__openStreams].some(url=>url.includes('ticket-canonical-next'))")
+    composer.click()
+    page.locator('.chat-overflow > .chat-overflow-btn').click()
+    page.locator('[data-conversation-new-arm]').click()
+    page.locator('[data-conversation-new-confirm]').click()
+    page.wait_for_function("() => ![...window.__openStreams].some(url=>url.includes('ticket-canonical-next'))")
+    page.evaluate('window.__detail()')
+    page.evaluate('window.__batch()')
+    assert not page.evaluate("[...window.__openStreams].some(url=>url.includes('ticket-canonical-next'))"), 'unchanged canonical pointer cannot undo local reset'
+    ticket['conversation_id']=None
+    page.evaluate('window.__batch()')
     page.locator('[data-ticket-id="t_guidance"]').wait_for()
     assert page.locator('[data-accept]').count() == 1
     proposal=page.locator('[data-approval-block][data-field="success_condition"] [contenteditable]')
@@ -464,6 +587,8 @@ with sync_playwright() as p:
     expect(page.locator('[data-revision-note]')).to_be_visible()
     page.evaluate("window.__showTicket('t_done')")
     page.locator('[data-ticket-id="t_done"]').wait_for()
+    expect(page.locator('[data-ticket-backlog-action], [data-ticket-backlogged]')).to_have_count(0)
+    assert page.evaluate('window.__wait()')['status']=='included'
     assert page.locator('[data-copy]').count() == 0
     assert page.locator('.ticket-operating').count() == 0
     ticket['conversation_id']='review-worker'
@@ -506,7 +631,8 @@ with sync_playwright() as p:
     assert len(approvals) == 1
     assert approvals[0]['next_ceiling'] == 'done'
     assert approvals[0]['next_holder'] == {'kind': 'chief', 'id': 'chief'}
-    assert approvals[0]['expected_proposal_revision'] == 1
+    # The earlier reviewer change advanced the canonical proposal revision.
+    assert approvals[0]['expected_proposal_revision'] == 2
     expect(page.locator('[data-review-card]')).to_have_count(0)
     # A later canonical proposal is a new ask, not resurrection of the accepted one.
     ticket.update(ticket_status='awaiting_approval',pending_proposal={'field':'success_condition','body':'A result','proposed_by':'agent','created_at':2,'revision':2})
