@@ -20,6 +20,11 @@ const scratchRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".
 /** Scratch names end in `-<pid>` before their extension. That suffix names the owner. */
 const owner = /-(\d+)(?:\.[^.]+)?$/;
 
+export function ownedByProcess(entryName, pid = process.pid) {
+  const match = owner.exec(entryName);
+  return match !== null && Number(match[1]) === pid;
+}
+
 function ownerIsAlive(entryName) {
   const match = owner.exec(entryName);
   if (match === null) return true;

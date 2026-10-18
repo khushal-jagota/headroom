@@ -7,14 +7,20 @@ export default class ScopeReporter {
   onTestRunEnd(modules, errors, reason) {
     const runtime = modules.filter(module => !module.meta().typecheck).map(module => ({
       path: `web/${relative(this.vitest.config.root, module.moduleId).replaceAll("\\", "/")}`,
-      cases: [...module.children.allTests()].map(test => ({name: test.fullName, status: test.result().state})),
+      cases: [...module.children.allTests()].map(test => ({name: test.fullName, status: test.result()?.state || "unexecuted"})),
     }));
     const typeModules = modules.filter(module => module.meta().typecheck);
     const compiler = this.vitest.config.typecheck.enabled && typeModules.length &&
       typeModules.every(module => module.ok()) && !errors.length && reason === "passed" ? "passed" : "not-passed";
-    const passed = reason === "passed" && !errors.length;
-    console.log(`\nPARTIAL ${passed ? "PASS" : "FAIL"} — Vitest scope ${passed ? "passed" : "failed"}`);
-    console.log(`EXECUTED runtime: ${runtime.map(result => result.path).join(", ") || "none"}`);
+    const cases = runtime.flatMap(result => result.cases);
+    const complete = runtime.length > 0 && runtime.every(result => result.cases.length > 0) &&
+      cases.every(test => test.status === "passed");
+    const passed = reason === "passed" && !errors.length && complete;
+    const failed = reason !== "passed" || errors.length > 0 || cases.some(test => test.status === "failed");
+    const outcome = passed ? "PASS" : failed ? "FAIL" : "INCOMPLETE";
+    console.log(`\nPARTIAL ${outcome} — Vitest scope ${passed ? "passed" : failed ? "failed" : "has incomplete runtime proof"}`);
+    console.log(`EXECUTED runtime: ${runtime.filter(result => result.cases.some(test => ["passed", "failed"].includes(test.status))).map(result => result.path).join(", ") || "none"}`);
+    console.log(`UNEXECUTED runtime: ${runtime.filter(result => !result.cases.length || result.cases.some(test => !["passed", "failed"].includes(test.status))).map(result => result.path).join(", ") || "none"}`);
     console.log(`TypeScript test project: ${compiler}`);
     console.log("Runtime proof applies only to listed files; unlisted runtime tests receive no credit.");
     console.log("NOT RUN: browser entries, Python checks, Svelte checks, production build. This result is not a suite-wide pass.");

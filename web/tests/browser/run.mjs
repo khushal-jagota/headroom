@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { build } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
-import { scratchDirectory } from "../support/scratch.mjs";
+import { scratchDirectory, ownedByProcess } from "../support/scratch.mjs";
 import { selectedEntries, validateCompanion } from "./contracts.mjs";
 
 const webRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -28,10 +28,34 @@ function cleanEnvironment() {
     !/^(PLAN_|PANELS_REAL_)/.test(key) && !["HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"].includes(key)));
 }
 
+function printScope(entries, receipt, requiredCompanions, selections) {
+  const cases = Array.isArray(receipt.cases) ? receipt.cases.filter(case_ => case_ && typeof case_ === "object") : [];
+  console.log(`\nPARTIAL ${receipt.outcome === "passed" ? "PASS" : "FAIL"} — browser entries: ${entries.map(entry => entry.id).join(", ") || selections.join(", ") || "none"}`);
+  console.log(`EXECUTED cases: ${cases.map(case_ => `${case_.id} (${case_.status})`).join(", ") || "none"}`);
+  const executed = new Set(cases.map(case_ => case_.id));
+  console.log(`NOT RUN selected cases: ${entries.flatMap(entry => entry.cases).filter(id => !executed.has(id)).join(", ") || "none"}`);
+  if (receipt.companion) console.log(`PASS: Node companion runtime (${requiredCompanions.join(", ")}) and TypeScript test project compiler`);
+  else if (requiredCompanions.length) console.log("NOT PROVED: required Node companion runtime and TypeScript test project compiler");
+  console.log(`NOT RUN: ${catalog.entries.filter(entry => !entries.includes(entry)).map(entry => entry.id).join(", ") || "no omitted browser entries"}; ${receipt.companion ? "other Vitest runtime tests" : requiredCompanions.length ? "other Vitest runtime tests" : "Vitest runtime and test compiler"}, Python checks, Svelte checks, production build. This result is not a suite-wide pass.`);
+}
+
 export async function run(selections = [], options = {}) {
+  let entries = [], requiredCompanions = [];
+  const receipt = {outcome: "failed", cases: [], companion: null};
+  try {
+    entries = selectedEntries(catalog, selections);
+    requiredCompanions = [...new Set(entries.flatMap(entry => entry.companions || []))];
+    return await runSelected(entries, options, receipt, requiredCompanions);
+  } catch (error) {
+    receipt.outcome = "failed";
+    throw error;
+  } finally {
+    printScope(entries, receipt, requiredCompanions, selections);
+  }
+}
+
+async function runSelected(entries, options, receipt, requiredCompanions) {
   const started = performance.now();
-  const entries = selectedEntries(catalog, selections);
-  const requiredCompanions = [...new Set(entries.flatMap(entry => entry.companions || []))];
   const invocationId = options.invocationId || randomUUID();
   const revision = execFileSync("git", ["rev-parse", "HEAD"], {cwd: repositoryRoot, encoding: "utf8"}).trim();
   assert.ok(!options.revision || options.revision === revision, "Requested browser revision differs from checkout");
@@ -45,7 +69,8 @@ export async function run(selections = [], options = {}) {
   const before = new Set(await readdir(scratchRoot));
   let server;
   let completed = false;
-  const receipt = {schema: 1, outcome: "failed", revision, invocationId, selected: entries.map(entry => entry.path), cases: [], companion: null, timing: {}};
+  Object.assign(receipt, {schema: 1, revision, invocationId, selected: entries.map(entry => entry.path), timing: {}});
+  let primaryError;
   try {
     const companionStarted = performance.now();
     if (requiredCompanions.length) {
@@ -107,10 +132,9 @@ export async function run(selections = [], options = {}) {
     assert.equal(receipt.cases.length, prepared.length, "Browser receipt omitted cases");
     assert.ok(receipt.cases.every(case_ => case_.status === "passed"), "Browser case failed");
     completed = true;
-    console.log(`\nPARTIAL PASS — browser entries: ${entries.map(entry => entry.id).join(", ")}`);
-    console.log(`EXECUTED cases: ${receipt.cases.map(case_ => case_.id).join(", ")}`);
-    if (receipt.companion) console.log(`PASS: Node companion runtime (${requiredCompanions.join(", ")}) and TypeScript test project compiler`);
-    console.log(`NOT RUN: ${catalog.entries.filter(entry => !entries.includes(entry)).map(entry => entry.id).join(", ") || "no omitted browser entries"}; ${receipt.companion ? "other Vitest runtime tests" : "Vitest runtime and test compiler"}, Python checks, Svelte checks, production build. This result is not a suite-wide pass.`);
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
     const teardownStarted = performance.now();
     let teardownError;
@@ -118,7 +142,7 @@ export async function run(selections = [], options = {}) {
       if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
       await rm(temporary, {recursive: true, force: true});
       for (const name of await readdir(scratchRoot)) {
-        if (!before.has(name) && name.includes(`-${process.pid}`)) await rm(join(scratchRoot, name), {recursive: true, force: true});
+        if (!before.has(name) && ownedByProcess(name)) await rm(join(scratchRoot, name), {recursive: true, force: true});
       }
     } catch (error) {
       teardownError = error;
@@ -127,9 +151,18 @@ export async function run(selections = [], options = {}) {
       receipt.outcome = completed && !teardownError ? "passed" : "failed";
       receipt.timing.teardownSeconds = (performance.now() - teardownStarted) / 1000;
       receipt.timing.invocationSeconds = (performance.now() - started) / 1000;
-      if (options.report) await writeFile(options.report, JSON.stringify(receipt, null, 2) + "\n");
+      if (options.report) {
+        try { await writeFile(options.report, JSON.stringify(receipt, null, 2) + "\n"); }
+        catch (error) {
+          if (!primaryError && !teardownError) throw error;
+          console.error("Browser report failed:", error);
+        }
+      }
     }
-    if (teardownError) throw teardownError;
+    if (teardownError) {
+      if (!primaryError) throw teardownError;
+      console.error("Browser cleanup failed:", teardownError);
+    }
   }
   return receipt;
 }
@@ -137,12 +170,17 @@ export async function run(selections = [], options = {}) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const selections = [];
   const options = {};
-  for (let index = 2; index < process.argv.length; index++) {
-    const argument = process.argv[index];
-    if (["--report", "--revision", "--invocation-id"].includes(argument)) {
-      assert.ok(process.argv[index + 1], `Missing argument for ${argument}`);
-      options[argument === "--invocation-id" ? "invocationId" : argument.slice(2)] = process.argv[++index];
-    } else selections.push(argument);
+  try {
+    for (let index = 2; index < process.argv.length; index++) {
+      const argument = process.argv[index];
+      if (["--report", "--revision", "--invocation-id"].includes(argument)) {
+        assert.ok(process.argv[index + 1], `Missing argument for ${argument}`);
+        options[argument === "--invocation-id" ? "invocationId" : argument.slice(2)] = process.argv[++index];
+      } else selections.push(argument);
+    }
+  } catch (error) {
+    printScope([], {outcome: "failed", cases: [], companion: null}, [], selections);
+    throw error;
   }
   await run(selections, options);
 }
