@@ -15,7 +15,6 @@ from planner.core.contracts import BlockerSummary, JsonDict
 from planner.files.lifecycle import database_path
 from planner.files.logic.listing import entries_as_json, fold_directory
 from planner.files.logic.paths import ticket_files_root
-from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
@@ -31,6 +30,7 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.derivation import TicketFacts
 from planner.tickets.logic import fields_codec, machine
+from planner.tickets.logic.recap import recap_preview
 from planner.worker_types.configuration import configured_worker_type_registry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
@@ -192,13 +192,6 @@ def _ticket_search_text(row: sqlite3.Row) -> str:
     )
 
 
-def _recap_preview(recap: str) -> str:
-    compact = " ".join(recap.split())
-    if len(compact) <= TICKET_RECAP_PREVIEW_CHARS:
-        return compact
-    return compact[: TICKET_RECAP_PREVIEW_CHARS - 1].rstrip() + "…"
-
-
 def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
     return {
         "is_backlogged": bool(row["is_backlogged"]),
@@ -225,7 +218,7 @@ def _ticket_summary_json(row: sqlite3.Row, facts: TicketFacts) -> JsonDict:
         ),
         "sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
         "effective_sprint_id": str(row["sprint_id"]) if row["sprint_id"] is not None else None,
-        "recap_preview": _recap_preview(str(row["recap"])),
+        "recap_preview": recap_preview(str(row["recap"])),
     }
 
 
@@ -499,7 +492,8 @@ def board_view(
     named_ticket_ids = tuple(dict.fromkeys(ticket_ids_holding_unread_owner_message))
     named_placeholders = ",".join("?" for _ in named_ticket_ids)
     rows = conn.execute(
-        "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
+        "SELECT tickets.id, tickets.title, tickets.recap, tickets.stage, tickets.priority, "
+        "tickets.deadline, "
         "tickets.is_backlogged, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "tickets.orchestrator_kind, "
@@ -563,6 +557,7 @@ def board_view(
                 ),
             },
             "title": str(row["title"]),
+            "recap_preview": recap_preview(str(row["recap"])),
             "priority": priority,
             "deadline": deadline,
             "project_id": group_project_id,
@@ -644,7 +639,7 @@ def _board_sprint_items(
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        f"SELECT i.id, i.title, i.priority, i.project_id, p.name AS project, "
+        f"SELECT i.id, i.title, i.body, i.priority, i.project_id, p.name AS project, "
         f"i.created_at, i.settled FROM sprint_items i JOIN projects p ON p.id=i.project_id "
         f"WHERE i.id IN ({placeholders})",
         item_ids,
@@ -656,6 +651,7 @@ def _board_sprint_items(
         BoardSprintItemSource(
             id=str(row["id"]),
             title=str(row["title"]),
+            recap_preview=recap_preview(str(row["body"])),
             priority=str(row["priority"]),
             settled=bool(row["settled"]),
             project_id=str(row["project_id"]),

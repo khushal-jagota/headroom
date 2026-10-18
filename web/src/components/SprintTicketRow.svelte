@@ -25,7 +25,7 @@
     href?: string | null;
     active?: boolean;
     quiet?: boolean;
-    onclick?: (() => void) | undefined;
+    onclick?: ((event: MouseEvent) => void) | undefined;
     class?: string;
     [key: string]: unknown;
   } = $props();
@@ -55,6 +55,7 @@
     class:ticket-row--active={active}
     class:ticket-row--quiet={quiet}
     {href}
+    {onclick}
     {...rest}
   >
     {@render content()}

@@ -11,7 +11,7 @@ const card = (id:string, values:Partial<BoardCard> = {}): BoardCard & SprintItem
   ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id:string, values:Partial<BoardSprintItem> = {}): BoardSprintItem => ({
-  ...quiet, id, title:id, priority:"P2", created_at:1, conversation_id:`supervisor-${id}`,
+  ...quiet, id, title:id, recap_preview:"", priority:"P2", created_at:1, conversation_id:`supervisor-${id}`,
   ticket_rollup:quiet, tickets:[], ...values
 });
 const chief = (values:Partial<ChiefManagementSettings> = {}):ChiefManagementSettings => ({

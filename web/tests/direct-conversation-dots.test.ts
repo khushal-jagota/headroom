@@ -40,7 +40,7 @@ describe("conversation dots across Worker references", () => {
 
   it("keeps the supervisor canonical signal separate from children and legacy attention", () => {
     const own = { working:true, message_for_owner:true };
-    const item = {id:"item",title:"Item",priority:"P2",created_at:1,tickets:[],conversation_id:"own",
+    const item = {id:"item",title:"Item",recap_preview:"",priority:"P2",created_at:1,tickets:[],conversation_id:"own",
       ...quiet, awaiting_reply:false, conversation_signal:own,ticket_rollup:{...quiet,awaiting_reply:true}} as BoardSprintItem;
     expect(buildWorkspaceRail([], [item]).items[0].conversationSignal).toEqual(own);
     delete item.conversation_signal;

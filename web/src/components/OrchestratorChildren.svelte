@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { railPreview } from "../lib/workspaceRailInteraction";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { filterOrchestratorChildren } from "../lib/orchestratorChildren";
@@ -10,10 +11,10 @@
   import ResourceState from "./ResourceState.svelte";
   import SprintTicketRow from "./SprintTicketRow.svelte";
 
-  let { principal, tickets, onHover = () => undefined, onLeave = () => undefined }: {
+  let { principal, tickets, onHover = undefined, onLeave = () => undefined }: {
     principal: OrchestratorPrincipal;
     tickets?: readonly SprintItemWorkspaceTicket[];
-    onHover?: (element: HTMLElement, ticketId: string) => void;
+    onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave?: () => void;
   } = $props();
   let filter = $state<OrchestratorChildFilter>("active");
@@ -70,13 +71,13 @@
         {/snippet}
         <div class="sprint-workspace-status-body">
           {#each group.tickets as ticket (ticket.id)}
+            <div use:railPreview={onHover ? {show:(element, immediate) => onHover?.(element, ticket.id, immediate), leave:onLeave} : null}>
             <SprintTicketRow priority={null} title={ticket.title} signal={ticket.conversation_signal} conversationId={ticket.conversation_id}
               quiet={ticket.stage === "done" || ticket.stage === "cancelled"}
               href={workspaceAddress(principal.kind === "sprint_item"
                 ? { kind: "ticket", id: ticket.id, openedFromItemId: principal.id } : { kind: "ticket", id: ticket.id })}
-              data-sprint-ticket-id={ticket.id}
-              onmouseenter={(event: MouseEvent) => onHover(event.currentTarget as HTMLElement, ticket.id)} onmouseleave={onLeave}
-              onfocus={(event: FocusEvent) => onHover(event.currentTarget as HTMLElement, ticket.id)} onblur={onLeave} />
+              data-sprint-ticket-id={ticket.id} />
+            </div>
           {/each}
         </div>
       </Disclosure>
