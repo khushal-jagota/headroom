@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -80,9 +81,13 @@ def test_regeneration_from_the_pinned_binary_is_byte_deterministic(
         prefix="binding-test-", dir=GENERATED_BINDINGS_PATH.parent
     ) as temporary_directory:
         generated = Path(temporary_directory) / "bindings_gen.py"
-        schema = Path(temporary_directory) / "schema.json"
-        monkeypatch.setattr(generator, "GENERATED_BINDINGS_PATH", generated)
-        monkeypatch.setattr(generator, "VENDORED_SUBSET_SCHEMA_PATH", schema)
-        generator.generate_bindings(codex_executable=codex)
+        schema = Path(temporary_directory) / VENDORED_SUBSET_SCHEMA_PATH.name
+        temporary_bundle = replace(
+            generator.TURN_BUNDLE,
+            generated_bindings_path=generated,
+            vendored_subset_schema_path=schema,
+        )
+        monkeypatch.setattr(generator, "BUNDLES", (temporary_bundle,))
+        generator.generate_bindings(codex_executable=codex, bundle_name="turn")
         assert generated.read_bytes() == GENERATED_BINDINGS_PATH.read_bytes()
         assert schema.read_bytes() == VENDORED_SUBSET_SCHEMA_PATH.read_bytes()

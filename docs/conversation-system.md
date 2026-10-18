@@ -489,6 +489,13 @@ uses that resolution and reports that the catalogue is unavailable. Without a la
 known-good resolution, it refuses the turn with a clear error. The shared picker
 shows the selected variant and resolved model, plus the catalogue warning when present.
 
+Ticket creation also tries to resolve its model. If no usable catalogue or cached
+resolution exists, creation preserves the requested model and reasoning effort. It
+reports unavailable resolution without writing a successful cache entry. Missing
+evidence does not block a fresh installation. Available evidence still rejects an
+unknown or disabled selection, or an unsupported effort. This exception applies to
+creation only. A later turn still requires a successful resolution.
+
 This rule covers Workers, Chief, ordinary orchestrators, new conversations, reused
 conversations and queued messages. Steering retains the active turn's model. Saved legacy
 versions resolve within their own variant. New orchestrators use the managed launch
@@ -831,11 +838,10 @@ and the shutdown, and stops showing the code when its own limit passes. It does 
 the code was still valid up to that point.
 
 **The protocol shapes are pinned separately.** The login messages are vendored as their
-own subset, generated against `codex-cli 0.163.0`, with their own pin header. The
-thread-and-turn subset stays pinned where it was. The two are kept apart because
-regenerating everything together would change twenty-two definitions the thread and turn
-core depends on, and the login closure shares none of them — the generator refuses to run
-if the two bundles ever reach the same definition.
+own subset with their own pin header. Both the login and thread-and-turn subsets are
+generated against `codex-cli 0.163.0`, matching the installed runtime. They retain separate
+pins so a future change to either surface is deliberate. Their definitions remain
+disjoint; generating both together refuses if they reach the same definition.
 
 ### One home and one credential per agent
 

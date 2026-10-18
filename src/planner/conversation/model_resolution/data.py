@@ -114,6 +114,10 @@ class ModelResolutionStore:
                 )
             conn.commit()
 
+    def has_catalogue(self, backend_key: ConversationBackendKey) -> bool:
+        with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
+            return has_catalogue(conn, backend_key)
+
     def read_catalogue(self, variant: ModelVariant) -> tuple[CachedModelResolution, ...]:
         with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
             return read_catalogue_models(conn, variant)
@@ -166,3 +170,11 @@ def read_catalogue_models(
             (variant.backend_key.value, variant.name),
         )
     )
+
+
+def has_catalogue(conn: sqlite3.Connection, backend_key: ConversationBackendKey) -> bool:
+    """A backend catalogue provides negative evidence; unrelated cached families do not."""
+    return conn.execute(
+        "SELECT 1 FROM model_catalogue_models WHERE backend_key=? LIMIT 1",
+        (backend_key.value,),
+    ).fetchone() is not None

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -19,6 +20,7 @@ from typing import Protocol
 
 from planner.conversation.backend_state import require_enabled_model
 from planner.conversation.contracts import require_conversation_backend_key
+from planner.conversation.model_resolution.contracts import ModelResolutionUnavailable
 from planner.conversation.model_resolution.service import resolve_cached_model
 from planner.core import authority, ticket_blocks
 from planner.core.contracts import (
@@ -333,17 +335,27 @@ def resolve_ticket_creation_context(
         and employee_launch_model.strip()
     ):
         require_enabled_model(conn, backend_key, employee_launch_model)
-    resolved = resolve_cached_model(
-        conn,
-        backend_key,
-        launch_configuration.employee_launch_model,
-        launch_configuration.employee_launch_reasoning_effort,
-    )
-    launch_configuration = replace(
-        launch_configuration,
-        employee_launch_model=resolved.model,
-        employee_launch_reasoning_effort=resolved.reasoning_effort,
-    )
+    try:
+        resolved = resolve_cached_model(
+            conn,
+            backend_key,
+            launch_configuration.employee_launch_model,
+            launch_configuration.employee_launch_reasoning_effort,
+        )
+    except ModelResolutionUnavailable:
+        require_enabled_model(conn, backend_key, launch_configuration.employee_launch_model)
+        logging.getLogger(__name__).warning(
+            "Ticket creation model resolution unavailable for %s/%s; "
+            "preserving requested model and reasoning effort without catalogue validation",
+            backend_key.value,
+            launch_configuration.employee_launch_model,
+        )
+    else:
+        launch_configuration = replace(
+            launch_configuration,
+            employee_launch_model=resolved.model,
+            employee_launch_reasoning_effort=resolved.reasoning_effort,
+        )
     if sprint_item_id is not None:
         item = conn.execute(
             "SELECT project_id FROM sprint_items WHERE id = ?",

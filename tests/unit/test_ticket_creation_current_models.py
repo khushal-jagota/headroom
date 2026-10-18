@@ -82,7 +82,9 @@ def test_creation_advances_saved_default_and_preserves_effort(tmp_path: Path) ->
     conn.close()
 
 
-def test_creation_refuses_missing_resolution_without_a_ticket(tmp_path: Path) -> None:
+def test_fresh_creation_preserves_unresolved_model_and_effort_without_cache(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     conn = connect(str(tmp_path / "cold.db"))
     create_schema(conn)
     definition = seed_probe_worker_type(conn)
@@ -91,22 +93,32 @@ def test_creation_refuses_missing_resolution_without_a_ticket(tmp_path: Path) ->
         replace(
             definition,
             worker_profile=replace(
-                definition.worker_profile, default_backend="codex", default_model="gpt-6-sol"
+                definition.worker_profile,
+                default_backend="codex",
+                default_model="opaque-requested-model",
+                default_reasoning_effort="high",
             ),
         ),
         now=0,
     )
     load_worker_runtime_definitions(conn)
-    with pytest.raises(PlannerError, match="no last-known-good"):
-        data.create_ticket(
-            conn,
-            title="Cold model",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            worker_type="probe",
-        )
-    assert conn.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
+    # create_schema plus the Worker definition supplies no catalogue or resolution.
+    assert conn.execute("SELECT count(*) FROM model_catalogue_models").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM model_variant_resolutions").fetchone()[0] == 0
+    ticket = data.create_ticket(
+        conn,
+        title="Cold model",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+        worker_type="probe",
+    )
+    assert ticket.employee_launch_model == "opaque-requested-model"
+    assert ticket.employee_launch_reasoning_effort == "high"
+    assert "resolution unavailable" in caplog.text
+    assert conn.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM model_catalogue_models").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM model_variant_resolutions").fetchone()[0] == 0
     conn.close()
 
 
@@ -225,6 +237,19 @@ def test_api_creation_and_default_saves_resolve_current_variant(
         )
         assert edited.status_code == 200, edited.text
         assert edited.json()["employee_launch_model"] == "gpt-6.1-sol"
+        # Successful catalogue evidence rules out both unknown and absent families.
+        for invalid_model in ("gpt-unknown-family", "gpt-6-astra"):
+            refused = client.post(
+                "/api/tickets",
+                json={
+                    "title": "Invalid known catalogue choice",
+                    "worker_type": "probe",
+                    "employee_backend": "codex",
+                    "employee_launch_model": invalid_model,
+                },
+            )
+            assert refused.status_code == 400, refused.text
+            assert refused.json()["error"]["code"] == "validation"
 
 
 def test_schedule_occurrence_resolves_a_stored_historical_model(tmp_path: Path) -> None:

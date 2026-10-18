@@ -18,15 +18,18 @@ from planner.conversation.model_resolution.config import (
 from planner.conversation.model_resolution.contracts import (
     CachedModelResolution,
     ModelResolution,
+    ModelResolutionUnavailable,
     ModelVariant,
 )
 from planner.conversation.model_resolution.data import (
     ModelResolutionStore,
+    has_catalogue,
     read_cached_resolution,
     read_catalogue_models,
 )
 from planner.conversation.model_resolution.logic.variants import (
     identify_variant,
+    recognize_variant,
     select_catalogue_model,
 )
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
@@ -88,14 +91,15 @@ class ModelResolutionService:
                 await asyncio.shield(task)
                 cached = self._store.read(variant)
                 if cached is None:
-                    raise PlannerError(
-                        ErrorCode.validation,
-                        "model catalogue unavailable and no last-known-good resolution exists",
-                        {
-                            "backend_key": backend_key.value,
-                            "variant": variant.name,
-                            "detail": self._failures.get(backend_key),
-                        },
+                    if self._store.has_catalogue(backend_key):
+                        raise PlannerError(
+                            ErrorCode.validation,
+                            "model catalogue has no enabled model for this variant; "
+                            "no last-known-good resolution exists",
+                            {"backend_key": backend_key.value, "variant": variant.name},
+                        )
+                    raise ModelResolutionUnavailable(
+                        backend_key, variant, detail=self._failures.get(backend_key)
                     )
             else:
                 warning = self._failures.get(backend_key) or (
@@ -272,7 +276,12 @@ def resolve_cached_model(
     reasoning_effort: str | None = None,
 ) -> ModelResolution:
     """Synchronous creation paths use durable evidence, never a child probe or guess."""
-    variant = identify_variant(backend_key, model)
+    variant = recognize_variant(backend_key, model)
+    catalogue_available = has_catalogue(conn, backend_key)
+    if variant is None:
+        if catalogue_available:
+            identify_variant(backend_key, model)  # Preserve evidence-backed refusal.
+        raise ModelResolutionUnavailable(backend_key, None)
     cached = read_cached_resolution(conn, variant)
     evidence = tuple(
         entry
@@ -283,11 +292,13 @@ def resolve_cached_model(
     if selected is not None:
         cached = selected
     if cached is None:
-        raise PlannerError(
-            ErrorCode.validation,
-            "no last-known-good model resolution exists for this variant",
-            {"backend_key": backend_key.value, "variant": variant.name},
-        )
+        if catalogue_available:
+            raise PlannerError(
+                ErrorCode.validation,
+                "model catalogue has no enabled model for this variant",
+                {"backend_key": backend_key.value, "variant": variant.name},
+            )
+        raise ModelResolutionUnavailable(backend_key, variant)
     if not model_is_enabled(conn, backend_key, cached.model):
         raise PlannerError(
             ErrorCode.validation,

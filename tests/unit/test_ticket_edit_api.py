@@ -17,7 +17,7 @@ from planner.conversation.backend_state import BackendStateStore, write_model_en
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.model_resolution.data import ModelResolutionStore
 from planner.conversation.model_resolution.service import ModelResolutionService
-from planner.conversation.snapshot import BackendModel, BackendSnapshot
+from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -413,8 +413,14 @@ def _backend_snapshot(
 def test_employee_configuration_preserves_effort_and_validates_each_backend(
     tmp_path: Path,
 ) -> None:
-    class BackendSnapshots:
-        async def snapshot(self, backend_key: str, **kwargs: object) -> BackendSnapshot:
+    class BackendSnapshots(BackendSnapshotService):
+        async def snapshot(
+            self,
+            backend_key: ConversationBackendKey,
+            *,
+            refresh: bool = False,
+            discover_update_advisory: bool = True,
+        ) -> BackendSnapshot:
             if backend_key == "claude":
                 return _backend_snapshot(
                     backend_key,

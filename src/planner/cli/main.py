@@ -2748,7 +2748,7 @@ for _retired in ("add", "remove", "carry"):
 main.add_command(sprint_item, "orchestrator")
 
 
-@main.group("model-corrections")
+@main.group("model-corrections", hidden=True)
 def model_corrections() -> None:
     """Preview and correct saved models without a message or restart."""
 

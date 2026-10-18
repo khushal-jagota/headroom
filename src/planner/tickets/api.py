@@ -37,7 +37,11 @@ from planner.conversation.contracts import (
     require_conversation_backend_key,
 )
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.conversation.model_resolution.contracts import CurrentModelResolver
+from planner.conversation.model_resolution.contracts import (
+    CurrentModelResolver,
+    ModelResolutionUnavailable,
+)
+from planner.conversation.model_resolution.service import resolve_cached_model
 from planner.conversation.storage import ConversationStore
 from planner.core import authority
 from planner.core.authctx import (
@@ -492,11 +496,26 @@ async def warm_ticket_creation_model(
     backend_key = require_conversation_backend_key(launch_configuration.employee_backend)
     if employee_launch_model and not model_source_is_historical:
         require_enabled_model(conn, backend_key, employee_launch_model)
-    await resolver.resolve(
-        backend_key,
-        launch_configuration.employee_launch_model,
-        launch_configuration.employee_launch_reasoning_effort,
-    )
+    try:
+        resolve_cached_model(
+            conn,
+            backend_key,
+            launch_configuration.employee_launch_model,
+            launch_configuration.employee_launch_reasoning_effort,
+        )
+    except ModelResolutionUnavailable as error:
+        if error.variant is None:
+            # There is no known family to probe. Creation retains the opaque value.
+            return
+    try:
+        await resolver.resolve(
+            backend_key,
+            launch_configuration.employee_launch_model,
+            launch_configuration.employee_launch_reasoning_effort,
+        )
+    except ModelResolutionUnavailable:
+        # The synchronous creation boundary reports and retains the unresolved choice.
+        pass
 
 
 @router.post("/tickets")

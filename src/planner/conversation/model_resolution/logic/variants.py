@@ -13,8 +13,8 @@ _CODEX_VERSION = re.compile(r"^gpt-(\d+(?:\.\d+)*)(?:-(sol|astra|luna|codex|mini
 _CLAUDE_VERSION = re.compile(r"^claude-(opus|sonnet|haiku)-(\d+(?:[-.]\d+)*)(\[1m\])?$")
 
 
-def identify_variant(backend_key: ConversationBackendKey, model: str) -> ModelVariant:
-    """Reject unfamiliar families instead of guessing from provider defaults or hints."""
+def recognize_variant(backend_key: ConversationBackendKey, model: str) -> ModelVariant | None:
+    """Recognize a family without treating absent catalogue evidence as invalidity."""
     if backend_key is ConversationBackendKey.hermes:
         return ModelVariant(backend_key, model)
     if backend_key is ConversationBackendKey.codex:
@@ -30,6 +30,14 @@ def identify_variant(backend_key: ConversationBackendKey, model: str) -> ModelVa
         match = _CLAUDE_VERSION.fullmatch(model)
         if match:
             return ModelVariant(backend_key, match.group(1) + (match.group(3) or ""))
+    return None
+
+
+def identify_variant(backend_key: ConversationBackendKey, model: str) -> ModelVariant:
+    """Reject unfamiliar families instead of guessing from provider defaults or hints."""
+    variant = recognize_variant(backend_key, model)
+    if variant is not None:
+        return variant
     raise PlannerError(
         ErrorCode.validation,
         "unknown model variant",

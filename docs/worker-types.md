@@ -413,6 +413,11 @@ orchestrators use the same rule, including after a server restart. Catalogue fai
 the last known-good resolution when one exists. See
 [current models within a variant](conversation-system.md#current-models-within-a-variant).
 
+On a fresh installation without model evidence, Ticket creation preserves its requested
+model and reasoning effort and reports unavailable resolution. It writes no invented
+catalogue or resolution. Available model evidence still enforces valid selections.
+The next turn follows the ordinary resolution rules.
+
 Saved choices can also be corrected without a Worker restart, including while the Ticket
 is idle or at a user-owned Stage. A correction changes launch choices only. It does not
 grant approval or advance work. See [model correction commands](cli.md#correct-saved-models).

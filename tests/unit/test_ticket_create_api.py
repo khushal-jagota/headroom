@@ -10,7 +10,6 @@ from unittest.mock import Mock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.model_catalogue import seed_test_model_catalogue
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
@@ -29,7 +28,6 @@ def create_api(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "ticket-create.db"
     with connect(str(db_path)) as conn:
         create_schema(conn)
-        seed_test_model_catalogue(conn)
     config = load_config(
         path=None,
         env={
@@ -258,3 +256,41 @@ def test_create_accepts_and_preserves_the_supported_optional_keys(
     with connect(str(db_path)) as conn:
         stored = tickets_data.read_ticket(conn, created["id"])
     assert stored.field_values["brief"] == body["brief"]
+
+
+def test_cold_failed_catalogue_does_not_block_creation_or_invent_evidence(
+    create_api: tuple[TestClient, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, db_path = create_api
+    calls: list[ConversationBackendKey] = []
+
+    async def unavailable_snapshot(
+        backend_key: ConversationBackendKey, **kwargs: object,
+    ) -> BackendSnapshot:
+        calls.append(backend_key)
+        raise ValueError("scripted first-run catalogue unavailable")
+
+    monkeypatch.setattr(
+        cast(FastAPI, client.app).state.conversation.backend_snapshots,
+        "snapshot", unavailable_snapshot,
+    )
+    requested = tickets_data.requested_ticket_launch_configuration("coding")
+    with connect(str(db_path)) as conn:
+        assert conn.execute("SELECT count(*) FROM model_catalogue_models").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM model_variant_resolutions").fetchone()[0] == 0
+    response = client.post(
+        "/api/tickets", json={"title": "Fresh install intake", "worker_type": "coding"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["employee_launch_model"] == requested.employee_launch_model
+    assert (
+        response.json()["employee_launch_reasoning_effort"]
+        == requested.employee_launch_reasoning_effort
+    )
+    assert calls == [ConversationBackendKey(requested.employee_backend)]
+    assert "resolution unavailable" in caplog.text
+    with connect(str(db_path)) as conn:
+        assert conn.execute("SELECT count(*) FROM model_catalogue_models").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM model_variant_resolutions").fetchone()[0] == 0

@@ -46,6 +46,7 @@ def test_administrative_and_legacy_paths_are_hidden_but_registered() -> None:
         "worker-type",
         "skill",
         "worker",
+        "model-corrections",
     ):
         assert main.commands[root].hidden is True
 

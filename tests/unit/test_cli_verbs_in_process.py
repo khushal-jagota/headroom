@@ -11,13 +11,16 @@ from typing import Any, cast
 import httpx
 import pytest
 from click.testing import CliRunner
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import seed_probe_worker_type
 
 from planner.cli.main import main as cli_main
+from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
+from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -414,7 +417,8 @@ def test_calendar_cli_writes_are_retired_and_planning_types_reject_creation(
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
-    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The backend and the model travel together, at both doors the CLI has.
 
@@ -422,6 +426,33 @@ def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
     on its own: creation takes the model with the backend it overrides to, and changing a
     Ticket's choice afterwards is a command that names the whole configuration.
     """
+    # Both fictional selections come from scripted provider catalogues at the real boundary.
+    async def snapshot(
+        backend_key: ConversationBackendKey, **kwargs: object,
+    ) -> BackendSnapshot:
+        model = {
+            ConversationBackendKey.hermes: "hermes-model",
+            ConversationBackendKey.codex: "gpt-99-sol",
+        }[backend_key]
+        return BackendSnapshot(
+            backend_key=backend_key,
+            installed=True,
+            executable_path=f"/scripted/{backend_key}",
+            version="1.0.0",
+            identity=None,
+            available_models=(BackendModel(model),),
+            reasoning_effort_options=(),
+            default_model_id=model,
+            default_reasoning_effort=None,
+            update_advisory=None,
+            diagnoses=(),
+        )
+
+    monkeypatch.setattr(
+        cast(FastAPI, api.client.app).state.conversation.backend_snapshots,
+        "snapshot",
+        snapshot,
+    )
     created = cli(
         server,
         "ticket",
@@ -447,12 +478,13 @@ def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
         "--backend",
         "codex",
         "--model",
-        "a-codex-model",
+        "gpt-99-sol",
     )
     assert updated["employee_backend"] == "codex"
+    assert updated["employee_launch_model"] == "gpt-99-sol"
     stored = api.get(server, f"/api/tickets?detail=full&id={created['id']}")
     assert stored["employee_backend"] == "codex"
-    assert stored["employee_launch_model"] == "a-codex-model"
+    assert stored["employee_launch_model"] == "gpt-99-sol"
 
 
 def test_schedule_cli_creates_lists_updates_and_shows_run_state(
