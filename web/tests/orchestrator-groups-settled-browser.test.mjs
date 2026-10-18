@@ -181,7 +181,7 @@ with sync_playwright() as p:
     page.route("**/api/**", respond)
     page.goto(sys.argv[1] + "#/workspace/item/si_focus")
     expect(page.locator('[data-workspace-group="agent"]')).to_be_visible()
-    # Sample actual transition frames: pointer exit must never reveal an accent border.
+    # Selection holds its existing accent outline through hover, focus and pointer exit.
     selected = page.locator('[data-sprint-item="si_focus"]')
     selected.hover()
     page.wait_for_timeout(180)
@@ -203,13 +203,14 @@ with sync_playwright() as p:
       probe.style.borderColor = 'var(--border-color)'; const neutral = getComputedStyle(probe).borderTopColor;
       probe.remove(); return {accent, neutral};
     }""")
-    assert all(frame["border"] != colors["accent"] for frame in border_frames), border_frames
-    assert border_frames[-1]["border"] == colors["neutral"], border_frames[-1]
+    assert hovered_border == colors["accent"], hovered_border
+    assert all(frame["border"] == colors["accent"] for frame in border_frames), border_frames
+    assert page.locator('[data-sprint-item="si_active_00"]').evaluate("n => getComputedStyle(n).borderTopColor") == colors["neutral"]
     assert selected.evaluate("n => getComputedStyle(n).backgroundColor") == page.locator('[data-sprint-item="si_active_00"]').evaluate("n => getComputedStyle(n).backgroundColor")
     expect(selected.locator('.item-head')).to_have_attribute("aria-current", "page")
     selected.locator('.item-head').click()
     page.mouse.move(1430, 10)
-    assert selected.evaluate("n => getComputedStyle(n).borderTopColor") != colors["accent"]
+    assert selected.evaluate("n => getComputedStyle(n).borderTopColor") == colors["accent"]
     selected.locator('.item-head').blur()
     selected.locator('.item-head').focus()
     page.keyboard.press("Tab")
@@ -218,6 +219,10 @@ with sync_playwright() as p:
     page.keyboard.press("Shift+Tab")
     assert selected.locator('.item-head').evaluate("n => n.matches(':focus-visible')")
     assert selected.locator('.item-head').evaluate("n => getComputedStyle(n).outlineStyle") != "none"
+    assert selected.evaluate("n => getComputedStyle(n).borderTopColor") == colors["accent"]
+    selected.locator('.item-head').blur()
+    page.wait_for_function("[...document.querySelectorAll('[data-rail-hover-panel]')].every(n => getComputedStyle(n).opacity === '0')")
+    screenshot(page, "selected-outline")
     unfinished = ["awaiting_approval", "awaiting_answer", "assigned", "errored", "empty", "blocked", "agent"]
     for key in unfinished:
         assert opened(page, key), key + " unfinished group did not open by default"

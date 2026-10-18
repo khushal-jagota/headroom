@@ -56,7 +56,9 @@ One screen per part of the system:
 
   A card opens its orchestrator. A row opens its Worker. The address preserves selection
   across reload and Back. Opening a detail pane never replaces rail classification.
-  Hover lights the card edge and title. Worker rows retain the existing hover wash.
+  Selection uses the existing bright accent outline without a background fill. The
+  outline stays bright through hover and focus. Hover lights unselected card edges and
+  titles. Worker rows retain the existing hover wash.
   Fine pointers with hover capability reveal a popup after 200 milliseconds. Visible
   keyboard focus reveals it immediately. Touch reveals it after a 400 millisecond hold.
   Movement, release, or cancellation stops an unfinished hold. Taps and clicks select.
