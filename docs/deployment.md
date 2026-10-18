@@ -216,6 +216,12 @@ resume only under the recorded same-package intent and positive safety checks.
 
 The workflow enables this path only when `PANELS_RESIDENT_DEPLOY_ENABLED=true` and
 all explicit Mac, interpreter, backend, and transport configuration passes preflight.
+With opt-in, preflight reads installed protocol and journal versions from both hosts
+before the deployment lifecycle starts. It compares those versions with the exact
+requested source revision. Unsupported transitions and unknown installed evidence
+refuse before either host changes. Confirmed first installation and same-protocol
+updates keep their existing safety checks. The authenticated Mac inspection is
+read-only. Current deployment tooling stays separate from the exact candidate app.
 Without opt-in, the existing VPS workflow remains unchanged. The resident step records
 both observed hosts under the deployment identity. Both observed revisions must match
 the request before aggregate success. One successful host stays installed after its

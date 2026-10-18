@@ -181,12 +181,32 @@ def _input_digest(app: Path, package: ResidentPackage) -> str:
         raise ResidentError("source package manifest is missing") from exc
     if actual != _json_bytes(expected):
         raise ResidentError("source package manifest or committed input bytes changed")
+    from planner.environments.resident.preflight import (
+        CONFIGURATION_SOURCE,
+        package_versions,
+        versions_from_source,
+    )
+
+    if CONFIGURATION_SOURCE in package.closure.files and versions_from_source(
+        (app / CONFIGURATION_SOURCE).read_text()
+    ) != package_versions(package):
+        raise ResidentError("package compatibility differs from source configuration")
     return hashlib.sha256(actual).hexdigest()
 
 
 def build_source_package(source: Path, package: ResidentPackage, destination: Path) -> Path:
     """Extract only declared regular files from the exact committed revision."""
     validate_package(package)
+    from planner.environments.resident.preflight import (
+        CONFIGURATION_SOURCE,
+        package_versions,
+        requested_versions,
+    )
+
+    if CONFIGURATION_SOURCE in package.closure.files and requested_versions(
+        source, package.application_revision
+    ) != package_versions(package):
+        raise ResidentError("package compatibility differs from exact source versions")
     _safe_parents(source)
     _safe_parents(destination)
     if destination.exists() or destination.is_symlink():

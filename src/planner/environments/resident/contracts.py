@@ -23,6 +23,26 @@ HostDisposition = Literal["verified", "unreachable", "deferred", "failed"]
 
 
 @dataclass(frozen=True)
+class ExecutorCompatibilityVersions:
+    """Wire and persistent-journal versions remain separate compatibility facts."""
+
+    protocol_version: int
+    spool_format_version: int
+
+
+@dataclass(frozen=True)
+class InstalledExecutorCompatibility:
+    """Both optional fields are absent only after positive first-install proof.
+
+    Unknown, unreadable, or conflicting installation evidence raises ResidentError.
+    """
+
+    host: HostName
+    application_revision: str | None
+    versions: ExecutorCompatibilityVersions | None
+
+
+@dataclass(frozen=True)
 class ResidentPaths:
     """Code is replaceable; data and native versioned runtimes never move."""
 

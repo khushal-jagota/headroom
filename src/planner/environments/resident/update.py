@@ -131,6 +131,19 @@ def update_resident(
     swapped = False
     old_health: ExecutorHealth | None = None
     try:
+        from planner.environments.resident.contracts import InstalledExecutorCompatibility
+        from planner.environments.resident.logic.upgrade import require_supported_upgrade
+        from planner.environments.resident.preflight import package_versions, supported_versions
+
+        require_supported_upgrade(
+            package_versions(candidate.package),
+            (
+                InstalledExecutorCompatibility(
+                    "mac", previous.package.application_revision, package_versions(previous.package)
+                ),
+            ),
+            supported_versions(),
+        )
         _check_paths(paths, candidate, previous)
         with _update_lock(paths.deployment_root):
             _check_paths(paths, candidate, previous)

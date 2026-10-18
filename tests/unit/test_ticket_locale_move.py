@@ -12,6 +12,7 @@ from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import MessageContent, text_message_content
+from planner.core.contracts import Principal
 from planner.core.errors import PlannerError
 from planner.runtime.conversation_start import conversation_link_lock, send_to_ticket_conversation
 from planner.runtime.worker_step_readiness import worker_step_blocker
@@ -244,18 +245,26 @@ def test_concurrent_claim_and_move_serialize_their_database_writes(
     first_has_write_lock = Event()
     release_first = Event()
     contender_attempted_begin = Event()
-    original_compatibility = locale_configuration.require_locale_backend_compatibility
+    original_validation = data.validate_ticket_locale_move
 
     def hold_first_write() -> None:
         first_has_write_lock.set()
         assert release_first.wait(5), "the test did not release the first writer"
 
-    def compatibility(locale: TicketLocale, backend: str) -> None:
-        original_compatibility(locale, backend)
-        if first == "move":
+    def validation(
+        conn: Connection, ticket_id: str, *, locale: TicketLocale,
+        principal: Principal, expected_record_sha256: str | None = None,
+    ) -> Ticket:
+        ticket = original_validation(
+            conn, ticket_id, locale=locale, principal=principal,
+            expected_record_sha256=expected_record_sha256,
+        )
+        # Preflight is read-only; hold only the final canonical writer.
+        if first == "move" and conn.in_transaction:
             hold_first_write()
+        return ticket
 
-    monkeypatch.setattr(data, "require_locale_backend_compatibility", compatibility)
+    monkeypatch.setattr(data, "validate_ticket_locale_move", validation)
 
     def readiness(
         conn: Connection, ticket: Ticket, *, worker_type_definition: WorkerTypeDefinition,

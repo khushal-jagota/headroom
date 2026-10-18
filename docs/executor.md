@@ -67,9 +67,10 @@ checks its publication identity, offset, and byte count before the next chunk.
 An empty, malformed, or mismatched acknowledgment stops the transfer. A chunk
 acknowledgment confirms the chunk write only. Full length and digest checks and
 complete publication acceptance still precede any dependent row or child command.
-An invalid input acknowledgment closes the link and retains the original command
-and caller for reconnect. It does not report failure and later dispatch abandoned
-work.
+An invalid input chunk or completion acknowledgment closes the link and retains
+the original command and caller for reconnect. It does not report failure and later dispatch abandoned
+work. A rejected completion acknowledgment does not authorize native dispatch, even
+when the receiver already holds the complete input file.
 
 Files and database rows have different commit boundaries. Complete orphan bytes
 after a crash can finish their original publication. Partial bytes stay outside
@@ -96,6 +97,11 @@ Reconciliation can give an old answer to its original surviving callback.
 An unanswered callback keeps its wait.
 A missing child does not receive a replacement answer, a refusal, or a made-up
 turn ending.
+
+After reconnect, the VPS acknowledges accepted retained command outcomes through
+the existing command acknowledgment path. Later registry inventories omit those
+outcomes. Filesystem receipt cleanup and registry confirmation remain separate.
+Neither acknowledgment repeats the native operation.
 
 The VPS exposes per-ask evidence: uncertain, reachable, child gone, or callback
 gone, alongside the stored answer and its application. A restored link alone
@@ -130,6 +136,37 @@ An incompatible rollback preserves the journal and refuses mutation.
 
 Code paths: `src/planner/executor/entrypoint.py`, `cli.py`, `preflight.py`,
 `configuration.py`, `mac.py`.
+
+## Explicit locale moves
+
+The VPS serializes a move with Ticket sends, resets, and Worker admission. A Mac
+source supplies fresh evidence for all VPS-assigned source children, including a
+start that has not reached the Mac. The executor refuses active turns, callbacks,
+unsent journal work, uncertain operations, and unfinished publication. Historical
+handshake inventory alone cannot authorize a move.
+
+After idle admission, the executor fences the old child identities against future
+commands and IPC writes, then retires those children. A receipt names the exact
+incarnation and connection generation. The VPS checks that identity again through
+the canonical write. An absent conversation still requires current source proof.
+New destination children receive fresh identities, including a later return to Mac.
+Failure after retirement begins reports retired or uncertain source state separately
+from an admission refusal.
+
+## Unsupported upgrade transitions
+
+Resident preflight compares the exact requested candidate protocol and journal
+versions with read-only installed evidence from both hosts. It runs before the VPS
+lifecycle write or any Mac staging, runtime preparation, or service mutation. A
+protocol mismatch refuses even when the journal format stays unchanged. Unknown
+installed evidence refuses instead of counting as first installation.
+
+A confirmed first installation and a supported same-protocol update keep their
+existing paths and safety checks. Current deployment tooling stays separate from
+the exact candidate source, so an earlier supported revision remains a candidate.
+A Mac inspection uses the pinned SSH identity and does not execute installed code.
+Direct deployment paths repeat the relevant checks before their own mutations.
+No migration or general retarget mechanism is part of this refusal policy.
 
 ## Browser previews
 

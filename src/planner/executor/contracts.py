@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Literal, Protocol, TypedDict
 
 from planner.conversation.backends.contracts import TurnToken
+from planner.conversation.contracts import MoveRetirementResult
 from planner.conversation.events import UserInputAnswer
 
 # Payloads carry existing domain types as JSON; operation-specific codecs validate
@@ -326,6 +327,23 @@ class ChildInventory:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceRetirementRequest:
+    expected_identity: ExecutorIdentity
+    ticket_id: str
+    conversation_id: str | None
+    assigned_children: tuple[ChildReference, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRetirementReceipt:
+    identity: ExecutorIdentity
+    ticket_id: str
+    conversation_id: str | None
+    assigned_children: tuple[ChildReference, ...]
+    result: MoveRetirementResult
+
+
+@dataclass(frozen=True, slots=True)
 class ReconciliationInventory:
     identity: ExecutorIdentity
     children: tuple[ChildInventory, ...]
@@ -400,6 +418,8 @@ class WireMessageKind(StrEnum):
     reconcile_inventory = "reconcile_inventory"
     reconcile_result = "reconcile_result"
     reconciliation_ready = "reconciliation_ready"
+    source_retire = "source_retire"
+    source_retired = "source_retired"
     envelope = "envelope"
     receipt = "receipt"
     file_manifest = "file_manifest"

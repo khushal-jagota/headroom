@@ -1555,6 +1555,7 @@ async def resume_ticket(
 @router.post("/tickets/{ticket_id}/move")
 async def move_ticket_locale(
     ticket_id: str,
+    request: Request,
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
@@ -1568,6 +1569,7 @@ async def move_ticket_locale(
     if "locale" not in raw or set(raw) - {"locale", "expected_record_sha256"}:
         raise PlannerError(ErrorCode.validation, "move requires a locale", {})
     now = clk.now_unix()
+    endpoint = getattr(request.app.state, "executor_endpoint", None)
     ticket = await move(
         conversations,
         conn,
@@ -1576,5 +1578,10 @@ async def move_ticket_locale(
         principal=ctx.principal,
         now=now,
         expected_record_sha256=_record_precondition(raw),
+        source_factory=(
+            (lambda ticket: endpoint.source_for_move(ticket.id, ticket.conversation_id))
+            if endpoint is not None
+            else None
+        ),
     )
     return tickets_views.ticket_json(ticket, now)

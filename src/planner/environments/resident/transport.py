@@ -15,18 +15,31 @@ from pathlib import Path
 from typing import cast
 
 from planner.environments.resident.contracts import (
+    ExecutorCompatibilityVersions,
     ExecutorLaunchOptions,
     HostDeploymentResult,
     HostDisposition,
+    InstalledExecutorCompatibility,
     ResidentError,
 )
+from planner.environments.resident.logic.upgrade import require_supported_upgrade
 from planner.environments.resident.packaging import build_source_package, package_from_dict
+from planner.environments.resident.preflight import (
+    inspect_installed_vps,
+    mac_admission_source,
+    mac_probe_command_source,
+    package_versions,
+    parse_mac_identity,
+    requested_versions,
+    supported_versions,
+)
 
 # Tooling is separate from installed executor code. This explicit closure imports
 # shared immutable types but excludes server, database and web implementations.
 _TOOL_SHARED = (
     "src/planner/__init__.py",
     "src/planner/environments/__init__.py",
+    "src/planner/environments/app.py",
     "src/planner/executor/__init__.py",
     "src/planner/executor/contracts.py",
     "src/planner/executor/configuration.py",
@@ -169,47 +182,29 @@ def build_delivery_archive(source: Path, manifest: Path, revision: str) -> bytes
         raise ResidentError("executor artifact specification does not match requested SHA")
     with tempfile.TemporaryDirectory(prefix="panels-resident-delivery-") as directory:
         app = build_source_package(source, package, Path(directory) / "app")
-        tool_paths = subprocess.check_output(
-            [
-                "git",
-                "-C",
-                str(source),
-                "ls-tree",
-                "-r",
-                "--name-only",
-                revision,
-                "--",
-                "src/planner/environments/resident",
-            ],
-            text=True,
-        ).splitlines()
+        # Deployment tools come from this executing checkout, independently of
+        # the exact requested app payload (which can be an earlier same-protocol SHA).
+        tool_source = Path(__file__).resolve().parents[4]
         tools = tuple(
             sorted(
                 set(_TOOL_SHARED)
-                | {name for name in tool_paths if name.endswith(".py")}
-                | {name for name in package.closure.files if name.startswith("src/planner/")}
+                | {
+                    path.relative_to(tool_source).as_posix()
+                    for path in (tool_source / "src/planner/environments/resident").rglob("*.py")
+                }
             )
-        )
-        result = subprocess.run(
-            ["git", "-C", str(source), "archive", "--format=tar", revision, "--", *tools],
-            check=True,
-            capture_output=True,
         )
         output = io.BytesIO()
         found: set[str] = set()
         with tarfile.open(fileobj=output, mode="w") as bundle:
-            with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:") as archive:
-                for member in archive:
-                    if member.isdir():
-                        continue
-                    if not member.isfile() or member.name not in tools or member.name in found:
-                        raise ResidentError("deployment tooling contains nonregular files")
-                    found.add(member.name)
-                    stream = archive.extractfile(member)
-                    member.name = "tools/" + member.name
-                    bundle.addfile(member, stream)
+            for name in tools:
+                path = tool_source / name
+                if path.is_symlink() or not path.is_file():
+                    raise ResidentError("deployment tooling contains nonregular files")
+                found.add(name)
+                bundle.add(path, arcname="tools/" + name, recursive=False)
             if found != set(tools) or not any(name.endswith("/driver.py") for name in found):
-                raise ResidentError("requested commit lacks complete deployment tooling")
+                raise ResidentError("Executing deployment tooling closure is incomplete")
             for path in sorted(app.rglob("*")):
                 if path.is_file():
                     bundle.add(
@@ -254,33 +249,8 @@ class SshResidentDeployment:
         self.npm, self.node = npm, node
         self.python, self.launch, self.timeout_seconds = python, launch, timeout_seconds
 
-    def deploy(self, requested_revision: str) -> HostDeploymentResult:
-        if requested_revision != self.launch.application_revision:
-            raise ResidentError("transport launch revision differs from requested deployment")
-        archive = build_delivery_archive(self.source, self.manifest, requested_revision)
-        arguments = [
-            "--python",
-            str(self.python),
-            "--requested-sha",
-            requested_revision,
-            "--executor-ssh-host",
-            self.launch.ssh_host,
-            "--panels-server-url",
-            self.launch.panels_server_url,
-            "--relay-command",
-            self.launch.remote_command,
-            "--timeout-seconds",
-            str(min(self.timeout_seconds, 60.0)),
-        ]
-        if self.launch.backend_path is not None:
-            arguments += ["--backend-path", self.launch.backend_path]
-        if self.npm is not None:
-            arguments += ["--npm", str(self.npm)]
-        if self.node is not None:
-            arguments += ["--node", str(self.node)]
-        encoded = base64.b64encode(json.dumps(arguments).encode()).decode()
-        command = shlex.join([str(self.python), "-I", "-B", "-c", _REMOTE_BOOTSTRAP, encoded])
-        ssh = [
+    def _ssh(self, command: str) -> list[str]:
+        return [
             "ssh",
             "-F",
             "/dev/null",
@@ -309,6 +279,79 @@ class SshResidentDeployment:
             self.host,
             command,
         ]
+
+    def inspect_installed(self) -> InstalledExecutorCompatibility:
+        command = shlex.join([str(self.python), "-I", "-B", "-c", mac_probe_command_source()])
+        try:
+            result = subprocess.run(
+                self._ssh(command),
+                capture_output=True,
+                timeout=min(self.timeout_seconds, 60.0),
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ResidentError("Mac read-only installation inspection failed") from exc
+        if result.returncode != 0:
+            raise ResidentError("Mac read-only installation inspection refused")
+        return parse_mac_identity(result.stdout)
+
+    def _candidate_versions(self, requested_revision: str) -> ExecutorCompatibilityVersions:
+        package = package_from_dict(json.loads(self.manifest.read_bytes()))
+        if (
+            requested_revision != self.launch.application_revision
+            or package.application_revision != requested_revision
+        ):
+            raise ResidentError("candidate/launch revision differs from requested deployment")
+        versions = requested_versions(self.source, requested_revision)
+        if versions != package_versions(package):
+            raise ResidentError("candidate manifest differs from exact requested source versions")
+        require_supported_upgrade(versions, (), supported_versions())
+        return versions
+
+    def preflight(self, requested_revision: str, *, vps_app: Path) -> None:
+        versions = self._candidate_versions(requested_revision)
+        vps = inspect_installed_vps(vps_app)
+        mac = self.inspect_installed()
+        require_supported_upgrade(versions, (vps, mac), supported_versions())
+
+    def deploy(self, requested_revision: str) -> HostDeploymentResult:
+        if requested_revision != self.launch.application_revision:
+            raise ResidentError("transport launch revision differs from requested deployment")
+        versions = self._candidate_versions(requested_revision)
+        require_supported_upgrade(versions, (self.inspect_installed(),), supported_versions())
+        archive = build_delivery_archive(self.source, self.manifest, requested_revision)
+        arguments = [
+            "--python",
+            str(self.python),
+            "--requested-sha",
+            requested_revision,
+            "--executor-ssh-host",
+            self.launch.ssh_host,
+            "--panels-server-url",
+            self.launch.panels_server_url,
+            "--relay-command",
+            self.launch.remote_command,
+            "--timeout-seconds",
+            str(min(self.timeout_seconds, 60.0)),
+        ]
+        if self.launch.backend_path is not None:
+            arguments += ["--backend-path", self.launch.backend_path]
+        if self.npm is not None:
+            arguments += ["--npm", str(self.npm)]
+        if self.node is not None:
+            arguments += ["--node", str(self.node)]
+        encoded = base64.b64encode(json.dumps(arguments).encode()).decode()
+        command = shlex.join(
+            [
+                str(self.python),
+                "-I",
+                "-B",
+                "-c",
+                mac_admission_source(versions) + "\n" + _REMOTE_BOOTSTRAP,
+                encoded,
+            ]
+        )
+        ssh = self._ssh(command)
         try:
             completed = subprocess.run(
                 ssh,

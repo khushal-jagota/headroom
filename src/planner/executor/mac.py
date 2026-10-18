@@ -54,6 +54,7 @@ from planner.executor.contracts import (
     ReceiptDisposition,
     ReconciliationInventory,
     ReconciliationResult,
+    SourceRetirementRequest,
     WireMessage,
     WireMessageKind,
 )
@@ -206,6 +207,7 @@ class MacExecutor:
                 WireMessageKind.file_complete,
                 WireMessageKind.command,
                 WireMessageKind.command_outcome_ack,
+                WireMessageKind.source_retire,
             ):
                 raise ProtocolRefused("peer sent work before validated handshake")
             if message.kind == WireMessageKind.file_manifest:
@@ -248,6 +250,10 @@ class MacExecutor:
                         },
                     )
                 )
+            elif message.kind == WireMessageKind.source_retire:
+                task = asyncio.create_task(self._retire_source(message))
+                self._command_tasks.add(task)
+                task.add_done_callback(self._command_tasks.discard)
             elif message.kind == WireMessageKind.command:
                 task = asyncio.create_task(self._command(message))
                 self._command_tasks.add(task)
@@ -263,6 +269,14 @@ class MacExecutor:
                         # Admit opens after the ready acknowledgment in wire order.
                         self.state = ConnectionState.ready
                     future.set_result(message)
+
+    async def _retire_source(self, message: WireMessage) -> None:
+        request = TypeAdapter(SourceRetirementRequest).validate_python(message.payload)
+        receipt = await self.registry.retire_source(message.request_id, request, self.identity)
+        with contextlib.suppress(ConnectionError, BrokenPipeError):
+            await self._send(
+                WireMessage(WireMessageKind.source_retired, message.request_id, as_object(receipt))
+            )
 
     async def _command(self, message: WireMessage) -> None:
         command = TypeAdapter(ChildCommand).validate_python(message.payload)
@@ -489,25 +503,29 @@ class MacExecutor:
                     ),
                 )
                 return IpcResponse(request.request_id, response.payload, None)
-            payload = as_object(
-                CliWrite(
-                    str(request.payload["operation"]),
-                    cast(JsonObject, request.payload["arguments"]),
-                    child.reference,
-                    child.active_turn,
+            self.registry.begin_source_work(child.reference)
+            try:
+                payload = as_object(
+                    CliWrite(
+                        str(request.payload["operation"]),
+                        cast(JsonObject, request.payload["arguments"]),
+                        child.reference,
+                        child.active_turn,
+                    )
                 )
-            )
-            snapshots: tuple[FileSnapshot, ...] = ()
-            if child.ticket_id is not None:
-                snapshots = snapshot_ticket(self.paths, child.ticket_id)
-            envelope = await asyncio.to_thread(
-                self.spool.mint_envelope,
-                conversation_id=child.reference.conversation_id,
-                kind=EnvelopeKind.cli_write,
-                payload=payload,
-                snapshots=snapshots,
-                submission_id=request.request_id,
-            )
+                snapshots: tuple[FileSnapshot, ...] = ()
+                if child.ticket_id is not None:
+                    snapshots = snapshot_ticket(self.paths, child.ticket_id)
+                envelope = await asyncio.to_thread(
+                    self.spool.mint_envelope,
+                    conversation_id=child.reference.conversation_id,
+                    kind=EnvelopeKind.cli_write,
+                    payload=payload,
+                    snapshots=snapshots,
+                    submission_id=request.request_id,
+                )
+            finally:
+                self.registry.end_source_work(child.reference)
             future: asyncio.Future[AcceptanceReceipt] = asyncio.get_running_loop().create_future()
             self._receipts[envelope.submission_id] = future
             try:

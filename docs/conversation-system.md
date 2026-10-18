@@ -207,6 +207,19 @@ associations and leaves each conversation record behind. A file removed by eithe
 turn an attachment somebody sent into a file nobody can retrieve, while the row still
 says that the attachment was sent.
 
+An explicit Ticket locale move uses a separate idle-retirement operation. It holds
+conversation admission through source retirement and the synchronous locale write.
+It preserves the notebook, session cursor, model settings, and access posture.
+The old child cannot receive the next prompt after a successful move. A missing
+linked conversation refuses rather than supplying an idle proof.
+
+For a Mac source, the executor checks current work and retires the assigned source
+child identities. Old identities remain fenced against delayed commands and IPC
+writes. A later return to the Mac receives fresh child identities. Receipt evidence
+must still match the current executor incarnation and connection generation at commit.
+Admission refusal precedes native effects. Stop uncertainty keeps the child handle
+quarantined. A failed write after confirmed stop reports that the source retired.
+
 A finished tool call keeps the readable text that its backend reports. Claude can
 report a result as a list of text and non-text blocks. Panels joins its text blocks
 and keeps no finish detail when the list contains no text. Some older Claude rows

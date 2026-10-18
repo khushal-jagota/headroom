@@ -24,7 +24,12 @@ from planner.conversation.backends.contracts import (
     BackendUserInputRequest,
     TurnToken,
 )
-from planner.conversation.contracts import ConversationRoleMaterials, ResolvedConversationStart
+from planner.conversation.contracts import (
+    ConversationRoleMaterials,
+    MoveRetirementDisposition,
+    MoveRetirementResult,
+    ResolvedConversationStart,
+)
 from planner.conversation.logic.user_input import ordered_user_input_answers
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.executor.codec import encode_backend_event, encode_value, invoke_child
@@ -50,6 +55,8 @@ from planner.executor.contracts import (
     JsonObject,
     Quiescence,
     ReconciliationInventory,
+    SourceRetirementReceipt,
+    SourceRetirementRequest,
 )
 from planner.executor.files import safe_component, snapshot_ticket
 
@@ -118,16 +125,165 @@ class NativeChildRegistry:
         self._applications_published: set[str] = set()
         self._confirmed_command_ids: set[str] = set()
         self.admission_stopped = False
+        self._retired_children: set[str] = set()
+        self._retiring_children: set[str] = set()
+        self._retiring_tickets: set[str] = set()
+        self._source_work: dict[str, int] = {}
+        self._retirements: dict[
+            str, tuple[SourceRetirementRequest, asyncio.Task[SourceRetirementReceipt]]
+        ] = {}
 
     def authenticate(self, child_id: str | None, capability: str | None) -> _Child:
         child = self.children.get(child_id or "")
         if (
             child is None
+            or child_id in self._retired_children
+            or child_id in self._retiring_children
+            or child.ticket_id in self._retiring_tickets
             or capability is None
             or not secrets.compare_digest(child.capability, capability)
         ):
             raise PermissionError("unknown executor child capability")
         return child
+
+    def begin_source_work(self, child: ChildReference) -> None:
+        native = self.children.get(child.child_id)
+        if (
+            child.child_id in self._retired_children
+            or child.child_id in self._retiring_children
+            or (native is not None and native.ticket_id in self._retiring_tickets)
+        ):
+            raise PermissionError("source child is retired or retiring")
+        key = child.conversation_id
+        self._source_work[key] = self._source_work.get(key, 0) + 1
+
+    def end_source_work(self, child: ChildReference) -> None:
+        key = child.conversation_id
+        self._source_work[key] -= 1
+        if not self._source_work[key]:
+            del self._source_work[key]
+
+    async def retire_source(
+        self,
+        request_id: str,
+        request: SourceRetirementRequest,
+        identity: ExecutorIdentity,
+    ) -> SourceRetirementReceipt:
+        previous = self._retirements.get(request_id)
+        if previous is not None:
+            if previous[0] != request:
+                raise ValueError("source retirement id reused with different content")
+            return await asyncio.shield(previous[1])
+        task = asyncio.create_task(self._retire_source(request, identity))
+        self._retirements[request_id] = (request, task)
+        return await asyncio.shield(task)
+
+    async def _retire_source(
+        self,
+        request: SourceRetirementRequest,
+        identity: ExecutorIdentity,
+    ) -> SourceRetirementReceipt:
+        def receipt(
+            disposition: MoveRetirementDisposition, reason: str | None = None
+        ) -> SourceRetirementReceipt:
+            return SourceRetirementReceipt(
+                identity,
+                request.ticket_id,
+                request.conversation_id,
+                request.assigned_children,
+                MoveRetirementResult(disposition, reason),
+            )
+
+        refs = set(request.assigned_children)
+        ids = {ref.child_id for ref in refs}
+        if (
+            request.expected_identity != identity
+            or identity.executor_incarnation != self.incarnation
+            or len(ids) != len(request.assigned_children)
+            or any(ref.executor_incarnation != self.incarnation for ref in refs)
+            or request.ticket_id in self._retiring_tickets
+        ):
+            return receipt(
+                MoveRetirementDisposition.refused,
+                "source identity is not current or retirement is in progress",
+            )
+        conversations = {ref.conversation_id for ref in refs}
+        if request.conversation_id is not None:
+            conversations.add(request.conversation_id)
+        children = [
+            child
+            for child in self.children.values()
+            if child.ticket_id == request.ticket_id
+            or child.reference.conversation_id in conversations
+        ]
+        if any(
+            child.ticket_id != request.ticket_id or child.reference not in refs
+            for child in children
+        ):
+            return receipt(
+                MoveRetirementDisposition.refused,
+                "source child assignment is unknown or conflicting",
+            )
+        self._retiring_tickets.add(request.ticket_id)
+        self._retiring_children.update(ids)
+        try:
+            busy = (
+                any(
+                    child.active_turn is not None
+                    or child.asks
+                    or child.user_inputs
+                    or child.lock.locked()
+                    for child in children
+                )
+                or any(self._source_work.get(conv, 0) for conv in conversations)
+                or any(
+                    not task.done()
+                    for key, task in self._tasks.items()
+                    if self._commands[key].child.child_id in ids
+                )
+                or any(
+                    outcome.disposition is CommandDisposition.uncertain
+                    for outcome in self.outcomes.values()
+                    if outcome.child.child_id in ids
+                )
+                or any(
+                    command_id not in self._outcomes_published
+                    for command_id, outcome in self.outcomes.items()
+                    if outcome.child.child_id in ids
+                )
+                or any(
+                    answer_id not in self._applications_published
+                    for answer_id, application in self._applications.items()
+                    if application.ask.child.child_id in ids
+                )
+                or any(row.conversation_id in conversations for row in self.spool.pending())
+            )
+            if busy:
+                return receipt(
+                    MoveRetirementDisposition.refused, "source has activity or waiting messages"
+                )
+            # Tombstone identities before native effects, fencing delayed starts.
+            self._retired_children.update(ids)
+            for child in children:
+                try:
+                    async with child.lock:
+                        await child.native.stop()
+                except Exception:
+                    return receipt(
+                        MoveRetirementDisposition.uncertain, "source stop could not be confirmed"
+                    )
+            for child in children:
+                self.children.pop(child.reference.child_id, None)
+            if any(self._source_work.get(conv, 0) for conv in conversations) or any(
+                row.conversation_id in conversations for row in self.spool.pending()
+            ):
+                return receipt(
+                    MoveRetirementDisposition.uncertain, "source retirement produced unsettled work"
+                )
+            return receipt(MoveRetirementDisposition.retired)
+        finally:
+            self._retiring_tickets.discard(request.ticket_id)
+            self._retiring_children.difference_update(ids)
 
     async def execute_command(self, command: ChildCommand) -> CommandOutcome:
         previous = self._commands.get(command.command_id)
@@ -246,7 +402,20 @@ class NativeChildRegistry:
         )
 
     async def _execute(self, command: ChildCommand) -> CommandOutcome:
-        if command.child.executor_incarnation != self.incarnation:
+        if (
+            command.child.child_id in self._retired_children
+            or command.child.child_id in self._retiring_children
+        ):
+            outcome = CommandOutcome(
+                command.command_id,
+                command.child,
+                CommandDisposition.refused,
+                {
+                    "error_type": "BackendSpawnFailed",
+                    "error_message": "source child identity was retired",
+                },
+            )
+        elif command.child.executor_incarnation != self.incarnation:
             outcome = CommandOutcome(
                 command.command_id,
                 command.child,
@@ -288,6 +457,16 @@ class NativeChildRegistry:
                     )
                     if resolved.conversation_id != command.child.conversation_id:
                         raise ValueError("child conversation mismatch")
+                    environment = dict(
+                        resolved.role_materials.identity_environment_variables
+                        if resolved.role_materials
+                        else ()
+                    )
+                    ticket_id = environment.get("PLAN_TICKET_ID")
+                    if ticket_id is not None and any(
+                        existing.ticket_id == ticket_id for existing in self.children.values()
+                    ):
+                        raise BackendSpawnFailed("Ticket already has a retained source child")
                     capability = secrets.token_urlsafe(32)
                     resolved = self._localize_start(
                         resolved, command.child, capability, command.arguments
@@ -406,6 +585,19 @@ class NativeChildRegistry:
         turn: TurnToken | None,
         arguments: dict[str, object],
     ) -> None:
+        self.begin_source_work(reference)
+        try:
+            await self._report_event(reference, method, turn, arguments)
+        finally:
+            self.end_source_work(reference)
+
+    async def _report_event(
+        self,
+        reference: ChildReference,
+        method: BackendEventMethod,
+        turn: TurnToken | None,
+        arguments: dict[str, object],
+    ) -> None:
         child = self.children.get(reference.child_id)
         if child is None:
             raise ValueError("event from unknown child")
@@ -515,7 +707,13 @@ class NativeChildRegistry:
         application = self._applications.get(action.answer_id)
         if application is None or application.ask != action.ask:
             raise ValueError("tool action has no exact applied answer correlation")
-        await self._emit(action.ask.child.conversation_id, EnvelopeKind.authorized_action, action)
+        self.begin_source_work(action.ask.child)
+        try:
+            await self._emit(
+                action.ask.child.conversation_id, EnvelopeKind.authorized_action, action
+            )
+        finally:
+            self.end_source_work(action.ask.child)
 
     def inventory(self, identity: ExecutorIdentity) -> ReconciliationInventory:
         return ReconciliationInventory(

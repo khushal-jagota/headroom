@@ -268,6 +268,47 @@ class ExecutorStore:
                 ),
             )
 
+    def assigned_ticket_children(
+        self, ticket_id: str, incarnation: str
+    ) -> tuple[ChildReference, ...]:
+        """Include absent, closed and delayed-start identities; retirement fences them all."""
+        connection = connect(self.db_path)
+        try:
+            rows = connection.execute(
+                "SELECT child_id,conversation_id FROM executor_child_assignments "
+                "WHERE executor_incarnation=? AND principal_kind='ticket' AND principal_id=? "
+                "ORDER BY child_id",
+                (incarnation, ticket_id),
+            ).fetchall()
+            return tuple(ChildReference(incarnation, row[0], row[1]) for row in rows)
+        finally:
+            connection.close()
+
+    def require_ready_connection(self, identity: ExecutorIdentity) -> None:
+        """Read only: also safe while the move writer owns its short write transaction."""
+        connection = connect(self.db_path)
+        try:
+            row = self._current(connection, identity)
+            if row["connection_state"] != ConnectionState.ready.value:
+                raise _invalid("Executor source is not ready")
+        finally:
+            connection.close()
+
+    def has_closed_child_assignment(self, child: ChildReference) -> bool:
+        """Historical identity evidence only; this grants no child/domain authority."""
+        connection = connect(self.db_path)
+        try:
+            return (
+                connection.execute(
+                    "SELECT 1 FROM executor_child_assignments WHERE executor_incarnation=? "
+                    "AND child_id=? AND conversation_id=? AND closed_at_ms IS NOT NULL",
+                    (child.executor_incarnation, child.child_id, child.conversation_id),
+                ).fetchone()
+                is not None
+            )
+        finally:
+            connection.close()
+
     def child_assignment(self, child: ChildReference) -> tuple[str, str] | None:
         connection = connect(self.db_path)
         try:
@@ -401,7 +442,7 @@ class ExecutorStore:
             tuple(receipts),
             tuple(answers),
             tuple(evidence),
-            (),
+            tuple(acknowledged_commands),
         )
 
     @staticmethod

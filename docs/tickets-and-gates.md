@@ -39,8 +39,17 @@ locale, including through manual start commands. This guard keeps Mac work safe 
 the Mac executor exists.
 
 Use `panels ticket move <ticket> --locale vps|macos` to change an idle Ticket's locale.
-The move refuses if a Worker step, active turn, or accepted message still needs the
-current machine. It changes only the locale and preserves the conversation and history.
+The move refuses before retirement if a Worker step, active turn, pending ask, or
+unsent work still needs the source. A Mac source requires fresh evidence from the
+current executor connection, even without a linked conversation. Unknown source
+state refuses. The move retires an idle source child before the canonical locale
+change. The next native start uses the destination. The conversation, history,
+session cursor, and access posture remain intact.
+
+An admission refusal leaves the locale and process unchanged. A failure after
+retirement starts reports whether source retirement succeeded or remains uncertain.
+The canonical locale stays unchanged after a failed final write. An uncertain
+retirement quarantines the source instead of permitting a second native start.
 A move does not copy repository files. Code work on the destination requires a fresh
 checkout at the required revision. Uncommitted work does not travel. Commit it before a move.
 

@@ -69,6 +69,7 @@ jobs:
             backend_args=(--backend-path "$PANELS_EXECUTOR_BACKEND_PATH")
           fi
           PYTHONPATH="$GITHUB_WORKSPACE/src" python3 -m planner.environments.resident.cli preflight \
+            --vps-app "$HOME/Deployments/Panels/current/app" \
             --requested-sha "$PANELS_REQUESTED_SHA" --source-root "$GITHUB_WORKSPACE" \
             --manifest "$PANELS_RESIDENT_MANIFEST" --ssh-host "$PANELS_MAC_HOST" \
             --known-hosts "$PANELS_MAC_KNOWN_HOSTS" --identity "$PANELS_MAC_SSH_IDENTITY" \
@@ -177,6 +178,7 @@ jobs:
             backend_args=(--backend-path "$PANELS_EXECUTOR_BACKEND_PATH")
           fi
           PYTHONPATH="$GITHUB_WORKSPACE/src" python3 -m planner.environments.resident.cli deploy-remote \
+            --vps-app "$HOME/Deployments/Panels/current/app" \
             --requested-sha "$PANELS_REQUESTED_SHA" --source-root "$GITHUB_WORKSPACE" \
             --manifest "$PANELS_RESIDENT_MANIFEST" --ssh-host "$PANELS_MAC_HOST" \
             --known-hosts "$PANELS_MAC_KNOWN_HOSTS" --identity "$PANELS_MAC_SSH_IDENTITY" \

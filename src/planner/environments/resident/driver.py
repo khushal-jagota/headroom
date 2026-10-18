@@ -34,6 +34,7 @@ from planner.environments.resident.packaging import (
     validate_runtime,
 )
 from planner.environments.resident.paths import data_paths, resident_paths
+from planner.environments.resident.preflight import requested_versions, require_mac_upgrade
 
 
 def read_prepared(app: Path, paths: ResidentPaths) -> PreparedResidentPackage:
@@ -70,6 +71,7 @@ def activate(
     revision = candidate.package.application_revision
     if launch.application_revision != revision:
         raise ResidentError("launch revision does not match candidate package")
+    require_mac_upgrade(home, candidate.package)
     control = OwnerExecutorControl(data_paths(paths).ipc_socket, timeout_seconds=timeout_seconds)
     service = LaunchAgentService(
         ServiceConfiguration(paths, os.getuid(), launch=launch),
@@ -213,6 +215,7 @@ def prepare_and_activate(
     package = package_from_dict(manifest["package"])
     if package.application_revision != launch.application_revision:
         raise ResidentError("requested revision does not match package")
+    require_mac_upgrade(home, package)
     prepared = prepare_runtime(
         app, package, resident_paths(home), NativeRuntimeBuilder(python, npm=npm, node=node)
     )
@@ -284,6 +287,7 @@ def deploy_local_source(
     package = package_from_dict(payload)
     if package.application_revision != launch.application_revision:
         raise ResidentError("requested revision does not match manifest")
+    require_mac_upgrade(home, package)
     build_source_package(source, package, candidate)
     return prepare_and_activate(
         candidate,
@@ -436,12 +440,11 @@ def write_package_spec(
         "agent_backends/package.json",
         "agent_backends/package-lock.json",
     ]
-    from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
-
+    versions = requested_versions(source, revision)
     package = ResidentPackage(
         revision,
-        PROTOCOL_VERSION,
-        SPOOL_FORMAT_VERSION,
+        versions.protocol_version,
+        versions.spool_format_version,
         "darwin",
         architecture,
         python_version,

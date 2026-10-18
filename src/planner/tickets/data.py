@@ -2016,6 +2016,25 @@ def set_ticket_backlog(
         return _load_ticket_for_write(conn, ticket_id)
 
 
+def validate_ticket_locale_move(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    locale: TicketLocale,
+    principal: Principal,
+    expected_record_sha256: str | None = None,
+) -> Ticket:
+    """Read-only admission checks, shared with the canonical final writer."""
+    authority.require_above(conn, principal, authority.ticket(ticket_id))
+    ticket = _load_ticket_for_write(conn, ticket_id)
+    _require_record_sha256(conn, ticket_id, expected_record_sha256)
+    locale = require_ticket_locale(locale)
+    require_locale_backend_compatibility(locale, ticket.employee_backend)
+    if ticket.worker_step_claim is not WorkerStepClaim.none:
+        raise PlannerError(ErrorCode.validation, "the Ticket has an outstanding worker-step claim")
+    return ticket
+
+
 def move_ticket_locale(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -2024,18 +2043,26 @@ def move_ticket_locale(
     principal: Principal,
     now: int,
     expected_record_sha256: str | None = None,
+    expected_source_locale: TicketLocale | None = None,
+    expected_conversation_id: str | None = None,
+    validate_source: Callable[[], None] | None = None,
 ) -> Ticket:
-    """Canonical locale-only writer; runtime owns exclusion against conversation admission."""
+    """Canonical writer; caller retains source/admission fencing through this commit."""
     with _txn(conn):
-        authority.require_above(conn, principal, authority.ticket(ticket_id))
-        ticket = _load_ticket_for_write(conn, ticket_id)
-        _require_record_sha256(conn, ticket_id, expected_record_sha256)
-        locale = require_ticket_locale(locale)
-        require_locale_backend_compatibility(locale, ticket.employee_backend)
-        if ticket.worker_step_claim is not WorkerStepClaim.none:
-            raise PlannerError(
-                ErrorCode.validation, "the Ticket has an outstanding worker-step claim"
-            )
+        ticket = validate_ticket_locale_move(
+            conn,
+            ticket_id,
+            locale=locale,
+            principal=principal,
+            expected_record_sha256=expected_record_sha256,
+        )
+        if expected_source_locale is not None and (
+            ticket.locale is not expected_source_locale
+            or ticket.conversation_id != expected_conversation_id
+        ):
+            raise PlannerError(ErrorCode.validation, "the Ticket source changed during move")
+        if validate_source is not None:
+            validate_source()
         if ticket.locale != locale:
             conn.execute("UPDATE tickets SET locale=? WHERE id=?", (locale.value, ticket_id))
         return _load_ticket_for_write(conn, ticket_id)

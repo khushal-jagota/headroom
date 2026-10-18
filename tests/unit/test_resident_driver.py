@@ -17,10 +17,12 @@ from planner.environments.resident.contracts import (
     ExecutorLaunchOptions,
     ExecutorSourceClosure,
     HostDeploymentResult,
+    InstalledExecutorCompatibility,
     ResidentError,
     ResidentPackage,
 )
 from planner.environments.resident.native_builder import NativeRuntimeBuilder
+from planner.environments.resident.preflight import supported_versions
 from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION
 
 SHA = "a" * 40
@@ -63,12 +65,17 @@ def test_remote_authenticated_transfer_and_exact_host_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _remote(tmp_path)
+    monkeypatch.setattr(transport, "requested_versions", lambda *args: supported_versions())
     adapter = transport.SshResidentDeployment(**config)
     monkeypatch.setattr(transport, "build_delivery_archive", lambda *args: b"source-tar")
     calls: list[tuple[list[str], dict[str, Any]]] = []
 
     def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         calls.append((argv, kwargs))
+        if "input" not in kwargs:
+            return subprocess.CompletedProcess(
+                argv, 0, b'{"host":"mac","application_revision":null,"versions":null}', b""
+            )
         return subprocess.CompletedProcess(
             argv,
             0,
@@ -80,7 +87,7 @@ def test_remote_authenticated_transfer_and_exact_host_result(
 
     monkeypatch.setattr(subprocess, "run", run)
     assert adapter.deploy(SHA).disposition == "verified"
-    argv, kwargs = calls[0]
+    argv, kwargs = calls[1]
     assert "StrictHostKeyChecking=yes" in argv
     assert "GlobalKnownHostsFile=/dev/null" in argv
     assert f"UserKnownHostsFile={config['known_hosts']}" in argv
@@ -89,7 +96,7 @@ def test_remote_authenticated_transfer_and_exact_host_result(
     assert "-F" in argv and "/dev/null" in argv
     assert kwargs["input"] == b"source-tar"
     assert kwargs["timeout"] == 1200.0
-    assert len(calls) == 1
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize("outcome", ["disconnect", "timeout", "lying-report"])
@@ -99,6 +106,12 @@ def test_remote_unverified_is_not_success_or_queued(
     outcome: str,
 ) -> None:
     adapter = transport.SshResidentDeployment(**_remote(tmp_path))
+    monkeypatch.setattr(transport, "requested_versions", lambda *args: supported_versions())
+    monkeypatch.setattr(
+        adapter,
+        "inspect_installed",
+        lambda: InstalledExecutorCompatibility("mac", None, None),
+    )
     monkeypatch.setattr(transport, "build_delivery_archive", lambda *args: b"source-tar")
 
     def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
@@ -126,13 +139,24 @@ def test_remote_unverified_is_not_success_or_queued(
         assert result.observed_revision is None
 
 
-def test_preflight_validates_complete_config_and_archive_without_host_contact(
+def test_preflight_validates_config_archive_and_read_only_host_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config = _remote(tmp_path)
     calls = []
+    monkeypatch.setattr(transport, "requested_versions", lambda *args: supported_versions())
+    inspections = []
+
+    def inspect_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        inspections.append(argv)
+        assert "input" not in kwargs
+        return subprocess.CompletedProcess(
+            argv, 0, b'{"host":"mac","application_revision":null,"versions":null}', b""
+        )
+
+    monkeypatch.setattr(subprocess, "run", inspect_run)
     monkeypatch.setattr(transport, "build_delivery_archive", lambda *args: calls.append(args))
 
     def forbidden(*args: Any, **kwargs: Any) -> Any:
@@ -141,6 +165,8 @@ def test_preflight_validates_complete_config_and_archive_without_host_contact(
     monkeypatch.setattr(transport.SshResidentDeployment, "deploy", forbidden)
     args = [
         "preflight",
+        "--vps-app",
+        str(tmp_path / "vps/current/app"),
         "--requested-sha",
         SHA,
         "--source-root",
@@ -163,6 +189,7 @@ def test_preflight_validates_complete_config_and_archive_without_host_contact(
     assert cli.main(args) == 0
     assert json.loads(capsys.readouterr().out)["disposition"] == "prepared"
     assert len(calls) == 1
+    assert len(inspections) == 1
     config["identity"].chmod(0o644)
     assert cli.main(args) == 2
     assert "owner-only" in capsys.readouterr().out
@@ -291,6 +318,11 @@ def test_real_adapter_wiring_retries_same_interrupted_first_install_only(
     source = tmp_path / "source"
     (source / "src/example").mkdir(parents=True)
     (source / "src/example/runner.py").write_text("pass\n")
+    configuration = "src/planner/executor/configuration.py"
+    (source / configuration).parent.mkdir(parents=True)
+    (source / configuration).write_text(
+        f"PROTOCOL_VERSION = {PROTOCOL_VERSION}\nSPOOL_FORMAT_VERSION = {SPOOL_FORMAT_VERSION}\n"
+    )
     (source / "requirements.lock").write_text("")
     subprocess.run(["git", "init", "-q", str(source)], check=True)
     subprocess.run(["git", "-C", str(source), "add", "."], check=True)
@@ -314,7 +346,12 @@ def test_real_adapter_wiring_retries_same_interrupted_first_install_only(
     ).strip()
     from dataclasses import replace
 
-    package = replace(_package(), application_revision=revision)
+    original = _package()
+    package = replace(
+        original,
+        application_revision=revision,
+        closure=replace(original.closure, files=(*original.closure.files, configuration)),
+    )
     paths = resident_paths(home)
     app = packaging.build_source_package(source, package, paths.deployment_root / "staged-1")
 

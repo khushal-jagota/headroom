@@ -67,6 +67,9 @@ from planner.conversation.contracts import (
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
+    MoveRetirementDisposition,
+    MoveRetirementResult,
+    MoveSourceRetirement,
     PromptDeliveryFate,
     PromptDeliveryInjected,
     PromptDeliveryMode,
@@ -317,6 +320,7 @@ class _ConversationState:
     sender_messages_being_delivered: dict[str, _AdmittedSenderMessage] = field(default_factory=dict)
     backend_event_queue: asyncio.Queue[_BackendEventHandler] = field(default_factory=asyncio.Queue)
     backend_event_pump: asyncio.Task[None] | None = None
+    backend_event_in_progress: bool = False
     settlement_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     steer_settlements: set[asyncio.Event] = field(default_factory=set)
     reserved_turn: _ReservedTurn | None = None
@@ -398,6 +402,87 @@ class SqliteProcessConversationSystem:
                 return False
             operation()
             return True
+
+    async def retire_idle_for_move(
+        self,
+        conversation_id: str | None,
+        operation: Callable[[], None],
+        *,
+        source: MoveSourceRetirement | None = None,
+    ) -> MoveRetirementResult:
+        from planner.core.errors import ErrorCode, PlannerError
+
+        state = None if conversation_id is None else await self._conversation_state(conversation_id)
+        refused = MoveRetirementResult(
+            MoveRetirementDisposition.refused,
+            "activity or waiting messages, or unknown conversation",
+        )
+        if conversation_id is not None and state is None:
+            return refused
+        if state is not None and state.lock.locked():
+            return refused
+
+        async def retire_and_commit() -> MoveRetirementResult:
+            if state is not None and (
+                state.phase is not _ConversationPhase.idle
+                or state.reserved_turn is not None
+                or state.running_turn is not None
+                or state.held_prompts
+                or state.admitted_sender_messages
+                or state.sender_messages_being_delivered
+                or state.steer_settlements
+                or state.child_is_quarantined
+                or not state.backend_event_queue.empty()
+                or state.backend_event_in_progress
+                or any(not task.done() for task in state.settlement_tasks)
+            ):
+                return refused
+            if source is not None:
+                result = await source.retire()
+                if result.disposition is not MoveRetirementDisposition.retired:
+                    if (
+                        state is not None
+                        and result.disposition is MoveRetirementDisposition.uncertain
+                    ):
+                        state.child_is_quarantined = True
+                        await self._store.save_move_retirement(
+                            state.record.conversation_id, uncertain=True
+                        )
+                    return result
+            elif state is not None and state.child is not None:
+                try:
+                    await state.child.stop()
+                except Exception:
+                    state.child_is_quarantined = True
+                    return MoveRetirementResult(
+                        MoveRetirementDisposition.uncertain, "source stop could not be confirmed"
+                    )
+            if state is not None:
+                state.child = None
+                state.executor_child_reference = None
+                state.child_is_quarantined = False
+            try:
+                if state is not None:
+                    await self._store.save_move_retirement(
+                        state.record.conversation_id, uncertain=False
+                    )
+                if source is not None:
+                    source.validate_current()
+                operation()
+            except Exception as error:
+                detail = dict(error.detail) if isinstance(error, PlannerError) else {}
+                detail.update(retirement_started=True, source_retired=True)
+                raise PlannerError(
+                    ErrorCode.validation,
+                    f"source retired but locale was not changed: {error}",
+                    detail,
+                ) from error
+            return MoveRetirementResult(MoveRetirementDisposition.retired)
+
+        if state is None:
+            return await retire_and_commit()
+        async with state.lock:
+            return await retire_and_commit()
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         """Create the conversation. Writing its row is the first thing that happens.
@@ -3047,6 +3132,7 @@ class SqliteProcessConversationSystem:
         queue = state.backend_event_queue
         while True:
             handle = await queue.get()
+            state.backend_event_in_progress = True
             try:
                 await handle()
             except asyncio.CancelledError:
@@ -3061,6 +3147,7 @@ class SqliteProcessConversationSystem:
                     state.record.conversation_id,
                 )
             finally:
+                state.backend_event_in_progress = False
                 queue.task_done()
 
     async def _hold_for_the_live_turn(
@@ -3466,9 +3553,16 @@ class SqliteProcessConversationSystem:
         child = TypeAdapter(ChildReference).validate_json(metadata[0])
         token = TypeAdapter(TurnToken).validate_json(metadata[1])
         runtime = json.loads(metadata[2])
-        state.executor_child_reference = child
+        state.executor_child_reference = None if runtime.get("source_retired") else child
         state.next_turn_number = max(state.next_turn_number, token.turn_number + 1)
         state.has_delivered_prompt = True
+        if runtime.get("move_retirement_uncertain"):
+            state.child_is_quarantined = True
+            return
+        if runtime.get("source_retired"):
+            state.last_ended_turn_token = token
+            state.last_ended_turn_was_automatic_compaction = runtime["automatic_compaction"]
+            return
         if runtime.get("delivery_uncertain"):
             state.child_is_quarantined = True
             state.reserved_turn = _ReservedTurn(

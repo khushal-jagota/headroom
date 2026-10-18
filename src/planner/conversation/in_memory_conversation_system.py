@@ -25,6 +25,9 @@ from planner.conversation.contracts import (
     HeldPrompt,
     HeldPromptPromotionFate,
     HeldPromptPromotionMode,
+    MoveRetirementDisposition,
+    MoveRetirementResult,
+    MoveSourceRetirement,
     PromptDeliveryFate,
     PromptDeliveryInjected,
     PromptDeliveryMode,
@@ -227,6 +230,41 @@ class InMemoryConversationSystem:
         # All mutations in this deterministic implementation are synchronous.
         operation()
         return True
+
+    async def retire_idle_for_move(
+        self,
+        conversation_id: str | None,
+        operation: Callable[[], None],
+        *,
+        source: MoveSourceRetirement | None = None,
+    ) -> MoveRetirementResult:
+        from planner.core.errors import ErrorCode, PlannerError
+
+        state = self._conversations.get(conversation_id or "")
+        if (conversation_id is not None and state is None) or (
+            state is not None and (state.running_turn is not None or state.held_prompts)
+        ):
+            return MoveRetirementResult(
+                MoveRetirementDisposition.refused,
+                "activity or waiting messages, or unknown conversation",
+            )
+        if source is not None:
+            result = await source.retire()
+            if result.disposition is not MoveRetirementDisposition.retired:
+                return result
+        if state is not None:
+            state.backend_session = None
+        try:
+            if source is not None:
+                source.validate_current()
+            operation()
+        except Exception as error:
+            detail = dict(error.detail) if isinstance(error, PlannerError) else {}
+            detail.update(retirement_started=True, source_retired=True)
+            raise PlannerError(
+                ErrorCode.validation, f"source retired but locale was not changed: {error}", detail
+            ) from error
+        return MoveRetirementResult(MoveRetirementDisposition.retired)
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
         resolved = resolve_conversation_start_request(request)

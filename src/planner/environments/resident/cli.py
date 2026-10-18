@@ -21,7 +21,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     preflight = commands.add_parser(
-        "preflight", help="Check deployment admission without contacting either host"
+        "preflight", help="Inspect installed hosts without writes before deployment admission"
     )
     preflight.add_argument("--requested-sha", type=_revision, required=True)
     build = commands.add_parser("source-build", help="Build an exact-revision source-only payload")
@@ -68,6 +68,7 @@ def _parser() -> argparse.ArgumentParser:
             command.add_argument("--manifest", type=Path, required=True)
     remote = commands.add_parser("deploy-remote", help="Deliver exact source to the configured Mac")
     for command in (remote, preflight):
+        command.add_argument("--vps-app", type=Path)
         command.add_argument("--source-root", type=Path)
         command.add_argument("--manifest", type=Path)
         command.add_argument("--ssh-host")
@@ -116,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if arguments.command in {"preflight", "deploy-remote"}:
             required = (
+                "vps_app",
                 "source_root",
                 "manifest",
                 "ssh_host",
@@ -173,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
                 build_delivery_archive(
                     arguments.source_root, arguments.manifest, arguments.requested_sha
                 )
+                adapter.preflight(arguments.requested_sha, vps_app=arguments.vps_app)
                 print(
                     json.dumps(
                         {
@@ -189,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             from planner.environments.resident.driver import deploy_and_record_remote
 
+            adapter.preflight(arguments.requested_sha, vps_app=arguments.vps_app)
             record = deploy_and_record_remote(
                 adapter,
                 arguments.requested_sha,

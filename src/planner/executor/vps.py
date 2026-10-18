@@ -18,7 +18,12 @@ from uuid import uuid4
 from pydantic import TypeAdapter
 
 from planner.conversation.backends.contracts import BackendEventSink, BackendSpawnFailed
-from planner.conversation.contracts import ResolvedConversationStart
+from planner.conversation.contracts import (
+    MoveRetirementDisposition,
+    MoveRetirementResult,
+    MoveSourceRetirement,
+    ResolvedConversationStart,
+)
 from planner.conversation.events import UserInputAnswer
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
@@ -53,6 +58,8 @@ from planner.executor.contracts import (
     QueuedEnvelope,
     ReconciliationInventory,
     ReconciliationResult,
+    SourceRetirementReceipt,
+    SourceRetirementRequest,
     WireMessage,
     WireMessageKind,
 )
@@ -85,6 +92,76 @@ def vps_socket_path(db_path: str) -> Path:
         .expanduser()
         .resolve()
     )
+
+
+class _MoveSource:
+    def __init__(
+        self, endpoint: ExecutorEndpoint, ticket_id: str, conversation_id: str | None
+    ) -> None:
+        self.endpoint = endpoint
+        self.ticket_id = ticket_id
+        self.conversation_id = conversation_id
+        self.identity: ExecutorIdentity | None = None
+        self.writer: asyncio.StreamWriter | None = None
+
+    def validate_current(self) -> None:
+        endpoint = self.endpoint
+        if (
+            self.identity is None
+            or not endpoint.ready
+            or endpoint.identity != self.identity
+            or endpoint.writer is not self.writer
+            or self.writer is None
+            or self.writer.is_closing()
+        ):
+            raise ConnectionError("Mac source connection changed during move")
+        endpoint.store.require_ready_connection(self.identity)
+
+    async def retire(self) -> MoveRetirementResult:
+        endpoint = self.endpoint
+        self.identity, self.writer = endpoint.identity, endpoint.writer
+        try:
+            self.validate_current()
+        except (ConnectionError, PlannerError):
+            return MoveRetirementResult(
+                MoveRetirementDisposition.refused, "current Mac source cannot be verified"
+            )
+        assert self.identity is not None
+        refs = endpoint.store.assigned_ticket_children(
+            self.ticket_id, self.identity.executor_incarnation
+        )
+        ids = {ref.child_id for ref in refs}
+        if any(
+            command.child.child_id in ids and not future.done()
+            for command, future in endpoint.pending_commands.values()
+        ):
+            return MoveRetirementResult(
+                MoveRetirementDisposition.refused, "source command or input transfer is pending"
+            )
+        request = SourceRetirementRequest(self.identity, self.ticket_id, self.conversation_id, refs)
+        try:
+            response = await endpoint._request(WireMessageKind.source_retire, _object(request))
+            if response.kind is not WireMessageKind.source_retired:
+                raise ValueError("unexpected source retirement response")
+            receipt = TypeAdapter(SourceRetirementReceipt).validate_python(response.payload)
+            if (
+                receipt.identity != request.expected_identity
+                or receipt.ticket_id != request.ticket_id
+                or receipt.conversation_id != request.conversation_id
+                or receipt.assigned_children != request.assigned_children
+            ):
+                raise ValueError("source retirement response conflicts with request")
+            # Keep a confirmed retirement distinct even when source replacement invalidates commit.
+            if receipt.result.disposition is MoveRetirementDisposition.retired:
+                for ref in refs:
+                    endpoint.store.close_child(ref, now_ms())
+                    endpoint.children.pop(ref.child_id, None)
+                    endpoint.sinks.pop(ref.child_id, None)
+            return receipt.result
+        except (ConnectionError, OSError, ValueError, PlannerError):
+            return MoveRetirementResult(
+                MoveRetirementDisposition.uncertain, "source retirement outcome is unknown"
+            )
 
 
 class ExecutorEndpoint:
@@ -160,6 +237,9 @@ class ExecutorEndpoint:
         if self._server is not None:
             await self._server.wait_closed()
         vps_socket_path(self.db_path).unlink(missing_ok=True)
+
+    def source_for_move(self, ticket_id: str, conversation_id: str | None) -> MoveSourceRetirement:
+        return _MoveSource(self, ticket_id, conversation_id)
 
     def assign_child(
         self, start: ResolvedConversationStart, sink: BackendEventSink
@@ -254,7 +334,7 @@ class ExecutorEndpoint:
                     validate_file_chunk_ack(response, chunk)
                 response = await self._request(WireMessageKind.file_complete, _object(manifest))
                 if response.kind is not WireMessageKind.file_accepted:
-                    raise ValueError("Mac did not confirm complete input bytes")
+                    raise FileChunkAcknowledgmentRefused("Mac did not confirm complete input bytes")
 
     async def send_command(self, command: ChildCommand) -> CommandOutcome:
         existing = self.pending_commands.get(command.command_id)
@@ -377,7 +457,20 @@ class ExecutorEndpoint:
             )
         if envelope.kind is EnvelopeKind.command_outcome:
             outcome = TypeAdapter(CommandOutcome).validate_python(envelope.payload)
-            self._assignment(outcome.child)
+            if outcome.child.conversation_id != envelope.conversation_id:
+                raise ValueError("command outcome conversation conflicts with envelope")
+            retired_refusal = (
+                outcome.disposition is CommandDisposition.refused
+                and outcome.result
+                == {
+                    "error_type": "BackendSpawnFailed",
+                    "error_message": "source child identity was retired",
+                }
+                and outcome.child.executor_incarnation == identity.executor_incarnation
+                and self.store.has_closed_child_assignment(outcome.child)
+            )
+            if not retired_refusal:
+                self._assignment(outcome.child)
             application_payload = outcome.result.get("answer_application")
             if isinstance(application_payload, dict):
                 application = TypeAdapter(AnswerApplication).validate_python(application_payload)

@@ -440,6 +440,28 @@ class ConversationAlreadyStarted(Exception):
     """
 
 
+class MoveRetirementDisposition(StrEnum):
+    refused = "refused"
+    retired = "retired"
+    uncertain = "uncertain"
+
+
+@dataclass(frozen=True, slots=True)
+class MoveRetirementResult:
+    """Refused precedes effects; retired proves absence; uncertain cannot prove absence."""
+
+    disposition: MoveRetirementDisposition
+    reason: str | None = None
+
+
+class MoveSourceRetirement(Protocol):
+    """Injected remote source proof; final validation is synchronous through commit."""
+
+    async def retire(self) -> MoveRetirementResult: ...
+
+    def validate_current(self) -> None: ...
+
+
 class ConversationSystem(Protocol):
     """Everything the rest of Panels can do to a conversation.
 
@@ -470,6 +492,21 @@ class ConversationSystem(Protocol):
         Refuse immediately when any turn, held prompt, or delivery is outstanding.
         The callback must do no backend I/O and cannot await. A missing conversation
         counts as idle; callers serialize its association when creating or unlinking it.
+        """
+        ...
+
+    async def retire_idle_for_move(
+        self,
+        conversation_id: str | None,
+        operation: Callable[[], None],
+        *,
+        source: MoveSourceRetirement | None = None,
+    ) -> MoveRetirementResult:
+        """Hold admission through source retirement and a synchronous canonical write.
+
+        Admission refusal starts no retirement. Uncertain retirement preserves its
+        handle and quarantine. A failed write after retirement reports source state
+        honestly. No database transaction spans an awaited backend operation.
         """
         ...
 

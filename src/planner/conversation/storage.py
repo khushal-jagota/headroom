@@ -1248,6 +1248,30 @@ class ConversationStore:
                 (json.dumps(runtime), turn.conversation_id),
             )
 
+    async def save_move_retirement(self, conversation_id: str, *, uncertain: bool) -> None:
+        """Retain remote turn history while retiring its live source association."""
+
+        def write() -> None:
+            conn = self._connect()
+            try:
+                with conn:
+                    row = conn.execute(
+                        "SELECT runtime_json FROM executor_core_turns WHERE conversation_id=?",
+                        (conversation_id,),
+                    ).fetchone()
+                    if row is not None:
+                        runtime = json.loads(row[0])
+                        runtime["source_retired"] = not uncertain
+                        runtime["move_retirement_uncertain"] = uncertain
+                        conn.execute(
+                            "UPDATE executor_core_turns SET runtime_json=? WHERE conversation_id=?",
+                            (json.dumps(runtime), conversation_id),
+                        )
+            finally:
+                conn.close()
+
+        await self._write(write)
+
     async def save_executor_turn(
         self, conversation_id: str, metadata: tuple[str, str, str]
     ) -> None:
@@ -1311,12 +1335,15 @@ class ConversationStore:
         try:
             with conn:
                 for sender_id in sender_message_ids:
-                    if conn.execute(
-                        "SELECT 1 FROM executor_native_messages WHERE "
-                        "held_target_conversation_id=? AND submission_id=? "
-                        "AND held_state='pending'",
-                        (conversation_id, sender_id),
-                    ).fetchone() is None:
+                    if (
+                        conn.execute(
+                            "SELECT 1 FROM executor_native_messages WHERE "
+                            "held_target_conversation_id=? AND submission_id=? "
+                            "AND held_state='pending'",
+                            (conversation_id, sender_id),
+                        ).fetchone()
+                        is None
+                    ):
                         continue
                     cursor = conn.execute(
                         "UPDATE executor_native_messages SET held_state='dispatching' WHERE "

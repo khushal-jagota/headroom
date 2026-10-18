@@ -1270,7 +1270,7 @@ def test_artifact_chunk_ack_must_validate_before_publication_and_backend_row(
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("invalid_ack", ["empty", "mismatched"])
+@pytest.mark.parametrize("invalid_ack", ["empty", "mismatched", "completion_refused"])
 def test_input_chunk_ack_must_validate_before_completion_or_command_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_ack: str
 ) -> None:
@@ -1291,7 +1291,18 @@ def test_input_chunk_ack_must_validate_before_completion_or_command_dispatch(
             endpoint_send = harness.endpoint._send
 
             async def corrupt_ack(message: WireMessage) -> None:
-                if reject and message.kind is WireMessageKind.file_chunk_ack:
+                if (
+                    reject
+                    and message.kind is WireMessageKind.file_accepted
+                    and invalid_ack == "completion_refused"
+                ):
+                    message = WireMessage(WireMessageKind.error, message.request_id, {})
+                    rejected.set()
+                if (
+                    reject
+                    and message.kind is WireMessageKind.file_chunk_ack
+                    and invalid_ack != "completion_refused"
+                ):
                     payload = {} if invalid_ack == "empty" else dict(message.payload)
                     if invalid_ack == "mismatched":
                         payload["byte_count"] = -1
@@ -1356,19 +1367,21 @@ def test_input_chunk_ack_must_validate_before_completion_or_command_dispatch(
             assert not caller.done()
             pending = harness.endpoint.pending_commands[command.command_id]
             assert pending[0] == command and not pending[1].done()
-            assert completions == 0 and commands == 0
+            assert commands == 0
+            assert completions > 0 if invalid_ack == "completion_refused" else completions == 0
             assert harness.native.prompt_count == 1
-            assert not target.exists()
+            assert target.exists() if invalid_ack == "completion_refused" else not target.exists()
             assert (
                 await harness.endpoint.runtime.message_files.read("c_scripted", kept.stored_file_id)
                 == contents
             )
+            rejected_completions = completions
             reject = False
             outcome = await asyncio.wait_for(asyncio.shield(caller), 8)
             assert outcome.command_id == command.command_id
             assert outcome.disposition is CommandDisposition.succeeded
             assert target.read_bytes() == contents
-            assert completions == 1 and commands == 1
+            assert completions == rejected_completions + 1 and commands == 1
             assert harness.native.prompt_count == 2
             assert command.command_id not in harness.endpoint.pending_commands
 
@@ -1376,6 +1389,124 @@ def test_input_chunk_ack_must_validate_before_completion_or_command_dispatch(
             if caller is not None and not caller.done():
                 caller.cancel()
                 await asyncio.gather(caller, return_exceptions=True)
+            await harness.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("operation", ["prompt", "user_input_answer"])
+def test_reconnect_acknowledges_settled_registry_outcomes_after_direct_ack_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    from planner.executor.codec import encode_value
+    from planner.executor.contracts import ChildCommand, ChildOperation
+
+    async def run() -> None:
+        harness = await boot(tmp_path, monkeypatch)
+        try:
+            await eventually(
+                lambda: (
+                    not harness.mac.registry.inventory(
+                        harness.mac.identity
+                    ).retained_command_outcomes
+                ),
+                "Initial registry outcomes did not settle",
+            )
+            if operation == "user_input_answer":
+                await harness.native.raise_user_input()
+                await harness.wait_input_reachable()
+            generation = harness.mac.identity.connection_generation
+            dropped: set[str] = set()
+            send = harness.endpoint._send
+
+            async def lose_old_generation_ack(message: WireMessage) -> None:
+                if (
+                    message.kind is WireMessageKind.command_outcome_ack
+                    and harness.mac.identity.connection_generation == generation
+                ):
+                    dropped.add(str(message.payload["command_id"]))
+                    return
+                await send(message)
+
+            monkeypatch.setattr(harness.endpoint, "_send", lose_old_generation_ack)
+            if operation == "prompt":
+                await harness.endpoint.send_command(
+                    ChildCommand(
+                        "settled_prompt",
+                        harness.ask.child,
+                        ChildOperation.write_prompt,
+                        harness.native.turn,
+                        {
+                            "content": encode_value(text_message_content("One more prompt")),
+                            "sender_content": encode_value(text_message_content("One more prompt")),
+                            "sender_label": "Test",
+                            "mode": "queue",
+                        },
+                    )
+                )
+            else:
+                assert await harness.endpoint.answer_user_input(
+                    "c_scripted", "request_input", INPUT_ANSWERS
+                )
+            await eventually(lambda: bool(dropped), "Direct command acknowledgment was not lost")
+            await eventually(
+                lambda: not harness.mac.spool.pending(), "Filesystem outcome spool did not drain"
+            )
+            # A durable receipt removes the filesystem entry, but cannot confirm
+            # the live registry's retained result: these are separate inventories.
+            retained = harness.mac.registry.inventory(
+                harness.mac.identity
+            ).retained_command_outcomes
+            assert dropped <= {outcome.command_id for outcome in retained}
+            assert len(retained) == (2 if operation == "user_input_answer" else 1)
+            assert all(outcome.disposition is CommandDisposition.succeeded for outcome in retained)
+            assert any("answer_application" in outcome.result for outcome in retained) == (
+                operation == "user_input_answer"
+            )
+            assert harness.endpoint.writer is not None
+            harness.endpoint.writer.close()
+            await eventually(
+                lambda: (
+                    harness.mac.identity.connection_generation > generation
+                    and harness.endpoint.ready
+                ),
+                "Link did not reconnect after direct acknowledgment loss",
+            )
+            await eventually(
+                lambda: (
+                    not harness.mac.registry.inventory(
+                        harness.mac.identity
+                    ).retained_command_outcomes
+                ),
+                "Accepted outcomes remained in the in-memory registry inventory",
+            )
+            assert not harness.mac.spool.pending()
+            # Reconcile another generation to prove settled results stay absent.
+            generation = harness.mac.identity.connection_generation
+            assert harness.endpoint.writer is not None
+            harness.endpoint.writer.close()
+            await eventually(
+                lambda: (
+                    harness.mac.identity.connection_generation > generation
+                    and harness.endpoint.ready
+                ),
+                "Second inventory did not reconcile",
+            )
+            assert not harness.mac.registry.inventory(
+                harness.mac.identity
+            ).retained_command_outcomes
+            assert not harness.mac.spool.pending()
+            assert harness.native.start_count == 1
+            assert harness.native.prompt_count == (2 if operation == "prompt" else 1)
+            assert harness.native.user_answers == (
+                [("request_input", ORDERED_INPUT_ANSWERS)]
+                if operation == "user_input_answer"
+                else []
+            )
+            assert harness.events("user_input_answered") == (
+                1 if operation == "user_input_answer" else 0
+            )
+        finally:
             await harness.close()
 
     asyncio.run(run())
