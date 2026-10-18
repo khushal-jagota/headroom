@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.contracts import ConversationStartRequest, ConversationSystem
@@ -55,6 +56,7 @@ def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     conn.close()
     env = {
         "PLAN_TEST_MODE": "1",
@@ -706,7 +708,7 @@ def test_legacy_recovery_refuses_a_launch_override_before_mutation(tmp_path: Pat
             f"/api/tickets/{ready.id}/restart-worker",
             json={
                 "employee_backend": "claude",
-                "employee_launch_model": "claude-model",
+                "employee_launch_model": "sonnet",
             },
         )
 
@@ -974,7 +976,7 @@ def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
         ticket_id = _stranded_child(client, db_path, str(item["id"]))
         configuration = {
             "employee_backend": "claude",
-            "employee_launch_model": "claude-model",
+            "employee_launch_model": "sonnet",
             "employee_launch_reasoning_effort": "medium",
         }
         direct_configuration = client.put(

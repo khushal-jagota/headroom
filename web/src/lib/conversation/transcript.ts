@@ -181,6 +181,7 @@ export type TranscriptRow =
 
 const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   no_such_conversation: "there is no such conversation to send to",
+  model_resolution_failed: "the selected model could not be resolved",
   backend_did_not_start: "the backend would not start",
   session_did_not_load: "the backend's session would not load",
   write_to_backend_failed: "the write to the backend did not succeed",
@@ -193,8 +194,8 @@ const REFUSAL_SENTENCES: Record<PromptDeliveryRefusalReason, string> = {
   command_cannot_join_running_turn: "a command cannot join a turn that is already running"
 };
 
-export function refusalSentence(reason: PromptDeliveryRefusalReason): string {
-  return REFUSAL_SENTENCES[reason] ?? "the delivery was impossible";
+export function refusalSentence(reason: PromptDeliveryRefusalReason, detail?: string | null): string {
+  return detail?.trim() || REFUSAL_SENTENCES[reason] || "the delivery was impossible";
 }
 
 /** What a message that was taken back before anything received it says about itself. The
@@ -316,7 +317,7 @@ export function transcriptRows(
           content: messageContentOf(event.payload),
           senderLabel: event.payload.sender_label,
           reason: event.payload.refusal_reason,
-          sentence: refusalSentence(event.payload.refusal_reason)
+          sentence: refusalSentence(event.payload.refusal_reason, event.payload.refusal_detail)
         });
         break;
       case "prompt_delivery_uncertain":

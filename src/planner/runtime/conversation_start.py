@@ -271,13 +271,22 @@ async def start_ticket_conversation(
         ensure_started_conversation_record(
             conn, resolve_conversation_start_request(request), created_at=now
         )
+        actual_start = conn.execute(
+            "SELECT model,reasoning_effort FROM conversations WHERE conversation_id=?",
+            (conversation_id,),
+        ).fetchone()
         linked = tickets_data.write_ticket_conversation_start(
             conn,
             ticket.id,
             conversation_id=conversation_id,
+            expected_configuration=tickets_data.employee_launch_configuration(ticket),
             backend=values.backend_key.value,
-            model=values.model,
-            reasoning_effort=values.reasoning_effort,
+            model=values.model if actual_start is None else actual_start["model"],
+            reasoning_effort=(
+                values.reasoning_effort
+                if actual_start is None
+                else actual_start["reasoning_effort"]
+            ),
             now=now,
         )
     except BaseException as start_error:
@@ -506,6 +515,8 @@ async def _send_into_the_conversation_the_ticket_is_in(
     own values — and the value it keeps for a field this message did not change is read
     back now rather than taken from before the send, for the same reason.
     """
+    captured_ticket = tickets_data.read_ticket(conn, ticket_id)
+    expected_configuration = tickets_data.employee_launch_configuration(captured_ticket)
     receipt = await _send_with_addressed_receipt(
         system,
         sending_into,
@@ -528,6 +539,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
             conn,
             ticket_id,
             expected_conversation_id=sending_into,
+            expected_configuration=expected_configuration,
             model=(ticket.employee_launch_model if runs_under.model is None else runs_under.model),
             reasoning_effort=(
                 ticket.employee_launch_reasoning_effort

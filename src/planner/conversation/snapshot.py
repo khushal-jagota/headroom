@@ -136,6 +136,9 @@ class BackendModel:
     display_name: str | None = None
     detail: str | None = None
     reasoning_effort_options: tuple[str, ...] = ()
+    selected_variant: str | None = None
+    resolved_model_id: str | None = None
+    catalogue_warning: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,9 +288,7 @@ class SubprocessBackendProbeEnvironment:
                 if not candidate.is_dir():
                     return False
                 metadata = candidate.stat()
-                if metadata.st_uid != effective_uid or not os.access(
-                    candidate, os.W_OK | os.X_OK
-                ):
+                if metadata.st_uid != effective_uid or not os.access(candidate, os.W_OK | os.X_OK):
                     return False
         except OSError:
             return False
@@ -622,6 +623,7 @@ async def _claude_catalog(request: _CatalogRequest) -> _CatalogAnswer:
                 model_id=model.model_id,
                 display_name=model.display_name,
                 detail=f"{model.model_id} → {model.resolved_model_id}",
+                resolved_model_id=model.resolved_model_id,
                 reasoning_effort_options=model.reasoning_effort_options,
             )
             for model in catalog.models
@@ -673,9 +675,7 @@ def _read_codex_identity(request: _IdentityRequest) -> BackendIdentity:
     if standing is None:
         if not reported:
             return BackendIdentity(status=BackendIdentityStatus.unknown)
-        return BackendIdentity(
-            status=BackendIdentityStatus.authenticated, account_label=cli_line
-        )
+        return BackendIdentity(status=BackendIdentityStatus.authenticated, account_label=cli_line)
     stored = standing.stored
     label = stored.account_label or cli_line
     if not stored.present:
@@ -1098,13 +1098,35 @@ async def probe_backend(
         executable_path=executable_path,
         version=version,
         identity=identity,
-        available_models=catalog.models,
+        available_models=_model_metadata(backend_key, catalog.models),
         reasoning_effort_options=catalog.reasoning_effort_options,
         default_model_id=catalog.default_model_id,
         default_reasoning_effort=catalog.default_reasoning_effort,
         update_advisory=advisory,
         diagnoses=tuple(diagnoses),
     )
+
+
+def _model_metadata(
+    backend_key: ConversationBackendKey, models: tuple[BackendModel, ...]
+) -> tuple[BackendModel, ...]:
+    from planner.conversation.model_resolution.logic.variants import identify_variant
+    from planner.core.contracts import PlannerError
+
+    entries: list[BackendModel] = []
+    for model in models:
+        try:
+            variant = identify_variant(backend_key, model.model_id).name
+        except PlannerError:
+            variant = None
+        entries.append(
+            replace(
+                model,
+                selected_variant=variant,
+                resolved_model_id=model.resolved_model_id or model.model_id,
+            )
+        )
+    return tuple(entries)
 
 
 async def _probe_identity(
@@ -1270,7 +1292,11 @@ class BackendSnapshotService:
         )
 
     async def snapshot(
-        self, backend_key: ConversationBackendKey, *, refresh: bool = False
+        self,
+        backend_key: ConversationBackendKey,
+        *,
+        refresh: bool = False,
+        discover_update_advisory: bool = True,
     ) -> BackendSnapshot:
         # A forced advisory refresh keeps the last complete card readable. An ordinary
         # reader never waits behind remote work when this process already has an answer.
@@ -1298,7 +1324,7 @@ class BackendSnapshotService:
                 # Ordinary reads serve the catalogue without waiting for remote update
                 # discovery. An explicit refresh replaces this cached answer with the
                 # complete advisory, which update_backend also requires before it acts.
-                discover_update_advisory=refresh,
+                discover_update_advisory=refresh and discover_update_advisory,
                 codex_login=codex_login,
                 now=reading_at,
             )

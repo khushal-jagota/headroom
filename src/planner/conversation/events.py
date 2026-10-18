@@ -244,6 +244,7 @@ class PromptDeliveryRefusedEventPayload:
     sender_label: str
     mode: PromptDeliveryMode
     refusal_reason: PromptDeliveryRefusalReason
+    refusal_detail: str | None = None
     sender_message_id: str | None = None
     sent_at_unix_milliseconds: int | None = None
     sender: Principal | None = None
@@ -608,6 +609,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 "refusal_reason": str(payload.refusal_reason),
+                "refusal_detail": payload.refusal_detail,
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
                 **_entry_if_minted("sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds),
                 **_principal_entries(payload.sender, payload.recipient),
@@ -764,6 +766,7 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 mode=_prompt_delivery_mode_from_stored(stored),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
+                refusal_detail=_optional_text(stored, "refusal_detail"),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
                 sent_at_unix_milliseconds=_optional_whole_number(
                     stored, "sent_at_unix_milliseconds"

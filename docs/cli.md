@@ -105,6 +105,26 @@ The server validates the intended final state and writes it in one transaction. 
 transitions, blockers, Worker restart, deletion, help, and messages keep dedicated
 commands because they have effects beyond a Ticket field edit.
 
+## Correct saved models
+
+The administrative `model-corrections` commands repair saved models within their selected
+variant. Preview accepts explicit targets. Repeat target flags to inspect several records.
+
+```sh
+panels model-corrections preview --ticket t_example --orchestrator si_example --chief --worker-default coding > corrections.json
+panels model-corrections apply < corrections.json
+```
+
+Preview prints JSON without changes to saved model choices. Review the proposed models before apply.
+Apply reads the complete preview from stdin. It checks the original launch choices and
+the proposed model again, so a stale preview cannot overwrite a later choice.
+Each result reports its own success or refusal. Both commands accept `--json`.
+
+Corrections preserve backend and reasoning effort. They work for idle Workers and
+user-owned Stages. Active turns finish on their current model. Apply does not start a turn,
+restart a Worker, approve work, or change its Stage. The server checks authority for
+each target again at apply.
+
 ## Ticket proposals
 
 One command owns the proposal lifecycle:

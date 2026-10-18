@@ -16,11 +16,10 @@ class SprintItemSupervisorLaunchConfiguration:
     employee_launch_reasoning_effort: str | None
 
 
-# This snapshot is part of the Sprint Item domain. Migration code repeats these literal
-# values so an upgrade never reads mutable Worker or Chief settings.
+# The default selects a family; dispatch resolves its current installed version.
 SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS: Final = SprintItemSupervisorLaunchConfiguration(
     employee_backend=ConversationBackendKey.codex,
-    employee_launch_model="gpt-5.6-sol",
+    employee_launch_model="sol",
     employee_launch_reasoning_effort="medium",
 )
 

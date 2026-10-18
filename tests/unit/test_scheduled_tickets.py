@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backend_state import write_model_enablement
@@ -223,12 +225,16 @@ def test_schedule_model_disabled_after_save_fails_once_without_ticket(
     failed_schedule_id = _schedule(tmp_db, template=template)
     saved_schedule = data.read_schedule(tmp_db, failed_schedule_id)
     write_model_enablement(tmp_db, backend, profile.default_model, False)
+    tmp_db.execute(
+        "INSERT OR REPLACE INTO model_variant_resolutions VALUES (?,?,?,?,?)",
+        ("codex", "astra", "gpt-6-astra", '["medium", "high"]', int(time.time())),
+    )
     enabled_schedule_id = _schedule(
         tmp_db,
         template=replace(
             _template(title="Enabled override occurrence", worker_type="exploration"),
             employee_backend=str(backend),
-            employee_launch_model="enabled-override-model",
+            employee_launch_model="gpt-6-astra",
         ),
     )
     now = _now("2026-07-28T14:30:00")
@@ -248,8 +254,7 @@ def test_schedule_model_disabled_after_save_fails_once_without_ticket(
     created = data.list_occurrences(tmp_db, enabled_schedule_id)[0]
     assert created.ticket_id is not None
     assert (
-        tickets_data.read_ticket(tmp_db, created.ticket_id).employee_launch_model
-        == "enabled-override-model"
+        tickets_data.read_ticket(tmp_db, created.ticket_id).employee_launch_model == "gpt-6-astra"
     )
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
     assert tmp_db.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 0
@@ -272,6 +277,8 @@ def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(
     db_path = tmp_path / "scheduled-loop.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
+    conn.commit()
     _schedule(conn)
     conn.close()
     clock = MutableClock(_now("2026-07-28T14:30:00"))

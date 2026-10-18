@@ -1,5 +1,6 @@
 """Manual and agent HTTP creation share the disabled model boundary."""
 
+import time
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,8 @@ from tests.support.probe import seed_probe_worker_type
 from planner.conversation.backend_state import write_model_enablement
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.model_resolution.contracts import CachedModelResolution, ModelVariant
+from planner.conversation.model_resolution.data import ModelResolutionStore
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -44,6 +47,12 @@ def test_http_ticket_creation_refuses_disabled_model_without_partial_writes(
         lambda: connect(str(db_path)),
         conversation_system_for_test=InMemoryConversationSystem(),
     )
+    cache = ModelResolutionStore(str(db_path))
+    for model in ("probe-model", "enabled-model"):
+        cache.keep(
+            ModelVariant(ConversationBackendKey.hermes, model),
+            CachedModelResolution(model, ("probe-high",), int(time.time())),
+        )
     with TestClient(app) as client:
         worker_ticket = client.post(
             "/api/tickets",
@@ -76,7 +85,8 @@ def test_http_ticket_creation_refuses_disabled_model_without_partial_writes(
             error = response.json()["error"]
             assert error["code"] == "validation"
             assert "disabled" in error["message"]
-            assert "Choose an enabled model" in error["message"]
+            if explicit:
+                assert "Choose an enabled model" in error["message"]
             assert tuple(conn.iterdump()) == before
             body.update(employee_backend="hermes", employee_launch_model="enabled-model")
             enabled = client.post("/api/tickets", json=body, headers=headers)
