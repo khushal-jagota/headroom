@@ -34,7 +34,7 @@ const script=String.raw`
 import sys,json,os
 from playwright.sync_api import sync_playwright,expect
 health={'mode':'remote','identity':{'executor_incarnation':'one','connection_generation':1},'connection_state':'disconnected','reconciliation_ready':False,'last_contact_at_ms':1792312320000,'last_contact_source':'vps_received_valid_executor_frame'}
-moves=[]; contexts=[]; fail=False
+moves=[]; contexts=[]; creations=[]; fail=False; requires_mac=False; context_error=False
 
 def api(route):
  global fail
@@ -43,13 +43,15 @@ def api(route):
  elif '/worker-types' in u: data={'worker_types':[{'worker_type':'coding','label':'Coding'}]}
  elif '/projects' in u: data={'projects':[]}
  elif '/creation-context' in u:
-  b=route.request.post_data_json;contexts.append(b);loc=b.get('locale','vps');data={'resolved_locale':loc,'employee_backend':'codex','project_id':None,'locale_choices':[{'locale':'macos','compatible':True,'reason':None},{'locale':'vps','compatible':True,'reason':None}]}
+  b=route.request.post_data_json;contexts.append(b)
+  if context_error: route.fulfill(status=400,content_type='application/json',body=json.dumps({'error':{'code':'validation','message':'Project policy is not available.'}}));return
+  loc=b.get('locale','macos' if requires_mac else 'vps');data={'resolved_locale':loc,'employee_backend':'codex','project_id':None,'locale_choices':[{'locale':'macos','compatible':True,'reason':None},{'locale':'vps','compatible':True,'reason':None}]}
  elif '/move' in u:
   moves.append(route.request.post_data_json)
   if fail: route.fulfill(status=409,content_type='application/json',body=json.dumps({'error':{'code':'conflict','message':'Cannot move while a turn runs.'}}));return
   data={'id':'t0'}
  elif '/tickets?detail=full&id=t0' in u: data={'id':'t0','title':'Ticket 0','locale':'macos','record_sha256':'a'*64}
- elif u.endswith('/api/tickets') and route.request.method=='POST': data={'id':'created'}
+ elif u.endswith('/api/tickets') and route.request.method=='POST': creations.append(route.request.post_data_json);data={'id':'created'}
  else: raise AssertionError('Unexpected API '+u)
  route.fulfill(status=200,content_type='application/json',body=json.dumps(data))
 with sync_playwright() as p:
@@ -79,9 +81,19 @@ with sync_playwright() as p:
  page.evaluate('()=>window.__fixture(2,true,true)');expect(page.locator('[data-machine-notice]')).to_have_count(1)
  health.update(connection_state='reconciling',reconciliation_ready=False);page.evaluate('()=>window.__fixture(2,true,true)');expect(page.locator('[data-machine-notice]')).to_have_count(1)
  health.update(connection_state='ready',reconciliation_ready=True);page.evaluate('()=>window.__fixture(2,true,true)');expect(page.locator('[data-machine-notice]')).to_have_count(0)
- page.evaluate('()=>window.__fixture(2,false,false,true)');page.get_by_label('Title',exact=True).fill('Preserved draft');page.get_by_label('Brief',exact=True).fill('Check it');page.get_by_label('Run on',exact=True).select_option('macos');expect(page.get_by_text('Resolved machine: Mac.',exact=True)).to_be_visible()
- health.update(connection_state='disconnected',reconciliation_ready=False);page.evaluate('()=>window.__fixture(2,false,false,true)');expect(page.get_by_label('Title',exact=True)).to_have_value('Preserved draft');expect(page.get_by_text('The Mac is unreachable',exact=False)).to_be_visible();page.get_by_role('button',name='Create Ticket',exact=True).click();expect.poll if False else None
- page.wait_for_function('window.__created === "created"');assert contexts[-1]['locale']=='macos'
+ page.evaluate('()=>window.__fixture(2,false,false,true)');page.get_by_label('Title',exact=True).fill('Preserved draft');page.get_by_label('Brief',exact=True).fill('Check it')
+ expect(page.get_by_text('Resolved machine: VPS.',exact=True)).to_be_visible()
+ before=len(contexts);requires_mac=True;page.evaluate('()=>window.__fixture(2,false,false,true)')
+ expect(page.get_by_text('Resolved machine: Mac.',exact=True)).to_be_visible();assert len(contexts)>before
+ expect(page.get_by_label('Title',exact=True)).to_have_value('Preserved draft');expect(page.get_by_label('Brief',exact=True)).to_have_value('Check it');expect(page.get_by_label('Run on',exact=True)).to_have_value('')
+ context_error=True;page.evaluate('()=>window.__fixture(2,false,false,true)');expect(page.get_by_role('alert')).to_have_text('Project policy is not available.')
+ expect(page.get_by_role('button',name='Create Ticket',exact=True)).to_be_disabled();expect(page.get_by_text('Resolved machine:',exact=False)).to_have_count(0)
+ page.locator('form[aria-label="Create a Ticket"]').evaluate('(form)=>form.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}))');assert not creations
+ expect(page.get_by_label('Title',exact=True)).to_have_value('Preserved draft');expect(page.get_by_label('Brief',exact=True)).to_have_value('Check it');expect(page.get_by_label('Run on',exact=True)).to_have_value('')
+ context_error=False;page.evaluate('()=>window.__fixture(2,false,false,true)');expect(page.get_by_text('Resolved machine: Mac.',exact=True)).to_be_visible()
+ page.get_by_label('Run on',exact=True).select_option('macos');expect(page.get_by_text('Resolved machine: Mac.',exact=True)).to_be_visible()
+ health.update(connection_state='disconnected',reconciliation_ready=False);page.evaluate('()=>window.__fixture(2,false,false,true)');expect(page.get_by_label('Title',exact=True)).to_have_value('Preserved draft');expect(page.get_by_text('The Mac is unreachable',exact=False)).to_be_visible();page.get_by_role('button',name='Create Ticket',exact=True).click()
+ page.wait_for_function('window.__created === "created"');assert contexts[-1]['locale']=='macos';assert len(creations)==1
  browser.close()
 print('Machine surfaces browser checks passed')
 `;

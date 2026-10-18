@@ -9,6 +9,15 @@ export type ExecutorHealth = {
   last_contact_at_ms: number | null;
   last_contact_source: "vps_received_valid_executor_frame";
 };
+export type TicketCreationDraft = {
+  worker_type: string;
+  project_id?: string;
+  project?: string;
+  orchestrator?: {kind: "chief" | "sprint_item"; id: string};
+  employee_backend?: string;
+  employee_launch_model?: string;
+  locale?: TicketLocale;
+};
 export type DraftCreationContext = {
   resolved_locale: TicketLocale;
   employee_backend: string;
