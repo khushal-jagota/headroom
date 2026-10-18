@@ -362,7 +362,7 @@ def test_uncertain_commit_is_not_reclassified_or_observed(tmp_path: Path, route:
     assert isinstance(lease, CapturedLease) and lease.reads == 1
     assert isinstance(caught.value.__cause__, OSError)
     with pytest.raises(AttributeError):
-        caught.value.reconciliation_handle = object()
+        object.__setattr__(caught.value, "reconciliation_handle", object())
     assert ("settle", "uncertain", "OSError") in factory.events
     assert factory.events.count("release") == 1
     observer.assert_not_called()

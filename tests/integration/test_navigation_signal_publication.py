@@ -51,7 +51,8 @@ def publication(identity: str, revision: int = 0) -> ConversationSignalPublicati
 
 def complete() -> SignalSnapshot:
     return SignalSnapshot(
-        "installation", SignalCursor("producer-scope", "runtime", 4),
+        "installation",
+        SignalCursor("producer-scope", "runtime", 4),
         (publication("current"), publication("historical", 12)),
     )
 
@@ -60,8 +61,12 @@ def batch(sequence: int = 5) -> SignalBatch:
     return SignalBatch(
         SignalCursor("producer-scope", "runtime", sequence - 1),
         SignalCursor("producer-scope", "runtime", sequence),
-        f"batch-{sequence}", (f"operation-{sequence}",), f"fingerprint-{sequence}",
-        (), (), (),
+        f"batch-{sequence}",
+        (f"operation-{sequence}",),
+        f"fingerprint-{sequence}",
+        (),
+        (),
+        (),
     )
 
 
@@ -126,8 +131,13 @@ def test_complete_install_rejects_partial_duplicate_and_invalid_fences_atomicall
         replace(original, values=original.values[:1]),
         replace(original, values=(*original.values, original.values[0])),
         replace(original, values=(publication("current", -1), publication("historical"))),
-        replace(original, values=(replace(publication("current"), runtime_epoch="old"),
-                                  publication("historical"))),
+        replace(
+            original,
+            values=(
+                replace(publication("current"), runtime_epoch="old"),
+                publication("historical"),
+            ),
+        ),
         replace(original, cursor=replace(original.cursor, sequence=-1)),
     )
     for candidate in invalid:
@@ -157,10 +167,16 @@ def test_cursor_accepts_exact_duplicate_and_rejects_conflicts_gaps_and_foreign_e
         replace(accepted, replacements=(publication("current", 101),)),
         batch(7),
         batch(4),
-        replace(batch(6), base_cursor=SignalCursor("foreign", "runtime", 5),
-                cursor=SignalCursor("foreign", "runtime", 6)),
-        replace(batch(6), base_cursor=SignalCursor("producer-scope", "old", 5),
-                cursor=SignalCursor("producer-scope", "old", 6)),
+        replace(
+            batch(6),
+            base_cursor=SignalCursor("foreign", "runtime", 5),
+            cursor=SignalCursor("foreign", "runtime", 6),
+        ),
+        replace(
+            batch(6),
+            base_cursor=SignalCursor("producer-scope", "old", 5),
+            cursor=SignalCursor("producer-scope", "old", 6),
+        ),
         replace(batch(6), replacements=(publication("current", 101), publication("current", 102))),
     )
     for candidate in invalid:
@@ -184,9 +200,21 @@ def test_association_and_order_only_batches_advance_cursor_without_signal_wire_c
     assert conn.execute("SELECT sequence FROM navigation_signal_installation").fetchone()[0] == "5"
     conn.execute("BEGIN")
     conn.execute("UPDATE tickets SET conversation_id='historical' WHERE id='ticket'")
-    participate(conn, replace(batch(6), associations=(SignalAssociationEffect(
-        "ticket", "ticket", "current", "current", "historical",
-    ),)))
+    participate(
+        conn,
+        replace(
+            batch(6),
+            associations=(
+                SignalAssociationEffect(
+                    "ticket",
+                    "ticket",
+                    "current",
+                    "current",
+                    "historical",
+                ),
+            ),
+        ),
+    )
     conn.commit()
     addresses = [value for (kind, _), value in values(conn).items() if kind == "address"]
     assert any(value["conversation_id"] == "historical" and value["current"] for value in addresses)
@@ -203,10 +231,12 @@ def test_deletion_tombstone_rejects_obsolete_delete_and_same_epoch_resurrection(
     conn.execute("DELETE FROM conversations WHERE conversation_id='historical'")
     participate(conn, replace(batch(), deletions=(SignalDeletion("historical", "runtime", 20),)))
     conn.commit()
-    assert tuple(conn.execute(
-        "SELECT conversation_revision,attention FROM navigation_signal_publications "
-        "WHERE conversation_id='historical'"
-    ).fetchone()) == ("20", None)
+    assert tuple(
+        conn.execute(
+            "SELECT conversation_revision,attention FROM navigation_signal_publications "
+            "WHERE conversation_id='historical'"
+        ).fetchone()
+    ) == ("20", None)
     before = dump(conn)
     invalid = (
         replace(batch(6), replacements=(publication("historical", 19),)),

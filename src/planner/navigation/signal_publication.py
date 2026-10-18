@@ -173,7 +173,8 @@ def participate(conn: sqlite3.Connection, batch: SignalBatch, /) -> None:
             raise SignalInstallationError("invalid or duplicate Signal deletion")
         identities.add(deletion.conversation_id)
     candidates: tuple[ConversationSignalPublicationV1 | SignalDeletion, ...] = (
-        *batch.replacements, *batch.deletions
+        *batch.replacements,
+        *batch.deletions,
     )
     for candidate in candidates:
         previous = conn.execute(

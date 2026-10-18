@@ -195,7 +195,8 @@ def create_app(
                     from planner.core.loops import prepare_background_loops
 
                     loops = prepare_background_loops(
-                        config, clock,
+                        config,
+                        clock,
                         conversation_system=app.state.conversation_system,
                         asyncio_loop=asyncio.get_running_loop(),
                     )
@@ -242,7 +243,9 @@ def create_app(
     navigation_delivery = create_delivery_runtime(config.db_path)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     app.add_middleware(
-        NavigationCommandFenceMiddleware, conn_factory=conn_factory, db_path=config.db_path,
+        NavigationCommandFenceMiddleware,
+        conn_factory=conn_factory,
+        db_path=config.db_path,
     )
     app.state.navigation_delivery = navigation_delivery
     app.add_middleware(ConversationSendBodyLimitMiddleware)

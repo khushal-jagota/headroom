@@ -52,12 +52,17 @@ def test_runtime_cleanup_tracks_successful_system_transfer(
     monkeypatch.setattr(api, "SqliteProcessConversationSystem", System)
     monkeypatch.setattr(api, "CodexSignInService", SignIn)
     monkeypatch.setattr(
-        api, "ConversationLiveTail",
+        api,
+        "ConversationLiveTail",
         lambda: SimpleNamespace(close_all_subscriptions=lambda: events.append("tail closed")),
     )
     for name in (
-        "ConversationStore", "ConversationMessageFiles", "BackendSnapshotService",
-        "BackendStateStore", "ModelResolutionService", "ModelResolutionStore",
+        "ConversationStore",
+        "ConversationMessageFiles",
+        "BackendSnapshotService",
+        "BackendStateStore",
+        "ModelResolutionService",
+        "ModelResolutionStore",
     ):
         monkeypatch.setattr(api, name, lambda *args, **kwargs: object())
     monkeypatch.setattr(api, "production_backend_usage_service", lambda: object())
@@ -77,8 +82,11 @@ def test_runtime_cleanup_tracks_successful_system_transfer(
         if failure is None:
             asyncio.run(compose())
             assert events == [
-                "constructed", "runtime complete", "tail closed",
-                "system shutdown", "sign-in shutdown",
+                "constructed",
+                "runtime complete",
+                "tail closed",
+                "system shutdown",
+                "sign-in shutdown",
             ]
             assert borrowed.closed
         else:
@@ -108,11 +116,14 @@ def test_application_stack_drains_failure_before_runtime_return(
 
     monkeypatch.setattr(server, "build_conversation_runtime", fail_after_transfer)
     monkeypatch.setattr(server, "DurableCodexLoginRejection", lambda *args, **kwargs: object())
-    config = load_config(None, env={
-        "PLAN_DB_PATH": str(tmp_path / "runtime" / "synthetic.db"),
-        "PLAN_LOGS_DIR": str(tmp_path / "runtime" / "logs"),
-        "PLAN_TEST_MODE": "1",
-    })
+    config = load_config(
+        None,
+        env={
+            "PLAN_DB_PATH": str(tmp_path / "runtime" / "synthetic.db"),
+            "PLAN_LOGS_DIR": str(tmp_path / "runtime" / "logs"),
+            "PLAN_TEST_MODE": "1",
+        },
+    )
     app = server.create_app(config, fake_clock, lambda: pytest.fail("No SQL is admitted"))
 
     async def enter() -> None:
