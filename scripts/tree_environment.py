@@ -342,6 +342,11 @@ def _diagnosis(tree: Path, found: list[str], *, dependencies: bool) -> str:
         repair = "Rebuild the virtualenv in place"
     return (
         f"{heading}:\n  " + "\n  ".join(found)
+        + (
+            "\nNo bypass is supported. After a pin change, refusal is expected "
+            "until installed dependencies match the pins."
+            if dependencies else ""
+        )
         + f"\nActive interpreter: {sys.executable}\n{repair}: {command}"
     )
 

@@ -58,13 +58,13 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
     (planner_metadata / "direct_url.json").write_text(
         json.dumps({"url": tree.as_uri(), "dir_info": {"editable": True}})
     )
-    sdk_metadata = site_packages / "claude_agent_sdk-0.2.152.dist-info"
+    sdk_metadata = site_packages / "claude_agent_sdk-0.2.128.dist-info"
     sdk_metadata.mkdir()
     (sdk_metadata / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: claude-agent-sdk\nVersion: 0.2.152\n"
+        "Metadata-Version: 2.1\nName: claude-agent-sdk\nVersion: 0.2.128\n"
     )
     (tree / "requirements.txt").write_text(
-        "claude-agent-sdk==0.2.152\n"
+        "claude-agent-sdk==0.2.128\n"
         f"packaging=={importlib.metadata.version('packaging')}\n"
     )
     (tree / "pyproject.toml").write_text(
@@ -112,10 +112,10 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
     assert "[assignment]" in healthy_mypy.stdout
     assert not imported.exists()
 
-    stale_metadata = site_packages / "claude_agent_sdk-0.2.128.dist-info"
-    sdk_metadata.rename(stale_metadata)
-    (stale_metadata / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: claude-agent-sdk\nVersion: 0.2.128\n"
+    # A repository pin bump deliberately makes the unchanged environment stale.
+    requirements = tree / "requirements.txt"
+    requirements.write_text(
+        requirements.read_text().replace("==0.2.128", "==0.2.152")
     )
     for tool in ("pytest", "mypy"):
         refused = run_tool(tool)
@@ -125,6 +125,9 @@ def test_real_pytest_and_mypy_refuse_pin_drift_before_work(tmp_path: Path) -> No
         assert "0.2.128" in output
         assert "0.2.152" in output
         assert "requirements.txt" in output
+        assert "No bypass is supported." in output
+        assert "After a pin change, refusal is expected" in output
+        assert "until installed dependencies match the pins." in output
         assert shlex.quote(str(tree)) in output
         assert "[assignment]" not in output
         assert not imported.exists(), output

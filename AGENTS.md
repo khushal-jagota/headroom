@@ -78,6 +78,9 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   A dependency refusal names the required and installed versions, active interpreter,
   and a repair command anchored to this tree. Missing or unusable `packaging` reports
   a parser bootstrap failure. A foreign or moved virtualenv needs a rebuild.
+  A pin change makes old environments stale, so refusal is expected until their
+  installed dependencies match. No environment variable or flag skips this check.
+  Restore the pinned dependency versions to pass it.
   These hooks cannot cover failures before pytest or mypy loads them. They do not
   cover `ruff`, pytest outside `tests/`, or arbitrary `.venv/bin` commands.
 - Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`
