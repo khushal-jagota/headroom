@@ -22,7 +22,9 @@ from tests.support.probe import (
 from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
+from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.configuration import (
+    configured_worker_type_registry,
     load_worker_runtime_definitions,
 )
 from planner.worker_types.store import (
@@ -39,6 +41,56 @@ def database(tmp_path: Path) -> Iterator[sqlite3.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+def test_fresh_database_loads_authorized_design_and_research_defaults(
+    database: sqlite3.Connection,
+) -> None:
+    registry = configured_worker_type_registry()
+    design = registry.require("product_design")
+    assert design.stage_definition("needs_wireframe").ownership_mode == "worker"
+    assert design.stage_definition("needs_design").ownership_mode == "worker"
+    assert design.worker_profile.default_backend == "claude"
+    assert design.worker_profile.default_model == "opus"
+    assert design.worker_profile.default_reasoning_effort == "medium"
+
+    research = registry.require("research")
+    assert research.worker_profile.default_backend == "claude"
+    assert research.worker_profile.default_model == "opus"
+    # The fleet-wide model decision does not change Research effort or ownership.
+    assert research.worker_profile.default_reasoning_effort == "high"
+    assert research.stage_definition("needs_research_plan").ownership_mode == "worker"
+    assert research.stage_definition("needs_findings").ownership_mode == "worker"
+
+
+def test_reopening_database_preserves_owner_customized_product_design(
+    database: sqlite3.Connection,
+) -> None:
+    design = read_definition(database, "product_design")
+    customized = replace(
+        design,
+        stages=tuple(
+            replace(stage, ownership_mode=StageOwnershipMode.user)
+            if stage.id in {"needs_wireframe", "needs_design"}
+            else stage
+            for stage in design.stages
+        ),
+        worker_profile=replace(
+            design.worker_profile,
+            default_model="sonnet",
+            default_reasoning_effort="high",
+        ),
+    )
+    write_definition(database, customized, now=2)
+    database.commit()
+    path = str(database.execute("PRAGMA database_list").fetchone()[2])
+    reopened = connect(path)
+    try:
+        create_schema(reopened)
+        assert read_definition(reopened, "product_design") == customized
+        assert configured_worker_type_registry().require("product_design") == customized
+    finally:
+        reopened.close()
 
 
 def _probe_ticket(conn: sqlite3.Connection, stage: str) -> str:
