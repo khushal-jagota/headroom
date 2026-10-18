@@ -2419,9 +2419,6 @@ button.list-row:hover .list-row-title {
 [data-conversation-composer] .chat-foot .listbox-picker-chevron,
 [data-conversation-composer] .chat-foot .listbox-picker-chevron-drawn { display: none; }
 [data-conversation-composer] { container-type: inline-size; }
-@container (max-width: 430px) {
-  [data-conversation-composer] .chat-foot .listbox-picker-trigger { padding-inline: var(--space-2); }
-}
 .chat-submit {
   flex: none;
   margin-left: auto;
