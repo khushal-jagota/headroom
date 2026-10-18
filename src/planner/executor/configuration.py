@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Final
 
 PROTOCOL_VERSION: Final = 4
-SPOOL_FORMAT_VERSION: Final = 1
+SPOOL_FORMAT_VERSION: Final = 2
+OUTBOX_BUSY_TIMEOUT_MS: Final = 5000
+OUTBOX_COPY_BYTES: Final = 256 * 1024
 MAX_ENVELOPE_BYTES: Final = 1024 * 1024
 FILE_CHUNK_BYTES: Final = 256 * 1024
 FRAME_LENGTH_BYTES: Final = 4

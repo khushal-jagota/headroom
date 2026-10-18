@@ -32,7 +32,7 @@ from planner.conversation.events import ToolCallStatus
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.executor.codec import encode_value
-from planner.executor.configuration import PROTOCOL_VERSION, ExecutorPaths
+from planner.executor.configuration import PROTOCOL_VERSION, SPOOL_FORMAT_VERSION, ExecutorPaths
 from planner.executor.contracts import (
     AuthorizedAction,
     ChildCommand,
@@ -160,7 +160,7 @@ def test_pending_callback_and_native_command_survive_connection_task_cancel(tmp_
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
         identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, 1, reference.executor_incarnation, 2
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 2
         )
         ask = registry.inventory(identity).children[0].pending_asks[0]
         assert native.answers == []  # absence of an answer remains a wait
@@ -242,7 +242,7 @@ def test_stale_quiesce_rejects_restart_and_exit_is_identity_bound(tmp_path: Path
 def test_incompatible_spool_does_not_mutate_any_path(tmp_path: Path) -> None:
     root = tmp_path / "spool"
     root.mkdir()
-    (root / "metadata.json").write_text(json.dumps({"format": 999}))
+    (root / "metadata.json").write_text(json.dumps({"format": 999, "sender_id": str(uuid4())}))
     before = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*")}
     with pytest.raises(ValueError, match="incompatible"):
         FilesystemSpool(root)
@@ -423,7 +423,7 @@ def test_applied_answer_recovers_when_outcome_fsync_fails(
             turn, BackendPermissionAsk("ask", "Allow?", None, ())
         )
         identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, 1, reference.executor_incarnation, 1
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 1
         )
         ask = registry.inventory(identity).children[0].pending_asks[0]
         answer = DurableAnswer("answer", ask, "allow", 1)
@@ -913,7 +913,7 @@ def test_user_input_recorded_map_survives_lost_ack_and_durability_retry(
             turn, BackendPermissionAsk("same", "Allow?", None, ())
         )
         identity = ExecutorIdentity(
-            PROTOCOL_VERSION, "a" * 40, 1, reference.executor_incarnation, 2
+            PROTOCOL_VERSION, "a" * 40, SPOOL_FORMAT_VERSION, reference.executor_incarnation, 2
         )
         inventory = registry.inventory(identity).children[0]
         assert inventory.active_turn == turn

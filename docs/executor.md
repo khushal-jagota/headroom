@@ -23,9 +23,9 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 4. Earlier peers refuse work before replay. The
-journal format remains version 1 because its stored envelopes retain the same
-interpretation. Wire compatibility and journal compatibility are separate checks.
+The journal format is version 2. Earlier journal formats refuse ordinary startup
+and deployment before mutation. Wire compatibility and journal compatibility are
+separate checks; neither compatibility check converts stored work.
 
 ## The journal is transport, not a second Panels
 
@@ -51,13 +51,29 @@ discard consume that state through the conversation lifecycle. Interrupted nativ
 dispatch retains its bytes and exposes uncertainty instead of sending again.
 This persistence cannot recover messages lost before the feature existed.
 
+The outbound journal uses SQLite for envelopes, conversation positions, snapshots,
+and acknowledgment state. A transaction commits a submission and its snapshot references
+together. Indexed queries select each conversation's first pending submission, count
+waiting work, and check whether a conversation has waiting work without decoding
+the entire queue. The transport scheduler owns in-flight admission; unrelated
+conversations can progress while one waits.
+
+SQLite uses a rollback journal (`journal_mode=DELETE`), `synchronous=EXTRA`, and
+`fullfsync=ON`. On macOS, regular-file persistence also requests `F_FULLFSYNC`
+after `fsync`; directory entries are synced after publication or removal. This
+requires a local filesystem and storage that honor these flush requests. Linux
+tests prove ordering and crash recovery, not physical Mac power-loss behavior.
+
 Code paths: `src/planner/executor/journal.py`, `store.py`, `mutations.py`,
 `ipc_client.py`, `src/planner/cli/http.py`.
 
 ## Files precede their references
 
 Workers use ordinary file tools in a resolved Ticket directory. Publication
-captures immutable bytes. The receiver checks the assigned child, owner, path,
+captures immutable bytes. Transport consumes a `FileSnapshot` containing its
+manifest and local path. Snapshot bytes remain immutable until an authoritative
+receipt. A transfer pin retains them through receipt cleanup, completion, and
+cancellation; no database transaction spans network I/O. The receiver checks the assigned child, owner, path,
 length, and digest, then publishes a complete file from quarantine. A dependent
 row cannot commit first. A replay of an old publication cannot overwrite a newer
 file at the same URL.
@@ -100,7 +116,7 @@ turn ending.
 
 After reconnect, the VPS acknowledges accepted retained command outcomes through
 the existing command acknowledgment path. Later registry inventories omit those
-outcomes. Filesystem receipt cleanup and registry confirmation remain separate.
+outcomes. Journal receipt cleanup and registry confirmation remain separate.
 Neither acknowledgment repeats the native operation.
 
 The VPS exposes per-ask evidence: uncertain, reachable, child gone, or callback
@@ -168,6 +184,37 @@ A Mac inspection uses the pinned SSH identity and does not execute installed cod
 Direct deployment paths repeat the relevant checks before their own mutations.
 No migration or general retarget mechanism is part of this refusal policy.
 
+## Fresh installation and offline legacy conversion
+
+The production installation path is a fresh format-2 journal. No existing resident
+on the target Mac is required. Ordinary deployment continues to refuse incompatible
+journal or protocol versions before changing either installation.
+
+An existing format-1 journal has one supported conversion boundary: stop every
+process that can open it, disable automatic restarts, and run the explicit offline
+converter under its exclusive journal lock. Preserve an untouched backup of the
+stopped source before conversion, then run:
+
+```sh
+panels executor convert-spool --root /absolute/path/to/executor-root
+```
+
+The root is the persistent executor root, not its `spool` subdirectory. The command
+requires the executor to be stopped and acquires `spool/lock` exclusively. It is
+not part of ordinary installation, update, rollback, or startup. The converter
+validates the old envelopes, sequences, submission identities including acknowledged
+work, and immutable snapshot bytes before publishing format 2.
+Its local publication fence preserves the old journal when conversion is interrupted;
+a failed conversion never authorizes ordinary startup against partially converted
+state. Inspect the published format-2 journal before starting a compatible executor.
+Keep the stopped source backup for diagnosis, separate from the active journal.
+
+Automatic or in-place upgrades across both hosts are unsupported. Rollback across
+conversion is also unsupported: an old executable must not open the converted
+journal. These restrictions do not prevent the fresh format-2 installation. The
+offline converter supplies no two-host cutover orchestration or durable deployment
+phase machinery.
+
 ## Browser previews
 
 A preview uses `/dev/tickets/<ticket-id>/<port>/` on either locale. The server reads
@@ -195,7 +242,8 @@ The proxy preserves the requested port in `Host` and preview-local redirects.
 It strips Panels credentials and hop-by-hop headers before the preview receives a
 request. Hosted access still passes through the existing trusted ingress. Lease,
 remote connection, and stream failures return the existing unavailable response.
-Protocol 3 peers refuse the protocol 4 handshake. The spool format stays at 1.
+Earlier protocol peers refuse the current handshake before work. The journal
+format is 2.
 
 Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
 a real browser. That proves the software boundary and does not prove physical Mac

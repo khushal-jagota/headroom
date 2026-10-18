@@ -256,7 +256,7 @@ class NativeChildRegistry:
                     for answer_id, application in self._applications.items()
                     if application.ask.child.child_id in ids
                 )
-                or any(row.conversation_id in conversations for row in self.spool.pending())
+                or any(self.spool.has_pending(conv) for conv in conversations)
             )
             if busy:
                 return receipt(
@@ -275,7 +275,7 @@ class NativeChildRegistry:
             for child in children:
                 self.children.pop(child.reference.child_id, None)
             if any(self._source_work.get(conv, 0) for conv in conversations) or any(
-                row.conversation_id in conversations for row in self.spool.pending()
+                self.spool.has_pending(conv) for conv in conversations
             ):
                 return receipt(
                     MoveRetirementDisposition.uncertain, "source retirement produced unsettled work"
@@ -715,7 +715,9 @@ class NativeChildRegistry:
         finally:
             self.end_source_work(action.ask.child)
 
-    def inventory(self, identity: ExecutorIdentity) -> ReconciliationInventory:
+    def inventory(
+        self, identity: ExecutorIdentity, *, include_pending: bool = True
+    ) -> ReconciliationInventory:
         return ReconciliationInventory(
             identity,
             tuple(
@@ -727,7 +729,7 @@ class NativeChildRegistry:
                 )
                 for child in self.children.values()
             ),
-            self.spool.pending(),
+            self.spool.pending() if include_pending else (),
             tuple(
                 outcome
                 for command_id, outcome in self.outcomes.items()
@@ -765,7 +767,7 @@ class NativeChildRegistry:
         unresolved += sum(
             answer_id not in self._applications_published for answer_id in self._applications
         )
-        return active, callbacks, unresolved, len(self.spool.pending())
+        return active, callbacks, unresolved, self.spool.pending_count()
 
     async def quiesce(self) -> Quiescence:
         # Admission closes synchronously before any awaited native operation.
