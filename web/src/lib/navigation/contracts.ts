@@ -21,6 +21,7 @@ export interface TicketValue {
   ticket_status: string;
   blocked: boolean;
   updated_at: number;
+  created_at: number;
   worker_step_claim_out: boolean;
   priority: string;
   deadline: string | null;
@@ -35,6 +36,7 @@ export interface TicketValue {
   proposal_revision: number;
   proposal_created_at: number | null;
   stage_ownership: string | null;
+  gating_field: string | null;
   terminal: boolean;
   locale: string;
 }
@@ -376,6 +378,9 @@ export const wireDescriptors: Record<string, unknown> = {
       "updated_at": {
         "primitive": "integer"
       },
+      "created_at": {
+        "primitive": "integer"
+      },
       "worker_step_claim_out": {
         "primitive": "boolean"
       },
@@ -458,6 +463,16 @@ export const wireDescriptors: Record<string, unknown> = {
         ]
       },
       "stage_ownership": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      },
+      "gating_field": {
         "union": [
           {
             "primitive": "string"

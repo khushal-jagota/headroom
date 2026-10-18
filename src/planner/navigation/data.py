@@ -346,6 +346,9 @@ def _derive(
                 worker_step_claim_out=t["worker_step_claim"] == WorkerStepClaim.out,
                 blocked=live,
             )
+        if version >= 4:
+            value["gating_field"] = definition.gating_field(t["stage"])
+            value["created_at"] = t["created_at"]
         records.append(_record(kind, identity, value))
     elif kind in ("orchestrator", "chief"):
         if kind == "orchestrator":

@@ -338,9 +338,22 @@ def test_metadata_edits_publish_source_values_without_status_changes(tmp_path: P
             ("ticket", "t"),
             ("orchestrator", "a"),
         }
+        before_creation_edit = snapshot(conn)
+        original_ticket = actual["ticket", "t"]
+        conn.execute("UPDATE tickets SET created_at=12 WHERE id='t'")
+        changed_ticket = values(conn)["ticket", "t"]
+        assert changed_ticket == {**original_ticket, "created_at": 12}
+        assert changed_ticket["updated_at"] == 99
+        assert changed_ticket["ticket_status"] == "empty"
+        batches = journal(conn, before_creation_edit["epoch"], before_creation_edit["revision"])[
+            "batches"
+        ]
+        assert len(batches) == 1
+        assert batches[0]["upserts"] == [{"kind": "ticket", "id": "t", "value": changed_ticket}]
+        assert batches[0]["deletes"] == []
         stable = snapshot(conn)
         conn.execute("BEGIN")
-        conn.execute("UPDATE tickets SET updated_at=100 WHERE id='t'")
+        conn.execute("UPDATE tickets SET updated_at=100,created_at=13 WHERE id='t'")
         conn.execute("DELETE FROM tickets WHERE id='t'")
         conn.execute("DELETE FROM sprint_items WHERE id='a'")
         conn.rollback()
@@ -839,6 +852,58 @@ def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
         actual = values(conn)
         assert actual["ticket", "first"]["stage_ownership"] == "user"
         assert actual["ticket", "second"]["stage_ownership"] == "user"
+        conn.execute("BEGIN")
+        add_ticket(conn, "terminal")
+        conn.execute("UPDATE tickets SET stage='done' WHERE id='terminal'")
+        conn.commit()
+        assert values(conn)["ticket", "terminal"]["gating_field"] is None
+        before = snapshot(conn)
+        derived.clear()
+        previous_definition = json.dumps(definition)
+        # Swap only gates. The definition stays valid with one stage per field.
+        implementation = next(
+            stage for stage in definition["stages"] if stage["id"] == "needs_implementation"
+        )
+        consequences = next(
+            stage for stage in definition["stages"] if stage["id"] == "needs_consequences"
+        )
+        implementation["gating_field"], consequences["gating_field"] = (
+            consequences["gating_field"],
+            implementation["gating_field"],
+        )
+        conn.execute(
+            "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+            (json.dumps(definition),),
+        )
+        assert sorted(derived) == [
+            ("ticket", "first"),
+            ("ticket", "second"),
+            ("ticket", "terminal"),
+        ]
+        current = snapshot(conn)
+        after = values(conn)
+        for identity in ("first", "second"):
+            assert after["ticket", identity]["gating_field"] == "consequences"
+            assert after["ticket", identity]["stage_ownership"] == "user"
+            assert after["ticket", identity]["ticket_status"] == "empty"
+        batches = journal(conn, before["epoch"], before["revision"])["batches"]
+        assert len(batches) == 1
+        assert [(record["kind"], record["id"]) for record in batches[0]["upserts"]] == [
+            ("ticket", "first"),
+            ("ticket", "second"),
+        ]
+        assert batches[0]["deletes"] == []
+        conn.execute("BEGIN")
+        conn.execute(
+            "UPDATE worker_types SET definition_json=? WHERE worker_type='coding'",
+            (previous_definition,),
+        )
+        conn.rollback()
+        assert snapshot(conn) == current
+        conn.execute("BEGIN")
+        navigation_data.rebuild(conn)
+        conn.commit()
+        assert snapshot(conn)["records"] == current["records"]
         conn.close()
 
 

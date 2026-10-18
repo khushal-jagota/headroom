@@ -28,6 +28,7 @@ class TicketValue(TypedDict):
     ticket_status: str
     blocked: bool
     updated_at: int
+    created_at: int
     worker_step_claim_out: bool
     priority: str
     deadline: str | None
@@ -42,6 +43,7 @@ class TicketValue(TypedDict):
     proposal_revision: int
     proposal_created_at: int | None
     stage_ownership: str | None
+    gating_field: str | None
     terminal: bool
     locale: str
 
