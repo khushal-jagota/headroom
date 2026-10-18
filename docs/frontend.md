@@ -490,7 +490,8 @@ hand-rolling the same shapes per screen. Each does one job:
   screens: editable proposal, reviewer heading, Approve, and send-back action. Approve
   opens the existing compact ceiling/reviewer rail directly; there is no adjacent
   ceiling control. The reviewer heading opens the same picker for reviewer-only
-  routing. A new proposal revision resets the draft; an unrelated refresh preserves it.
+  routing. A Ticket reviewer is labelled Worker, distinct from its assigned Orchestrator.
+  A new proposal revision resets the draft; an unrelated refresh preserves it.
   Review supplies its existing voice revision box through the card.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
   the priority control on a Brief, the approval control, and the send-back box. It is named by a

@@ -9,7 +9,6 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
-from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.backend_state import write_model_enablement
@@ -271,28 +270,51 @@ def test_schedule_model_disabled_after_save_fails_once_without_ticket(
     assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
 
 
-def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(
+def test_cold_runtime_preserves_stored_choice_and_restart_safe_receipt(
     tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     db_path = tmp_path / "scheduled-loop.db"
     conn = connect(str(db_path))
     create_schema(conn)
-    seed_test_model_catalogue(conn)
-    conn.commit()
-    _schedule(conn)
+    schedule_id = _schedule(
+        conn,
+        template=replace(
+            _template(), employee_backend="codex", employee_launch_model="gpt-6-sol",
+        ),
+    )
+    stored_schedule = data.read_schedule(conn, schedule_id)
+    assert conn.execute("SELECT count(*) FROM model_catalogue_models").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM model_variant_resolutions").fetchone()[0] == 0
     conn.close()
-    clock = MutableClock(_now("2026-07-28T14:30:00"))
+    caplog.clear()
+    clock = MutableClock(_now("2026-07-28T14:29:59"))
 
+    # The ordinary synchronous loop needs no provider preparation for a first occurrence.
     first_loop = ScheduledTicketLoop(str(db_path), clock, boundary_hour=5)
-    second_loop = ScheduledTicketLoop(str(db_path), clock, boundary_hour=5)
+    assert first_loop.poll_once() == []
+    clock.set(_now("2026-07-28T14:30:00"))
     first = first_loop.poll_once()
+    second_loop = ScheduledTicketLoop(str(db_path), clock, boundary_hour=5)
     second = second_loop.poll_once()
 
     assert first[0].outcome is OccurrenceOutcome.created
     assert second == first
+    assert "resolution unavailable" in caplog.text
+    # A restart after the next day's due minute does not replay a missed occurrence.
+    clock.set(_now("2026-07-29T14:31:00"))
+    assert second_loop.poll_once() == []
     check = connect(str(db_path))
     try:
+        assert first[0].ticket_id is not None
+        ticket = tickets_data.read_ticket(check, first[0].ticket_id)
+        assert ticket.employee_backend == "codex"
+        assert ticket.employee_launch_model == "gpt-6-sol"
+        assert data.read_schedule(check, schedule_id) == stored_schedule
+        assert data.list_occurrences(check, schedule_id) == first
         assert check.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
         assert check.execute("SELECT count(*) FROM scheduled_ticket_occurrences").fetchone()[0] == 1
+        assert check.execute("SELECT count(*) FROM model_catalogue_models").fetchone()[0] == 0
+        assert check.execute("SELECT count(*) FROM model_variant_resolutions").fetchone()[0] == 0
     finally:
         check.close()

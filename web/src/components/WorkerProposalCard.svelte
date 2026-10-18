@@ -39,7 +39,7 @@
     error = null;
   });
   function reviewerLabel(value: Principal): string {
-    return value.kind === "owner" ? "User" : value.kind === "chief" ? "Chief" : "Orchestrator";
+    return value.kind === "owner" ? "User" : value.kind === "chief" ? "Chief" : value.kind === "ticket" ? "Worker" : "Orchestrator";
   }
   async function completeScope(change: { ceiling?: string; holder: Principal | null; approval?: boolean }): Promise<void> {
     if (!change.holder || disabled || busy || resolved) return;

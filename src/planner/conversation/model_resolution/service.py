@@ -251,7 +251,7 @@ class ModelResolutionService:
                 *catalogue.get(variant, ()),
                 CachedModelResolution(
                     model.model_id,
-                    model.reasoning_effort_options or snapshot.reasoning_effort_options,
+                    model.reasoning_effort_options,
                     observed_at,
                     model.resolved_model_id,
                 ),

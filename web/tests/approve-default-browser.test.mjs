@@ -276,6 +276,16 @@ with sync_playwright() as p:
     assert page.evaluate('location.hash') == hash_before
     assert approvals == [] and scope_writes == []
     page.get_by_role('listbox').press('Escape')
+    # A delegated Worker and the assigned orchestrator retain distinct roles and IDs.
+    tickets['t_worker_holder'] = ticket('t_worker_holder', 'coding', 'needs_plan', 'plan', 'Worker-held plan', 10)
+    tickets['t_worker_holder']['ceiling_holder'] = {'kind': 'ticket', 'id': 't_holder'}
+    page.evaluate("window.__showTicket('t_worker_holder')")
+    expect(block().locator('[data-reviewer-heading]')).to_have_text('Worker')
+    block().locator('[data-reviewer-heading]').click()
+    expect(page.get_by_role('option', name='Worker', exact=True)).to_have_attribute('data-ceiling-picker-choice', 't_holder')
+    expect(page.get_by_role('option', name='Orchestrator', exact=True)).to_have_attribute('data-ceiling-picker-choice', 'item_one')
+    page.get_by_role('listbox').press('Escape')
+    assert approvals == [] and scope_writes == []
     page.evaluate("window.__showTicket('t_coding')")
     # Reviewer heading only reroutes; pending proposal and revision stay intact.
     block().locator('[data-reviewer-heading]').click()

@@ -70,7 +70,10 @@ def setup(tmp_path: Path, catalogue: Catalogue) -> tuple[ModelResolutionService,
 
 def test_numeric_versions_and_provider_hints_cannot_cross_variant(tmp_path: Path) -> None:
     catalogue = Catalogue(
-        tuple(BackendModel(name) for name in ("gpt-6.9-sol", "gpt-6.10-sol", "gpt-99-astra"))
+        tuple(
+            BackendModel(name, reasoning_effort_options=("medium",))
+            for name in ("gpt-6.9-sol", "gpt-6.10-sol", "gpt-99-astra")
+        )
     )
     service, _ = setup(tmp_path, catalogue)
     result = asyncio.run(service.resolve(Backend.codex, "gpt-5.6-sol", "medium"))
@@ -150,11 +153,25 @@ def test_claude_alias_and_large_context_variant_stay_distinct(tmp_path: Path) ->
     assert identify_variant(Backend.hermes, "openai/gpt-5").name == "openai/gpt-5"
 
 
+def test_model_without_reasoning_does_not_inherit_backend_effort_union(tmp_path: Path) -> None:
+    service, _ = setup(
+        tmp_path,
+        Catalogue((
+            BackendModel("gpt-6-sol", reasoning_effort_options=()),
+            BackendModel("gpt-6-astra", reasoning_effort_options=("high",)),
+        )),
+    )
+    assert asyncio.run(service.resolve(Backend.codex, "sol")).supported_reasoning_efforts == ()
+    with pytest.raises(PlannerError, match="reasoning effort is unsupported"):
+        asyncio.run(service.resolve(Backend.codex, "sol", "high"))
+    assert asyncio.run(service.resolve(Backend.codex, "astra", "high")).model == "gpt-6-astra"
+
+
 def test_creation_queue_resume_resolve_at_dispatch_and_active_steer_does_not(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
-        catalogue = Catalogue((BackendModel("gpt-6-sol"),))
+        catalogue = Catalogue((BackendModel("gpt-6-sol", reasoning_effort_options=("high",)),))
         service, path = setup(tmp_path, catalogue)
         harness = _Harness(path)
         harness.system._model_resolver = service
@@ -165,7 +182,7 @@ def test_creation_queue_resume_resolve_at_dispatch_and_active_steer_does_not(
         assert record is not None and record.model == "gpt-6-sol"
         await harness.system.send("current", text_message_content("first"), sender_label="owner")
         assert harness.backend("current").model == "gpt-6-sol"
-        catalogue.models = (BackendModel("gpt-7-sol"),)
+        catalogue.models = (BackendModel("gpt-7-sol", reasoning_effort_options=("high",)),)
         await service._refresh(Backend.codex)
         await harness.system.send(
             "current",
@@ -184,7 +201,7 @@ def test_creation_queue_resume_resolve_at_dispatch_and_active_steer_does_not(
         await harness.system.shutdown()
         resumed = _Harness(path)
         resumed.system._model_resolver = service
-        catalogue.models = (BackendModel("gpt-8-sol"),)
+        catalogue.models = (BackendModel("gpt-8-sol", reasoning_effort_options=("high",)),)
         await service._refresh(Backend.codex)
         await resumed.system.send("current", text_message_content("resumed"), sender_label="owner")
         assert resumed.backend("current").model == "gpt-8-sol"
@@ -277,7 +294,7 @@ def test_queued_resolution_failure_is_clear_refusal_not_discard(
     )
 
     async def exercise() -> None:
-        catalogue = Catalogue((BackendModel("gpt-6-sol"),))
+        catalogue = Catalogue((BackendModel("gpt-6-sol", reasoning_effort_options=("high",)),))
         service, path = setup(tmp_path, catalogue)
         harness = _Harness(path)
         harness.system._model_resolver = service
