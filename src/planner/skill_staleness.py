@@ -1,4 +1,4 @@
-"""Which managed skill rows name something this build does not have.
+"""Which managed skill rows and packaged create examples name unsupported references.
 
 A skill row is the owner's text, so nothing here rewrites it. This reports, and the
 report is what makes a stale row visible instead of silent. Before this existed, a
@@ -24,6 +24,12 @@ Ticket-create keys are read only from a complete shell fence containing one exac
 JSON object. Extra shell syntax, dynamic or malformed bodies, incomplete fences and
 other examples are left alone. This is not a shell parser or a payload validator:
 only unsupported top-level keys are reported, and no example is executed.
+
+Create examples are checked in both stored rows and packaged seeds. A clean stored
+row cannot establish that the seed a new database receives is correct. Packaged
+findings use ``packaged_ticket_create_field`` to distinguish their source. Other
+reference checks remain confined to managed rows, because the packaged history is
+not what an existing database runs.
 """
 
 from __future__ import annotations
@@ -37,7 +43,7 @@ from typing import Final
 
 import click
 
-from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES
+from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES, panels_skill_root
 from planner.tickets.contracts import CreateTicketBody
 
 # A command a skill teaches is written as a literal a worker types, inside backticks.
@@ -68,7 +74,7 @@ UNCHECKED_STAGE_SKILL_NAMES: Final = frozenset({"probe-worker"})
 
 @dataclass(frozen=True)
 class StaleReference:
-    """One thing a skill row names that this build does not have."""
+    """One thing a skill source names that this build does not have."""
 
     skill_name: str
     kind: str
@@ -256,7 +262,7 @@ def stale_references(
     *,
     command_root: click.Command | None = None,
 ) -> tuple[StaleReference, ...]:
-    """Every reference in every skill row that this build cannot resolve."""
+    """Unsupported managed references and packaged Ticket-create fields."""
     if command_root is None:
         from planner.cli.main import main as cli_root
 
@@ -278,4 +284,8 @@ def stale_references(
                 terminal_names=terminal_names,
             )
         )
-    return tuple(found)
+    for path in panels_skill_root().glob("*/SKILL.md"):
+        for key in ticket_create_keys(path.read_text(encoding="utf-8")):
+            if key not in CreateTicketBody.__annotations__:
+                found.append(StaleReference(path.parent.name, "packaged_ticket_create_field", key))
+    return tuple(sorted(set(found), key=lambda item: (item.skill_name, item.kind, item.reference)))

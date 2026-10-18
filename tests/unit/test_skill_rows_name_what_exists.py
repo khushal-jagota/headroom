@@ -224,6 +224,35 @@ def test_create_field_findings_use_the_existing_managed_row_report(
     ]
 
 
+def test_seed_only_create_defects_remain_visible_when_the_stored_skill_has_no_example(
+    database: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database.execute(
+        "UPDATE managed_skills SET source_text = ? WHERE skill_name = ?",
+        ("The stored skill has no create example.", "panels-ticket-creation"),
+    )
+    root = tmp_path / "packaged-skills"
+    seed = root / "panels-ticket-creation" / "SKILL.md"
+    seed.parent.mkdir(parents=True)
+    seed.write_text(
+        "`panels vanished-command` needs_vanished_stage\n"
+        + _create_example('{"kickoff_note": "Intake"}'),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("planner.skill_staleness.panels_skill_root", lambda: root)
+
+    assert [item.as_dict() for item in stale_references(database)] == [
+        {
+            "skill_name": "panels-ticket-creation",
+            "kind": "packaged_ticket_create_field",
+            "reference": "kickoff_note",
+        }
+    ]
+
+    seed.write_text(seed.read_text(encoding="utf-8").replace("kickoff_note", "brief"))
+    assert stale_references(database) == ()
+
+
 def test_the_report_is_served_rather_than_read_as_a_skill_named_stale(tmp_path: Path) -> None:
     """``/skills/{skill_name}`` matches first unless the literal path is declared above it."""
     from fastapi.testclient import TestClient
