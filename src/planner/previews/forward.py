@@ -158,18 +158,25 @@ class MacPreviewForwards:
         if lease is None:
             raise ValueError("unknown preview lease")
         lease.closed = True
-        if lease.listener is not None:
-            lease.listener.close()
-        for task in tuple(lease.tasks):
-            task.cancel()
-        await asyncio.gather(*lease.tasks, return_exceptions=True)
+        try:
+            if lease.listener is not None:
+                lease.listener.close()
+        finally:
+            tasks = tuple(lease.tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         if lease.listener is not None:
             await asyncio.wait_for(lease.listener.wait_closed(), SSH_CLOSE_TIMEOUT_SECONDS)
 
     async def close(self) -> None:
         self.closed = True
-        for path in tuple(self.leases):
-            await self.release(path)
+        results = await asyncio.gather(
+            *(self.release(path) for path in tuple(self.leases)), return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
 
 @dataclass(slots=True)
@@ -322,5 +329,10 @@ class PreviewForwards:
             self.closed = True
             leases = tuple(self.leases.values())
             self.leases.clear()
-            for lease in leases:
-                await self._close_lease(lease, notify=False)
+            results = await asyncio.gather(
+                *(self._close_lease(lease, notify=False) for lease in leases),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result

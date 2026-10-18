@@ -299,3 +299,127 @@ def test_partial_corrupt_and_unsafe_files_never_publish(
     assert not (tmp_path / "files/tickets/ticket/result.bin").exists()
     with pytest.raises(ValueError, match="unsafe"):
         receiver.begin(replace(entry, relative_path="../escape"), identity=IDENTITY)
+
+
+def test_input_transfer_preserves_conversation_order_without_blocking_other_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bulk input must not block a command for an independent conversation."""
+    import asyncio
+    from uuid import uuid4
+
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import ChildCommand, ChildOperation
+    from planner.executor.vps import ExecutorEndpoint
+
+    async def run() -> None:
+        endpoint = ExecutorEndpoint(str(tmp_path / "unused.sqlite"), RealClock())
+        admitted: list[str] = []
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def transfer(command: ChildCommand) -> None:
+            admitted.append(command.command_id)
+            if command.command_id == "bulk":
+                started.set()
+                await release.wait()
+
+        monkeypatch.setattr(endpoint, "_transfer_command_inputs_locked", transfer)
+        child = ChildReference(str(uuid4()), str(uuid4()), "conversation-a")
+        bulk = ChildCommand("bulk", child, ChildOperation.stop, None, {})
+        later = replace(bulk, command_id="later")
+        unrelated = replace(
+            bulk, command_id="unrelated", child=replace(child, conversation_id="conversation-b")
+        )
+        first = asyncio.create_task(endpoint._transfer_command_inputs(bulk))
+        await asyncio.wait_for(started.wait(), 1)
+        second = asyncio.create_task(endpoint._transfer_command_inputs(later))
+        try:
+            await asyncio.wait_for(endpoint._transfer_command_inputs(unrelated), 1)
+            assert admitted == ["bulk", "unrelated"]
+            assert not second.done()
+            release.set()
+            await asyncio.gather(first, second)
+            assert admitted == ["bulk", "unrelated", "later"]
+        finally:
+            release.set()
+            first.cancel()
+            second.cancel()
+            await asyncio.gather(first, second, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+def test_session_preview_cleanup_failure_still_releases_transport_root(
+    store: ExecutorStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    import os
+    import tempfile
+    from typing import cast
+    from unittest.mock import AsyncMock, Mock
+    from uuid import uuid4
+
+    from planner.core.clock import RealClock
+    from planner.executor.contracts import (
+        ConnectionState,
+        ExecutorHealth,
+        WireMessage,
+        WireMessageKind,
+    )
+    from planner.executor.mac import as_object
+    from planner.executor.sftp import RestrictedSftpService
+    from planner.executor.vps import ExecutorEndpoint
+    from planner.executor.wire import encode_frame
+    from planner.previews.forward import PreviewForwards
+
+    async def run() -> None:
+        endpoint = ExecutorEndpoint(str(tmp_path / "vps.sqlite"), RealClock())
+        endpoint.store = store
+        identity = replace(IDENTITY, executor_incarnation=str(uuid4()))
+        reader = asyncio.StreamReader()
+        reader.feed_data(
+            encode_frame(
+                WireMessage(
+                    WireMessageKind.hello,
+                    "hello",
+                    as_object(
+                        ExecutorHealth(
+                            identity, os.getpid(), ConnectionState.reconciling, False, 1, None
+                        )
+                    ),
+                )
+            )
+        )
+        reader.feed_eof()
+        previews = Mock()
+        previews.close = AsyncMock(side_effect=ValueError("unsafe preview socket"))
+        service = Mock()
+        service.close = AsyncMock(side_effect=OSError("service cleanup failed"))
+        root = tempfile.TemporaryDirectory(dir=tmp_path)
+        root_path = Path(root.name)
+
+        async def setup_generation() -> None:
+            endpoint._preview_forwards = cast(PreviewForwards, previews)
+            endpoint._transports[identity] = cast(RestrictedSftpService, service)
+            endpoint._transport_roots[identity] = root
+            endpoint._upload_slots[(identity, "publication")] = "token"
+
+        writer = Mock()
+        writer.drain = AsyncMock(side_effect=setup_generation)
+        monkeypatch.setattr(endpoint, "_measure_clock", AsyncMock())
+        try:
+            with pytest.raises(OSError, match="service cleanup failed"):
+                await endpoint._session(reader, writer)
+            previews.close.assert_awaited_once()
+            service.close.assert_awaited_once()
+            assert not root_path.exists()
+            assert not endpoint._transports and not endpoint._transport_roots
+            assert not endpoint._upload_slots
+            assert endpoint.writer is None and not endpoint.ready
+        finally:
+            root.cleanup()
+            for task in tuple(endpoint._tasks):
+                task.cancel()
+            await asyncio.gather(*endpoint._tasks, return_exceptions=True)
+
+    asyncio.run(run())
