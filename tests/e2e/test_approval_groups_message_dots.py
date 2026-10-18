@@ -42,7 +42,7 @@ def _conversation(server: ServerHandle, name: str) -> None:
     _post(
         server,
         "/api/conversation/conversations",
-        {"conversation_id": name, "model": "e2e-model", "backend_key": "codex"},
+        {"conversation_id": name, "model": "gpt-6.1-sol", "backend_key": "codex"},
     )
 
 

@@ -7,6 +7,7 @@ from typing import cast
 from unittest.mock import patch
 
 import pytest
+from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.retired_workers import seed_historical_worker_type
 
@@ -49,6 +50,7 @@ def test_shell_count_tracks_distinct_actual_work_across_all_roles(
     db_path = tmp_path / "shell-count.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     item = sprints_data.create_item(
         conn, title="Settled supervisor", project_id="project_vylo", clock=RealClock()
     )
@@ -140,6 +142,7 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
     db_path = tmp_path / "attention.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     ticket = tickets_data.create_ticket(
         conn,
         worker_type="coding",
@@ -261,6 +264,7 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     db_path = tmp_path / "complete_board.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     item = sprints_data.create_item(
         conn, title="Complete approval queue", project_id="project_vylo", clock=RealClock()
     )
@@ -368,6 +372,7 @@ def test_chief_message_attention_uses_exact_conversation_and_owner_read_mark(
     db_path = tmp_path / "chief_messages.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     for conversation_id in ("c_chief", "c_child"):
         conn.execute(
             "INSERT INTO conversations "
@@ -431,6 +436,7 @@ def test_only_a_user_owned_stage_is_the_owners_work(tmp_path: Path) -> None:
     db_path = tmp_path / "assignment.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     worker_owned = tickets_data.create_ticket(
         conn,
         worker_type="coding",
@@ -492,6 +498,7 @@ def test_a_waiting_ask_is_not_reported_as_a_message(tmp_path: Path) -> None:
     db_path = tmp_path / "answer.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     ticket = tickets_data.create_ticket(
         conn,
         worker_type="coding",
@@ -533,6 +540,7 @@ def test_completed_failure_history_does_not_poison_ticket_or_item_attention(
     db_path = tmp_path / "completed.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     item = sprints_data.create_item(
         conn, title="Historical failures", project_id="project_vylo", clock=RealClock()
     )
@@ -649,6 +657,7 @@ def test_attention_facts_preserve_message_and_failure_boundaries(
     db_path = tmp_path / "attention.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     for conversation_id in ("selected", "unselected"):
         conn.execute(
             "INSERT INTO conversations "
@@ -692,6 +701,7 @@ def test_exact_conversation_signal_is_independent_for_workers_supervisors_and_ch
     db_path = tmp_path / "signals.db"
     conn = connect(str(db_path))
     create_schema(conn)
+    seed_test_model_catalogue(conn)
     item = sprints_data.create_item(
         conn, title="Independent signals", project_id="project_vylo", clock=RealClock()
     )

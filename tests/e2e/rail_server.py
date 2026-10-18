@@ -10,6 +10,7 @@ import sqlite3
 from pathlib import Path
 
 import uvicorn
+from tests.support.model_catalogue import seed_test_model_catalogue
 
 from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.events import MessageToOwnerEventPayload
@@ -73,6 +74,7 @@ def main() -> None:
     assert Path(config.db_path).name == "rail-proof.db"
     with connect(config.db_path) as bootstrap:
         create_schema(bootstrap)
+        seed_test_model_catalogue(bootstrap)
 
     def conn_factory() -> sqlite3.Connection:
         return connect(config.db_path)

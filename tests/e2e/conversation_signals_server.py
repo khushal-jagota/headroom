@@ -13,7 +13,9 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
+from tests.support.model_catalogue import seed_test_model_catalogue
 
+from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPromptAccepted,
@@ -31,6 +33,8 @@ from planner.conversation.events import (
 from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.message_content import text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.model_resolution.data import ModelResolutionStore
+from planner.conversation.model_resolution.service import ModelResolutionService
 from planner.conversation.snapshot import BackendSnapshotService, SubprocessBackendProbeEnvironment
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
@@ -127,6 +131,7 @@ def main() -> None:
     assert config.db_path.endswith("conversation-signals-proof.db")
     with connect(config.db_path) as conn:
         create_schema(conn)
+        seed_test_model_catalogue(conn)
     children: dict[str, ScriptedChild] = {}
 
     def make_child(
@@ -138,11 +143,18 @@ def main() -> None:
 
     store = ConversationStore(config.db_path)
     tail = ConversationLiveTail()
+    snapshots = BackendSnapshotService(NoInstalledBackends())
+    model_resolution = ModelResolutionService(
+        snapshots=snapshots,
+        store=ModelResolutionStore(config.db_path),
+        backend_state=BackendStateStore(config.db_path),
+    )
     system = SqliteProcessConversationSystem(
         store=store,
         message_files=ConversationMessageFiles(config.db_path),
         backend_child_factories={key: make_child for key in ConversationBackendKey},
         live_tail=tail,
+        model_resolver=model_resolution,
     )
     app = create_app(
         config, build_clock(config), lambda: connect(config.db_path),
@@ -159,7 +171,7 @@ def main() -> None:
             # runtime/tail must use this same real core, rather than a second idle core.
             application.state.conversation = replace(
                 runtime, system=system, live_tail=tail,
-                backend_snapshots=BackendSnapshotService(NoInstalledBackends()),
+                backend_snapshots=snapshots, model_resolution=model_resolution,
             )
             try:
                 yield
@@ -173,7 +185,7 @@ def main() -> None:
     async def start(conversation_id: str) -> dict[str, bool]:
         if await store.read_conversation(conversation_id) is None:
             await system.start_conversation(ConversationStartRequest(
-                conversation_id=conversation_id, model="scripted-proof",
+                conversation_id=conversation_id, model="gpt-6.1-sol",
             ))
         await system.send(
             conversation_id, text_message_content("Bounded proof turn"),

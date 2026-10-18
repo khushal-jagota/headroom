@@ -38,6 +38,7 @@ from tests.e2e.harness import (
     JsonObject,
     ServerHandle,
 )
+from tests.support.model_catalogue import seed_test_model_catalogue
 
 __all__ = [
     "BOOT_BUDGET_S",
@@ -116,11 +117,12 @@ def _start_server(
     base = f"http://127.0.0.1:{port}"
     db_path = srvdir / "planning.db"
     log_path = srvdir / "server.log"
-    if seed_db is not None:
-        from planner.core.db import connect, create_schema
+    from planner.core.db import connect, create_schema
 
-        with connect(str(db_path)) as bootstrap:
-            create_schema(bootstrap)
+    with connect(str(db_path)) as bootstrap:
+        create_schema(bootstrap)
+        seed_test_model_catalogue(bootstrap)
+    if seed_db is not None:
         seed_db(db_path)
 
     env = _scrubbed_env()
@@ -308,6 +310,7 @@ def _reset_database(db_path: Path) -> None:
     # each test with the same default projects as a newly booted server.
     with connect(str(db_path)) as conn:
         create_schema(conn)
+        seed_test_model_catalogue(conn)
 
 
 def _reset_managed_directories(database_parent: Path) -> None:

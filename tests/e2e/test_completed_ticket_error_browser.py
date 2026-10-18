@@ -30,7 +30,7 @@ def _failed_history(server: ServerHandle, ticket_id: str) -> JsonObject:
     conversation_id = f"historical-error-{ticket_id}"
     response = httpx.post(
         server.base + "/api/conversation/conversations",
-        json={"conversation_id": conversation_id, "backend_key": "codex", "model": "e2e-model"},
+        json={"conversation_id": conversation_id, "backend_key": "codex", "model": "gpt-6.1-sol"},
         timeout=10,
     )
     assert response.status_code == 201, response.text
@@ -40,7 +40,7 @@ def _failed_history(server: ServerHandle, ticket_id: str) -> JsonObject:
             ticket_id,
             conversation_id=conversation_id,
             backend="codex",
-            model="e2e-model",
+            model=response.json()["model"],
             reasoning_effort=None,
             now=1,
         )
