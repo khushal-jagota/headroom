@@ -2,17 +2,26 @@
 
 from __future__ import annotations
 
-import base64
+import fcntl
 import hashlib
 import os
 import re
 import stat
-import tempfile
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
 from planner.executor.configuration import FILE_CHUNK_BYTES, ExecutorPaths
-from planner.executor.contracts import FileChunk, FileManifest, FileScope, FileSnapshot
+from planner.executor.contracts import FileManifest, FileScope, FileSnapshot
+
+
+def fsync_file(descriptor: int) -> None:
+    """Persist regular-file bytes, including the drive cache on macOS."""
+    os.fsync(descriptor)
+    if sys.platform == "darwin":
+        fcntl.fcntl(descriptor, fcntl.F_FULLFSYNC)
 
 
 def fsync_directory(path: Path) -> None:
@@ -48,6 +57,76 @@ def contained_path(root: Path, relative_path: str) -> Path:
     return current
 
 
+@contextmanager
+def directory_descriptor(path: Path, *, create: bool = False) -> Iterator[int]:
+    """Walk every directory with O_NOFOLLOW, then retain its inode through I/O."""
+    absolute = path.absolute()
+    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in absolute.parts[1:]:
+            if component in (".", ".."):
+                raise ValueError("unsafe directory component")
+            if create:
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                    fsync_file(descriptor)
+                except FileExistsError:
+                    pass
+            child = os.open(
+                component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+            )
+            os.close(descriptor)
+            descriptor = child
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def regular_descriptor(path: Path) -> Iterator[int]:
+    with directory_descriptor(path.parent) as parent:
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("artifact is not regular file")
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def copy_verified(source: Path, destination: Path, manifest: FileManifest) -> None:
+    """Copy bounded blocks into a new inode and verify complete bytes."""
+    with regular_descriptor(source) as incoming, directory_descriptor(destination.parent) as parent:
+        outgoing = os.open(
+            destination.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent,
+        )
+        try:
+            digest = hashlib.sha256()
+            count = 0
+            while block := os.read(incoming, FILE_CHUNK_BYTES):
+                count += len(block)
+                if count > manifest.byte_count:
+                    raise ValueError("file exceeds manifest length")
+                digest.update(block)
+                view = memoryview(block)
+                while view:
+                    written = os.write(outgoing, view)
+                    if not written:
+                        raise OSError("file write made no progress")
+                    view = view[written:]
+            if count != manifest.byte_count or digest.hexdigest() != manifest.sha256:
+                raise ValueError("incomplete or corrupt file")
+            fsync_file(outgoing)
+        except BaseException:
+            os.unlink(destination.name, dir_fd=parent)
+            raise
+        finally:
+            os.close(outgoing)
+
+
 def snapshot_file(
     *,
     root: Path,
@@ -57,31 +136,35 @@ def snapshot_file(
 ) -> FileSnapshot:
     safe_component(owner_id)
     path = contained_path(root, relative_path)
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ValueError("artifact is not regular file")
-        with os.fdopen(descriptor, "rb", closefd=False) as source:
-            contents = source.read()
-    finally:
-        os.close(descriptor)
     private = root.parent / ".executor-snapshots"
-    private.mkdir(mode=0o700, exist_ok=True)
-    temporary_descriptor, temporary_path = tempfile.mkstemp(dir=private)
-    with os.fdopen(temporary_descriptor, "wb") as snapshot:
-        snapshot.write(contents)
-        snapshot.flush()
-        os.fsync(snapshot.fileno())
+    with directory_descriptor(private, create=True):
+        pass
+    temporary_path = private / uuid4().hex
+    digest = hashlib.sha256()
+    count = 0
+    with regular_descriptor(path) as incoming, directory_descriptor(private) as parent:
+        outgoing = os.open(
+            temporary_path.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent,
+        )
+        try:
+            with os.fdopen(outgoing, "wb", closefd=False) as snapshot:
+                while block := os.read(incoming, FILE_CHUNK_BYTES):
+                    snapshot.write(block)
+                    digest.update(block)
+                    count += len(block)
+                snapshot.flush()
+                fsync_file(outgoing)
+        except BaseException:
+            os.unlink(temporary_path.name, dir_fd=parent)
+            raise
+        finally:
+            os.close(outgoing)
     return FileSnapshot(
-        FileManifest(
-            publication_id=uuid4().hex,
-            scope=scope,
-            owner_id=owner_id,
-            relative_path=relative_path,
-            sha256=hashlib.sha256(contents).hexdigest(),
-            byte_count=len(contents),
-        ),
-        Path(temporary_path),
+        FileManifest(uuid4().hex, scope, owner_id, relative_path, digest.hexdigest(), count),
+        temporary_path,
     )
 
 
@@ -98,23 +181,6 @@ def snapshot_ticket(paths: ExecutorPaths, ticket_id: str) -> tuple[FileSnapshot,
         )
         for path in sorted(root.rglob("*"))
         if path.is_file() or path.is_symlink()
-    )
-
-
-def file_chunks(snapshot: FileSnapshot) -> tuple[FileChunk, ...]:
-    contents = snapshot.local_path.read_bytes()
-    if (
-        len(contents) != snapshot.manifest.byte_count
-        or hashlib.sha256(contents).hexdigest() != snapshot.manifest.sha256
-    ):
-        raise ValueError("file snapshot changed")
-    return tuple(
-        FileChunk(
-            snapshot.manifest.publication_id,
-            offset,
-            base64.b64encode(contents[offset : offset + FILE_CHUNK_BYTES]).decode(),
-        )
-        for offset in range(0, len(contents), FILE_CHUNK_BYTES)
     )
 
 
@@ -140,38 +206,41 @@ class IncomingFiles:
         target.write_bytes(b"")
         self._manifests[manifest.publication_id] = manifest
 
-    def chunk(self, chunk: FileChunk) -> None:
-        manifest = self._manifests[chunk.publication_id]
-        contents = base64.b64decode(chunk.content_base64, validate=True)
-        if len(contents) > FILE_CHUNK_BYTES:
-            raise ValueError("input chunk too large")
-        target = self.quarantine / chunk.publication_id
-        if (
-            target.stat().st_size != chunk.offset
-            or chunk.offset + len(contents) > manifest.byte_count
-        ):
-            raise ValueError("input chunk offset or size invalid")
-        with target.open("ab") as stream:
-            stream.write(contents)
+    def receive_path(self, manifest: FileManifest, path: Path) -> Path:
+        safe_component(manifest.publication_id)
+        safe_component(manifest.owner_id)
+        contained_path(self.root, manifest.relative_path)
+        with directory_descriptor(self.quarantine, create=True) as parent:
+            temporary = self.quarantine / uuid4().hex
+            copy_verified(path, temporary, manifest)
+            os.replace(
+                temporary.name, manifest.publication_id, src_dir_fd=parent, dst_dir_fd=parent
+            )
+            os.fsync(parent)
+        self._manifests[manifest.publication_id] = manifest
+        return self.complete(manifest)
 
     def complete(self, manifest: FileManifest) -> Path:
         if self._manifests.get(manifest.publication_id) != manifest:
             raise ValueError("unknown input publication")
         temporary = self.quarantine / manifest.publication_id
-        contents = temporary.read_bytes()
-        if (
-            len(contents) != manifest.byte_count
-            or hashlib.sha256(contents).hexdigest() != manifest.sha256
-        ):
-            raise ValueError("incomplete or corrupt input")
+        with regular_descriptor(temporary) as descriptor:
+            digest = hashlib.sha256()
+            count = 0
+            while block := os.read(descriptor, FILE_CHUNK_BYTES):
+                count += len(block)
+                digest.update(block)
+            if count != manifest.byte_count or digest.hexdigest() != manifest.sha256:
+                raise ValueError("incomplete or corrupt input")
         family = "conversations" if manifest.scope == FileScope.conversation else "tickets"
         target = contained_path(
             self.root, f"{family}/{safe_component(manifest.owner_id)}/{manifest.relative_path}"
         )
-        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with temporary.open("rb") as stream:
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
-        fsync_directory(target.parent)
+        with directory_descriptor(target.parent, create=True) as parent:
+            with regular_descriptor(temporary) as descriptor:
+                fsync_file(descriptor)
+            with directory_descriptor(self.quarantine) as quarantine:
+                os.replace(temporary.name, target.name, src_dir_fd=quarantine, dst_dir_fd=parent)
+            os.fsync(parent)
         self._manifests.pop(manifest.publication_id)
         return target

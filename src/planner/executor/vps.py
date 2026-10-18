@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import hashlib
 import os
 import sqlite3
+import tempfile
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -48,9 +47,6 @@ from planner.executor.contracts import (
     ExecutorHealth,
     ExecutorHealthRead,
     ExecutorIdentity,
-    FileChunk,
-    FileChunkAcknowledgment,
-    FileManifest,
     FilePublicationRequest,
     FileScope,
     JsonObject,
@@ -63,19 +59,17 @@ from planner.executor.contracts import (
     WireMessage,
     WireMessageKind,
 )
+from planner.executor.files import snapshot_file
 from planner.executor.mutations import write_ticket_mutation
 from planner.executor.remote import RemoteBackendChild, RemoteBackendChildFactory
+from planner.executor.sftp import RestrictedSftpService
 from planner.executor.store import ExecutorStore
 from planner.executor.wire import (
-    FileChunkAcknowledgmentRefused,
     parse_identity,
     read_frame,
-    validate_file_chunk_ack,
     write_frame,
 )
-from planner.previews.contracts import PREVIEW_KINDS
 from planner.previews.forward import PreviewForwards
-from planner.previews.streams import PreviewStreams
 
 
 def now_ms() -> int:
@@ -196,6 +190,10 @@ class ExecutorEndpoint:
         self.last_contact_at_ms: int | None = None
         self.lost_at_ms: int | None = None
         self._file_assignments: dict[str, ChildReference] = {}
+        self._transports: dict[ExecutorIdentity, RestrictedSftpService] = {}
+        self._transport_roots: dict[ExecutorIdentity, tempfile.TemporaryDirectory[str]] = {}
+        self._upload_slots: dict[tuple[ExecutorIdentity, str], str] = {}
+        self._transport_lock = asyncio.Lock()
 
     async def start(self) -> None:
         path = vps_socket_path(self.db_path)
@@ -291,8 +289,10 @@ class ExecutorEndpoint:
             await self._transfer_command_inputs_locked(command)
 
     async def _transfer_command_inputs_locked(self, command: ChildCommand) -> None:
-        from planner.executor.configuration import FILE_CHUNK_BYTES
-
+        identity = self.identity
+        if identity is None or identity not in self._transports:
+            raise ConnectionError("restricted SFTP unavailable")
+        service = self._transports[identity]
         seen: set[str] = set()
         for key in ("content", "sender_content"):
             content = command.arguments.get(key)
@@ -305,36 +305,33 @@ class ExecutorEndpoint:
                 if stored_file_id in seen:
                     continue
                 seen.add(stored_file_id)
-                contents = await self.runtime.message_files.read(
-                    command.child.conversation_id, stored_file_id
-                )
-                digest = hashlib.sha256(contents).hexdigest()
-                publication_id = hashlib.sha256(
-                    f"{command.command_id}:{command.child.conversation_id}:{stored_file_id}".encode()
-                ).hexdigest()
-                manifest = FileManifest(
-                    publication_id,
-                    FileScope.conversation,
+                path = await asyncio.to_thread(
+                    self.runtime.message_files.path_of,
                     command.child.conversation_id,
                     stored_file_id,
-                    digest,
-                    len(contents),
-                    str(piece.get("media_type", "application/octet-stream")),
                 )
-                await self._request(WireMessageKind.file_manifest, _object(manifest))
-                for offset in range(0, len(contents), FILE_CHUNK_BYTES):
-                    chunk = FileChunk(
-                        manifest.publication_id,
-                        offset,
-                        base64.b64encode(contents[offset : offset + FILE_CHUNK_BYTES]).decode(
-                            "ascii"
-                        ),
-                    )
-                    response = await self._request(WireMessageKind.file_chunk, _object(chunk))
-                    validate_file_chunk_ack(response, chunk)
-                response = await self._request(WireMessageKind.file_complete, _object(manifest))
-                if response.kind is not WireMessageKind.file_accepted:
-                    raise FileChunkAcknowledgmentRefused("Mac did not confirm complete input bytes")
+                snapshot = await asyncio.to_thread(
+                    snapshot_file,
+                    root=path.parent,
+                    relative_path=path.name,
+                    scope=FileScope.conversation,
+                    owner_id=command.child.conversation_id,
+                )
+                slot = None
+                try:
+                    self.store.verify_connection(identity)
+                    slot = await service.create_download_async(snapshot)
+                    response = await self._request(WireMessageKind.file_slot, _object(slot))
+                    if (
+                        response.kind is not WireMessageKind.file_accepted
+                        or response.payload != _object(snapshot.manifest)
+                    ):
+                        raise ValueError("Mac did not confirm complete input bytes")
+                    self.store.verify_connection(identity)
+                finally:
+                    if slot is not None:
+                        service.release(slot.token)
+                    snapshot.local_path.unlink(missing_ok=True)
 
     async def send_command(self, command: ChildCommand) -> CommandOutcome:
         existing = self.pending_commands.get(command.command_id)
@@ -349,7 +346,7 @@ class ExecutorEndpoint:
                 try:
                     try:
                         await self._transfer_command_inputs(command)
-                    except FileChunkAcknowledgmentRefused:
+                    except (ConnectionError, ValueError):
                         # Keep the original waiting caller and stable command. A
                         # new connection retries its inputs before native dispatch.
                         if self.writer is not None:
@@ -739,24 +736,13 @@ class ExecutorEndpoint:
             self.identity, self.writer, self.ready = identity, writer, False
             self.last_contact_at_ms = now_ms()
 
-            async def send_preview(message: WireMessage) -> None:
-                async with self._send_lock:
-                    if self.writer is not writer or self.identity != identity or not self.ready:
-                        raise ConnectionError("preview executor generation changed")
-                    await write_frame(writer, message)
-
-            previews = PreviewStreams(
-                identity,
-                send_preview,
-                lambda: self.ready and self.writer is writer and self.identity == identity,
-                accept_open=False,
-            )
-            forwards = PreviewForwards(previews)
-            self._preview_forwards = forwards
+            self._preview_forwards = None
             if old_writer is not None and old_writer is not writer:
                 old_writer.close()
             if old_previews is not None:
                 await old_previews.close()
+            if old_identity is not None:
+                await self._close_transport(old_identity)
             if self.writer is not writer or self.identity != identity:
                 return
             self._inventory = {}
@@ -796,9 +782,6 @@ class ExecutorEndpoint:
                 if self.writer is not writer or self.identity != identity:
                     break
                 self.last_contact_at_ms = now_ms()
-                if message.kind in PREVIEW_KINDS:
-                    previews.feed(message)
-                    continue
                 task = asyncio.create_task(self._handle(message, identity, writer))
                 self._tasks.add(task)
                 task.add_done_callback(self._tasks.discard)
@@ -808,6 +791,7 @@ class ExecutorEndpoint:
             if identity is not None and self.writer is writer and self.identity == identity:
                 # Detach this generation before cleanup yields to a replacement hello.
                 self.ready = False
+                forwards = self._preview_forwards
                 self._preview_forwards = None
                 self.writer = None
                 self.lost_at_ms = now_ms()
@@ -816,8 +800,13 @@ class ExecutorEndpoint:
                     if not response_future.done():
                         response_future.set_exception(ConnectionError("executor link lost"))
             writer.close()
+            current_forwards = self._preview_forwards if self.identity == identity else None
             if forwards is not None:
                 await forwards.close()
+            if current_forwards is not None:
+                await current_forwards.close()
+            if identity is not None:
+                await self._close_transport(identity)
 
     async def _measure_clock(self) -> None:
         sent = now_ms()
@@ -844,7 +833,50 @@ class ExecutorEndpoint:
                 return
             response_kind = WireMessageKind.error
             result: JsonObject
-            if message.kind is WireMessageKind.reconcile_inventory:
+            if message.kind is WireMessageKind.transport_open:
+                async with self._transport_lock:
+                    if (
+                        identity in self._transports
+                        or parse_identity(message.payload.get("identity")) != identity
+                    ):
+                        raise ValueError("duplicate or stale transport generation")
+                    root = tempfile.TemporaryDirectory(prefix="panels-ssh-")
+                    root_path = Path(root.name)
+                    previews_root = root_path / "p"
+                    previews_root.mkdir(mode=0o700)
+                    service = RestrictedSftpService(
+                        identity,
+                        root_path / "s",
+                        str(message.payload["client_public_key"]),
+                        lambda: self.identity == identity and self.writer is writer,
+                    )
+                    try:
+                        endpoint = await service.start()
+                        self.store.verify_connection(identity)
+                    except BaseException:
+                        await service.close()
+                        root.cleanup()
+                        raise
+                    self._transports[identity] = service
+                    self._transport_roots[identity] = root
+
+                    async def preview_request(
+                        kind: WireMessageKind, payload: JsonObject
+                    ) -> WireMessage:
+                        if self.identity != identity or self.writer is not writer:
+                            raise ConnectionError("preview generation changed")
+                        return await self._request(kind, payload)
+
+                    self._preview_forwards = PreviewForwards(
+                        previews_root,
+                        preview_request,
+                        lambda: self.identity == identity and self.writer is writer and self.ready,
+                    )
+                    result, response_kind = (
+                        {"endpoint": _object(endpoint), "preview_root": str(previews_root)},
+                        WireMessageKind.transport_opened,
+                    )
+            elif message.kind is WireMessageKind.reconcile_inventory:
                 inventory = TypeAdapter(ReconciliationInventory).validate_python(message.payload)
                 if inventory.identity != identity:
                     raise ValueError("stale reconciliation generation")
@@ -949,7 +981,6 @@ class ExecutorEndpoint:
                 result, response_kind = await self._read(read), WireMessageKind.read_response
             elif message.kind in (
                 WireMessageKind.file_manifest,
-                WireMessageKind.file_chunk,
                 WireMessageKind.file_complete,
             ):
                 result, response_kind = await self._file(message, identity)
@@ -1029,35 +1060,61 @@ class ExecutorEndpoint:
             self.file_receiver = PublicationReceiver(
                 self.store, root / "files", root / "executor-quarantine"
             )
-        if message.kind is WireMessageKind.file_manifest:
-            publication = TypeAdapter(FilePublicationRequest).validate_python(message.payload)
-            self._authorize_file(publication)
-            manifest = publication.manifest
-            self._file_assignments[manifest.publication_id] = publication.child
-            self.file_receiver.begin(manifest, identity=identity)
-            accepted = self.store.publication_accepted(manifest)
-            return _object(
-                manifest
-            ), WireMessageKind.file_accepted if accepted else WireMessageKind.file_pending
-        if message.kind is WireMessageKind.file_chunk:
-            chunk = TypeAdapter(FileChunk).validate_python(message.payload)
-            if chunk.publication_id not in self._file_assignments:
-                raise ValueError("file chunk has no authorized assignment")
-            self._assignment(self._file_assignments[chunk.publication_id])
-            self.file_receiver.write_chunk(chunk, identity=identity)
-            acknowledgment = FileChunkAcknowledgment(
-                chunk.publication_id,
-                chunk.offset,
-                len(base64.b64decode(chunk.content_base64, validate=True)),
-            )
-            return _object(acknowledgment), WireMessageKind.file_chunk_ack
+        service = self._transports.get(identity)
+        if service is None:
+            raise ValueError("restricted SFTP generation unavailable")
         publication = TypeAdapter(FilePublicationRequest).validate_python(message.payload)
         self._authorize_file(publication)
         manifest = publication.manifest
+        key = identity, manifest.publication_id
+        if message.kind is WireMessageKind.file_manifest:
+            self._file_assignments[manifest.publication_id] = publication.child
+            await asyncio.to_thread(self.file_receiver.begin, manifest, identity=identity)
+            self.store.verify_connection(identity)
+            if self.store.publication_accepted(manifest):
+                return _object(manifest), WireMessageKind.file_accepted
+            previous = self._upload_slots.pop(key, None)
+            if previous is not None:
+                service.release(previous)
+            slot = service.create_upload(manifest)
+            self._upload_slots[key] = slot.token
+            return _object(slot), WireMessageKind.file_slot
         if self._file_assignments.get(manifest.publication_id) != publication.child:
             raise ValueError("file publication assignment changed")
-        self.file_receiver.complete(manifest, now_ms(), identity=identity)
-        return _object(manifest), WireMessageKind.file_accepted
+        token = self._upload_slots.pop(key, None)
+        if token is None:
+            if self.store.publication_accepted(manifest):
+                return _object(manifest), WireMessageKind.file_accepted
+            raise ValueError("unknown publication slot")
+        sealed = None
+        try:
+            sealed = await service.seal_upload(token)
+            self.store.verify_connection(identity)
+            self._authorize_file(publication)
+            await asyncio.to_thread(
+                self.file_receiver.ingest_sealed, manifest, sealed, identity=identity
+            )
+            self.store.verify_connection(identity)
+            await asyncio.to_thread(
+                self.file_receiver.complete, manifest, now_ms(), identity=identity
+            )
+            self.store.verify_connection(identity)
+            return _object(manifest), WireMessageKind.file_accepted
+        finally:
+            if sealed is not None:
+                sealed.unlink(missing_ok=True)
+            service.release(token)
+
+    async def _close_transport(self, identity: ExecutorIdentity) -> None:
+        service = self._transports.pop(identity, None)
+        if service is not None:
+            await service.close()
+        for key in tuple(self._upload_slots):
+            if key[0] == identity:
+                self._upload_slots.pop(key)
+        root = self._transport_roots.pop(identity, None)
+        if root is not None:
+            root.cleanup()
 
 
 def _object(value: object) -> JsonObject:

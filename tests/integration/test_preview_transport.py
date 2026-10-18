@@ -1,4 +1,4 @@
-"""Synthetic Mac/VPS streams use real relay framing, TCP sockets and native events."""
+"""Synthetic Mac/VPS streams use real SSH forwarding, TCP sockets and native events."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def test_large_binary_http_body_and_shared_listener_leases(
                             response = await client.get(f"http://127.0.0.1:{local}/", timeout=5)
                             assert response.content == body
                             await eventually(
-                                lambda: not held.stream_ids,
+                                lambda: not held.tasks,
                                 "completed stream UUID remained under held lease",
                             )
                 assert endpoint._preview_forwards is not None
@@ -63,7 +63,7 @@ def test_large_binary_http_body_and_shared_listener_leases(
             forwards = endpoint._preview_forwards
             assert forwards is not None
             await eventually(
-                lambda: not forwards.streams.streams,
+                lambda: not any(lease.tasks for lease in forwards.leases.values()),
                 "preview streams survived completed request",
             )
             assert not harness.mac.spool.pending()
@@ -94,7 +94,7 @@ def test_stalled_preview_keeps_executor_events_live_and_drop_cleans_generation(
             with pytest.raises(ConnectionError, match="ended before request completion"):
                 async with endpoint.preview_forward(port, "t_scripted") as local:
                     reader, writer = await asyncio.open_connection("127.0.0.1", local)
-                    # Enough input to exhaust TCP buffering, leaving preview credit blocked.
+                    # Enough input to exhaust TCP buffering, leaving SSH flow control blocked.
                     writer.write(b"x" * (16 * 1024 * 1024))
                     drain = asyncio.create_task(writer.drain())
                     await eventually(lambda: bool(accepted), "Mac loopback dial absent")
@@ -107,11 +107,14 @@ def test_stalled_preview_keeps_executor_events_live_and_drop_cleans_generation(
                     )
                     assert endpoint._preview_forwards is not None
                     old = endpoint._preview_forwards
-                    assert len(old.streams.streams) <= MAX_PREVIEW_STREAMS
+                    assert (
+                        sum(len(lease.tasks) for lease in old.leases.values())
+                        <= MAX_PREVIEW_STREAMS
+                    )
                     assert endpoint.writer is not None
                     endpoint.writer.close()
                     await eventually(
-                        lambda: old.streams.closed and not old.streams.streams,
+                        lambda: old.closed and not old.leases,
                         "old preview generation survived link loss",
                     )
                     assert not old.leases
@@ -155,13 +158,13 @@ def test_last_lease_cancellation_stops_active_streams(
                 _, writer = await asyncio.open_connection("127.0.0.1", local)
                 await eventually(lambda: bool(accepted), "Mac did not dial fixture")
             forwards = harness.endpoint._preview_forwards
-            assert forwards is not None and not forwards.leases and not forwards.streams.streams
+            assert forwards is not None and not forwards.leases
             writer.close()
             await writer.wait_closed()
             mac_streams = harness.mac._preview_streams
             assert mac_streams is not None
             await eventually(
-                lambda: not mac_streams.streams,
+                lambda: not mac_streams.leases,
                 "Mac stream survived lease cancellation",
             )
         finally:
@@ -204,7 +207,7 @@ def test_old_session_cleanup_cannot_erase_ready_replacement(
             writer = endpoint.writer
             assert replacement is not None and replacement is not old and writer is not None
             release.set()
-            await eventually(lambda: old.streams.closed, "old generation did not finish cleanup")
+            await eventually(lambda: old.closed, "old generation did not finish cleanup")
             assert endpoint.writer is writer and endpoint._preview_forwards is replacement
             assert endpoint.ready
         finally:
@@ -240,7 +243,7 @@ def test_link_drop_after_partial_close_delimited_http_body_fails_lease(
                             chunks = response.aiter_raw()
                             assert response.status_code == 200
                             assert await anext(chunks) == partial
-                            # Bytes demonstrably crossed the real framed link.
+                            # Bytes demonstrably crossed the real SSH channels.
                             assert harness.endpoint.writer is not None
                             harness.endpoint.writer.close()
                             assert b"".join([chunk async for chunk in chunks]) == b""

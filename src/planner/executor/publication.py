@@ -2,47 +2,36 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import os
 import re
-import stat
 from pathlib import Path
+from uuid import uuid4
 
 from planner.executor.configuration import FILE_CHUNK_BYTES
-from planner.executor.contracts import ExecutorIdentity, FileChunk, FileManifest
-from planner.executor.files import contained_path, fsync_directory, safe_component
+from planner.executor.contracts import ExecutorIdentity, FileManifest
+from planner.executor.files import (
+    contained_path,
+    copy_verified,
+    directory_descriptor,
+    fsync_directory,
+    regular_descriptor,
+    safe_component,
+)
 from planner.executor.store import ExecutorStore
-
-
-def _mkdir_durable(path: Path) -> None:
-    missing: list[Path] = []
-    current = path
-    while not current.exists():
-        missing.append(current)
-        current = current.parent
-    for directory in reversed(missing):
-        directory.mkdir(exist_ok=True)
-        fsync_directory(directory)
-        fsync_directory(directory.parent)
 
 
 def _matches(path: Path, manifest: FileManifest) -> bool:
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with regular_descriptor(path) as descriptor:
+            if os.fstat(descriptor).st_size != manifest.byte_count:
+                return False
+            digest = hashlib.sha256()
+            while block := os.read(descriptor, FILE_CHUNK_BYTES):
+                digest.update(block)
+            return digest.hexdigest() == manifest.sha256
     except FileNotFoundError:
         return False
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_size != manifest.byte_count:
-            return False
-        digest = hashlib.sha256()
-        with os.fdopen(descriptor, "rb", closefd=False) as stream:
-            while block := stream.read(FILE_CHUNK_BYTES):
-                digest.update(block)
-        return digest.hexdigest() == manifest.sha256
-    finally:
-        os.close(descriptor)
 
 
 class PublicationReceiver:
@@ -50,11 +39,12 @@ class PublicationReceiver:
 
     def __init__(self, store: ExecutorStore, files_root: Path, quarantine_root: Path) -> None:
         self.store = store
-        self.files_root = files_root.resolve()
-        self.quarantine_root = quarantine_root.resolve()
+        self.files_root = files_root.absolute()
+        self.quarantine_root = quarantine_root.absolute()
         if self.quarantine_root.is_relative_to(self.files_root):
             raise ValueError("Quarantine must be outside the served file root")
-        self.quarantine_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with directory_descriptor(self.quarantine_root, create=True):
+            pass
 
     def _target(self, manifest: FileManifest) -> Path:
         safe_component(manifest.owner_id)
@@ -85,53 +75,43 @@ class PublicationReceiver:
             os.close(descriptor)
         fsync_directory(self.quarantine_root)
 
-    def write_chunk(self, chunk: FileChunk, *, identity: ExecutorIdentity) -> None:
+    def ingest_sealed(
+        self, manifest: FileManifest, sealed_path: Path, *, identity: ExecutorIdentity
+    ) -> None:
         self.store.verify_connection(identity)
-        manifest = self.store.publication_manifest(chunk.publication_id)
-        if manifest is None:
-            raise ValueError("File chunk has no manifest")
+        self.begin(manifest, identity=identity)
         if self.store.publication_accepted(manifest):
             return
-        contents = base64.b64decode(chunk.content_base64, validate=True)
-        if (
-            len(contents) > FILE_CHUNK_BYTES
-            or chunk.offset < 0
-            or chunk.offset + len(contents) > manifest.byte_count
-        ):
-            raise ValueError("File chunk exceeds manifest bounds")
-        path = self._partial(chunk.publication_id)
-        descriptor = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+        temporary = self.quarantine_root / (uuid4().hex + ".sealed-copy")
+        copy_verified(sealed_path, temporary, manifest)
         try:
-            current_size = os.fstat(descriptor).st_size
-            if chunk.offset < current_size:
-                if os.pread(descriptor, len(contents), chunk.offset) != contents:
-                    raise ValueError("Repeated file chunk conflicts")
-                return
-            if chunk.offset != current_size:
-                raise ValueError("File chunk is out of order")
-            written = 0
-            while written < len(contents):
-                count = os.pwrite(descriptor, contents[written:], chunk.offset + written)
-                if count == 0:
-                    raise OSError("File chunk write made no progress")
-                written += count
-            os.fsync(descriptor)
+            self.store.verify_connection(identity)
+            with directory_descriptor(self.quarantine_root) as parent:
+                os.replace(
+                    temporary.name,
+                    self._partial(manifest.publication_id).name,
+                    src_dir_fd=parent,
+                    dst_dir_fd=parent,
+                )
+                os.fsync(parent)
         finally:
-            os.close(descriptor)
+            temporary.unlink(missing_ok=True)
 
     def complete(self, manifest: FileManifest, now_ms: int, *, identity: ExecutorIdentity) -> None:
         target = self._target(manifest)
         partial = self._partial(manifest.publication_id)
 
         def publish() -> None:
-            _mkdir_durable(target.parent)
-            # Recheck after mkdir and inside the path-serialization transaction.
-            self._target(manifest)
-            if _matches(partial, manifest):
-                os.replace(partial, target)
-                fsync_directory(target.parent)
-                fsync_directory(self.quarantine_root)
-                return
+            with directory_descriptor(target.parent, create=True) as parent:
+                self._target(manifest)
+                if _matches(partial, manifest):
+                    with directory_descriptor(self.quarantine_root) as quarantine:
+                        os.replace(
+                            partial.name, target.name, src_dir_fd=quarantine, dst_dir_fd=parent
+                        )
+                        os.fsync(quarantine)
+                    os.fsync(parent)
+                    return
             # Crash after rename, before DB commit: complete bytes are an orphan,
             # and the staged reservation prevents a later version from passing it.
             if _matches(target, manifest):

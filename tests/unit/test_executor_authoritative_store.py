@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import sqlite3
 from dataclasses import replace
@@ -25,7 +24,6 @@ from planner.executor.contracts import (
     ClockSample,
     EnvelopeKind,
     ExecutorIdentity,
-    FileChunk,
     FileManifest,
     FileScope,
     JsonObject,
@@ -252,11 +250,9 @@ def test_quarantine_publication_old_retry_cannot_overwrite_newer(
     receiver = PublicationReceiver(store, tmp_path / "files", tmp_path / "quarantine")
     old, new = manifest("old", b"old\x00"), manifest("new", b"new\xff")
     for entry, contents in ((old, b"old\x00"), (new, b"new\xff")):
-        receiver.begin(entry, identity=IDENTITY)
-        receiver.write_chunk(
-            FileChunk(entry.publication_id, 0, base64.b64encode(contents).decode()),
-            identity=IDENTITY,
-        )
+        sealed = tmp_path / (entry.publication_id + ".sealed")
+        sealed.write_bytes(contents)
+        receiver.ingest_sealed(entry, sealed, identity=IDENTITY)
         receiver.complete(entry, 1100, identity=IDENTITY)
     receiver.complete(old, 1200, identity=IDENTITY)
     assert (tmp_path / "files/tickets/ticket/result.bin").read_bytes() == b"new\xff"
@@ -268,8 +264,9 @@ def test_staged_publication_blocks_newer_until_rename_crash_recovery(
 ) -> None:
     old, new = manifest("old", b"old"), manifest("new", b"new")
     receiver = PublicationReceiver(store, tmp_path / "files", tmp_path / "quarantine")
-    receiver.begin(old, identity=IDENTITY)
-    receiver.write_chunk(FileChunk("old", 0, base64.b64encode(b"old").decode()), identity=IDENTITY)
+    sealed = tmp_path / "old.sealed"
+    sealed.write_bytes(b"old")
+    receiver.ingest_sealed(old, sealed, identity=IDENTITY)
 
     def crash_after_rename() -> None:
         target = tmp_path / "files/tickets/ticket/result.bin"
@@ -293,9 +290,10 @@ def test_partial_corrupt_and_unsafe_files_never_publish(
     receiver = PublicationReceiver(store, tmp_path / "files", tmp_path / "quarantine")
     entry = manifest("publication", b"complete")
     receiver.begin(entry, identity=IDENTITY)
-    receiver.write_chunk(
-        FileChunk("publication", 0, base64.b64encode(b"part").decode()), identity=IDENTITY
-    )
+    sealed = tmp_path / "partial.sealed"
+    sealed.write_bytes(b"part")
+    with pytest.raises(ValueError, match="incomplete"):
+        receiver.ingest_sealed(entry, sealed, identity=IDENTITY)
     with pytest.raises(ValueError, match="incomplete"):
         receiver.complete(entry, 1100, identity=IDENTITY)
     assert not (tmp_path / "files/tickets/ticket/result.bin").exists()

@@ -8,15 +8,26 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shlex
 import signal
 import sys
 from pathlib import Path
 
+from tests.support.executor_sshd import isolated_sshd
+
 from planner.executor.configuration import ExecutorPaths
+from planner.executor.contracts import ExecutorSshConfig
 from planner.executor.mac import MacExecutor
 
 
 async def serve(root: Path, socket_path: Path, port: int) -> None:
+    with isolated_sshd(root.parent / "ssh") as ssh_config:
+        await serve_with_ssh(root, socket_path, port, ssh_config)
+
+
+async def serve_with_ssh(
+    root: Path, socket_path: Path, port: int, ssh_config: ExecutorSshConfig
+) -> None:
     async def http(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             request = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
@@ -44,10 +55,11 @@ async def serve(root: Path, socket_path: Path, port: int) -> None:
     mac = MacExecutor(
         paths=ExecutorPaths(root),
         revision="a" * 40,
-        ssh_argv=(
+        ssh_config=ssh_config,
+        remote_command=shlex.join((
             sys.executable, "-m", "planner.executor.entrypoint", "executor", "relay",
             "--socket-path", str(socket_path),
-        ),
+        )),
         panels_server_url="http://unused.invalid",
     )
     loop = asyncio.get_running_loop()

@@ -297,31 +297,25 @@ def test_preview_receipt_advances_contact_without_per_ask_liveness(
     tmp_db: Connection, fake_clock: ClockForTest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from planner.conversation.backends.contracts import TurnToken
-    from planner.previews.contracts import preview_identity
-    from planner.previews.streams import PreviewStreams
 
     endpoint = _endpoint(tmp_db, fake_clock)
     tick = [100]
     monkeypatch.setattr(vps, "now_ms", lambda: tick[0])
     received = asyncio.Event()
-    original_feed = PreviewStreams.feed
+    original_handle = endpoint._handle
 
     async def probe() -> None:
         return None
 
-    async def unexpected_dispatch(*_: object) -> None:
-        pytest.fail("preview receipt must bypass domain dispatch")
-
-    def feed(streams: PreviewStreams, message: WireMessage) -> None:
+    async def handle(message: WireMessage, identity: ExecutorIdentity, writer: Any) -> None:
         assert endpoint.last_contact_at_ms == 200
         assert endpoint.observed_at_ms == 100
         assert endpoint.ask_status("conversation", "ask")["answer_available"] is False
-        original_feed(streams, message)
+        await original_handle(message, identity, writer)
         received.set()
 
     monkeypatch.setattr(endpoint, "_measure_clock", probe)
-    monkeypatch.setattr(endpoint, "_handle", unexpected_dispatch)
-    monkeypatch.setattr(PreviewStreams, "feed", feed)
+    monkeypatch.setattr(endpoint, "_handle", handle)
 
     async def run() -> None:
         reader = asyncio.StreamReader()
@@ -347,12 +341,13 @@ def test_preview_receipt_advances_contact_without_per_ask_liveness(
         # Reconciled transport permits a preview, but this ask still lacks liveness.
         endpoint.ready = True
         tick[0] = 200
-        reader.feed_data(
-            encode_frame(
-                WireMessage(WireMessageKind.preview_close, str(uuid4()), preview_identity(identity))
-            )
-        )
+        request_id = str(uuid4())
+        response: asyncio.Future[WireMessage] = asyncio.get_running_loop().create_future()
+        endpoint._responses[request_id] = response
+        reader.feed_data(encode_frame(WireMessage(WireMessageKind.preview_bound, request_id, {})))
         await asyncio.wait_for(received.wait(), 1)
+        assert response.done()
+        assert response.result().kind is WireMessageKind.preview_bound
         assert endpoint.ask_status("conversation", "ask")["answer_available"] is False
         assert endpoint.health()["last_contact_at_ms"] == 200
         reader.feed_eof()

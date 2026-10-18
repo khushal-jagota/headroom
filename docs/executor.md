@@ -23,9 +23,9 @@ Mac: the original live callbacks, if they still exist
 Code paths: `src/planner/executor/`, `src/planner/runtime/`,
 `src/planner/tickets/locale_configuration.py`.
 
-The wire protocol is version 4. Earlier peers refuse work before replay. The
-journal format remains version 1 because its stored envelopes retain the same
-interpretation. Wire compatibility and journal compatibility are separate checks.
+The wire protocol is version 5. Earlier peers refuse work before replay. Wire
+compatibility and the journal format are separate checks. The SQLite outbox owns
+journal format 2 and its explicit conversion path.
 
 ## The journal is transport, not a second Panels
 
@@ -62,15 +62,21 @@ length, and digest, then publishes a complete file from quarantine. A dependent
 row cannot commit first. A replay of an old publication cannot overwrite a newer
 file at the same URL.
 
-Both transfer directions use a distinct typed chunk acknowledgment. The sender
-checks its publication identity, offset, and byte count before the next chunk.
-An empty, malformed, or mismatched acknowledgment stops the transfer. A chunk
-acknowledgment confirms the chunk write only. Full length and digest checks and
-complete publication acceptance still precede any dependent row or child command.
-An invalid input chunk or completion acknowledgment closes the link and retains
-the original command and caller for reconnect. It does not report failure and later dispatch abandoned
-work. A rejected completion acknowledgment does not authorize native dispatch, even
-when the receiver already holds the complete input file.
+Both directions use standard pipelined SFTP through a restricted endpoint. Each
+session receives temporary credentials and a pinned host key. An opaque slot
+permits only its issued upload or download. No SFTP path grants access to ordinary
+account files or the served destination. Four transfers and four open handles
+share a session. Each transfer permits sixteen requests of at most 64 KiB.
+
+Completion closes upload handles before a separate copy and digest check seals
+the bytes. Panels then validates publication and commits the first receipt.
+A successful SFTP write is no proof of publication or a native effect. Lost input
+completion retains the original command and caller for reconciliation.
+
+Snapshots and hashes use bounded streams. One submission per conversation can
+proceed at a time. Separate conversations can progress while a large transfer
+waits. Snapshot pins retain bytes through receipt and release them after transfer.
+The outbox holds no transaction across network I/O.
 
 Files and database rows have different commit boundaries. Complete orphan bytes
 after a crash can finish their original publication. Partial bytes stay outside
@@ -185,21 +191,56 @@ Preview traffic stays outside the journal, replay, and conversation commands.
 A failed request never moves to a VPS service at the same requested port.
 
 The remote open and local connect deadlines are one second. Idle streams expire
-after 30 seconds. Each direction sends at most one 64 KiB chunk before credit
-returns. Each peer admits at most 32 streams. The VPS admits at most 32 listeners.
-Capacity waits occur outside the
-shared executor reader and writer lock. These limits live in
-`src/planner/previews/configuration.py`.
+after 30 seconds. SSH channels supply byte flow control. Each peer admits at most
+32 streams. The VPS admits at most 32 listeners. Private Unix reverse listeners
+reach only fixed Mac loopback ports. The VPS proxy retains its temporary loopback
+listener for browser access. The final lease closes listeners and active channels.
+These limits live in `src/planner/previews/configuration.py`.
 
 The proxy preserves the requested port in `Host` and preview-local redirects.
 It strips Panels credentials and hop-by-hop headers before the preview receives a
 request. Hosted access still passes through the existing trusted ingress. Lease,
 remote connection, and stream failures return the existing unavailable response.
-Protocol 3 peers refuse the protocol 4 handshake. The spool format stays at 1.
+Protocol 4 peers refuse the protocol 5 handshake.
 
 Verification uses isolated Linux subprocesses as synthetic VPS and Mac peers, plus
 a real browser. That proves the software boundary and does not prove physical Mac
 access, installed routes, provider credentials, or deployed behavior.
+
+## SSH prerequisites and boundaries
+
+The launcher requires an explicit hostname, port, username, absolute private key
+path, and absolute `known_hosts` path. The adapter disables ambient configuration,
+agent use, adjacent certificates, proxies, password authentication, and alternative
+authentication. Missing or changed host keys refuse the connection. Encrypted
+identities without explicit unattended support refuse.
+
+The actual connection path uses AsyncSSH 2.24.1. Connection and login deadlines
+are ten seconds. Keepalives run every 15 seconds with three unanswered probes.
+Graceful closure has five seconds before abort. Transport failure preserves
+uncertain remote effects.
+
+The host must support direct and reverse Unix SSH channels. The inner SSH
+connection reaches only the current generation's restricted SFTP socket. Account
+SFTP is never a fallback. Missing capabilities refuse work and grant no authority
+for host configuration changes. Both connections share the outer TCP transport,
+so underlying TCP contention remains.
+
+The restricted service audits each inherited SFTP operation. Mutation, path,
+metadata, filesystem, and link extensions refuse. The standard read-only
+`limits@openssh.com` response remains advisory. Its library and OS maxima grant no
+additional Panels authority. Panels enforces its smaller bounds independently.
+
+The optional `copy-data` extension passes through the ordinary authorized handle
+hooks. Explicit copies up to 64 KiB can pass between a readable download and a
+writable upload. Larger copies and zero-length-to-EOF requests need a larger
+internal read and refuse at the 64 KiB hook. Stale, revoked, sealed, wrong-direction,
+and out-of-range handles refuse. This safe refusal does not affect ordinary
+pipelined SFTP read/write. No private API or larger bound enables this operation.
+
+Generation loss revokes slots, handles, credentials, and preview leases. Active
+transfers prevent quiescence. Complete sealed bytes, durable reservations, and
+first receipts retain their existing recovery rules.
 
 ## Evidence boundaries
 
@@ -211,7 +252,7 @@ timing. Those remain explicit requirements before a live success claim.
 Deployment and installation belong to the resident work. See
 [runtime environments](environments.md) and [deployment](deployment.md).
 
-_Last verified: 2026-10-17._
+_Last verified: 2026-10-18._
 
 ## Machine display reads
 
