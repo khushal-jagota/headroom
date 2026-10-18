@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import textwrap
 from dataclasses import asdict
 from pathlib import Path
 
@@ -98,13 +99,82 @@ def test_exact_bundle_bootstraps_without_preinstalled_panels_or_hidden_checkout(
     assert first.stdout.strip() == str(tools / "planner/environments/resident/driver.py")
     # Once target dependencies exist, owner IPC and the production compatibility
     # checker resolve only from delivered tooling, not the local checkout.
-    imports = (
-        "import sys;sys.path.insert(0,sys.argv[1]);"
-        "from planner.environments.resident import control,service;"
-        "from planner.executor import preflight;print(preflight.__file__)"
+    imports = textwrap.dedent(
+        '''
+        import sqlite3
+        import subprocess
+        import sys
+        from pathlib import Path
+        from uuid import uuid4
+
+        tools = Path(sys.argv[1])
+        sys.path.insert(0, str(tools))
+        from planner.environments.resident import control, service
+        from planner.executor import files, legacy_preflight, outbox_storage, preflight
+
+        for module in (files, legacy_preflight, outbox_storage, preflight):
+            assert Path(module.__file__).is_relative_to(tools)
+        root = Path(sys.argv[2])
+        preflight.check_spool_compatibility(root, 2)
+        assert not root.exists()
+        spool = root / 'spool'
+        (spool / 'entries').mkdir(parents=True)
+        database = spool / outbox_storage.DATABASE_NAME
+        sender = str(uuid4())
+        connection = outbox_storage.connect_database(database)
+        outbox_storage.initialize_database(connection, sender)
+        connection.close()
+        outbox_storage.publish_metadata(spool, sender)
+
+        def snapshot():
+            return {
+                str(path.relative_to(root)): (
+                    path.stat().st_mode, path.stat().st_mtime_ns,
+                    None if path.is_dir() else path.read_bytes(),
+                )
+                for path in (root, *root.rglob('*'))
+            }
+
+        connections = []
+        def audit(event, args):
+            if event == 'sqlite3.connect':
+                name = str(args[0])
+                assert name == ':memory:' or name.endswith('?mode=ro'), name
+                connections.append(name)
+        sys.addaudithook(audit)
+        before = snapshot()
+        preflight.check_spool_compatibility(root, 2)
+        assert snapshot() == before
+        assert database.resolve().as_uri() + '?mode=ro' in connections
+
+        # Crash a real SQLite writer after page spill. The delivered reader must
+        # refuse recovery and preserve the database and journal exactly.
+        crash = """import os, sqlite3, sys
+        c = sqlite3.connect(sys.argv[1])
+        c.execute('PRAGMA cache_size=1')
+        c.execute('BEGIN IMMEDIATE')
+        c.execute('UPDATE outbox_metadata SET sender_id=randomblob(2000000)')
+        os._exit(0)
+        """
+        subprocess.run(
+            [sys.executable, '-I', '-B', '-c', crash, str(database)], check=True,
+        )
+        assert database.with_name(database.name + '-journal').stat().st_size > 0
+        before = snapshot()
+        connections.clear()
+        try:
+            preflight.check_spool_compatibility(root, 2)
+        except ValueError as error:
+            assert 'recovery required' in str(error), str(error)
+        else:
+            raise AssertionError('preflight accepted recovery-required SQLite state')
+        assert not connections
+        assert snapshot() == before
+        print(preflight.__file__)
+        '''
     )
     second = subprocess.run(
-        [sys.executable, "-I", "-B", "-c", imports, str(tools)],
+        [sys.executable, "-I", "-B", "-c", imports, str(tools), str(tmp_path / "executor")],
         cwd=tmp_path,
         capture_output=True,
         text=True,
