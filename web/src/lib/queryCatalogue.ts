@@ -1,5 +1,7 @@
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson } from "./api";
+import type { ExecutorHealth } from "./ticketMachines";
+import { MACHINE_HEALTH_POLL_MS } from "./machines/config";
 import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
 import type { ConversationStartValues } from "./conversation/wire";
 import type { UsageDays, UsageSummary } from "./conversation/recordedUsageWire";
@@ -44,6 +46,12 @@ function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
 }
 
 export const queries = {
+  executorHealth: () => ({
+    ...jsonQuery<ExecutorHealth>(["executor-health"], "/api/executor/health"),
+    refetchInterval: MACHINE_HEALTH_POLL_MS,
+    refetchOnWindowFocus: true,
+    retry: false
+  }),
   recordedUsage: (days: UsageDays, timezone: string) =>
     jsonQuery<UsageSummary>(
       ["recorded-usage", { days, timezone }],
