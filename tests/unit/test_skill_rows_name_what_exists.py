@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -15,7 +16,9 @@ from planner.core.migrations.versions.skill_rows_name_what_exists import (
     corrected_sources,
     unmet_claims,
 )
+from planner.skill_sources import panels_skill_root
 from planner.skill_staleness import stale_references, stale_references_in
+from planner.tickets.contracts import CreateTicketBody
 
 
 @pytest.fixture
@@ -106,6 +109,116 @@ def test_a_database_this_build_made_names_only_things_this_build_has(
     database: sqlite3.Connection,
 ) -> None:
     assert stale_references(database) == ()
+
+
+def _create_example(payload: str, *, quote: str = "'", fence: str = "```sh") -> str:
+    return (
+        f"{fence}\npanels ticket create --input-json - <<{quote}JSON{quote}\n"
+        f"{payload}\nJSON\n{fence[:3]}\n"
+    )
+
+
+def _create_findings(text: str) -> list[dict[str, str]]:
+    return [
+        item.as_dict()
+        for item in stale_references_in(
+            "some-skill", text, command_root=click.Group("panels"), stage_ids=frozenset()
+        )
+        if item.kind == "ticket_create_field"
+    ]
+
+
+def test_create_fields_follow_the_contract_and_report_only_unknown_top_level_keys() -> None:
+    payload = {key: None for key in CreateTicketBody.__annotations__}
+    payload.update({"z_unknown": {}, "a_unknown": 1})
+    payload["orchestrator"] = {"kickoff_note": "a nested field is not a create field"}
+    example = _create_example(json.dumps(payload))
+
+    assert _create_findings(example + example) == [
+        {"skill_name": "some-skill", "kind": "ticket_create_field", "reference": key}
+        for key in ("a_unknown", "z_unknown")
+    ]
+
+
+@pytest.mark.parametrize("quote,fence", [("'", "```sh"), ('"', "~~~bash"), ("'", "```shell")])
+def test_create_example_reports_the_old_intake_field_and_accepts_brief(
+    quote: str, fence: str
+) -> None:
+    old = _create_example('{"kickoff_note": "Intake"}', quote=quote, fence=fence)
+
+    assert [item["reference"] for item in _create_findings(old)] == ["kickoff_note"]
+    assert _create_findings(old.replace("kickoff_note", "brief")) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'The old field is `kickoff_note`. {"kickoff_note": "prose"}',
+        _create_example('{"kickoff_note": "non-shell"}', fence="```json"),
+        _create_example('{"kickoff_note": "unfenced"}').replace("```sh\n", "").replace("```\n", ""),
+        _create_example('{"kickoff_note": "another command"}').replace(
+            "ticket create", "ticket edit"
+        ),
+        _create_example('{"kickoff_note": "file input"}').replace(
+            "--input-json -", "--input-json file.json"
+        ),
+        _create_example('{"kickoff_note": "$variable"}', quote=""),
+        _create_example('{"kickoff_note": $variable}'),
+        _create_example('{"kickoff_note": "truncated"'),
+        _create_example('{"kickoff_note": NaN}'),
+        _create_example('[{"kickoff_note": "array"}]'),
+        _create_example('{"kickoff_note": "missing fence"}').removesuffix("```\n"),
+        _create_example('{"kickoff_note": "wrong delimiter"}').replace("\nJSON\n", "\nOTHER\n"),
+        _create_example('{"kickoff_note": "spaced delimiter"}').replace("\nJSON\n", "\nJSON \n"),
+        _create_example('{"kickoff_note":\ntrue\n}').replace("JSON", "true"),
+        _create_example('{"kickoff_note": "continued command"}').replace(" - <<", " - \\\n<<"),
+        _create_example('{"kickoff_note": "shell suffix"}').replace(
+            "<<'JSON'", "<<'JSON' && echo done"
+        ),
+        _create_example('{"kickoff_note": "extra command"}').replace(
+            "```sh\n", "```sh\necho start\n"
+        ),
+        _create_example('{"kickoff_note": "extra command"}').replace(
+            "\nJSON\n", "\nJSON\necho done\n"
+        ),
+        "````text\n" + _create_example('{"kickoff_note": "nested fence"}') + "````\n",
+        _create_example(
+            '{"brief": "kickoff_note is only text", "orchestrator": {"kickoff_note": 1}}'
+        ),
+        _create_example('{"kickoff_note": "nested heredoc"}')
+        .replace("```sh\n", "```sh\ncat <<'OUTER'\n")
+        .replace("\nJSON\n", "\nJSON\nOUTER\n"),
+    ],
+)
+def test_ambiguous_or_unrelated_create_text_is_not_reported(text: str) -> None:
+    assert _create_findings(text) == []
+
+
+def test_packaged_create_examples_have_only_accepted_fields_before_migrations() -> None:
+    root = panels_skill_root()
+
+    assert {
+        path.parent.name: findings
+        for path in root.glob("*/SKILL.md")
+        if (findings := _create_findings(path.read_text()))
+    } == {}
+
+
+def test_create_field_findings_use_the_existing_managed_row_report(
+    database: sqlite3.Connection,
+) -> None:
+    database.execute(
+        "UPDATE managed_skills SET source_text = ? WHERE skill_name = ?",
+        (_create_example('{"kickoff_note": "Intake"}'), "panels-ticket-creation"),
+    )
+
+    assert [item.as_dict() for item in stale_references(database)] == [
+        {
+            "skill_name": "panels-ticket-creation",
+            "kind": "ticket_create_field",
+            "reference": "kickoff_note",
+        }
+    ]
 
 
 def test_the_report_is_served_rather_than_read_as_a_skill_named_stale(tmp_path: Path) -> None:

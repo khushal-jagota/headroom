@@ -5,11 +5,12 @@ report is what makes a stale row visible instead of silent. Before this existed,
 build could remove a command and leave every skill still teaching it, with nothing
 anywhere saying so.
 
-The four kinds of reference are checked against the build itself rather than against
+The five kinds of reference are checked against the build itself rather than against
 a list of yesterday's names: the CLI command tree, the Stage ids the Worker types
 declare, the Stage ladders those Worker types spell out, and the skills that are
-retired. A list would need editing every time something moved, and the thing that goes
-stale is exactly the list nobody edits.
+retired, plus the fields the Ticket-create contract accepts. A list would need editing
+every time something moved, and the thing that goes stale is exactly the list nobody
+edits.
 
 A Stage is named two ways. Its id, ``needs_something``, is unmistakable anywhere it
 appears. Its label is an ordinary phrase, and searching prose for a label reports text
@@ -17,6 +18,12 @@ that is correct: "approach" is an English word, and "kickoff" names the live
 ``--kickoff-note`` option. So labels are read in one place only, the ladder — names
 joined by arrows inside a bold span, ending at a terminal Stage. Nothing but a taught
 sequence takes that shape.
+
+Ticket-create keys are read only from a complete shell fence containing one exact
+``panels ticket create --input-json -`` command with a quoted heredoc and a literal
+JSON object. Extra shell syntax, dynamic or malformed bodies, incomplete fences and
+other examples are left alone. This is not a shell parser or a payload validator:
+only unsupported top-level keys are reported, and no example is executed.
 """
 
 from __future__ import annotations
@@ -24,12 +31,14 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Final
 
 import click
 
 from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES
+from planner.tickets.contracts import CreateTicketBody
 
 # A command a skill teaches is written as a literal a worker types, inside backticks.
 # Bare prose that happens to contain the word "panels" is not a command reference.
@@ -43,6 +52,11 @@ STAGE_REFERENCE: Final = re.compile(r"needs(?:\\_|_)([a-z](?:[a-z]|\\_|_)*)")
 # taught sequence from any other arrow in the text. A span may wrap across a line.
 LADDER_SPAN: Final = re.compile(r"\*\*([^*]*?\u2192[^*]*?)\*\*", re.S)
 LADDER_ARROW: Final = "\u2192"
+FENCE_OPEN: Final = re.compile(r"^ {0,3}(`{3,}|~{3,})([^`~]*)$")
+TICKET_CREATE_HEREDOC: Final = re.compile(
+    r"panels[ \t]+ticket[ \t]+create[ \t]+--input-json[ \t]+-[ \t]+"
+    r"<<(?P<quote>['\"])(?P<delimiter>[A-Za-z_][A-Za-z_0-9]*)(?P=quote)[ \t]*"
+)
 
 
 # The probe fixture's specialist skill ships so that the Worker type machinery can be
@@ -147,6 +161,55 @@ def ladder_names(span: str) -> tuple[str, ...]:
     return tuple(names)
 
 
+def shell_fences(source_text: str) -> Iterator[str]:
+    """Complete shell fences, without mistaking nested example fences for commands."""
+    lines = iter(source_text.splitlines())
+    for line in lines:
+        opening = FENCE_OPEN.fullmatch(line)
+        if opening is None:
+            continue
+        marker, language = opening.groups()
+        closing = re.compile(
+            r" {0,3}" + re.escape(marker[0]) + "{" + str(len(marker)) + r",}[ \t]*"
+        )
+        body: list[str] = []
+        for body_line in lines:
+            if closing.fullmatch(body_line):
+                if language.strip() in {"sh", "bash", "shell"}:
+                    yield "\n".join(body)
+                break
+            body.append(body_line)
+
+
+def ticket_create_keys(source_text: str) -> Iterator[str]:
+    """Keys in standalone, literal create examples whose shell meaning is unambiguous."""
+
+    def reject_non_json_constant(value: str) -> None:
+        raise ValueError(f"Not a JSON constant: {value}")
+
+    for body in shell_fences(source_text):
+        lines = body.splitlines()
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if len(lines) < 3:
+            continue
+        command = TICKET_CREATE_HEREDOC.fullmatch(lines[0])
+        if command is None or lines[-1] != command["delimiter"]:
+            continue
+        # A delimiter inside the body ends the heredoc early. What follows is shell,
+        # even if the whole body could also happen to parse as JSON.
+        if command["delimiter"] in lines[1:-1]:
+            continue
+        try:
+            payload = json.loads("\n".join(lines[1:-1]), parse_constant=reject_non_json_constant)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(payload, dict):
+            yield from payload
+
+
 def stale_references_in(
     skill_name: str,
     source_text: str,
@@ -157,6 +220,9 @@ def stale_references_in(
     terminal_names: frozenset[str] = frozenset(),
 ) -> tuple[StaleReference, ...]:
     found: set[StaleReference] = set()
+    for key in ticket_create_keys(source_text):
+        if key not in CreateTicketBody.__annotations__:
+            found.add(StaleReference(skill_name, "ticket_create_field", key))
     for match in COMMAND_SPAN.finditer(source_text):
         words = command_words(match.group(1))
         if words and not command_resolves(words, command_root):
