@@ -16,7 +16,6 @@ export const MODEL_PICKER_BACKEND_KEYS: readonly ConversationBackendKey[] = [
 export type ModelPickerChoice = Readonly<{
   value: string;
   name: string;
-  detail?: string | null;
 }>;
 
 export type ModelPickerBackend = Readonly<{
@@ -135,8 +134,7 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
     }),
     models: models.map((candidate) => ({
       value: candidate.model_id,
-      name: candidate.selected_variant ?? candidate.display_name ?? candidate.model_id,
-      detail: candidate.resolved_model_id ?? candidate.detail ?? null
+      name: resolvedModelPickerLabel(catalogModels, candidate.model_id)
     })),
     efforts: efforts.map((effort) => ({ value: effort, name: effort })),
     defaultModel,

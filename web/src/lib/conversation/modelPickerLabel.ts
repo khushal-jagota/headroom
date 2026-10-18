@@ -20,7 +20,7 @@ function readableResolvedModel(identifier: string): string {
   return identifier;
 }
 
-/** The closed face names the resolution; the open list still names the choice. */
+/** Both the closed face and model options name the resolution, without a second alias. */
 export function resolvedModelPickerLabel(
   models: readonly BackendModel[],
   value: string

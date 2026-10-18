@@ -275,12 +275,7 @@
     </PickerRail>
   {/snippet}
   {#snippet optionContent(choice, selected)}
-    <span class="model-picker-choice-name">
-      <span>{choice.name}</span>
-      {#if showing === "models" && (choice as ModelPickerChoice).detail && (choice as ModelPickerChoice).detail !== choice.name}
-        <span class="model-picker-choice-detail">{(choice as ModelPickerChoice).detail}</span>
-      {/if}
-    </span>
+    <span class="model-picker-choice-name">{choice.name}</span>
     {#if showUsage && showing === "models" && hasModelUsage(choice.value)}
       <UsageRings
         windows={snapshotFor(view.backendKey ?? "claude")?.cached_usage?.windows ?? []}
@@ -301,8 +296,7 @@
   .model-picker-face { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-tools { margin-top: auto; padding-top: var(--space-1); border-top: var(--border-hairline) solid var(--border-color); }
   .model-picker-tools svg { width: 13px; height: 13px; }
-  .model-picker-choice-name { display: flex; flex-direction: column; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-picker-choice-detail { color: var(--text-faint); font-size: var(--type-xs); overflow: hidden; text-overflow: ellipsis; }
+  .model-picker-choice-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .model-picker-foot {
     grid-column: 1 / -1; border-top: var(--border-hairline) solid var(--border-color);
     background: var(--surface-recessed); color: var(--text-faint); font-size: var(--type-xs);

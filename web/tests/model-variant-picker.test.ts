@@ -10,14 +10,14 @@ function picker(models: BackendModel[], model = "gpt-6.1-sol") {
 }
 
 describe("current model variants in the shared picker", () => {
-  it("shows the readable resolved model and effort while the list keeps its variant", () => {
+  it("shows the readable resolved model on the face and in one list label", () => {
     const view = picker([{
       model_id: "gpt-6.1-sol", display_name: "GPT 6.1 Sol", enabled: true,
       selected_variant: "sol", resolved_model_id: "gpt-6.1-sol"
     }]);
     expect(view.face).toBe("GPT 6.1 Sol medium");
     expect(view.modelValue).toBe("gpt-6.1-sol");
-    expect(view.models).toEqual([{ value: "gpt-6.1-sol", name: "sol", detail: "gpt-6.1-sol" }]);
+    expect(view.models).toEqual([{ value: "gpt-6.1-sol", name: "GPT 6.1 Sol" }]);
     expect(view.catalogueWarning).toBeNull();
   });
 
@@ -39,7 +39,7 @@ describe("current model variants in the shared picker", () => {
     }], "opus");
     expect(view.modelValue).toBe("opus");
     expect(view.face).toBe("Opus 5.5 medium");
-    expect(view.models).toEqual([{ value: "opus", name: "opus", detail: "claude-opus-5-5" }]);
+    expect(view.models).toEqual([{ value: "opus", name: "Opus 5.5" }]);
   });
 
   it("preserves catalogue labels when the backend supplies no variant metadata", () => {
@@ -67,6 +67,7 @@ describe("current model variants in the shared picker", () => {
     }], model);
     expect(view.face).toBe(expected);
     expect(view.modelValue).toBe(model);
+    expect(view.models).toEqual([{ value: model, name: expected.replace(/ medium$/, "") }]);
   });
 
   it("prefers the catalogue name for the concrete resolution over an alias label", () => {
@@ -79,5 +80,6 @@ describe("current model variants in the shared picker", () => {
     ], "opus");
     expect(view.face).toBe("Custom model medium");
     expect(view.modelValue).toBe("opus");
+    expect(view.models[0]).toEqual({ value: "opus", name: "Custom model" });
   });
 });
