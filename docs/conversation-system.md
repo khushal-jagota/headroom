@@ -897,18 +897,17 @@ Tickets. Hermes still offers no Panels reasoning control.
 Panels does not ask Hermes for update advice and does not offer a Hermes update action.
 Hermes version and model catalogue discovery remain available.
 
-Panels keeps the last successful usage reading for each backend in its database.
-Opening the Backends page, reading `GET /backends`, receiving a change signal, or
-refreshing another query only reads that stored answer. None of those actions contacts
-a provider. The one Refresh on the Backends page starts every usage source through
-`POST /backends/refresh`, then resolves those answers against ordinary backend snapshots.
-It does not force model catalogues, versions, identities, or update advice to refresh.
-Codex and Claude usage reads start independently, so catalogue work cannot delay them and
-one provider failure does not discard the other provider's new answer. A failed refresh
-also leaves that backend's prior reading in place. When the Backends page opens, it paints
-an ordinary snapshot first. It then refreshes catalogue and Codex and Claude update
-advice in the background. Cached ordinary reads stay available during that work. The
-page's Refresh action and the shared model picker stop after the usage answer.
+Panels keeps the last successful allowance reading for each backend in its database.
+Ordinary allowance reads use that stored answer without a provider request.
+The Usage page's Refresh starts provider allowance reads and the separate local record
+import in parallel. Allowance reads use ordinary backend snapshots. They do not force
+model catalogues, versions, identities, or update advice to refresh.
+
+Codex and Claude allowance reads start independently. A failure leaves that backend's
+prior reading in place and preserves the other backend's new answer. The page first
+shows an ordinary backend snapshot. Catalogue and supported update advice refresh in
+the background, while cached reads remain available. The shared model picker's Refresh
+reads provider allowances only.
 
 Codex starts one short-lived app-server child and asks its native
 `account/rateLimits/read` method. The request does not start a thread, run a model turn,
@@ -942,6 +941,82 @@ resolved choice after overrides. An enabled override works even if the default i
 Chief and Worker default saves refuse an off model. Each refusal names the model and
 requires an enabled choice. Panels never silently substitutes another model.
 Existing Ticket choices and existing conversations remain intact.
+
+### Recorded local usage
+
+Tokens and Cost describe local Codex and Claude records on this server. They include
+CLI activity outside Panels. They do not describe a complete account bill or allowance
+history. Hermes has no source for these historical charts.
+
+Opening the page, changing its period, or receiving a change signal reads stored usage.
+Only an explicit Refresh imports native files. Each request reads at most 256 MiB
+and cooperatively yields during source reads or parsing after 15 seconds or 2,000 file
+visits. Loading stored snapshots, merging records, serialization, and price refresh
+occur outside that deadline. It is not a hard HTTP response timeout.
+The next request resumes the stored
+queue. Small slices alternate providers and files. Large files and large JSON lines
+remain eligible. The streaming reader discards message and tool bodies as it reads.
+Its checkpoints contain syntax and selected usage fields. Complete block checks detect
+interior rewrites before a candidate replaces verified records. Source changes restart
+that candidate and preserve earlier records. Native files remain read-only.
+
+The queue covers source files modified within 90 days. Directory discovery has a
+100,000-entry and request-time limit. An unreadable or bounded inventory reports partial
+coverage. Progress describes this finite local read, not complete account history.
+SQLite commits the cursor and data together, so a restart resumes the same work.
+Append-only growth preserves the frozen prefix and its read progress. Every metadata
+generation change restarts block verification. A file that changes before every request
+needs a quiet verification window before its candidate enters the totals. Other files
+continue fairly, and its earlier verified records remain visible with partial coverage.
+A verified prefix can enter stored totals before its file finishes. An observed unread
+tail stays in the queue, and its byte count extends the progress total. Files first
+found during a pass wait for the next finite pass. Known pending files keep coverage
+partial and `more_work` true until a later request reads them.
+The same rule covers a completed member whose identity, size, or metadata changes in
+the latest inventory. Progress counts that file once and defers its new version to the
+next pass. Ready means that this latest bounded inventory has no known unvisited work.
+
+Copied records count once across files. Codex counts each stable completed response
+identity once. It keeps the response's original thread and session, even when another
+file contains a copy. Repeated counter updates and cumulative turn or thread totals do
+not add consumption. Old counter records need verified changes. Their producer history
+remains uncertain.
+
+Claude uses message and request identities. Overlapping or conflicting identities
+remain excluded with partial coverage. Conversation events and allowance snapshots do
+not become extra chart records.
+
+Missing required token counts remain unknown. As in T3 Code, an omitted optional Codex
+cache category means zero. An explicit null or invalid category remains unknown.
+The producer reports cache categories separately within inclusive input. A missing
+reasoning breakdown remains unknown and never adds another charge to output.
+A valid zero remains zero. Token totals with an
+unknown contributing value remain unknown. Cost follows T3 Code's price calculation.
+It uses source-reported USD when present. Otherwise it prices uncached input, cache reads,
+cache writes and output from the stored LiteLLM table. Reasoning remains part of output.
+Published fast and ultrafast rates apply to the recorded service tier. A tier without
+published rates uses its standard rates, as in T3 Code.
+
+The full external price document and fetch time remain in SQLite. Summary reads never
+fetch prices. Explicit Refresh can update the table, with T3's 60-second refresh floor,
+24-hour ordinary cache lifetime, a 10-second request timeout and a 16 MiB response bound.
+An unavailable source leaves the stored table available. Unknown model rates remain
+unpriced. Exact names and unambiguous aliases match the table. Bare family names do not
+select an invented generation.
+
+Known cost subtotals remain visible with an Unpriced record count. The data contract
+keeps table-calculated and source-reported USD separate. This value does not establish
+actual account charges. Cost categories, cache savings and speed premiums use the same
+price rules as T3 Code. A source-reported total scales the category split proportionally.
+
+Input already includes cache tokens, and output includes reasoning tokens. Neither
+subset is added twice. Charts show observed periods and leave unrecorded intervals as gaps.
+
+_Code paths:_ `src/planner/conversation/usage/` owns the contract, native adapters,
+bounded import, storage, and summaries. Its `api.py` exposes
+`GET /api/conversation/usage/summary` for stored reads and
+`POST /api/conversation/usage/refresh` for explicit imports. The refresh accepts no
+browser-supplied source paths or credentials.
 
 ## The composer catalog
 

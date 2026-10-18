@@ -83,7 +83,7 @@ class _World:
         self,
         *,
         title: str = "T",
-        kickoff_note: str = "Agreed brief.",
+        brief: str = "Agreed brief.",
         worker_type: str = "coding",
         conversation_id: str | None = None,
         on_today: bool = True,
@@ -94,7 +94,7 @@ class _World:
                 conn,
                 worker_type=worker_type,
                 title=title,
-                kickoff_note=kickoff_note,
+                brief=brief,
                 principal=OWNER_PRINCIPAL,
                 now=0,
                 title_max_chars=200,
@@ -869,7 +869,7 @@ class _QueueingConversationSystem:
 def test_the_opener_carries_only_what_the_worker_cannot_get_for_itself(world: _World) -> None:
     ticket_id = world.ready_ticket(
         title="Ship it",
-        kickoff_note="Use this agreed starting point.",
+        brief="Use this agreed starting point.",
         conversation_id="conv-opener",
     )
     world.start_conversation("conv-opener")

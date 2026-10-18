@@ -148,7 +148,7 @@ def test_structured_create_and_supervisor_revision_use_neutral_ticket_commands(
         "worker_type": "coding",
         "project_id": "project_other",
         "orchestrator": {"kind": "sprint_item", "id": item["id"]},
-        "kickoff_note": "Review this intake.",
+        "brief": "Review this intake.",
     }
     ticket = cli(
         server,
@@ -703,3 +703,74 @@ def test_the_ceiling_and_a_settled_value_are_set_like_every_other_field(
     assert corrected["field_values"]["brief"] == "corrected intake"
     read = f"/api/tickets?detail=full&id={tid}"
     assert api.get(server, read)["stage"] == "needs_success_condition"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"breif": "private misspelled Brief"},
+        {"employee_launch_reasoning_effort": "private effort"},
+        {"kickoff_note": "private old key"},
+        {"brief": "real Brief", "kickoff_note": "private old key"},
+    ],
+)
+def test_structured_ticket_create_propagates_unknown_key_errors(
+    server: ServerHandle, extra: JsonObject
+) -> None:
+    with connect(str(server.db_path)) as conn:
+        before = tuple(conn.iterdump())
+    result = CliRunner().invoke(
+        cli_main,
+        ["ticket", "create", "--input-json", "-", "--json"],
+        input=json.dumps({"title": "Rejected CLI intake", "worker_type": "coding", **extra}),
+        env={"PLAN_SERVER_URL": server.base},
+    )
+    assert result.exit_code == 1, result.output
+    error = json.loads(result.stderr)["error"]
+    assert error["code"] == "validation"
+    unknown_key = next(key for key in extra if key != "brief")
+    assert error["detail"] == {"field": unknown_key}
+    assert "private" not in result.output
+    with connect(str(server.db_path)) as conn:
+        assert tuple(conn.iterdump()) == before
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_structured_ticket_create_keeps_the_brief(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper, scoped: bool
+) -> None:
+    body: JsonObject = {
+        "worker_type": "coding",
+        "title": "Structured Brief",
+        "brief": "  Keep the structured Brief.\nSecond paragraph.  ",
+    }
+    if scoped:
+        body["ceiling"] = "needs_implementation"
+    created = cli(
+        server, "ticket", "create", "--input-json", "-", stdin=json.dumps(body)
+    )
+    detail = api.get(server, f"/api/tickets?detail=full&id={created['id']}")
+    if scoped:
+        assert detail["field_values"]["brief"] == body["brief"]
+        assert detail["pending_proposal"] is None
+        assert detail["stage"] == "needs_success_condition"
+    else:
+        assert detail["pending_proposal"]["field"] == "brief"
+        assert detail["pending_proposal"]["body"] == body["brief"]
+        assert detail["stage"] == "needs_brief"
+
+
+@pytest.mark.parametrize("from_file", [False, True])
+def test_legacy_ticket_create_flags_populate_the_brief(
+    server: ServerHandle, cli: Callable[..., JsonObject], from_file: bool
+) -> None:
+    brief = "Keep the legacy flag's Brief."
+    flags = ("--kickoff-note-file", "-") if from_file else ("--kickoff-note", brief)
+    created = cli(
+        server,
+        "ticket", "create", "--worker-type", "coding", "--title", "Legacy Brief flags",
+        *flags,
+        stdin=brief if from_file else None,
+    )
+    assert created["pending_proposal"]["field"] == "brief"
+    assert created["pending_proposal"]["body"] == brief

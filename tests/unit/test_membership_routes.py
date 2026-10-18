@@ -56,7 +56,7 @@ def _ticket(
     body: dict[str, Any] = {
         "worker_type": worker_type,
         "title": title,
-        "kickoff_note": "Start here.",
+        "brief": "Start here.",
     }
     if item_id is not None:
         body["orchestrator"] = {"kind": "sprint_item", "id": item_id}

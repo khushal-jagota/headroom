@@ -67,7 +67,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
             conn,
             worker_type=values.pop("worker_type", "coding"),
             title=values.pop("title", "Before edit"),
-            kickoff_note=values.pop("kickoff_note", "Before note"),
+            brief=values.pop("brief", "Before note"),
             principal=OWNER_PRINCIPAL,
             now=1,
             title_max_chars=200,

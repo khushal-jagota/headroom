@@ -58,7 +58,7 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
         principal=OWNER_PRINCIPAL,
         now=clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note=kw.pop("kickoff_note", "Agreed brief."),
+        brief=kw.pop("brief", "Agreed brief."),
         **kw,
     )
     if not settle_kickoff:
@@ -113,7 +113,7 @@ def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
         cfg,
         fake_clock,
         title="Draft kickoff title",
-        kickoff_note="draft kickoff note",
+        brief="draft kickoff note",
         settle_kickoff=False,
     )
 
@@ -366,7 +366,7 @@ def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(
         cfg,
         fake_clock,
         title="Proposed title",
-        kickoff_note="proposed note",
+        brief="proposed note",
         settle_kickoff=False,
     )
 
@@ -1149,12 +1149,12 @@ def test_a_create_that_names_no_brief_parks_nothing(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     """A blank Brief is nothing written, not a Brief whose text is empty."""
-    blank = _create(tmp_db, cfg, fake_clock, kickoff_note="", settle_kickoff=False)
+    blank = _create(tmp_db, cfg, fake_clock, brief="", settle_kickoff=False)
     assert blank.stage == "needs_brief"
     assert blank.ticket_status is TicketStatus.empty
     assert blank.pending_proposal is None
     assert dict(blank.field_values) == {}
 
-    whitespace = _create(tmp_db, cfg, fake_clock, kickoff_note="  \n\t ", settle_kickoff=False)
+    whitespace = _create(tmp_db, cfg, fake_clock, brief="  \n\t ", settle_kickoff=False)
     assert whitespace.pending_proposal is None
     assert whitespace.ticket_status is TicketStatus.empty

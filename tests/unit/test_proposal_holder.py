@@ -43,7 +43,7 @@ def _park(
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type=worker_type,
-        kickoff_note="Agreed kickoff",
+        brief="Agreed kickoff",
         stated_ceiling=stated_ceiling,
     )
     parked = data.file_current_proposal(
@@ -75,7 +75,7 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Parent",
+        brief="Parent",
     )
     other = data.create_ticket(
         tmp_db,
@@ -84,7 +84,7 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
         now=2,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Other",
+        brief="Other",
     )
     item = sprints_data.create_item(
         tmp_db, title="Supervisor", project_id="project_vylo", clock=fake_clock
@@ -96,7 +96,7 @@ def test_canonical_proposal_writer_accepts_only_the_ticket_own_worker(
         now=3,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Target",
+        brief="Target",
     )
     forbidden_principals = (
         Principal(PrincipalKind.sprint_item, item.id),
@@ -342,7 +342,7 @@ def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(
         now=10,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note=None,
+        brief=None,
     )
     data.create_ticket(
         tmp_db,
@@ -351,7 +351,7 @@ def test_a_ticket_holder_cannot_be_deleted_while_another_ticket_uses_it(
         now=11,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note=None,
+        brief=None,
     )
     with pytest.raises(PlannerError, match="holds another Ticket ceiling"):
         data.delete_ticket(tmp_db, holder.id, principal=OWNER_PRINCIPAL, now=12)
@@ -409,7 +409,7 @@ def test_setting_the_ceiling_leaves_the_holder_alone(tmp_db: Connection) -> None
         now=10,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Kickoff",
+        brief="Kickoff",
         stated_ceiling="needs_success_condition",
     )
     assert ticket.ceiling_holder == CHIEF_PRINCIPAL
@@ -483,7 +483,7 @@ def test_creation_names_a_holder_the_creator_does_not_hold(tmp_db: Connection) -
         now=10,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Kickoff",
+        brief="Kickoff",
         stated_ceiling="needs_success_condition",
         stated_holder=OWNER_PRINCIPAL,
     )
@@ -523,7 +523,7 @@ def _park_under(conn: Connection, outcome_id: str, *, now: int = 10) -> Ticket:
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Agreed kickoff",
+        brief="Agreed kickoff",
         stated_ceiling="needs_success_condition",
         sprint_item_id=outcome_id,
         stated_holder=holder,
@@ -599,7 +599,7 @@ def test_a_move_leaves_a_holder_that_still_stands_above_alone(
         now=10,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
-        kickoff_note="Agreed kickoff",
+        brief="Agreed kickoff",
         stated_ceiling="needs_success_condition",
         sprint_item_id=left,
     )

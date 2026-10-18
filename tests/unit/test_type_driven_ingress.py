@@ -61,7 +61,7 @@ def app_db(tmp_path: Path) -> AppDb:
 def _create(client: TestClient, worker_type: str) -> str:
     r = client.post(
         "/api/tickets",
-        json={"title": worker_type, "worker_type": worker_type, "kickoff_note": "k"},
+        json={"title": worker_type, "worker_type": worker_type, "brief": "k"},
     )
     assert r.status_code == 200, r.json()
     ticket_id: str = r.json()["id"]
@@ -327,7 +327,7 @@ def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) 
 def test_a_create_naming_no_brief_parks_nothing_at_the_http_door(
     app_db: AppDb, probe_installed: None
 ) -> None:
-    """The default path: an absent kickoff_note used to park an empty proposal."""
+    """The default path: an absent brief used to park an empty proposal."""
     app, _db = app_db
     with TestClient(app) as client:
         created = client.post("/api/tickets", json={"title": "No brief", "worker_type": "coding"})

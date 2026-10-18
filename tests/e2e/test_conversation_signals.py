@@ -141,7 +141,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         "title": "Signal orchestrator", "priority": "P1", "project_id": project["id"],
     })
     ticket = api.direct_post(server, "/api/tickets", {
-        "title": "Signal Worker", "worker_type": "coding", "kickoff_note": "Agreed brief.",
+        "title": "Signal Worker", "worker_type": "coding", "brief": "Agreed brief.",
         "orchestrator": {"kind": "sprint_item", "id": item["id"]},
     })
     api.direct_post(server, f"/api/tickets/{ticket['id']}/accept/brief", {
@@ -460,7 +460,7 @@ def test_unobscured_message_precedence_pages(
         "title": "Signal orchestrator", "project_id": project["id"],
     })
     ticket = api.direct_post(server, "/api/tickets", {
-        "title": "Signal Worker", "worker_type": "coding", "kickoff_note": "Agreed brief.",
+        "title": "Signal Worker", "worker_type": "coding", "brief": "Agreed brief.",
         "orchestrator": {"kind": "sprint_item", "id": item["id"]},
     })
     identities = {
