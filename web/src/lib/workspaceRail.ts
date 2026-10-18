@@ -1,8 +1,10 @@
 import type { Lifecycle } from "./lifecycle";
+import { workspaceChildMessageConversations } from "./workspaceMessageDiscovery";
 import type {
   BoardCard,
   BoardSprintItem,
   Priority,
+  WorkspaceMessageConversation,
 } from "./types";
 import {
   WORK_ITEM_ATTENTION_GROUP_KEYS,
@@ -55,7 +57,7 @@ function railGroups(
 ): WorkspaceTicketGroup[] {
   const groups = workItemTicketGroups(
     cards,
-    attentionOnly ? [...WORK_ITEM_ATTENTION_GROUP_KEYS, "backlog"] : undefined
+    attentionOnly ? WORK_ITEM_ATTENTION_GROUP_KEYS : undefined
   );
   return groups.map((group) => ({
     key: group.key,
@@ -72,11 +74,27 @@ export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGro
 export function workspaceAttentionGroups(
   cards: readonly WorkItemTicketFacts[]
 ): WorkspaceTicketGroup[] {
-  return railGroups(cards, true);
+  return railGroups(cards.filter((card) => !card.is_backlogged), true);
 }
 
 export function workspaceHoverGroups(cards: readonly WorkItemTicketFacts[]): WorkspaceTicketGroup[] {
-  return railGroups(cards.filter((card) => card.stage !== "done" && card.ticket_status !== "cancelled"));
+  return railGroups(cards.filter((card) => !card.is_backlogged && card.stage !== "done" && card.ticket_status !== "cancelled"));
+}
+
+/** Sidebar visibility stays separate from the durable unread conversation index. */
+export function workspaceRailChildMessageConversations(
+  rows: readonly WorkspaceMessageConversation[],
+  parent: Pick<BoardSprintItem, "id" | "title" | "settled"> & { tickets: readonly WorkItemTicketFacts[] },
+  cards: readonly BoardCard[] = []
+): WorkspaceMessageConversation[] {
+  const byTicket = new Map(parent.tickets.map((ticket) => [ticket.id, ticket]));
+  for (const card of cards) byTicket.set(card.id, card);
+  const visible = (id: string) => !byTicket.get(id)?.is_backlogged;
+  return workspaceChildMessageConversations(
+    rows,
+    {...parent, tickets: parent.tickets.filter((ticket) => visible(ticket.id))},
+    cards
+  ).filter((row) => visible(row.id));
 }
 
 export type WorkspaceWorkerStage = { id: string; label: string; state: "done" | "now" | "todo" };

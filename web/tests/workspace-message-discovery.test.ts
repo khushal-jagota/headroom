@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { workspaceChildMessageConversations, workspaceMessageConversations, workspaceSettledUnreadCount, workspaceUnreadConversationCount } from "../src/lib/workspaceMessageDiscovery";
-import { buildWorkspaceRail } from "../src/lib/workspaceRail";
+import { buildWorkspaceRail, workspaceRailChildMessageConversations } from "../src/lib/workspaceRail";
 import type { BoardCard, BoardSprintItem, ChiefManagementSettings, SprintItemWorkspaceTicket } from "../src/lib/types";
 
 const quiet = { awaiting_reply:false, awaiting_answer:false, awaiting_approval:false,
@@ -38,12 +38,47 @@ describe("exact unread conversation discovery", () => {
       card("done", { is_backlogged:true, awaiting_reply:true, stage:"done" }),
       card("cancelled", { is_backlogged:true, awaiting_reply:true, stage:"cancelled", ticket_status:"cancelled" })];
     const parent = item("ordinary", { tickets:rows });
-    expect(buildWorkspaceRail(rows, [parent]).items[0].groups.map((group) => group.key)).toEqual(["backlog"]);
+    expect(buildWorkspaceRail(rows, [parent]).items[0].groups.map((group) => group.key)).toEqual([]);
     expect(workspaceMessageConversations(rows, [parent]).map((row) => row.id))
       .toEqual(["owner", "supervisor", "done", "cancelled"]);
     expect(workspaceUnreadConversationCount(rows)).toBe(4);
     expect(workspaceMessageConversations(rows.map((row) => ({ ...row, awaiting_reply:false })), []))
       .toEqual([]);
+  });
+
+  it("excludes backlog from settled sidebar Messages while preserving global discovery", () => {
+    const saved = card("saved", {is_backlogged:true, awaiting_reply:true, sprint_item_id:"parent"});
+    const fallback = card("fallback", {is_backlogged:true, awaiting_reply:true});
+    const ordinary = card("ordinary", {awaiting_reply:true, sprint_item_id:"parent"});
+    const parent = item("parent", {settled:true, tickets:[{...saved,is_backlogged:false},fallback,ordinary]});
+    const cards = [saved,ordinary];
+    const rows = workspaceMessageConversations(cards,[parent]);
+    expect(rows.map((row) => row.id)).toEqual(["saved","ordinary","fallback"]);
+    expect(workspaceChildMessageConversations(rows,parent,cards).map((row) => row.id))
+      .toEqual(["saved","fallback","ordinary"]);
+    expect(workspaceRailChildMessageConversations(rows,parent,cards).map((row) => row.id)).toEqual(["ordinary"]);
+    const noChild = {...parent,tickets:[]};
+    expect(workspaceRailChildMessageConversations(rows,noChild,cards).map((row) => row.id))
+      .toEqual(["ordinary","fallback"]);
+    // A canonical resume wins over a stale backlogged child, including fallback index rows.
+    const resumed = {...saved,is_backlogged:false};
+    expect(workspaceRailChildMessageConversations(rows,{...parent,tickets:[saved,fallback]},[resumed])
+      .map((row) => row.id)).toEqual(["saved","ordinary"]);
+    // A same-conversation alias cannot reintroduce a backlogged child.
+    const alias = {...fallback,conversation_id:ordinary.conversation_id};
+    expect(workspaceRailChildMessageConversations(rows,{...parent,tickets:[alias,ordinary]},cards)
+      .map((row) => row.id)).toEqual(["ordinary"]);
+  });
+
+  it("retains an eligible alias when backlog is the global unread representative", () => {
+    const saved = card("saved", {is_backlogged:true, awaiting_reply:true, sprint_item_id:"parent",conversation_id:"shared"});
+    const ordinary = card("ordinary", {awaiting_reply:true, sprint_item_id:"parent",conversation_id:"shared"});
+    const parent = item("parent", {settled:true,tickets:[saved,ordinary]});
+    const rows = workspaceMessageConversations([saved,ordinary],[parent]);
+    expect(rows.map((row) => row.id)).toEqual(["saved"]);
+    expect(workspaceRailChildMessageConversations(rows,parent,[saved,ordinary]).map((row) => row.id))
+      .toEqual(["ordinary"]);
+    expect(rows.map((row) => row.id)).toEqual(["saved"]);
   });
 
   it("never invents unread from ask, approval, child rollups, error or incomplete conversation identity", () => {

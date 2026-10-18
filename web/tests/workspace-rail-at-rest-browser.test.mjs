@@ -20,11 +20,12 @@ let server;
 
 try {
   await writeFile(host, `<script lang="ts">
+import { tick } from "svelte";
 import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
 import BoardRoute from "../src/routes/BoardRoute.svelte";
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-(window as any).__refresh = () => client.invalidateQueries();
+(window as any).__refresh = async () => { await client.invalidateQueries(); await tick(); };
 const address = { selection: { kind: "none" as const }, view: "items" as const, openFile: null };
 </script>
 
@@ -94,12 +95,14 @@ board = {
         # A broken worker still holding a proposal for him. It is his to approve, and the
         # Item at rest keeps the three groups, so it belongs under Needs your approval.
         card("t_broken", "si_needs_him", "Needs him", awaiting_approval=True, agent_state="errored"),
-        card("t_backlog_owner", "si_needs_him", "Needs him", title="Review saved workspace changes", is_backlogged=True, awaiting_approval=True),
-        card("t_backlog_supervisor", "si_needs_him", "Needs him", title="Prepare the next workspace pass", is_backlogged=True, awaiting_agent_approval=True),
-        card("t_chief_backlog", None, None, title="Revisit workspace navigation", is_backlogged=True, awaiting_approval=True),
+        card("t_backlog_owner", "si_needs_him", "Needs him", title="Review saved workspace changes", is_backlogged=True, awaiting_approval=True, awaiting_reply=True, conversation_id="backlog-"+"t_backlog_owner"),
+        card("t_backlog_supervisor", "si_needs_him", "Needs him", title="Prepare the next workspace pass", is_backlogged=True, awaiting_agent_approval=True, awaiting_reply=True, conversation_id="backlog-supervisor"),
+        card("t_chief_backlog", None, None, title="Revisit workspace navigation", is_backlogged=True, awaiting_approval=True, awaiting_reply=True, conversation_id="backlog-chief"),
         card("t_quiet", "si_quiet", "Quiet", agent_state="working"),
+        card("t_settled_backlog", "si_settled", "Settled work", title="Saved settled message", is_backlogged=True, awaiting_reply=True, conversation_id="backlog-settled"),
+        card("t_settled_message", "si_settled", "Settled work", title="Ordinary settled message", awaiting_reply=True, conversation_id="ordinary-settled"),
     ]}],
-    "sprint_items": [item("si_needs_him"), item("si_quiet")],
+    "sprint_items": [item("si_needs_him"), item("si_quiet"), {**item("si_settled"), "settled":True}],
 }
 for summary in board["sprint_items"]:
     summary["tickets"] = [row for column in board["columns"] for row in column["cards"] if row["sprint_item_id"] == summary["id"]]
@@ -131,16 +134,16 @@ with sync_playwright() as p:
     assert page.locator('[data-sprint-item] [aria-current="page"]').count() == 0
     assert page.locator(".orchestrator-card.selected").count() == 0
 
-    # Existing attention groups plus Backlog. A broken worker does not open a fifth one here. An answer
+    # Backlog stays outside the sidebar. An answer
     # he owes sits under the decision he owes and above the Stage that is merely his.
     headers = needs_him.locator("[data-bucket-key]")
-    expect(headers).to_have_count(5)
-    assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(5)] == [
-        "awaiting_approval", "awaiting_answer", "assigned", "awaiting_reply", "backlog"
+    expect(headers).to_have_count(4)
+    assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(4)] == [
+        "awaiting_approval", "awaiting_answer", "assigned", "awaiting_reply"
     ]
     assert [
-        headers.nth(i).locator(".bucket-label").text_content() for i in range(5)
-    ] == ["Needs your approval", "Needs your answer", "Yours", "Messages", "Backlog"]
+        headers.nth(i).locator(".bucket-label").text_content() for i in range(4)
+    ] == ["Needs your approval", "Needs your answer", "Yours", "Messages"]
 
     # The rows are there too, one Ticket under one header.
     for ticket_id, key in [
@@ -149,8 +152,6 @@ with sync_playwright() as p:
         ("t_assigned", "assigned"),
         ("t_message", "awaiting_reply"),
         ("t_answer", "awaiting_answer"),
-        ("t_backlog_owner", "backlog"),
-        ("t_backlog_supervisor", "backlog"),
     ]:
         row = needs_him.locator('[data-ticket-id="' + ticket_id + '"]')
         expect(row).to_have_count(1)
@@ -190,15 +191,15 @@ with sync_playwright() as p:
     page.evaluate("window.__refresh()")
     expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
 
-    # Chief and ordinary rows use the same plain Backlog presentation. Proposal
-    # ownership survives in the fixture; it must not create duplicate approval rows.
+    # Backlogged owner/supervisor/unread rows never re-enter active or Chief cards.
     chief_card = page.locator(".orchestrator-card.chief")
-    expect(chief_card.locator('[data-bucket-key="backlog"] .bucket-label')).to_have_text("Backlog")
-    expect(chief_card.locator('[data-ticket-id="t_chief_backlog"]')).to_have_count(1)
-    for ticket_id in ["t_backlog_owner", "t_backlog_supervisor"]:
-        row = needs_him.locator('[data-ticket-id="'+ticket_id+'"]')
-        assert row.get_attribute("class").split() == needs_him.locator('[data-ticket-id="t_approval"]').get_attribute("class").split()
-        assert row.inner_text() == next(r["title"] for r in board["columns"][0]["cards"] if r["id"] == ticket_id)
+    def assert_backlog_absent():
+        expect(page.locator('.approved-rail [data-bucket-key="backlog"]')).to_have_count(0)
+        for ticket_id in ["t_backlog_owner", "t_backlog_supervisor", "t_chief_backlog", "t_settled_backlog"]:
+            expect(page.locator('.approved-rail [data-ticket-id="'+ticket_id+'"]')).to_have_count(0)
+        expect(page.locator('[data-message-conversation="backlog-settled"]')).to_have_count(0)
+        expect(page.locator('[data-message-conversation="backlog-t_backlog_owner"]')).to_have_count(0)
+    assert_backlog_absent()
     owner = next(r for r in board["columns"][0]["cards"] if r["id"] == "t_backlog_owner")
     owner["is_backlogged"] = False
     page.evaluate("window.__refresh()")
@@ -206,16 +207,32 @@ with sync_playwright() as p:
     assert owner["awaiting_approval"] is True
     owner["is_backlogged"] = True
     page.evaluate("window.__refresh()")
-    expect(needs_him.locator('[data-bucket-key="backlog"] [data-ticket-id="t_backlog_owner"]')).to_have_count(1)
-    needs_him.locator('[data-ticket-id="t_backlog_owner"]').click()
-    expect(page).to_have_url(sys.argv[1] + "#/workspace/item/si_needs_him/t_backlog_owner")
+    assert_backlog_absent()
+    page.get_by_role("button", name="Settled (1)").click()
+    expect(page.locator('[data-message-conversation="ordinary-settled"]')).to_be_visible()
+    assert_backlog_absent()
+
+    # Parent hover has the ordinary child control and no backlogged title.
+    needs_him.locator(".item-head").hover()
+    panel = page.locator("[data-rail-hover-panel]")
+    expect(panel).to_have_attribute("aria-hidden", "false")
+    expect(panel).to_contain_text("t_approval")
+    for title in ["Review saved workspace changes", "Prepare the next workspace pass"]:
+        expect(panel).not_to_contain_text(title)
+    chief_card.locator(".item-head").hover()
+    expect(panel).to_contain_text("Chief of Staff")
+    expect(panel).not_to_contain_text("Revisit workspace navigation")
+    page.mouse.move(1200, 900)
+    expect(panel).to_have_attribute("aria-hidden", "true")
 
     output = os.environ.get("PANELS_UI_PROOF_DIR")
     if output:
         folder = pathlib.Path(output); folder.mkdir(parents=True, exist_ok=True)
         for label, width in [("desktop", 1280), ("compact", 720)]:
             page.set_viewport_size(dict(width=width, height=1000))
-            expect(needs_him.locator('[data-bucket-key="backlog"]')).to_be_visible()
+            expect(needs_him.locator('[data-bucket-key="awaiting_approval"]')).to_be_visible()
+            expect(page.locator('[data-message-conversation="ordinary-settled"]')).to_be_visible()
+            assert_backlog_absent()
             page.screenshot(path=str(folder/("backlog-rail-"+label+".png")), full_page=True)
         (folder/"backlog-rail-dom.html").write_text(page.content())
 

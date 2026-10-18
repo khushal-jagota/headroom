@@ -3,13 +3,13 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
-  import { buildWorkspaceRail, type WorkspaceRailItem } from "../lib/workspaceRail";
+  import { buildWorkspaceRail, workspaceRailChildMessageConversations, type WorkspaceRailItem } from "../lib/workspaceRail";
   import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
   import { whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import type { WorkspaceMessageConversation } from "../lib/types";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
-  import { workspaceChildMessageConversations, workspaceMessageConversations } from "../lib/workspaceMessageDiscovery";
+  import { workspaceMessageConversations } from "../lib/workspaceMessageDiscovery";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
   import WorkspaceMessages from "../components/WorkspaceMessages.svelte";
   import ChiefConversation from "../components/ChiefConversation.svelte";
@@ -145,7 +145,7 @@
                     <button class="settled-title" type="button" onclick={() => selectItem(item.id)} onmouseenter={(event) => hoverItem(event.currentTarget,item)} onmouseleave={() => hover.leave()} onfocus={(event) => hoverItem(event.currentTarget,item)} onblur={() => hover.leave()}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
                     <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
                   </div>
-                  <WorkspaceMessages conversations={workspaceChildMessageConversations(messages, item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
+                  <WorkspaceMessages conversations={workspaceRailChildMessageConversations(messages, item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
                   </div>
                 {/each}
                 </div>

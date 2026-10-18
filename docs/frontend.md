@@ -40,8 +40,9 @@ One screen per part of the system:
   Existing orchestrators start active. Settlement does not change Worker eligibility.
 
   Each active card shows the existing attention groups: Needs your approval, Needs your
-  answer, Yours, Messages, then Errored, followed by Backlog. Backlog takes precedence
-  for backlogged Workers. The shared rule gives other Workers their first applicable group. Holder-aware approval and the existing priority/creation ordering
+  answer, Yours, Messages, then Errored. Backlogged Workers stay outside the sidebar,
+  including hover details and nested Messages under Settled. The shared rule gives
+  other Workers their first applicable group. Holder-aware approval and the existing priority/creation ordering
   remain. Priority is not displayed in the rail. Quiet children remain in the
   orchestrator workspace and hover details. Empty orchestrators remain visible.
 
@@ -50,7 +51,7 @@ One screen per part of the system:
   Hover lights the card edge and title. Worker rows retain the existing hover wash.
   Single-line Worker titles clip before a reserved mark column. Hover or keyboard focus
   supplies the full title and manifest stages. Orchestrator hover supplies its children
-  grouped by the existing rule, excluding Done. One panel swaps between targets without
+  grouped by the existing rule, excluding Done and Backlog. One panel swaps between targets without
   a second delay. It stays inside the viewport and does not capture the pointer.
 
   The rail defaults to `clamp(17rem, 22vw, 20rem)`. Its edge resizes from 232 to 520
@@ -63,12 +64,13 @@ One screen per part of the system:
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
 
-  Backlogged Tickets use one Backlog header after the attention headers and before Agent.
+  In full workspace lists, backlogged Tickets use one Backlog header after the attention headers and before Agent.
   This rule applies to every backlogged Ticket supplied to the shared presentation,
   including terminal history. Backlog uses normal rows and starts open. It does not
   add review badges or explanations. Approval, reviewer, message, and readiness facts
   remain independent. Resume restores ordinary classification and readiness checks.
-  The existing rail and history filters still determine which Tickets reach each view.
+  The sidebar excludes Backlog without changing the shared classifier or unread index.
+  The existing history filters still determine which Tickets reach full lists.
   Historical Day counts and Feedback labels keep their separate rules.
 
   Unfinished groups on the orchestrator page start open. Done and Cancelled start closed.

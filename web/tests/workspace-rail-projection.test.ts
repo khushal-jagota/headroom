@@ -47,22 +47,25 @@ describe("orchestrator rail projection", () => {
     expect(rail.items[0].conversationSignal).toBeUndefined();
   });
 
-  it("shows Backlog once in Chief and ordinary attention rails with existing terminal boundaries", () => {
+  it("excludes backlog from Chief, active, settled, and hover projections without changing child facts", () => {
     const rows = [card("approval", { is_backlogged:true, awaiting_approval:true }),
+      card("supervisor", { is_backlogged:true, awaiting_agent_approval:true }),
+      card("message", { is_backlogged:true, awaiting_reply:true }),
+      card("quiet", { is_backlogged:true }),
       card("done", { is_backlogged:true, stage:"done", ticket_status:"empty" }),
-      card("cancelled-status", { is_backlogged:true, stage:"cancelled", ticket_status:"cancelled" }),
-      card("cancelled-stage", { is_backlogged:true, stage:"cancelled", ticket_status:"empty" })];
-    const rail = buildWorkspaceRail(rows, [item("ordinary", { tickets:rows })]);
-    for (const groups of [rail.chiefGroups, rail.items[0].groups]) {
-      expect(groups.map((group) => [group.key, group.defaultCollapsed])).toEqual([["backlog",false]]);
-      expect(groups[0].cards.map((row) => row.id)).toEqual(["approval", "cancelled-stage", "done"]);
-      expect(groups[0].cards[0]).toBe(rows[0]);
+      card("cancelled", { is_backlogged:true, stage:"cancelled", ticket_status:"cancelled" })];
+    const rail = buildWorkspaceRail(rows, [item("ordinary", { tickets:rows }), item("settled", { tickets:rows, settled:true })]);
+    for (const groups of [rail.chiefGroups, rail.chiefHoverGroups,
+      rail.items[0].groups, rail.items[0].hoverGroups, rail.settledItems[0].groups, rail.settledItems[0].hoverGroups]) {
+      expect(groups).toEqual([]);
     }
-    // Hover retains its existing stage=done/status=cancelled exclusions.
-    for (const groups of [rail.chiefHoverGroups, rail.items[0].hoverGroups]) {
-      expect(groups[0].cards.map((row) => row.id)).toEqual(["approval", "cancelled-stage"]);
-    }
+    expect(rail.groups.map((group) => group.key)).toEqual(["backlog"]);
     expect(rail.items[0].tickets).toEqual(rows);
+    expect(rail.settledItems[0].tickets).toEqual(rows);
+    const resumed = rows.map((row) => ({...row, is_backlogged:false}));
+    expect(buildWorkspaceRail(resumed).chiefGroups.map((group) => group.key))
+      .toEqual(["awaiting_approval", "awaiting_reply"]);
+    expect(rows[0].awaiting_approval).toBe(true);
   });
 
   it("preserves priority order and exact direct-conversation message marks", () => {
