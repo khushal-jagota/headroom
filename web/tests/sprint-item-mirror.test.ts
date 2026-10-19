@@ -80,7 +80,8 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
   return {
     id: "si_mirror",
     title: "Mirror Item",
-    body: "",
+    goal: "",
+    recap: "",
     project_id: "project_panels",
     project: "Panels",
     created_at: 1,

@@ -475,6 +475,7 @@ class InMemoryConversationSystem:
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        credit_explicit_reply: bool = True,
     ) -> None:
         require_message_content(content)
         state = self._conversations.get(conversation_id)
@@ -503,7 +504,7 @@ class InMemoryConversationSystem:
                 recipient=recipient,
             )
         )
-        if state.running_turn is not None:
+        if credit_explicit_reply and state.running_turn is not None:
             state.running_turn.explicit_reply_recipients.add(recipient)
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:

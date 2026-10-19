@@ -25,6 +25,7 @@ from planner.core.contracts import Principal
 from planner.membership.contracts import Collection
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
+from planner.tickets.contracts import ReviewTransferNotice
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,7 @@ class MembershipWrite:
     member_id: str
     now: int
     admit: Callable[[], None]
+    review_transfer_notices: list[ReviewTransferNotice] = field(default_factory=list)
 
 
 Write = Callable[[MembershipWrite], None]
@@ -64,6 +66,7 @@ def _add_outcome_ticket(write: MembershipWrite) -> None:
         principal=write.principal,
         now=write.now,
         admit=write.admit,
+        review_transfer_notices=write.review_transfer_notices,
     )
 
 
@@ -75,6 +78,7 @@ def _remove_outcome_ticket(write: MembershipWrite) -> None:
         principal=write.principal,
         now=write.now,
         admit=write.admit,
+        review_transfer_notices=write.review_transfer_notices,
     )
 
 

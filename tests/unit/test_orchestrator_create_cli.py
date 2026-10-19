@@ -18,25 +18,25 @@ def _create(
     *,
     as_json: bool = False,
     command: tuple[str, ...] = ("orchestrator",),
-    brief: str | None = None,
+    goal: str | None = None,
 ) -> tuple[Result, dict[str, Any]]:
     payload = {"id": "si_saved", "title": "A useful goal", "startup": startup}
-    if brief is None and startup is not None:
-        brief = "Do the work"
+    if goal is None and startup is not None:
+        goal = "Do the work"
 
     def respond(method: str, url: str, **kwargs: Any) -> httpx.Response:
         assert method == "POST"
         assert url.endswith("/api/items")
-        assert kwargs["json"]["body"] == (brief or "")
+        assert kwargs["json"]["goal"] == (goal or "")
         return httpx.Response(200, json=payload, request=httpx.Request(method, url))
 
     monkeypatch.setattr(httpx, "request", respond)
     args = [*command, "create", "--title", "A useful goal", "--project-id", "p_test"]
-    if brief is not None:
-        args.extend(["--body-file", "-"])
+    if goal is not None:
+        args.extend(["--goal-file", "-"])
     if as_json:
         args.append("--json")
-    return CliRunner().invoke(main, args, input=brief), payload
+    return CliRunner().invoke(main, args, input=goal), payload
 
 
 @pytest.mark.parametrize("fate", ["started", "queued", "injected"])
@@ -52,13 +52,13 @@ def test_create_reports_delivery_success(monkeypatch: pytest.MonkeyPatch, fate: 
     assert "Retry" not in result.stdout
 
 
-@pytest.mark.parametrize("brief", [None, "", " \n\t"])
-def test_create_without_brief_reports_idle(
-    monkeypatch: pytest.MonkeyPatch, brief: str | None
+@pytest.mark.parametrize("goal", [None, "", " \n\t"])
+def test_create_without_a_goal_reports_idle(
+    monkeypatch: pytest.MonkeyPatch, goal: str | None
 ) -> None:
-    result, _ = _create(monkeypatch, None, brief=brief)
+    result, _ = _create(monkeypatch, None, goal=goal)
     assert result.exit_code == 0, result.output
-    assert result.stdout.strip() == "Created orchestrator si_saved. Idle (no brief)."
+    assert result.stdout.strip() == "Created orchestrator si_saved. Idle (no goal)."
 
 
 def test_refused_start_keeps_saved_address_and_recovery_command(
@@ -72,7 +72,7 @@ def test_refused_start_keeps_saved_address_and_recovery_command(
     assert "Startup refused. busy" in result.stdout
     assert "The orchestrator is saved." in result.stdout
     assert "panels orchestrator show si_saved" in result.stdout
-    assert 'panels send-message --sprint-item si_saved --message "<brief>"' in result.stdout
+    assert 'panels send-message --sprint-item si_saved --message "<goal>"' in result.stdout
     assert "Startup started" not in result.stdout
 
 

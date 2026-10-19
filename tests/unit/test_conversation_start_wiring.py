@@ -186,6 +186,7 @@ class _LinkWatchingConversationSystem:
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        credit_explicit_reply: bool = True,
     ) -> None:
         await self._system.record_message_to_owner(
             conversation_id,
@@ -195,6 +196,7 @@ class _LinkWatchingConversationSystem:
             recipient=recipient,
             sender_message_id=sender_message_id,
             sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            credit_explicit_reply=credit_explicit_reply,
         )
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
