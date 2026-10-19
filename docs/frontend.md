@@ -80,7 +80,7 @@ One screen per part of the system:
   The Chief popup states the eligible Ticket count.
   Empty orchestrator recaps use that same factual fallback. The panel stays
   inside the viewport and does not capture the pointer. Recaps wrap to the available
-  space and show an ellipsis only at actual visual overflow. The title and current
+  space, up to five lines, and show an ellipsis only at actual visual overflow. The title and current
   stage stay visible. Dense list rows retain their concise recap preview.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group

@@ -5,6 +5,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { fetchJson } from "../lib/api";
   import { lifecycleFor, type WorkerTypesResponse } from "../lib/lifecycle";
+  import { RAIL_HOVER_RECAP_MAX_LINES } from "../lib/workspaceRailInteraction";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   let { visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, element = $bindable<HTMLDivElement | null>(null) }: {
@@ -36,7 +37,7 @@
         return height + child.getBoundingClientRect().height + px(style.marginTop) + px(style.marginBottom);
       }, 0);
       const available = px(css.maxHeight) - edges(css) - fixedHeight - edges(recapCss) - px(recapCss.marginTop) - px(recapCss.marginBottom);
-      recapLines = Math.max(0, Math.floor(available / px(recapCss.lineHeight)));
+      recapLines = Math.min(RAIL_HOVER_RECAP_MAX_LINES, Math.max(0, Math.floor(available / px(recapCss.lineHeight))));
     };
     const observer = new ResizeObserver(budget);
     for (const child of panel.children) if (child !== recapBox) observer.observe(child);

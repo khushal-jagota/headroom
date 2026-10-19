@@ -590,6 +590,7 @@ def run(browser, urls):
                 const fixed=[...panel.querySelectorAll('.kicker,.title,.doing')].map(node=>node.getBoundingClientRect());
                 return {height:r.height,cap:innerHeight*.74,width:r.width,
                     textWidth:t.width,scrollWidth:text.scrollWidth,
+                    visibleLines:t.height/parseFloat(getComputedStyle(text).lineHeight),
                     overflow:text.scrollHeight>text.clientHeight+1,
                     tailVisible:tail.bottom<=t.bottom+1,
                     fixedVisible:fixed.every(box=>box.top>=r.top && box.bottom<=r.bottom),
@@ -611,7 +612,10 @@ def run(browser, urls):
                 geometry = recap_geometry(panel)
                 assert geometry["fixedVisible"] and geometry["pointers"] == "none", geometry
                 assert geometry["height"] <= geometry["cap"] + 1, geometry
+                assert geometry["visibleLines"] <= 5, geometry
                 assert geometry["overflow"] == (label == "overflow"), geometry
+                if label == "overflow":
+                    assert abs(geometry["visibleLines"] - 5) < 0.1, geometry
                 if label == "full":
                     assert len(content) > 160 and geometry["tailVisible"], geometry
                 page.screenshot(path=str(artifact_dir / f"recap-{name}-{label}.png"))
@@ -620,12 +624,15 @@ def run(browser, urls):
                 facts["recap"] = "unbroken" * 500
                 page.evaluate("window.__refresh()")
                 expect(panel.locator('.recap-text')).to_have_text(facts["recap"])
-                for height in [420, 1000]:
+                for height in [300, 1000]:
                     page.set_viewport_size(dict(width=1440, height=height))
                     expect(panel).to_have_attribute("aria-hidden", "false")
                     page.wait_for_timeout(80)
                     geometry = recap_geometry(panel)
                     assert geometry["fixedVisible"] and geometry["overflow"], geometry
+                    assert geometry["visibleLines"] <= 5, geometry
+                    if height == 300:
+                        assert geometry["visibleLines"] < 5, geometry
                     assert geometry["scrollWidth"] <= geometry["textWidth"] + 1, geometry
                     assert geometry["height"] <= geometry["cap"] + 1, geometry
                     page.screenshot(path=str(artifact_dir / f"recap-long-word-{height}.png"))
