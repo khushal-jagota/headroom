@@ -22,15 +22,18 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
 from tests.support.real_permission_mapping import (
     assert_native_configuration,
     install_permission_mapping,
 )
+from tests.support.real_provider_application import (
+    assert_navigation_attention,
+    provider_application,
+    require_provider_auth,
+)
 
-from planner.conversation.api import ConversationRuntime, build_conversation_runtime, router
+from planner.conversation.api import ConversationRuntime
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.signals import read_conversation_signals
 from planner.core.db import connect, create_schema
 
@@ -66,7 +69,7 @@ async def _exercise(
     workspace.mkdir()
     target = workspace / f"permission-{uuid.uuid4().hex}.txt"
     nonce = uuid.uuid4().hex
-    _prepare_home(backend, root, monkeypatch)
+    require_provider_auth(backend)
     for key, value in {
         "PLAN_DB_PATH": root / "planner.db",
         "PLAN_LOGS_DIR": root / "logs",
@@ -92,6 +95,8 @@ async def _exercise(
         "passed": False,
     }
 
+    assert receipts["source_status"] == "", "real-provider proof requires a clean tree"
+
     def save() -> None:
         # Only these selected records are stored: never process environments, homes,
         # SDK initialization payloads, or arbitrary stderr that can contain credentials.
@@ -106,7 +111,7 @@ async def _exercise(
     conversation_id = f"permission-{backend}-{decision}-{uuid.uuid4().hex}"
     base = f"/api/conversation/conversations/{conversation_id}"
     try:
-        async with _api(database) as (client, runtime):
+        async with _api(database, receipts) as (client, runtime):
             response = await client.post(
                 "/api/conversation/conversations",
                 json={
@@ -118,6 +123,9 @@ async def _exercise(
                 },
             )
             assert response.status_code == 201, response.text
+            await assert_navigation_attention(
+                client, conversation_id, receipts, "created", working=False, awaiting_answer=False
+            )
             # Hermes file edits have a separate ACP ask, so ask for the native file-edit
             # tool. The other providers gate the shell command under their default policy.
             instruction = (
@@ -154,6 +162,14 @@ async def _exercise(
             )
             assert_native_configuration(backend, observations)
             receipts["ask"] = ask
+            await assert_navigation_attention(
+                client,
+                conversation_id,
+                receipts,
+                "pending_permission",
+                working=True,
+                awaiting_answer=True,
+            )
             events = await _events(client, base)
             assert any(
                 event["kind"] == "permission_asked"
@@ -200,6 +216,9 @@ async def _exercise(
             )
             assert attention[conversation_id].awaiting_answer is False
             receipts["awaiting_answer_after"] = attention[conversation_id].awaiting_answer
+            await assert_navigation_attention(
+                client, conversation_id, receipts, "completed", working=False, awaiting_answer=False
+            )
             if decision == "allow":
                 assert target.read_text() == nonce
             else:
@@ -218,25 +237,11 @@ async def _exercise(
 
 
 @asynccontextmanager
-async def _api(database: Path) -> AsyncIterator[tuple[httpx.AsyncClient, ConversationRuntime]]:
-    runtime = build_conversation_runtime(
-        db_path=str(database),
-        db_busy_timeout_ms=5_000,
-        sse_heartbeat_ms=10_000,
-        backend_child_factories=production_backend_child_factories(
-            panels_server_url="http://127.0.0.1:1"
-        ),
-    )
-    app = FastAPI()
-    app.include_router(router, prefix="/api/conversation")
-    app.state.conversation = runtime
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://permission.test"
-        ) as client:
-            yield client, runtime
-    finally:
-        await runtime.shutdown()
+async def _api(
+    database: Path, receipts: dict[str, Any]
+) -> AsyncIterator[tuple[httpx.AsyncClient, ConversationRuntime]]:
+    async with provider_application(database, receipts) as value:
+        yield value
 
 
 async def _events(client: httpx.AsyncClient, base: str) -> list[dict[str, Any]]:
@@ -275,36 +280,6 @@ async def _poll(
             raise AssertionError("turn ended before reaching expected permission state")
         await asyncio.sleep(0.1)
     raise AssertionError("real provider never reached expected permission state")
-
-
-def _prepare_home(
-    backend: ConversationBackendKey, root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    if backend is ConversationBackendKey.codex:
-        return  # Existing shared home: copying a rotating grant can invalidate the real login.
-    name = (
-        "PANELS_REAL_HERMES_HOME_TEMPLATE"
-        if backend is ConversationBackendKey.hermes
-        else ("PANELS_REAL_CLAUDE_CONFIG_TEMPLATE")
-    )
-    source = Path(os.environ[name]).expanduser().resolve()
-    assert source.is_dir()
-    destination = root / f"{backend}-home"
-    destination.mkdir()
-    if backend is ConversationBackendKey.hermes:
-        # Config is isolated, but rotating auth remains one shared canonical file.
-        for filename in ("config.yaml", ".env"):
-            if (source / filename).exists():
-                shutil.copy2(source / filename, destination / filename)
-        if (source / "auth.json").exists():
-            (destination / "auth.json").symlink_to(source / "auth.json")
-        monkeypatch.setenv("PLAN_HERMES_HOME", str(destination))
-    else:
-        for filename in (".credentials.json",):
-            if (source / filename).exists():
-                (destination / filename).symlink_to(source / filename)
-        # Do not inherit permission grants/settings: default mode must actually ask.
-        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(destination))
 
 
 def _versions(backend: ConversationBackendKey) -> dict[str, str]:

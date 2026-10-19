@@ -88,15 +88,16 @@ dot: those dots mean an unread reply. The earlier inherited claim that an ask ha
 its own white mark was false; visible request and attention state coverage replace
 that check.
 
-Run `tests/integration/test_conversation_real_provider_permissions.py` with
+The real-provider permission host uses the production application lifespan, including
+Signal initialization, current navigation installation and shutdown. It retains the
+explicit native test-only permission mapping. Enable it with
 `PANELS_REAL_PERMISSION_TESTS=1`, an absolute `PANELS_PERMISSION_EVIDENCE_ROOT`,
-and the relevant `PANELS_REAL_HERMES_HOME_TEMPLATE` or
-`PANELS_REAL_CLAUDE_CONFIG_TEMPLATE`. These calls use real accounts and model
-usage. The tests save selected request, wait, answer, native configuration,
-version, source revision and file outcome receipts, including partial receipts
-when a case fails. They keep Codex on its existing credential home. Other homes
-isolate test configuration while sharing any rotating credential file instead of
-copying a login grant. These tests do not claim connection-drop recovery coverage.
+and an explicit fresh `PANELS_PROVIDER_RUNTIME_ROOT`. Select only the commissioned
+allow case per backend. It records native request/wait/answer/file outcomes and
+canonical start, pending and end attention. Calls use real accounts and model usage.
+No supported no-copy authentication route is currently provisioned for these fresh
+synthetic homes. The host fails before provider startup with the specific prerequisite;
+unset opt-in flags alone are not that prerequisite. No connection-drop recovery is claimed.
 
 ## The notebook
 
@@ -931,12 +932,16 @@ General coverage would require tracing helpers, branches, filesystem operations 
 launch paths. The bounded checks do not provide that general guarantee; review
 must enforce the invariant.
 
-The steering harness now follows the permission harness's canonical-credential pattern.
-Hermes copies only `config.yaml` and `.env`, and symlinks `auth.json` to the source home.
-Claude copies optional `settings.json`, and symlinks optional `.credentials.json` to its
-source home. Codex continues to use its real home because a copied login loses refresh
-rotation. The former whole-home Hermes copy and Claude credential copy are resolved.
-The current helper explains why credentials stay canonical.
+The commissioned steering and permission hosts use fresh synthetic databases,
+conversations, workspaces, runtime paths and homes. They do not copy credentials,
+configuration, `.env` files or whole homes, and they do not create credential symlinks.
+They require a separately reviewed supported no-copy authentication route before calls.
+Hermes needs a native canonical authentication and refresh-lock route for the isolated
+home. Codex needs a supported external-authentication or verified OS-store route for a
+fresh home. Claude needs a provisioned supported token/API-key/profile route for its
+fresh configuration directory. These are missing prerequisites, not model-access
+verdicts. A canonical login cannot serve as disposable test state. No new login,
+purchase or authentication workaround is authorized by these tests.
 
 Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
 `tests/unit/test_no_codex_credential_copies.py`,
@@ -1198,46 +1203,36 @@ virtual environment:
 | `PANELS_REAL_HERMES_TESTS=1` | `tests/unit/test_conversation_hermes_acp.py` | 4 |
 | `PANELS_REAL_SYSTEM_STEERING_TESTS=1` | `tests/integration/test_conversation_real_provider_steering.py` | 3 |
 
-The first three drive one adapter directly. The fourth is the only one that runs the whole
-conversation system and its HTTP API against all three real agent processes, and it is
-where a steer is proved to cross into a live turn.
+The first three drive one adapter directly. The fourth uses `create_app` and its actual
+application lifespan against the real agent processes: Signal composition, navigation
+installation, conversation API, janitor and shutdown. Test mode omits background Worker
+scheduling. No conversation facade or transaction driver substitutes for production.
+The permission integration host uses the same lifespan. Controlled tests retain the
+failure, denial and uncertainty coverage.
 
-That fourth exercise asks for more before it will start. It refuses a dirty tree, so
-`git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs these source directories
-for the isolated test homes:
+Both integration hosts require a clean source tree, absolute evidence destinations and
+an explicit fresh `PANELS_PROVIDER_RUNTIME_ROOT` containing their synthetic databases
+and runtime paths. The steering evidence destination is `PANELS_STEERING_EVIDENCE_ROOT`.
+The permission destination is `PANELS_PERMISSION_EVIDENCE_ROOT`. Isolate the whole
+process environment, including HOME, XDG directories, provider homes and temporary
+files, before application import. Never point these paths at a real agent home or
+production database. The former home-template variables and credential-sharing helpers
+are removed. All three backends currently fail closed at the safe-authentication
+prerequisite described above. Do not run provider calls until the authentication route
+and harness receive independent review. The bounded commission is one steering/stop/
+resume scenario and one explicit-allow permission roundtrip per backend; it does not
+commission additional paid denial or failure permutations.
 
-- `PANELS_REAL_HERMES_HOME_TEMPLATE` — the canonical Hermes home itself, normally
-  `~/.hermes`. Do not make a copy. The harness copies `config.yaml` and `.env`
-  into an isolated home and symlinks `auth.json` back to this source. This requires
-  the canonical home: a symlink into a copied home still separates rotating auth
-  from the real login.
-- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — the canonical Claude home itself, normally
-  `~/.claude`. Do not make a copy. The harness copies optional `settings.json`
-  into an isolated home and symlinks optional `.credentials.json` back to this source.
-  A symlink into a copied home still separates rotating credentials from the real login.
-  The copied settings must contain no secrets.
+### Historical adapter observations
 
-If you followed the old instructions, switch both variables to their canonical homes
-and remove the obsolete copies. Neither source requires a directory that you prepare
-by hand.
+The following observations describe earlier runs, not current-tree execution or a
+current pass/fail count. The commissioned integration hosts are now blocked before
+provider startup by the authentication prerequisites above.
 
-Codex is the exception, and deliberately. It keeps one account in one file and refreshes
-that file in whichever home it is pointed at, so a private copy takes the new token with
-it and leaves the real login holding one the server has already spent. Everything that
-uses codex afterwards then fails, and codex reports it as the subsystem that happened to
-ask first rather than as a login. So this exercise uses the real codex home, and Panels
-refuses to start any codex child whose `CODEX_HOME` holds a copy of that login.
-
-### A red run is expected today
-
-Seven or eight of the twenty-seven fail, and none of it is Panels being wrong. Expect it,
-and do not go looking for a defect you did not cause. Four groups:
-
-- **The whole steering exercise, one failure per backend.** All three die on the same
-  assertion, that a steer sent while nothing is running is refused. Panels now starts a turn
-  instead, and has since the send modes were named. Worth repairing, and it is one line:
-  these three cases are the only thing here that runs the contract against real adapters.
+- **The steering exercise.** The current source explicitly refuses an idle steer with
+  `no_running_turn_to_steer_into`; the integration assertion preserves that contract.
+  Earlier claims that the source starts an idle turn are obsolete. Active steer admission
+  proves the provider accepted the exact running-turn request, not that the model obeyed it.
 - **Two claude cases, and they are not reliably red.** Both plant a codeword and ask for it
   back, and the model reads that as an attempt to smuggle instructions past it — sometimes.
   One run fails both, the next fails one. A case that turns on whether a model feels like
@@ -1252,8 +1247,9 @@ and do not go looking for a defect you did not cause. Four groups:
   weight — that a model sent with a turn reaches the model call — is proved by the case next
   to it, which sends a model that does not exist and reads the refusal back.
 
-What passes is worth knowing too. Every run so far has each of the three backends accept a
-steer into a turn that was genuinely running, on a receipt from the provider process itself.
+Earlier provider receipts show active-steer admission into a genuinely running turn.
+They remain evidence about their exact historical source, not execution of the current
+application lifespan with fresh synthetic homes.
 
 ## Code paths
 

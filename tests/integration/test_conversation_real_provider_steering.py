@@ -36,19 +36,19 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from tests.support.real_provider_application import (
+    assert_navigation_attention,
+    provider_application,
+    require_provider_auth,
+)
 
-from planner.conversation.api import build_conversation_runtime, router
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.production_backends import production_backend_child_factories
 from planner.core.db import connect, create_schema
 from planner.environments.hermes_home import hermes_src_root
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 REAL_SYSTEM_STEERING_ENVIRONMENT_NAME = "PANELS_REAL_SYSTEM_STEERING_TESTS"
 EVIDENCE_ROOT_ENVIRONMENT_NAME = "PANELS_STEERING_EVIDENCE_ROOT"
-HERMES_HOME_TEMPLATE_ENVIRONMENT_NAME = "PANELS_REAL_HERMES_HOME_TEMPLATE"
-CLAUDE_CONFIG_TEMPLATE_ENVIRONMENT_NAME = "PANELS_REAL_CLAUDE_CONFIG_TEMPLATE"
 
 real_system_steering_only = pytest.mark.skipif(
     os.environ.get(REAL_SYSTEM_STEERING_ENVIRONMENT_NAME) != "1",
@@ -91,7 +91,7 @@ async def _exercise(
     assert planner_file.is_relative_to(REPOSITORY_ROOT), (
         f"planner resolved outside the proof worktree: {planner_file}"
     )
-    _prepare_isolated_provider_home(case.backend_key, runtime_root, monkeypatch)
+    require_provider_auth(case.backend_key)
     database_path = runtime_root / "state" / "planner.db"
     workspace = runtime_root / "workspace"
     database_path.parent.mkdir(parents=True)
@@ -128,7 +128,7 @@ async def _exercise(
         "responses": [],
     }
 
-    async with _api(database_path) as client:
+    async with _api(database_path, receipts) as client:
         started = await client.post(
             "/api/conversation/conversations",
             json={
@@ -141,6 +141,9 @@ async def _exercise(
         )
         _keep_response(receipts, "start", started)
         assert started.status_code == 201, started.text
+        await assert_navigation_attention(
+            client, conversation_id, receipts, "created", working=False, awaiting_answer=False
+        )
 
         first = await _send(
             client,
@@ -304,6 +307,9 @@ async def _exercise(
         )
         endings = [event for event in stopped_events if event["kind"] == "turn_ended"]
         assert endings[-1]["payload"]["ending"] == "interrupted"
+        await _keep_and_assert_view(
+            client, conversation_id, receipts, "idle_after_stop", is_running=False
+        )
         await asyncio.sleep(7)
         bounded_stop_events = await _events(client, conversation_id)
         _assert_stopped_effect_absent(bounded_stop_events, forbidden_nonce, forbidden_file)
@@ -333,7 +339,7 @@ async def _exercise(
             is_running=False,
         )
 
-    async with _api(database_path) as resumed_client:
+    async with _api(database_path, receipts) as resumed_client:
         resumed = await _send(
             resumed_client,
             conversation_id,
@@ -406,25 +412,9 @@ async def _exercise(
 
 
 @asynccontextmanager
-async def _api(database_path: Path) -> AsyncIterator[httpx.AsyncClient]:
-    runtime = build_conversation_runtime(
-        db_path=str(database_path),
-        db_busy_timeout_ms=5_000,
-        sse_heartbeat_ms=10_000,
-        backend_child_factories=production_backend_child_factories(
-            panels_server_url="http://127.0.0.1:8811"
-        ),
-    )
-    app = FastAPI()
-    app.include_router(router, prefix="/api/conversation")
-    app.state.conversation = runtime
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://panels.test"
-        ) as client:
-            yield client
-    finally:
-        await runtime.shutdown()
+async def _api(database_path: Path, receipts: dict[str, Any]) -> AsyncIterator[httpx.AsyncClient]:
+    async with provider_application(database_path, receipts) as (client, _runtime):
+        yield client
 
 
 async def _send(
@@ -548,6 +538,9 @@ async def _keep_and_assert_view(
     assert response.status_code == 200
     assert response.json()["is_running"] is is_running
     assert response.json()["held_prompts"] == []
+    await assert_navigation_attention(
+        client, conversation_id, receipts, name, working=is_running, awaiting_answer=False
+    )
 
 
 def _agent_text(events: list[dict[str, Any]]) -> str:
@@ -556,51 +549,6 @@ def _agent_text(events: list[dict[str, Any]]) -> str:
         for event in events
         if event["kind"] == "agent_message"
     )
-
-
-def _prepare_isolated_provider_home(
-    backend_key: ConversationBackendKey,
-    runtime_root: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    if backend_key is ConversationBackendKey.hermes:
-        source = _required_template(HERMES_HOME_TEMPLATE_ENVIRONMENT_NAME)
-        destination = runtime_root / "hermes-home"
-        destination.mkdir()
-        # Isolate configuration, but keep rotating auth in the canonical source home.
-        for name in ("config.yaml", ".env"):
-            if (source / name).exists():
-                shutil.copy2(source / name, destination / name)
-        if (source / "auth.json").exists():
-            (destination / "auth.json").symlink_to(source / "auth.json")
-        monkeypatch.setenv("PLAN_HERMES_HOME", str(destination))
-        return
-    if backend_key is ConversationBackendKey.codex:
-        # Codex keeps one account in one file, and refreshes it in whichever home it is
-        # pointed at. A copied home takes the rotation with it and leaves the real login
-        # holding a spent token, so this case uses the real home as production does. There
-        # is nothing of codex's to isolate that is worth that.
-        return
-    source = _required_template(CLAUDE_CONFIG_TEMPLATE_ENVIRONMENT_NAME)
-    destination = runtime_root / "claude-config"
-    destination.mkdir()
-    if (source / "settings.json").exists():
-        shutil.copy2(source / "settings.json", destination / "settings.json")
-    # Keep rotating credentials in the canonical home. A symlink follows atomic
-    # replacement there, while a copy or hardlink keeps the old credential.
-    if (source / ".credentials.json").exists():
-        (destination / ".credentials.json").symlink_to(source / ".credentials.json")
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(destination))
-
-
-def _required_template(environment_name: str) -> Path:
-    value = os.environ.get(environment_name)
-    if value is None:
-        pytest.fail(f"{environment_name} is required for the selected real provider")
-    path = Path(value).expanduser().resolve()
-    if not path.is_dir():
-        pytest.fail(f"{environment_name} does not name a directory: {path}")
-    return path
 
 
 def _create_database(database_path: Path) -> None:
