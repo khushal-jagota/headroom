@@ -18,6 +18,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -35,9 +36,11 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
+from planner.tickets.contracts import TITLE_MAX_CHARS
 from planner.worker_types.configuration import load_worker_runtime_definitions
 from planner.worker_types.store import read_definition
 
@@ -386,10 +389,14 @@ def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> 
 
 def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> None:
     app, db_path = app_db
-    with TestClient(app) as client:
-        ticket_id = _create(client, "coding")
-        original = "  Historical boundary\n\nKeep this. λ\x00  "
-        with connect(str(db_path)) as conn:
+    original = "  Historical boundary\n\nKeep this. λ\x00  "
+    # Schema reopen runs before the actual runtime owns this synthetic database.
+    with closing(connect(str(db_path))) as conn:
+        with conn:
+            ticket_id = tickets_data.create_ticket(
+                conn, title="coding", worker_type="coding", brief="k",
+                principal=OWNER_PRINCIPAL, now=1, title_max_chars=TITLE_MAX_CHARS,
+            ).id
             conn.execute("UPDATE tickets SET guidance=? WHERE id=?", (original, ticket_id))
             before = hashlib.sha256(
                 conn.execute("SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket_id,))
@@ -402,12 +409,12 @@ def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> 
             expected_record_hash = hashlib.sha256(json.dumps(
                 active_record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
             ).encode()).hexdigest()
-            # Reopening an existing database must leave the historical column alone.
+        conn.set_authorizer(_deny_retired_ticket_guidance)
+        create_schema(conn)
+        assert tickets_data.ticket_record_sha256(conn, ticket_id) == expected_record_hash
+    with TestClient(app) as client:
+        with connect(str(db_path)) as conn:
             conn.set_authorizer(_deny_retired_ticket_guidance)
-            # Schema migration uses its own connection and needs this one idle.
-            conn.commit()
-            create_schema(conn)
-            assert tickets_data.ticket_record_sha256(conn, ticket_id) == expected_record_hash
             ticket = tickets_data.read_ticket(conn, ticket_id)
             conn.execute(
                 "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
