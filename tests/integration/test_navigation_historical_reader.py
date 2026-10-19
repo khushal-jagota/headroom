@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 from tests.support.navigation_current import current_navigation_database
 from tests.support.navigation_historical_source import (
+    CURRENT_STAGING_TIP,
     HISTORICAL_TIP,
     historical_source,
     run_historical,
@@ -33,8 +34,10 @@ def _copy_closed_database(source: Path, target: Path) -> None:
             reader.backup(writer)
 
 
-def _expected_reader_values(result: dict[str, Any], *, later: bool = False) -> None:
-    assert result["tip"] == HISTORICAL_TIP
+def _expected_reader_values(
+    result: dict[str, Any], *, expected_tip: str, later: bool = False,
+) -> None:
+    assert result["tip"] == expected_tip
     assert result["foreign_keys"] == []
     assert result["denied_writes"] == 2
     assert result["projects"]["project_historical"] == (
@@ -71,18 +74,22 @@ def _expected_reader_values(result: dict[str, Any], *, later: bool = False) -> N
         assert json.loads(payload)["text"] == "Synthetic receipt α\nKeep exact bytes."
 
 
-def test_exact_595_ingress_reader_reversal_and_lossy_fixture_restore(
+@pytest.mark.parametrize("expected_tip", [HISTORICAL_TIP, CURRENT_STAGING_TIP], ids=["595", "86"])
+def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
     tmp_path: Path,
+    expected_tip: str,
 ) -> None:
     source = historical_source()
+    if expected_tip == CURRENT_STAGING_TIP:
+        source = source.parent / "t_3p0mtprp-baseline-86"
     if not (source / ".venv/bin/python").exists():
         pytest.skip(
-            "exact 595 tree/interpreter unavailable; set PANELS_NAVIGATION_HISTORICAL_SOURCE"
+            f"exact {expected_tip} tree/interpreter unavailable at {source}"
         )
     # The old source executes its migrations and seed, then exits before transfer.
-    original = tmp_path / "595-source.db"
-    before = run_historical(source, original, "seed")
-    _expected_reader_values(before)
+    original = tmp_path / "staging-source.db"
+    before = run_historical(source, original, "seed", expected_tip=expected_tip)
+    _expected_reader_values(before, expected_tip=expected_tip)
     assert before["source"]["heads"] == [["remove_priority"]]
     candidate = tmp_path / "upgraded.db"
     _copy_closed_database(original, candidate)
@@ -123,8 +130,8 @@ def test_exact_595_ingress_reader_reversal_and_lossy_fixture_restore(
 
     # Stop every candidate owner before invoking bounded legacy read-only readers.
     contents = candidate.read_bytes()
-    after = run_historical(source, candidate, "read")
-    _expected_reader_values(after, later=True)
+    after = run_historical(source, candidate, "read", expected_tip=expected_tip)
+    _expected_reader_values(after, expected_tip=expected_tip, later=True)
     assert after["source"] == later_facts
     assert candidate.read_bytes() == contents
 
@@ -140,10 +147,10 @@ def test_exact_595_ingress_reader_reversal_and_lossy_fixture_restore(
     assert candidate.read_bytes() == contents
 
     # Restore the old synthetic backup into another target, never over the candidate.
-    restored = tmp_path / "restored-595.db"
+    restored = tmp_path / "restored-staging.db"
     _copy_closed_database(original, restored)
-    reopened = run_historical(source, restored, "read")
-    _expected_reader_values(reopened)
+    reopened = run_historical(source, restored, "read", expected_tip=expected_tip)
+    _expected_reader_values(reopened, expected_tip=expected_tip)
     assert reopened["source"] == before["source"]
     with current_navigation_database(restored) as connection:
         restored_snapshot = snapshot(connection)
@@ -167,7 +174,9 @@ def test_exact_595_ingress_reader_reversal_and_lossy_fixture_restore(
         assert facts["aliases"] == before["source"]["aliases"]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     # The original upgraded fixture retains the deliberately discarded later writes.
-    assert run_historical(source, candidate, "read")["ticket"]["title"] == "Later fixture Ticket"
+    assert run_historical(source, candidate, "read", expected_tip=expected_tip)["ticket"]["title"] == (
+        "Later fixture Ticket"
+    )
     print(
         json.dumps(
             {

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 HISTORICAL_TIP = "595eb08ee85e60cb51b28332a850c59f3df26cb6"
+CURRENT_STAGING_TIP = "86da50467e292a863283695dbbbdcf6f0b9d49a7"
 F097_TIP = "f0977a512ba9a6bb1736e15ee9760aa39989a0fc"
 PUBLIC_FOUR_TIP = "82d50c14f4057196883843640dae2ff1aa1d7850"
 DEFAULT_SOURCE = Path(__file__).resolve().parents[3] / "t_3p0mtprp-baseline-595"
@@ -189,7 +190,7 @@ def _main() -> None:
     observed = subprocess.check_output(
         ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
     ).strip()
-    assert expected_tip in {HISTORICAL_TIP, F097_TIP, PUBLIC_FOUR_TIP}
+    assert expected_tip in {HISTORICAL_TIP, CURRENT_STAGING_TIP, F097_TIP, PUBLIC_FOUR_TIP}
     assert observed == expected_tip, observed
     subprocess.run(
         [

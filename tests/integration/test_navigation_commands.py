@@ -250,17 +250,60 @@ def test_real_application_command_families_and_store_writes(
                 },
             )
         )
-        accepted(client.delete(f"/api/collections/outcome_tickets/{item['id']}/{ticket['id']}"))
-        accepted(client.put(f"/api/collections/outcome_tickets/{item['id']}/{ticket['id']}"))
         proposal = accepted(
             client.post(
                 f"/api/tickets/{ticket['id']}/propose",
-                json={
-                    "body": "Observe complete navigation evidence",
-                },
+                json={"body": "Observe complete navigation evidence"},
                 headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket["id"]},
             )
         )
+        other = accepted(client.post(
+            "/api/items", json={"title": "Other orchestrator", "project_id": project["id"]},
+        ))
+
+        def park_for_original_holder() -> dict[str, Any]:
+            return accepted(client.patch(f"/api/tickets/{ticket['id']}", json={
+                "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+                "ceiling_holder": {"kind": "sprint_item", "id": item["id"]},
+            }))
+
+        def owner_release(response: Any, previous: dict[str, Any], parent: str | None) -> None:
+            accepted(response)
+            detail = client.get("/api/tickets", params={"detail": "full", "id": ticket["id"]})
+            assert detail.status_code == 200, detail.text
+            moved = detail.json()
+            assert moved["ceiling_holder"] == {"kind": "owner", "id": "owner"}
+            assert moved["pending_proposal"] == previous["pending_proposal"]
+            projected = client.get("/api/navigation/snapshot", params={
+                "fence": response.headers[FENCE_HEADER.decode()],
+            })
+            assert projected.status_code == 200, projected.text
+            body = projected.json()
+            assert body["proof"]["status"] == "included"
+            value = next(record["value"] for record in body["snapshot"]["records"]
+                         if record["kind"] == "ticket" and record["id"] == ticket["id"])
+            assert value["ceiling_holder"] == moved["ceiling_holder"]
+            assert value["sprint_item_id"] == parent
+            assert value["ticket_status"] == "awaiting_approval"
+            assert value["proposal_revision"] == previous["pending_proposal"]["revision"]
+
+        # Existing routes now prove the domain move and its owner-release publication
+        # together, rather than publishing only a move whose holder already is owner.
+        parked = park_for_original_holder()
+        owner_release(client.patch(f"/api/tickets/{ticket['id']}", json={
+            "orchestrator": {"kind": "sprint_item", "id": other["id"]},
+        }), parked, other["id"])
+        parked = park_for_original_holder()
+        owner_release(client.delete(
+            f"/api/collections/outcome_tickets/{item['id']}/{ticket['id']}",
+        ), parked, None)
+        parked = park_for_original_holder()
+        owner_release(client.put(
+            f"/api/collections/outcome_tickets/{other['id']}/{ticket['id']}",
+        ), parked, other["id"])
+        proposal = client.get(
+            "/api/tickets", params={"detail": "full", "id": ticket["id"]},
+        ).json()
         accepted(
             client.post(
                 f"/api/tickets/{ticket['id']}/accept/{proposal['pending_proposal']['field']}",
