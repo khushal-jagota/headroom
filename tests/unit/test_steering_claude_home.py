@@ -1,69 +1,63 @@
-"""Synthetic proof that the steering harness shares Claude credential rotation."""
+"""Synthetic proof of the steering harness's canonical Claude profile route."""
 
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from tests.integration.test_conversation_real_provider_steering import (
-    CLAUDE_CONFIG_TEMPLATE_ENVIRONMENT_NAME,
-    _prepare_isolated_provider_home,
-)
+from tests.support.real_provider_application import require_provider_auth
 
 from planner.conversation.contracts import ConversationBackendKey
 
 
-def test_claude_home_follows_atomic_credential_rotation_and_isolates_settings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.fixture
+def canonical_claude_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    normal_home = tmp_path / "normal-home"
+    canonical = normal_home / ".claude"
+    canonical.mkdir(parents=True)
+    monkeypatch.setattr(
+        "tests.support.real_provider_application.pwd.getpwuid",
+        lambda _: SimpleNamespace(pw_dir=str(normal_home)),
+    )
+    monkeypatch.setenv("HOME", str(normal_home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(canonical))
+    return canonical
+
+
+def test_claude_canonical_profile_follows_atomic_credential_rotation_without_artifacts(
+    canonical_claude_home: Path, tmp_path: Path
 ) -> None:
-    canonical_home = tmp_path / "canonical-claude"
-    canonical_home.mkdir()
-    credential = canonical_home / ".credentials.json"
+    credential = canonical_claude_home / ".credentials.json"
     credential.write_text('{"synthetic_token": "old"}')
-    settings = canonical_home / "settings.json"
+    settings = canonical_claude_home / "settings.json"
     settings.write_text('{"theme": "dark"}')
-    copied_credential = tmp_path / "copied-credential.json"
-    shutil.copy2(credential, copied_credential)
-    hardlinked_credential = tmp_path / "hardlinked-credential.json"
-    hardlinked_credential.hardlink_to(credential)
-    runtime_root = tmp_path / "runtime"
-    runtime_root.mkdir()
-    monkeypatch.setenv(CLAUDE_CONFIG_TEMPLATE_ENVIRONMENT_NAME, str(canonical_home))
+    before = set(tmp_path.rglob("*"))
 
-    _prepare_isolated_provider_home(ConversationBackendKey.claude, runtime_root, monkeypatch)
+    receipt = require_provider_auth(ConversationBackendKey.claude)
 
-    isolated_home = Path(os.environ["CLAUDE_CONFIG_DIR"])
-    assert isolated_home == runtime_root / "claude-config"
-    isolated_credential = isolated_home / ".credentials.json"
-    assert isolated_credential.is_symlink()
-    assert isolated_credential.resolve() == credential
-    replacement = canonical_home / "replacement.json"
-    replacement.write_text('{"synthetic_token": "new"}')
-    os.replace(replacement, credential)
-    assert isolated_credential.read_text() == '{"synthetic_token": "new"}'
-    assert copied_credential.read_text() == '{"synthetic_token": "old"}'
-    assert hardlinked_credential.read_text() == '{"synthetic_token": "old"}'
-    isolated_settings = isolated_home / "settings.json"
-    assert isolated_settings.read_text() == '{"theme": "dark"}'
-    assert not isolated_settings.is_symlink()
-    assert isolated_settings.stat().st_ino != settings.stat().st_ino
-    isolated_settings.write_text('{"theme": "light"}')
+    profile = Path(receipt["profile"])
+    assert profile == canonical_claude_home
+    assert receipt["profile_variable"] == "CLAUDE_CONFIG_DIR"
+    assert os.environ["CLAUDE_CONFIG_DIR"] == str(canonical_claude_home)
+    assert set(tmp_path.rglob("*")) == before
+    assert credential.read_text() == '{"synthetic_token": "old"}'
     assert settings.read_text() == '{"theme": "dark"}'
 
+    replacement = canonical_claude_home / "replacement.json"
+    replacement.write_text('{"synthetic_token": "new"}')
+    os.replace(replacement, credential)
 
-def test_claude_home_accepts_absent_optional_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    assert (profile / ".credentials.json").read_text() == '{"synthetic_token": "new"}'
+
+
+def test_claude_rejects_noncanonical_profile(
+    canonical_claude_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    canonical_home = tmp_path / "canonical-claude"
-    canonical_home.mkdir()
-    runtime_root = tmp_path / "runtime"
-    runtime_root.mkdir()
-    monkeypatch.setenv(CLAUDE_CONFIG_TEMPLATE_ENVIRONMENT_NAME, str(canonical_home))
+    other_profile = tmp_path / "other-claude"
+    other_profile.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(other_profile))
 
-    _prepare_isolated_provider_home(ConversationBackendKey.claude, runtime_root, monkeypatch)
-
-    isolated_home = Path(os.environ["CLAUDE_CONFIG_DIR"])
-    assert isolated_home == runtime_root / "claude-config"
-    assert list(isolated_home.iterdir()) == []
+    with pytest.raises(AssertionError, match="^CLAUDE_CONFIG_DIR$"):
+        require_provider_auth(ConversationBackendKey.claude)

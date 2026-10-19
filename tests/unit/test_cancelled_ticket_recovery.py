@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 from tests.support.model_catalogue import seed_test_model_catalogue
+from tests.support.retired_workers import seed_historical_worker_type
 from tests.unit.test_db import _migration_tree_through
 
 from planner.cli import http
@@ -61,6 +62,7 @@ def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.
         _migration_tree_through(tmp_path, historical, "current_model_variants")
         create_schema(conn)
     seed_test_model_catalogue(conn)
+    seed_historical_worker_type(conn, "personal")
     try:
         yield conn
     finally:
@@ -360,9 +362,9 @@ def test_pre_cutover_snapshot_recovers_materialized_cancelled_records_without_ol
         assert hashlib.sha256(materialized).hexdigest() == manifest["prepared_database_sha256"]
         create_schema(conn)
         assert conn.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
-        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
-            "remove_priority"
-        )
+        assert {
+            row[0] for row in conn.execute("SELECT version_num FROM alembic_version")
+        } == {"navigation_current_workspace"}
     finally:
         conn.close()
 

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import shutil
 import socket
-import sqlite3
 import subprocess
 import sys
 import time
@@ -85,6 +82,7 @@ def _start_server(
     server_module: str | None = None,
     database_name: str = "planning.db",
 ) -> ServerHandle:
+    started_at = time.monotonic()
     # A1: the log file is opened from THIS process before the subprocess exists;
     # panels serve only creates directories later, inside itself.
     srvdir.mkdir(parents=True, exist_ok=True)
@@ -179,6 +177,7 @@ def _start_server(
             assert root.status_code == 200, root.status_code
             assert "data-svelte-app" in root.text
             _adopt_the_worker_types_the_server_runs_on(db_path)
+            print(f"E2E_SERVER_START {srvdir.name} seconds={time.monotonic() - started_at:.3f}")
             return handle
         time.sleep(0.1)
 
@@ -249,122 +248,23 @@ def restart_server() -> Iterator[Callable[[ServerHandle], ServerHandle]]:
         _stop_server(handle)
 
 
-def _database_has_conversation_runtime(db_path: Path) -> bool:
-    with sqlite3.connect(db_path) as conn:
-        return bool(conn.execute("SELECT EXISTS(SELECT 1 FROM conversations)").fetchone()[0])
-
-
-def _reset_database(db_path: Path) -> None:
-    """Reset mutable rows after the caller confirms that boot-managed state is unchanged."""
-    from planner.core.db import connect, create_schema
-
-    with sqlite3.connect(db_path, isolation_level=None, timeout=10) as conn:
-        conn.execute("PRAGMA foreign_keys=OFF")
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            tables = [
-                str(row[0])
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type='table' AND name NOT LIKE 'sqlite_%' "
-                    "AND name NOT IN ('alembic_version', 'managed_skill_versions', "
-                    "'managed_skills', 'worker_types', 'chief_settings')"
-                )
-            ]
-            for table in tables:
-                # Names came from sqlite_master, but quote them rather than treating a
-                # future migration's table name as SQL.
-                conn.execute(f'DELETE FROM "{table.replace(chr(34), chr(34) * 2)}"')
-            conn.execute("DELETE FROM sqlite_sequence")
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        finally:
-            conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-
-    # create_schema is also the one canonical seed door, so the shared server begins
-    # each test with the same default projects as a newly booted server.
-    with closing(connect(str(db_path))) as conn:
-        create_schema(conn)
-        seed_test_model_catalogue(conn)
-
-
-def _reset_managed_directories(database_parent: Path) -> None:
-    """Remove mutable stores and runner evidence that must not cross test cases."""
-    for name in ("files",):
-        path = database_parent / name
-        if path.is_symlink():
-            path.unlink()
-        elif path.exists():
-            shutil.rmtree(path)
-    for name in ("deployment-lifecycle.json", "deployment-lifecycle.json.lock"):
-        path = database_parent / name
-        if path.exists() or path.is_symlink():
-            path.unlink()
-
-
-def _process_owned_managed_state(handle: ServerHandle) -> tuple[object, ...]:
-    """Compare boot-provisioned state by content, without treating its existence as mutation."""
-    entries: list[object] = []
-    for directory in ("worker-settings", "skills"):
-        root = handle.db_path.parent / directory
-        for path in sorted(root.rglob("*")) if root.exists() else []:
-            relative = str(path.relative_to(handle.db_path.parent))
-            if path.is_symlink():
-                entries.append((relative, "link", os.readlink(path)))
-            elif path.is_file():
-                entries.append((relative, "file", hashlib.sha256(path.read_bytes()).hexdigest()))
-    with sqlite3.connect(handle.db_path) as conn:
-        for table in ("managed_skills", "managed_skill_versions", "worker_types", "chief_settings"):
-            entries.append(
-                (table, tuple(sorted(tuple(row) for row in conn.execute(f"SELECT * FROM {table}"))))
-            )
-    return tuple(entries)
-
-
 class _ReusableServer:
     def __init__(self, root: Path) -> None:
         self._root = root
         self._generation = 0
-        self._used = False
         self.handle: ServerHandle | None = None
-        self._boot_managed_state: tuple[object, ...] = ()
 
     def _start(self) -> ServerHandle:
         srvdir = self._root / f"srv{self._generation}"
         self._generation += 1
-        handle = _start_server(srvdir)
-        self._boot_managed_state = _process_owned_managed_state(handle)
-        return handle
+        return _start_server(srvdir)
 
     def prepare(self) -> ServerHandle:
-        if self.handle is None:
-            self.handle = self._start()
-        if not self._used:
-            self._used = True
-            return self.handle
-
-        if _database_has_conversation_runtime(self.handle.db_path) or (
-            _process_owned_managed_state(self.handle) != self._boot_managed_state
-        ):
-            # Conversation runtime lives in memory, while worker settings and managed
-            # skills may be read and recreated by the running process. Replacing the
-            # process is the only honest reset boundary for tests that touched either;
-            # ordinary row-only tests retain the fast shared process.
+        # Publication and navigation registrations belong to the child lifetime.
+        # A fresh generation resets canonical and derived state under real ownership.
+        if self.handle is not None:
             _stop_server(self.handle)
-            self.handle = self._start()
-            return self.handle
-
-        _reset_database(self.handle.db_path)
-        _reset_managed_directories(self.handle.db_path.parent)
-        response = httpx.post(
-            self.handle.base + "/api/test/set-now",
-            json={"now": FAKE_NOW},
-            timeout=10.0,
-        )
-        assert response.status_code == 200, response.text
+        self.handle = self._start()
         return self.handle
 
     def close(self) -> None:

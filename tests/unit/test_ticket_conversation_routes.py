@@ -185,8 +185,7 @@ def test_resetting_kills_the_conversation_and_unlinks_it(tmp_path: Path) -> None
         assert response.json()["conversation_id"] is None
         assert _conversation_id(db_path, ticket_id) is None
 
-    # And the next message makes a fresh one rather than reaching the killed one.
-    with TestClient(app) as client:
+        # The next message makes a fresh one rather than reaching the killed one.
         after = _send(client, ticket_id, "starting over").json()
     assert after["conversation_id"] != started
 

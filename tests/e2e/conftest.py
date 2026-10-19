@@ -1,9 +1,9 @@
 """E2E harness fixtures (SPEC §18.3 items 22-27). Standalone: imports nothing from
 tests/unit.
 
-Ordinary tests share a real ``panels serve`` subprocess on an OS-assigned port. The
-``server`` fixture resets its canonical SQLite and managed-file state before every test;
-if a test created conversation/runtime state, the fixture replaces the process instead.
+Ordinary tests use a real ``panels serve`` subprocess on an OS-assigned port. The
+``server`` fixture starts a fresh generation before every test so canonical rows, derived
+state, and process-local publication registrations share the same isolated lifetime.
 Tests whose subject is process ownership or special configuration keep using the
 function-scoped ``server_factory`` path. Browser contexts come from pytest-playwright's
 session ``browser``; the ``open_page`` / ``cli`` / ``api`` helpers drive the surfaces.

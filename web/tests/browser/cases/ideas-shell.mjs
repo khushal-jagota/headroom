@@ -15,16 +15,6 @@ const indexPath = join(scratchRoot, `ideas-shell-index-${process.pid}.html`);
 <script lang="ts">
   import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
 
-  const item = (id: string) => ({
-    id,
-    title: "Brief " + id,
-    status: "active",
-    deadline: null,
-    project_id: "project_tribe",
-    project: "Tribe",
-    sprint_id: null
-  });
-  const finalItem = item("item_offboard");
   let ideas: any[] = [];
   const projects = [
     { id: "project_vylo", name: "Vylo" },
@@ -78,8 +68,8 @@ const indexPath = join(scratchRoot, `ideas-shell-index-${process.pid}.html`);
         ]
       });
     }
-    if (path === "/api/board") {
-      return json({ columns: [], sprint_items: [] });
+    if (path === "/api/navigation/snapshot") {
+      return json((window as any).__navigationFixture);
     }
     if (path === "/api/workers") {
       return json({
@@ -94,38 +84,9 @@ const indexPath = join(scratchRoot, `ideas-shell-index-${process.pid}.html`);
         }
       });
     }
-    if (path === "/api/items/item_offboard/workspace") {
+    if (path === "/api/items/item_offboard/workspace-content") {
       return json({
-        ...finalItem,
-        awaiting_reply: false,
-        awaiting_answer: false,
-        awaiting_approval: false,
-        awaiting_agent_approval: false,
-        assigned: false,
-        agent_state: "idle",
-        ticket_rollup: {
-          awaiting_reply: false,
-          awaiting_answer: false,
-          awaiting_approval: false,
-          awaiting_agent_approval: false,
-          assigned: false,
-          agent_state: "idle"
-        },
-        kind: "normal",
         body: "The off-board brief remains readable.",
-        committed_sprints: [],
-        supervisor: {
-          agent_key: "sprint_item:item_offboard",
-          conversation_id: null,
-          launch_configuration: {
-            employee_backend: "codex",
-            employee_launch_model: "gpt-5",
-            employee_launch_reasoning_effort: null
-          }
-        },
-        planning_day_id: "2026-09-05",
-        today_ticket_ids: [],
-        tickets: [],
         artifacts: [],
         conversation_history: []
       });

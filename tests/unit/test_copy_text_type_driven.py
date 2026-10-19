@@ -10,6 +10,7 @@ import pytest
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 from tests.support.probe import (
     install_probe_registry,
+    seed_probe_worker_type,
     uninstall_probe_registry,
 )
 
@@ -25,7 +26,8 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 @pytest.fixture
-def probe_registry() -> Iterator[WorkerTypeDefinition]:
+def probe_registry(tmp_db: Connection) -> Iterator[WorkerTypeDefinition]:
+    seed_probe_worker_type(tmp_db)
     definition = install_probe_registry()
     try:
         yield definition

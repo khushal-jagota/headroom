@@ -23,7 +23,8 @@ from planner.days.data import add_day_ticket
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.api import add_conversation_row_signals, review
-from planner.tickets.contracts import TITLE_MAX_CHARS
+from planner.tickets.contracts import TITLE_MAX_CHARS, PendingTicketProposal
+from planner.tickets.logic.fields_codec import proposal_to_json
 from planner.tickets.views import board_view, review_view
 from planner.work_attention import add_work_attention, read_running_conversation_count
 from planner.worker_settings.api import add_agent_conversation_signals
@@ -170,8 +171,11 @@ def test_ticket_attention_combines_ownership_proposal_and_conversation_facts(
         ),
     )
     conn.execute(
-        "UPDATE tickets SET conversation_id = 'c_attention', pending_proposal = '{}' WHERE id = ?",
-        (ticket.id,),
+        "UPDATE tickets SET conversation_id = 'c_attention', pending_proposal = ? WHERE id = ?",
+        (
+            proposal_to_json(PendingTicketProposal("brief", "Review this brief.", "worker", 2)),
+            ticket.id,
+        ),
     )
     row: JsonDict = {"id": ticket.id}
 
@@ -291,7 +295,13 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     ]
     add_day_ticket(conn, "2026-10-16", rows[0].id, 1)
     for index in (1, 3):
-        conn.execute("UPDATE tickets SET pending_proposal = '{}' WHERE id = ?", (rows[index].id,))
+        conn.execute(
+            "UPDATE tickets SET pending_proposal = ? WHERE id = ?",
+            (
+                proposal_to_json(PendingTicketProposal("brief", "Review this brief.", "worker", 2)),
+                rows[index].id,
+            ),
+        )
     conn.execute("UPDATE tickets SET stage = 'needs_answer' WHERE id = ?", (rows[2].id,))
     conn.execute(
         "UPDATE tickets SET ceiling_holder = ? WHERE id = ?",
@@ -733,9 +743,9 @@ def test_exact_conversation_signal_is_independent_for_workers_supervisors_and_ch
                 "{}" if unread else json.dumps({"ending": "completed"}),
             ),
         )
-    # A completed stage and a parked approval cannot suppress actual runtime work.
+    # A completed stage cannot suppress actual runtime work.
     conn.execute(
-        "UPDATE tickets SET conversation_id = 'worker', stage = 'done', pending_proposal = '{}' "
+        "UPDATE tickets SET conversation_id = 'worker', stage = 'done', pending_proposal = NULL "
         "WHERE id = ?",
         (ticket.id,),
     )
@@ -760,6 +770,21 @@ def test_exact_conversation_signal_is_independent_for_workers_supervisors_and_ch
 
     chief = asyncio.run(project())
     expected = {"working": running, "message_for_owner": unread}
+    assert worker["conversation_signal"] == expected
+    assert supervisor["conversation_signal"] == expected
+    assert chief["conversation_signal"] == expected
+    assert "conversation_signal" not in supervisor["ticket_rollup"]
+
+    # A separate valid parked proposal must preserve the same exact signals.
+    conn.execute(
+        "UPDATE tickets SET stage = 'needs_brief', pending_proposal = ? WHERE id = ?",
+        (
+            proposal_to_json(PendingTicketProposal("brief", "Review this brief.", "worker", 2)),
+            ticket.id,
+        ),
+    )
+    conn.commit()
+    chief = asyncio.run(project())
     assert worker["conversation_signal"] == expected
     assert supervisor["conversation_signal"] == expected
     assert chief["conversation_signal"] == expected

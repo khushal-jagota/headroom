@@ -560,6 +560,10 @@ It works for idle Workers and user-owned Stages without a restart or a message.
 It preserves backend and reasoning choices. Active turns finish on their current model.
 The next turn resolves the corrected model within the same conversation.
 The action does not approve work, change a Stage, clear a claim, or start a turn.
+Both preview and apply resolve models outside a write transaction. Each accepted
+correction acquires a short writer transaction, checks current authority again, and
+compares the saved selection before its update. No resolver await crosses that
+transaction. Failed targets retain their individual errors in the batch.
 See [model correction commands](cli.md#correct-saved-models).
 
 Code: `src/planner/conversation/`, `src/planner/runtime/`.
