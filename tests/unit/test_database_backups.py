@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from planner.environments.backup import (
+    RETENTION_COUNT,
     _is_verified_snapshot,
     create_database_backup,
     restore_database_snapshot,
@@ -64,16 +65,16 @@ def test_backup_uses_online_snapshot_and_records_integrity_metadata(tmp_path: Pa
         assert connection.execute("SELECT value FROM records").fetchone()[0] == "committed in WAL"
 
 
-def test_retention_keeps_seven_verified_snapshots(tmp_path: Path) -> None:
+def test_retention_keeps_the_configured_verified_snapshots(tmp_path: Path) -> None:
     source = tmp_path / "planning.db"
     backup_dir = tmp_path / "backups"
     with sqlite3.connect(source) as connection:
         connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    for revision in range(8):
+    for revision in range(RETENTION_COUNT + 1):
         create_database_backup(source, backup_dir, str(revision))
 
     snapshots = sorted(backup_dir.glob("snapshot-*"))
-    assert len(snapshots) == 7
+    assert len(snapshots) == RETENTION_COUNT
     assert all((snapshot / "metadata.json").exists() for snapshot in snapshots)
 
 
