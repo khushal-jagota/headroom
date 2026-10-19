@@ -32,6 +32,7 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.store import definition_from_json
 
 type Key = tuple[str, str]
+type TicketOwners = dict[str, dict[str, dict[str, Any]]]
 
 # UPDATE capture deliberately ignores private provider cursors, catalog and compaction.
 SOURCES: dict[str, tuple[str, str | None]] = {
@@ -297,10 +298,30 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
     return roots
 
 
+def _ticket_owners_by_conversation(conn: sqlite3.Connection) -> TicketOwners:
+    """Read current ownership once for this rebuild, including historical aliases."""
+    tickets = {
+        ticket["id"]: ticket
+        for ticket in rows(conn, "SELECT id,sprint_item_id,conversation_id FROM tickets")
+    }
+    owners: TicketOwners = {}
+    for ticket in tickets.values():
+        if ticket["conversation_id"] is not None:
+            owners.setdefault(ticket["conversation_id"], {})[ticket["id"]] = ticket
+    for association in rows(conn, "SELECT conversation_id,ticket_id FROM ticket_conversations"):
+        historical_ticket = tickets.get(association["ticket_id"])
+        if historical_ticket is not None:
+            owners.setdefault(association["conversation_id"], {})[historical_ticket["id"]] = (
+                historical_ticket
+            )
+    return owners
+
+
 def _derive(
     conn: sqlite3.Connection,
     root: Key,
     definitions: dict[str, WorkerTypeDefinition] | None = None,
+    ticket_owners: TicketOwners | None = None,
 ) -> tuple[list[NavigationRecord], set[Key]]:
     kind, identity = root
     deps: set[Key] = set()
@@ -314,7 +335,8 @@ def _derive(
             "SELECT t.title,t.worker_type,t.stage,t.deadline,t.orchestrator_kind,"
             "t.sprint_item_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,"
             "t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,"
-            "t.updated_at,t.created_at,t.recap," + priority_column
+            "t.updated_at,t.created_at,t.recap,"
+            + priority_column
             + "COALESCE(i.project_id,t.project_id) effective_project "
             "FROM tickets t LEFT JOIN sprint_items i ON i.id=t.sprint_item_id WHERE t.id=?",
             (identity,),
@@ -474,7 +496,13 @@ def _derive(
                 "ticket_conversations",
             )
         )
-        found = rows(conn, "SELECT * FROM conversations WHERE conversation_id=?", (identity,))
+        found = rows(
+            conn,
+            "SELECT latest_sequence,owner_read_through_sequence,latest_agent_activity_sequence,"
+            "latest_agent_activity_at,identity_environment_variables "
+            "FROM conversations WHERE conversation_id=?",
+            (identity,),
+        )
         if not found:
             return [], deps
         c = found[0]
@@ -505,13 +533,18 @@ def _derive(
             value["attention"] = read_current_attention(conn, identity)
         records.append(_record(kind, identity, value))
         addresses: dict[Key, dict[str, Any]] = {}
-        for t in rows(
-            conn,
-            "SELECT t.id,t.sprint_item_id,t.conversation_id FROM tickets t "
-            "LEFT JOIN ticket_conversations tc ON tc.ticket_id=t.id "
-            "WHERE t.conversation_id=? OR tc.conversation_id=? GROUP BY t.id",
-            (identity, identity),
-        ):
+        owners = (
+            rows(
+                conn,
+                "SELECT t.id,t.sprint_item_id,t.conversation_id FROM tickets t "
+                "LEFT JOIN ticket_conversations tc ON tc.ticket_id=t.id "
+                "WHERE t.conversation_id=? OR tc.conversation_id=? GROUP BY t.id",
+                (identity, identity),
+            )
+            if ticket_owners is None
+            else ticket_owners.get(identity, {}).values()
+        )
+        for t in owners:
             deps.add(("tickets", t["id"]))
             parent = _parent(t)
             if parent[0] == "orchestrator":
@@ -628,8 +661,9 @@ def _put_root(
     *,
     derived: tuple[list[NavigationRecord], set[Key]] | None = None,
     definitions: dict[str, WorkerTypeDefinition] | None = None,
+    ticket_owners: TicketOwners | None = None,
 ) -> tuple[list[NavigationRecord], list[RecordKey]]:
-    new, deps = _derive(conn, root, definitions) if derived is None else derived
+    new, deps = _derive(conn, root, definitions, ticket_owners) if derived is None else derived
     previous_values = {
         (str(r[0]), str(r[1])): r[2]
         for r in conn.execute(
@@ -767,6 +801,9 @@ def finalize(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO navigation_journal VALUES(?,?)", (base + 1, _json(batch)))
     conn.execute("UPDATE navigation_meta SET revision=? WHERE singleton=1", (base + 1,))
     conn.execute("DELETE FROM navigation_dirty")
+    from planner.navigation.views.projection import update as update_views
+
+    update_views(conn, upserts, deletes)
 
 
 def _replace_epoch(conn: sqlite3.Connection) -> None:
@@ -781,6 +818,9 @@ def _replace_epoch(conn: sqlite3.Connection) -> None:
 def reset_epoch(conn: sqlite3.Connection) -> Continuity:
     _require_current_schema(conn)
     _replace_epoch(conn)
+    from planner.navigation.views.projection import rebuild as rebuild_views
+
+    rebuild_views(conn)
     return cast(Continuity, _continuity(conn))
 
 
@@ -813,9 +853,13 @@ def rebuild(conn: sqlite3.Connection) -> None:
             if kind == "orchestrator":
                 roots.add(("totals", "orchestrator:" + identity))
     definitions: dict[str, WorkerTypeDefinition] = {}
+    ticket_owners = _ticket_owners_by_conversation(conn)
     for root in sorted(roots, key=lambda key: (key[0] == "totals", key)):
-        _put_root(conn, root, definitions=definitions)
+        _put_root(conn, root, definitions=definitions, ticket_owners=ticket_owners)
     _replace_epoch(conn)
+    from planner.navigation.views.projection import rebuild as rebuild_views
+
+    rebuild_views(conn)
 
 
 def _require_current_schema(conn: sqlite3.Connection) -> None:

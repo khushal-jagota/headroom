@@ -7,10 +7,13 @@ file. Nothing edits the copy: an edit goes to the row, and the row is written ou
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sqlite3
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
@@ -25,6 +28,23 @@ PACKAGED_SKILLS_ROOT: Final = Path(__file__).resolve().parent / SKILLS_DIR_NAME
 
 def managed_skills_home(configured_database_parent: Path | str) -> Path:
     return Path(configured_database_parent).expanduser() / SKILLS_DIR_NAME
+
+
+@contextmanager
+def skill_publication_lock(configured_database_parent: Path | str) -> Iterator[Path]:
+    """Serialize row reads and publication across processes and threads.
+
+    Every caller opens a fresh descriptor. The inode stays in place between calls,
+    because unlinking it would let another caller lock a different inode.
+    """
+    root = managed_skills_home(configured_database_parent).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / ".publication.lock").open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield root
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def atomic_replace_bytes(path: Path, content: bytes) -> None:
@@ -252,12 +272,13 @@ def write_skill_home(conn: sqlite3.Connection, configured_database_parent: Path 
     Only a file whose bytes differ is rewritten, so the copies keep their modification
     times and a worker home's symlinks are never disturbed by a read.
     """
-    root = managed_skills_home(configured_database_parent)
-    root.mkdir(parents=True, exist_ok=True)
-    for name, source_text in read_all_skill_sources(conn).items():
-        path = root / name / SKILL_FILE_NAME
-        content = source_text.encode("utf-8")
-        if path.is_file() and path.read_bytes() == content:
-            continue
-        atomic_replace_bytes(path, content)
+    if conn.in_transaction:
+        raise RuntimeError("write_skill_home requires a connection with no active transaction")
+    with skill_publication_lock(configured_database_parent) as root:
+        for name, source_text in read_all_skill_sources(conn).items():
+            path = root / name / SKILL_FILE_NAME
+            content = source_text.encode("utf-8")
+            if path.is_file() and path.read_bytes() == content:
+                continue
+            atomic_replace_bytes(path, content)
     return root

@@ -10,7 +10,7 @@ def run(browser, urls):
     page.locator('[data-screen="more"]').click()
     page.locator(".fb-count").wait_for()
     shell_requests = page.evaluate("window.__requests()")
-    assert any(r["path"] == "/api/feedback/count" for r in shell_requests)
+    assert any(r["path"] == "/api/resource-body?key=%2Fapi%2Ffeedback%2Fcount" for r in shell_requests)
     assert not any(r["path"] == "/api/feedback" for r in shell_requests)
     page.keyboard.press("Escape")
     page.evaluate("window.location.hash = '#/feedback'")

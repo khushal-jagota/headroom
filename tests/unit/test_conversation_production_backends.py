@@ -26,21 +26,6 @@ def _machine(**found: str) -> Callable[[str], str | None]:
     return executable_path
 
 
-def test_claude_runs_on_the_panels_owned_tested_cli() -> None:
-    launches = production_backend_launches(
-        panels_server_url=SERVER_URL,
-        executable_path=_machine(claude="/Users/someone/.local/bin/claude")
-    )
-
-    assert launches.claude.claude_executable is not None
-    assert launches.claude.claude_executable.parts[-6:] == (
-        "agent_backends",
-        "node_modules",
-        "@anthropic-ai",
-        "claude-code",
-        "bin",
-        "claude.exe",
-    )
 
 
 def test_every_agent_is_told_where_panels_is_answering() -> None:

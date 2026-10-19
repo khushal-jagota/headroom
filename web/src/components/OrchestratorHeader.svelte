@@ -4,10 +4,14 @@
   import ClampedText from "./ClampedText.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import RequestRecapAction from "./RequestRecapAction.svelte";
+  import RecapSlot from "./RecapSlot.svelte";
 
   // The goal pair is optional because Chief has a recap and no goal: it is permanent,
   // so what it is for is not a thing anyone edits.
-  let { title, eyebrow, goal, onSaveGoal, recap, onSaveRecap, signal, conversationId = null }: {
+  // ``recapTarget`` is the agent that can be asked for a fresh recap. Every agent with a
+  // recap passes one; a header shown without a live agent behind it passes nothing.
+  let { title, eyebrow, goal, onSaveGoal, recap, onSaveRecap, signal, conversationId = null, recapTarget = null }: {
     title: Snippet;
     eyebrow?: Snippet;
     goal?: string;
@@ -16,6 +20,7 @@
     onSaveRecap?: (value: string) => Promise<unknown>;
     signal?: Partial<ConversationSignal>;
     conversationId?: string | null;
+    recapTarget?: { kind: "sprint_item" | "chief"; id: string } | null;
   } = $props();
 </script>
 
@@ -44,6 +49,8 @@
   {/if}
   {#if recap !== undefined && onSaveRecap}
     {#if goal !== undefined}<p class="sprint-workspace-recap-label">Recap</p>{/if}
+    <RecapSlot>
+    {#snippet children()}
     <ClampedText
       class="sprint-workspace-recap"
       contentKey={recap}
@@ -59,6 +66,13 @@
         onSave={onSaveRecap}
       />
     </ClampedText>
+    {/snippet}
+    </RecapSlot>
+  {/if}
+  {#if recapTarget !== null}
+    <div class="sprint-workspace-recap-ask">
+      <RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} />
+    </div>
   {/if}
 </header>
 
@@ -69,5 +83,9 @@
   /* No padding on the clamped block itself: ClampedText measures its scrollHeight
      against a line count, so padding there reports an empty recap as overflowing. */
   .sprint-workspace-recap-label { font-family:var(--font-ui); font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-faintest); margin-top:var(--space-4); }
-  .sprint-workspace-head :global(.sprint-workspace-recap) { font-family:var(--font-ui); font-size:15px; line-height:1.6; margin-top:var(--space-1); max-width:66ch; }
+  /* The gap sits on the animating slot, not inside it: a margin on the clamped block
+     would stay behind the height the slot is measuring. */
+  .sprint-workspace-head :global([data-recap-slot]) { margin-top:var(--space-1); }
+  .sprint-workspace-head :global(.sprint-workspace-recap) { font-family:var(--font-ui); font-size:15px; line-height:1.6; max-width:66ch; }
+  .sprint-workspace-recap-ask { margin-top:var(--space-3); font-size:13px; color:var(--text-muted); }
 </style>

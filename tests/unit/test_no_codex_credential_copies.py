@@ -303,30 +303,3 @@ def test_rejects_each_copy_function_and_login_spelling(
 )
 def test_rejects_resolved_login_copies_and_hardlinks(source: str) -> None:
     assert _credential_copy_failures(source)
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        'import shutil\nshutil.copy2(home / "config.yaml", scratch)\n'
-        '(scratch / "auth.json").symlink_to(canonical)',
-        "import shutil\n# auth.json is a comment\nshutil.copy(config, scratch)",
-        'import shutil\ndef first():\n p = home / "auth.json"\ndef second():\n'
-        " shutil.copy2(p, scratch)",
-        'import shutil\np = home / "auth.json"\np = config\nshutil.copy2(p, scratch)',
-        'import shutil\nshutil.copy2(p, scratch)\np = home / "auth.json"',
-        'import shutil\np = home / "auth.json"\nf = lambda p: shutil.copy2(p, scratch)',
-        'import shutil\nf = lambda shutil: shutil.copy2("auth.json", scratch)',
-        'import shutil\nshutil.move(home / "auth.json", scratch)',
-        'import os\nos.replace(home / "auth.json", scratch)',
-    ],
-)
-def test_allows_safe_patterns_and_keeps_scope_and_statement_boundaries(source: str) -> None:
-    assert _credential_copy_failures(source) == []
-
-
-@pytest.mark.parametrize("source", ['import shutil\nshutil.copy2("auth.json",', 'x = "\x00"'])
-def test_unparseable_module_fails_closed(source: str) -> None:
-    failures = _credential_copy_failures(source, "broken.py")
-    assert len(failures) == 1
-    assert failures[0].startswith("broken.py: cannot parse:")

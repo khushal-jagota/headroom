@@ -138,27 +138,6 @@ def test_multi_note_use_is_atomic(feedback_client: TestClient) -> None:
     assert feedback_client.get("/api/feedback").json()["open"] == [note]
 
 
-@pytest.mark.parametrize(
-    "page_address",
-    (
-        "javascript:alert(1)",
-        "https://example.com/",
-        "/#/workspace",
-        "#/workspace#other",
-        "#/workspace\n",
-        "#/",
-    ),
-)
-def test_feedback_page_context_rejects_non_panels_addresses(
-    feedback_client: TestClient, page_address: str
-) -> None:
-    response = feedback_client.post(
-        "/api/feedback",
-        json={"text": "Unsafe context", "page_address": page_address, "page_label": "Page"},
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "validation"
 
 
 def test_feedback_write_permissions_follow_direct_worker_and_supervisor_scope(

@@ -24,6 +24,13 @@ def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
     path = tmp_path / "content.db"
     with sqlite3.connect(path) as conn:
         conn.execute(
+            "CREATE TABLE resource_source_versions("
+            "source_kind TEXT,source_id TEXT,revision INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO resource_source_versions VALUES('workspace-orchestrator','item',7)"
+        )
+        conn.execute(
             "CREATE TABLE sprint_items(id TEXT PRIMARY KEY,goal TEXT NOT NULL,recap TEXT NOT NULL)"
         )
         conn.execute(
@@ -76,7 +83,7 @@ def no_summary(*args: object, **kwargs: object) -> None:
     raise AssertionError("content must not request summaries or Signal")
 
 
-def test_content_keeps_exact_document_history_and_artifacts_without_summary_work(
+def test_content_keeps_exact_document_without_unopened_catalog_or_summary_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -85,27 +92,10 @@ def test_content_keeps_exact_document_history_and_artifacts_without_summary_work
     monkeypatch.setattr(views, "item_detail", no_summary)
     monkeypatch.setattr(views, "item_tickets", no_summary)
     monkeypatch.setattr(api, "add_work_attention", no_summary)
+    monkeypatch.setattr(sprint_item_files, "list_artifact_entries", no_summary)
     expected = {
         "goal": "Original\n  goal",
         "recap": "Right now",
-        "conversation_history": [
-            {"conversation_id": "old", "created_at": 10},
-            {"conversation_id": "new", "created_at": 20},
-        ],
-        "artifacts": [
-            {
-                "name": "proof.md",
-                "opens": "artifacts/proof.md",
-                "modified_at": 20.0,
-                "children": [],
-            },
-            {
-                "name": "site",
-                "opens": "artifacts/site/index.html",
-                "modified_at": 10.0,
-                "children": [],
-            },
-        ],
     }
 
     async def run() -> None:
@@ -117,13 +107,22 @@ def test_content_keeps_exact_document_history_and_artifacts_without_summary_work
                 "/api/items/item/workspace-content",
                 headers={"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "item"},
             )
+            versioned = await client.get(
+                "/api/resource-body", params={"key": "/api/items/item/workspace-content"}
+            )
         assert owner.status_code == supervisor.status_code == 200
         assert owner.json() == supervisor.json() == expected
+        assert versioned.status_code == 200
+        assert versioned.json()["body"] == expected
+        assert versioned.json()["revision"] == "7"
         assert owner.headers["cache-control"] == supervisor.headers["cache-control"] == "no-store"
 
     asyncio.run(run())
     assert app.state.conversation is None and not app.state.navigation_delivery.ready
-    assert not any("tickets" in query.lower() or "navigation" in query.lower() for query in reads)
+    assert not any(
+        any(name in query.lower() for name in ("tickets", "navigation", "conversations"))
+        for query in reads
+    )
     assert path.read_bytes() == before
 
 
@@ -148,8 +147,18 @@ def test_content_checks_authority_before_read_and_preserves_missing_identity(
                         "X-Plan-Sprint-Item-ID": "foreign",
                     },
                 )
+                foreign_versioned = await client.get(
+                    "/api/resource-body",
+                    params={"key": "/api/items/item/workspace-content"},
+                    headers={
+                        "X-Plan-Actor": "sprint_item_supervisor",
+                        "X-Plan-Sprint-Item-ID": "foreign",
+                    },
+                )
             assert foreign.status_code == 400  # Existing agent_forbidden HTTP mapping.
             assert foreign.json()["error"]["code"] == "agent_forbidden"
+            assert foreign_versioned.status_code == foreign.status_code
+            assert foreign_versioned.json()["error"]["code"] == "agent_forbidden"
             assert not any(
                 "goal" in query.lower() or "conversations" in query.lower() for query in reads
             )

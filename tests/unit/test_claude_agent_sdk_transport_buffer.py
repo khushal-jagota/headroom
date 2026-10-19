@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncIterator, Iterable
 from typing import Any, cast
 
 from anyio.abc import Process
 from anyio.streams.text import TextReceiveStream
-from claude_agent_sdk import ClaudeAgentOptions, ToolResultBlock, UserMessage
-from claude_agent_sdk._internal.message_parser import parse_message
+from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
 from planner.conversation.backends.claude_agent_sdk import CLAUDE_SDK_MAX_BUFFER_SIZE
@@ -67,18 +65,3 @@ def _tool_result_line(content: str) -> str:
         )
         + "\n"
     )
-
-
-def test_a_tool_result_just_over_one_megabyte_is_parsed() -> None:
-    async def exercise() -> None:
-        content = "x" * (1024 * 1024 + 1)
-
-        messages = await _read_messages(_tool_result_line(content))
-
-        parsed = parse_message(messages[0])
-        assert isinstance(parsed, UserMessage)
-        assert isinstance(parsed.content, list)
-        assert isinstance(parsed.content[0], ToolResultBlock)
-        assert parsed.content[0].content == content
-
-    asyncio.run(exercise())

@@ -116,12 +116,12 @@ dropped entirely, not stored and not shown.
 Late backend prose, deltas, tool activity, asks, usage, and extra endings remain
 live-turn facts and are discarded after the turn ends.
 
-Reading is one rule everywhere: fetch the rows after the last one you hold, then
-listen for new ones. Opening a conversation, reconnecting after a dropped
-connection, and a second device are all that same fetch. Nothing re-downloads
-mid-read.
+The durable event record remains authoritative. The browser reads indexed server views,
+not the complete event history. Each view supplies recent bounded pages, compact status,
+and one selected tail. Older pages remain available through the existing transcript and
+fold controls. Source references preserve access to complete large bodies.
 
-A browser with no saved lens choice opens through the Focus lens. Focus shows the
+A fresh conversation pane opens through the Focus lens. Focus shows the
 owner's prompts, explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
@@ -140,12 +140,20 @@ core supplies an honest unknown-reason fallback if an adapter supplies no usable
 Full shows the complete runtime notebook, every held prompt, all live agent text, and
 every tool call without a Focus fold. The header toggle and the unmodified `f` key switch
 the lens without replacing the conversation. Editable controls keep the key. The browser
-keeps the choice across conversation switches, new conversations, and later visits.
+keeps an explicit choice across conversation switches and New within the mounted pane.
+A fresh pane starts in Focus again.
 
-The lens changes only what the person reads. Liveness, streaming, reconnects, and
-snapshots continue to use the complete feed. A switch to another conversation invalidates
-the old read and tail. A late snapshot, row, frame, or refresh from the old conversation
-cannot change the newly opened conversation.
+Focus requests only visible content and compact current status. Full requests its history
+only after explicit selection. A Full request starts a temporary file for current-turn
+output. That file survives hidden views, rest, lens switches, and the final reader's exit.
+The canonical turn end or runtime reset removes it. Startup removes files from stale runtime
+identities. Open body responses keep their immutable file version through replacement.
+
+Rest and hidden panes release transcript bodies and native previews. They retain compact
+status and logical UI state. A conversation switch invalidates the old requests and tail.
+A late response from the previous conversation cannot change the new view. Page reads pause
+stream admission, then replay from unchanged coverage across every retained scope. A closed
+fold cancels its pending page. Page failures also resume the tail.
 
 While an active lens is open, the owner read position advances through the newest delivered
 row. Runtime-only rows can clear an unread mark because each lens displays every result that
@@ -354,6 +362,14 @@ Unaddressed loop and maintenance prompts do not. The agent role requires one exp
 send to each addressed sender before the turn ends.
 Panels classifies that accepted send as the reply, so its recipient receives no counter-
 reply requirement and agent conversations cannot form an acknowledgement loop.
+
+The owner can also ask an agent for a fresh recap. That ask is one route taking a Ticket,
+orchestrator, or Chief principal. It empties the recap being replaced and steers the same
+fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
+keep it short and top level." Only the owner may ask, and the owner is the only principal
+it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
+the agent writes rather than words it sends back, so it is the one addressed send that
+carries no reply requirement and leaves no missing-reply marker.
 
 An actual native slash command uses its backend's exact control route, so its wire form
 does not carry the reply requirement. The adapter reports that fact with its delivery

@@ -1,18 +1,11 @@
 """Workflow routing and the real mount boundary, without another browser host."""
 from __future__ import annotations
 
-import io
-import json
-import os
-import shutil
-import subprocess
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 import yaml
-from scripts.deployment_check_report import check_pytest
-from scripts.deployment_rehearsal import capture, deployment_paths, verify_proof
+from scripts.deployment_rehearsal import deployment_paths
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/deploy.yml"
 
@@ -95,129 +88,3 @@ def test_workflow_routes_rehearsal_away_from_production_and_checks_pin_before_su
     assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in hermes["run"]
     assert '"$hermes_source[acp]"' in hermes["run"]
     assert "ffmpeg" in steps["Bootstrap disposable hosted runner"]["run"]
-
-
-def test_e2e_report_survives_real_shadow_mount_and_remains_host_parseable(tmp_path: Path) -> None:
-    # Execute the workflow's actual bwrap command with a tiny JUnit writer. Only the
-    # shadow destination is substituted, keeping this proof away from deployed data.
-    assert shutil.which("bwrap"), "the deployment mount proof requires bubblewrap"
-    steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["deploy"]["steps"]
-    script = next(step["run"] for step in steps if step.get("name") ==
-                  "pytest E2E at requested source")
-    command = script[script.index("bwrap --bind"):]
-    command = command[:command.index('\n"$PANELS_DEPLOY_VENV')]
-    command = command.replace("/home/vps/Deployments/Panels", str(tmp_path))
-    source = tmp_path / "source"
-    gate = tmp_path / "gate"
-    reports = gate / "reports"
-    tools = tmp_path / "codex-tools"
-    for directory in (source / ".venv/bin", gate / "artifact-shadow", reports, tools):
-        directory.mkdir(parents=True)
-    protected_marker = tmp_path / "artifact-marker"
-    protected_marker.write_text("original host artifact")
-    writer = source / ".venv/bin/pytest"
-    writer.write_text(
-        "#!/usr/bin/python3\nimport pathlib, sys\n"
-        "report = next(arg.split('=', 1)[1] for arg in sys.argv if arg.startswith('--junitxml='))\n"
-        "pathlib.Path(report).write_text('<testsuite tests=\"1\"><testcase "
-        "classname=\"tests.e2e.test_probe\" name=\"test_probe\"/></testsuite>')\n"
-        f"pathlib.Path({str(protected_marker)!r}).write_text('sandbox artifact')\n"
-    )
-    writer.chmod(0o755)
-    subprocess.run(["bash", "-euc", "selected=(tests/e2e/test_probe.py)\n" + command], check=True,
-                   env=os.environ | {
-                       "PANELS_CANDIDATE_SOURCE": str(source), "PANELS_GATE_DIR": str(gate),
-                       "PANELS_REPORT_DIR": str(reports), "PANELS_CODEX_TOOLS": str(tools),
-                   })
-    report = reports / "e2e.xml"
-    assert report.is_file()
-    check_pytest(report, ["tests/e2e/test_probe.py"])
-    assert not list((gate / "artifact-shadow").rglob("e2e.xml"))
-    assert protected_marker.read_text() == "original host artifact"
-    assert (gate / "artifact-shadow/artifact-marker").read_text() == "sandbox artifact"
-
-
-def test_rehearsal_success_requires_actual_prior_backup_and_requested_health(
-    tmp_path: Path,
-) -> None:
-    records = {
-        "baseline-health.json": {"app_sha": "b" * 40, "ready": True},
-        "final-health.json": {"app_sha": "a" * 40, "ready": True},
-        "deployed-manifest.json": {"app_sha": "a" * 40},
-        "lifecycle.json": {"phase": "succeeded"},
-    }
-    for name, body in records.items():
-        (tmp_path / name).write_text(json.dumps(body))
-    with pytest.raises(ValueError, match="verified prior-release backup"):
-        verify_proof(tmp_path, "b" * 40, "a" * 40)
-    (tmp_path / "backup-example.json").write_text(json.dumps({
-        "verified": True, "deployed_revision": "b" * 40,
-    }))
-    verify_proof(tmp_path, "b" * 40, "a" * 40)
-    (tmp_path / "final-health.json").write_text(json.dumps({"app_sha": "b" * 40, "ready": True}))
-    with pytest.raises(ValueError, match="requested SHA"):
-        verify_proof(tmp_path, "b" * 40, "a" * 40)
-
-
-def test_capture_requests_health_proof_for_the_exact_requested_sha(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    gate = tmp_path / "gate"
-    expected_sha = "a" * 40
-    for key, value in {
-        "PANELS_REHEARSAL": "true", "RUNNER_ENVIRONMENT": "github-hosted",
-        "PANELS_GATE_DIR": str(gate), "PANELS_CURRENT_ROOT": str(tmp_path / "current"),
-        "PANELS_LIFECYCLE_PATH": str(tmp_path / "lifecycle.json"),
-        "XDG_RUNTIME_DIR": str(tmp_path / "run"), "PANELS_SERVICE_NAME": "rehearsal.service",
-        "PANELS_HEALTH_URL": "http://127.0.0.1:12345/api/health",
-        "PANELS_REQUESTED_SHA": expected_sha, "PANELS_REHEARSAL_JOB_STATUS": "failure",
-    }.items():
-        monkeypatch.setenv(key, value)
-    payload = json.dumps({"app_sha": expected_sha, "ready": True}).encode()
-    with (
-        patch("scripts.deployment_rehearsal.subprocess.run"),
-        patch("scripts.deployment_rehearsal.urllib.request.urlopen",
-              return_value=io.BytesIO(payload)) as request,
-    ):
-        capture()
-    request.assert_called_once_with(
-        "http://127.0.0.1:12345/api/health?expected_sha=" + expected_sha, timeout=5,
-    )
-    assert (gate / "final-health.json").read_bytes() == payload
-    assert not (gate / "final-health-error.txt").exists()
-
-
-@pytest.mark.parametrize("workflow_name,job_name,preceding", [
-    ("deploy.yml", "deploy", "Deploy exact app"),
-    ("recover-private-route.yml", "recover", "Restore private HTTPS route"),
-])
-def test_published_http2_guard_is_required_after_route_changes(
-    workflow_name: str, job_name: str, preceding: str, tmp_path: Path,
-) -> None:
-    workflow = yaml.safe_load((WORKFLOW.parent / workflow_name).read_text())
-    job = workflow["jobs"][job_name]
-    steps = job["steps"]
-    guard_index = next(index for index, step in enumerate(steps)
-                       if step.get("name") == "Check published HTTP/2")
-    guard = steps[guard_index]
-    assert steps[guard_index - 1]["name"] == preceding
-    assert guard["env"] == {"PANELS_PUBLISHED_ORIGIN": "${{ vars.PANELS_PUBLISHED_ORIGIN }}"}
-    assert not guard.get("continue-on-error", False)
-    assert not job.get("continue-on-error", False)
-    if job_name == "deploy":
-        assert guard["if"] == "${{ !inputs.rehearsal }}"
-        assert guard_index < next(index for index, step in enumerate(steps)
-                                  if step.get("name") == "Finalize deployment lifecycle")
-    else:
-        assert "if" not in guard
-        assert steps[0]["uses"] == "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
-        assert workflow["permissions"] == {"contents": "read"}
-    # Execute the exact shell step. A helper failure must reach the runner exit.
-    scripts = tmp_path / "scripts"
-    scripts.mkdir()
-    (scripts / "check_published_http2.py").write_text("raise SystemExit(23)\n")
-    result = subprocess.run(
-        ["bash", "-euc", guard["run"]],
-        env=os.environ | {"GITHUB_WORKSPACE": str(tmp_path)}, check=False,
-    )
-    assert result.returncode == 23

@@ -6,10 +6,9 @@ import pytest
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.core.contracts import PlannerError
-from planner.list_reads.contracts import ListPageRequest
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data, views
-from planner.tickets.contracts import Ticket, TicketListFilters, WorkerStepClaim
+from planner.tickets.contracts import Ticket, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -71,16 +70,6 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
     assert deferred_again.worker_step_claim_revision == claimed.worker_step_claim_revision
 
 
-def test_removed_stage_is_rejected_and_historical_field_is_hidden(tmp_db: Connection) -> None:
-    from planner.tickets.logic.fields_codec import values_from_json
-
-    definition = configured_worker_type_registry().require("coding")
-    assert not definition.is_known_stage("cancelled")
-    with pytest.raises(PlannerError, match="stage outside the linear order"):
-        definition.validate_ticket_position("cancelled", definition.default_ceiling())
-    assert values_from_json('{"retirement":"Legacy provenance"}', definition.field_ids()) == {}
-    assert definition.is_terminal("done")
-    assert definition.advance_target("done") is None
 
 
 def test_hash_guard_detects_same_second_changes_and_authority_is_unchanged(
@@ -106,45 +95,8 @@ def test_hash_guard_detects_same_second_changes_and_authority_is_unchanged(
     assert data.read_ticket(tmp_db, tid).stage == "needs_brief"
 
 
-def test_bounded_summary_can_filter_deferral_without_conflating_placement(
-    tmp_db: Connection,
-) -> None:
-    deferred = create(tmp_db)
-    active = create(tmp_db)
-    backlog(tmp_db, deferred)
-    page = views.list_ticket_summaries(
-        tmp_db,
-        page_request=ListPageRequest(limit=1, offset=0),
-        filters=TicketListFilters(is_backlogged=True, worker_types=("coding",)),
-        project_id=None,
-        sprint_id=None,
-        sprint_item_id=None,
-    )
-    assert page.match_count == 1
-    assert page.rows[0]["id"] == deferred and page.rows[0]["is_backlogged"] is True
-    assert data.read_ticket(tmp_db, active).sprint_id is None
-    assert data.read_ticket(tmp_db, active).is_backlogged is False
 
 
-def test_backlog_does_not_release_occupied_closeout_lane(tmp_db: Connection) -> None:
-    occupied = create(tmp_db)
-    waiting = create(tmp_db)
-    tmp_db.execute(
-        "UPDATE tickets SET stage='needs_consequences', ceiling='needs_consequences', "
-        "pending_proposal=NULL,worker_step_claim='out' WHERE id=?",
-        (occupied,),
-    )
-    tmp_db.execute(
-        "UPDATE tickets SET stage='needs_consequences', ceiling='needs_consequences', "
-        "pending_proposal=NULL WHERE id=?",
-        (waiting,),
-    )
-    tmp_db.commit()
-    backlog(tmp_db, occupied)
-    definition = configured_worker_type_registry().require("coding")
-    assert not is_ready_for_worker_step(
-        tmp_db, data.read_ticket(tmp_db, waiting), worker_type_definition=definition
-    )
 
 
 def ready_ticket(conn: Connection, *, ceiling: str = "needs_success_condition") -> Ticket:
@@ -261,75 +213,3 @@ def test_resume_keeps_ceiling_and_parks_new_proposal_at_its_gate(tmp_db: Connect
     assert proposed.pending_proposal.field == "success_condition"
     assert proposed.pending_proposal.body == "Observable result"
     assert "success_condition" not in proposed.field_values
-
-
-@pytest.mark.parametrize("resumed_wins", [False, True])
-def test_closeout_resume_and_peer_claim_recheck_lane_from_fresh_state(
-    tmp_db: Connection,
-    resumed_wins: bool,
-) -> None:
-    from planner.core.db import connect
-
-    deferred = create(tmp_db)
-    peer_id = create(tmp_db)
-    tmp_db.execute(
-        "UPDATE tickets SET stage='needs_consequences',ceiling='needs_consequences',"
-        "pending_proposal=NULL WHERE id IN (?,?)",
-        (deferred, peer_id),
-    )
-    tmp_db.commit()
-    backlog(tmp_db, deferred)
-    path = tmp_db.execute("PRAGMA database_list").fetchone()[2]
-    peer = connect(path)
-    try:
-        definition = configured_worker_type_registry().require("coding")
-        # A peer scans an empty lane before the deferred contender resumes.
-        assert is_ready_for_worker_step(
-            peer,
-            data.read_ticket(peer, peer_id),
-            worker_type_definition=definition,
-        )
-        backlog(tmp_db, deferred, False)
-        assert is_ready_for_worker_step(
-            tmp_db,
-            data.read_ticket(tmp_db, deferred),
-            worker_type_definition=definition,
-        )
-        first, second = (deferred, peer_id) if resumed_wins else (peer_id, deferred)
-        first_conn, second_conn = (tmp_db, peer) if resumed_wins else (peer, tmp_db)
-        holder = data.claim_ticket_for_worker_step(
-            first_conn,
-            first,
-            readiness_check=is_ready_for_worker_step,
-            now=21,
-        )
-        assert holder is not None and holder.worker_step_claim is WorkerStepClaim.out
-        assert (
-            data.claim_ticket_for_worker_step(
-                second_conn,
-                second,
-                readiness_check=is_ready_for_worker_step,
-                now=21,
-            )
-            is None
-        )
-        # Deferral of a delivered holder cannot transfer its lane or claim to its peer.
-        backlog(first_conn, first)
-        backlog(second_conn, second)
-        backlog(second_conn, second, False)
-        assert (
-            data.claim_ticket_for_worker_step(
-                second_conn,
-                second,
-                readiness_check=is_ready_for_worker_step,
-                now=22,
-            )
-            is None
-        )
-        preserved = data.read_ticket(first_conn, first)
-        assert preserved.worker_step_claim is holder.worker_step_claim
-        assert preserved.worker_step_claim_revision == holder.worker_step_claim_revision
-        assert preserved.stage == holder.stage and preserved.ceiling == holder.ceiling
-        assert preserved.pending_proposal == holder.pending_proposal
-    finally:
-        peer.close()

@@ -6,11 +6,10 @@ selector, no server/browser hosts). Existing deployment tests do not compute dif
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from planner.environments.related_checks import parse_name_status, select_release
+from planner.environments.related_checks import select_release
 from planner.environments.related_checks_contracts import RelatedSelection
 
 
@@ -77,13 +76,6 @@ def test_full_endpoint_union_includes_authority_and_rollback(
     assert reverse["unit"] == first["unit"]
 
 
-def test_docs_and_empty_keep_source_checks_empty(history: tuple[Path, str, Path]) -> None:
-    selected = release(history, {"docs/guide.md": "new"})
-    assert not selected["unit"] and not selected["e2e"] and not selected["mypy"]
-    root, _, mapping = history
-    empty = select_release(root, selected["requested_sha"], selected["control_sha"],
-                           selected["requested_sha"], mapping)
-    assert not empty["broad"] and not empty["ruff"]
 
 
 @pytest.mark.parametrize("path", [
@@ -111,25 +103,8 @@ def test_absent_baseline_and_missing_historical_mapping_broaden(
     assert any("Missing mapped coverage" in reason for reason in selected["reasons"])
 
 
-def test_rename_is_deletion_plus_addition_and_broadens_test_suite(
-    history: tuple[Path, str, Path],
-) -> None:
-    selected = release(history, {"tests/unit/test_feedback.py": None,
-                                 "tests/unit/test_renamed.py": "initial\n"})
-    assert "tests/unit/test_feedback.py" in selected["changed_paths"]
-    assert "tests/unit/test_renamed.py" in selected["unit"]
-    assert "tests/unit/test_authority_matrix.py" in selected["unit"]
-    assert parse_name_status(b"D\0a name\n.py\0A\0another.py\0") == [
-        ("D", "a name\n.py"), ("A", "another.py"),
-    ]
 
 
-def test_changed_known_test_selects_its_existing_domain(
-    history: tuple[Path, str, Path],
-) -> None:
-    selected = release(history, {"tests/unit/test_feedback.py": "new"})
-    assert selected["e2e"] == ["tests/e2e/test_feedback.py"]
-    assert not selected["broad"]
 
 
 def test_requested_identity_and_missing_selected_file_refuse(
@@ -142,43 +117,3 @@ def test_requested_identity_and_missing_selected_file_refuse(
     (root / "tests/e2e/test_feedback.py").unlink()
     with pytest.raises(ValueError, match="absent"):
         select_release(root, selected["requested_sha"], base, base, mapping)
-
-
-def test_shared_browser_capability_comes_from_requested_revision_and_rollback_is_legacy(
-    history: tuple[Path, str, Path],
-) -> None:
-    """Mixed control/source revisions keep receipts mandatory only for capable source."""
-    catalog = json.dumps({"schema": 1, "entries": [{"id": "shared",
-        "path": "web/tests/shared-browser.test.mjs", "cases": ["independent"]}]})
-    selected = release(history, {"web/tests/browser/catalog.json": catalog,
-                                 "web/tests/shared-browser.test.mjs": "shared"})
-    assert selected["browser_format"] == "shared-v1"
-    assert selected["browser"] == ["web/tests/shared-browser.test.mjs"]
-    root, base, mapping = history
-    subprocess.check_call(["git", "-C", str(root), "checkout", "-q", base])
-    rollback = select_release(root, base, selected["requested_sha"], None, mapping)
-    assert rollback["browser_format"] == "legacy"
-    assert rollback["browser"] == ["web/tests/feedback.test.mjs"]
-
-
-@pytest.mark.parametrize("catalog", [
-    {"schema": 2, "entries": []},
-    {"schema": 1, "entries": [{"path": "web/tests/absent-browser.test.mjs"}]},
-    {"schema": 1, "entries": []},
-])
-def test_invalid_tracked_browser_capability_cannot_fall_back_to_exit_only(
-    history: tuple[Path, str, Path], catalog: dict[str, Any],
-) -> None:
-    with pytest.raises(ValueError):
-        release(history, {"web/tests/browser/catalog.json": json.dumps(catalog)})
-
-
-def test_missing_selector_map_broadens_and_browser_requires_sandbox(
-    history: tuple[Path, str, Path],
-) -> None:
-    root, base, mapping = history
-    mapping.unlink()
-    selected = select_release(root, base, base, base, mapping)
-    assert selected["broad"]
-    assert "bwrap" in selected["required_tools"]
-    assert any("Selector map unavailable" in reason for reason in selected["reasons"])

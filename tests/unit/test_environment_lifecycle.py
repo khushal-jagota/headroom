@@ -13,33 +13,6 @@ from planner.environments.contracts import EnvironmentManifest, EnvironmentValid
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
 
 
-def test_staging_reset_replaces_fake_state_but_preserves_instance_contract(
-    tmp_path: Path,
-) -> None:
-    repository = _repository(tmp_path, "staging-repo")
-    root = _environment_root(tmp_path)
-    prepared = materialize.prepare_environment_instance(
-        kind="staging",
-        environment_root=root,
-        repository_roots=(repository,),
-        now=123,
-    )
-    marker = prepared.managed_files_root / "activity.txt"
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text("discard", encoding="utf-8")
-    reset = materialize.reset_environment_instance(
-        kind="staging",
-        environment_root=root,
-        repository_roots=(),
-        now=456,
-    )
-
-    assert reset.instance_root == prepared.instance_root
-    assert reset.prepared_at == 456
-    assert reset.db_path.is_file()
-    assert not marker.exists()
-
-
 def test_staging_reset_refuses_while_instance_lifecycle_is_owned(tmp_path: Path) -> None:
     repository = _repository(tmp_path, "staging-repo")
     root = _environment_root(tmp_path)

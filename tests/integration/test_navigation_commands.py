@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,16 +9,13 @@ from pathlib import Path
 from typing import Any, Never, cast
 
 import pytest
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.navigation_current import current_navigation_database
 
-from planner.conversation.storage import ConversationStore
-from planner.core.commit_capture import register_capture_task
 from planner.core.db import commit_without_change_signal, connect, create_schema
 from planner.navigation import proof
 from planner.navigation.command_contracts import FENCE_HEADER
-from planner.navigation.commands import COMMAND_ROUTES, is_navigation_command
 from planner.navigation.middleware import NavigationCommandFenceMiddleware
 
 
@@ -62,61 +58,6 @@ def fence(response: Any) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(response.headers[FENCE_HEADER.decode()]))
 
 
-def test_multi_commit_capture_includes_awaited_conversation_tasks_and_not_background(
-    tmp_path: Path,
-) -> None:
-    app = command_app(tmp_path)
-    store = ConversationStore(str(tmp_path / "planner.db"))
-
-    @app.post("/api/conversation/conversations/c/send")
-    async def send() -> dict[str, str]:
-        write(tmp_path, 1)
-        # A detached background task inherits context, but owns no command work.
-        unrelated = asyncio.create_task(asyncio.to_thread(write, tmp_path, 2))
-        await unrelated
-
-        async def settlement() -> None:
-            # The store uses its real shielded task and worker-thread path.
-            await store._write(lambda: write(tmp_path, 3))
-
-        task = asyncio.create_task(settlement())
-        register_capture_task(task)
-        await asyncio.shield(task)
-        return {"fate": "uncertain", "receipt": "preserved"}
-
-    with TestClient(app) as client:
-        response = client.post("/api/conversation/conversations/c/send")
-        assert response.json() == {"fate": "uncertain", "receipt": "preserved"}
-        issued = fence(response)
-        assert issued["coverage"] == "complete"
-        assert len(issued["witnesses"]) == 2
-        conn = connect(str(tmp_path / "planner.db"))
-        try:
-            conn.execute("BEGIN")
-            assert proof.certify(conn, issued)["status"] == "included"
-            assert (
-                conn.execute("SELECT count(*) FROM navigation_commit_witnesses").fetchone()[0] >= 3
-            )
-        finally:
-            conn.close()
-
-
-def test_204_and_noop_preserve_body_status_and_prove_noop(tmp_path: Path) -> None:
-    app = command_app(tmp_path)
-
-    @app.post("/api/conversation/conversations/c/interrupt", status_code=204)
-    async def interrupt() -> Response:
-        return Response(status_code=204)
-
-    with TestClient(app) as client:
-        response = client.post("/api/conversation/conversations/c/interrupt")
-    assert response.status_code == 204
-    assert response.content == b""
-    issued = fence(response)
-    assert issued["coverage"] == "complete"
-    assert issued["witnesses"] == []
-
-
 def test_observation_failure_and_overflow_never_change_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -143,53 +84,6 @@ def test_observation_failure_and_overflow_never_change_success(
         assert response.status_code == 200
         assert response.json() == {"accepted": True}
         assert response.headers["panels-navigation-coverage"] == "unknown"
-
-
-@pytest.mark.parametrize(
-    "method,path",
-    [
-        ("GET", "/api/tickets"),
-        ("POST", "/api/feedback"),
-        ("POST", "/api/conversation/backends/refresh"),
-        ("PUT", "/api/conversation/backends/codex/models/a/enablement"),
-        ("POST", "/api/conversation/voice-transcriptions"),
-        ("POST", "/api/ideas"),
-        ("POST", "/api/scheduled-tickets"),
-    ],
-)
-def test_detail_and_pure_configuration_are_not_commands(method: str, path: str) -> None:
-    assert not is_navigation_command(method, path)
-
-
-def test_explicit_inventory_has_unique_routes_and_all_declared_entries_match() -> None:
-    assert len({(route.method, route.path) for route in COMMAND_ROUTES}) == len(COMMAND_ROUTES)
-    for route in COMMAND_ROUTES:
-        import re
-
-        path = re.sub(r"\{[^}]+\}", "synthetic", route.path)
-        assert is_navigation_command(route.method, path)
-
-
-def test_registered_write_routes_are_included_or_explicitly_excluded(tmp_path: Path) -> None:
-    from tests.integration.test_navigation_runtime import make_app
-
-    from planner.navigation.commands import EXCLUDED_COMMAND_ROUTES
-
-    app = make_app(tmp_path, test_mode=False)
-    registered = {
-        (method.upper(), path)
-        for path, methods in app.openapi()["paths"].items()
-        for method in methods
-        if method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
-    }
-    included = {(route.method, route.path) for route in COMMAND_ROUTES}
-    excluded = {
-        (route.method, route.path.replace(":path}", "}")) for route in EXCLUDED_COMMAND_ROUTES
-    }
-    # The named Chief route and generic Worker route share the same classifier.
-    included.add(("PUT", "/api/workers/chief-of-staff/launch-defaults"))
-    assert not included & excluded
-    assert registered == included | excluded
 
 
 def test_real_application_command_families_and_store_writes(

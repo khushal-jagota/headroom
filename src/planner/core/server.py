@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic as _monotonic
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
@@ -21,11 +22,13 @@ from planner.conversation.api import router as conversation_router
 from planner.conversation.backend_state import DurableCodexLoginRejection
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import ConversationBackendKey, ConversationSystem
+from planner.conversation.history.api import router as conversation_history_router
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
 from planner.conversation.usage.api import router as recorded_usage_router
 from planner.conversation.usage.pricing import UsagePricingService
 from planner.conversation.usage.service import RecordedUsageService
+from planner.conversation.views.api import router as conversation_views_router
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import HOST, Config
@@ -39,6 +42,7 @@ from planner.core.response_compression import (
 from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
+from planner.core.web_assets import WebAssets
 from planner.days.api import router as days_router
 from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.vps_status import (
@@ -49,12 +53,15 @@ from planner.environments.vps_status import (
 )
 from planner.feedback.api import router as feedback_router
 from planner.files.api import router as files_router
+from planner.files.catalog.api import router as artifact_catalog_router
 from planner.membership.api import router as membership_router
 from planner.message_delivery.api import router as message_delivery_router
 from planner.navigation.delivery import create_delivery_runtime
 from planner.navigation.middleware import NavigationCommandFenceMiddleware
+from planner.navigation.views.delivery import ScopedDeliveryRuntime
 from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
+from planner.resource_versions.api import router as resource_versions_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
 from planner.server_lifecycle.runtime import application_runtime
 from planner.skill_versions import (
@@ -63,6 +70,7 @@ from planner.skill_versions import (
 )
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
+from planner.tickets.workspace.api import router as ticket_workspace_router
 from planner.worker_settings.api import router as worker_settings_router
 from planner.worker_types.configuration import (
     configured_worker_runtime_definitions,
@@ -73,6 +81,7 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.stale_claim: 409,
     ErrorCode.already_running: 409,
     ErrorCode.gateway_offline: 503,
+    ErrorCode.skill_save_incomplete: 500,
 }
 
 
@@ -156,7 +165,10 @@ def create_app(
             app.state.conversation = None
             try:
                 try:
-                    await navigation_delivery.close()
+                    try:
+                        await scoped_navigation.close()
+                    finally:
+                        await navigation_delivery.close()
                 finally:
                     if loops is not None:
                         deadline = _monotonic() + float(config.shutdown_grace_seconds)
@@ -215,6 +227,7 @@ def create_app(
                 )
 
             await navigation_delivery.start()
+            await scoped_navigation.start()
             await conversation.system.start_idle_child_janitor()
             lifecycle_observer = asyncio.create_task(
                 observe_path_changes(deployment_lifecycle_path, change_signal.emit)
@@ -224,6 +237,7 @@ def create_app(
             yield
 
     navigation_delivery = create_delivery_runtime(config.db_path)
+    scoped_navigation = ScopedDeliveryRuntime(navigation_delivery)
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     app.add_middleware(
         NavigationCommandFenceMiddleware,
@@ -259,6 +273,8 @@ def create_app(
         Path(config.db_path).expanduser().resolve(strict=False).parent / "deployment-lifecycle.json"
     )
     deployment_lifecycle_store = DeploymentLifecycleStore(deployment_lifecycle_path)
+    app.state.deployment_lifecycle_store = deployment_lifecycle_store
+    app.state.resource_version_epoch = str(uuid4())
 
     @app.exception_handler(PlannerError)
     async def handle_planner_error(request: Request, exc: PlannerError) -> JSONResponse:
@@ -274,6 +290,10 @@ def create_app(
 
     for domain_router in (
         tickets_router,
+        ticket_workspace_router,
+        resource_versions_router,
+        artifact_catalog_router,
+        conversation_history_router,
         projects_router,
         sprints_router,
         days_router,
@@ -286,8 +306,10 @@ def create_app(
     ):
         include_router(domain_router, prefix="/api")
     include_router(navigation_delivery.router)
+    include_router(scoped_navigation.router)
     include_router(files_router)
     include_router(conversation_router, prefix="/api/conversation")
+    include_router(conversation_views_router, prefix="/api/conversation")
     include_router(recorded_usage_router, prefix="/api/conversation")
 
     @app.get("/api/meta")
@@ -369,7 +391,7 @@ def create_app(
     if config.test_mode:
         include_router(build_test_router(config, clock), prefix="/api")
     if _WEB_DIST.is_dir():
-        app.mount("/_app", StaticFiles(directory=_WEB_DIST, html=True), name="vite_app")
+        app.mount("/_app", WebAssets(directory=_WEB_DIST, html=True), name="vite_app")
     app.mount("/assets", StaticFiles(directory=_ASSETS_DIR), name="assets")
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
     # Reads are large and the link is remote, so bodies travel compressed. Level 4 is

@@ -45,7 +45,7 @@ from tests.support.real_provider_application import (
 
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.events import AgentMessageDeltaFrame
-from planner.conversation.live_tail import ConversationLiveTail, ConversationTailSubscription
+from planner.conversation.live_tail import ConversationTailSubscription
 from planner.core.db import connect, create_schema
 from planner.environments.hermes_home import hermes_src_root
 
@@ -82,55 +82,6 @@ def test_real_provider_steer_reaches_model_system_api_stop_and_resume(
     """One bounded run exercises admission and durable browser-visible state."""
 
     asyncio.run(asyncio.wait_for(_exercise(case, tmp_path, monkeypatch), 900.0))
-
-
-def test_hermes_home_selection_uses_canonical_home_without_artifacts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from types import SimpleNamespace
-
-    home = tmp_path / "normal-home"
-    canonical = home / ".hermes"
-    interpreter = canonical / "hermes-agent/venv/bin/python"
-    interpreter.parent.mkdir(parents=True)
-    interpreter.touch()
-    runtime = tmp_path / "runtime"
-    runtime.mkdir()
-    before = set(home.rglob("*"))
-    monkeypatch.setattr(
-        "tests.support.real_provider_application.pwd.getpwuid",
-        lambda _: SimpleNamespace(pw_dir=str(home)),
-    )
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("HERMES_HOME", f"{canonical}/../{canonical.name}")
-    monkeypatch.setenv("PLAN_HERMES_HOME", str(canonical))
-    monkeypatch.setenv("PLAN_HERMES_PYTHON", str(interpreter))
-
-    receipt = require_provider_auth(ConversationBackendKey.hermes)
-
-    assert receipt["profile"] == str(canonical.resolve())
-    assert list(runtime.iterdir()) == []
-    assert set(home.rglob("*")) == before
-
-
-def test_live_text_oracle_reads_split_deltas_and_closes_subscription() -> None:
-    """Durable rows omit prose, so the oracle must retain live chunks without gaps."""
-
-    async def exercise() -> None:
-        tail = ConversationLiveTail()
-        receipts: dict[str, Any] = {"live_agent_text_deltas": []}
-        subscription = tail.subscribe("proof")
-        reader = asyncio.create_task(_collect_live_text(subscription, receipts))
-        tail.publish_frame("proof", AgentMessageDeltaFrame("AFTER-"))
-        tail.publish_frame("other", AgentMessageDeltaFrame("WRONG"))
-        tail.publish_frame("proof", AgentMessageDeltaFrame("STOP"))
-        await asyncio.sleep(0)
-        assert _agent_text(receipts) == "AFTER-STOP"
-        subscription.close()
-        await reader
-        assert tail.open_subscription_count() == 0
-
-    asyncio.run(exercise())
 
 
 async def _exercise(

@@ -38,6 +38,7 @@ from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.maintenance.cli import maintenance as maintenance_group
 from planner.message_delivery.contracts import MessageDeliveryMode
 from planner.tickets.contracts import TicketLocale
+from planner.worker_settings.contracts import SkillPatch
 from planner.worker_types.contracts import BRIEF_FIELD_ID
 
 _LOCALES = [locale.value for locale in TicketLocale]
@@ -922,18 +923,25 @@ def worker_type_save(as_json: bool) -> None:
 
 @worker_type_group.command("skill")
 @click.argument("worker_type")
-@click.option("--description", required=True, help="The one-line description in the frontmatter.")
+@click.option("--description", help="The one-line description in the frontmatter.")
 @json_option
-def worker_type_skill(worker_type: str, description: str, as_json: bool) -> None:
-    """Replace this Worker type's skill. Markdown body on stdin."""
-    body = read_worker_stdin_body(as_json, "skill body")
+def worker_type_skill(worker_type: str, description: str | None, as_json: bool) -> None:
+    """Edit this Worker type's skill. Optional Markdown body on redirected stdin."""
+    patch = _read_skill_patch(description, as_json)
+    worker_path = quote(worker_type, safe="")
+    definition = http.send("GET", f"/api/worker-types/{worker_path}", as_json=as_json)
+    skill_name = definition["profile"]["specialist_skill"]
     data = http.send(
-        "PUT",
-        f"/api/workers/{worker_type}/skill",
-        json_body={"description": description, "markdown_body": body},
+        "PATCH",
+        f"/api/skills/{quote(skill_name, safe='')}",
+        json_body=patch,
         as_json=as_json,
     )
-    http.emit(data, as_json, f"{data['specialist_skill']['name']} saved")
+    if as_json:
+        # Keep the legacy settings envelope while the write uses the common door.
+        detail = http.send("GET", f"/api/workers/{worker_path}", as_json=True)
+        data = detail["settings"]
+    http.emit(data, as_json, f"{skill_name} saved")
 
 
 # --- project ------------------------------------------------------------------
@@ -941,7 +949,58 @@ def worker_type_skill(worker_type: str, description: str, as_json: bool) -> None
 
 @main.group("skill", hidden=True)
 def skill_group() -> None:
-    """Inspect the managed skills."""
+    """Inspect and edit the managed skills."""
+
+
+def _read_skill_patch(description: str | None, as_json: bool) -> SkillPatch:
+    patch: SkillPatch = {}
+    if description is not None:
+        if not description.strip():
+            http.fail_validation("description must not be blank", as_json)
+        patch["description"] = description
+    body = "" if sys.stdin.isatty() else sys.stdin.read()
+    if body:
+        if not body.strip():
+            http.fail_validation("markdown_body must not be blank", as_json)
+        patch["markdown_body"] = body
+    if not patch:
+        http.fail_validation("supply --description or a skill body on redirected stdin", as_json)
+    return patch
+
+
+@skill_group.command("list")
+@json_option
+def skill_list(as_json: bool) -> None:
+    """List the managed skill names."""
+    data = http.send("GET", "/api/skills", as_json=as_json)
+    http.emit(data, as_json, _lines(data["skills"], lambda item: str(item["name"])))
+
+
+@skill_group.command("show")
+@click.argument("name")
+@json_option
+def skill_show(name: str, as_json: bool) -> None:
+    """Print a skill's Markdown body, or its full record as JSON."""
+    data = http.send("GET", f"/api/skills/{quote(name, safe='')}", as_json=as_json)
+    if as_json:
+        http.emit(data, True, "")
+    click.echo(data["markdown_body"], nl=False)
+
+
+@skill_group.command("edit")
+@click.argument("name")
+@click.option("--description", help="The one-line description in the frontmatter.")
+@json_option
+def skill_edit(name: str, description: str | None, as_json: bool) -> None:
+    """Edit a skill. Optional Markdown body on redirected stdin."""
+    patch = _read_skill_patch(description, as_json)
+    data = http.send(
+        "PATCH",
+        f"/api/skills/{quote(name, safe='')}",
+        json_body=patch,
+        as_json=as_json,
+    )
+    http.emit(data, as_json, f"{data['name']} saved")
 
 
 @skill_group.command("check")

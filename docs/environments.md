@@ -154,3 +154,12 @@ path.
 ---
 
 _Last verified: 2026-08-09._
+
+## Python build prerequisites
+
+The indexed workspace ordering uses PyICU, pinned in `requirements.txt`. Install
+ICU headers, `pkg-config`, and a C++ compiler before creating the Python environment.
+On Debian use `apt-get install libicu-dev pkg-config build-essential`. On macOS use
+`brew install icu4c pkg-config`, then set `PKG_CONFIG_PATH` to
+`$(brew --prefix icu4c)/lib/pkgconfig` for the Python dependency installation.
+The runtime needs the matching ICU shared libraries.

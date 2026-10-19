@@ -464,6 +464,14 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
             {"target": {"kind": "ticket", "id": s.ticket_a}, "message": "Hello."},
         ),
     ),
+    (
+        "POST   /recap-requests",
+        lambda s: Call(
+            "POST",
+            "/api/recap-requests",
+            {"target": {"kind": "ticket", "id": s.ticket_a}},
+        ),
+    ),
 )
 
 

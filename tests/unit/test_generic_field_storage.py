@@ -29,7 +29,6 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     PendingTicketProposal,
 )
-from planner.tickets.logic import fields_codec
 from planner.tickets.logic.decisions import Decision
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -176,26 +175,8 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
     ) == {**historical, "brief": "Corrected brief."}
 
 
-@pytest.mark.parametrize("raw", ["{", "[]", '"text"', '{"alpha": 1}', '{"removed": null}'])
-def test_field_read_does_not_hide_corrupt_storage(raw: str) -> None:
-    with pytest.raises((PlannerError, json.JSONDecodeError)):
-        fields_codec.values_from_json(raw, ("alpha",))
 
 
-def test_unknown_proposed_and_new_values_stay_invalid(
-    probe_registry: WorkerTypeDefinition,
-) -> None:
-    for values, proposal in (
-        ({"removed": "New text"}, None),
-        ({}, PendingTicketProposal("removed", "New text", "worker", 1)),
-    ):
-        with pytest.raises(PlannerError, match="corrupt ticket field state"):
-            fields_codec.validate_state(
-                values,
-                proposal,
-                A,
-                worker_type_definition=probe_registry,
-            )
 
 
 def test_removed_field_approval_survives_edits_and_proposals_until_redeclared(

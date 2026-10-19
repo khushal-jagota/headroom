@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  const navigation=navigationApplication();
+  import { navigationScrollWindow } from "../lib/navigation/views/scrollWindow";
+  import type { ViewWindow } from "../lib/navigation/contracts";
   import { onDestroy } from "svelte";
   import { createRailPreviewInput } from "../lib/workspaceRailInteraction";
   import type { WorkspaceTicketGroup } from "../lib/workspaceRail";
@@ -8,12 +12,14 @@
   import SprintTicketRow from "./SprintTicketRow.svelte";
   import OrchestratorEyebrow from "./OrchestratorEyebrow.svelte";
   import chiefProfile from "../assets/chief-of-staff-profile.webp";
-  let { id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+  let { navigationWindow=undefined, onWindow=()=>undefined, onVisibility=()=>undefined, id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
+    navigationWindow?:ViewWindow;onWindow?:(anchor:string,direction:'before'|'after')=>void;onVisibility?:(id:string,visible:boolean)=>void;
     id: string; title: string; project?: string | null; chief?: boolean; signal?: Partial<ConversationSignal>; conversationId?: string | null; selected: boolean;
     selectedTicketId: string | null; groups: WorkspaceTicketGroup[]; busy?: boolean;
     onSelect: () => void; onTicket: (id: string) => void; onSettle: () => void;
     onHover: (target: HTMLElement, immediate?: boolean) => void; onWorkerHover: (target: HTMLElement, ticket: WorkItemTicketFacts, immediate?: boolean) => void; onLeave: () => void;
   } = $props();
+  function visibility(node:HTMLElement){const observer=new IntersectionObserver(entries=>onVisibility(id,entries[0].isIntersecting),{root:node.closest('.active-work-scroll'),rootMargin:'200px'});observer.observe(node);return{destroy(){observer.disconnect();onVisibility(id,false);}};}
   const inputs = new Map<string, ReturnType<typeof createRailPreviewInput>>();
   function input(ticket?: WorkItemTicketFacts) {
     const key = ticket?.id ?? "head";
@@ -32,7 +38,7 @@
   });
   onDestroy(() => { for (const controller of inputs.values()) controller.dispose(); });
 </script>
-<section role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button")) onSelect(); }} data-rail-motion={`card:${id}`} class="orchestrator-card" class:chief class:selected onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-sprint-item={chief ? undefined : id}>
+<section use:visibility use:navigationScrollWindow={{window:navigationWindow,activate:()=>navigation?.owner.prioritizeWindow(navigationWindow?.request),selector:'[data-ticket-id]',key:node=>node.dataset.ticketId ?? '',move:onWindow}} role="presentation" onclick={(event) => { if (!(event.target as HTMLElement).closest("button")) onSelect(); }} data-rail-motion={`card:${id}`} class="orchestrator-card" class:chief class:selected onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} data-sprint-item={chief ? undefined : id}>
   <div class="identity">
     {#if !chief}<OrchestratorEyebrow {project} {title} rail {busy} {onSettle} />{/if}
     <button type="button" class="item-head" onclick={(event) => { if (input().click(event)) onSelect(); }} aria-current={selected ? "page" : undefined} data-chief-destination={chief ? "" : undefined} onpointerenter={(event) => input().pointerEnter(event)} onpointerleave={onLeave} onpointerdown={(event) => input().down(event)} onpointermove={(event) => input().move(event)} onpointerup={() => input().end()} onpointercancel={() => input().cancel()} onfocus={(event) => input().focus(event)} onblur={onLeave}>

@@ -8,7 +8,7 @@ managed overlay that can be edited outside installed Python code.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from planner.worker_types.contracts import WorkerTypeManifest
 
@@ -26,9 +26,19 @@ class SkillsHome:
     skills: tuple[ManagedSkill, ...]
 
 
-class SpecialistSkillPatch(TypedDict, total=False):
+class SkillPatch(TypedDict, total=False):
     description: str
     markdown_body: str
+
+
+SpecialistSkillPatch = SkillPatch
+
+
+class SkillSaveIncompleteDetail(TypedDict):
+    skill_name: str
+    saved: Literal[True]
+    published: bool
+    phase: Literal["file", "history"]
 
 
 @dataclass(frozen=True, slots=True)

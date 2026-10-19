@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson } from "./api";
+import { resourceQuery } from "./resourceVersions/query";
 import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
 import type { ConversationStartValues } from "./conversation/wire";
 import type { UsageDays, UsageSummary } from "./conversation/recordedUsageWire";
@@ -37,11 +38,12 @@ type ChiefConversationReference = {
 // key and the API path it comes from. A screen names the resource it needs and
 // gets both. One-shot reads that nothing invalidates — the employee
 // configuration catalog — stay imperative fetches where they are used.
-function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
-  return queryOptions<T>({
-    queryKey,
-    queryFn: ({ signal }) => fetchJson<T>(path, { signal })
-  });
+export function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
+  return resourceQuery<T>(queryKey, path);
+}
+
+export function versionedJsonQuery<T>(queryKey: readonly unknown[], path: string) {
+  return resourceQuery<T>(queryKey, path, true);
 }
 
 export const queries = {
@@ -51,7 +53,7 @@ export const queries = {
       `/api/conversation/usage/summary?days=${days}&timezone=${encodeURIComponent(timezone)}`
     ),
   deploymentStatus: () =>
-    jsonQuery<DeploymentStatus>(["deployment-status"], "/api/deployment-status"),
+    versionedJsonQuery<DeploymentStatus>(["deployment-status"], "/api/deployment-status"),
   vpsStatusSummary: () =>
     jsonQuery<VpsStatusSummary>(["vps-status-summary"], "/api/vps-status-summary"),
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
@@ -64,7 +66,7 @@ export const queries = {
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   feedback: () => jsonQuery<FeedbackResponse>(["feedback"], "/api/feedback"),
   feedbackCount: () =>
-    jsonQuery<FeedbackCountResponse>(["feedback-count"], "/api/feedback/count"),
+    versionedJsonQuery<FeedbackCountResponse>(["feedback-count"], "/api/feedback/count"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
   schedules: () => jsonQuery<SchedulesResponse>(["schedules"], "/api/schedules"),
   sprintSummaries: () => jsonQuery<SprintsResponse>(["sprints"], "/api/sprints?detail=full"),
@@ -77,7 +79,7 @@ export const queries = {
       `/api/sprints/${encodeURIComponent(sprintId)}/tracking`
     ),
   sprintItemWorkspaceContent: (itemId: string) =>
-    jsonQuery<SprintItemWorkspaceContent>(
+    versionedJsonQuery<SprintItemWorkspaceContent>(
       ["sprint-item", itemId, "workspace-content"],
       `/api/items/${encodeURIComponent(itemId)}/workspace-content`
     ),
@@ -91,11 +93,15 @@ export const queries = {
       ["sprint-item", itemId, "conversation-start-values"],
       `/api/items/${encodeURIComponent(itemId)}/conversation/start-values`
     ),
+  workspaceTicket: (ticketId: string) =>
+    versionedJsonQuery<import("./ticketWorkspace/contracts").WorkspaceTicket>(["ticket", ticketId, "workspace"], `/api/tickets/${encodeURIComponent(ticketId)}/workspace`),
+  workspaceTicketField: (ticketId: string, field: string) =>
+    versionedJsonQuery<import("./ticketWorkspace/contracts").WorkspaceFieldBody>(["ticket", ticketId, "workspace", "field", field], `/api/tickets/${encodeURIComponent(ticketId)}/workspace/fields/${encodeURIComponent(field)}`),
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets?detail=full&id=${encodeURIComponent(ticketId)}`),
   reviewProposal: (item: import('./types').NavigationReviewItem) =>
-    jsonQuery<TicketDetail>(["ticket",item.ticket_id,"proposal",item.field,item.proposal_field,item.waiting_since,item.proposal_revision],
-      `/api/tickets?detail=full&id=${encodeURIComponent(item.ticket_id)}`),
+    versionedJsonQuery<import("./ticketWorkspace/contracts").WorkspaceTicket>(["ticket",item.ticket_id,"proposal",item.field,item.proposal_field,item.waiting_since,item.proposal_revision],
+      `/api/tickets/${encodeURIComponent(item.ticket_id)}/workspace`),
   // What a conversation started right now would run on, for each owner that starts one.
   // It follows the change stream because the owner can change it: Config sets the
   // Chief's, and a Ticket's own last-chosen values move when its worker is talked to.
@@ -105,11 +111,11 @@ export const queries = {
       `/api/tickets/${encodeURIComponent(ticketId)}/conversation/start-values`
     ),
   chiefSettings: () =>
-    jsonQuery<Pick<ChiefManagementSettings, "employee_id" | "label" | "recap" | "skill" | "launch_defaults">>(
+    versionedJsonQuery<Pick<ChiefManagementSettings, "employee_id" | "label" | "recap" | "skill" | "launch_defaults">>(
       ["chief", "settings"], "/api/workers/chief-of-staff/settings"
     ),
   chiefConversationStartValues: () =>
-    jsonQuery<ConversationStartValues>(
+    versionedJsonQuery<ConversationStartValues>(
       ["chief", "conversation-start-values"],
       "/api/chief/conversation/start-values"
     ),
@@ -122,8 +128,8 @@ export const queries = {
       // Hiding it behind automatic attempts makes a blank/new thread appear authoritative.
       retry: false
     }),
-  supportedWorkerTypeManifests: () => jsonQuery<WorkerTypesResponse>(["worker-types", "supported"], "/api/worker-types?supported=true"),
-  workerTypeManifests: () => jsonQuery<WorkerTypesResponse>(["worker-types"], "/api/worker-types"),
+  supportedWorkerTypeManifests: () => versionedJsonQuery<WorkerTypesResponse>(["worker-types", "supported"], "/api/worker-types?supported=true"),
+  workerTypeManifests: () => versionedJsonQuery<WorkerTypesResponse>(["worker-types"], "/api/worker-types"),
   workers: () => jsonQuery<WorkersResponse>(["workers"], "/api/workers"),
   worker: (workerType: string) =>
     jsonQuery<WorkerManagementDetail>(

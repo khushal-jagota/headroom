@@ -20,7 +20,7 @@ function matchesCandidate(value: unknown, descriptor: Descriptor): boolean {
   }
   return true;
 }
-function validate(value: unknown, descriptor: Descriptor, path: string): void {
+export function validate(value: unknown, descriptor: Descriptor, path: string): void {
   if (descriptor.ref) return validate(value, wireDescriptors[descriptor.ref] as Descriptor, path);
   if (descriptor.union) {
     for (const candidate of descriptor.union) {
@@ -55,7 +55,7 @@ export function parseRevision(value: string): bigint {
   return BigInt(value);
 }
 export function compareRevision(left: string, right: string): number { const a = parseRevision(left), b = parseRevision(right); return a < b ? -1 : a > b ? 1 : 0; }
-function continuity(value: Omit<Continuity, "semantics"> & {semantics:string}): void {
+export function continuity(value: Omit<Continuity, "semantics"> & {semantics:string}): void {
   if (value.schema_version !== SCHEMA_VERSION || value.semantics !== SUPPORTED_SEMANTICS || !value.scope || !value.epoch) throw new NavigationProtocolError('Unsupported continuity');
   parseRevision(value.revision);
 }
@@ -85,7 +85,7 @@ export function sameAuthority(left: CurrentAuthority | DegradedAuthority, right:
       && left.permit.scope === right.permit.scope && left.permit.runtime_epoch === right.permit.runtime_epoch
       && left.permit.installation_id === right.permit.installation_id && left.permit.generation === right.permit.generation);
 }
-function authority(value: CurrentAuthority | DegradedAuthority): void {
+export function authority(value: CurrentAuthority | DegradedAuthority): void {
   if (!value.delivery_session_id) throw new NavigationProtocolError('Empty delivery session');
   parseRevision(value.availability.generation);
   if (value.permit !== null) {

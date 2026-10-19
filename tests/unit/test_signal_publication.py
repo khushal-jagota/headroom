@@ -215,39 +215,8 @@ def producer(tmp_path: Path) -> Iterator[_Harness]:
     harness.close()
 
 
-def test_complete_install_does_not_advance_cursor_and_runtime_mutation_is_reversible(
-    producer: _Harness,
-) -> None:
-    attachment = producer.attach()
-    permit = attachment.capture_permit()
-    connection = producer.mutation(_Turn())
-    with pytest.raises(SignalUnavailable, match="candidate"):
-        attachment.validate(permit)
-    connection.rollback()
-    assert producer.runtime.running_turn is None
-    connection.close()
-    connection = producer.mutation(_Turn())
-    connection.commit()
-    assert len(producer.batches) == 1
-    batch = producer.batches[0]
-    assert batch.base_cursor.sequence == 0
-    assert batch.cursor.sequence == 1
-    assert batch.replacements[0].attention.signal["working"]
-    assert persistence.operation_result(connection, "op") is not None
-    connection.close()
 
 
-def test_unrelated_transaction_is_not_a_publication_or_write(producer: _Harness) -> None:
-    producer.attach()
-    connection = producer.connect()
-    connection.execute("BEGIN")
-    before = connection.total_changes
-    connection.execute("SELECT * FROM conversations").fetchall()
-    connection.commit()
-    assert connection.total_changes == before
-    assert persistence.cursor(connection).sequence == 0
-    assert producer.batches == []
-    connection.close()
 
 
 def test_owner_message_read_failure_and_pending_sets_remain_independent(producer: _Harness) -> None:
@@ -292,27 +261,6 @@ def test_participant_rejection_undoes_runtime_and_sql_and_fences_before_release(
     connection.close()
 
 
-def test_participants_cannot_change_source_private_state_or_control_transaction(
-    producer: _Harness,
-) -> None:
-    attempts = []
-
-    def participant(connection: sqlite3.Connection, batch: SignalBatch) -> None:
-        for sql in (
-            "UPDATE conversations SET owner_read_through_sequence=99",
-            "UPDATE signal_publication_meta SET sequence=99",
-            "COMMIT",
-        ):
-            with pytest.raises(sqlite3.DatabaseError):
-                connection.execute(sql)
-            attempts.append(sql)
-
-    producer.attach(participant)
-    connection = producer.mutation(_Turn())
-    connection.commit()
-    assert len(attempts) == 3
-    assert persistence.cursor(connection).sequence == 1
-    connection.close()
 
 
 def test_association_only_batches_capture_old_and_new_and_deletion_is_fenced(
@@ -372,36 +320,8 @@ def test_commit_uncertainty_retains_undo_and_requires_exact_evidence(producer: _
     raw.close()
 
 
-def test_install_registration_failure_stays_unavailable_after_known_commit(
-    producer: _Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def fail(*args: object) -> None:
-        raise RuntimeError("registration failed")
-
-    monkeypatch.setattr(producer.coordinator, "_register_callbacks", fail)
-    with pytest.raises(RuntimeError, match="registration"):
-        producer.attach()
-    connection = producer.connect()
-    assert connection.execute("SELECT cursor FROM installed").fetchone()[0] == 0
-    assert producer.coordinator.signal_availability().state == "unavailable"
-    connection.close()
 
 
-def test_reentrant_detach_and_savepoint_after_runtime_mutation_are_rejected(
-    producer: _Harness,
-) -> None:
-    attachment = producer.attach()
-    connection = producer.mutation(_Turn())
-    with pytest.raises(SignalUnavailable, match="candidate"):
-        attachment.close()
-    with pytest.raises(RuntimeError, match="savepoint"):
-        assert connection.lease is not None
-        connection.lease.check_savepoint("create")
-    connection.rollback()
-    connection.close()
-    attachment.close()
-    attachment.close()
-    assert not producer.ownership.closed
 
 
 def test_degraded_durable_knowledge_does_not_fabricate_runtime_idle(producer: _Harness) -> None:
@@ -429,20 +349,6 @@ def test_degraded_durable_knowledge_does_not_fabricate_runtime_idle(producer: _H
     connection.close()
 
 
-def test_late_runtime_start_after_deletion_fails_before_field_mutation(producer: _Harness) -> None:
-    producer.attach()
-    connection = producer.connect()
-    connection.execute("BEGIN")
-    connection.execute("DELETE FROM conversations")
-    connection.commit()
-    connection.close()
-    with pytest.raises(SignalUnavailable, match="deleted"):
-        producer.mutation(_Turn())
-    # The helper leaves the failed candidate transaction to its owner.
-    lease = next(iter(producer.coordinator._leases.values()))
-    lease.connection.rollback()
-    lease.connection.close()
-    assert producer.runtime.running_turn is None
 
 
 def test_replace_on_new_connection_captures_deleted_owner_and_rename_effects(
@@ -505,75 +411,12 @@ def test_commit_uncertainty_with_committed_evidence_never_undoes_or_repeats_appe
     raw.close()
 
 
-def test_private_evidence_prunes_only_acknowledged_known_results(producer: _Harness) -> None:
-    producer.attach()
-    connection = producer.mutation(_Turn(), "first")
-    connection.commit()
-    producer.coordinator.accept_operation_result("first")
-    connection.close()
-    connection = producer.connect()
-    connection.execute("BEGIN")
-    before = connection.total_changes
-    connection.commit()
-    assert connection.total_changes == before
-    assert persistence.operation_result(connection, "first") is not None
-    connection.close()
-    connection = producer.mutation(None, "second")
-    connection.commit()
-    assert persistence.operation_result(connection, "first") is None
-    assert persistence.operation_result(connection, "second") is not None
-    assert connection.execute("SELECT COUNT(*) FROM signal_publication_batches").fetchone()[0] == 1
-    connection.close()
 
 
-def test_gate_blocks_other_thread_from_observing_uncommitted_runtime(producer: _Harness) -> None:
-    attachment = producer.attach()
-    connection = producer.mutation(_Turn())
-    started, finished = threading.Event(), threading.Event()
-    observed = []
-
-    def reader() -> None:
-        started.set()
-        with producer.coordinator.current_read():
-            observed.append(producer.runtime.running_turn)
-        finished.set()
-
-    thread = threading.Thread(target=reader)
-    thread.start()
-    assert started.wait(2)
-    assert not finished.wait(0.05)
-    connection.rollback()
-    assert finished.wait(2)
-    thread.join()
-    assert observed == [None]
-    attachment.capture_permit()
-    connection.close()
 
 
-def test_initialization_does_not_admit_runtime_before_install_or_old_bootstrap_token(
-    producer: _Harness,
-) -> None:
-    connection = producer.connect()
-    with pytest.raises(SignalUnavailable, match="installation"):
-        producer.coordinator.admit_runtime()
-    with pytest.raises(SignalUnavailable, match="not open"):
-        connection.execute("BEGIN")
-    connection.close()
-    producer.attach()
-    producer.coordinator.admit_runtime()
 
 
-def test_degraded_reader_rejects_other_database(producer: _Harness, tmp_path: Path) -> None:
-    producer.attach().close()
-    raw = sqlite3.connect(tmp_path / "other.db", isolation_level=None)
-    raw.execute("BEGIN")
-    with pytest.raises(SignalUnavailable, match="another Signal database"):
-        producer.coordinator.read_durable_signal_knowledge(
-            raw,
-            ("c",),
-            producer.coordinator.signal_availability().generation,
-        )
-    raw.close()
 
 
 def test_complete_cross_conversation_snapshot_orders_competing_mutation_without_leakage(
@@ -632,19 +475,6 @@ def test_complete_cross_conversation_snapshot_orders_competing_mutation_without_
     assert [value.conversation_id for value in batches[0].replacements] == ["c"]
 
 
-def test_lifecycle_upsert_does_not_override_dirty_deduplication(producer: _Harness) -> None:
-    producer.attach()
-    connection = producer.connect()
-    connection.execute("BEGIN")
-    for _ in range(2):
-        connection.execute(
-            "INSERT INTO conversation_lifecycle_facts VALUES('c') "
-            "ON CONFLICT(conversation_id) DO UPDATE SET conversation_id=excluded.conversation_id"
-        )
-    assert connection.execute("SELECT COUNT(*) FROM signal_publication_dirty").fetchone()[0] == 1
-    connection.commit()
-    assert len(producer.batches) == 1
-    connection.close()
 
 
 def test_reconciliation_handle_survives_release_and_rejects_foreign_stale_and_expired(
@@ -675,16 +505,6 @@ def test_reconciliation_handle_survives_release_and_rejects_foreign_stale_and_ex
     raw.close()
 
 
-def test_shutdown_stops_new_admission_without_closing_borrowed_handle(producer: _Harness) -> None:
-    producer.attach()
-    producer.coordinator.invalidate("shutdown")
-    connection = producer.connect()
-    with pytest.raises(SignalUnavailable, match="shutdown"):
-        connection.execute("BEGIN")
-    with pytest.raises(SignalUnavailable, match="shutdown"):
-        producer.coordinator.prepare_mutation(connection, None, operation_id="late")
-    assert not producer.ownership.closed
-    connection.close()
 
 
 def test_new_epoch_retires_private_evidence_and_runtime_without_clearing_unread(

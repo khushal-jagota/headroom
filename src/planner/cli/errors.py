@@ -37,6 +37,7 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels worker-type skill": (
         "panels worker-type skill WORKER_TYPE --description TEXT < SKILL_FILE"
     ),
+    "panels skill edit": "panels skill edit NAME --description TEXT < SKILL_FILE",
     "panels project set": "panels project set PROJECT_ID FIELD --value VALUE",
     "panels ticket delete": "panels ticket delete TICKET_ID --yes",
     "panels ticket create": "panels ticket create --input-json FILE",

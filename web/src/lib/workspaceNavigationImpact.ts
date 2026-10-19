@@ -26,6 +26,7 @@ export function workspaceRailImpact(impact:RecordImpact,presentation:NavigationP
   if(impact.kind==='project') return rail.items.some(item=>item.projectId===impact.id) && touches(impact,['name']);
   if(impact.kind==='conversation') {
     if(!touches(impact,['attention'])) return false;
+    if(presentation?.globalCounts)return true;
     if(presentation?.chief?.conversation_id===impact.id || items.some(item=>item.conversationId===impact.id)) return true;
     if([...groupedTickets].some(id=>presentation?.ticketsById.get(id)?.conversation_id===impact.id)
       || settledMessages.some(message=>message.conversationId===impact.id)) return true;
@@ -70,7 +71,7 @@ export function orchestratorChildrenImpact(impact:RecordImpact,principal:Orchest
     // mounted parent lists can change; capture them before the request.
     if(touches(impact,['orchestrator_kind','sprint_item_id'])) return true;
     const row=presentation?.rawTicketsById.get(impact.id)?.value;
-    if(!row) return impact.fields==='*';
+    if(!row) return impact.fields==='*' || Boolean(presentation?.globalCounts) && touches(impact,['stage','is_backlogged','terminal','created_at','ticket_status','blocked','ceiling_holder','gating_field','stage_ownership','conversation_id']);
     const belongs=principal.kind==='chief' ? row.orchestrator_kind==='chief' : row.sprint_item_id===principal.id;
     if(!belongs) return false;
     if(touches(impact,['stage','is_backlogged','terminal','created_at','orchestrator_kind','sprint_item_id'])) return true;
@@ -79,7 +80,7 @@ export function orchestratorChildrenImpact(impact:RecordImpact,principal:Orchest
     const visible=groups.some(group=>(open[group.key] ?? orchestratorGroupDefaultOpen(group.key)) && group.tickets.some(ticket=>ticket.id===impact.id));
     return visible && touches(impact,['title','updated_at']);
   }
-  return impact.kind==='conversation' && rows.some(ticket=>ticket.conversation_id===impact.id) && touches(impact,['attention']);
+  return impact.kind==='conversation' && (Boolean(presentation?.globalCounts) || rows.some(ticket=>ticket.conversation_id===impact.id)) && touches(impact,['attention']);
 }
 
 /** Body updates project the full recap and its concise preview. */

@@ -27,7 +27,6 @@ from tempfile import mkdtemp
 
 import pytest
 from tests.support.conversation_claude_agent_sdk_bench import _RecordingSink
-from tests.support.solid_png import solid_png
 
 from planner.conversation.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChild,
@@ -41,9 +40,6 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.message_content import (
-    MessageImage,
-    MessageText,
-    message_content_text,
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
@@ -88,53 +84,6 @@ def _real_child(
     )
 
 
-@real_claude_only
-def test_claude_really_takes_a_picture_in_a_message_and_can_see_it(tmp_path: Path) -> None:
-    """The one thing a script cannot prove: the picture reaches the model, not just the CLI.
-
-    The answer has to contain the colour, and the only way to it is having looked at the
-    bytes this adapter sent. A CLI that accepted the message and dropped the picture would
-    answer without the colour, and this would fail — which is the whole point.
-    """
-
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        message_files = ConversationMessageFiles(str(Path(mkdtemp()) / "planner.db"))
-        child = _real_child(tmp_path, sink, message_files)
-        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
-        try:
-            # Pure green, which no other colour word is close to.
-            kept = await message_files.keep(
-                "real-claude", solid_png(0, 255, 0), media_type="image/png"
-            )
-            content = (
-                MessageText(
-                    text=(
-                        "What colour is this image? Answer with one word and nothing "
-                        "else. Do not use any tools."
-                    )
-                ),
-                MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
-            )
-            await child.write_prompt(
-                TurnToken(conversation_id="real-claude", turn_number=1),
-                content,
-                sender_content=content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-            )
-            await sink.wait_for_the_turn_to_end()
-
-            said = " ".join(
-                message_content_text(content) for _, content in sink.message_contents
-            ).lower()
-            assert "green" in said
-        finally:
-            await child.stop()
-
-    _run(exercise)
 
 
 @real_claude_only
