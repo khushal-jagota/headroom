@@ -70,7 +70,7 @@ def test_summary_preserves_all_old_uncertainty_without_history_arrays(tmp_path: 
         record = next(r for r in snapshot(conn)["records"] if r["kind"] == "conversation")
         assert "lifecycle" not in record["value"]
         assert record["value"]["lifecycle_summary"] == _summary_expected()
-        assert snapshot(conn)["semantics"] == "attention-knowledge-v6"
+        assert snapshot(conn)["semantics"] == "attention-knowledge-v6-recap"
         assert snapshot(conn)["schema_version"] == 6
         conn.close()
 

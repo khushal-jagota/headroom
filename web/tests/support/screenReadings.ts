@@ -94,6 +94,7 @@ function boardCard(facts: TicketFacts): BoardCard {
   return {
     id: "t_reading",
     title: "One Ticket",
+    recap: "",
     recap_preview: "",
     deadline: null,
     project_id: null,

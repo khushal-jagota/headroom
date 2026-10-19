@@ -147,13 +147,15 @@ def test_board_orchestrator_recap_uses_authoritative_body_without_changes(
 ) -> None:
     item = seed_item(tmp_db, "Recap owner")
     seed(tmp_db, title="Recap child", item=item)
-    body = "  Ship the sidebar.\n\tKeep attention concise.  "
+    body = "  Ship the sidebar.\n\t" + "Keep attention concise. " * 10
     tmp_db.execute("UPDATE sprint_items SET body=? WHERE id=?", (body, item))
     before = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())
 
     board = views.board_view(tmp_db)
 
-    assert board["sprint_items"][0]["recap_preview"] == "Ship the sidebar. Keep attention concise."
+    assert board["sprint_items"][0]["recap"] == body
+    assert len(board["sprint_items"][0]["recap_preview"]) == 160
+    assert board["sprint_items"][0]["recap_preview"].endswith("…")
     after = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())
     assert after == before
 
@@ -186,5 +188,7 @@ def test_board_and_child_recap_match_concise_ticket_summary(
     child = board["sprint_items"][0]["tickets"][0]
 
     assert summary.rows[0]["recap_preview"] == expected
+    assert card["recap"] == recap
+    assert child["recap"] == recap
     assert card["recap_preview"] == expected
     assert child["recap_preview"] == expected

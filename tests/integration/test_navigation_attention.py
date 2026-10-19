@@ -314,7 +314,7 @@ def test_physical_migration_waits_for_complete_install_and_failed_activation_rol
         assert calls == 1
         current = snapshot(check)
         assert current["schema_version"] == 6
-        assert current["semantics"] == "attention-knowledge-v6"
+        assert current["semantics"] == "attention-knowledge-v6-recap"
         assert current["revision"] == "0"
         assert all(
             record["value"]["attention"]["current"] is not None
@@ -355,7 +355,7 @@ def test_empty_physical_runtime_cannot_activate_attention_without_complete_insta
         composition.coordinator.admit_runtime()
         current = snapshot(conn)
         assert current["schema_version"] == 6
-        assert current["semantics"] == "attention-knowledge-v6"
+        assert current["semantics"] == "attention-knowledge-v6-recap"
         assert all(record["kind"] != "conversation" for record in current["records"])
         assert (
             conn.execute("SELECT COUNT(*) FROM navigation_signal_publications").fetchone()[0] == 0
