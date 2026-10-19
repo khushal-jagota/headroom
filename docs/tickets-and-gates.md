@@ -365,6 +365,20 @@ Both halves can change later, and they change separately.
   way a proposal sitting in the wrong queue reaches the right one. Anyone standing above
   the Ticket can do it.
 
+When a parked review moves to another holder, Panels attempts one courtesy notice to
+the previous holder. The notice names the Ticket and the new holder. Automatic returns
+to the user after reassignment follow the same rule. No parked proposal or no final
+holder change means no notice. A combined edit names only the final holder.
+
+The Chief, an orchestrator, or a holder Ticket receives the notice in its conversation.
+The user receives a Panels message in the affected Ticket conversation. This message
+starts no worker turn and does not answer an unrelated request for a worker reply.
+
+The transfer commits before the notice attempt. A failed notice logs the failure and leaves
+the transfer successful. Panels does not retry the notice. A process failure before send,
+a refused send, or a restart before a queued message reaches the agent can lose the line.
+Once the conversation records the message, its ordinary history preserves it.
+
 Everywhere tooling takes a holder — creation, either change, and approval — it takes one
 `--holder`, and reads the kind from what it is given: `me`, `chief`, a Sprint Item id, or
 a Ticket id. Approving without naming one keeps the ceiling where it is: you hold it.
