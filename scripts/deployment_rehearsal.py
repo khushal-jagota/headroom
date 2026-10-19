@@ -23,6 +23,9 @@ def deployment_paths(environment: dict[str, str]) -> dict[str, str]:
     if rehearsal:
         if environment.get("RUNNER_ENVIRONMENT") != "github-hosted":
             raise ValueError("rehearsal requires a disposable GitHub-hosted runner")
+        requested = environment.get("PANELS_REQUESTED_SHA", "")
+        if not re.fullmatch(r"[0-9a-f]{40}", requested):
+            raise ValueError("rehearsal requires a full requested SHA")
         baseline = environment.get("PANELS_BASELINE_SHA", "")
         if not re.fullmatch(r"[0-9a-f]{40}", baseline):
             raise ValueError("rehearsal requires an explicit full known-good baseline SHA")
@@ -168,7 +171,8 @@ def verify_proof(gate: Path, baseline: str, requested: str) -> None:
 
     baseline_health = read("baseline-health.json")
     health = read("final-health.json")
-    if baseline_health.get("app_sha") != baseline or baseline == requested:
+    if (baseline_health.get("app_sha") != baseline
+            or baseline_health.get("ready") is not True or baseline == requested):
         raise ValueError("rehearsal did not serve the distinct known-good baseline")
     if health.get("app_sha") != requested or health.get("ready") is not True:
         raise ValueError("rehearsal did not finish healthy at the requested SHA")

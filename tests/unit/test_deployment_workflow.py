@@ -39,11 +39,19 @@ def test_rehearsal_isolates_every_persistent_path_and_preserves_production_defau
         assert Path(rehearsal[key]).is_relative_to(root)
         assert rehearsal[key] != production[key]
     assert rehearsal["PANELS_SERVICE_NAME"] == "panels-rehearsal-123-1.service"
+    for identity in ({"GITHUB_RUN_ID": "124"}, {"GITHUB_RUN_ATTEMPT": "2"}):
+        independent = deployment_paths(environment() | {"PANELS_REHEARSAL": "true"} | identity)
+        for key in ("PANELS_TEMP_ROOT", "PANELS_CURRENT_ROOT", "PANELS_LIFECYCLE_PATH",
+                    "PANELS_SERVICE_NAME", "PANELS_DEPLOYMENT_ID"):
+            assert independent[key] != rehearsal[key]
 
 
 @pytest.mark.parametrize("override", [
     {"RUNNER_ENVIRONMENT": "self-hosted"},
     {"PANELS_BASELINE_SHA": ""},
+    {"PANELS_BASELINE_SHA": "b" * 39},
+    {"PANELS_REQUESTED_SHA": ""},
+    {"PANELS_REQUESTED_SHA": "A" * 40},
     {"PANELS_BASELINE_SHA": "a" * 40},
 ])
 def test_rehearsal_refuses_non_disposable_or_no_replacement_setup(
@@ -53,20 +61,48 @@ def test_rehearsal_refuses_non_disposable_or_no_replacement_setup(
         deployment_paths(environment() | {"PANELS_REHEARSAL": "true"} | override)
 
 
-def test_workflow_routes_rehearsal_away_from_production_and_checks_pin_before_suites() -> None:
+def test_workflow_routes_hosted_events_and_checks_pin_before_suites() -> None:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     job = workflow["jobs"]["deploy"]
-    assert job["if"] == "${{ inputs.rehearsal || github.ref == 'refs/heads/main' }}"
+    hosted = "(github.event_name == 'merge_group' || inputs.rehearsal)"
+    # PyYAML reads the Actions `on` key as a YAML 1.1 boolean.
+    assert workflow[True]["merge_group"] == {"types": ["checks_requested"]}
+    assert workflow[True]["push"] == {"branches": ["main"]}
+    assert "workflow_dispatch" in workflow[True]
+    assert workflow["env"]["PANELS_REQUESTED_SHA"] == (
+        "${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || "
+        "github.event_name == 'workflow_dispatch' && inputs.commit_sha || "
+        "github.event_name == 'push' && github.sha || '' }}"
+    )
+    assert job["env"]["PANELS_BASELINE_SHA"] == (
+        "${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || "
+        "github.event_name == 'workflow_dispatch' && inputs.baseline_sha || '' }}"
+    )
+    assert job["env"]["PANELS_REHEARSAL"] == "${{ " + hosted + " && 'true' || 'false' }}"
+    assert job["if"] == "${{ " + hosted + " || github.ref == 'refs/heads/main' }}"
     assert job["runs-on"] == (
-        "${{ inputs.rehearsal && 'ubuntu-24.04' || "
+        "${{ " + hosted + " && 'ubuntu-24.04' || "
         "fromJSON('[\"self-hosted\", \"linux\", \"production\", \"panels-deploy\"]') }}"
     )
-    assert "inputs.rehearsal && format('deploy-rehearsal-" in workflow["concurrency"]["group"]
+    assert workflow["concurrency"] == {
+        "group": "${{ " + hosted
+        + " && format('deploy-rehearsal-{0}', github.run_id) || 'production-deploy' }}",
+        "cancel-in-progress": False,
+    }
+    checkout = job["steps"][0]
+    assert checkout["with"]["ref"] == "${{ github.event.merge_group.head_sha || github.sha }}"
+    assert checkout["with"]["fetch-depth"] == 0
     steps = {step.get("name"): step for step in job["steps"]}
     names = list(steps)
     assert names.index("Start deployment lifecycle") < names.index("Prepare deployment runtime")
-    assert steps["Prepare deployment runtime"]["if"] == "${{ !inputs.rehearsal }}"
-    assert steps["Prepare rehearsal runtime"]["if"] == "${{ inputs.rehearsal }}"
+    assert steps["Prepare deployment runtime"]["if"] == "${{ !" + hosted + " }}"
+    for step in job["steps"]:
+        if step.get("uses", "").startswith(("actions/setup-python@", "actions/setup-node@")):
+            assert step["if"] == "${{ " + hosted + " }}"
+    for name in ("Bootstrap disposable hosted runner", "Prepare rehearsal runtime",
+                 "Start known-good rehearsal release",
+                 "Provision offline Hermes packaging prerequisite"):
+        assert steps[name]["if"] == "${{ " + hosted + " }}"
     assert steps["Prepare rehearsal runtime"]["run"] == steps["Prepare deployment runtime"]["run"]
     assert names.index("Prepare rehearsal runtime") < names.index(
         "Start known-good rehearsal release"
@@ -80,21 +116,38 @@ def test_workflow_routes_rehearsal_away_from_production_and_checks_pin_before_su
     for value in ("PANELS_CURRENT_ROOT", "PANELS_HEALTH_URL", "PANELS_SERVICE_NAME",
                   "PANELS_LIFECYCLE_PATH", "PANELS_APP_HOME"):
         assert value in deploy
-    assert "inputs.rehearsal" in steps["Retain rehearsal proof"]["if"]
+    assert steps["Prove merge-group checkout"]["if"] == "${{ github.event_name == 'merge_group' }}"
+    assert names.index("Start known-good rehearsal release") < names.index(
+        "Observe served release and select related checks"
+    )
+    for name in ("Collect rehearsal proof", "Retain rehearsal proof",
+                 "Remove rehearsal temporary state"):
+        assert steps[name]["if"] == "${{ always() && " + hosted + " }}"
+    assert steps["Finalize deployment lifecycle"]["if"] == "always()"
     production_cleanup = "Remove production deployment temporary state"
     rehearsal_cleanup = "Remove rehearsal temporary state"
-    assert steps[production_cleanup]["if"] == "${{ always() && !inputs.rehearsal }}"
-    assert steps[rehearsal_cleanup]["if"] == "${{ always() && inputs.rehearsal }}"
+    assert steps[production_cleanup]["if"] == "${{ always() && !" + hosted + " }}"
+    assert steps[rehearsal_cleanup]["if"] == "${{ always() && " + hosted + " }}"
     assert steps[production_cleanup]["run"] == steps[rehearsal_cleanup]["run"]
     assert names.index(production_cleanup) < names.index("Finalize deployment lifecycle")
     assert names.index("Finalize deployment lifecycle") < names.index("Collect rehearsal proof")
     assert names.index("Collect rehearsal proof") < names.index("Retain rehearsal proof")
     assert names.index("Retain rehearsal proof") < names.index(rehearsal_cleanup)
     hermes = steps["Provision offline Hermes packaging prerequisite"]
-    assert hermes["if"] == "${{ inputs.rehearsal }}"
     assert "76d832d3857551a029c4b39c23945eb47c16fe5b" in hermes["run"]
     assert '"$hermes_source[acp]"' in hermes["run"]
     assert "ffmpeg" in steps["Bootstrap disposable hosted runner"]["run"]
+
+
+def test_queue_checkout_requires_the_exact_candidate_commit() -> None:
+    steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["deploy"]["steps"]
+    script = next(step["run"] for step in steps if step.get("name") == "Prove merge-group checkout")
+    root = WORKFLOW.parents[2]
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    for requested, expected_status in ((head, 0), ("0" * 40, 1), ("", 1)):
+        result = subprocess.run(["bash", "-euc", script], cwd=root,
+                                env=os.environ | {"PANELS_REQUESTED_SHA": requested}, check=False)
+        assert result.returncode == expected_status
 
 
 def test_e2e_report_survives_real_shadow_mount_and_remains_host_parseable(tmp_path: Path) -> None:
@@ -154,6 +207,12 @@ def test_rehearsal_success_requires_actual_prior_backup_and_requested_health(
         "verified": True, "deployed_revision": "b" * 40,
     }))
     verify_proof(tmp_path, "b" * 40, "a" * 40)
+    (tmp_path / "baseline-health.json").write_text(json.dumps({
+        "app_sha": "b" * 40, "ready": False,
+    }))
+    with pytest.raises(ValueError, match="distinct known-good baseline"):
+        verify_proof(tmp_path, "b" * 40, "a" * 40)
+    (tmp_path / "baseline-health.json").write_text(json.dumps(records["baseline-health.json"]))
     (tmp_path / "final-health.json").write_text(json.dumps({"app_sha": "b" * 40, "ready": True}))
     with pytest.raises(ValueError, match="requested SHA"):
         verify_proof(tmp_path, "b" * 40, "a" * 40)

@@ -2,6 +2,8 @@ name: Deploy exact commit
 on:
   push:
     branches: [main]
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       commit_sha:
@@ -20,32 +22,35 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ inputs.rehearsal && format('deploy-rehearsal-{0}', github.run_id) || 'production-deploy' }}
+  group: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) && format('deploy-rehearsal-{0}', github.run_id) || 'production-deploy' }}
   cancel-in-progress: false
 env:
-  PANELS_REQUESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
+  PANELS_REQUESTED_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.event_name == 'push' && github.sha || '' }}
 jobs:
   deploy:
-    if: ${{ inputs.rehearsal || github.ref == 'refs/heads/main' }}
-    runs-on: ${{ inputs.rehearsal && 'ubuntu-24.04' || fromJSON('["self-hosted", "linux", "production", "panels-deploy"]') }}
+    if: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) || github.ref == 'refs/heads/main' }}
+    runs-on: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) && 'ubuntu-24.04' || fromJSON('["self-hosted", "linux", "production", "panels-deploy"]') }}
     env:
-      PANELS_REHEARSAL: ${{ inputs.rehearsal && 'true' || 'false' }}
-      PANELS_BASELINE_SHA: ${{ inputs.baseline_sha }}
+      PANELS_REHEARSAL: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) && 'true' || 'false' }}
+      PANELS_BASELINE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event_name == 'workflow_dispatch' && inputs.baseline_sha || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.merge_group.head_sha || github.sha }}
           fetch-depth: 0
+      - name: Prove merge-group checkout
+        if: ${{ github.event_name == 'merge_group' }}
+        run: test "$(git rev-parse HEAD)" = "$PANELS_REQUESTED_SHA"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        if: ${{ inputs.rehearsal }}
+        if: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) }}
         with:
           python-version: '3.12'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        if: ${{ inputs.rehearsal }}
+        if: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) }}
         with:
           node-version: '22'
       - name: Bootstrap disposable hosted runner
-        if: ${{ inputs.rehearsal }}
+        if: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) }}
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap dbus-user-session ffmpeg
@@ -60,7 +65,7 @@ jobs:
       - name: Set deployment paths
         run: python3 scripts/deployment_rehearsal.py configure
       - name: Provision offline Hermes packaging prerequisite
-        if: ${{ inputs.rehearsal }}
+        if: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) }}
         run: |
           set -o pipefail
           # Only the real core + ACP package is needed; never provider credentials/extras.
@@ -78,13 +83,13 @@ jobs:
             2>&1 | tee "$PANELS_GATE_DIR/hermes-install.log"
           echo "$hermes_sha" > "$PANELS_GATE_DIR/hermes-revision.txt"
       - name: Prepare rehearsal runtime
-        if: ${{ inputs.rehearsal }}
+        if: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) }}
         run: &prepare_deployment_runtime |
           python3 -m venv "$PANELS_DEPLOY_VENV"
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install -r requirements.txt
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install --editable .
       - name: Start known-good rehearsal release
-        if: ${{ inputs.rehearsal }}
+        if: ${{ (github.event_name == 'merge_group' || inputs.rehearsal) }}
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" scripts/deployment_rehearsal.py start
       - name: Start deployment lifecycle
@@ -137,7 +142,7 @@ jobs:
           python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python 3.12 or newer is required"'
           node -e 'const major = Number(process.versions.node.split(".")[0]); if (major !== 22) throw new Error("Node 22 is required")'
       - name: Prepare deployment runtime
-        if: ${{ !inputs.rehearsal }}
+        if: ${{ !(github.event_name == 'merge_group' || inputs.rehearsal) }}
         run: *prepare_deployment_runtime
       - name: Observe served release and select related checks
         run: |
@@ -355,7 +360,7 @@ jobs:
             --codex-home "$PANELS_APP_HOME/.codex" \
             --claude-home "$PANELS_APP_HOME/.claude"
       - name: Remove production deployment temporary state
-        if: ${{ always() && !inputs.rehearsal }}
+        if: ${{ always() && !(github.event_name == 'merge_group' || inputs.rehearsal) }}
         run: &cleanup_deployment_state python3 scripts/deployment_rehearsal.py cleanup
       - name: Finalize deployment lifecycle
         if: always()
@@ -383,17 +388,17 @@ jobs:
             --preserve-terminal \
             "${serving_args[@]}"
       - name: Collect rehearsal proof
-        if: ${{ always() && inputs.rehearsal }}
+        if: ${{ always() && (github.event_name == 'merge_group' || inputs.rehearsal) }}
         env:
           PANELS_REHEARSAL_JOB_STATUS: ${{ job.status }}
         run: python3 scripts/deployment_rehearsal.py capture
       - name: Retain rehearsal proof
-        if: ${{ always() && inputs.rehearsal }}
+        if: ${{ always() && (github.event_name == 'merge_group' || inputs.rehearsal) }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: deploy-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.PANELS_GATE_DIR }}
           if-no-files-found: error
       - name: Remove rehearsal temporary state
-        if: ${{ always() && inputs.rehearsal }}
+        if: ${{ always() && (github.event_name == 'merge_group' || inputs.rehearsal) }}
         run: *cleanup_deployment_state

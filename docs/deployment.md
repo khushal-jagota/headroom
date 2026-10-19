@@ -70,7 +70,7 @@ Claude homes.
 
 A push to `main` deploys `${{ github.sha }}`. The owner-triggered workflow input accepts
 one lowercase, full 40-character SHA, including an earlier commit selected for rollback.
-Both routes use the same transaction:
+Both production routes use the same transaction:
 
 ```text
 workflow checkout
@@ -137,7 +137,8 @@ reports failure; rerunning the deployment safely retries skill reconciliation.
 ## Related checks before deployment
 
 Deployment runs related checks before any app transaction. Pull requests and staging
-pushes do not start a suite workflow. Agents still run focused checks before a push.
+pushes do not start a suite workflow. Merge-queue checks use the hosted gate described below.
+Agents still run focused checks before a push.
 The current workflow revision supplies control tooling. The requested checkout supplies
 its own editable Python environment, pinned dependencies, source, and test configuration.
 Both Node lockfiles supply build prerequisites. A rollback uses these same boundaries.
@@ -231,11 +232,48 @@ control revision's builder. These can differ during rollback, so the actual cand
 smoke does not replace that source-builder proof.
 
 
+## Merge-queue admission
+
+`merge_group` events with `checks_requested` run the existing `deploy` job on
+`ubuntu-24.04`. Each workflow run has its own concurrency group and disposable state.
+The candidate is `merge_group.head_sha`. The baseline is `merge_group.base_sha`.
+Both values must be distinct lowercase, full 40-character commit SHAs. The workflow
+checks that its initial checkout matches the candidate before it prepares the gate.
+
+The hosted gate builds and starts the baseline before release observation and selection.
+Its health response must report that exact baseline SHA and `ready: true`. This proves
+that the baseline is healthy in this run. It does not prove an earlier successful workflow.
+The selector compares this served baseline with the exact queue candidate.
+
+The complete hosted route below applies to queue runs: source checks, candidate build,
+installed-launcher smoke, sealed evidence, backup, replacement, exact-SHA health, and
+skill provisioning. Proof capture, artifact upload, and cleanup run after failures too.
+Queue runs never select the production runner or production state. Main pushes and
+manual production dispatches retain the production route.
+
+The hosted rehearsal guard requires the Codex binding unit test and nonempty E2E selection.
+The selector also permits narrow, empty, and documentation-only selections. Those queue
+entries can fail this guard despite a correct selection. The workflow does not broaden
+or skip their selected checks. This incompatibility remains until separate approved work
+resolves it. A proof PR must select broad coverage to exercise the complete gate.
+
+GitHub merge queues require an organization-owned repository and a supported plan.
+The workflow must exist on the queue's base branch before enqueue. The Chief owns the
+queue requirement, prerequisite checks, timeout, and any temporary settings. See GitHub's
+[merge queue configuration guide](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)
+and [merge group event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#merge_group).
+
+A live acceptance record must identify the real `merge_group` event, base branch, queue
+ref, head and baseline SHAs, run URL and ID, conclusion, hosted runner, and retained proof.
+The `deploy` check must report on the queue commit. Local checks and manual dispatch
+cannot replace this evidence. The workflow implementation alone does not establish that
+repository configuration or live queue admission succeeds.
+
 ## Disposable workflow rehearsal
 
 The same `Deploy exact commit` workflow accepts `rehearsal: true` on manual dispatch.
 Supply `commit_sha` and an explicit known-good `baseline_sha`; both are full SHAs and
-must differ. The rehearsal runs on a fresh GitHub-hosted Ubuntu VM with its own
+must differ. The rehearsal runs on a fresh GitHub-hosted `ubuntu-24.04` VM with its own
 concurrency group. Production runs remain on the dedicated self-hosted runner and only
 accept the workflow control revision from `main`.
 
@@ -375,4 +413,4 @@ Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 
 ---
 
-_Last verified: 2026-10-18 (local gate implementation; main activation remains separate)._
+_Local workflow and test changes: 2026-10-19. Live merge-queue evidence and main activation remain separate._
