@@ -85,8 +85,43 @@ flags with `--input-json`.
 
 Create rejects unknown JSON keys before it creates anything. The validation error
 identifies the offending key. Use `brief` for the Brief text. The old `kickoff_note`
-JSON key and unsupported launch options such as `employee_launch_reasoning_effort`
-produce an error. Hidden legacy `--kickoff-note` flags send the text as `brief`.
+JSON key produces an error. Hidden legacy `--kickoff-note` flags send the text as
+`brief`.
+
+Create accepts `employee_launch_reasoning_effort` with the selected backend and model:
+
+```json
+{
+  "title": "Review the import path",
+  "worker_type": "coding",
+  "employee_backend": "claude",
+  "employee_launch_model": "opus",
+  "employee_launch_reasoning_effort": "high",
+  "ceiling": "needs_implementation",
+  "ceiling_holder": {"kind": "owner", "id": "owner"}
+}
+```
+
+The model must be enabled and offer the requested effort. A blank, non-string, or
+unsupported effort fails before Ticket creation. If the catalogue cannot validate an
+explicit effort, creation fails with a clear error. No effort is silently replaced.
+
+An omitted or null effort keeps the existing creation defaults. The Worker type's
+effort applies only to its own backend and model. Other selections store null.
+Null means no effort override: Claude receives no effort option, Codex receives null,
+and Hermes receives no effort configuration. The backend controls the effort in that
+case. The existing catalogue-unavailable fallback remains for omitted effort.
+
+The creation response adds `supervision_receipt`, a plain-language explanation of the
+effective grant. Normal CLI output prints it, and `--json` retains it beside the Ticket
+fields. It names the Stages whose proposals auto-accept, any Brief already settled,
+remaining unsupervised work, the first review gate, and its recipient. Stages that require
+user participation still require it. A grant with no unsupervised Stage or
+no review gate states that explicitly. Ordinary Ticket reads keep their existing shape.
+
+Earlier model-selection work required a model for a different backend. A later correction
+used each model's own effort options for validation. Neither change accepted an explicit
+effort at creation. The create input now provides that choice without a Worker restart.
 
 `ticket edit` sends one JSON object to the existing Ticket PATCH route. One request can
 change one or more fields that the route already accepts.

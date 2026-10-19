@@ -200,6 +200,7 @@ def requested_ticket_launch_configuration(
     *,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
 ) -> EmployeeLaunchConfiguration:
     """Read the creator's selection before current-model resolution."""
@@ -215,6 +216,7 @@ def requested_ticket_launch_configuration(
             employee_backend if employee_backend is not None else launch_defaults.employee_backend
         ),
         employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
     )
     return launch_configuration
 
@@ -228,6 +230,7 @@ def resolve_ticket_creation_context(
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
     model_source_is_historical: bool = False,
     project_id: str | None = None,
     sprint_id: str | None = None,
@@ -246,6 +249,7 @@ def resolve_ticket_creation_context(
         worker_type,
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
         worker_runtime_definitions=runtime_definitions,
     )
     assert launch_configuration.employee_launch_model is not None
@@ -265,7 +269,12 @@ def resolve_ticket_creation_context(
             launch_configuration.employee_launch_model,
             launch_configuration.employee_launch_reasoning_effort,
         )
-    except ModelResolutionUnavailable:
+    except ModelResolutionUnavailable as error:
+        if employee_launch_reasoning_effort is not None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "cannot validate explicit reasoning effort without a model catalogue",
+            ) from error
         require_enabled_model(conn, backend_key, launch_configuration.employee_launch_model)
         logging.getLogger(__name__).warning(
             "Ticket creation model resolution unavailable for %s/%s; "
@@ -925,6 +934,7 @@ def create_ticket(
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
     model_source_is_historical: bool = False,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
@@ -956,6 +966,7 @@ def create_ticket(
             worker_type=worker_type,
             employee_backend=employee_backend,
             employee_launch_model=employee_launch_model,
+            employee_launch_reasoning_effort=employee_launch_reasoning_effort,
             model_source_is_historical=model_source_is_historical,
             locale=locale,
             project_id=project_id,
