@@ -23,9 +23,8 @@ from tests.e2e.harness import (
     ServerHandle,
     capture_success,
 )
+from tests.support.connected_rows import _bind
 from tests.support.server_fixtures import signal_server as signal_server
-
-from planner.core.db import connect
 
 EVIDENCE = REPO_ROOT / "data/verification/conversation-signals/message-precedence-revision"
 
@@ -102,34 +101,9 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     for conversation in identities:
         _post(server, f"/api/test/signals/{conversation}/start")
         _post(server, f"/api/test/signals/{conversation}/finish")
-    with connect(str(server.db_path)) as conn:
-        conn.execute(
-            "UPDATE tickets SET conversation_id=? WHERE id=?",
-            (
-                "proof-worker",
-                ticket["id"],
-            ),
-        )
-        conn.execute(
-            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
-            (
-                "proof-worker",
-                ticket["id"],
-            ),
-        )
-        conn.execute(
-            "UPDATE agents SET conversation_id=? WHERE agent_key=?",
-            (
-                "proof-supervisor",
-                item["supervisor"]["agent_key"],
-            ),
-        )
-        conn.execute(
-            "INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?) "
-            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id",
-            ("proof-chief",),
-        )
-        conn.commit()
+    _bind(server, "ticket", ticket["id"], "proof-worker")
+    _bind(server, "agent", item["supervisor"]["agent_key"], "proof-supervisor")
+    _bind(server, "agent", "chief_of_staff", "proof-chief")
     context = context_factory()
     page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
     page.set_viewport_size({"width": 1440 if layout == "desktop" else 560, "height": 1000})
@@ -216,6 +190,10 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
                 },
             )
             assert delivered == {"conversation_id": conversation, "fate": "injected"}
+            # An addressed owner send acknowledges its captured record. A new explicit
+            # message stays unread until the held browser acknowledgement reaches it.
+            _marks(pane_signal, True, False)
+            _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
             _marks(pane_signal, True, True)
         capture_success(page, evidence / f"{conversation}-{layout}-page-message.png")
         rest = pane.locator("[data-conversation-rest-bar]")

@@ -96,14 +96,14 @@
   let hoverChief = $state(false);
   let hoverWorker = $derived.by(() => {
     const ticket = allCards.find((card) => card.id === hoverWorkerId)
-      ?? [...rail.items,...rail.settledItems].flatMap(item => item.tickets).find(ticket => ticket.id === hoverWorkerId);
+      ?? [...desiredRail.items,...desiredRail.settledItems].flatMap(item => item.tickets).find(ticket => ticket.id === hoverWorkerId);
     if (!ticket) return null;
     return hoverConversationIdOverride === null ? ticket : {...ticket,conversation_id:hoverConversationIdOverride,
       conversation_signal:workspace?.conversationSignals.get(hoverConversationIdOverride)};
   });
-  let hoveredItem = $derived([...rail.items, ...rail.settledItems].find((item) => item.id === hoverItemId));
-  let hoverRecap = $derived(hoverChief ? workspaceListRecap(rail.chiefGroups)
-    : workspaceListRecap(hoveredItem?.groups ?? [], hoveredItem?.recapPreview));
+  let hoveredItem = $derived([...desiredRail.items, ...desiredRail.settledItems].find((item) => item.id === hoverItemId));
+  let hoverRecap = $derived(hoverChief ? workspaceListRecap(desiredRail.chiefGroups)
+    : workspaceListRecap(hoveredItem?.groups ?? [], hoveredItem?.recap));
   let hoverSignal = $derived(hoverConversationIdOverride !== null ? workspace?.conversationSignals.get(hoverConversationIdOverride)
     : hoverChief ? workspace?.chief?.conversation_signal : hoveredItem?.conversationSignal);
   let hoverConversationId = $derived(hoverConversationIdOverride ?? (hoverChief ? workspace?.chief?.conversation_id : hoveredItem?.conversationId));
@@ -177,7 +177,7 @@
     if (message.kind === "chief") { hover.enter({target,title:message.title,kicker:"Chief of Staff",chief:true,conversationId:message.conversationId}, immediate); return; }
     if (message.kind === "sprint_item") { hover.enter({target,title:message.title,kicker:"Orchestrator",itemId:message.id,conversationId:message.conversationId}, immediate); return; }
     const worker = allCards.find((card) => card.id === message.id)
-      ?? rail.settledItems.flatMap((item) => item.tickets).find((ticket) => ticket.id === message.id);
+      ?? [...desiredRail.items, ...desiredRail.settledItems].flatMap((item) => item.tickets).find((ticket) => ticket.id === message.id);
     if (worker) {
         hover.enter({target,title:worker.title,kicker:"Worker",worker,conversationId:message.conversationId},immediate);
     }
@@ -209,7 +209,7 @@
       const id=hoverWorkerId ?? hoverItemId ?? 'chief';
       const view=navigation.state.effective;
       return workspaceHoverImpact(impact,kind,id,hoverWorker?.conversation_id ?? hoverConversationId,view ? navigation.presentationFor(view) : undefined,
-        kind==='chief' || kind==='orchestrator' && !hoveredItem?.recapPreview.trim());
+        kind==='chief' || kind==='orchestrator' && !hoveredItem?.recap.trim());
     });
     hoverObserver = observer;
     return () => { navigation.disposeRenderBoundary(observer); hoverObserver = null; };
@@ -227,7 +227,7 @@
     const worker = hoverWorker;
     const title = currentHoverTitle;
     const kicker = currentHoverKicker;
-    const recap = worker ? worker.recap_preview ?? '' : hoverRecap;
+    const recap = worker ? worker.recap ?? '' : hoverRecap;
     const stage = worker ? workspaceWorkerStageSentence(worker,lifecycleFor(manifests.data,worker.worker_type)) : '';
     const signal = worker?.conversation_signal ?? hoverSignal;
     const conversation = worker?.conversation_id ?? hoverConversationId;

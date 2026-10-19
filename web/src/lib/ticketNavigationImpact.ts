@@ -24,7 +24,7 @@ export function ticketCommandImpact(view:EffectiveNavigationView | null | undefi
   const record=view?.publication.records.find(record=>record.kind==='ticket' && record.id===id);
   if(!view || !record || record.kind!=='ticket') return {complete:false,reason:'missing_ticket_source'};
   const fields:readonly (keyof TicketRecord['value'])[]=operation==='title' ? ['title','updated_at']
-    : operation==='recap' ? ['recap_preview','updated_at']
+    : operation==='recap' ? ['recap','recap_preview','updated_at']
     : operation==='blocker' ? ['blocked','ticket_status','updated_at']
     : operation==='scope' ? ['ceiling','ceiling_holder','proposal_revision','ticket_status','updated_at']
     : operation==='backlog' ? ['is_backlogged','updated_at']

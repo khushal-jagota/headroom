@@ -16,7 +16,7 @@ import {
 /** Only fields the workspace presentation reads, independent of detail/config responses. */
 export type WorkspaceTicket = WorkItemTicketFacts & Pick<BoardCard, 'orchestrator' | 'sprint_item_id' | 'sprint_item_title'>;
 export type WorkspaceOrchestrator = Pick<BoardSprintItem,
-  'id' | 'title' | 'created_at' | 'settled' | 'project_id' | 'project' | 'recap_preview' | 'conversation_id'>
+  'id' | 'title' | 'created_at' | 'settled' | 'project_id' | 'project' | 'recap' | 'recap_preview' | 'conversation_id'>
   & WorkItemAttentionFacts & {conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>; tickets: readonly WorkItemTicketFacts[]};
 export type WorkspaceChief = Pick<import('./types').ChiefManagementSettings,'label' | 'conversation_id'>
   & {awaiting_reply:boolean | null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>};
@@ -40,7 +40,7 @@ export type WorkspaceRailItem = {
   project: string | null;
   projectId: string | null;
   tickets: WorkItemTicketFacts[];
-  recapPreview: string;
+  recap: string;
 };
 
 export type WorkspaceRail = {
@@ -136,7 +136,7 @@ export function workspaceAttentionGroups(
   return railGroups(cards.filter(railTicketEligible), true);
 }
 
-/** Use the existing concise recap; missing data gets only a factual list count. */
+/** Preserve the full recap; empty text gets only a factual list count. */
 export function workspaceListRecap(groups: readonly WorkspaceTicketGroup[], recap = ""): string {
   if (recap.trim()) return recap;
   const count = groups.reduce((total, group) => total + group.cards.length, 0);
@@ -171,7 +171,7 @@ export function buildWorkspaceRail(
     conversationSignal: item.conversation_signal,
     conversationId: item.conversation_id,
     groups: workspaceAttentionGroups(item.tickets),
-    recapPreview: item.recap_preview,
+    recap: item.recap,
     tickets: [...item.tickets],
     settled: item.settled === true,
     rested: item.settled === true,

@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, ticket_principal
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import (
+    install_probe_registry,
+    seed_probe_worker_type,
+    uninstall_probe_registry,
+)
 from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.backend_state import write_model_enablement
@@ -41,7 +45,8 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def probe_runtime() -> Iterator[None]:
+def probe_runtime(tmp_db: Connection) -> Iterator[None]:
+    seed_probe_worker_type(tmp_db)
     install_probe_registry()
     try:
         yield

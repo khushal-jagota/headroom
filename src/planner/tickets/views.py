@@ -510,6 +510,7 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
                 ),
             },
             "title": str(row["title"]),
+            "recap": str(row["recap"]),
             "recap_preview": recap_preview(str(row["recap"])),
             "deadline": deadline,
             "project_id": group_project_id,
@@ -597,6 +598,7 @@ def _board_sprint_items(
         BoardSprintItemSource(
             id=str(row["id"]),
             title=str(row["title"]),
+            recap=str(row["body"]),
             recap_preview=recap_preview(str(row["body"])),
             settled=bool(row["settled"]),
             project_id=str(row["project_id"]),

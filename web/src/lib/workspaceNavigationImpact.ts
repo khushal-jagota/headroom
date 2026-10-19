@@ -45,7 +45,7 @@ export function workspaceRailImpact(impact:RecordImpact,presentation:NavigationP
 }
 export function workspaceHoverImpact(impact:RecordImpact,kind:'ticket'|'orchestrator'|'chief',id:string,
   conversationId:string | null | undefined,presentation:NavigationPresentation | undefined,showsFallbackCount=false):boolean {
-  if(impact.kind===kind && impact.id===id) return impact.fields==='*' || touches(impact,['title','recap_preview','worker_type','stage','ticket_status','blocked','conversation_id','gating_field','stage_ownership','ceiling_holder']);
+  if(impact.kind===kind && impact.id===id) return impact.fields==='*' || touches(impact,['title','recap','worker_type','stage','ticket_status','blocked','conversation_id','gating_field','stage_ownership','ceiling_holder']);
   if(impact.kind==='conversation') return impact.id===conversationId && touches(impact,['attention']);
   if(showsFallbackCount && kind!=='ticket' && impact.kind==='ticket') {
     if(touches(impact,['orchestrator_kind','sprint_item_id'])) return true;
@@ -82,9 +82,9 @@ export function orchestratorChildrenImpact(impact:RecordImpact,principal:Orchest
   return impact.kind==='conversation' && rows.some(ticket=>ticket.conversation_id===impact.id) && touches(impact,['attention']);
 }
 
-/** Body updates project only their canonical preview; Item updated_at is not public. */
+/** Body updates project the full recap and its concise preview. */
 export const orchestratorEditImpact=(id:string,field:'title'|'body'):CommandImpact=>({complete:true,records:[{
-  kind:'orchestrator',id,fields:[field==='body' ? 'recap_preview' : field],
+  kind:'orchestrator',id,fields:field==='body' ? ['recap','recap_preview'] : [field],
 }]});
 export const orchestratorSettleImpact=(id:string):CommandImpact=>({complete:true,records:[{kind:'orchestrator',id,fields:['settled']}]});
 

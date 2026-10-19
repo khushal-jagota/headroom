@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -324,29 +323,65 @@ def test_application_bootstrap_does_not_enclose_schema_migration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from planner.conversation import runtime_composition
+    from planner.conversation.lifecycle_storage import (
+        ConversationRuntimeAlreadyOwned,
+        acquire_runtime_ownership,
+    )
+    from planner.core.config import load_config
     from planner.server_lifecycle import application
 
     db_path = tmp_path / "bootstrap.db"
-    config = SimpleNamespace(
-        db_path=str(db_path),
-        db_busy_timeout_ms=5000,
-        logs_dir=str(tmp_path / "logs"),
-        port=0,
+    config = load_config(
+        path=None,
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": str(db_path),
+            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+        },
     )
-    monkeypatch.chdir(Path.cwd())
+    from planner.core.db import create_schema as original_schema
+
+    migrations: list[bool] = []
+
+    def check_migration(
+        conn: sqlite3.Connection,
+        *,
+        migration_admission: object | None = None,
+    ) -> None:
+        assert not conn.in_transaction
+        with pytest.raises(ConversationRuntimeAlreadyOwned):
+            acquire_runtime_ownership(str(db_path))
+        original_schema(conn, migration_admission=migration_admission)
+        migrations.append(True)
+
+    monkeypatch.setattr(runtime_composition, "create_schema", check_migration)
     monkeypatch.delenv("PLAN_SERVER_LISTENER_FD", raising=False)
     monkeypatch.setattr(application, "load_config", Mock(return_value=config))
-    monkeypatch.setattr(application, "build_clock", Mock())
-    monkeypatch.setattr(application, "create_app", Mock())
     server = Mock()
-    monkeypatch.setattr(application, "ChangeStreamClosingServer", Mock(return_value=server))
-    monkeypatch.setattr(uvicorn, "Config", Mock())
+
+    def enter_actual_lifetime(server_config: uvicorn.Config) -> None:
+        assert isinstance(server_config.app, FastAPI)
+        with TestClient(server_config.app):
+            db = connect(str(db_path))
+            try:
+                assert (
+                    db.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+                    == SCHEMA_VERSION
+                )
+            finally:
+                db.close()
+
+    server.run.side_effect = lambda: enter_actual_lifetime(server.configuration)
+
+    def make_server(server_config: uvicorn.Config) -> Mock:
+        server.configuration = server_config
+        return server
+
+    monkeypatch.setattr(application, "ChangeStreamClosingServer", make_server)
     application.run_application_process()
     server.run.assert_called_once()
-    db = connect(str(db_path))
-    try:
-        assert (
-            db.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == SCHEMA_VERSION
-        )
-    finally:
-        db.close()
+    assert migrations == [True]

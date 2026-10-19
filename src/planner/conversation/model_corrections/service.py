@@ -160,17 +160,16 @@ async def apply_corrections(
                 )
             # No await crosses this authorization + CAS boundary. Authority can change
             # while catalogue resolution awaits, so check it again before the write.
-            conn.execute("SAVEPOINT model_correction")
+            conn.execute("BEGIN IMMEDIATE")
             try:
                 _authorize(conn, principal, correction.target)
                 if not _write(conn, correction, now):
                     raise PlannerError(
                         ErrorCode.validation, "saved model changed; preview again", {}
                     )
-                conn.execute("RELEASE SAVEPOINT model_correction")
+                conn.commit()
             except Exception:
-                conn.execute("ROLLBACK TO SAVEPOINT model_correction")
-                conn.execute("RELEASE SAVEPOINT model_correction")
+                conn.rollback()
                 raise
             results.append(current.model_copy(update={"applied": True}))
         except PlannerError as exc:

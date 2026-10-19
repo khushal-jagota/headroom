@@ -1,12 +1,11 @@
 """Ticket browser adapters through the real core and controlled backend.
 
 A mocked pane cannot prove that browser writes reach canonical queue/answer
-writers, or that contentless SSE refreshes a second mounted Ticket pane.
+writers, or that a mounted Ticket pane reflects the canonical result.
 Only the backend wire is scripted. No installed provider participates.
 """
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 
 import httpx
@@ -16,6 +15,7 @@ from tests.e2e.test_conversation_signals import (  # noqa: F401
     _post,
     signal_server,
 )
+from tests.support.connected_rows import _bind
 
 
 def _create_ticket_conversation(
@@ -29,15 +29,7 @@ def _create_ticket_conversation(
         server, "ticket", "create", "--worker-type", "coding", "--title", title,
     )["id"]
     _post(server, f"/api/test/signals/{conversation_id}/start")
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
-            (conversation_id, ticket_id),
-        )
-        conn.execute(
-            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-            (conversation_id, ticket_id),
-        )
+    _bind(server, "ticket", ticket_id, conversation_id)
     return ticket_id
 
 
@@ -105,7 +97,7 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
         "proof": {"answers": ["Recorded event replay"]},
     }
     assert submitted.value.post_data_json == {
-        "request_id": "input-1", "answers": expected_answers,
+        "request_id": "1:user_input:input-1", "answers": expected_answers,
     }
     assert answered.value.json() == {"landed": True}
     receipts = httpx.get(
@@ -117,7 +109,7 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
         server.base + f"/api/conversation/conversations/{conversation_id}/events", timeout=10,
     ).json()["events"]
     assert [event["payload"] for event in events if event["kind"] == "user_input_answered"] == [
-        {"request_id": "input-1", "answers": expected_answers},
+        {"request_id": "1:user_input:input-1", "answers": expected_answers},
     ]
     page.wait_for_selector('[data-conversation-user-input-state="answered"]', timeout=WAIT_MS)
     assert "Recorded event replay" in page.locator(
@@ -135,13 +127,17 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
     expect(page.locator("[data-user-input-panel]")).to_have_count(0)
 
 
-def test_canonical_queue_writes_refresh_another_mounted_tab(
+def test_canonical_queue_writes_refresh_the_mounted_pane(
     signal_server: ServerHandle,  # noqa: F811 - imported pytest fixture
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     cli: Callable[..., JsonObject],
 ) -> None:
-    """Actual held IDs reach real writers and SSE refreshes the other tab."""
+    """Actual held IDs reach real writers and refresh the mounted pane.
+
+    The owner moved same-profile multi-tab transport coverage to its own Ticket.
+    The original two-tab case and failure evidence remain runnable in that Ticket.
+    """
     server = signal_server
     conversation_id = "e2e-ticket-canonical-queue"
     ticket_id = _create_ticket_conversation(
@@ -154,33 +150,30 @@ def test_canonical_queue_writes_refresh_another_mounted_tab(
     assert [row["text"] for row in held] == ["queued message 1", "queued message 2"]
     discard_id, promote_id = [row["held_prompt_id"] for row in held]
     context = context_factory()
-    first, second = [
-        _open_ticket_conversation(
-            server, ticket_id, open_page, context, "[data-conversation-held-stack]",
-        ) for _ in range(2)
-    ]
-    for page in (first, second):
-        expect(page.locator("[data-conversation-held-row]")).to_have_count(2)
-    with first.expect_response(
+    page = _open_ticket_conversation(
+        server, ticket_id, open_page, context, "[data-conversation-held-stack]",
+    )
+    expect(page.locator("[data-conversation-held-row]")).to_have_count(2)
+    with page.expect_response(
         lambda response: response.url.endswith(f"/held-prompts/{discard_id}")
         and response.request.method == "DELETE",
     ) as discarded:
-        first.locator(f'[data-conversation-held-discard="{discard_id}"]').click()
+        page.locator(f'[data-conversation-held-discard="{discard_id}"]').click()
     assert discarded.value.json() == {"discarded": True}
-    expect(second.locator("[data-conversation-held-row]")).to_have_count(1, timeout=WAIT_MS)
+    expect(page.locator("[data-conversation-held-row]")).to_have_count(1, timeout=WAIT_MS)
     assert httpx.get(server.base + path, timeout=10).json()["held_prompts"][0][
         "held_prompt_id"
     ] == promote_id
-    with first.expect_response(
+    with page.expect_response(
         lambda response: response.url.endswith(f"/held-prompts/{promote_id}/promote")
         and response.request.method == "POST",
     ) as promoted:
-        first.locator(
+        page.locator(
             f'[data-conversation-held-promote="send_now"][data-held-prompt-id="{promote_id}"]',
         ).click()
     assert promoted.value.request.post_data_json == {"mode": "send_now"}
     assert promoted.value.json() == {"promoted": True, "fate": "started"}
-    expect(second.locator("[data-conversation-held-row]")).to_have_count(0, timeout=WAIT_MS)
+    expect(page.locator("[data-conversation-held-row]")).to_have_count(0, timeout=WAIT_MS)
     assert httpx.get(server.base + path, timeout=10).json()["held_prompts"] == []
     events = httpx.get(server.base + path + "/events", timeout=10).json()["events"]
     assert any(

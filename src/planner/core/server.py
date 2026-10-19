@@ -19,7 +19,8 @@ from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.api import router as conversation_router
 from planner.conversation.backend_state import DurableCodexLoginRejection
-from planner.conversation.contracts import ConversationSystem
+from planner.conversation.backends.contracts import BackendChildFactory
+from planner.conversation.contracts import ConversationBackendKey, ConversationSystem
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.conversation.send_body_limit import ConversationSendBodyLimitMiddleware
 from planner.conversation.usage.api import router as recorded_usage_router
@@ -130,6 +131,8 @@ def create_app(
     conn_factory: Callable[[], sqlite3.Connection],
     *,
     conversation_system_for_test: ConversationSystem | None = None,
+    backend_child_factories_for_test: Mapping[ConversationBackendKey, BackendChildFactory]
+    | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
     vps_status_summary_collector: (
         Callable[[Config, str | None, str | None], VpsStatusSummary] | None
@@ -137,6 +140,8 @@ def create_app(
 ) -> FastAPI:
     if conversation_system_for_test is not None and not config.test_mode:
         raise ValueError("conversation_system_for_test is accepted only in test mode")
+    if backend_child_factories_for_test is not None and not config.test_mode:
+        raise ValueError("backend_child_factories_for_test is accepted only in test mode")
 
     @asynccontextmanager
     async def _configured_lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -171,9 +176,13 @@ def create_app(
             db_path=config.db_path,
             db_busy_timeout_ms=config.db_busy_timeout_ms,
             sse_heartbeat_ms=config.sse_heartbeat_ms,
-            backend_child_factories=production_backend_child_factories(
-                panels_server_url=f"http://{HOST}:{config.port}",
-                remembered_codex_login_rejection=remembered_codex_login_rejection,
+            backend_child_factories=(
+                backend_child_factories_for_test
+                if backend_child_factories_for_test is not None
+                else production_backend_child_factories(
+                    panels_server_url=f"http://{HOST}:{config.port}",
+                    remembered_codex_login_rejection=remembered_codex_login_rejection,
+                )
             ),
             remembered_codex_login_rejection=remembered_codex_login_rejection,
             navigation_delivery=navigation_delivery,
