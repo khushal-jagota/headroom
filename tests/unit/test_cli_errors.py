@@ -279,7 +279,7 @@ def test_revision_feedback_error_names_its_real_non_cli_path(
 
     assert result.exit_code == 1
     assert _lines(result.stderr) == [
-        "error: unknown part names: rejection; valid part names: brief, proposal, recap, guidance",
+        "error: unknown part names: rejection; valid part names: brief, proposal, recap",
         "Revision feedback arrives in the Worker prompt. No panels command reads it.",
     ]
 
@@ -299,7 +299,7 @@ def test_revision_feedback_json_envelope_stays_machine_readable(
         "error": {
             "code": "validation",
             "message": (
-                "unknown part names: rejection; valid part names: brief, proposal, recap, guidance"
+                "unknown part names: rejection; valid part names: brief, proposal, recap"
             ),
             "detail": {},
         }

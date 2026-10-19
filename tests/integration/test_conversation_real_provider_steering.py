@@ -82,6 +82,35 @@ def test_real_provider_steer_reaches_model_system_api_stop_and_resume(
     asyncio.run(asyncio.wait_for(_exercise(case, tmp_path, monkeypatch), 900.0))
 
 
+def test_hermes_home_selection_uses_canonical_home_without_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    home = tmp_path / "normal-home"
+    canonical = home / ".hermes"
+    interpreter = canonical / "hermes-agent/venv/bin/python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.touch()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    before = set(home.rglob("*"))
+    monkeypatch.setattr(
+        "tests.support.real_provider_application.pwd.getpwuid",
+        lambda _: SimpleNamespace(pw_dir=str(home)),
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("HERMES_HOME", f"{canonical}/../{canonical.name}")
+    monkeypatch.setenv("PLAN_HERMES_HOME", str(canonical))
+    monkeypatch.setenv("PLAN_HERMES_PYTHON", str(interpreter))
+
+    receipt = require_provider_auth(ConversationBackendKey.hermes)
+
+    assert receipt["profile"] == str(canonical.resolve())
+    assert list(runtime.iterdir()) == []
+    assert set(home.rglob("*")) == before
+
+
 async def _exercise(
     case: _BackendCase,
     runtime_root: Path,

@@ -97,7 +97,6 @@ def run(browser, urls):
             "is_backlogged": False,
             "blocker_summary": {"blocked_by": []},
             "recap": "Orientation",
-            "guidance": "",
             "field_values": {"brief": "Request"},
             "pending_proposal_revision": 1,
             "pending_proposal": {

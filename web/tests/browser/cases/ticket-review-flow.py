@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Shared browser case with canonical navigation-source coverage."""
+"""Ticket and Review interactions, including stale response field suppression."""
 
 
 def run(browser, urls):
@@ -26,8 +26,8 @@ def run(browser, urls):
         sprint_id="sp_old",
         sprint_item_id="outcome_kept",
         sprint_item_title="Kept outcome",
-        id="t_guidance",
-        title="Guidance ticket",
+        id="t_review",
+        title="Review ticket",
         worker_type="coding",
         employee_backend="codex",
         employee_launch_model=None,
@@ -44,7 +44,8 @@ def run(browser, urls):
         is_backlogged=False,
         blocker_summary={"blocked_by": []},
         recap="Orientation",
-        guidance="Original **constraint**",
+        # A stale response must not reintroduce the retired Ticket field.
+        guidance="Retired guidance sentinel",
         field_values={"brief": "Request"},
         pending_proposal={
             "field": "success_condition",
@@ -258,7 +259,7 @@ def run(browser, urls):
         source = [
             fixture_ticket(identity)
             for identity in [
-                "t_guidance",
+                "t_review",
                 "t_personal",
                 "t_personal_pending",
                 "t_artifacts",
@@ -267,7 +268,7 @@ def run(browser, urls):
                 "t_open",
                 "t_done",
             ]
-            if identity != "t_guidance" or not source_deleted
+            if identity != "t_review" or not source_deleted
         ]
         parent = {
             "id": "outcome_kept",
@@ -288,7 +289,7 @@ def run(browser, urls):
                 row = rows[record["id"]]
                 proposal = (
                     navigation_proposal
-                    if row["id"] == "t_guidance" and navigation_proposal
+                    if row["id"] == "t_review" and navigation_proposal
                     else row["pending_proposal"]
                 )
                 definition = next(
@@ -376,9 +377,9 @@ def run(browser, urls):
                     "pending_user_input": None,
                     "composer_catalog": [],
                 }
-        elif path == "tickets/t_guidance/conversation/send":
+        elif path == "tickets/t_review/conversation/send":
             result = {"conversation_id": "ticket-delivered-local", "fate": "started"}
-        elif path == "tickets/t_guidance/conversation/reset":
+        elif path == "tickets/t_review/conversation/reset":
             result = {}
         elif path.endswith("/conversation/start-values"):
             result = {"backend_key": "codex", "model": None, "reasoning_effort": None}
@@ -386,17 +387,15 @@ def run(browser, urls):
             raise AssertionError("competing review summary query remains")
         elif path.startswith("navigation/events"):
             return
-        elif path == "tickets/t_guidance":
+        elif path == "tickets/t_review":
             if hold_detail and route.request.method == "GET":
                 held_details.append(route)
                 return
             if route.request.method == "PATCH":
                 body = route.request.post_data_json
                 assert not {"project_id", "sprint_id", "sprint_item_id"} & set(body)
-                if "guidance" in body:
-                    writes.append({"guidance": body["guidance"]})
-                    ticket["guidance"] = body["guidance"]
-                elif "field_values" in body:
+                assert "guidance" not in body
+                if "field_values" in body:
                     writes.append({"value": body["field_values"]})
                     ticket["field_values"].update(body["field_values"])
                 elif "ceiling" in body or "ceiling_holder" in body:
@@ -431,7 +430,7 @@ def run(browser, urls):
                     body=json.dumps(result),
                 )
                 return
-        elif path in ["tickets/t_guidance/backlog", "tickets/t_guidance/resume"]:
+        elif path in ["tickets/t_review/backlog", "tickets/t_review/resume"]:
             assert route.request.method == "POST"
             backlog_writes.append(
                 {"action": path.rsplit("/", 1)[1], "body": route.request.post_data_json}
@@ -617,7 +616,7 @@ def run(browser, urls):
     page.evaluate("window.__refresh()")
     expect(page.locator(".error-line")).to_have_count(1)
     expect(page.locator(".error-code")).to_have_text("unavailable")
-    expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Guidance ticket")
+    expect(page.locator(".ticket-title [contenteditable]")).to_have_text("Review ticket")
     snapshot_unavailable = False
     page.evaluate("window.__refresh()")
     expect(page.locator(".error-line")).to_have_count(0)
@@ -785,6 +784,7 @@ def run(browser, urls):
     assert page.get_by_label("Ticket outcome").count() == 0
     assert page.get_by_label("Ticket Sprint").count() == 0
     assert page.locator("[data-ticket-guidance], [data-ticket-history]").count() == 0
+    expect(page.locator("body")).not_to_contain_text("Retired guidance sentinel")
     assert page.get_by_text("Old unapproved draft").count() == 0
     expect(page.locator("[data-send-back]")).to_be_disabled()
     expect(page.locator("[data-return-unavailable]")).to_contain_text(
@@ -932,7 +932,7 @@ def run(browser, urls):
     assert_ticket_layout(1280)
     assert_ticket_layout(390)
     page.set_viewport_size({"width": 1280, "height": 900})
-    page.evaluate("window.__showTicket('t_guidance')")
+    page.evaluate("window.__showTicket('t_review')")
     title_editor = page.locator(".ticket-title [contenteditable]")
     title_editor.fill("Local masthead edit")
     page.evaluate("window.__batch()")
@@ -977,7 +977,7 @@ def run(browser, urls):
     ), "unchanged canonical pointer cannot undo local reset"
     ticket["conversation_id"] = None
     page.evaluate("window.__batch()")
-    page.locator('[data-ticket-id="t_guidance"]').wait_for()
+    page.locator('[data-ticket-id="t_review"]').wait_for()
     assert page.locator("[data-accept]").count() == 1
     proposal = page.locator(
         '[data-approval-block][data-field="success_condition"] [contenteditable]'
@@ -1062,11 +1062,14 @@ def run(browser, urls):
     ticket["ceiling_holder"] = {"kind": "owner", "id": "owner"}
     page.evaluate("window.__refresh()")
     page.evaluate("window.__showReview()")
-    expect(page.locator("[data-ticket-guidance]")).to_have_count(1)
-    guidance = page.locator("[data-ticket-guidance]")
-    guidance.locator("summary").click()
-    expect(guidance).to_contain_text("Original constraint")
-    assert guidance.locator("[contenteditable]").count() == 0
+    review = page.locator('[data-review-card][data-ticket-id="t_review"]')
+    expect(review).to_be_visible()
+    expect(review.locator("[data-ticket-guidance]")).to_have_count(0)
+    expect(review).not_to_contain_text("Retired guidance sentinel")
+    if os.environ.get("PANELS_REVIEW_SCREENSHOT"):
+        page.screenshot(path=os.environ["PANELS_REVIEW_SCREENSHOT"], full_page=True, animations="disabled")
+    # Review shows what the author wrote. The edit on the Ticket page was never saved
+    # over it, because an edited proposal is approved as the edit or it is nothing.
     expect(page.locator('[data-approval-block][data-field="success_condition"]')).to_contain_text(
         "A result"
     )
@@ -1104,7 +1107,7 @@ def run(browser, urls):
     assert approvals[0]["next_ceiling"] == "done"
     assert approvals[0]["next_holder"] == {"kind": "chief", "id": "chief"}
     assert approvals[0]["expected_proposal_revision"] == 2
-    expect(page.locator('[data-review-card][data-ticket-id="t_guidance"]')).to_have_count(0)
+    expect(page.locator('[data-review-card][data-ticket-id="t_review"]')).to_have_count(0)
     remaining = page.locator('[data-review-card][data-ticket-id="t_personal_pending"]')
     expect(remaining).to_have_count(1)
     remaining.locator("[data-skip]").click()

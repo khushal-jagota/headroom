@@ -31,9 +31,10 @@ It does not protect Hermes or Claude. The separate bounded source detector in
 scripts/check_agent_home_copies.py relates supported copies to selected agent homes,
 but cannot prove external credential provenance or safety on its omitted routes.
 
-The steering harness now copies Hermes configuration while symlinking canonical
-auth.json, and copies Claude settings while symlinking canonical .credentials.json.
-Codex uses its real home. The former whole-home and credential copies are removed;
+Both real-provider harnesses select the canonical Hermes home directly so auth and
+its home-derived lock stay together. Steering copies Claude settings while symlinking
+canonical .credentials.json; permissions links only Claude credentials. Codex uses its
+real home. The former whole-home and credential copies are removed;
 docs/conversation-system.md describes the current checks and their remaining limits.
 This tripwire has no new exemption.
 

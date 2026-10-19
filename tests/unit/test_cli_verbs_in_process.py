@@ -539,7 +539,7 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
     assert "cadence must be one of: daily" in rejected.output
 
 
-def test_ticket_approval_copy_and_worker_note_shape(
+def test_ticket_approval_copy_omits_historical_guidance_and_rejects_retired_writes(
     server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
 ) -> None:
     tid = cli(
@@ -597,65 +597,30 @@ def test_ticket_approval_copy_and_worker_note_shape(
     assert approved["stage"] == "needs_what_changes"
     assert approved["field_values"].get("success_condition") == "success body"
 
-    cli(
-        server,
-        "ticket",
-        "edit",
-        tid,
-        "--input-json",
-        "-",
-        ticket_id=tid,
-        stdin=json.dumps({"guidance": "approach note"}),
-    )
-    cli(
-        server,
-        "ticket",
-        "edit",
-        tid,
-        "--input-json",
-        "-",
-        ticket_id=tid,
-        stdin=json.dumps({"guidance_append": "additional approach note"}),
-    )
-    appended_detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
-    assert appended_detail["guidance"] == "approach note\n\nadditional approach note"
-    cli(
-        server,
-        "ticket",
-        "edit",
-        tid,
-        "--input-json",
-        "-",
-        ticket_id=tid,
-        stdin=json.dumps({"guidance": "replaced approach note"}),
-    )
+    historical_guidance = "Historical guidance.\r\n  Exact whitespace stays.  \n"
+    with connect(str(server.db_path)) as conn:
+        conn.execute("UPDATE tickets SET guidance = ? WHERE id = ?", (historical_guidance, tid))
+    for key in ("guidance", "guidance_append"):
+        result = CliRunner().invoke(
+            cli_main,
+            ["ticket", "edit", tid, "--input-json", "-", "--json"],
+            input=json.dumps({key: "retired write"}),
+            env={"PLAN_SERVER_URL": server.base, "PLAN_TICKET_ID": tid, "PLAN_ACTOR": "worker"},
+        )
+        assert result.exit_code == 1
+        assert json.loads(result.stderr)["error"]["code"] == "validation"
     detail = api.get(server, f"/api/tickets?detail=full&id={tid}")
-    assert detail["guidance"] == "replaced approach note"
-
-    new_worker_id = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "new_worker",
-        "--title",
-        "CLI new worker note",
-    )["id"]
-    cli(
-        server,
-        "worker",
-        "note",
-        new_worker_id,
-        ticket_id=new_worker_id,
-        stdin="stages note",
-    )
-    new_worker_detail = api.get(server, f"/api/tickets?detail=full&id={new_worker_id}")
-    assert new_worker_detail["guidance"] == "stages note"
+    assert "guidance" not in detail
+    assert "Historical guidance" not in json.dumps(detail)
 
     copied = cli(server, "ticket", "copy", tid)
     assert "CLI approve ticket" in copied["text"]
     assert "updated intake" in copied["text"]
-    assert "replaced approach note" in copied["text"]
+    assert "Historical guidance" not in copied["text"]
+    with connect(str(server.db_path)) as conn:
+        assert conn.execute("SELECT guidance FROM tickets WHERE id = ?", (tid,)).fetchone()[0] == (
+            historical_guidance
+        )
 
     # `trouble` only accepts writes during an active claimed worker step. The refusal
     # assertion above covers its argument parsing. Writer tests cover the active path.

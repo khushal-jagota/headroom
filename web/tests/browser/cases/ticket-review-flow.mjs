@@ -6,7 +6,7 @@ export async function prepare({ scratchRoot }) {
   const root = fileURLToPath(new URL("../../../", import.meta.url));
   const webRoot = root;
   const scratch = scratchRoot;
-const stem = `guidance-${process.pid}`;
+const stem = `ticket-review-${process.pid}`;
 const host = join(scratchRoot, `${stem}.svelte`);
 const main = join(scratchRoot, `${stem}.ts`);
 const index = join(scratchRoot, `${stem}.html`);
@@ -59,7 +59,7 @@ navigation.owner.waitForVisibility=(fence,options)=>{
   if(current.generation!==generation || current.connection!=='subscribed')continue;
   const previous=current.publication!;
   if(response.snapshot.revision===previous.continuity.revision){await tick();return;}
-  if(BigInt(response.snapshot.revision)!==BigInt(previous.continuity.revision)+1n)throw new Error('controlled guidance source revision gap');
+  if(BigInt(response.snapshot.revision)!==BigInt(previous.continuity.revision)+1n)throw new Error('controlled review source revision gap');
   const keys=new Set(response.snapshot.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
   const batch={...response.snapshot,base_revision:previous.continuity.revision,upserts:response.snapshot.records,
   deletes:previous.records.filter(row=>!keys.has(JSON.stringify([row.kind,row.id]))).map(row=>({kind:row.kind,id:row.id}))};delete batch.records;
@@ -83,12 +83,12 @@ client.setDefaultOptions({ queries: { retry: false } });
 (window as any).__manifest=()=>client.invalidateQueries({queryKey:['worker-types']});
 
 let review = $state(false);
-let reviewTicketId = $state('t_guidance');
+let reviewTicketId = $state('t_review');
 let historicalIdentity=$derived(navigation.selectors.effective ? navigationReviewPresentation(navigation.selectors.effective).items.find(item=>item.ticket_id===reviewTicketId) : undefined);
 let reviewField = $state('success_condition');
 let config = $state(false);
-let ticketId = $state('t_guidance');
-(window as any).__showReview = (id = "t_guidance", field = "success_condition") => { reviewTicketId = id; reviewField = field; review = true; };
+let ticketId = $state('t_review');
+(window as any).__showReview = (id = "t_review", field = "success_condition") => { reviewTicketId = id; reviewField = field; review = true; };
 (window as any).__showTicket = (id: string) => { review = false; ticketId = id; };
 (window as any).__showConfig = () => { config = true; };
 </script>
@@ -101,5 +101,5 @@ let ticketId = $state('t_guidance');
   await writeFile(main, `globalThis.__openStreams=new Set();globalThis.EventSource=class extends EventTarget{onerror=null;constructor(url){super();this.url=String(url);globalThis.__openStreams.add(this.url);if(this.url.startsWith('/api/navigation/events?'))globalThis.__navigationSource=this;}close(){globalThis.__openStreams.delete(this.url);}}; import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
   await writeFile(index, `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
 
-  return {inputs: [index], arguments: [index], python: fileURLToPath(new URL("./ticket-guidance.py", import.meta.url))};
+  return {inputs: [index], arguments: [index], python: fileURLToPath(new URL("./ticket-review-flow.py", import.meta.url))};
 }

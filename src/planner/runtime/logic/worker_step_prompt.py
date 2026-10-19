@@ -1,9 +1,8 @@
 """The ordered inputs Panels sends into a Ticket's conversation for one worker step.
 
-A wake carries only what a Worker cannot get for itself. The Ticket brief and the Ticket
-guidance are not that: they sit in the database, and one command returns them. What a
-Worker cannot get is the knowledge that it lost its memory, so that is what was added
-when those two were removed.
+A wake carries only what a Worker cannot get for itself. The Ticket brief sits in the
+database, and one command returns it. What a Worker cannot get is the knowledge that it
+lost its memory, so Panels includes that fact when the conversation was compacted.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ from planner.tickets.logic import machine
 from planner.tickets.revision_feedback import PendingRevisionFeedback
 from planner.worker_types.contracts import WorkerTypeDefinition
 
-READ_YOUR_TICKET_COMMAND: Final = "panels worker my-ticket brief,guidance"
+READ_YOUR_TICKET_COMMAND: Final = "panels worker my-ticket brief"
 
 MEMORY_LOSS_NOTICE: Final = (
     "Your context was compacted, so the conversation you were working from is gone. "

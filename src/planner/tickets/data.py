@@ -15,7 +15,6 @@ import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime
 from typing import Protocol
 
 from planner.conversation.backend_state import require_enabled_model
@@ -333,7 +332,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         effective_sprint_id=row["sprint_id"],
         sprint_item_title=row["sprint_item_title"],
         recap=row["recap"],
-        guidance=row["guidance"],
         ceiling=str(row["ceiling"]),
         ceiling_holder=_principal_from_json(str(row["ceiling_holder"])),
         ticket_status=derivation.derive_ticket_status(
@@ -362,9 +360,41 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     )
 
 
+# Historical columns stay stored, but active reads and the stale-write guard only
+# select the Ticket record the application still uses.
+_TICKET_STORED_COLUMNS = (
+    "id",
+    "title",
+    "worker_type",
+    "employee_backend",
+    "employee_launch_model",
+    "employee_launch_reasoning_effort",
+    "stage",
+    "deadline",
+    "project_id",
+    "sprint_item_id",
+    "recap",
+    "ceiling",
+    "conversation_id",
+    "field_values",
+    "created_at",
+    "updated_at",
+    "sprint_id",
+    "pending_proposal",
+    "ceiling_holder",
+    "worker_step_claim",
+    "worker_step_claim_revision",
+    "pending_proposal_revision",
+    "orchestrator_kind",
+    "is_backlogged",
+    "locale",
+)
+_TICKET_STORED_SELECT = ", ".join(f"tickets.{column}" for column in _TICKET_STORED_COLUMNS)
+
+
 def _ticket_row(conn: sqlite3.Connection, ticket_id: str) -> sqlite3.Row:
     row: sqlite3.Row | None = conn.execute(
-        "SELECT tickets.*, CASE WHEN tickets.sprint_item_id IS NOT NULL "
+        f"SELECT {_TICKET_STORED_SELECT}, CASE WHEN tickets.sprint_item_id IS NOT NULL "
         "THEN sprint_items.project_id ELSE tickets.project_id END AS effective_project_id, "
         "projects.name AS project_name, "
         "sprint_items.title AS sprint_item_title, "
@@ -1055,7 +1085,7 @@ def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
 def read_ticket_by_conversation_id(conn: sqlite3.Connection, conversation_id: str) -> Ticket:
     """Resolve the Ticket that owns this durable Employee conversation."""
     rows = conn.execute(
-        "SELECT tickets.*, CASE WHEN tickets.sprint_item_id IS NOT NULL "
+        f"SELECT {_TICKET_STORED_SELECT}, CASE WHEN tickets.sprint_item_id IS NOT NULL "
         "THEN sprint_items.project_id ELSE tickets.project_id END AS effective_project_id, "
         "projects.name AS project_name, "
         "sprint_items.title AS sprint_item_title, "
@@ -1541,46 +1571,10 @@ def delete_ticket_records(
     )
 
 
-def _outcome_title(conn: sqlite3.Connection, sprint_item_id: str | None) -> str | None:
-    if sprint_item_id is None:
-        return None
-    row = conn.execute("SELECT title FROM sprint_items WHERE id = ?", (sprint_item_id,)).fetchone()
-    return None if row is None else str(row["title"])
-
-
-def _returned_ceiling_line(
-    conn: sqlite3.Connection,
-    *,
-    moved_from_sprint_item_id: str | None,
-    moved_to_sprint_item_id: str | None,
-    now: int,
-) -> str:
-    """One sentence saying the ceiling came back, and which move sent it back.
-
-    Named by Outcome title rather than by id, because this is read by whoever is about to
-    decide the proposal and an id tells them nothing.
-    """
-    day = datetime.fromtimestamp(now).date().isoformat()
-    left = _outcome_title(conn, moved_from_sprint_item_id)
-    joined = _outcome_title(conn, moved_to_sprint_item_id)
-    if left is None:
-        where = f"This Ticket moved into **{joined}**"
-    elif joined is None:
-        where = f"This Ticket moved out of **{left}**"
-    else:
-        where = f"This Ticket moved from **{left}** to **{joined}**"
-    return (
-        f"{day} — the ceiling returned to Khushal. {where}, which left the Outcome that held "
-        "the ceiling no longer above it, so that Outcome can no longer decide what parks here."
-    )
-
-
 def _release_a_holder_the_move_left_below(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    moved_from_sprint_item_id: str | None,
-    moved_to_sprint_item_id: str | None,
     now: int,
 ) -> None:
     """Return the ceiling to Khushal when a move leaves its holder no longer above.
@@ -1599,7 +1593,7 @@ def _release_a_holder_the_move_left_below(
     before anything arrives at it.
     """
     row = conn.execute(
-        "SELECT ceiling_holder, guidance FROM tickets WHERE id = ?", (ticket_id,)
+        "SELECT ceiling_holder FROM tickets WHERE id = ?", (ticket_id,)
     ).fetchone()
     if row is None:
         return
@@ -1608,21 +1602,9 @@ def _release_a_holder_the_move_left_below(
     holder = _principal_from_json(str(row["ceiling_holder"]))
     if authority.is_above(conn, holder, authority.ticket(ticket_id)):
         return
-    existing = str(row["guidance"])
-    line = _returned_ceiling_line(
-        conn,
-        moved_from_sprint_item_id=moved_from_sprint_item_id,
-        moved_to_sprint_item_id=moved_to_sprint_item_id,
-        now=now,
-    )
     conn.execute(
-        "UPDATE tickets SET ceiling_holder = ?, guidance = ?, updated_at = ? WHERE id = ?",
-        (
-            _principal_to_json(OWNER_PRINCIPAL),
-            f"{existing}\n\n{line}" if existing else line,
-            now,
-            ticket_id,
-        ),
+        "UPDATE tickets SET ceiling_holder = ?, updated_at = ? WHERE id = ?",
+        (_principal_to_json(OWNER_PRINCIPAL), now, ticket_id),
     )
     # Who holds the ceiling decides whether the user is waiting on this Ticket.
     capture_ticket_attention(conn, ticket_id, now)
@@ -1721,18 +1703,8 @@ def edit_ticket(
         )
         changes = [change for change in candidates if change[2] != change[3]]
 
-        # The guidance document, the recap, and the settled field values are Ticket
-        # fields like any other, so they are set here. They are listed apart because each
-        # is a whole document rather than a scalar, not because it takes another door.
-        if "guidance" in edit:
-            changes.append(("guidance", "guidance", ticket.guidance, edit["guidance"]))
-        if "guidance_append" in edit and edit["guidance_append"]:
-            appended = (
-                f"{ticket.guidance}\n\n{edit['guidance_append']}"
-                if ticket.guidance
-                else edit["guidance_append"]
-            )
-            changes.append(("guidance", "guidance", ticket.guidance, appended))
+        # The recap and settled field values are whole documents set through the same
+        # Ticket edit door as scalar fields.
         if "recap" in edit:
             changes.append(("recap", "recap", ticket.recap, edit["recap"]))
 
@@ -1822,8 +1794,6 @@ def edit_ticket(
             _release_a_holder_the_move_left_below(
                 conn,
                 ticket_id,
-                moved_from_sprint_item_id=ticket.sprint_item_id,
-                moved_to_sprint_item_id=sprint_item_id,
                 now=now,
             )
         # Who holds the ceiling decides whether the user is waiting on this Ticket, so a
@@ -1885,8 +1855,6 @@ def classify_ticket(
         _release_a_holder_the_move_left_below(
             conn,
             ticket_id,
-            moved_from_sprint_item_id=ticket.sprint_item_id,
-            moved_to_sprint_item_id=sprint_item_id,
             now=now,
         )
         return _load_ticket_for_write(conn, ticket_id)
@@ -1930,16 +1898,16 @@ def unclassify_ticket(
         _release_a_holder_the_move_left_below(
             conn,
             ticket_id,
-            moved_from_sprint_item_id=ticket.sprint_item_id,
-            moved_to_sprint_item_id=None,
             now=now,
         )
         return _load_ticket_for_write(conn, ticket_id)
 
 
 def ticket_record_sha256(conn: sqlite3.Connection, ticket_id: str) -> str:
-    """Fingerprint the complete stored record, including same-second changes."""
-    row = conn.execute("SELECT * FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+    """Fingerprint every active stored column, including same-second changes."""
+    row = conn.execute(
+        f"SELECT {_TICKET_STORED_SELECT} FROM tickets WHERE id=?", (ticket_id,)
+    ).fetchone()
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
     return hashlib.sha256(

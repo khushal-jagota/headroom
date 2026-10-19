@@ -904,10 +904,12 @@ A rotating refresh token must have one owner: refreshing a copied login in a sec
 home can leave the original holding a spent token. Hardlinks are unsafe too: they
 share a file only until a refresh replaces the canonical path by rename.
 
-Synthetic homes with invented credentials are fine. Tests can also copy configuration
-files while symlinking the credential path to the canonical file. That link follows
-the current credential rather than keeping a second copy. Copying a whole real home
-or a credential first is still unsafe.
+Synthetic homes with invented credentials are fine. Claude tests can copy settings
+while linking the credential path to the canonical file. That link follows the current
+credential rather than keeping a second copy. Copying a whole real home or a credential
+first is still unsafe. For Hermes, linking only the credential is insufficient: its
+auth lock is derived from the home path, so a second home separates lock identity even
+when both credential paths reach the same file.
 
 **The existing checks cover only part of this rule.** Before launching a Codex child,
 Panels compares its home with the home selected by the server's own environment.
@@ -945,8 +947,11 @@ its normal HERMES_HOME and PLAN_HERMES_HOME together, preserving the one native 
 refresh-lock identity, with its installed interpreter explicitly configured. No new login,
 purchase or authentication workaround is authorized. Native provider caches/logs/temp
 follow the production launcher; parent Panels process XDG/temp paths are synthetic.
-Hermes trims inherited environment names, so this is not a claim that every native
-provider temporary path is synthetic. Missing supported native authentication or model
+Hermes requests a filtered environment, but the installed ACP transport merges its
+default inherited environment before the spawn. The commissioned observer checks that
+actual environment and refuses a child with `PYTEST_CURRENT_TEST`. Do not remove that
+marker or bypass the native guard. Canonical home selection alone does not close this
+execution prerequisite. Native provider temporary paths are not all synthetic. Missing supported native authentication or model
 access is an observed prerequisite failure, not permission to create a workaround.
 
 Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
@@ -976,10 +981,10 @@ conditional alias merges, byte transfers, or runtime paths. Synthetic credential
 and skill symlinks are not copies. Reviewers must inspect those omitted routes themselves.
 A clean result does not certify safety.
 
-This standalone command is invoked explicitly rather than enforced in CI. Against the
-current source, it reports zero accusations and two Hermes configuration dismissals,
-exiting with status 0. That result verifies the checked source pattern; it does not
-certify credential safety, external configuration contents, or the omitted copy routes.
+This standalone command is invoked explicitly rather than enforced in CI. The two
+real-provider harnesses now contain no Hermes copy sites to dismiss. A clean scan
+verifies only the supported source patterns; it does not certify credential safety,
+external configuration contents, or the omitted copy routes.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged

@@ -27,7 +27,7 @@ header and a part manifest. Add one comma-separated part list to expand selected
 
 ```sh
 panels ticket show t_example success_condition,what_changes --json
-panels ticket show brief,guidance --json
+panels ticket show brief --json
 panels sprint show current primary_bet,kickoff --json
 panels sprint item show si_example body --json
 panels day show 2026-08-10 focus,watchout --json
@@ -94,8 +94,7 @@ change one or more fields that the route already accepts.
 ```sh
 panels ticket edit t_example --input-json - <<'JSON'
 {
-  "recap": "Ready for review.",
-  "guidance_append": "Keep the public surface small."
+  "recap": "Ready for review."
 }
 JSON
 ```
