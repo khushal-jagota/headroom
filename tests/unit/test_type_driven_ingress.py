@@ -404,6 +404,8 @@ def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> 
             ).encode()).hexdigest()
             # Reopening an existing database must leave the historical column alone.
             conn.set_authorizer(_deny_retired_ticket_guidance)
+            # Schema migration uses its own connection and needs this one idle.
+            conn.commit()
             create_schema(conn)
             assert tickets_data.ticket_record_sha256(conn, ticket_id) == expected_record_hash
             ticket = tickets_data.read_ticket(conn, ticket_id)
