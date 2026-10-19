@@ -6,7 +6,7 @@
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
-  let { ticket, terminal, assertCurrent, runCommand, leading, leadingShown = true }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown>; leading?: Snippet; leadingShown?: boolean } = $props();
+  let { ticket, terminal, assertCurrent, runCommand, leading }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown>; leading?: Snippet } = $props();
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -35,7 +35,7 @@
   {#if !terminal}
     <div class="actions">
       {@render leading?.()}
-      {#if leading && leadingShown}<span class="separator" aria-hidden="true">·</span>{/if}
+      {#if leading}<span class="separator" aria-hidden="true">·</span>{/if}
       {#if ticket.is_backlogged}<span class="state" data-ticket-backlogged>Backlogged</span>{/if}
       {#if ticket.is_backlogged}
         <Button disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>

@@ -523,7 +523,7 @@
             </ClampedText>
             {/if}
           </div>
-          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)} leadingShown={!recapPending(detail.recap, masthead.conversation_signal)}>
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)}>
             {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} pending={recapPending(detail.recap, masthead.conversation_signal)} />{/snippet}
           </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}

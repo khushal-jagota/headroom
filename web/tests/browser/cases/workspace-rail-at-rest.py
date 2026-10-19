@@ -578,9 +578,11 @@ def run(browser, urls):
         # push, so it makes it rather than waiting for one that cannot arrive.
         page.evaluate("window.__refresh()")
         # The press clears the line, and the empty line beside a working agent is what
-        # says a recap is coming. The ask steps aside while it does.
-        expect(panel.locator("[data-request-recap-action]")).to_have_count(0)
+        # says a recap is coming. The ask stays exactly where it was, and takes no
+        # second press until the recap lands.
         expect(panel.locator("[data-recap-pending]")).to_have_count(1)
+        expect(ask).to_have_text("Ask for a recap")
+        expect(ask).to_have_attribute("aria-disabled", "true")
         assert recap_requests == [{"target": {"kind": "sprint_item", "id": "si_needs_him"}}], (
             recap_requests
         )
@@ -592,7 +594,7 @@ def run(browser, urls):
         page.evaluate("window.__refresh()")
         expect(panel.locator("[data-recap-pending]")).to_have_count(0)
         expect(panel.locator("[data-recap-text]")).to_have_text(ORCHESTRATOR_RECAP)
-        expect(panel.locator("[data-request-recap-action]")).to_have_count(1)
+        expect(ask).to_have_attribute("aria-disabled", "false")
         page.mouse.move(1200, 900)
         expect(panel).to_have_attribute("aria-hidden", "true")
         for viewport, label in [

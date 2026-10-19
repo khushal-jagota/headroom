@@ -45,17 +45,17 @@
 </script>
 
 <span class={`request-recap${extraClass ? ` ${extraClass}` : ""}`} data-request-recap={`${kind}:${id}`}>
-  {#if !pending}
-    <!-- Marked rather than disabled: a disabled control loses focus the instant it is
-         pressed, and inside a hover panel losing focus is how the panel decides you left. -->
-    <button
-      type="button"
-      class="request-recap-action"
-      aria-disabled={quiet}
-      data-request-recap-action
-      onclick={() => void ask()}
-    >Ask for a recap</button>
-  {/if}
+  <!-- It stays put and keeps its words through all of this. A control that vanishes or
+       renames itself when pressed moves the page under the hand that pressed it.
+       Marked rather than disabled: a disabled control loses focus the instant it is
+       pressed, and inside a hover panel losing focus is how the panel decides you left. -->
+  <button
+    type="button"
+    class="request-recap-action"
+    aria-disabled={quiet}
+    data-request-recap-action
+    onclick={() => void ask()}
+  >Ask for a recap</button>
   {#if note}<span class="request-recap-note" data-request-recap-note>{note}</span>{/if}
 </span>
 
