@@ -128,7 +128,7 @@ def test_a_move_to_chief_releases_only_an_invalid_old_parent_holder(tmp_db: Conn
         now=2,
     )
     assert moved.ceiling_holder == OWNER_PRINCIPAL
-    assert "ceiling returned" in moved.guidance
+    assert moved.updated_at == 2
 
 
 def test_creation_has_no_calendar_defaults_and_chief_is_a_real_destination(

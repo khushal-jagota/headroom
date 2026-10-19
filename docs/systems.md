@@ -163,7 +163,7 @@ repeat. Panels then starts or reuses the Ticket conversation and sends one order
 of Ticket inputs. It carries only what the worker cannot get for itself: a notice when
 its context was compacted, the Stage instruction, and current-Stage revision feedback
 where present. The Stage instruction names the command that reads the Ticket, so the
-Brief and the guidance are a read rather than a payload. Started and queued both count
+Brief is a read rather than a payload. Started and queued both count
 as delivered. Refusal releases every claim and removes any tentative opener fact.
 
 Nothing watches a turn end. A Ticket moves only when someone acts on it. A process crash

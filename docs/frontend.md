@@ -31,8 +31,8 @@ One screen per part of the system:
   cursor is not in a text field, and each item fades in as it arrives. A proposal's
   approve button sends the next ceiling and owner holder together. Send-back
   stores the owner's exact attributed comment for the next worker-step prompt while
-  clearing the proposal and returning the Ticket to its resting control status. Ticket
-  guidance stays independent. A reply in the Ticket conversation leaves the proposal in
+  clearing the proposal and returning the Ticket to its resting control status.
+  A reply in the Ticket conversation leaves the proposal in
   Review until a decision.
 - **Workspace** — an adjustable rail of orchestrator cards beside the selected conversation
   or Worker. Chief leads, keeps its portrait, and never settles. Ordinary orchestrators
@@ -206,7 +206,7 @@ One screen per part of the system:
   stay intact in requests.
 
   Steps and Artifacts are closed bands below the live card. Steps retain their circular progress marks. Each step opens its own
-  text. Future stages, guidance, and a separate historical record do not appear.
+  text. Future stages and a separate historical record do not appear.
   Artifacts remain accessible even when no inline link exists,
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
@@ -396,7 +396,7 @@ and `web/src/lib/conversation/recordedUsageWire.ts`.
   scrollbar appears. On a mouse or trackpad the thumb stays quiet until hover, focus,
   or active use. Touch and forced-colors modes keep the platform's visible scrollbar
   behavior.
-- **Ticket files are linked, not stored in fields.** Ticket guidance, fields,
+- **Ticket files are linked, not stored in fields.** Ticket fields,
   proposals, and results stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
@@ -670,7 +670,7 @@ fixtures. The retained direct `node web/tests/workspace-rail-at-rest-browser.tes
 command invokes workspace and carries the same companion requirement.
 
 Other former direct host commands move to their catalog entry. Ideas and feedback use
-`shell-feedback`. Approval, Stage owner, and guidance use `ticket-review`. Worker setup
+`shell-feedback`. Approval and Stage owner use `ticket-review`. Worker setup
 and scheduled tasks use `configuration-schedules`. Pane, conversation switches,
 unanswered sends, and open-state cases use `conversation`. Composer and voice use
 `composer-voice`. Rail, order, Settled groups, children, and reader state use `workspace`.

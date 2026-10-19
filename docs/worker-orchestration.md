@@ -112,7 +112,7 @@ The opening message is composed first as one ordered, inspectable list of Panels
 It carries only what a worker cannot get for itself: a notice when the worker's context
 was compacted, the Stage instruction, and revision feedback for the current Stage when
 there is some. The Stage instruction names the command that reads the Ticket, because
-the Ticket's Brief and guidance are a read the worker makes rather than a payload every
+the Ticket's Brief is a read the worker makes rather than a payload every
 message carries. Worker skills and conversation history stay separate from this list. It
 is composed before anything else so that a failure here cannot leave a conversation
 behind.
@@ -240,8 +240,7 @@ to a separate attributed revision-feedback record, and returns the Ticket to its
 status. Its commit wakes normal readiness, which reuses the existing
 conversation. A same-Stage user opener is cleared so the discussion can open again. The
 next normal worker-step prompt carries feedback for that Stage, and only a successful
-send consumes it. Ticket guidance is not sent with it, and the worker reads that off the
-Ticket. Reply bookkeeping credits the source
+send consumes it. Reply bookkeeping credits the source
 turn after the commit and cannot undo the rejection.
 
 _Code path:_ `src/planner/tickets/actions.py`.

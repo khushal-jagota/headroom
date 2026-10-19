@@ -19,7 +19,6 @@
   import type { TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
-  import Disclosure from "./Disclosure.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
@@ -265,11 +264,6 @@
         </div>
       </div>
 
-      {#if ticketDetail.guidance}
-        <Disclosure title="Guidance" variant="support" defaultOpen={false} data-ticket-guidance>
-          <MarkdownBlock text={ticketDetail.guidance} />
-        </Disclosure>
-      {/if}
       <div class="review-arrive review-arrive--3">
         {#if acceptField}
           {#if lc && ticketDetail.pending_proposal}

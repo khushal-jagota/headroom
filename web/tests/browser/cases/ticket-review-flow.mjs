@@ -6,7 +6,7 @@ export async function prepare({ scratchRoot }) {
   const root = fileURLToPath(new URL("../../../", import.meta.url));
   const webRoot = root;
   const scratch = scratchRoot;
-const stem = `guidance-${process.pid}`;
+const stem = `ticket-review-${process.pid}`;
 const host = join(scratchRoot, `${stem}.svelte`);
 const main = join(scratchRoot, `${stem}.ts`);
 const index = join(scratchRoot, `${stem}.html`);
@@ -18,11 +18,11 @@ import ReviewProposalCard from '../src/components/ReviewProposalCard.svelte';
 import ConfigRoute from '../src/routes/ConfigRoute.svelte';
 client.setDefaultOptions({ queries: { retry: false } });
 let review = $state(false);
-let reviewTicketId = $state('t_guidance');
+let reviewTicketId = $state('t_review');
 let reviewField = $state('success_condition');
 let config = $state(false);
-let ticketId = $state('t_guidance');
-(window as any).__showReview = (id = "t_guidance", field = "success_condition") => { reviewTicketId = id; reviewField = field; review = true; };
+let ticketId = $state('t_review');
+(window as any).__showReview = (id = "t_review", field = "success_condition") => { reviewTicketId = id; reviewField = field; review = true; };
 (window as any).__showTicket = (id: string) => { review = false; ticketId = id; };
 (window as any).__showConfig = () => { config = true; };
 </script>
@@ -34,5 +34,5 @@ let ticketId = $state('t_guidance');
   await writeFile(main, `import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
   await writeFile(index, `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
 
-  return {inputs: [index], arguments: [index], python: fileURLToPath(new URL("./ticket-guidance.py", import.meta.url))};
+  return {inputs: [index], arguments: [index], python: fileURLToPath(new URL("./ticket-review-flow.py", import.meta.url))};
 }

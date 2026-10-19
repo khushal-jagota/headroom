@@ -63,7 +63,6 @@ def run(browser, urls):
         "ticket_status": "awaiting_approval",
         "conversation_id": "worker-session",
         "conversation_history": [],
-        "guidance": "",
         "field_values": {},
         "pending_proposal": {
             "field": "implementation",

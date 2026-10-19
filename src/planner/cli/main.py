@@ -298,7 +298,6 @@ def _ticket_record(
     }
     parts["proposal"] = part(data.get("pending_proposal"))
     parts["recap"] = part(data.get("recap", ""))
-    parts["guidance"] = part(data.get("guidance", ""))
     return header, parts
 
 
@@ -2454,24 +2453,6 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send("PATCH", f"/api/tickets/{tid}", as_json=as_json, json_body={"recap": body})
     http.emit(data, as_json, f"recap written on {data['id']}")
-
-
-@worker.command("note")
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--append", "append_note", is_flag=True, help="Append to Ticket guidance.")
-@json_option
-def worker_note(ticket_id: str | None, append_note: bool, as_json: bool) -> None:
-    """Write Ticket guidance from stdin; no field selection is needed."""
-    tid = resolve_ticket_id(ticket_id, as_json)
-    body = sys.stdin.read()
-    key = "guidance_append" if append_note else "guidance"
-    data = http.send(
-        "PATCH",
-        f"/api/tickets/{tid}",
-        as_json=as_json,
-        json_body={key: body},
-    )
-    http.emit(data, as_json, f"guidance written on {data['id']}")
 
 
 @ticket.command("proposal")
