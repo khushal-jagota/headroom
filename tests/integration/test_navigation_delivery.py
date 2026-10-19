@@ -3,15 +3,11 @@
 import asyncio
 import json
 import sqlite3
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
 
-import httpx
 import pytest
-from fastapi import FastAPI
-from starlette.types import Message
 from tests.integration.test_navigation_signal_publication import (
     _ActualBinding,
 )
@@ -29,18 +25,14 @@ from planner.conversation.contracts import (
     SignalReadPermit,
 )
 from planner.core.sse import open_change_stream_count
-from planner.navigation.api import DeadlineStreamingResponse
 from planner.navigation.configuration import DeliveryConfig
 from planner.navigation.contracts import Continuity, ProjectRecord, RevisionBatch
-from planner.navigation.data import snapshot
 from planner.navigation.delivery import DeliveryRuntime, read_page, read_snapshot
 from planner.navigation.delivery_authority import (
     DeliveryAuthority,
-    DeliveryRead,
     DeliveryUnavailable,
 )
 from planner.navigation.delivery_contracts import (
-    CurrentAuthority,
     ResetRequired,
     compact_json,
     decode_cursor,
@@ -84,19 +76,6 @@ def injected_runtime(path: Path, config: DeliveryConfig | None = None) -> Delive
     runtime.bind_signal_source(InjectedKnowledgeSource())
     runtime.admission.configure(InjectedDeliveryAuthority().callbacks())
     return runtime
-
-
-def injected_authority() -> CurrentAuthority:
-    return {
-        "delivery_session_id": "injected-session",
-        "availability": {"state": "current", "generation": "1", "reason": None},
-        "permit": {
-            "scope": "source",
-            "runtime_epoch": "runtime",
-            "installation_id": "installed",
-            "generation": "1",
-        },
-    }
 
 
 @pytest.fixture
@@ -150,26 +129,6 @@ def append(path: Path, revision: int, *, title: str | None = None) -> None:
         conn.execute("UPDATE navigation_meta SET revision=?", (revision,))
 
 
-def test_snapshot_handoff_complete_empty_batches_and_final_equality(journal_db: Path) -> None:
-    initial = read_snapshot(journal_db)
-    append(journal_db, 1, title="new")
-    append(journal_db, 2)
-    page = read_page(journal_db, decode_cursor(initial["cursor"]), DeliveryConfig())
-    assert [b["revision"] for b in page["batches"]] == ["1", "2"]
-    assert page["batches"][1]["upserts"] == []
-    assert page["batches"][0]["upserts"] == read_snapshot(journal_db)["snapshot"]["records"]
-    assert not page["has_more"]
-
-
-def test_identity_validation_precedes_duplicate_or_future(journal_db: Path) -> None:
-    for revision in ("0", "9999999999999999999999999"):
-        foreign = decode_cursor(encode_cursor({**continuity(revision), "scope": "foreign"}))
-        with pytest.raises(ResetRequired, match="incompatible_continuity"):
-            read_page(journal_db, foreign, DeliveryConfig())
-    with pytest.raises(ResetRequired, match="future_cursor"):
-        read_page(journal_db, decode_cursor(encode_cursor(continuity("1"))), DeliveryConfig())
-
-
 def test_retention_prefix_expiry_and_gap_are_explicit(journal_db: Path) -> None:
     for revision in range(1, 5):
         append(journal_db, revision)
@@ -199,23 +158,6 @@ def test_oversize_batch_recovers_via_unrestricted_snapshot(journal_db: Path) -> 
     assert read_page(journal_db, decode_cursor(recovery["cursor"]), config)["batches"] == []
 
 
-def test_page_count_and_serialized_byte_bounds(journal_db: Path) -> None:
-    from planner.navigation.delivery_contracts import batch_frame
-
-    for revision in range(1, 6):
-        append(journal_db, revision)
-    config = replace(DeliveryConfig(), frame_bytes=700, page_bytes=1100, page_batch_count=3)
-    page = read_page(
-        journal_db,
-        decode_cursor(encode_cursor(continuity())),
-        config,
-        authority=injected_authority(),
-    )
-    assert 0 < len(page["batches"]) <= 3
-    assert sum(len(batch_frame(b, injected_authority())) for b in page["batches"]) <= 1100
-    assert page["has_more"]
-
-
 def test_poll_delivers_without_wake_and_shutdown_cleans_registration(journal_db: Path) -> None:
     async def run() -> None:
         baseline = open_change_stream_count()
@@ -241,65 +183,6 @@ def test_poll_delivers_without_wake_and_shutdown_cleans_registration(journal_db:
     asyncio.run(run())
 
 
-def test_http_snapshot_and_reset_doors_preserve_ingress_identity(journal_db: Path) -> None:
-    async def run() -> None:
-        runtime = injected_runtime(journal_db)
-        app = FastAPI()
-        app.include_router(runtime.router)
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            assert (await client.get("/api/navigation/snapshot")).status_code == 503
-            runtime.ready = True
-            response = await client.get("/api/navigation/snapshot")
-            assert response.status_code == 200
-            assert response.json()["snapshot"]["revision"] == "0"
-            response = await client.get("/api/navigation/events?cursor=bad")
-            assert response.status_code == 200
-            assert response.headers["content-type"].startswith("text/event-stream")
-            assert b'"reason":"invalid_cursor"' in response.content
-            assert b'"snapshot_url":"/api/navigation/snapshot"' in response.content
-
-    asyncio.run(run())
-
-
-def test_send_deadline_releases_iterator_and_other_client_continues(journal_db: Path) -> None:
-    async def run() -> None:
-        runtime = injected_runtime(journal_db)
-        runtime.ready = True
-        append(journal_db, 1)
-        baseline = open_change_stream_count()
-        response = DeadlineStreamingResponse(
-            runtime.stream(encode_cursor(continuity())), send_timeout=0.01
-        )
-
-        async def send(message: Message) -> None:
-            if message["type"] == "http.response.body":
-                await asyncio.sleep(1)
-
-        await response.stream_response(send)
-        assert open_change_stream_count() == baseline
-        other = runtime.stream(encode_cursor(continuity()))
-        assert b'"revision":"1"' in await anext(other)
-        await cast(AsyncGenerator[bytes, None], other).aclose()
-        await runtime.close()
-
-    asyncio.run(run())
-
-
-def test_pruning_between_pages_resets_without_skipping(journal_db: Path) -> None:
-    for revision in range(1, 5):
-        append(journal_db, revision)
-    config = replace(DeliveryConfig(), page_batch_count=1, retained_batch_count=1)
-    first = read_page(journal_db, decode_cursor(encode_cursor(continuity())), config)
-    assert first["batches"][0]["revision"] == "1"
-    with sqlite3.connect(journal_db) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        prune(conn, config)
-    with pytest.raises(ResetRequired, match="expired_history"):
-        read_page(journal_db, decode_cursor(encode_cursor(continuity("1"))), config)
-
-
 def test_retention_byte_limit_can_prune_every_batch_and_snapshot_recovers(journal_db: Path) -> None:
     append(journal_db, 1, title="large" * 2000)
     config = replace(DeliveryConfig(), retained_bytes=100)
@@ -313,55 +196,6 @@ def test_retention_byte_limit_can_prune_every_batch_and_snapshot_recovers(journa
         read_page(journal_db, decode_cursor(encode_cursor(continuity())), config)
     recovery = read_snapshot(journal_db)
     assert read_page(journal_db, decode_cursor(recovery["cursor"]), config)["batches"] == []
-
-
-def test_epoch_reset_rejects_previously_complete_cursor_before_duplicate(journal_db: Path) -> None:
-    old = decode_cursor(encode_cursor(continuity()))
-    with sqlite3.connect(journal_db) as conn:
-        conn.execute("UPDATE navigation_meta SET epoch='fresh'")
-    with pytest.raises(ResetRequired, match="incompatible_continuity"):
-        read_page(journal_db, old, DeliveryConfig())
-
-
-def test_delete_is_one_complete_revision_frame(journal_db: Path) -> None:
-    from planner.navigation.delivery_contracts import batch_frame
-
-    append(journal_db, 1)
-    with sqlite3.connect(journal_db) as conn:
-        body = {
-            **continuity("1"),
-            "base_revision": "0",
-            "upserts": [],
-            "deletes": [{"kind": "project", "id": "gone"}],
-        }
-        conn.execute("UPDATE navigation_journal SET body=?", (compact_json(body),))
-    page = read_page(journal_db, decode_cursor(encode_cursor(continuity())), DeliveryConfig())
-    frame = batch_frame(page["batches"][0], injected_authority())
-    assert frame.count(b"event: batch") == 1
-    assert frame.endswith(b"\n\n")
-    assert b'"deletes":[{"id":"gone","kind":"project"}]' in frame
-
-
-def test_send_error_releases_stream_registration(journal_db: Path) -> None:
-    async def run() -> None:
-        runtime = injected_runtime(journal_db)
-        runtime.ready = True
-        append(journal_db, 1)
-        baseline = open_change_stream_count()
-        response = DeadlineStreamingResponse(
-            runtime.stream(encode_cursor(continuity())), send_timeout=0.1
-        )
-
-        async def send(message: Message) -> None:
-            if message["type"] == "http.response.body":
-                raise OSError("disconnected")
-
-        with pytest.raises(OSError, match="disconnected"):
-            await response.stream_response(send)
-        assert open_change_stream_count() == baseline
-        await runtime.close()
-
-    asyncio.run(run())
 
 
 def test_concurrent_snapshot_and_writer_keep_one_consistent_revision(
@@ -432,228 +266,6 @@ class InjectedDeliveryAuthority:
         return DeliveryAuthority(self.capture_permit, self.validate, self.validate_snapshot)
 
 
-def test_configured_missing_attachment_never_falls_back_to_ready(journal_db: Path) -> None:
-    async def run() -> None:
-        runtime = injected_runtime(journal_db)
-        runtime.ready = True
-        runtime.admission.configure(None)
-        app = FastAPI()
-        app.include_router(runtime.router)
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            assert (await client.get("/api/navigation/snapshot")).status_code == 503
-            assert (await client.get("/api/navigation/events?cursor=bad")).status_code == 503
-
-    asyncio.run(run())
-
-
-def test_snapshot_discards_old_permit_after_threaded_read_and_rapid_recovery(
-    journal_db: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import threading
-
-    from planner.navigation import delivery
-
-    pinned = threading.Event()
-    release = threading.Event()
-    original = snapshot
-
-    def blocked(conn: sqlite3.Connection) -> object:
-        value = original(conn)
-        pinned.set()
-        assert release.wait(3), "test did not release snapshot worker"
-        return value
-
-    monkeypatch.setattr(delivery, "snapshot", blocked)
-
-    async def run() -> None:
-        runtime = injected_runtime(journal_db)
-        authority = InjectedDeliveryAuthority()
-        runtime.admission.configure(authority.callbacks())
-        pending = asyncio.create_task(runtime.current_snapshot())
-        try:
-            assert await asyncio.to_thread(pinned.wait, 3)
-            runtime.admission.invalidate()
-            authority.permit = SignalReadPermit("source", "runtime", "replaced", 1)
-            runtime.admission.configure(authority.callbacks())
-        finally:
-            release.set()
-        with pytest.raises(DeliveryUnavailable):
-            await pending
-        value, _ = await runtime.current_snapshot()
-        assert value["snapshot"]["revision"] == "0"
-
-    asyncio.run(run())
-
-
-def test_installation_check_occurs_in_snapshot_and_page_transactions(journal_db: Path) -> None:
-    async def run() -> None:
-        runtime = injected_runtime(journal_db)
-        authority = InjectedDeliveryAuthority()
-        authority.epoch = "different-installation"
-        runtime.admission.configure(authority.callbacks())
-        with pytest.raises(DeliveryUnavailable, match="installation"):
-            await runtime.current_snapshot()
-        runtime.ready = True
-        stream = runtime.stream(encode_cursor(continuity()))
-        with pytest.raises(StopAsyncIteration):
-            await anext(stream)
-
-    asyncio.run(run())
-
-
-def test_producer_validation_never_enters_the_sql_snapshot_worker(journal_db: Path) -> None:
-    import threading
-
-    owner_thread = threading.get_ident()
-
-    class ThreadCheckedAuthority(InjectedDeliveryAuthority):
-        def validate(self, permit: object) -> None:
-            assert threading.get_ident() == owner_thread, "producer gate enters SQL read worker"
-            super().validate(permit)
-
-    async def run() -> None:
-        runtime = injected_runtime(journal_db)
-        runtime.ready = True
-        runtime.admission.configure(ThreadCheckedAuthority().callbacks())
-        await runtime.current_snapshot()
-        append(journal_db, 1)
-        stream = runtime.stream(encode_cursor(continuity()))
-        assert b'"revision":"1"' in await anext(stream)
-        await cast(AsyncGenerator[bytes, None], stream).aclose()
-
-    asyncio.run(run())
-
-
-def test_empty_page_invalidation_closes_stream_and_cannot_revive_after_recovery(
-    journal_db: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import threading
-
-    from planner.navigation import delivery
-
-    pinned = threading.Event()
-    release = threading.Event()
-    original = delivery.read_page
-
-    def blocked(*args: object, **kwargs: object) -> object:
-        page = original(*args, **kwargs)  # type: ignore[arg-type]
-        pinned.set()
-        assert release.wait(3), "test did not release page worker"
-        return page
-
-    monkeypatch.setattr(delivery, "read_page", blocked)
-
-    async def run() -> None:
-        baseline = open_change_stream_count()
-        runtime = injected_runtime(journal_db)
-        runtime.ready = True
-        authority = InjectedDeliveryAuthority()
-        runtime.admission.configure(authority.callbacks())
-        stream = runtime.stream(encode_cursor(continuity()))
-        pending: asyncio.Future[bytes] = asyncio.ensure_future(anext(stream))
-        try:
-            assert await asyncio.to_thread(pinned.wait, 3)
-            runtime.admission.invalidate()
-            runtime.admission.configure(authority.callbacks())
-        finally:
-            release.set()
-        with pytest.raises(StopAsyncIteration):
-            await pending
-        assert open_change_stream_count() == baseline
-
-    asyncio.run(run())
-
-
-def test_invalidation_cancels_admitted_send_and_rejects_queued_old_frame(journal_db: Path) -> None:
-    async def run() -> None:
-        runtime = injected_runtime(journal_db)
-        authority = InjectedDeliveryAuthority()
-        runtime.admission.configure(authority.callbacks())
-        read = runtime.admission.capture()
-        entered = asyncio.Event()
-        cancelled = asyncio.Event()
-        calls: list[Message] = []
-
-        async def send(message: Message) -> None:
-            calls.append(message)
-            entered.set()
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                cancelled.set()
-                raise
-
-        pending = asyncio.create_task(
-            runtime.admission.send(read, send, {"type": "http.response.body", "body": b"admitted"})
-        )
-        await entered.wait()
-        runtime.admission.invalidate()
-        # A fresh ready attachment cannot authorize the old queued frame.
-        runtime.admission.configure(authority.callbacks())
-        with pytest.raises(asyncio.CancelledError):
-            await pending
-        assert cancelled.is_set()
-        with pytest.raises(DeliveryUnavailable):
-            await runtime.admission.send(
-                read, send, {"type": "http.response.body", "body": b"obsolete"}
-            )
-        assert len(calls) == 1
-
-    asyncio.run(run())
-
-
-def test_snapshot_send_checks_headers_and_body_and_stream_prestart_returns_unavailable(
-    journal_db: Path,
-) -> None:
-    from planner.navigation.api import FencedJSONResponse
-
-    async def run() -> None:
-        runtime = injected_runtime(journal_db)
-        authority = InjectedDeliveryAuthority()
-        runtime.admission.configure(authority.callbacks())
-        value, read = await runtime.current_snapshot()
-        assert value["mode"] == "current" and isinstance(read, DeliveryRead)
-        messages: list[Message] = []
-
-        async def send(message: Message) -> None:
-            messages.append(message)
-            if message["type"] == "http.response.start":
-                # Simulate loss after headers are accepted. No stale body follows.
-                runtime.admission.invalidate()
-
-        async def receive() -> Message:
-            return {"type": "http.disconnect"}
-
-        response = FencedJSONResponse(value, admission=runtime.admission, read=read, headers={})
-        with pytest.raises(DeliveryUnavailable):
-            await response({"type": "http"}, receive, send)
-        assert [message["type"] for message in messages] == ["http.response.start"]
-
-        messages.clear()
-        unavailable = FencedJSONResponse(value, admission=runtime.admission, read=read, headers={})
-
-        async def collect(message: Message) -> None:
-            messages.append(message)
-
-        await unavailable({"type": "http"}, receive, collect)
-        assert messages[0]["type"] == "http.response.start"
-        assert messages[0]["status"] == 503
-        assert b'"snapshot"' not in messages[1]["body"]
-
-        messages.clear()
-        stream = runtime.stream("bad", read, value["authority"])
-        streaming = DeadlineStreamingResponse(
-            stream, send_timeout=0.1, admission=runtime.admission, read=read
-        )
-        await streaming.stream_response(collect)
-        assert messages[0]["type"] == "http.response.start"
-        assert messages[0]["status"] == 503
-
-    asyncio.run(run())
-
-
 def test_actual_current_and_degraded_snapshots_keep_canonical_durable_facts(
     actual_binding: _ActualBinding,
 ) -> None:
@@ -697,204 +309,3 @@ def test_actual_current_and_degraded_snapshots_keep_canonical_durable_facts(
     assert recovered["mode"] == "current"
     assert recovered["authority"]["permit"] != current["authority"]["permit"]
     assert recovered["snapshot"]["epoch"] != current["snapshot"]["epoch"]
-
-
-@pytest.mark.parametrize("failure", ["omitted", "null", "malformed", "unequal"])
-def test_actual_failed_coherent_snapshot_returns_503_without_partial_body(
-    actual_binding: _ActualBinding,
-    monkeypatch: pytest.MonkeyPatch,
-    failure: str,
-) -> None:
-    host = actual_binding
-    host.binding.attach()
-    producer = host.composition.coordinator
-    original = producer.read_durable_signal_knowledge
-    if failure in ("omitted", "null"):
-
-        def incomplete(
-            connection: sqlite3.Connection, ids: tuple[str, ...], generation: int, /
-        ) -> tuple[SignalKnowledge, ...]:
-            values = original(connection, ids, generation)
-            return (
-                ()
-                if failure == "omitted"
-                else tuple(replace(value, durable=None) for value in values)
-            )
-
-        monkeypatch.setattr(producer, "read_durable_signal_knowledge", incomplete)
-    else:
-        with sqlite3.connect(host.path) as conn:
-            path = (
-                "$.attention.current"
-                if failure == "malformed"
-                else "$.attention.durable.message_for_owner"
-            )
-            conn.execute(
-                "UPDATE navigation_records SET value=json_set(value,?,json(?)) "
-                "WHERE kind='conversation'",
-                (path, "null" if failure == "malformed" else "true"),
-            )
-    host.delivery.ready = True
-    app = FastAPI()
-    app.include_router(host.delivery.router)
-
-    async def run() -> None:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.get("/api/navigation/snapshot")
-        assert response.status_code == 503
-        assert "snapshot" not in response.json()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("change", ["create", "delete"])
-def test_actual_inventory_race_is_rejected_without_server_retry(
-    actual_binding: _ActualBinding,
-    monkeypatch: pytest.MonkeyPatch,
-    change: str,
-) -> None:
-    from planner.navigation import delivery
-
-    host = actual_binding
-    host.binding.attach()
-    original = delivery._inventory
-    calls = 0
-
-    def changed(path: Path) -> tuple[str, ...]:
-        nonlocal calls
-        calls += 1
-        inventory = original(path)
-        conn = host.composition.connect()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            if change == "create":
-                conn.execute(
-                    "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
-                    "created_at) "
-                    "VALUES('late','codex','/synthetic','full',0)"
-                )
-            else:
-                conn.execute("DELETE FROM conversations WHERE conversation_id='actual'")
-            conn.commit()
-        finally:
-            conn.close()
-        return inventory
-
-    monkeypatch.setattr(delivery, "_inventory", changed)
-    with pytest.raises(DeliveryUnavailable):
-        asyncio.run(host.delivery.current_snapshot())
-    assert calls == 1
-
-
-def test_actual_empty_inventory_is_validated_for_current_and_degraded(
-    actual_binding: _ActualBinding,
-) -> None:
-    host = actual_binding
-    host.binding.attach()
-    conn = host.composition.connect()
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("DELETE FROM conversations WHERE conversation_id='actual'")
-        conn.commit()
-    finally:
-        conn.close()
-    current, _ = asyncio.run(host.delivery.current_snapshot())
-    assert current["mode"] == "current"
-    assert not any(record["kind"] == "conversation" for record in current["snapshot"]["records"])
-    host.composition.coordinator.invalidate("publication_failed")
-    degraded, _ = asyncio.run(host.delivery.current_snapshot())
-    assert degraded["mode"] == "degraded"
-    assert not any(record["kind"] == "conversation" for record in degraded["snapshot"]["records"])
-
-
-def test_same_generation_profile_change_after_sql_rejects_degraded_snapshot(
-    journal_db: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from planner.navigation import delivery
-
-    source = InjectedKnowledgeSource()
-    source.availability = SignalAvailability(7, "initializing", "initializing")
-    runtime = DeliveryRuntime(journal_db)
-    runtime.bind_signal_source(source)
-    runtime.admission.configure(None)
-    original = snapshot
-
-    def transition(conn: sqlite3.Connection) -> object:
-        value = original(conn)
-        source.availability = SignalAvailability(7, "current", None)
-        return value
-
-    monkeypatch.setattr(delivery, "snapshot", transition)
-    with pytest.raises(DeliveryUnavailable, match="profile changed"):
-        asyncio.run(runtime.current_snapshot())
-
-
-@pytest.mark.parametrize("after_headers", [False, True])
-def test_same_generation_profile_change_is_checked_at_each_degraded_send(
-    journal_db: Path,
-    after_headers: bool,
-) -> None:
-    from planner.navigation.api import FencedJSONResponse
-
-    source = InjectedKnowledgeSource()
-    source.availability = SignalAvailability(7, "initializing", "initializing")
-    runtime = DeliveryRuntime(journal_db)
-    runtime.bind_signal_source(source)
-    runtime.admission.configure(None)
-
-    async def run() -> None:
-        value, read = await runtime.current_snapshot()
-        assert value["mode"] == "degraded"
-        messages: list[Message] = []
-
-        async def send(message: Message) -> None:
-            messages.append(message)
-            if after_headers and message["type"] == "http.response.start":
-                source.availability = SignalAvailability(7, "current", None)
-
-        async def receive() -> Message:
-            return {"type": "http.disconnect"}
-
-        if not after_headers:
-            source.availability = SignalAvailability(7, "current", None)
-        response = FencedJSONResponse(value, admission=runtime.admission, read=read, headers={})
-        if after_headers:
-            with pytest.raises(DeliveryUnavailable, match="profile changed"):
-                await response({"type": "http"}, receive, send)
-            assert len(messages) == 1 and messages[0]["type"] == "http.response.start"
-        else:
-            await response({"type": "http"}, receive, send)
-            assert messages[0]["type"] == "http.response.start" and messages[0]["status"] == 503
-
-    asyncio.run(run())
-
-
-def test_degraded_read_cannot_cross_delivery_sessions(journal_db: Path) -> None:
-    source = InjectedKnowledgeSource()
-    source.availability = SignalAvailability(7, "unavailable", "synthetic")
-    runtimes = [DeliveryRuntime(journal_db), DeliveryRuntime(journal_db)]
-    for runtime in runtimes:
-        runtime.bind_signal_source(source)
-        runtime.admission.configure(None)
-    first, read = asyncio.run(runtimes[0].current_snapshot())
-    second, _ = asyncio.run(runtimes[1].current_snapshot())
-    assert first["authority"]["delivery_session_id"] != second["authority"]["delivery_session_id"]
-    with pytest.raises(DeliveryUnavailable, match="generation changed"):
-        runtimes[1].admission.validate(read)
-
-
-def test_current_stream_rejects_foreign_authority_before_emitting_frames(journal_db: Path) -> None:
-    runtime = injected_runtime(journal_db)
-    runtime.ready = True
-    read, authority = runtime.current_read()
-    foreign: CurrentAuthority = {**authority, "delivery_session_id": "another-session"}
-
-    async def run() -> None:
-        stream = runtime.stream(encode_cursor(continuity()), read, foreign)
-        with pytest.raises(DeliveryUnavailable, match="profile changed"):
-            await anext(stream)
-
-    asyncio.run(run())

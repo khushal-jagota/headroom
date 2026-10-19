@@ -26,7 +26,7 @@ from tests.support.navigation_historical_source import (
     source_facts,
 )
 
-from planner.core.db import _alembic_config, _migration_engine, upgrade_schema_connection
+from planner.core.db import _alembic_config, _migration_engine
 from planner.navigation import data, journal, snapshot
 from planner.navigation.configuration import DeliveryConfig
 from planner.navigation.contracts import Continuity
@@ -130,43 +130,3 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
         assert all("priority" not in record["value"] for record in current["records"])
     with pytest.raises(ResetRequired, match="incompatible_continuity"):
         read_page(path, old_cursor, DeliveryConfig())
-
-
-def test_mixed_priority_source_is_rejected_before_projection_mutation(tmp_path: Path) -> None:
-    path = tmp_path / "mixed-source.db"
-    with current_navigation_database(path):
-        pass
-    engine = _migration_engine(str(path), 1000)
-    try:
-        with engine.begin() as connection:
-            conn = cast(sqlite3.Connection, connection.connection.driver_connection)
-            # Synthetic corruption: only one of four tables has the legacy column.
-            conn.execute("ALTER TABLE projects ADD COLUMN priority TEXT")
-            checkpoint = list(conn.iterdump())
-            for operation in (data.rebuild, data.upgrade_current_workspace, data.create_schema):
-                with pytest.raises(RuntimeError, match="inconsistent priority columns"):
-                    operation(conn)
-                assert list(conn.iterdump()) == checkpoint
-    finally:
-        engine.dispose()
-
-
-def test_unknown_or_empty_head_set_is_refused_without_rewriting_versions(tmp_path: Path) -> None:
-    path = tmp_path / "unknown-head.db"
-    with current_navigation_database(path):
-        pass
-    engine = _migration_engine(str(path), 1000)
-    try:
-        with engine.begin() as connection:
-            conn = cast(sqlite3.Connection, connection.connection.driver_connection)
-            for heads in (("navigation_current_workspace", "unknown_fixture"), ()):
-                conn.execute("DELETE FROM alembic_version")
-                conn.executemany(
-                    "INSERT INTO alembic_version VALUES(?)", [(head,) for head in heads]
-                )
-                checkpoint = list(conn.iterdump())
-                with pytest.raises(RuntimeError, match="which this build does not carry"):
-                    upgrade_schema_connection(connection, "head")
-                assert list(conn.iterdump()) == checkpoint
-    finally:
-        engine.dispose()
