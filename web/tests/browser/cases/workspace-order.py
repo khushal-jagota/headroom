@@ -244,6 +244,8 @@ def run(browser, urls):
         return page.locator('[data-sprint-item="' + item_id + '"] .item-title')
 
     page = browser.new_page(viewport={"width": 1280, "height": 900})
+    # Install before application timers, then pause only for the dismissal proof.
+    page.clock.install()
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.route("**/api/**", respond)
@@ -369,11 +371,13 @@ def run(browser, urls):
     source_row.evaluate(
         "e=>{for(let p=e.parentElement;p;p=p.parentElement)if(p instanceof HTMLDetailsElement)p.open=true;}"
     )
+    page.mouse.move(1200, 850)
     source_row.focus()
     panel = page.locator("[data-rail-hover-panel]").last
     expect(panel).to_have_attribute("aria-hidden", "false")
     page.evaluate("window.__startHoverWait()")
     page.wait_for_function("window.__hoverWaitStatus==='included'")
+    page.clock.pause_at((page.evaluate("Date.now()") + 100) / 1000)
     deleted_id = source_row.get_attribute("data-ticket-id")
     source_row.evaluate("e=>e.remove()")
     for column in board["columns"]:
@@ -381,9 +385,19 @@ def run(browser, urls):
     for summary in board["sprint_items"]:
         summary["tickets"] = [row for row in summary["tickets"] if row["id"] != deleted_id]
     page.evaluate("window.__refresh()")
+    page.clock.run_for(32)
     expect(panel).to_have_attribute("aria-hidden", "false")
     page.evaluate("window.__startHoverWait()")
+    # The detached source cannot certify a publication while its popup still exists.
+    page.clock.run_for(32)
+    hover_wait_status = page.evaluate("window.__hoverWaitStatus")
+    assert hover_wait_status == "pending", hover_wait_status
+    expect(panel).to_have_attribute("aria-hidden", "false")
+    # Normal blur dismissal then closes the popup and removes its observer.
+    page.clock.run_for(200)
+    expect(panel).to_have_attribute("aria-hidden", "true")
     page.wait_for_function("window.__hoverWaitStatus==='unknown'")
+    page.clock.resume()
     workers["chief_of_staff"]["conversation_signal"] = {"working": True, "message_for_owner": False}
     page.evaluate("window.__refresh()")
     page.goto([__file__, *urls][1] + "#/workspace/chief-of-staff")

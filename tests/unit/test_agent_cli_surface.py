@@ -138,10 +138,17 @@ def test_structured_create_forwards_the_existing_create_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, str, dict[str, Any]]] = []
+    response = {
+        "id": "t_new",
+        "stage": "needs_success_condition",
+        "supervision_receipt": (
+            "Nothing runs unsupervised. First parks for review at Brief, with the owner."
+        ),
+    }
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs["json_body"]))
-        return {"id": "t_new", "stage": "needs_success_condition"}
+        return response
 
     monkeypatch.setattr(http, "send", fake_send)
     body = {
@@ -159,6 +166,7 @@ def test_structured_create_forwards_the_existing_create_body(
 
     assert result.exit_code == 0, result.output
     assert calls == [("POST", "/api/tickets", body)]
+    assert json.loads(result.stdout) == response
 
 
 def test_structured_create_rejects_legacy_option_mix() -> None:
