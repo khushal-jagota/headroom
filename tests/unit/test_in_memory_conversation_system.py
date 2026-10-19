@@ -87,4 +87,27 @@ def test_in_memory_replays_report_freshness_and_silence_matches_production() -> 
         ]
         assert markers == [OWNER_PRINCIPAL]
 
+        turn = await system.active_turn_reference("c")
+        assert turn is not None
+        await system.record_message_to_owner(
+            "c",
+            text_message_content("Your review was taken by Chief"),
+            sender_label="Panels",
+            sender=recipient,
+            recipient=OWNER_PRINCIPAL,
+            credit_explicit_reply=False,
+        )
+        assert system.observations("c")[-1].kind is (
+            InMemoryConversationObservationKind.message_to_owner
+        )
+        assert await system.turn_expects_reply(turn, OWNER_PRINCIPAL) is True
+        await system.record_message_to_owner(
+            "c",
+            text_message_content("The requested report"),
+            sender_label="Worker",
+            sender=recipient,
+            recipient=OWNER_PRINCIPAL,
+        )
+        assert await system.turn_expects_reply(turn, OWNER_PRINCIPAL) is False
+
     asyncio.run(exercise())

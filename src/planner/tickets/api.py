@@ -93,12 +93,14 @@ from planner.tickets.contracts import (
     GateCompletionBody,
     ProposalBody,
     RejectionBody,
+    ReviewTransferNotice,
     Ticket,
     TicketEdit,
     TicketListFilters,
     TicketStatus,
 )
 from planner.tickets.logic import admission
+from planner.tickets.review_transfer import notify_review_transfers
 from planner.work_attention import add_work_attention, read_running_conversation_count
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
@@ -974,7 +976,8 @@ async def delete_ticket(
 
 @router.patch("/tickets/{ticket_id}")
 async def patch_ticket(
-    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk,
+    conversations: Conversations,
 ) -> JsonDict:
     recognized = (
         "title",
@@ -1021,6 +1024,7 @@ async def patch_ticket(
     if "field_values" in body:
         edit["field_values"] = _marshal_settled_field_values(conn, ticket_id, body["field_values"])
     now = clk.now_unix()
+    notices: list[ReviewTransferNotice] = []
     ticket = tickets_data.edit_ticket(
         conn,
         ticket_id,
@@ -1028,7 +1032,9 @@ async def patch_ticket(
         title_max_chars=TITLE_MAX_CHARS,
         principal=ctx.principal,
         now=now,
+        review_transfer_notices=notices,
     )
+    await notify_review_transfers(conversations, conn, notices, now=now)
     return tickets_views.ticket_json(ticket, now)
 
 
