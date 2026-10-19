@@ -828,8 +828,5 @@ def test_ticket_create_prints_supervision_receipt_in_normal_output(
         env={"PLAN_SERVER_URL": server.base},
     )
     assert result.exit_code == 0, result.output
-    assert (
-        "Remaining unsupervised Worker Stages: Brief, Success Condition, What Changes."
-        in result.output
-    )
-    assert "first parks for proposal review at Plan, with the owner." in result.output
+    assert "Runs unsupervised: Brief, Success Condition, What Changes." in result.output
+    assert "First parks for review at Plan, with the owner." in result.output

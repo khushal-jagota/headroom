@@ -332,9 +332,10 @@ it settles and the Ticket starts at the next Stage when the stated ceiling is pa
 the Brief, and it parks for approval otherwise. State nothing and the default leash holds,
 which is the ordinary case for intake the human wants to sense-check.
 
-The creation receipt explains this grant in plain words. It names auto-accepted Stages,
-remaining unsupervised work, and the first review gate with its recipient. A Brief that
-settles at creation appears separately from the work that remains. Stage ownership still
+The creation receipt explains this grant in plain words. It lists only the Stages that
+remain unsupervised, then states any Brief settled at creation and the first review gate
+with its recipient. If no review gate remains, the receipt opens with:
+"Nothing in this grant ever parks for review." Stage ownership still
 controls user participation. A Ticket holder routes a parked proposal to the owner, and the
 receipt names that actual destination. The receipt changes no ceiling or holder rule.
 See `cli.md` for the JSON input and effort choice at creation.

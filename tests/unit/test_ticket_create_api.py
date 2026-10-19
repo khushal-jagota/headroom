@@ -447,28 +447,31 @@ def test_creation_receipt_matches_grant_and_excludes_settled_brief_from_remainin
     body: dict[str, Any] = {"title": "Explain grant", "worker_type": "coding", "brief": "Intake"}
     if ceiling is not None:
         body["ceiling"] = ceiling
+    if ceiling == "needs_consequences":
+        body["ceiling_holder"] = {"kind": "chief", "id": "chief"}
     response = client.post("/api/tickets", json=body)
     assert response.status_code == 200, response.text
     receipt = response.json()["supervision_receipt"]
     if ceiling is None:
-        assert "no Stage proposals auto-accept" in receipt
-        assert "No remaining Worker Stage runs unsupervised." in receipt
-        assert "first parks for proposal review at Brief, with the owner." in receipt
+        assert receipt == (
+            "Granted scope: no Stage proposals auto-accept without review. "
+            "No remaining Worker Stage runs unsupervised. "
+            "The Ticket first parks for proposal review at Brief, with the owner."
+        )
+    elif ceiling == "needs_consequences":
+        assert receipt == (
+            "Runs unsupervised: Success Condition, What Changes, Plan, Implementation. "
+            "Brief is settled at creation. First parks for review at Consequences, with Chief."
+        )
+        assert receipt.count("Success Condition") == 1
     else:
-        assert (
-            "Granted scope: proposals auto-accept without review for Brief, Success Condition"
-            in receipt
+        assert receipt == (
+            "Nothing in this grant ever parks for review. "
+            "Runs unsupervised: Success Condition, What Changes, Plan, "
+            "Implementation, Consequences. "
+            "Brief is settled at creation."
         )
-        assert "Brief is already settled at creation." in receipt
-        assert (
-            "Remaining unsupervised Worker Stages: "
-            "Success Condition, What Changes, Plan, Implementation"
-            in receipt
-        )
-        if ceiling == "done":
-            assert "No proposal review gate remains" in receipt
-        else:
-            assert "first parks for proposal review at Consequences, with the owner." in receipt
+        assert receipt.startswith("Nothing in this grant ever parks for review.")
     detail = client.get(f"/api/tickets?detail=full&id={response.json()['id']}").json()
     assert "supervision_receipt" not in detail
 
@@ -506,7 +509,7 @@ def test_creation_receipt_names_actual_review_recipient(
     )
     assert response.status_code == 200, response.text
     receipt = response.json()["supervision_receipt"]
-    assert f"first parks for proposal review at Plan, with {expected}." in receipt
+    assert f"First parks for review at Plan, with {expected}." in receipt
     assert holder_id not in receipt
 
 
@@ -546,7 +549,7 @@ def test_receipt_distinguishes_user_involvement_from_auto_acceptance(
         worker_type_definition=definition,
         review_recipient="the owner",
     )["supervision_receipt"]
-    assert "Remaining unsupervised Worker Stages: Success Condition, What Changes." in receipt
+    assert "Runs unsupervised: Success Condition, What Changes." in receipt
     assert (
         "User involvement is required at Brief, even though its proposals auto-accept." in receipt
     )

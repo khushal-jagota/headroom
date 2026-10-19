@@ -26,15 +26,6 @@ def supervision_receipt(
         ).kind
         is ProposalRouteKind.auto_accept
     )
-    parts = [
-        "Granted scope: proposals auto-accept without review for "
-        + ", ".join(stage.label for stage in auto_accept)
-        + "."
-        if auto_accept
-        else "Granted scope: no Stage proposals auto-accept without review."
-    ]
-    if BRIEF_FIELD_ID in ticket.field_values:
-        parts.append("Brief is already settled at creation.")
     current_index = definition.stage_index(ticket.stage)
     remaining = tuple(
         stage for stage in stages if definition.stage_index(stage.id) >= current_index
@@ -44,13 +35,19 @@ def supervision_receipt(
         for stage in remaining
         if stage in auto_accept and stage.ownership_mode is StageOwnershipMode.worker
     )
+    review = next((stage for stage in remaining if stage not in auto_accept), None)
+    parts: list[str] = []
+    if review is None:
+        parts.append("Nothing in this grant ever parks for review.")
+    if not auto_accept:
+        parts.append("Granted scope: no Stage proposals auto-accept without review.")
     parts.append(
-        "Remaining unsupervised Worker Stages: "
-        + ", ".join(stage.label for stage in autonomous)
-        + "."
+        "Runs unsupervised: " + ", ".join(stage.label for stage in autonomous) + "."
         if autonomous
         else "No remaining Worker Stage runs unsupervised."
     )
+    if BRIEF_FIELD_ID in ticket.field_values:
+        parts.append("Brief is settled at creation.")
     user_stages = tuple(
         stage
         for stage in remaining
@@ -62,14 +59,14 @@ def supervision_receipt(
             + ", ".join(stage.label for stage in user_stages)
             + ", even though its proposals auto-accept."
         )
-    review = next((stage for stage in remaining if stage not in auto_accept), None)
-    if review is None:
-        parts.append("No proposal review gate remains within this grant.")
-    else:
-        parts.append(
-            f"The Ticket first parks for proposal review at {review.label}, "
-            f"with {review_recipient}."
-        )
+    if review is not None:
+        if auto_accept:
+            parts.append(f"First parks for review at {review.label}, with {review_recipient}.")
+        else:
+            parts.append(
+                f"The Ticket first parks for proposal review at {review.label}, "
+                f"with {review_recipient}."
+            )
         if review.ownership_mode is StageOwnershipMode.user:
             parts.append(f"{review.label} requires user involvement before its proposal review.")
     return TicketCreationReceipt(supervision_receipt=" ".join(parts))

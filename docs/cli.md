@@ -114,10 +114,14 @@ case. The existing catalogue-unavailable fallback remains for omitted effort.
 
 The creation response adds `supervision_receipt`, a plain-language explanation of the
 effective grant. Normal CLI output prints it, and `--json` retains it beside the Ticket
-fields. It names the Stages whose proposals auto-accept, any Brief already settled,
-remaining unsupervised work, the first review gate, and its recipient. Stages that require
-user participation still require it. A grant with no unsupervised Stage or
-no review gate states that explicitly. Ordinary Ticket reads keep their existing shape.
+fields. It lists only the Stages that remain unsupervised, then states any Brief settled
+at creation and the first review gate with its recipient. For example:
+
+> Runs unsupervised: Success Condition, What Changes, Plan, Implementation. Brief is settled at creation. First parks for review at Consequences, with Chief.
+
+Stages that require user participation still require it. A grant with no unsupervised
+Stage states that explicitly. If no review gate remains, the first sentence states:
+"Nothing in this grant ever parks for review." Ordinary Ticket reads keep their existing shape.
 
 Earlier model-selection work required a model for a different backend. A later correction
 used each model's own effort options for validation. Neither change accepted an explicit
