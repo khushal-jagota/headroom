@@ -13,7 +13,14 @@ export function installConversationViewReaderFixture():void {
     const direction=url.searchParams.get('direction')??'older';
     const end=cursor===null?sequence:direction==='older'?cursor.order.sequence-(cursor.order.slot>0?0:1):Math.min(sequence,cursor.order.sequence+100);
     const start=Math.max(1,end-99);
-    const items=Array.from({length:end-start+1},(_,index)=>item(start+index));
+    const items=Array.from({length:end-start+1},(_,index)=>{
+      const row=item(start+index);
+      if(row.source_sequence>=1997 && row.source_sequence<=1999){
+        row.row_kind='prompt';
+        row.body={kind:'inline',value:{kind:'prompt',sender_label:row.source_sequence===1997?'Chief':'owner',mode:'queue',content:[{piece:'text',text:row.source_sequence===1999?'A long owner prompt retains its existing width limit. '.repeat(20):'Short prompt.'}]}};
+      }
+      return row;
+    });
     const position=(n:number):ViewPageCursor=>({projection_version:1,lens,scope:{kind:'timeline',key:null},order:{sequence:n,slot:0}});
     return{conversation_id:id,protocol_version:1,projection_version:1,lens,scope:{kind:'timeline',key:null},items,older:start>1?position(start):null,newer:end<sequence?position(end):null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
   }

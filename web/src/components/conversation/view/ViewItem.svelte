@@ -21,3 +21,9 @@
 <div bind:this={node} data-conversation-view-key={itemKey} style:min-height={active?'0':`${height}px`}>
   {#if active}{@render children()}{/if}
 </div>
+
+<style>
+  /* Retain a measurable box for virtualization and the thread's flex alignment
+     for rows rendered through display: contents transcript containers. */
+  div { display: flex; flex-direction: column; }
+</style>

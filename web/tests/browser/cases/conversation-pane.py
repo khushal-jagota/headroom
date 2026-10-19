@@ -1595,6 +1595,28 @@ def _bounded_reader(browser, url):
     page.wait_for_selector('[data-conversation-thread]')
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-row=agent_message]').length > 0")
     assert page.locator('[data-conversation-view-key]').count() <= 300
+    # Persisted projected prompts must retain the same bubble layout as outgoing
+    # prompts. Class-only assertions miss a virtualization wrapper breaking flex.
+    for width in (1000, 420):
+        page.set_viewport_size({"width": width, "height": 900})
+        for key in ("e1998", "e1999"):
+            bubble = page.locator(f'[data-conversation-view-key="{key}"] .chat-u')
+            bubble.scroll_into_view_if_needed()
+            geometry = bubble.evaluate("""element => {
+                const row = element.getBoundingClientRect();
+                const wrapper = element.closest('[data-conversation-view-key]').getBoundingClientRect();
+                return {right: row.right, width: row.width, parentRight: wrapper.right,
+                    parentWidth: wrapper.width, maxWidth: parseFloat(getComputedStyle(element).maxWidth)};
+            }""")
+            assert abs(geometry["right"] - geometry["parentRight"]) < 1, geometry
+            assert geometry["width"] <= geometry["parentWidth"] * geometry["maxWidth"] / 100 + 1, geometry
+            if key == "e1998":
+                assert geometry["width"] < geometry["parentWidth"] * 0.65, geometry
+        other = page.locator('[data-conversation-view-key="e1997"] .chat-system')
+        other.scroll_into_view_if_needed()
+        assert "Chief" in other.inner_text()
+    page.set_viewport_size({"width": 1000, "height": 900})
+
     page.close()
 
 
