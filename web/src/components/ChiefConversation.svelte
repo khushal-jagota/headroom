@@ -114,7 +114,7 @@
 <div class="chief-workspace-host" bind:this={root}>
 <OrchestratorWorkspace class="chief-workspace" bind:conversationState>
   <OrchestratorHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
-    recap={chiefSettings.data?.recap} onSaveRecap={saveRecap}>
+    recap={chiefSettings.data?.recap} onSaveRecap={saveRecap} recapTarget={{ kind: "chief", id: "chief" }}>
     {#snippet title()}Chief of Staff{/snippet}
   </OrchestratorHeader>
   <section class="orchestrator-workers" aria-label="Workers">

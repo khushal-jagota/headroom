@@ -35,6 +35,7 @@
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import RequestRecapAction from "../components/RequestRecapAction.svelte";
   import TicketLifecycleControls from "../components/TicketLifecycleControls.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
@@ -516,7 +517,9 @@
               />
             </ClampedText>
           </div>
-          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)} />{/if}
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)}>
+            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} recap={detail.recap ?? ""} />{/snippet}
+          </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
               <span class="ticket-blocker-heading">Blocked by</span>

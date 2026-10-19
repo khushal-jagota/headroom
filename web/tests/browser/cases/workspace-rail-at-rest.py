@@ -311,6 +311,8 @@ def run(browser, urls):
         navigation_response.__globals__["_navigation_revision"] = source_revision - 1
         return navigation_response(board, workers)
 
+    recap_requests = []
+
     def respond(route):
         path = route.request.url.split("/api/", 1)[1].split("?")[0]
         if path == "navigation/snapshot":
@@ -347,6 +349,13 @@ def run(browser, urls):
             result = {"backend_key": "codex", "model": None, "reasoning_effort": None}
         elif path.startswith("tickets/") or path == "tickets":
             result = ticket
+        elif path == "recap-requests":
+            recap_requests.append(route.request.post_data_json)
+            result = {
+                "target": route.request.post_data_json["target"],
+                "conversation_id": "c_hover",
+                "fate": "started",
+            }
         elif path == "chief/conversation":
             result = {"conversation_id": None}
         elif path == "chief/children":
@@ -538,14 +547,31 @@ def run(browser, urls):
         needs_him.locator(".item-head").hover()
         panel = page.locator("[data-rail-hover-panel]")
         expect(panel).to_have_attribute("aria-hidden", "false")
-        expect(panel.locator(".recap")).to_have_text(ORCHESTRATOR_RECAP)
+        expect(panel.locator("[data-recap-text]")).to_have_text(ORCHESTRATOR_RECAP)
         expect(panel).not_to_contain_text(LONG_TITLE)
         for title in ["Review saved workspace changes", "Prepare the next workspace pass"]:
             expect(panel).not_to_contain_text(title)
         chief_card.locator(".item-head").hover()
         expect(panel).to_contain_text("Chief of Staff")
-        expect(panel.locator(".recap")).to_have_text("Nothing in this list right now.")
+        expect(panel.locator("[data-recap-text]")).to_have_text("Nothing in this list right now.")
         expect(panel).not_to_contain_text("Revisit workspace navigation")
+        # Every agent the panel can show keeps a recap, the Chief included.
+        expect(panel.locator(".recap [data-request-recap-action]")).to_have_count(1)
+        # The ask sits inside the recessed recap block, and the pointer has to be able to
+        # leave the row, cross the gap, and press it before the panel closes behind it.
+        needs_him.locator(".item-head").hover()
+        ask = panel.locator(".recap [data-request-recap-action]")
+        expect(ask).to_have_text("Ask for a recap")
+        panel.hover()
+        expect(panel).to_have_attribute("aria-hidden", "false")
+        ask.click()
+        expect(ask).to_have_text("Asked")
+        expect(panel.locator("[data-request-recap-note]")).to_have_text("started it up")
+        assert recap_requests == [{"target": {"kind": "sprint_item", "id": "si_needs_him"}}], (
+            recap_requests
+        )
+        page.mouse.move(1200, 900)
+        expect(panel).to_have_attribute("aria-hidden", "true")
         for viewport, label in [
             (dict(width=1440, height=1000), "desktop"),
             (dict(width=560, height=1000), "compact"),
@@ -557,7 +583,7 @@ def run(browser, urls):
             ]:
                 target.hover()
                 expect(panel).to_have_attribute("aria-hidden", "false")
-                expect(panel.locator(".recap")).to_have_text(recap)
+                expect(panel.locator("[data-recap-text]")).to_have_text(recap)
                 expect(panel.locator("[data-bucket-key],.group-label,.child-title")).to_have_count(
                     0
                 )
@@ -609,7 +635,7 @@ def run(browser, urls):
         expect(panel).not_to_contain_text("Stages")
         expect(panel).to_contain_text("Awaiting your approval at implementation.")
         needs_him.locator(".item-head").hover()
-        expect(panel.locator(".recap")).to_have_text(ORCHESTRATOR_RECAP)
+        expect(panel.locator("[data-recap-text]")).to_have_text(ORCHESTRATOR_RECAP)
         expect(panel).not_to_contain_text("Quiet ordinary Worker")
         expect(panel).not_to_contain_text("Blocked ordinary Worker")
         expect(panel).not_to_contain_text("Stages")
@@ -684,7 +710,7 @@ def run(browser, urls):
         for cached, trigger in [(False, "pointer"), (True, "pointer"), (False, "focus")]:
             before_requests = len(preview_requests)
             page.evaluate(
-                "() => {\n              const root=document.querySelector('[data-rail-hover-panel]');\n              window.__previewTiming={start:performance.now(),visible:null,recap:null,firstText:null};\n              window.__previewObserver?.disconnect();\n              window.__previewObserver=new MutationObserver(() => {\n                const t=window.__previewTiming;\n                if(root.getAttribute('aria-hidden')==='false' && t.visible===null) {\n                  t.visible=performance.now()-t.start;t.firstText=root.querySelector('.recap')?.textContent ?? '';\n                }\n                if(t.visible!==null && root.querySelector('.recap')?.textContent==='A concise recap from the current projection.' && t.recap===null) t.recap=performance.now()-t.start;\n              });\n              window.__previewObserver.observe(root,{subtree:true,childList:true,characterData:true,attributes:true});\n            }"
+                "() => {\n              const root=document.querySelector('[data-rail-hover-panel]');\n              window.__previewTiming={start:performance.now(),visible:null,recap:null,firstText:null};\n              window.__previewObserver?.disconnect();\n              window.__previewObserver=new MutationObserver(() => {\n                const t=window.__previewTiming;\n                if(root.getAttribute('aria-hidden')==='false' && t.visible===null) {\n                  t.visible=performance.now()-t.start;t.firstText=root.querySelector('[data-recap-text]')?.textContent ?? '';\n                }\n                if(t.visible!==null && root.querySelector('[data-recap-text]')?.textContent==='A concise recap from the current projection.' && t.recap===null) t.recap=performance.now()-t.start;\n              });\n              window.__previewObserver.observe(root,{subtree:true,childList:true,characterData:true,attributes:true});\n            }"
             )
             if trigger == "pointer":
                 row.hover()
@@ -694,7 +720,7 @@ def run(browser, urls):
                 page.keyboard.press("Tab")
                 page.keyboard.press("Shift+Tab")
             expect(panel).to_have_attribute("aria-hidden", "false")
-            expect(panel.locator(".recap")).to_have_text(
+            expect(panel.locator("[data-recap-text]")).to_have_text(
                 "A concise recap from the current projection."
             )
             page.wait_for_function("window.__previewTiming.recap !== null")

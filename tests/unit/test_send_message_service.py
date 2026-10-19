@@ -15,9 +15,13 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationSystem,
+    PromptDeliveryMode,
 )
 from planner.conversation.events import PromptEventPayload
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.in_memory_conversation_system import (
+    InMemoryConversationObservationKind,
+    InMemoryConversationSystem,
+)
 from planner.conversation.message_content import (
     MessageContent,
     message_content_text,
@@ -25,7 +29,8 @@ from planner.conversation.message_content import (
 from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as PlannerTestClock
 from planner.core.contracts import Principal, PrincipalKind
-from planner.message_delivery import service
+from planner.core.errors import ErrorCode, PlannerError
+from planner.message_delivery import recap_request, service
 from planner.runtime import conversation_start
 from planner.runtime.conversation_start import DeliveredMessage
 from planner.sprints import data as sprints_data
@@ -223,5 +228,100 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
             turn = await subject.system.active_turn_reference("c_si_second")
             assert turn is not None
             assert not await subject.system.turn_expects_reply(turn, first)
+
+    asyncio.run(exercise())
+
+
+def test_a_recap_request_reaches_the_agent_and_asks_for_no_reply_message(
+    tmp_db: Connection,
+    fake_clock: PlannerTestClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recap is the whole answer, so this press must leave no reply debt.
+
+    An ordinary owner message obliges the agent to send one explicit reply before its
+    turn ends, and records a missing-reply marker when it does not. On a control the
+    owner can press on every row in the rail, that marker is an unread mark per press.
+    Nothing else covers the one send in Panels whose answer is not words.
+    """
+
+    async def exercise() -> None:
+        conversations = InMemoryConversationSystem()
+        await conversations.start_conversation(
+            ConversationStartRequest(
+                conversation_id="c_worker",
+                backend_key=ConversationBackendKey.hermes,
+                model="test-model",
+            )
+        )
+        owner = Principal(PrincipalKind.owner, "owner")
+        worker = Principal(PrincipalKind.ticket, "t_worker")
+        monkeypatch.setattr(
+            tickets_data,
+            "read_ticket",
+            lambda _conn, _ticket_id: SimpleNamespace(conversation_id="c_worker"),
+        )
+        modes: list[object] = []
+
+        async def send_to_ticket(
+            system: ConversationSystem,
+            _conn: Connection,
+            _ticket_id: str,
+            content: object,
+            **kwargs: object,
+        ) -> DeliveredMessage:
+            modes.append(kwargs["mode"])
+            receipt = await system.send_with_receipt(
+                "c_worker",
+                cast(MessageContent, content),
+                sender_label=cast(str, kwargs["sender_label"]),
+                sender=cast(Principal, kwargs["sender"]),
+                recipient=cast(Principal, kwargs["recipient"]),
+                reply_requested=cast(bool, kwargs["reply_requested"]),
+            )
+            return DeliveredMessage("c_worker", receipt.fate, receipt.newly_accepted)
+
+        monkeypatch.setattr(conversation_start, "send_to_ticket_conversation", send_to_ticket)
+
+        await recap_request.request_recap(
+            conversations,
+            tmp_db,
+            fake_clock,
+            RequestContext(owner),
+            worker,
+        )
+
+        write = conversations.backend_prompt_writes("c_worker")[-1]
+        assert recap_request.RECAP_REQUEST_MESSAGE in write.text
+        assert "Authenticated Panels reply requirement" not in write.text
+        assert modes == [PromptDeliveryMode.steer]
+
+        conversations.complete_running_turn("c_worker")
+        assert not [
+            observation
+            for observation in conversations.observations("c_worker")
+            if observation.kind is InMemoryConversationObservationKind.explicit_reply_missing
+        ]
+
+    asyncio.run(exercise())
+
+
+def test_a_recap_cannot_be_asked_of_the_owner(
+    tmp_db: Connection,
+    fake_clock: PlannerTestClock,
+) -> None:
+    """Every agent keeps a recap. The owner is the one reachable principal that does not."""
+
+    async def exercise() -> None:
+        conversations = InMemoryConversationSystem()
+        with pytest.raises(PlannerError) as refusal:
+            await recap_request.request_recap(
+                conversations,
+                tmp_db,
+                fake_clock,
+                RequestContext(Principal(PrincipalKind.owner, "owner")),
+                Principal(PrincipalKind.owner, "owner"),
+            )
+        assert refusal.value.code is ErrorCode.validation
 
     asyncio.run(exercise())
