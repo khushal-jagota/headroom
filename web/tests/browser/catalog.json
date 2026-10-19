@@ -23,7 +23,8 @@
       "id": "configuration-schedules",
       "path": "web/tests/configuration-schedules-browser.test.mjs",
       "cases": [
-        "scheduled-tasks"
+        "scheduled-tasks",
+        "skill-editors"
       ],
       "companions": []
     },

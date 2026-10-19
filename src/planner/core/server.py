@@ -73,6 +73,7 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.stale_claim: 409,
     ErrorCode.already_running: 409,
     ErrorCode.gateway_offline: 503,
+    ErrorCode.skill_save_incomplete: 500,
 }
 
 

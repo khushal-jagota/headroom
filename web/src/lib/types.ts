@@ -244,6 +244,8 @@ export type ManagedSkill = {
   description: string;
   markdown_body: string;
 };
+export type ManagedSkillPatch = Partial<Pick<ManagedSkill, "description" | "markdown_body">>;
+export type ManagedSkillField = keyof ManagedSkillPatch;
 export type SkillsHomeResponse = { skills: ManagedSkill[] };
 
 export type WorkerManagementSummary = {

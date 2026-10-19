@@ -241,13 +241,13 @@ the supported manifests for automation. The CLI does not maintain its own Worker
 ## Declaring and changing a Worker type
 
 There is one write door, `POST /api/worker-types`, and it takes the whole record. An
-optional `skill` block carries the specialist skill's description and body, so declaring a
-new Worker and declaring the skill it names happen together rather than as two writes that
-can half-happen: a Worker type may only name a skill that already exists.
+optional `skill` block supplies a specialist skill through the common skill writer.
+A new skill requires a description and body. The Worker declaration follows the skill save.
+If that declaration fails, the saved skill remains. A Worker type must name an existing skill.
 
 At the command line, `panels worker-type show <type>` prints the stored record in the
-shape `panels worker-type save` takes back on stdin, and
-`panels worker-type skill <type> --description "..."` replaces just the skill text.
+shape `panels worker-type save` takes back on stdin. Use `panels skill edit <skill-name>`
+for a skill edit. The old `panels worker-type skill` command remains an adapter.
 
 Declaring a Worker type is a direct operation. A worker cannot declare one.
 
@@ -314,10 +314,13 @@ does not occur exactly once. Both revisions raise when a correction they declare
 land, and only then: a row that is merely stale is reported by the check rather than
 refusing an upgrade.
 
-A Worker type owns its specialist skill. `PATCH /api/skills/{skill-name}` refuses one and
-points at the Worker, so each skill has exactly one editor. Native homes use symlinks to
-managed skills, never copied overlays. Codex and Claude select all Panels skills, and the
-Hermes home links every skill in the managed home.
+Every skill uses the same editor. `PATCH /api/skills/{skill-name}` accepts the description,
+Markdown body, or both. Omitted fields keep their current values. The skill name stays fixed.
+Worker and Chief edit routes delegate to that writer and retain their response shapes.
+Their PUT routes also preserve omitted fields. All routes retain the same owner authority.
+
+Native homes use symlinks to managed skills. Codex and Claude select all Panels skills.
+The Hermes home links every skill in the managed home.
 
 The Config section lives under **Settings** at `#/settings/config`. It has exactly two
 quiet, whitespace-separated sections. Every destination is a whole-row link showing
@@ -345,23 +348,24 @@ screens.
 Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/settings/config` and
 `#/settings/config/workers/<worker-type>`.
 
-Every edit here reads the current record, changes one part of it and writes the whole
-thing back, so each one holds the write lock across that read and write. Two edits landing
-together would otherwise each write what it read, and the slower one would undo the
-faster one's field.
+Skill edits and startup reconstruction share one lock for the managed skills home.
+The lock covers the current read, row commit, file replacement, and version capture.
+Edits to different fields survive. For the same field, the later serialized edit wins.
+Startup cannot replace a newer file with an older snapshot.
 
-The row commits first and the file copy is written from it afterwards. If recording the
-skill's version history then fails, the owner's edit still stands: the row is the
-authority, and the copy is rewritten from it on every open.
+The row commits before the file changes. A failure after commit does not undo the edit.
+The error states whether the file changed and whether file publication or history capture failed.
+Read the current skill before retry. Startup reconstructs the file from the canonical row.
 
 What a Worker type launches on is part of its record rather than a separate setting, so
 there is no second copy to keep in step and nothing to reconcile. The Chief is not a
 Worker type and keeps its own single row.
 
 Every editable skill name is read-only. Description and Markdown body are ordinary
-direct edits that save, fail, and retry independently. Successful skill edits refresh
-the configured planner Hermes home without changing existing conversations.
-Codex and Claude Code use the same managed home.
+direct edits that save, fail, and retry independently. A save replaces the managed file
+without a conversation reset. Later file reads see that revision. Text already in model
+context remains there. Version history does not prove that a model consumed a revision.
+Codex, Claude Code, and Hermes use the same managed home.
 
 `GET /api/workers` serves the Config-page destinations and Chief settings. The Chief
 entry also carries its current `conversation_id`, whether it is working or needs the
@@ -369,11 +373,9 @@ owner, and the sequence where its latest turn ended. The Workspace Chief row use
 conversation-owned signals without turning them into managed settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for role skills and specialist
-descriptions on the index. Worker and Chief endpoints edit skill description and body
-or launch defaults. The generic
-`PATCH /api/skills/{skill-name}` endpoint edits the Worker and Sprint Item supervisor
-role skills. A saved change announces itself, and any Config screen on display refetches
-what it is showing.
+descriptions on the index. All Config skill editors use the common skill endpoint.
+Worker and Chief endpoints still own launch defaults. A saved change announces itself,
+and each mounted Config screen refetches its data.
 
 Approval derives its initial ceiling from the Worker definition's advance target for the
 new Stage. A valid terminal Stage is the fallback when no further advance exists.

@@ -94,6 +94,7 @@ class ErrorCode(StrEnum):
     already_running = "already_running"  # Hermes 4009 session busy
     not_found = "not_found"
     validation = "validation"  # generic input validation
+    skill_save_incomplete = "skill_save_incomplete"
 
 
 class PlannerError(Exception):
