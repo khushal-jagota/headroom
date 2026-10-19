@@ -324,7 +324,7 @@ export type TicketDetail = {
   sprint_item_title: string | null;
   ticket_status?: string;
   conversation_id: string | null;
-  conversation_history: TicketConversationHistoryEntry[];
+  conversation_history?: TicketConversationHistoryEntry[];
   day_ids?: string[];
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
@@ -601,4 +601,4 @@ export type WorkspaceMessageConversation = {
 };
 
 /** Exact detail-only reply, independent of shared navigation facts. */
-export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "goal" | "recap" | "artifacts" | "conversation_history">;
+export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "goal" | "recap">;

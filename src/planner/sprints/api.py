@@ -159,16 +159,11 @@ async def read_items(
 
 @router.get("/items/{item_id}/workspace-content")
 async def get_item_workspace_content(
-    item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg, response: Response
+    item_id: str, conn: DbConn, ctx: Ctx, response: Response
 ) -> ItemWorkspaceContent:
     require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
     document = sprints_views.item_workspace_document(conn, item_id)
-    result: ItemWorkspaceContent = {
-        **document,
-        "artifacts": sprint_item_files.list_artifact_entries(
-            conn, ctx.principal, item_id, cfg.db_path
-        ),
-    }
+    result: ItemWorkspaceContent = {**document}
     response.headers["Cache-Control"] = "no-store"
     return result
 

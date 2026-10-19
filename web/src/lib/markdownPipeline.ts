@@ -24,25 +24,11 @@ type MarkdownNode = {
   data?: { hProperties?: Record<string, unknown> };
 };
 
-type HastNode = {
-  type: string;
-  tagName?: string;
-  value?: string;
-  properties?: Record<string, unknown>;
-  children?: HastNode[];
-};
+import type { MarkdownTreeNode as HastNode, MarkdownReferenceDefinition as ReferenceDefinition, ParsedMarkdown } from "./markdown/contracts";
 
 type AtomicPlaceholder = {
   placeholder: string;
   sourceToken: string;
-};
-
-type ReferenceDefinition = {
-  type: "definition";
-  identifier: string;
-  label?: string;
-  url: string;
-  title?: string | null;
 };
 
 const referenceDefinitionsByRoot = new WeakMap<Node, ReferenceDefinition[]>();
@@ -162,18 +148,25 @@ const reverseProcessor = unified()
     ruleSpaces: false
   });
 
-export function renderMarkdownToElement(source: string): HTMLElement {
+/** DOM-free exact parse, shared by the main-thread editor and parser worker. */
+export function parseMarkdown(source: string): ParsedMarkdown {
   const processor = forwardProcessor(source);
   const parsed = processor.parse(source);
-  const referenceDefinitions = collectReferenceDefinitions(parsed as unknown as MarkdownNode);
+  const definitions = collectReferenceDefinitions(parsed as unknown as MarkdownNode);
   const tree = processor.runSync(parsed) as HastNode;
-  const root = document.createElement("div");
+  return { children: tree.children || [], definitions };
+}
+
+export function renderParsedMarkdown(document: ParsedMarkdown): HTMLElement {
+  const root = globalThis.document.createElement("div");
   root.className = "markdown";
-  for (const child of tree.children || []) {
-    appendHastNode(root, child);
-  }
-  referenceDefinitionsByRoot.set(root, referenceDefinitions);
+  for (const child of document.children) appendHastNode(root, child);
+  referenceDefinitionsByRoot.set(root, document.definitions);
   return root;
+}
+
+export function renderMarkdownToElement(source: string): HTMLElement {
+  return renderParsedMarkdown(parseMarkdown(source));
 }
 
 /** The link and image destinations that rendered Markdown exposes to a reader. */
@@ -230,6 +223,10 @@ function appendHastNode(parent: HTMLElement, node: HastNode): void {
   }
   if (node.type !== "element" || !node.tagName) return;
   const element = document.createElement(node.tagName);
+  if (element instanceof HTMLImageElement) {
+    element.loading = "lazy";
+    element.decoding = "async";
+  }
   applySanitizedProperties(element, node.properties || {});
   for (const child of node.children || []) appendHastNode(element, child);
   parent.appendChild(element);

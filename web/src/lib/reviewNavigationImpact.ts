@@ -12,5 +12,5 @@ export function reviewProposalImpact(impact:RecordImpact,id:string):boolean {
 }
 export function runtimeCountImpact(impact:RecordImpact,presentation:NavigationPresentation | undefined):boolean {
   if(impact.kind==='ticket' || impact.kind==='chief' || impact.kind==='orchestrator') return touches(impact,['conversation_id']);
-  return impact.kind==='conversation' && Boolean(presentation?.review.currentConversationIds.has(impact.id)) && touches(impact,['attention']);
+  return impact.kind==='conversation' && Boolean(presentation?.globalCounts || presentation?.review.currentConversationIds.has(impact.id)) && touches(impact,['attention']);
 }

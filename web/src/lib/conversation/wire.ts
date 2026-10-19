@@ -601,10 +601,11 @@ export async function readEventsAfter(
 /** The whole output of one finished tool call, which an open does not carry. */
 export async function readToolCallDetail(
   conversationId: string,
-  sequence: number
+  sequence: number,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const answer = await request<{ detail: string | null }>(
-    `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`
+    `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`, {signal}
   );
   return answer.detail;
 }

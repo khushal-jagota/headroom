@@ -1,0 +1,79 @@
+"""Closed field omission must preserve control admission and exact field revisions."""
+
+import json
+from sqlite3 import Connection
+
+from starlette.requests import Request
+from tests.support.principals import OWNER_PRINCIPAL
+
+from planner.tickets import data, views
+from planner.tickets.workspace.resource_versions import TicketWorkspaceResources
+from planner.tickets.workspace.views import workspace_field, workspace_ticket
+
+
+def test_selected_ticket_preserves_controls_without_closed_bodies(tmp_db: Connection) -> None:
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Compact controls",
+        worker_type="coding",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+    )
+    values = {"brief": "current", "plan": "historical body " * 20000}
+    tmp_db.execute("UPDATE tickets SET field_values=? WHERE id=?", (json.dumps(values), ticket.id))
+    tmp_db.commit()
+    full = views.ticket_detail(tmp_db, ticket.id, 1)
+    compact = workspace_ticket(tmp_db, ticket.id)
+    for key in (
+        "id",
+        "worker_type",
+        "stage",
+        "ticket_status",
+        "ceiling",
+        "ceiling_holder",
+        "is_backlogged",
+        "blocked",
+        "sprint_item_id",
+        "conversation_id",
+        "pending_proposal",
+        "field_approvals",
+        "record_sha256",
+    ):
+        assert compact[key] == full[key]
+    assert compact["field_values"] == {"brief": "current"}
+    assert "artifacts" not in compact and "conversation_history" not in compact
+    assert compact["field_summaries"]["plan"]["byte_count"] == len(values["plan"].encode())
+    assert workspace_field(tmp_db, ticket.id, "plan")["value"] == values["plan"]
+    assert len(json.dumps(compact)) < 5000
+
+
+def test_field_revision_changes_only_with_its_body_and_rolls_back(tmp_db: Connection) -> None:
+    ticket = data.create_ticket(
+        tmp_db,
+        title="Field identity",
+        worker_type="coding",
+        principal=OWNER_PRINCIPAL,
+        now=1,
+        title_max_chars=200,
+    )
+    provider = TicketWorkspaceResources()
+    request = Request({"type": "http"})
+    key = f"/api/tickets/{ticket.id}/workspace/fields/brief"
+    original = provider.capture(tmp_db, request, key)
+    assert original is not None
+    tmp_db.execute("UPDATE tickets SET recap='another recap' WHERE id=?", (ticket.id,))
+    tmp_db.commit()
+    same = provider.capture(tmp_db, request, key)
+    assert same is not None and same.revision == original.revision
+    tmp_db.execute("BEGIN")
+    tmp_db.execute(
+        "UPDATE tickets SET field_values=? WHERE id=?", ('{"brief":"changed"}', ticket.id)
+    )
+    changed = provider.capture(tmp_db, request, key)
+    assert changed is not None and changed.revision != original.revision
+    assert changed.read()["value"] == "changed"
+    tmp_db.rollback()
+    restored = provider.capture(tmp_db, request, key)
+    assert restored is not None and restored.revision == original.revision
+    assert restored.read()["value"] == ""

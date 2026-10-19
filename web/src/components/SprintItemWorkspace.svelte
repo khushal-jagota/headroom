@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { selectedRecap } from "../lib/navigation/views/recap.svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { onMount, onDestroy, tick } from "svelte";
   import { mutateJson } from "../lib/mutate";
@@ -30,8 +31,7 @@
   import ArtifactsBand from "./ArtifactsBand.svelte";
   import ArtifactPreview from "./ArtifactPreview.svelte";
   import {
-    managedFileTargetFromLinkHref,
-    sprintItemArtifactStripItems
+    managedFileTargetFromLinkHref
   } from "../lib/artifactStrip";
   import { isPlainLinkClick } from "../lib/linkClick";
   import type { ManagedFileTarget } from "../lib/filePreview";
@@ -74,10 +74,12 @@
   let displayedView=$state.raw<EffectiveNavigationView | undefined>(undefined);
   $effect(()=>{const view=navigation.selectors.effective;if(view) displayedView=view;});
   let shared=$derived(displayedView ? navigation.presentationFor(displayedView) : undefined);
-  let publicItem=$derived(shared?.orchestratorsById.get(itemId));
+  let rawPublicItem=$derived(shared?.orchestratorsById.get(itemId));
+  const fullRecap=selectedRecap(()=>rawPublicItem?.recap_reference,()=>true);
+  let publicItem=$derived(rawPublicItem?.recap_reference && fullRecap.body===undefined?undefined:rawPublicItem?{...rawPublicItem,recap:fullRecap.body ?? rawPublicItem.recap}:undefined);
   let content=$derived(workspaceResource ?? ownWorkspace);
   let workspace=$derived({data:publicItem && content.data ? {...publicItem,...content.data} : undefined,
-    error:content.error ?? (navigationErrorHandledByParent ? null : navigation.state.error),isLoading:content.isLoading || !publicItem});
+    error:fullRecap.error ?? content.error ?? (navigationErrorHandledByParent ? null : navigation.state.error),isLoading:content.isLoading || !publicItem});
   const manifests=createQuery(()=>queries.workerTypeManifests());
   let headerElement=$state<HTMLElement | null>(null);
   let hoverElement=$state<HTMLDivElement | null>(null);
@@ -86,20 +88,17 @@
   let conversationId = $state<string | null>(null);
   let selectedPastConversationId = $state<string | null>(null);
   let selectedConversationId = $derived(selectedPastConversationId ?? conversationId);
-  /** Every conversation this Item kept except the one it is on. Only this screen can say
-   *  which that is, so the filtering is here rather than in the conversation. */
-  let pastConversations = $derived(
-    (workspace.data?.conversation_history ?? []).filter(
-      (entry) => entry.conversation_id !== conversationId
-    )
-  );
+  $effect(()=>navigation.owner.setDemand('orchestrator',{selected:{kind:'orchestrator',id:itemId},selected_conversation_id:selectedPastConversationId,windows:[]}));
+  onDestroy(()=>navigation.owner.setDemand('orchestrator',undefined));
   let conversationState = $state<ConversationState>("rest");
   let backends = $state<readonly BackendSnapshot[]>([]);
 
   let hoverTarget = $state<HTMLElement | null>(null);
   let hoverWorkerId = $state<string | null>(null);
-  let hoverWorker = $derived(shared?.ticketsByParent.get(`orchestrator:${itemId}`)?.find(ticket=>ticket.id===hoverWorkerId) ?? null);
+  let rawHoverWorker = $derived(shared?.ticketsByParent.get(`orchestrator:${itemId}`)?.find(ticket=>ticket.id===hoverWorkerId) ?? null);
   let hoverVisible = $state(false);
+  const hoverBody=selectedRecap(()=>rawHoverWorker?.recap_reference,()=>hoverVisible);
+  let hoverWorker=$derived(rawHoverWorker && hoverBody.body!==undefined?{...rawHoverWorker,recap:hoverBody.body}:rawHoverWorker);
   let hoverInstant = $state(false);
   const hover = createRailHoverController<{target:HTMLElement; ticket:WorkItemTicketFacts}>((value, instant) => {
     if (!value.target.isConnected) return;
@@ -169,9 +168,6 @@
     conversationId = null;
   }
 
-  let artifactRows = $derived(
-    workspace.data ? sprintItemArtifactStripItems(itemId, workspace.data.artifacts) : []
-  );
   let shownFile = $state<ManagedFileTarget | null>(null);
   let artifactReloadSignal = $state(0);
   let artifactElement = $state<HTMLElement | null>(null);
@@ -301,7 +297,7 @@
                 if (ticket) hoverRow(element, ticket, immediate);
               }} onLeave={() => hover.leave()} />
           </section>
-          <div class="orchestrator-artifacts"><ArtifactsBand items={artifactRows} /></div>
+          <div class="orchestrator-artifacts"><ArtifactsBand owner={{kind:"sprint_item",id:itemId}} /></div>
       {/if}
     </ResourceState>
   {#snippet readingAside()}
@@ -316,12 +312,11 @@
   {/if}
   {/snippet}
   {#snippet conversation()}
-      <LiveConversation
+      <LiveConversation historyOwner={{kind:"sprint_item",id:itemId}}
         bind:conversationState
         conversationId={selectedConversationId}
         persistenceKey={`owner:sprint-item:${itemId}`}
         readOnly={selectedPastConversationId !== null}
-        {pastConversations}
         bind:selectedPastConversationId
         label="Orchestrator"
         composerPlaceholder="Message this orchestrator…"

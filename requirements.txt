@@ -54,6 +54,7 @@ pydantic==2.13.4
 pydantic_core==2.46.4
 pyee==13.0.1
 Pygments==2.20.0
+PyICU==2.16.2
 PyJWT==2.13.0
 pytest-base-url==2.1.0
 pytest-playwright==0.8.0
@@ -81,3 +82,9 @@ urllib3==2.7.0
 uvicorn==0.50.0
 websockets==16.0
 yarl==1.24.5
+
+# Canonical managed artifact links from CommonMark source.
+markdown-it-py==4.0.0
+mdurl==0.1.2
+linkify-it-py==2.0.3
+uc-micro-py==1.0.3

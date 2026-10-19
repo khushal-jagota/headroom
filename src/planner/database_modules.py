@@ -71,13 +71,14 @@ def _finalize_signal(connection: sqlite3.Connection, /) -> None:
 def attach(connection: sqlite3.Connection) -> tuple[TransactionParticipant, ...]:
     """Attach database modules and return their synchronous commit participants."""
     from planner import navigation
+    from planner.files.catalog.links import finalize as finalize_artifact_links
     from planner.navigation import proof
 
     navigation.attach(connection)
     source = _source(connection)
     if source is not None:
         source.attach_connection(connection)
-    return (_finalize_signal, proof.prepare_witness, navigation.finalize)
+    return (_finalize_signal, finalize_artifact_links, proof.prepare_witness, navigation.finalize)
 
 
 def commit_observers() -> tuple[CommitObserver, ...]:

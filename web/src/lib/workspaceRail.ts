@@ -17,7 +17,7 @@ import {
 export type WorkspaceTicket = WorkItemTicketFacts & Pick<BoardCard, 'orchestrator' | 'sprint_item_id' | 'sprint_item_title'>;
 export type WorkspaceOrchestrator = Pick<BoardSprintItem,
   'id' | 'title' | 'created_at' | 'settled' | 'project_id' | 'project' | 'recap' | 'recap_preview' | 'conversation_id'>
-  & WorkItemAttentionFacts & {conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>; tickets: readonly WorkItemTicketFacts[]};
+  & WorkItemAttentionFacts & {recap_reference?:import("./navigation/contracts").ViewContentReference|null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>; tickets: readonly WorkItemTicketFacts[]};
 export type WorkspaceChief = Pick<import('./types').ChiefManagementSettings,'label' | 'conversation_id'>
   & {awaiting_reply:boolean | null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>};
 
@@ -41,6 +41,7 @@ export type WorkspaceRailItem = {
   projectId: string | null;
   tickets: WorkItemTicketFacts[];
   recap: string;
+  recap_reference?:import("./navigation/contracts").ViewContentReference|null;
 };
 
 export type WorkspaceRail = {
@@ -137,9 +138,9 @@ export function workspaceAttentionGroups(
 }
 
 /** Preserve the full recap; empty text gets only a factual list count. */
-export function workspaceListRecap(groups: readonly WorkspaceTicketGroup[], recap = ""): string {
+export function workspaceListRecap(groups: readonly WorkspaceTicketGroup[], recap = "", exactCount?:number): string {
   if (recap.trim()) return recap;
-  const count = groups.reduce((total, group) => total + group.cards.length, 0);
+  const count = exactCount ?? groups.reduce((total, group) => total + group.cards.length, 0);
   return count ? `${count} Ticket${count === 1 ? "" : "s"} in this list.` : "Nothing in this list right now.";
 }
 
@@ -172,6 +173,7 @@ export function buildWorkspaceRail(
     conversationId: item.conversation_id,
     groups: workspaceAttentionGroups(item.tickets),
     recap: item.recap,
+    recap_reference:item.recap_reference,
     tickets: [...item.tickets],
     settled: item.settled === true,
     rested: item.settled === true,

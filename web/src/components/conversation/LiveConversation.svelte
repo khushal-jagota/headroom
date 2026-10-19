@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** A conversation, bound to the system that runs it.
    *
    * The pane above this draws; this is what makes it live. It opens a conversation by id,
@@ -15,30 +16,20 @@
    * So a Ticket nobody has run and a Ticket mid-turn are the same box, and there is no state
    * a person has to get themselves out of before they can type.
    */
+  import {SvelteSet} from "svelte/reactivity";
   import { onMount, untrack, type Snippet } from "svelte";
   import ConversationPane from "./ConversationPane.svelte";
-  import {
-    conversationLiveness,
-    createConversationStream,
-    currentRunValues,
-    emptyConversationFeed,
-    type ConversationFeed,
-    type ConversationStream
-  } from "../../lib/conversation/feed";
-  import { fateSentence, recordedMessageFateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
+  import {ConversationViewReader,type ViewReaderAnchor} from "../../lib/conversation/view/reader.svelte";
+  import {rowForBody} from "../../lib/conversation/view/presentation";
+  import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
   import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import {
-    conversationFeedForLens,
-    conversationLensPreference,
-    conversationRowsForLens,
     heldPromptIsInLens,
-    rememberConversationLensPreference,
     type ConversationLens
   } from "../../lib/conversation/lens";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import {
     eligibleOwnerReadSequence,
-    ownerReadCoversNewMessage,
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
   import { queryClient } from "../../lib/queryClient";
@@ -51,7 +42,6 @@
     moveRememberedOutgoingMessages,
     outgoingPersistenceConversationId,
     outgoingMessagesByPlace,
-    outgoingMessagesTheRecordHasNot,
     recallOutgoingMessages,
     releaseOutgoingMessageFiles,
     releaseOutgoingMessageImages,
@@ -66,7 +56,6 @@
   import {
     liveAskFrom,
     liveUserInputFrom,
-    transcriptRows
   } from "../../lib/conversation/transcript";
   import {
     answerPermissionAsk,
@@ -74,10 +63,8 @@
     advanceOwnerRead,
     discardHeldPrompt,
     interruptConversation,
-    openConversationTail,
     promoteHeldPrompt,
     readConversation,
-    readEventsAfter,
     ConversationWireError,
     type BackendSnapshot,
     type ConversationBackendKey,
@@ -105,6 +92,7 @@
     sendMessage,
     onNewConversation,
     readOnly = false,
+    historyOwner,
     pastConversations = [],
     selectedPastConversationId = $bindable(null)
   }: {
@@ -142,6 +130,7 @@
     readOnly?: boolean;
     /** The owner's earlier conversations, handed straight to the pane. The caller says
      *  which ones are past, because only it knows which conversation is the current one. */
+    historyOwner?: {kind:HistoryOwnerKind;id:string};
     pastConversations?: readonly PastConversation[];
     /** Which earlier conversation the owner picked, or null for the current one. The
      *  caller opens what this names by passing it back as ``conversationId``. */
@@ -149,7 +138,10 @@
   } = $props();
 
   let view = $state<ConversationView | null>(null);
-  let feed = $state<ConversationFeed>(emptyConversationFeed());
+  let reader = $state<ConversationViewReader | null>(null);
+  let viewAnchor=$state<ViewReaderAnchor|null>(null);
+  let viewFolds=new Set<string>();
+  let openTools=new SvelteSet<string>();
   /** How many frames have said the conversation is alive. Only its movement is read, and
    *  it is held apart from the feed so that saying "still working" costs the thread
    *  nothing: a frame with no words in it moves this and touches no row. */
@@ -162,12 +154,12 @@
   let fateNote = $state<string | null>(null);
   let fateNoteIsTerminal = $state(false);
   let fateNoteMessageId = $state<string | null>(null);
-  let visibleFateNote = $derived(recordedMessageFateSentence(feed.events, fateNoteMessageId, fateNote));
+  let visibleFateNote = $derived(fateNote);
   let errorNote = $state<string | null>(null);
   let askNote = $state<string | null>(null);
   let busy = $state(false);
   let opening = $state(false);
-  let lens = $state<ConversationLens>(conversationLensPreference());
+  let lens = $state<ConversationLens>("focus");
   /** The conversation this component currently has open. It follows the prop, and a start
    *  sets it directly, because the message that caused the start has to go somewhere now
    *  rather than after the parent's own state has come back round. */
@@ -182,35 +174,26 @@
    *  the cached booleans, and that event must still retry rows that arrived while away. */
   let attentionPulse = $state(0);
 
-  let stream: ConversationStream | null = null;
-
-  $effect(() => {
-    rememberConversationLensPreference(lens);
-  });
-
   /** Whether there is a conversation here at all. Holding an id is not the same as one
    *  existing: a Ticket names its conversation before a person opens the page, and this
    *  page puts an id in the address before anything has been started under it. Only the
    *  record answering is a conversation. */
   let started = $derived(view !== null);
-  let liveness = $derived(
-    conversationLiveness(
-      feed,
-      view === null ? null : { latestSequence: view.latest_sequence, isRunning: view.is_running }
-    )
-  );
-  let visibleFeed = $derived(conversationFeedForLens(feed, lens, senderLabel));
-  let rows = $derived(transcriptRows(feed, {
-    turnStoppedWithoutAnEnding: liveness.turnStoppedWithoutAnEnding
-  }));
-  let visibleRows = $derived(conversationRowsForLens(
-    transcriptRows(visibleFeed, {
-      turnStoppedWithoutAnEnding: liveness.turnStoppedWithoutAnEnding
-    }),
-    lens
-  ));
-  let ask = $derived(liveAskFrom(visibleRows));
-  let userInput = $derived(liveUserInputFrom(visibleRows));
+  let rows = $derived((reader?.pages ?? []).flatMap(page=>page.items.flatMap(item=>
+    item.kind==='row'&&item.body.kind==='inline' ? [rowForBody(item,item.body.value)] : [])));
+  let visibleRows = $derived(rows);
+  let ask = $derived.by(()=>{
+    if(reader?.status?.pending_permission===null)return null;
+    const row=liveAskFrom(visibleRows);if(row!==null)return row;
+    const pending=view?.pending_permission_ask;
+    return pending&&pending.ask_id===reader?.status?.pending_permission?.request_id ? {askId:pending.ask_id,title:pending.title,detail:pending.detail,options:pending.options}:null;
+  });
+  let userInput = $derived.by(()=>{
+    if(reader?.status?.pending_user_input===null)return null;
+    const row=liveUserInputFrom(visibleRows);if(row!==null)return row;
+    const pending=view?.pending_user_input;
+    return pending&&pending.request_id===reader?.status?.pending_user_input?.request_id ? {requestId:pending.request_id,questions:pending.questions}:null;
+  });
   const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
@@ -223,7 +206,7 @@
         // Focus can leave the top document through a preview iframe without a window
         // blur event. Ask the document again when a new row is about to be credited.
         windowIsFocused: windowIsFocused && document.hasFocus(),
-        deliveredLatestSequence: feed.latestSequence,
+        deliveredLatestSequence: reader?.transcript ? reader.coverage : 0,
         snapshot: {
           latestSequence: view.latest_sequence,
           ownerReadThroughSequence: view.owner_read_through_sequence
@@ -235,7 +218,7 @@
           && eligibleSequence <= advancingRead.sequence)
       ) return;
       const reading = view;
-      const deliveredEvents = feed.events;
+      const latestOwnerMessage = reader?.status?.rest.latest_owner_message_sequence ?? 0;
       const request = {
         conversationId: reading.conversation_id,
         sequence: eligibleSequence
@@ -251,7 +234,7 @@
             reading.owner_read_through_sequence,
             refreshedReadThrough.get(reading.conversation_id) ?? 0
           );
-          if (ownerReadCoversNewMessage(deliveredEvents, previouslyReadThrough, advanced)) {
+          if (latestOwnerMessage > previouslyReadThrough && latestOwnerMessage <= advanced) {
             refreshedReadThrough.set(reading.conversation_id, advanced);
             // The server accepted this read. Ask mounted queries for current truth,
             // even if the owner switched conversations while the request was pending.
@@ -277,7 +260,7 @@
     windowIsFocused = attention.windowIsFocused;
     attentionPulse += 1;
   }));
-  let running = $derived(liveness.isRunning);
+  let running = $derived(reader?.status ? reader.status.turn_running === true : view?.is_running ?? false);
   // The conversation's own backend, and before there is one what starting it would use.
   // Those are the only two answers there are: a backend nobody has said is not shown.
   let backendKey = $derived<ConversationBackendKey | null>(
@@ -289,12 +272,7 @@
   let backendSnapshot = $derived(
     backends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
   );
-  let current = $derived<RunValues>(
-    currentRunValues(
-      { model: view?.model ?? null, reasoningEffort: view?.reasoning_effort ?? null },
-      feed
-    )
-  );
+  let current = $derived<RunValues>({model:view?.model??null,reasoningEffort:view?.reasoning_effort??null});
   let serverHeldSenderIds = $derived(
     new Set((view?.held_prompts ?? []).filter((held) =>
       heldPromptIsInLens(held, lens, senderLabel)
@@ -344,7 +322,7 @@
       openedId = null;
       opening = false;
       view = null;
-      feed = emptyConversationFeed();
+      reader = null;
       composerStackMessageIds = [];
       void adoptUnopenedPersistence(persistenceKey);
       return;
@@ -355,8 +333,12 @@
   async function adopt(id: string): Promise<void> {
     closeStream();
     openedId = id;
+    refreshedReadThrough.clear();
+    viewAnchor=null;
+    viewFolds=new Set();
+    openTools=new SvelteSet();
     view = null;
-    feed = emptyConversationFeed();
+    reader = null;
     // A reload can happen after the first request reached the server but before its
     // response moved this tab's recovery pointer. Reconcile the owner's stable identity
     // into the canonical Conversation before looking for remembered messages there.
@@ -390,99 +372,58 @@
       .map((message) => message.messageId);
   }
 
-  function closeStream(): void {
-    stream?.close();
-    stream = null;
-  }
+  function closeStream(): void {reader?.close();reader=null;}
 
-  /** Open, reload, second tab, tab return — one path for all of them. */
-  async function openConversation(id: string): Promise<void> {
-    if (openedId !== id) return;
-    opening = true;
-    let snapshot: ConversationView;
-    try {
-      snapshot = await readConversation(id);
-    } catch (error) {
-      if (openedId !== id) return;
-      if (error instanceof ConversationWireError && error.status === 404) {
-        // A 404 is a conversation named but never started: the empty state, not a failure.
-        // It is also an answer — there is no record and there never was — so anything this
-        // tab brought back for it has been told as much as it is ever going to be.
-        theRecordHasBeenRead();
-      } else {
-        errorNote = sentenceFor(error);
-      }
-      opening = false;
-      return;
-    }
-    if (openedId !== id) return;
-    view = snapshot;
-    connectionTrouble = false;
-    let theOpenAlreadyReadTheView = true;
-    let localStream: ConversationStream;
-    localStream = createConversationStream(
-      id,
-      {
-        readEventsAfter,
-        openTail: (tailId, after, handlers) =>
-          openConversationTail(tailId, after, {
-            onCommittedEvent: (event) => {
-              if (openedId === id && stream === localStream) handlers.onCommittedEvent(event);
-            },
-            onLiveFrame: (frame) => {
-              if (openedId === id && stream === localStream) handlers.onLiveFrame(frame);
-            },
-            onTrouble: () => {
-              if (openedId !== id || stream !== localStream) return;
-              connectionTrouble = true;
-              handlers.onTrouble();
-            }
-          })
-      },
-      (next) => {
-        if (openedId !== id || stream !== localStream) return;
-        feed = next;
-        // The record draws a message once it has it. A copy it now holds is not redrawn
-        // somewhere else — it simply stops being drawn.
-        const stillOutgoing = outgoingMessagesTheRecordHasNot(sentMessages, next.events);
-        if (stillOutgoing !== sentMessages) void holdOnTo(stillOutgoing);
-        connectionTrouble = false;
-      },
-      // Every connect asks the system about itself again, after the rows are in. This is
-      // the after-a-restart path: the rows still leave a turn open, and only the system
-      // can say nothing is running behind it any more. The first connect of an open is
-      // the exception: the view it would ask for was read a moment ago, by the open.
-      () => {
-        if (openedId !== id || stream !== localStream) return;
-        if (theOpenAlreadyReadTheView) {
-          theOpenAlreadyReadTheView = false;
-          return;
-        }
+  async function reconcileReceipts(local:ConversationViewReader):Promise<void>{
+    if(sentMessages.length===0)return;
+    const receipts=await local.receipts(sentMessages.map(message=>message.messageId));
+    if(reader!==local)return;
+    const recorded=new Set(receipts.receipts.map(receipt=>receipt.sender_message_id));
+    if(recorded.size>0)await holdOnTo(sentMessages.filter(message=>!recorded.has(message.messageId)));
+  }
+  /** One cancellable reader per selected lens and visible transcript demand. */
+  function attachReader(id:string):ConversationViewReader{
+    closeStream();
+    let lastCoverage=-1;
+    const local=new ConversationViewReader(id,lens,documentIsVisible&&conversationState!=="rest",()=>{
+      if(reader!==local)return;
+      connectionTrouble=local.trouble;
+      livenessPulse++;
+      if(local.coverage!==lastCoverage){
+        lastCoverage=local.coverage;
         void refreshView(id);
-      },
-      () => {
-        if (openedId === id && stream === localStream) void refreshView(id);
-      },
-      () => {
-        if (openedId === id && stream === localStream) livenessPulse += 1;
+        void reconcileReceipts(local).catch(()=>undefined);
       }
-    );
-    if (openedId !== id) {
-      localStream.close();
-      return;
-    }
-    stream = localStream;
-    try {
-      await localStream.connect();
-      if (openedId !== id || stream !== localStream) return;
+    },viewAnchor,viewFolds,openTools);
+    reader=local;
+    return local;
+  }
+  $effect(()=>{
+    const selectedLens=lens;
+    const transcript=documentIsVisible&&conversationState!=="rest";
+    const currentReader=untrack(()=>reader);
+    if(currentReader===null||currentReader.lens===selectedLens&&currentReader.transcript===transcript)return;
+    const next=untrack(()=>attachReader(currentReader.id));
+    void next.connect().catch(()=>{if(reader===next)connectionTrouble=true;});
+  });
+  async function openConversation(id: string): Promise<void> {
+    if(openedId!==id)return;
+    opening=true;
+    try{
+      const snapshot=await readConversation(id);
+      if(openedId!==id)return;
+      view=snapshot;
+      const local=attachReader(id);
+      await local.connect();
+      if(reader!==local)return;
+      await reconcileReceipts(local);
       theRecordHasBeenRead();
-    } catch (error) {
-      if (openedId !== id || stream !== localStream) return;
-      connectionTrouble = true;
-      errorNote = sentenceFor(error);
-    } finally {
-      if (openedId === id && stream === localStream) opening = false;
-    }
+      connectionTrouble=false;
+    }catch(error){
+      if(openedId!==id)return;
+      if(error instanceof ConversationWireError&&error.status===404)theRecordHasBeenRead();
+      else{errorNote=sentenceFor(error);connectionTrouble=true;}
+    }finally{if(openedId===id)opening=false;}
   }
 
   /** The record has answered, so the messages brought back from before the page reloaded
@@ -508,28 +449,20 @@
    * own once that one lands, because it knows something the read in flight did not, and
    * an answer fetched before its fact existed is not an answer to it.
    */
-  let viewBeingRead: { conversationId: string; done: Promise<void> } | null = null;
-
-  function refreshView(requestedId: string | null = openedId): Promise<void> {
-    if (requestedId === null || openedId !== requestedId) return Promise.resolve();
-    const inFlight = viewBeingRead;
-    const read = async (): Promise<void> => {
-      if (openedId !== requestedId) return;
-      try {
-        const refreshed = await readConversation(requestedId);
-        if (openedId === requestedId) view = refreshed;
-      } catch {
-        // The rows are the record; a snapshot that did not come back changes nothing.
-      }
+  let viewBeingRead: {conversationId:string;done:Promise<void>}|null=null;
+  let viewReadDirty=false;
+  function refreshView(requestedId:string|null=openedId):Promise<void>{
+    if(requestedId===null||openedId!==requestedId)return Promise.resolve();
+    if(viewBeingRead?.conversationId===requestedId){viewReadDirty=true;return viewBeingRead.done;}
+    const read=async()=>{
+      do{
+        viewReadDirty=false;
+        try{const refreshed=await readConversation(requestedId);if(openedId===requestedId)view=refreshed;}catch{}
+      }while(viewReadDirty&&openedId===requestedId);
     };
-    const reading =
-      inFlight?.conversationId === requestedId ? inFlight.done.then(read) : read();
-    const entry = { conversationId: requestedId, done: reading };
-    viewBeingRead = entry;
-    void reading.finally(() => {
-      if (viewBeingRead === entry) viewBeingRead = null;
-    });
-    return reading;
+    const entry={conversationId:requestedId,done:read()};viewBeingRead=entry;
+    void entry.done.finally(()=>{if(viewBeingRead===entry)viewBeingRead=null;});
+    return entry.done;
   }
 
   function sentenceFor(error: unknown): string {
@@ -831,7 +764,7 @@
     composerStackMessageIds = [];
     openedId = null;
     view = null;
-    feed = emptyConversationFeed();
+    reader = null;
     fateNote = null;
     errorNote = null;
     askNote = null;
@@ -847,7 +780,7 @@
    * the telling both belong to the reader that is still the current one.
    */
   function readTheRecordAgain(): void {
-    const reconnectingStream = stream;
+    const reconnectingStream = reader;
     const reconnectingId = openedId;
     if (reconnectingId === null) return;
     if (reconnectingStream === null) {
@@ -858,9 +791,11 @@
       return;
     }
     const stillTheCurrentReader = (): boolean =>
-      stream === reconnectingStream && openedId === reconnectingId;
+      reader === reconnectingStream && openedId === reconnectingId;
     reconnectingStream.connect().then(
-      () => {
+      async () => {
+        if (!stillTheCurrentReader()) return;
+        await reconcileReceipts(reconnectingStream);
         if (stillTheCurrentReader()) theRecordHasBeenRead();
       },
       () => {
@@ -910,6 +845,9 @@
   conversationExists={started}
   bind:backends
   workspaceFolder={view?.workspace_folder ?? null}
+  {reader}
+  bind:viewAnchor
+  transcriptVisible={documentIsVisible}
   {rows}
   {visibleRows}
   outgoingMessages={transcriptOutgoingMessages}
@@ -932,6 +870,7 @@
   {errorNote}
   {connectionTrouble}
   {readOnly}
+  {historyOwner}
   {pastConversations}
   pastConversationsLabel={`${label} conversation`}
   bind:selectedPastConversationId

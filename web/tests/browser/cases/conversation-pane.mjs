@@ -15,6 +15,29 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     hostPath,
     String.raw`<script lang="ts">
   import { tick } from "svelte";
+  import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
+  import {installConversationViewReaderFixture} from "../tests/support/conversationViewReaderFixture";
+  const readerOnly=new URLSearchParams(window.location.search).has("reader");
+  let readerState=$state<"opened"|"rest">("opened");
+  if(readerOnly)installConversationViewReaderFixture();
+  (window as any).__readerState=(state:typeof readerState)=>readerState=state;
+
+  import MarkdownBlock from "../src/components/MarkdownBlock.svelte";
+  import FilePreview from "../src/components/FilePreview.svelte";
+  import { targetFromHref } from "../src/lib/filePreview";
+  const previewsOnly=new URLSearchParams(window.location.search).has("previews");
+  let previewMode=$state("media");
+  let containerRevision=$state(0);
+  const containerMarkdown='| Name | Detail | Outcome |\n| --- | --- | --- |\n'+Array.from({length:49},(_,i)=>'| Row '+i+' | A representative exact table cell with text | Preserved |').join('\n')+'\n\n'+Array.from({length:54},(_,i)=>(i+1)+'. A representative ordered-list item retains its exact numbering.').join('\n');
+  (window as any).__containerRevision=()=>{containerRevision+=1;previewMode='containers';};
+  const largeMarkdown=Array.from({length:1600},(_,index)=>"## Paragraph "+index+"\n\n"+"This exact logical document stays readable while the parser runs away from input. ".repeat(3)).join("\n\n");
+  (window as any).__previewMode=(mode:string)=>{previewMode=mode;};
+  import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
+  import ConversationHistoryPicker from "../src/components/conversation/ConversationHistoryPicker.svelte";
+  import ArtifactsBand from "../src/components/ArtifactsBand.svelte";
+  const catalogsOnly=new URLSearchParams(window.location.search).has("catalogs");
+  const catalogClient=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  let catalogSelected=$state<string|null>(null);
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import { discardHeldPrompt, promoteHeldPrompt } from "../src/lib/conversation/wire";
   import type { ConversationState } from "../src/lib/conversation/conversationState";
@@ -124,23 +147,25 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   // Controlled content replay. Responses stay pending while the reader chooses a
   // position, then browser-owned image/Markdown completion changes the same rows.
-  (window as any).__setupScrollRegression = (kind: string) => {
+  (window as any).__setupScrollRegression = (kind: string, mode = "scrollback") => {
     conversationState = "peeked";
     lens = "full";
     running = false;
     const paragraphs = Array.from({ length: 32 }, (_, index) =>
-      "Tall paragraph " + index + ": " + words(index)).join("\n\n");
+      "Tall paragraph " + index + ": " + words(index));
+    const previewAt = mode === "following" ? 30 : 14;
     rows = Array.from({ length: 28 }, (_, index) => ({
       key: "regression-" + index,
       kind: "agent_message",
       sequence: index + 1,
       createdAt: 1_000 + index,
-      content: index === 12 && kind !== "plain"
+      content: index === (mode === "following" ? 27 : 12) && kind !== "plain"
         ? [
+            {piece: "text", text: paragraphs.slice(0, previewAt).join("\n\n")},
             kind === "image"
               ? {piece: "image", stored_file_id: "delayed.png", file_name: "delayed.png"}
               : {piece: "text", text: "[Delayed Markdown](/files/tickets/t_scrollregression/delayed.md)"},
-            {piece: "text", text: paragraphs}
+            {piece: "text", text: paragraphs.slice(previewAt).join("\n\n")}
           ]
         : [{piece: "text", text: words(index)}]
     }));
@@ -458,6 +483,47 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 </script>
 
+{#if readerOnly}
+  <div style="height:700px;width:700px;display:flex;flex-direction:column">
+    <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
+  </div>
+{:else if previewsOnly}
+  <input aria-label="Parser input" />
+  <div data-conversation-thread data-preview-fixture style="height:600px;overflow:auto">
+  {#if previewMode === "large"}
+    <MarkdownBlock text={largeMarkdown} />
+  {:else if previewMode === "copy"}
+    <div data-copy-selection>
+      <p data-copy-before>OUTSIDE BEFORE prefix KEEP START</p>
+      <div data-copy-first data-conversation-thread style="height:160px;overflow:auto">
+        <MarkdownBlock text={largeMarkdown.replaceAll('Paragraph ', 'FIRST Paragraph ')} />
+      </div>
+      <p data-copy-middle>OUTSIDE BETWEEN messages</p>
+      <div data-copy-second data-conversation-thread style="height:160px;overflow:auto">
+        <MarkdownBlock text={largeMarkdown.replaceAll('Paragraph ', 'SECOND Paragraph ')} />
+      </div>
+      <p data-copy-after>KEEP END suffix OUTSIDE AFTER</p>
+    </div>
+  {:else if previewMode === "containers"}
+    <MarkdownBlock text={containerMarkdown+'\n\nRevision '+containerRevision} />
+  {:else if previewMode === "media"}
+    {#each Array.from({length:24},(_,index)=>index) as index}
+      <div style="min-height:340px">
+        <FilePreview target={targetFromHref('/files/tickets/t_preview/preview'+index+'.html')} />
+        <FilePreview target={targetFromHref('/files/tickets/t_preview/image'+index+'.png')} />
+      </div>
+    {/each}
+  {/if}
+  </div>
+{:else if catalogsOnly}
+<QueryClientProvider client={catalogClient}>
+  <section style="padding:40px;width:600px;" data-catalog-fixture>
+    <ConversationHistoryPicker owner={{kind:"ticket",id:"t_catalog"}} bind:selected={catalogSelected} label="Prior conversation" conversationExists={true} />
+    <output data-history-selection>{catalogSelected ?? "current"}</output>
+    <ArtifactsBand owner={{kind:"ticket",id:"t_catalog"}} />
+  </section>
+</QueryClientProvider>
+{:else}
 <main class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
   <section class="fixture-document">
     <button type="button" data-ticket-behind onclick={dismissConversation}>Ticket content</button>
@@ -509,6 +575,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     </div>
   </section>
 </main>
+{/if}
 
 <style>
   :global(html), :global(body), :global(#app) {
