@@ -177,7 +177,7 @@ def run(browser, urls):
                     "body": "Original personal outcome proposal",
                     "revision": 1,
                     "proposed_by": "agent",
-                    "created_at": 1,
+                    "created_at": 2,
                 },
             }
         if identity == "t_artifacts":
