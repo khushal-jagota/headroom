@@ -4,8 +4,10 @@
 
 def run(browser, urls):
 
+    import json
     import os
     import pathlib
+    import runpy
 
     def screenshot(page, name):
         directory = os.environ.get("PANELS_UI_PROOF_DIR")
@@ -13,7 +15,27 @@ def run(browser, urls):
             pathlib.Path(directory).mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(pathlib.Path(directory) / (name + ".png")), full_page=True)
 
+    fixture = runpy.run_path(
+        str(pathlib.Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
+    )
+    snapshot = fixture["navigation_response"](
+        {
+            "columns": [],
+            "sprint_items": [
+                {
+                    "id": "item_offboard",
+                    "title": "Brief item_offboard",
+                    "created_at": 1,
+                    "project_id": "project_tribe",
+                    "project": "Tribe",
+                    "settled": True,
+                }
+            ],
+        },
+        {"chief_of_staff": {"label": "Chief of Staff", "conversation_id": None}},
+    )
     page = browser.new_page()
+    page.add_init_script("window.__navigationFixture = " + json.dumps(snapshot))
     page.goto([__file__, *urls][1] + "#/backlog?project=project_vylo", wait_until="networkidle")
     page.locator('section[data-screen="workspace"]').wait_for()
     assert page.evaluate("window.location.hash") == "#/workspace"
@@ -89,8 +111,8 @@ def run(browser, urls):
     page.get_by_text("no such screen", exact=True).wait_for()
     page.set_viewport_size({"width": 1280, "height": 900})
 
-    # A canonical direct Item address survives the empty board response and mounts
-    # the real Item workspace, even though the board rail has no row for it.
+    # A canonical direct Item address mounts its real workspace while its settled
+    # row remains hidden inside the closed Settled rail.
     page.evaluate("window.location.hash = '#/workspace/item/item_offboard'")
     page.locator('[data-sprint-item-workspace="item_offboard"] [data-sprint-item-brief]').wait_for()
     assert (
@@ -98,8 +120,17 @@ def run(browser, urls):
         == "The off-board brief remains readable."
     )
     page.wait_for_function(
-        """() => window.__requests().some(request => request.path === "/api/board")"""
+        """() => window.__requests().some(request => request.path === "/api/navigation/snapshot")"""
     )
+    page.wait_for_function(
+        """() => window.__requests().some(request => request.path === "/api/items/item_offboard/workspace-content")"""
+    )
+    assert (
+        page.get_by_role("button", name="Settled", exact=False).get_attribute("aria-expanded")
+        == "false"
+    )
+    assert not page.locator('[data-settled-item="item_offboard"]').is_visible()
+    assert not page.locator('[data-sprint-item="item_offboard"]').is_visible()
     page.wait_for_timeout(50)
     assert page.evaluate("window.location.hash") == "#/workspace/item/item_offboard"
 

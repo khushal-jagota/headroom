@@ -17,7 +17,8 @@ from planner.runtime.worker_step_readiness import (
     is_ready_for_worker_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Ticket
+from planner.tickets.contracts import PendingTicketProposal, Ticket
+from planner.tickets.logic.fields_codec import proposal_to_json
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -175,7 +176,7 @@ def _to_closeout(conn: sqlite3.Connection, ticket_id: str) -> None:
     "occupy",
     [
         "UPDATE tickets SET worker_step_claim = 'out' WHERE id = ?",
-        "UPDATE tickets SET pending_proposal = '{}' WHERE id = ?",
+        "approval",
         "UPDATE tickets SET worker_step_claim = 'errored' WHERE id = ?",
     ],
     ids=["agent", "awaiting_approval", "errored"],
@@ -189,7 +190,18 @@ def test_a_closeout_waiter_is_not_ready_while_its_lane_is_occupied(
         waiting = _ticket(conn)
         _to_closeout(conn, occupying.id)
         _to_closeout(conn, waiting.id)
-        conn.execute(occupy, (occupying.id,))
+        if occupy == "approval":
+            conn.execute(
+                "UPDATE tickets SET pending_proposal = ? WHERE id = ?",
+                (
+                    proposal_to_json(
+                        PendingTicketProposal("consequences", "Review the closeout.", "worker", 6)
+                    ),
+                    occupying.id,
+                ),
+            )
+        else:
+            conn.execute(occupy, (occupying.id,))
         assert not _ready(conn, waiting)
     finally:
         conn.close()
@@ -198,9 +210,7 @@ def test_a_closeout_waiter_is_not_ready_while_its_lane_is_occupied(
 def test_lanes_in_different_projects_or_worker_types_are_independent(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
-        other_project_id = projects_data.create_project(
-            conn, name="Client Work", now=0
-        ).id
+        other_project_id = projects_data.create_project(conn, name="Client Work", now=0).id
         occupying = _ticket(conn, planning_day_id=None, project_id=other_project_id)
         other_project = _ticket(conn)
         _to_closeout(conn, occupying.id)
