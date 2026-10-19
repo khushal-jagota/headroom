@@ -63,4 +63,5 @@
   $effect(() => () => { generation++; abort?.abort(); if (timer !== null)
       clearTimeout(timer); text = ''; });
 </script>
-{#if text}<article class="chat-a" data-conversation-row="streaming"><MarkdownBlock {text}/></article>{/if}
+{#if text}<article class="chat-a c2-streaming" data-conversation-row="streaming"><MarkdownBlock {text}/></article>{/if}
+<style>.c2-streaming { color: var(--text-muted); }</style>

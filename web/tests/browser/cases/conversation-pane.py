@@ -1620,9 +1620,103 @@ def _bounded_reader(browser, url):
     page.close()
 
 
+def _projected_visual_relationships(browser, url):
+    import json
+    import os
+    from pathlib import Path
+
+    page = browser.new_page(viewport={"width": 1000, "height": 1100})
+    page.goto(url + "?reader=1&visual=1")
+    second = page.locator('[data-conversation-view-key="e4"] .chat-a')
+    second.wait_for()
+    second.scroll_into_view_if_needed()
+    focus = second.evaluate("""element => {
+        const wrapper = element.closest('[data-conversation-view-key]');
+        const decoration = node => ({separator: getComputedStyle(node, '::before').content,
+            margin: parseFloat(getComputedStyle(node).marginBlockStart)});
+        const decorations = [decoration(element), decoration(wrapper)];
+        const first = document.querySelector('[data-conversation-view-key="e2"]');
+        return {decorations, first: [decoration(first), decoration(first.querySelector('.chat-a'))]};
+    }""")
+    page.locator('[data-conversation-lens-choice="full"]').click()
+    page.locator('[data-conversation-tool="tool-5"]').wait_for()
+    stream = page.locator('[data-conversation-row="streaming"]')
+    stream.wait_for()
+    stream.scroll_into_view_if_needed()
+    page.wait_for_function("""() => !document.querySelector('[data-conversation-view-key="e13"]') &&
+        window.__viewCalls.some(raw => {
+            const url = new URL(raw, location.origin);
+            const reference = url.searchParams.get('reference');
+            return reference && JSON.parse(reference).body_id === 'completed:13';
+        })""")
+    full = page.evaluate("""() => {
+        const rect = element => element.getBoundingClientRect();
+        const first = document.querySelector('[data-conversation-tool="tool-5"]');
+        const second = document.querySelector('[data-conversation-tool="tool-6"]');
+        const thread = document.querySelector('.chat-thread-content');
+        const a = document.querySelector('[data-conversation-view-key="e2"] .chat-a');
+        const b = document.querySelector('[data-conversation-view-key="e4"] .chat-a');
+        const streaming = document.querySelector('[data-conversation-row="streaming"]');
+        const prompt = document.querySelector('[data-conversation-view-key="e1"] .chat-u');
+        const ending = document.querySelector('[data-conversation-view-key="e8"]');
+        const last = document.querySelector('[data-conversation-view-key="e11"] .chat-a');
+        const probe = document.createElement('span');
+        probe.style.color = 'var(--text-muted)';
+        streaming.append(probe);
+        const muted = getComputedStyle(probe).color;
+        probe.remove();
+        let rule = false;
+        for(let node = first.parentElement; node && node !== thread; node=node.parentElement)
+            rule ||= parseFloat(getComputedStyle(node).borderInlineStartWidth) > 0;
+        return {
+            toolIndent: rect(first).left - rect(thread).left,
+            toolGap: rect(second).top - rect(first).bottom,
+            toolRule: rule,
+            firstTop: rect(prompt).top - rect(thread).top,
+            groupBeforeGap: rect(first).top - rect(b).bottom,
+            groupAfterGap: rect(ending).top - rect(second).bottom,
+            streamingGap: rect(streaming).top - rect(last).bottom,
+            proseGap: rect(b).top - rect(a).bottom,
+            threadGap: parseFloat(getComputedStyle(thread).rowGap),
+            emptyHeights: ['e0', 'e3', 'e7', 'e12', 'e13', 'work:5'].map(key => {
+                const node = document.querySelector(`[data-conversation-view-key="${key}"]`);
+                return node ? rect(node).height : 0;
+            }),
+            streamingColor: getComputedStyle(streaming).color, muted,
+            visibleEndings: document.querySelectorAll('[data-conversation-row="turn_ended"]').length
+        };
+    }""")
+    proof = {"focus": focus, "full": full}
+    print("PROJECTED_VISUAL_PROOF " + json.dumps(proof), flush=True)
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    if evidence:
+        output = Path(evidence)
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "visual-geometry.json").write_text(json.dumps(proof, indent=2))
+        page.screenshot(path=str(output / "projected-full.png"))
+    failures = []
+    if not any(row["separator"] not in ("none", "normal") and row["margin"] > 0 for row in focus["decorations"]):
+        failures.append("Focus messages lost their separator")
+    if any(row["separator"] not in ("none", "normal") for row in focus["first"]):
+        failures.append("A separator appeared across the owner prompt")
+    if not full["toolRule"] or full["toolIndent"] <= 0 or abs(full["toolGap"] - 4) > 1:
+        failures.append("Full tools lost their run layout")
+    if any(full["emptyHeights"]) or abs(full["proseGap"] - full["threadGap"]) > 1:
+        failures.append("Invisible bookkeeping rows consume transcript space")
+    if abs(full["firstTop"]) > 1 or any(abs(full[key] - full["threadGap"]) > 1 for key in ("groupBeforeGap", "groupAfterGap", "streamingGap")):
+        failures.append("Leading, trailing, or group markers alter transcript spacing")
+    if full["streamingColor"] != full["muted"]:
+        failures.append("Streaming prose lost its muted color")
+    if full["visibleEndings"] != 3:
+        failures.append("Failed/interrupted/compaction-warning endings disappeared")
+    page.close()
+    assert not failures, {"failures": failures, "proof": proof}
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        _projected_visual_relationships(browser, urls[0])
         _bounded_reader(browser, urls[0])
         _run(browser, urls)
