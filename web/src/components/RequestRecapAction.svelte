@@ -56,6 +56,10 @@
     data-request-recap-action
     onclick={() => void ask()}
   >Ask for a recap</button>
+  <!-- The slot is always here, so the spinner arriving moves nothing. -->
+  <span class="request-recap-spin-slot">
+    {#if quiet}<span class="acp-spin request-recap-spin" role="img" aria-label="Writing a recap"></span>{/if}
+  </span>
   {#if note}<span class="request-recap-note" data-request-recap-note>{note}</span>{/if}
 </span>
 
@@ -66,4 +70,6 @@
   .request-recap-action[aria-disabled="true"] { cursor:default; color:var(--text-faintest); }
   .request-recap-action[aria-disabled="true"]:hover { color:var(--text-faintest); }
   .request-recap-note { color:var(--text-faintest); font-size:var(--type-xs); }
+  .request-recap-spin-slot { display:inline-flex; align-items:center; justify-content:center; flex:none; width:var(--space-3); height:var(--space-3); }
+  .request-recap-spin { margin-left:0; }
 </style>

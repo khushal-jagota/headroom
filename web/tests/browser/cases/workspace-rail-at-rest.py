@@ -580,9 +580,14 @@ def run(browser, urls):
         # The press clears the line, and the empty line beside a working agent is what
         # says a recap is coming. The ask stays exactly where it was, and takes no
         # second press until the recap lands.
-        expect(panel.locator("[data-recap-pending]")).to_have_count(1)
+        slot = panel.locator("[data-recap-slot]")
+        held = slot.bounding_box()["height"]
+        expect(panel.locator("[data-recap-text]")).to_have_count(0)
         expect(ask).to_have_text("Ask for a recap")
         expect(ask).to_have_attribute("aria-disabled", "true")
+        expect(panel.locator(".request-recap-spin")).to_have_count(1)
+        # The emptied line keeps the height it had, so nothing below it moves.
+        assert slot.bounding_box()["height"] == held, (slot.bounding_box()["height"], held)
         assert recap_requests == [{"target": {"kind": "sprint_item", "id": "si_needs_him"}}], (
             recap_requests
         )
@@ -592,7 +597,7 @@ def run(browser, urls):
                 summary["recap_preview"] = ORCHESTRATOR_RECAP
                 summary["conversation_signal"] = dict(working=False, message_for_owner=False)
         page.evaluate("window.__refresh()")
-        expect(panel.locator("[data-recap-pending]")).to_have_count(0)
+        expect(panel.locator(".request-recap-spin")).to_have_count(0)
         expect(panel.locator("[data-recap-text]")).to_have_text(ORCHESTRATOR_RECAP)
         expect(ask).to_have_attribute("aria-disabled", "false")
         page.mouse.move(1200, 900)

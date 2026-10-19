@@ -8,7 +8,7 @@
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import RequestRecapAction from "./RequestRecapAction.svelte";
-  import RecapPending from "./RecapPending.svelte";
+  import RecapSlot from "./RecapSlot.svelte";
   import { recapPending } from "../lib/recapPending";
   /* ``recapTarget`` is the agent that can be asked for a fresh recap, and its own canonical
    * recap. The panel's line is not always that recap — for an orchestrator it is a composed
@@ -70,7 +70,9 @@
   <div class="title"><span>{currentWorker?.title ?? title}</span><ConversationSignalMark signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   {#if recapText || recapTarget}
     <div class="recap">
-      {#if pendingRecap}<RecapPending />{:else if recapText}<span data-recap-text>{recapText}</span>{/if}
+      <RecapSlot pending={pendingRecap}>
+        {#snippet children()}{#if recapText}<span data-recap-text>{recapText}</span>{/if}{/snippet}
+      </RecapSlot>
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} pending={pendingRecap} class="recap-ask" />{/if}
     </div>
   {/if}
