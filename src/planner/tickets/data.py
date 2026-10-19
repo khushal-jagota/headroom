@@ -42,8 +42,11 @@ from planner.tickets.contracts import (
     ResolvedTicketCreationContext,
     StageOwnershipMode,
     Ticket,
+    TicketApprovalMethod,
     TicketDeletion,
     TicketEdit,
+    TicketFieldApproval,
+    TicketFieldApprovals,
     TicketFieldValues,
     TicketLocale,
     WorkerStepClaim,
@@ -326,7 +329,9 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     worker_type_definition = configured_worker_type_registry().require(worker_type)
     stage = str(row["stage"])
     worker_type_definition.validate_ticket_position(stage, str(row["ceiling"]))
+    values = fields_codec.values_from_json(row["field_values"], worker_type_definition.field_ids())
     return Ticket(
+        field_approvals=fields_codec.approvals_from_json(row["field_approvals"], values),
         locale=TicketLocale(row["locale"]),
         is_backlogged=bool(row["is_backlogged"]),
         id=row["id"],
@@ -386,6 +391,7 @@ _TICKET_STORED_COLUMNS = (
     "ceiling",
     "conversation_id",
     "field_values",
+    "field_approvals",
     "created_at",
     "updated_at",
     "sprint_id",
@@ -527,6 +533,20 @@ def _field_values_for_storage(
     )
 
 
+def _field_approvals_for_storage(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    approvals: TicketFieldApprovals,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> str:
+    row = conn.execute("SELECT field_approvals FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+    assert row is not None
+    return fields_codec.replace_declared_approvals(
+        row["field_approvals"], approvals, worker_type_definition.field_ids()
+    )
+
+
 def _apply_decision(
     conn: sqlite3.Connection,
     ticket: Ticket,
@@ -568,7 +588,7 @@ def _apply_decision(
                     )
     proposal_changed = newly_filed_proposal and decision.pending_proposal is not None
     conn.execute(
-        "UPDATE tickets SET field_values = ?, pending_proposal = ?, "
+        "UPDATE tickets SET field_values = ?, field_approvals = ?, pending_proposal = ?, "
         "pending_proposal_revision = pending_proposal_revision + ?, "
         "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ? WHERE id = ?",
         (
@@ -576,6 +596,12 @@ def _apply_decision(
                 conn,
                 ticket.id,
                 decision.field_values,
+                worker_type_definition=worker_type_definition,
+            ),
+            _field_approvals_for_storage(
+                conn,
+                ticket.id,
+                decision.field_approvals,
                 worker_type_definition=worker_type_definition,
             ),
             fields_codec.proposal_to_json(decision.pending_proposal),
@@ -1020,10 +1046,11 @@ def create_ticket(
             "employee_launch_reasoning_effort, stage, deadline, "
             "project_id, sprint_id, sprint_item_id, orchestrator_kind, "
             "recap, ceiling, ceiling_holder, "
-            "conversation_id, field_values, pending_proposal, pending_proposal_revision, "
+            "conversation_id, field_values, field_approvals, pending_proposal, "
+            "pending_proposal_revision, "
             "created_at, updated_at, locale) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
-            "?, ?, ?, ?, ?, ?)",
+            "?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -1040,6 +1067,14 @@ def create_ticket(
                 ceiling,
                 _principal_to_json(ceiling_holder),
                 values_json,
+                fields_codec.approvals_to_json(
+                    {
+                        key: TicketFieldApproval(
+                            TicketApprovalMethod.auto_accept, None, "Auto-accepted"
+                        )
+                        for key in initial_values
+                    }
+                ),
                 fields_codec.proposal_to_json(initial_proposal),
                 int(initial_proposal is not None),
                 now,
@@ -1321,6 +1356,23 @@ def file_current_proposal(
         return _load_ticket_for_write(conn, ticket_id)
 
 
+def _explicit_approval(conn: sqlite3.Connection, principal: Principal) -> TicketFieldApproval:
+    if principal == OWNER_PRINCIPAL:
+        name = "Khushal"
+    elif principal == CHIEF_PRINCIPAL:
+        name = "Chief"
+    else:
+        row = conn.execute(
+            "SELECT title FROM sprint_items WHERE id = ?", (principal.id,)
+        ).fetchone()
+        if row is None:
+            raise PlannerError(ErrorCode.not_found, "approving orchestrator not found")
+        name = str(row["title"])
+    return TicketFieldApproval(
+        TicketApprovalMethod.explicit_accept, principal, f"Approved by {name}"
+    )
+
+
 def accept_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1360,6 +1412,7 @@ def accept_proposal(
             next_ceiling,
             next_holder,
             worker_type_definition=worker_type_definition,
+            approval=_explicit_approval(conn, principal),
         )
         updated = _apply_decision(conn, ticket, decision, now)
         _give_back_worker_step_claim(conn, updated, now=now)
@@ -1603,9 +1656,7 @@ def _release_a_holder_the_move_left_below(
     Asked on every move, not only while a proposal is parked. A wrong address is wrong
     before anything arrives at it.
     """
-    row = conn.execute(
-        "SELECT ceiling_holder FROM tickets WHERE id = ?", (ticket_id,)
-    ).fetchone()
+    row = conn.execute("SELECT ceiling_holder FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
     if row is None:
         return
     # Read back rather than trust the Ticket loaded before the move: one edit can set the
@@ -1721,15 +1772,17 @@ def edit_ticket(
 
         settled_values = edit.get("field_values")
         edited_values = dict(ticket.field_values)
+        edited_approvals = dict(ticket.field_approvals)
         if settled_values:
             for field, body in settled_values.items():
                 decision = resolution.decide_edit_settled_field(
-                    replace(ticket, field_values=edited_values),
+                    replace(ticket, field_values=edited_values, field_approvals=edited_approvals),
                     field,
                     body,
                     worker_type_definition=worker_type_definition,
                 )
                 edited_values = dict(decision.field_values)
+                edited_approvals = dict(decision.field_approvals)
             changes.append(
                 (
                     "field_values",
@@ -1739,6 +1792,20 @@ def edit_ticket(
                         conn,
                         ticket.id,
                         edited_values,
+                        worker_type_definition=worker_type_definition,
+                    ),
+                )
+            )
+
+            changes.append(
+                (
+                    "field_approvals",
+                    "field_approvals",
+                    fields_codec.approvals_to_json(ticket.field_approvals),
+                    _field_approvals_for_storage(
+                        conn,
+                        ticket.id,
+                        edited_approvals,
                         worker_type_definition=worker_type_definition,
                     ),
                 )

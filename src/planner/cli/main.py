@@ -294,7 +294,11 @@ def _ticket_record(
     header = {key: data[key] for key in header_keys if key in data}
     manifest = _worker_type(str(data["worker_type"]), True)
     parts = {
-        field["id"]: part(data["field_values"].get(field["id"])) for field in manifest["fields"]
+        field["id"]: part(
+            data["field_values"].get(field["id"]),
+            approval=data.get("field_approvals", {}).get(field["id"]),
+        )
+        for field in manifest["fields"]
     }
     parts["proposal"] = part(data.get("pending_proposal"))
     parts["recap"] = part(data.get("recap", ""))

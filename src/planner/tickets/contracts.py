@@ -143,6 +143,24 @@ class TicketListFilters:
 TicketFieldValues = Mapping[str, str]
 
 
+class TicketApprovalMethod(StrEnum):
+    explicit_accept = "explicit_accept"
+    auto_accept = "auto_accept"
+    unknown = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class TicketFieldApproval:
+    """Approval of the current field text, with a readable identity snapshot."""
+
+    method: TicketApprovalMethod
+    principal: Principal | None
+    display_label: str
+
+
+TicketFieldApprovals = Mapping[str, TicketFieldApproval]
+
+
 @dataclass(frozen=True)
 class PendingTicketProposal:
     """The one current result awaiting agreement on a Ticket."""
@@ -291,6 +309,7 @@ class Ticket:  # §3.3 — column names match exactly
     worker_step_claim_revision: int
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     field_values: TicketFieldValues
+    field_approvals: TicketFieldApprovals = field(default_factory=dict, kw_only=True)
     pending_proposal: PendingTicketProposal | None
     created_at: int
     updated_at: int
