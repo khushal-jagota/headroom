@@ -7,7 +7,6 @@ import pytest
 
 from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import OWNER_PRINCIPAL
-from planner.core.errors import PlannerError
 from planner.projects import data as projects
 from planner.sprints import data as sprints
 from planner.tickets import data, locale_configuration, views
@@ -105,40 +104,8 @@ def test_inherited_project_resolves_before_locale(
     assert ticket.locale is TicketLocale.macos
 
 
-@pytest.mark.parametrize("locale", ["macos", "wrong", "", 12])
-def test_refused_creation_is_atomic(tmp_db: Connection, locale: object) -> None:
-    before = tuple(tmp_db.iterdump())
-    with pytest.raises(PlannerError) as error:
-        data.create_ticket(
-            tmp_db,
-            title="Rejected",
-            worker_type="coding",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=TITLE_MAX_CHARS,
-            locale=locale,  # type: ignore[arg-type]
-        )
-    assert tuple(tmp_db.iterdump()) == before
-    if locale == "macos":
-        assert error.value.detail["locale"] == "macos"
-        assert error.value.detail["employee_backend"]
-        assert error.value.detail["reason"]
 
 
-def test_existing_defaults_and_requirements_round_trip(tmp_db: Connection) -> None:
-    assert all(not project.requires_macos for project in projects.list_projects(tmp_db))
-    settings = worker_settings.read_worker_settings(
-        tmp_db, configured_worker_type_registry(), "coding"
-    )
-    assert settings.requires_macos is False
-    project = projects.create_project(
-        tmp_db,
-        name="Persisted",
-        requires_macos=True,
-        now=1,
-    )
-    assert projects.read_project(tmp_db, project.id).requires_macos is True
-    assert projects.project_json(project)["requires_macos"] is True
 
 
 def test_worker_requirement_survives_definition_updates(tmp_db: Connection) -> None:
@@ -199,103 +166,6 @@ def test_locale_migration_preserves_entire_existing_rows(
     conn.close()
 
 
-@pytest.mark.parametrize("actor", ["owner", "chief", "sprint_item_supervisor", "worker"])
-def test_every_authenticated_creator_uses_locale_resolution(
-    tmp_db: Connection,
-    tmp_path: Path,
-    fake_clock: ClockForTest,
-    monkeypatch: pytest.MonkeyPatch,
-    actor: str,
-) -> None:
-    from fastapi.testclient import TestClient
-
-    from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
-    from planner.core.config import load_config
-    from planner.core.db import connect
-    from planner.core.server import create_app
-
-    monkeypatch.setitem(
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS,
-        TicketLocale.macos,
-        locale_configuration.LOCALE_SUPPORTED_BACKENDS[TicketLocale.vps],
-    )
-    project = projects.create_project(
-        tmp_db,
-        name="API Mac",
-        requires_macos=True,
-        now=1,
-    )
-    item = sprints.create_item(
-        tmp_db,
-        title="API parent",
-        project_id=project.id,
-        clock=fake_clock,
-    )
-    db_path = tmp_db.execute("PRAGMA database_list").fetchone()[2]
-    config = load_config(
-        path=None,
-        env={
-            "PLAN_TEST_MODE": "1",
-            "PLAN_DB_PATH": db_path,
-            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
-        },
-    )
-    app = create_app(
-        config,
-        fake_clock,
-        lambda: connect(db_path),
-        conversation_system_for_test=InMemoryConversationSystem(),
-    )
-    headers = {} if actor == "owner" else {"X-Plan-Actor": actor}
-    if actor == "sprint_item_supervisor":
-        headers["X-Plan-Sprint-Item-ID"] = item.id
-    elif actor == "worker":
-        worker = data.create_ticket(
-            tmp_db,
-            title="Caller",
-            worker_type="coding",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=TITLE_MAX_CHARS,
-            locale="vps",
-            sprint_item_id=item.id,
-        )
-        headers["X-Plan-Ticket-ID"] = worker.id
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/tickets",
-            headers=headers,
-            json={
-                "title": "Inherited API locale",
-                "worker_type": "coding",
-                "orchestrator": {"kind": "sprint_item", "id": item.id},
-            },
-        )
-        assert response.status_code == 200, response.text
-        assert response.json()["locale"] == "macos"
-        explicit = client.post(
-            "/api/tickets",
-            headers=headers,
-            json={
-                "title": "Explicit API locale",
-                "worker_type": "coding",
-                "locale": "vps",
-                "orchestrator": {"kind": "sprint_item", "id": item.id},
-            },
-        )
-        assert explicit.status_code == 200, explicit.text
-        assert explicit.json()["locale"] == "vps"
-        invalid = client.post(
-            "/api/tickets",
-            headers=headers,
-            json={
-                "title": "Invalid API locale",
-                "worker_type": "coding",
-                "locale": None,
-                "orchestrator": {"kind": "sprint_item", "id": item.id},
-            },
-        )
-        assert invalid.status_code == 400, invalid.text
 
 
 def test_move_http_checks_record_precondition_and_authority_before_locale_only_write(

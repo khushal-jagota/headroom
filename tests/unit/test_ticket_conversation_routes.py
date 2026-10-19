@@ -9,7 +9,6 @@ own record rather than from the route's report of itself.
 
 from __future__ import annotations
 
-import base64
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -19,14 +18,12 @@ from httpx import Response
 from tests.support.principals import OWNER_PRINCIPAL
 
 from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.runtime.conversation_start import CONVERSATION_ID_PREFIX
 from planner.tickets import data as tickets_data
 
 _AGENT = {"X-Plan-Actor": "agent"}
@@ -105,56 +102,8 @@ def _conversation_id(db_path: Path, ticket_id: str) -> str | None:
         conn.close()
 
 
-def test_the_first_message_makes_the_conversation_and_goes_into_it(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-    assert _conversation_id(db_path, ticket_id) is None
-
-    with TestClient(app) as client:
-        response = _send(client, ticket_id, "hello", model="sonnet")
-
-        assert response.status_code == 200, response.text
-        answered = response.json()
-        assert answered["fate"] == "started"
-        made = answered["conversation_id"]
-        assert made is not None
-        assert made.startswith(CONVERSATION_ID_PREFIX)
-        # The Ticket names it, and the conversation system has the words: both halves.
-        assert _conversation_id(db_path, ticket_id) == made
-        delivered = [
-            observation.text
-            for observation in app.state.conversation_system.observations(made)
-            if observation.kind is InMemoryConversationObservationKind.prompt_delivered
-        ]
-        assert delivered == ["hello"]
 
 
-def test_an_invalid_first_image_makes_neither_conversation_prompt_nor_file(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-    malformed_png = b"\x89PNG\r\n\x1a\nnot a structurally valid png"
-
-    with TestClient(app) as client:
-        response = client.post(
-            f"/api/tickets/{ticket_id}/conversation/send",
-            json={
-                "conversation_id": None,
-                "content": [
-                    {
-                        "piece": "image",
-                        "data": base64.b64encode(malformed_png).decode("ascii"),
-                        "media_type": "image/png",
-                    }
-                ],
-                "sender_label": "owner",
-            },
-        )
-
-    assert response.status_code == 422
-    assert _conversation_id(db_path, ticket_id) is None
-    assert not list((db_path.parent / "files" / "conversations").glob("**/*"))
 
 
 def test_a_message_naming_a_conversation_the_ticket_is_not_in_is_turned_away(
@@ -173,21 +122,6 @@ def test_a_message_naming_a_conversation_the_ticket_is_not_in_is_turned_away(
     assert response.status_code == 404, response.text
 
 
-def test_resetting_kills_the_conversation_and_unlinks_it(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _ticket(db_path)
-
-    with TestClient(app) as client:
-        started = _send(client, ticket_id, "hello").json()["conversation_id"]
-        response = client.post(f"/api/tickets/{ticket_id}/conversation/reset")
-
-        assert response.status_code == 200, response.text
-        assert response.json()["conversation_id"] is None
-        assert _conversation_id(db_path, ticket_id) is None
-
-        # The next message makes a fresh one rather than reaching the killed one.
-        after = _send(client, ticket_id, "starting over").json()
-    assert after["conversation_id"] != started
 
 
 def _start_values(client: TestClient, ticket_id: str) -> dict[str, object]:

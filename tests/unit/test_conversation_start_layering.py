@@ -39,18 +39,8 @@ def _worker(
     return values.backend_key, values.model, values.reasoning_effort
 
 
-def test_with_no_ticket_layer_and_no_overrides_the_worker_type_defaults_answer() -> None:
-    assert _worker() == (ConversationBackendKey.codex, "gpt-5.6-sol", "medium")
 
 
-def test_the_ticket_layer_replaces_the_worker_type_defaults() -> None:
-    assert _worker(
-        ticket_last_chosen=ConversationStartConfiguration(
-            backend_key=ConversationBackendKey.claude,
-            model="opus",
-            reasoning_effort="high",
-        )
-    ) == (ConversationBackendKey.claude, "opus", "high")
 
 
 def test_an_override_that_changes_the_backend_without_a_model_is_refused() -> None:

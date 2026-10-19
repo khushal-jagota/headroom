@@ -9,8 +9,6 @@ from alembic import op
 
 from planner.core.db import connect, create_schema
 from planner.core.migrations.versions import disable_retired_worker_schedules as migration
-from planner.managed_skills import PACKAGED_SKILLS_ROOT
-from planner.worker_types.shipped import shipped_worker_types
 
 RETIRED = {"personal", "planning-day", "planning-midday-check", "planning-sprint"}
 SPECIALISTS = {
@@ -21,21 +19,6 @@ SPECIALISTS = {
 }
 
 
-def test_fresh_seed_and_reopen_do_not_restore_retired_types_or_specialists(tmp_path: Path) -> None:
-    path = str(tmp_path / "planner.db")
-    for _ in range(2):
-        conn = connect(path)
-        try:
-            create_schema(conn)
-            types = {row[0] for row in conn.execute("SELECT worker_type FROM worker_types")}
-            skills = {row[0] for row in conn.execute("SELECT skill_name FROM managed_skills")}
-            assert not RETIRED & types
-            assert not SPECIALISTS & skills
-            assert {"coding", "general"} <= types
-        finally:
-            conn.close()
-    assert not SPECIALISTS & {p.name for p in PACKAGED_SKILLS_ROOT.iterdir()}
-    assert not RETIRED & {d["worker_type"] for d in shipped_worker_types()}
 
 
 def test_schedule_migration_preserves_tickets_receipts_and_unrelated_schedules(

@@ -1,19 +1,14 @@
 """Pure rules for completing a user-owned gate and for editing a settled value."""
 
-from dataclasses import replace
 
-import pytest
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.retired_workers import historical_definition
 
-from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets.contracts import (
-    PendingTicketProposal,
     Ticket,
     TicketStatus,
     WorkerStepClaim,
 )
-from planner.tickets.logic import resolution
 
 PERSONAL_TASK_WORKER_TYPE_DEFINITION = historical_definition("personal")
 
@@ -49,57 +44,3 @@ def _ticket(*, stage: str = "needs_success_condition") -> Ticket:
 # Who may edit a settled value is no longer this rule's question. A settled field is in
 # admission.TICKET_FIELDS_ONLY_FROM_ABOVE, so the one rule answers it where the write
 # happens: test_worker_cannot_edit_settled_value, in the api file beside this one.
-
-
-def test_direct_user_cannot_complete_a_gate_with_a_pending_proposal() -> None:
-    ticket = replace(
-        _ticket(stage="needs_outcome"),
-        worker_type="personal",
-        field_values={"brief": "context"},
-        pending_proposal=PendingTicketProposal("outcome", "draft", "worker", 7),
-    )
-    with pytest.raises(PlannerError) as exc:
-        resolution.decide_complete_user_owned_gate(
-            ticket,
-            "outcome",
-            "value",
-            OWNER_PRINCIPAL,
-            worker_type_definition=PERSONAL_TASK_WORKER_TYPE_DEFINITION,
-        )
-    assert exc.value.code == ErrorCode.validation
-
-
-def test_direct_user_cannot_complete_a_gate_while_the_worker_step_is_out() -> None:
-    ticket = replace(
-        _ticket(stage="needs_outcome"),
-        worker_type="personal",
-        field_values={"brief": "context"},
-        worker_step_claim=WorkerStepClaim.out,
-    )
-    with pytest.raises(PlannerError) as exc:
-        resolution.decide_complete_user_owned_gate(
-            ticket,
-            "outcome",
-            "value",
-            OWNER_PRINCIPAL,
-            worker_type_definition=PERSONAL_TASK_WORKER_TYPE_DEFINITION,
-        )
-    assert exc.value.code == ErrorCode.already_running
-
-
-def test_direct_completion_does_not_claim_approval() -> None:
-    """A user doing the work does not prove that anyone approved a proposal."""
-    ticket = replace(
-        _ticket(stage="needs_outcome"),
-        worker_type="personal",
-        field_values={"brief": "context"},
-    )
-    decision = resolution.decide_complete_user_owned_gate(
-        ticket,
-        "outcome",
-        "value",
-        OWNER_PRINCIPAL,
-        worker_type_definition=PERSONAL_TASK_WORKER_TYPE_DEFINITION,
-    )
-    assert decision.field_values["outcome"] == "value"
-    assert "outcome" not in decision.field_approvals

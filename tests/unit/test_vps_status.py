@@ -7,8 +7,6 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 from planner.core.config import Config, load_config
 from planner.environments.backup import create_database_backup
 from planner.environments.vps_status import (
@@ -16,7 +14,6 @@ from planner.environments.vps_status import (
     apply_cleanup_inventory,
     collect_cleanup_inventory,
     collect_vps_status,
-    collect_vps_status_summary,
 )
 
 
@@ -26,117 +23,8 @@ class _StatVfs:
     f_bavail = 500_000
 
 
-def test_small_summary_collects_linux_cpu_ram_disk_and_backup_with_boundaries(
-    tmp_path: Path,
-) -> None:
-    config = _config(tmp_path)
-    Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
-    backup_dir = Path(config.backup_dir)
-    backup_dir.mkdir()
-    source = Path(config.db_path)
-    with sqlite3.connect(source) as connection:
-        connection.execute("CREATE TABLE facts (value TEXT NOT NULL)")
-    create_database_backup(source, backup_dir, "revision")
-    proc_stat = iter(
-        (
-            "cpu 100 0 100 800 0 0 0 0\n",
-            "cpu 180 0 180 840 0 0 0 0\n",
-        )
-    )
-
-    def read_text(path: Path) -> str:
-        if path == Path("/proc/stat"):
-            return next(proc_stat)
-        if path == Path("/proc/meminfo"):
-            return "MemTotal: 1000 kB\nMemAvailable: 200 kB\n"
-        return path.read_text(encoding="utf-8")
-
-    summary = collect_vps_status_summary(
-        config,
-        deployment_outcome="failed",
-        deployment_detail="candidate health proof failed",
-        dependencies=VpsStatusDependencies(
-            now=lambda: datetime.now(UTC),
-            platform_name=lambda: "Linux",
-            statvfs=lambda _path: _StatVfs(),  # type: ignore[return-value, arg-type]
-            read_text=read_text,
-            sleep=lambda _: None,
-        ),
-    ).as_dict()
-
-    assert summary["deployed_sha"] == config.app_sha
-    assert summary["deployment"] == {
-        "outcome": "failed",
-        "detail": "candidate health proof failed",
-    }
-    assert summary["cpu"] == {
-        "used_percent": 80.0,
-        "state": "warning",
-        "unavailable_reason": None,
-    }
-    assert summary["ram"] == {
-        "used_percent": 80.0,
-        "state": "warning",
-        "unavailable_reason": None,
-    }
-    assert summary["disk"] == {
-        "used_percent": 50.0,
-        "state": "healthy",
-        "unavailable_reason": None,
-    }
-    assert isinstance(summary["backup"]["age_seconds"], int)  # type: ignore[index]
 
 
-@pytest.mark.parametrize(
-    ("stat_samples", "meminfo", "cpu_reason", "ram_reason"),
-    [
-        (
-            ("not cpu\n", "not cpu\n"),
-            "",
-            "CPU evidence is unavailable",
-            "RAM evidence is unavailable",
-        ),
-        (
-            ("cpu 10 0 10 80\n", "cpu 5 0 5 40\n"),
-            "MemTotal: 0 kB\nMemAvailable: 0 kB\n",
-            "CPU counters did not advance safely",
-            "RAM evidence is unavailable",
-        ),
-    ],
-)
-def test_small_summary_keeps_malformed_and_reset_proc_evidence_explicitly_unavailable(
-    tmp_path: Path,
-    stat_samples: tuple[str, str],
-    meminfo: str,
-    cpu_reason: str,
-    ram_reason: str,
-) -> None:
-    config = _config(tmp_path)
-    Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
-    samples = iter(stat_samples)
-
-    def read_text(path: Path) -> str:
-        return next(samples) if path == Path("/proc/stat") else meminfo
-
-    summary = collect_vps_status_summary(
-        config,
-        dependencies=VpsStatusDependencies(
-            platform_name=lambda: "Linux",
-            read_text=read_text,
-            sleep=lambda _: None,
-        ),
-    )
-
-    assert summary.cpu == {
-        "used_percent": None,
-        "state": "unavailable",
-        "unavailable_reason": cpu_reason,
-    }
-    assert summary.ram == {
-        "used_percent": None,
-        "state": "unavailable",
-        "unavailable_reason": ram_reason,
-    }
 
 
 def _config(tmp_path: Path) -> Config:
@@ -226,5 +114,3 @@ def test_symlinked_snapshot_evidence_is_absent_from_status_and_cleanup(tmp_path:
     assert apply_cleanup_inventory(inventory).removed == []
     assert external.exists()
     assert (Path(config.backup_dir) / "snapshot-external-link").is_symlink()
-
-

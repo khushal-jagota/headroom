@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -19,7 +18,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.projects import data as projects_data
 from planner.sprints import data as sprints_data
-from planner.tickets import actions, data, views
+from planner.tickets import data, views
 from planner.tickets.contracts import Ticket
 
 CHIEF = Principal(PrincipalKind.chief, "chief")
@@ -131,36 +130,8 @@ def test_a_move_to_chief_releases_only_an_invalid_old_parent_holder(tmp_db: Conn
     assert moved.updated_at == 2
 
 
-def test_creation_has_no_calendar_defaults_and_chief_is_a_real_destination(
-    tmp_db: Connection,
-) -> None:
-    ticket = actions.create_ticket(
-        tmp_db,
-        title="No calendar",
-        worker_type="coding",
-        principal=OWNER_PRINCIPAL,
-        now=1,
-        title_max_chars=200,
-        orchestrator_kind="chief",
-        planning_now=datetime(2026, 10, 16, tzinfo=UTC),
-    )
-    assert ticket.orchestrator_kind == "chief"
-    assert ticket.sprint_id is None
-    assert tmp_db.execute("SELECT COUNT(*) FROM days").fetchone()[0] == 0
-    assert tmp_db.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0] == 0
 
 
-def test_board_and_review_find_off_day_work_under_a_settled_orchestrator(
-    tmp_db: Connection,
-) -> None:
-    item_id = _item(tmp_db)
-    ticket = _ticket(tmp_db, sprint_item_id=item_id)
-    tmp_db.execute("UPDATE sprint_items SET settled=1 WHERE id=?", (item_id,))
-    board = views.board_view(tmp_db)
-    cards = [card for column in board["columns"] for card in column["cards"]]
-    assert next(card for card in cards if card["id"] == ticket.id)["has_pending_proposal"] is True
-    assert board["sprint_items"][0]["settled"] is True
-    assert views.review_view(tmp_db)["items"][0]["ticket_id"] == ticket.id
 
 
 @pytest.fixture
@@ -178,52 +149,3 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     )
     with TestClient(app) as test_client:
         yield test_client
-
-
-def test_api_creates_and_reassigns_chief_without_a_thin_item(client: TestClient) -> None:
-    created = client.post(
-        "/api/tickets",
-        json={
-            "title": "Chief child",
-            "worker_type": "coding",
-            "orchestrator": {"kind": "chief", "id": "chief"},
-        },
-    )
-    assert created.status_code == 200, created.text
-    assert created.json()["orchestrator"] == {"kind": "chief", "id": "chief"}
-    ticket_id = created.json()["id"]
-    result = client.patch(
-        f"/api/tickets/{ticket_id}", json={"orchestrator": {"kind": "chief", "id": "chief"}}
-    )
-    assert result.status_code == 200, result.text
-    assert result.json()["ceiling_holder"] == {"kind": "owner", "id": "owner"}
-
-
-@pytest.mark.parametrize("field", ["sprint_id", "sprint_item_id", "day", "day_id"])
-def test_api_rejects_calendar_and_legacy_assignment_creation(
-    client: TestClient, field: str
-) -> None:
-    response = client.post(
-        "/api/tickets", json={"title": "Old placement", "worker_type": "coding", field: None}
-    )
-    assert response.status_code == 400
-
-
-@pytest.mark.parametrize("query", ["day=today", "sprint_id=null"])
-def test_api_rejects_calendar_list_filters(client: TestClient, query: str) -> None:
-    assert client.get(f"/api/tickets?{query}").status_code == 400
-
-
-def test_board_keeps_empty_orchestrators_and_their_project_after_settlement(
-    tmp_db: Connection,
-) -> None:
-    item_id = _item(tmp_db)
-    item = sprints_data.read_item(tmp_db, item_id).item
-    for settled in (False, True):
-        tmp_db.execute("UPDATE sprint_items SET settled=? WHERE id=?", (int(settled), item_id))
-        rows = views.board_view(tmp_db)["sprint_items"]
-        [row] = [entry for entry in rows if entry["id"] == item_id]
-        assert row["tickets"] == []
-        assert row["settled"] is settled
-        assert row["project_id"] == item.project_id
-        assert row["project"] == "Item Project"

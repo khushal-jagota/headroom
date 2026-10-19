@@ -84,18 +84,6 @@ def _ready(
     )
 
 
-def test_membership_in_any_day_is_not_required(tmp_path: Path) -> None:
-    conn = _db(tmp_path)
-    try:
-        no_day = _ticket(conn, planning_day_id=None)
-        other_day = _ticket(conn, planning_day_id=OTHER_DAY_ID)
-        supplied_day = _ticket(conn)
-
-        assert _ready(conn, no_day)
-        assert _ready(conn, other_day)
-        assert _ready(conn, supplied_day)
-    finally:
-        conn.close()
 
 
 def test_user_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None:

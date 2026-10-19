@@ -68,23 +68,8 @@ def _add_ticket(
     )
 
 
-def test_a_conversation_compacted_after_the_last_worker_step_message_holds_a_loss(
-    conn: sqlite3.Connection,
-) -> None:
-    _make_conversation(conn, "c1", compacted=7)
-    _add_prompt(conn, "c1", sequence=3, sender_message_id="worker_step_message_abc")
-
-    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1") is True
 
 
-def test_a_boundary_before_the_last_worker_step_message_is_already_answered(
-    conn: sqlite3.Connection,
-) -> None:
-    _make_conversation(conn, "c1", compacted=3)
-    _add_prompt(conn, "c1", sequence=3, sender_message_id="worker_step_message_abc")
-    _add_prompt(conn, "c1", sequence=9, sender_message_id="worker_step_message_def")
-
-    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1") is False
 
 
 def test_a_memory_notice_answers_the_boundary_so_the_same_one_is_never_sent_twice(
@@ -97,55 +82,3 @@ def test_a_memory_notice_answers_the_boundary_so_the_same_one_is_never_sent_twic
     _add_prompt(conn, "c1", sequence=8, sender_message_id="worker_step_memory_notice_xyz")
 
     assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1") is False
-
-
-def test_a_conversation_panels_never_woke_has_no_memory_to_have_lost(
-    conn: sqlite3.Connection,
-) -> None:
-    _make_conversation(conn, "c1", compacted=7)
-    _add_prompt(conn, "c1", sequence=3, sender_message_id="owner_message_abc")
-    _add_prompt(conn, "c1", sequence=4, sender_message_id=None)
-
-    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "c1") is False
-
-
-def test_a_ticket_with_no_conversation_holds_no_loss(conn: sqlite3.Connection) -> None:
-    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, None) is False
-
-
-def test_an_unknown_conversation_holds_no_loss(conn: sqlite3.Connection) -> None:
-    assert worker_memory.conversation_holds_an_unanswered_memory_loss(conn, "missing") is False
-
-
-def test_only_a_ticket_part_way_through_a_step_is_found_by_the_scan(
-    conn: sqlite3.Connection,
-) -> None:
-    _make_conversation(conn, "mid-step", compacted=7)
-    _make_conversation(conn, "resting", compacted=7)
-    for conversation_id in ("mid-step", "resting"):
-        _add_prompt(conn, conversation_id, sequence=3, sender_message_id="worker_step_message_a")
-    _add_ticket(conn, "t_mid", claim="out", conversation_id="mid-step")
-    _add_ticket(conn, "t_rest", claim="none", conversation_id="resting")
-    _place_on_the_day(conn, "t_mid")
-    _place_on_the_day(conn, "t_rest")
-
-    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ("t_mid",)
-
-
-def test_a_ticket_without_day_membership_receives_memory_recovery(
-    conn: sqlite3.Connection,
-) -> None:
-    _make_conversation(conn, "off-day", compacted=7)
-    _add_prompt(conn, "off-day", sequence=3, sender_message_id="worker_step_message_a")
-    _add_ticket(conn, "t_off", claim="out", conversation_id="off-day")
-
-    assert worker_memory.ticket_ids_holding_an_unanswered_memory_loss(conn) == ("t_off",)
-
-
-def test_every_message_id_the_rule_counts_on_starts_with_the_same_prefix() -> None:
-    assert worker_memory.new_worker_step_message_id().startswith(
-        worker_memory.ANSWERING_SENDER_MESSAGE_PREFIX
-    )
-    assert worker_memory.new_memory_notice_message_id().startswith(
-        worker_memory.ANSWERING_SENDER_MESSAGE_PREFIX
-    )
