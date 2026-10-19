@@ -12,20 +12,17 @@
   import { fateSentence } from "../lib/conversation/composer";
   import type { PromptDeliveryFate } from "../lib/conversation/wire";
 
-  let { kind, id, pending = false, class: extraClass = "" }: {
+  let { kind, id, class: extraClass = "" }: {
     kind: "ticket" | "sprint_item" | "chief";
     id: string;
-    /** The recap is already on its way. The line says so, so the ask steps aside. */
-    pending?: boolean;
     class?: string;
   } = $props();
 
   let sending = $state(false);
   let note = $state<string | null>(null);
-  let quiet = $derived(sending || pending);
 
   async function ask(): Promise<void> {
-    if (quiet) return;
+    if (sending) return;
     sending = true;
     note = null;
     try {
@@ -52,14 +49,10 @@
   <button
     type="button"
     class="request-recap-action"
-    aria-disabled={quiet}
+    aria-disabled={sending}
     data-request-recap-action
     onclick={() => void ask()}
   >Ask for a recap</button>
-  <!-- The slot is always here, so the spinner arriving moves nothing. -->
-  <span class="request-recap-spin-slot">
-    {#if quiet}<span class="acp-spin request-recap-spin" role="img" aria-label="Writing a recap"></span>{/if}
-  </span>
   {#if note}<span class="request-recap-note" data-request-recap-note>{note}</span>{/if}
 </span>
 
@@ -70,6 +63,4 @@
   .request-recap-action[aria-disabled="true"] { cursor:default; color:var(--text-faintest); }
   .request-recap-action[aria-disabled="true"]:hover { color:var(--text-faintest); }
   .request-recap-note { color:var(--text-faintest); font-size:var(--type-xs); }
-  .request-recap-spin-slot { display:inline-flex; align-items:center; justify-content:center; flex:none; width:var(--space-3); height:var(--space-3); }
-  .request-recap-spin { margin-left:0; }
 </style>

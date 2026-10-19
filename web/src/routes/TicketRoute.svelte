@@ -37,7 +37,6 @@
   import ResourceState from "../components/ResourceState.svelte";
   import RequestRecapAction from "../components/RequestRecapAction.svelte";
   import RecapSlot from "../components/RecapSlot.svelte";
-  import { recapPending } from "../lib/recapPending";
   import TicketLifecycleControls from "../components/TicketLifecycleControls.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
@@ -502,7 +501,7 @@
               />
               <ConversationSignalMark signal={masthead.conversation_signal} conversationId={masthead.conversation_id} />
             </div>
-            <RecapSlot pending={recapPending(detail.recap, masthead.conversation_signal)}>
+            <RecapSlot>
             {#snippet children()}
             <ClampedText
               contentKey={detail.recap}
@@ -524,7 +523,7 @@
             </RecapSlot>
           </div>
           {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)}>
-            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} pending={recapPending(detail.recap, masthead.conversation_signal)} />{/snippet}
+            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
           </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>

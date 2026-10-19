@@ -6,7 +6,6 @@
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import RequestRecapAction from "./RequestRecapAction.svelte";
   import RecapSlot from "./RecapSlot.svelte";
-  import { recapPending } from "../lib/recapPending";
 
   /* ``recapTarget`` is the agent that can be asked for a fresh recap. Every agent with a
    * recap passes one; a header shown without a live agent behind it passes nothing. */
@@ -28,7 +27,7 @@
     <ConversationSignalMark {signal} {conversationId} class="sprint-workspace-title-mark" />
   </h1>
   {#if recap !== undefined && onSaveRecap}
-    <RecapSlot pending={recapPending(recap, signal)}>
+    <RecapSlot>
     {#snippet children()}
     <ClampedText
       class="sprint-workspace-brief"
@@ -50,7 +49,7 @@
   {/if}
   {#if recapTarget !== null}
     <div class="sprint-workspace-recap-ask">
-      <RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} pending={recapPending(recap, signal)} />
+      <RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} />
     </div>
   {/if}
 </header>

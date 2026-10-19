@@ -1,49 +1,52 @@
 <script lang="ts">
-  /* The place a recap sits, and keeps sitting while the next one is written.
+  /* The recap's place, which changes size when the recap does.
    *
-   * Asking clears the line, so without this the page would jump twice: up when the words
-   * go, and down again when the new ones land. The slot remembers how tall it was while
-   * it had something to say and holds exactly that, so nothing below it moves.
-   *
-   * Empty is deliberate. The spinner beside the ask says a recap is coming, and a second
-   * thing saying it here would be words standing where the recap goes.
+   * Asking for a recap clears the line, so this space shrinks to whatever an empty recap
+   * shows and grows again when the new one lands. Both happen while someone is looking
+   * straight at it, so it moves rather than jumps.
    */
   import type { Snippet } from "svelte";
 
-  let { pending, children }: { pending: boolean; children: Snippet } = $props();
+  let { children }: { children: Snippet } = $props();
 
-  let element = $state<HTMLDivElement | null>(null);
-  let heldHeight = $state(0);
+  let frame = $state<HTMLDivElement | null>(null);
+  let content = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
-    if (pending || !element) return;
-    const measured = element;
+    const outer = frame;
+    const inner = content;
+    if (!outer || !inner) return;
+    let last = inner.offsetHeight;
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const rest = () => {
+      outer.style.height = "";
+      outer.style.overflow = "";
+    };
     const observer = new ResizeObserver(() => {
-      if (measured.offsetHeight > 0) heldHeight = measured.offsetHeight;
+      const next = inner.offsetHeight;
+      if (next === last) return;
+      clearTimeout(settle);
+      outer.style.overflow = "hidden";
+      outer.style.height = `${last}px`;
+      void outer.offsetHeight; // take the old height before asking for the new one
+      outer.style.height = `${next}px`;
+      last = next;
+      settle = setTimeout(rest, 260);
     });
-    observer.observe(measured);
-    return () => observer.disconnect();
+    observer.observe(inner);
+    return () => {
+      observer.disconnect();
+      clearTimeout(settle);
+      rest();
+    };
   });
 </script>
 
-<div
-  bind:this={element}
-  class="recap-slot"
-  data-recap-slot
-  style:min-height={pending && heldHeight ? `${heldHeight}px` : undefined}
->
-  {#if pending}
-    <span class="recap-slot-pending" data-recap-pending>writing a recap</span>
-  {:else}
-    {@render children()}
-  {/if}
+<div bind:this={frame} class="recap-slot" data-recap-slot>
+  <div bind:this={content}>{@render children()}</div>
 </div>
 
 <style>
-  .recap-slot { transition:min-height var(--motion-base) var(--motion-ease); }
-  /* Said to anyone who cannot see the spinner, and to nobody who can. */
-  .recap-slot-pending {
-    position:absolute; width:1px; height:1px; overflow:hidden;
-    clip-path:inset(50%); white-space:nowrap;
-  }
+  .recap-slot { transition:height var(--motion-base) var(--motion-ease); }
+  @media (prefers-reduced-motion:reduce) { .recap-slot { transition:none; } }
 </style>

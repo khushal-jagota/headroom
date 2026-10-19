@@ -9,11 +9,7 @@
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import RequestRecapAction from "./RequestRecapAction.svelte";
   import RecapSlot from "./RecapSlot.svelte";
-  import { recapPending } from "../lib/recapPending";
-  /* ``recapTarget`` is the agent that can be asked for a fresh recap, and its own canonical
-   * recap. The panel's line is not always that recap — for an orchestrator it is a composed
-   * list — and the ask has to watch the real thing it asked for, not a line that moves for
-   * its own reasons.
+  /* ``recapTarget`` is the agent that can be asked for a fresh recap.
    * ``onKeepOpen`` and ``onLeave`` hand the panel the same hover intent the rows use, so
    * the pointer can cross the gap and press what is inside without the panel closing. */
   let { visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, recapTarget = null, onKeepOpen, onLeave, element = $bindable<HTMLDivElement | null>(null) }: {
@@ -21,7 +17,7 @@
     recap?: string; worker?: WorkItemTicketFacts | null;
     rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
     signal?: Partial<ConversationSignal>; conversationId?: string | null;
-    recapTarget?: { kind: "ticket" | "sprint_item" | "chief"; id: string; recap?: string } | null;
+    recapTarget?: { kind: "ticket" | "sprint_item" | "chief"; id: string } | null;
     onKeepOpen?: () => void; onLeave?: () => void;
     element?: HTMLDivElement | null;
   } = $props();
@@ -29,8 +25,6 @@
   let currentWorker = $derived(worker);
   let stageSentence = $derived(currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
   let recapText = $derived(worker ? (currentWorker?.recap_preview ?? "") : recap);
-  let panelSignal = $derived(currentWorker?.conversation_signal ?? signal);
-  let pendingRecap = $derived(recapTarget !== null && recapPending(recapTarget.recap, panelSignal));
   let left = $state(0);
   let top = $state(0);
   /* The panel can only take the pointer where it is clear of the rail. A narrow window
@@ -70,10 +64,10 @@
   <div class="title"><span>{currentWorker?.title ?? title}</span><ConversationSignalMark signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   {#if recapText || recapTarget}
     <div class="recap">
-      <RecapSlot pending={pendingRecap}>
+      <RecapSlot>
         {#snippet children()}{#if recapText}<span data-recap-text>{recapText}</span>{/if}{/snippet}
       </RecapSlot>
-      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} pending={pendingRecap} class="recap-ask" />{/if}
+      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
     </div>
   {/if}
   {#if worker && stageSentence}<div class="doing">{stageSentence}</div>{/if}
