@@ -570,6 +570,67 @@ def run(browser, urls):
                     panel.bounding_box()["x"] + panel.bounding_box()["width"] <= viewport["width"]
                 )
                 page.screenshot(path=str(artifact_dir / f"sidebar-{name}-{label}-popup.png"))
+        # A source recap longer than the list cut must fit intact. Genuine overflow
+        # needs a visual ellipsis, with the title and stage sentence still in bounds.
+        page.set_viewport_size(dict(width=1440, height=1000))
+        full_recap = (
+            "The full current recap explains the sidebar changes and the approval that remains. "
+            "It includes the evidence from the browser and the next decision for the owner. "
+            "This final sentence lies beyond the list preview cut."
+        )
+        overflowing_recap = full_recap * 30
+
+        def recap_geometry(active_panel):
+            return active_panel.evaluate("""panel => {
+                const text=panel.querySelector('.recap-text'), r=panel.getBoundingClientRect();
+                const last=document.createRange();
+                last.setStart(text.firstChild,text.firstChild.length-1);
+                last.setEnd(text.firstChild,text.firstChild.length);
+                const tail=last.getBoundingClientRect(), t=text.getBoundingClientRect();
+                const fixed=[...panel.querySelectorAll('.kicker,.title,.doing')].map(node=>node.getBoundingClientRect());
+                return {height:r.height,cap:innerHeight*.74,width:r.width,
+                    textWidth:t.width,scrollWidth:text.scrollWidth,
+                    overflow:text.scrollHeight>text.clientHeight+1,
+                    tailVisible:tail.bottom<=t.bottom+1,
+                    fixedVisible:fixed.every(box=>box.top>=r.top && box.bottom<=r.bottom),
+                    pointers:getComputedStyle(panel).pointerEvents};
+            }""")
+
+        worker_facts = board["columns"][0]["cards"][0]
+        supervisor_facts = board["sprint_items"][0]
+        for target, facts, name in [
+            (needs_him.locator('[data-ticket-id="t_approval"]'), worker_facts, "worker"),
+            (needs_him.locator('.item-head'), supervisor_facts, "orchestrator"),
+        ]:
+            for content, label in [(full_recap, "full"), (overflowing_recap, "overflow")]:
+                facts["recap"] = content
+                page.evaluate("window.__refresh()")
+                target.hover()
+                expect(panel.locator('.recap-text')).to_have_text(content)
+                page.wait_for_timeout(80)
+                geometry = recap_geometry(panel)
+                assert geometry["fixedVisible"] and geometry["pointers"] == "none", geometry
+                assert geometry["height"] <= geometry["cap"] + 1, geometry
+                assert geometry["overflow"] == (label == "overflow"), geometry
+                if label == "full":
+                    assert len(content) > 160 and geometry["tailVisible"], geometry
+                page.screenshot(path=str(artifact_dir / f"recap-{name}-{label}.png"))
+            if name == "worker":
+                # The pointer stays on the same row through both content and viewport changes.
+                facts["recap"] = "unbroken" * 500
+                page.evaluate("window.__refresh()")
+                expect(panel.locator('.recap-text')).to_have_text(facts["recap"])
+                for height in [420, 1000]:
+                    page.set_viewport_size(dict(width=1440, height=height))
+                    expect(panel).to_have_attribute("aria-hidden", "false")
+                    page.wait_for_timeout(80)
+                    geometry = recap_geometry(panel)
+                    assert geometry["fixedVisible"] and geometry["overflow"], geometry
+                    assert geometry["scrollWidth"] <= geometry["textWidth"] + 1, geometry
+                    assert geometry["height"] <= geometry["cap"] + 1, geometry
+                    page.screenshot(path=str(artifact_dir / f"recap-long-word-{height}.png"))
+            facts.pop("recap")
+            page.evaluate("window.__refresh()")
         page.mouse.move(1200, 900)
         expect(panel).to_have_attribute("aria-hidden", "true")
         page.set_viewport_size(dict(width=1440, height=1000))
@@ -1185,6 +1246,25 @@ def run(browser, urls):
         expect(child_panel.locator(".kicker")).to_contain_text("Needs him")
         expect(child_panel).to_contain_text("Blocked at implementation.")
         expect(child_panel).not_to_contain_text("Stages")
+        blocked_facts = next(row for row in board["columns"][0]["cards"] if row["id"] == "t_parent_blocked")
+        blocked_facts["recap"] = full_recap
+        page.evaluate("window.__refresh()")
+        blocked_child.hover()
+        expect(child_panel.locator('.recap-text')).to_have_text(full_recap)
+        page.wait_for_timeout(80)
+        assert recap_geometry(child_panel)["tailVisible"]
+        child_bounds = blocked_child.bounding_box()
+        blocked_facts["recap"] = full_recap + " Fresh nested child recap arrives without another pointer event."
+        page.evaluate("window.__refresh()")
+        expect(child_panel).to_have_attribute("aria-hidden", "false")
+        expect(child_panel.locator('.recap-text')).to_have_text(blocked_facts["recap"])
+        assert blocked_child.bounding_box() == child_bounds
+        expect(child_panel).to_contain_text("Blocked at implementation.")
+        page.screenshot(path=str(artifact_dir / "recap-nested-child-refreshed.png"))
+        blocked_facts["recap"] = ""
+        page.evaluate("window.__refresh()")
+        expect(child_panel.locator('.recap')).to_have_count(0)
+        expect(child_panel).to_contain_text("Blocked at implementation.")
         assert page.locator(".board-workspace-item-line").count() == 0
         assert errors == [], errors
     pass

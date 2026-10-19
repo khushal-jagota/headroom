@@ -410,6 +410,8 @@ def _derive(
         if version >= 4:
             value["gating_field"] = definition.gating_field(t["stage"])
             value["created_at"] = t["created_at"]
+            if version >= PREPARED_SCHEMA_VERSION:
+                value["recap"] = str(t["recap"])
             value["recap_preview"] = recap_preview(str(t["recap"]))
         records.append(_record(kind, identity, value))
     elif kind in ("orchestrator", "chief"):
@@ -431,6 +433,8 @@ def _derive(
                 if version < PREPARED_SCHEMA_VERSION:
                     value["priority"] = t["priority"]
             if version >= 4:
+                if version >= PREPARED_SCHEMA_VERSION:
+                    value["recap"] = str(t["body"])
                 value["recap_preview"] = recap_preview(str(t["body"]))
         else:
             key = "chief_of_staff"

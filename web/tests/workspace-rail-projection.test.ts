@@ -11,13 +11,13 @@ const quiet = {
   awaiting_agent_approval: false, assigned: false, agent_state: "idle" as const
 };
 const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & SprintItemWorkspaceTicket => ({
-  id, title: id, is_backlogged:false, activity_at: 0, stage: "needs_implementation",
+  id, title: id, recap:"", recap_preview:"", is_backlogged:false, activity_at: 0, stage: "needs_implementation",
   ticket_status: "agent", worker_type: "coding", sprint_item_id: null,
   day_ids: [], sprint_id: null, sprint_name: null,
   ...quiet, ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id: string, values: Partial<BoardSprintItem> = {}): BoardSprintItem => ({
-  id, title: id, recap_preview: "", created_at: 1, tickets: [], conversation_id: null,
+  id, title: id, recap: "",recap_preview: "", created_at: 1, tickets: [], conversation_id: null,
   ticket_rollup: quiet, ...quiet, ...values
 });
 
@@ -112,10 +112,10 @@ describe("orchestrator rail projection", () => {
   });
 
   it("passes the authoritative orchestrator recap and uses only factual counts when absent", () => {
-    const source = item("recap", {recap_preview:"Keep existing summary semantics.", tickets:[card("live"), card("done", {stage:"done"})]});
+    const source = item("recap", {recap:"Full body.\n" + "The rest of the recap is available. ".repeat(12),recap_preview:"Full body.…", tickets:[card("live"), card("done", {stage:"done"})]});
     const rail = buildWorkspaceRail([], [source]);
-    expect(rail.items[0].recapPreview).toBe(source.recap_preview);
-    expect(workspaceListRecap(rail.items[0].groups, rail.items[0].recapPreview)).toBe(source.recap_preview);
+    expect(rail.items[0].recap).toBe(source.recap);
+    expect(workspaceListRecap(rail.items[0].groups, rail.items[0].recap)).toBe(source.recap);
     expect(workspaceListRecap(rail.items[0].groups, " ")).toBe("1 Ticket in this list.");
     expect(workspaceListRecap(buildWorkspaceRail([card("one"), card("two")]).chiefGroups)).toBe("2 Tickets in this list.");
     expect(workspaceListRecap([])).toBe("Nothing in this list right now.");
@@ -212,13 +212,13 @@ import { currentSnapshot, conversation, continuity, envelope } from './support/n
 import { encodeCursor } from '../src/lib/navigation/validation';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
 const sourceTicket:TicketRecord={kind:'ticket',id:'source-ticket',value:{
-  title:'Source Ticket',recap_preview:'Source recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
+  title:'Source Ticket',recap:'Full source recap.\n'+'Body continues. '.repeat(20),recap_preview:'Source recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
   updated_at:11,worker_step_claim_out:false,deadline:null,project_id:'project',orchestrator_kind:'sprint_item',
   sprint_item_id:'item',conversation_id:'conversation',is_backlogged:false,ceiling:'needs_implementation',
   ceiling_holder:{kind:'owner',id:'owner'},gating_field:'implementation',proposal_field:null,proposal_revision:0,
   proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'en'}};
 const sourceRecords:NavigationRecord[]=[sourceTicket,conversation('conversation'),
-  {kind:'orchestrator',id:'item',value:{title:'Parent',recap_preview:'Parent recap',created_at:1,project_id:'project',settled:false,conversation_id:null}},
+  {kind:'orchestrator',id:'item',value:{title:'Parent',recap:'Full parent recap.\n'+'Body continues. '.repeat(20),recap_preview:'Parent recap',created_at:1,project_id:'project',settled:false,conversation_id:null}},
   {kind:'project',id:'project',value:{name:'Project'}},
   {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:null}},
   {kind:'address',id:'address',value:{owner_kind:'ticket',owner_id:'source-ticket',conversation_id:'conversation',current:true,parent_kind:'orchestrator',parent_id:'item'}}];
@@ -249,6 +249,9 @@ describe('canonical navigation workspace presentation',()=>{
       adapter.publishSnapshot(currentSnapshot({...continuity,records:[source,...sourceRecords.slice(1)]}),'source');
       const view=knowledge.accept(adapter.getPublication()!);
       const first=navigationWorkspacePresentation(view);
+      expect(first.tickets[0].recap).toBe(sourceTicket.value.recap);
+      const parent=sourceRecords.find(record=>record.kind==='orchestrator')!;
+      expect(first.orchestrators[0].recap).toBe(parent.value.recap);
       expect(first.tickets[0]).toMatchObject({blocked:true,assigned:true,awaiting_approval:true,awaiting_agent_approval:false,
         agent_state:'working',awaiting_reply:true,conversation_signal:{working:true,message_for_owner:true}});
       expect(buildWorkspaceRail(first.tickets,first.orchestrators).items[0].groups).toEqual([]);

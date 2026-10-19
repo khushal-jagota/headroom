@@ -120,6 +120,7 @@ def item_tickets(
             {
                 "id": str(r["id"]),
                 "title": str(r["title"]),
+                "recap": str(r["recap"]),
                 "recap_preview": recap_preview(str(r["recap"])),
                 "sprint_id": r["sprint_id"],
                 "sprint_name": r["sprint_name"],

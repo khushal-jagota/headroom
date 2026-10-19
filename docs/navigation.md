@@ -2,7 +2,7 @@
 
 Navigation is a derived view of canonical database facts. It does not own Ticket or conversation state.
 
-The public contract uses schema 6 and `attention-knowledge-v6` semantics. It contains Ticket metadata, canonical status, assignment, approval references, orchestrator metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
+The public contract uses schema 6 and `attention-knowledge-v6-recap` semantics. It contains Ticket metadata, canonical status, assignment, approval references, orchestrator metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
 
 Conversation attention comes from the accepted Signal producer. Each conversation carries complete current attention or explicitly unavailable runtime knowledge, plus independently durable message and failure facts. Raw lifecycle counters, read positions, and Ticket status never substitute for that source. Consumer adoption is in progress. Complete production parity, render proof, recovery, and performance acceptance remain open.
 
@@ -60,8 +60,8 @@ All records have `kind`, `id`, and `value`. `navigation/contracts.py` declares a
 
 | Tag | Value fields |
 | --- | --- |
-| `ticket` | `title`, `recap_preview`, `worker_type`, `stage`, `ticket_status`, `deadline`, effective `project_id`, `orchestrator_kind`, `sprint_item_id`, `conversation_id`, `is_backlogged`, `ceiling`, `ceiling_holder`, `proposal_field`, `proposal_revision`, `proposal_created_at`, `updated_at`, `created_at`, `worker_step_claim_out`, `blocked`, `stage_ownership`, `gating_field`, `terminal`, `locale` |
-| `orchestrator` | `title`, `recap_preview`, `created_at`, `project_id`, `settled`, current `conversation_id` |
+| `ticket` | `title`, `recap`, `recap_preview`, `worker_type`, `stage`, `ticket_status`, `deadline`, effective `project_id`, `orchestrator_kind`, `sprint_item_id`, `conversation_id`, `is_backlogged`, `ceiling`, `ceiling_holder`, `proposal_field`, `proposal_revision`, `proposal_created_at`, `updated_at`, `created_at`, `worker_step_claim_out`, `blocked`, `stage_ownership`, `gating_field`, `terminal`, `locale` |
+| `orchestrator` | `title`, `recap`, `recap_preview`, `created_at`, `project_id`, `settled`, current `conversation_id` |
 | `chief` | `label`, current `conversation_id` |
 | `project` | `name` |
 | `conversation` | raw `latest_sequence`, `owner_read_through_sequence`, `latest_agent_activity_sequence`, `latest_agent_activity_at`, `error_acknowledged_through_sequence`, `lifecycle_summary`, `attention` |
@@ -71,6 +71,8 @@ All records have `kind`, `id`, and `value`. `navigation/contracts.py` declares a
 Ticket status uses the canonical pure status rule. Stage ownership, terminal state, and `gating_field` use the stored Worker definition from the same database transaction. The required nullable gate comes from `definition.gating_field` for the exact Ticket stage. Null means that the stage has no gate. A manifest never supplies category authority. Gating-only definition changes publish affected Ticket records without changing status or ownership. This field was introduced in schema4 and remains in schema6; historical schema1/2/3 layouts stay unchanged. Approval data contains the field, revision, creation time, and holder. It excludes the proposal body and field values.
 
 Ticket and orchestrator `recap_preview` are required strings introduced in schema4 and retained in schema6. They use the unchanged canonical helper over `tickets.recap` and `sprint_items.body`. The helper compacts whitespace and applies the configured 160-character bound and ellipsis. Row, title, and preview enter the same publication. Chief retains its existing list-count fallback. No browser truncation or separate preview writer supplies these values. Historical schema1/2/3 shapes stay unchanged.
+
+Current Ticket and orchestrator records also contain required full `recap` text from the same sources. Rail popovers use this text and apply a visual limit from available space. Dense rows retain `recap_preview`. Historical schema1–4 shapes stay unchanged. Startup installation rebuilds stored records before public delivery, so existing schema6 records acquire the full text. The recap semantics identify the changed wire shape and reject older cursors.
 
 The character bound is not a byte or memory bound. UTF-8 and JSON escaping change the encoded cost. Initial full-payload cost, removed preview requests, recurring-update savings, and browser memory require separate matched-candidate evidence. Final cost acceptance remains open.
 
@@ -92,7 +94,7 @@ Address IDs are canonical JSON arrays of owner kind, owner ID, and conversation 
 
 ## Snapshots and replay
 
-`navigation.snapshot(conn)` returns scope, schema version, `semantics`, epoch, revision, and records in one read transaction. `semantics` is exactly `attention-knowledge-v6`. Stored records and journal upserts contain the complete current attention profile. Reads reject a caller transaction that contains pending canonical changes. They do not finalize it early.
+`navigation.snapshot(conn)` returns scope, schema version, `semantics`, epoch, revision, and records in one read transaction. `semantics` is exactly `attention-knowledge-v6-recap`. Stored records and journal upserts contain the complete current attention profile. Reads reject a caller transaction that contains pending canonical changes. They do not finalize it early.
 
 `navigation.journal(conn, epoch, after_revision, limit)` returns the same continuity plus complete batches and `has_more`. Limits range from 1 to 1,000 batches. Each batch contains scope, schema version, semantics, epoch, `base_revision`, resulting `revision`, typed upserts, and typed deletion keys. Revisions use exact canonical decimal strings. A relevant transaction creates one batch even when the public delta is empty. Unrelated transactions create none.
 

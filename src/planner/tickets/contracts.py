@@ -69,6 +69,7 @@ class BoardCardSource(TypedDict):
 
     id: str
     title: str
+    recap: str
     recap_preview: str
     deadline: str | None
     project_id: str | None
@@ -109,6 +110,7 @@ class BoardSprintItemSource(TypedDict):
 
     id: str
     title: str
+    recap: str
     recap_preview: str
     project_id: str
     project: str

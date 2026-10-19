@@ -71,15 +71,17 @@ One screen per part of the system:
   A completed hold suppresses its click. One popup swaps targets without another delay.
 
   Worker popups show their orchestrator, full title, direct conversation mark, existing
-  concise recap, and one sentence from the served Worker manifest and current facts.
+  full recap, and one sentence from the served Worker manifest and current facts.
   “Currently doing” requires an actual working signal. Idle Workers say “At” their stage.
   Approval, answer, assignment, error, and blocked facts use their specific wording.
   The popup has no stage ladder or named blockers. Recaps arrive through the existing
   board and orchestrator projections, without detail requests or another transport.
-  Orchestrator popups show their existing concise body preview in a recessed recap.
+  Orchestrator popups show their full body in a recessed recap.
   The Chief popup states the eligible Ticket count.
   Empty orchestrator recaps use that same factual fallback. The panel stays
-  inside the viewport and does not capture the pointer.
+  inside the viewport and does not capture the pointer. Recaps wrap to the available
+  space and show an ellipsis only at actual visual overflow. The title and current
+  stage stay visible. Dense list rows retain their concise recap preview.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group
   moves take 360–560 milliseconds according to distance. A new row opens space before
@@ -147,7 +149,9 @@ One screen per part of the system:
   ordering remain unchanged, including precedence for unread completed Workers.
 
   An open hover popup resolves its Worker, supervisor, or Chief from the latest query
-  records by identity, so its marks and child rows refresh while it stays open. Settling
+  records by identity, so its title, recap, stage, and marks refresh while it stays open.
+  This includes children absent from the top-level cards. Pointer presence freezes
+  row positions, while the popup continues to use fresh content. Settling
   an orchestrator changes its location without changing either conversation fact.
 
   The Chief of Staff keeps its own exact conversation marks. A browser with no saved lens

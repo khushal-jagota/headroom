@@ -145,6 +145,22 @@ def test_complete_install_activates_attention_and_rollback_restores_historical_s
     install_fixture(conn)
     assert navigation_snapshot(conn)["epoch"] != old_epoch
 
+    # Existing schema-6 records from an older build lack the full recap. The
+    # startup installation rebuilds them before it admits public delivery.
+    recap = "Full recap beyond the list budget. " * 8
+    conn.execute("UPDATE tickets SET recap=? WHERE id='ticket'", (recap,))
+    old_value = values(conn)["ticket", "ticket"]
+    del old_value["recap"]
+    conn.execute(
+        "UPDATE navigation_records SET value=? WHERE kind='ticket' AND id='ticket'",
+        (json.dumps(old_value),),
+    )
+    conn.commit()
+    old_epoch = navigation_snapshot(conn)["epoch"]
+    install_fixture(conn)
+    assert values(conn)["ticket", "ticket"]["recap"] == recap
+    assert navigation_snapshot(conn)["epoch"] != old_epoch
+
 
 def test_complete_install_rejects_partial_duplicate_and_invalid_fences_atomically(
     signal_db: sqlite3.Connection,

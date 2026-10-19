@@ -26,7 +26,7 @@ function ticket(
   return {
     id,
     title: id,
-    recap_preview: "",
+    recap: "",recap_preview: "",
     stage: "needs_implementation",
     activity_at: 1,
     is_backlogged: false,
@@ -107,7 +107,7 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
 
 function boardItem(rows: SprintItemWorkspaceTicket[]): BoardSprintItem {
   const full = workspace(rows);
-  return { id: full.id, title: full.title, recap_preview: "",
+  return { id: full.id, title: full.title, recap: "",recap_preview: "",
     created_at: full.created_at, conversation_id: null, tickets: rows,
     ticket_rollup: quiet, ...quiet };
 }
