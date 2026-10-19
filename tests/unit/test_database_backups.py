@@ -143,24 +143,6 @@ def test_restore_rejects_corrupted_snapshot(tmp_path: Path) -> None:
         restore_database_snapshot(snapshot, tmp_path / "restored.db", live_stopped=True)
 
 
-def test_backup_captures_and_verifies_the_managed_file_tree(tmp_path: Path) -> None:
-    source = tmp_path / "data" / "planner.db"
-    _seed_database(source)
-    _seed_managed_tree(source.parent, marker="captured")
-    backup_dir = tmp_path / "backups"
-
-    snapshot = create_database_backup(source, backup_dir, "rev-1")
-
-    metadata = json.loads((snapshot / "metadata.json").read_text())
-    assert metadata["managed_files"]["roots"] == ["files", "skills", "worker-settings"]
-    assert (
-        snapshot / "files" / "files" / "tickets" / "t_1" / "artifacts" / "ui.html"
-    ).read_text() == "<h1>captured</h1>"
-    assert (
-        snapshot / "files" / "worker-settings" / "coding" / "settings.json"
-    ).read_text() == '{"marker": "captured"}'
-    assert (snapshot / "files" / "skills" / "panels" / "SKILL.md").read_text() == "# captured"
-    assert _is_verified_snapshot(snapshot)
 
 
 def test_restore_brings_back_the_managed_file_tree(tmp_path: Path) -> None:

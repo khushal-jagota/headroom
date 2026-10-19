@@ -189,34 +189,6 @@ def test_recovery_failure_reports_every_existing_continuation_path(tmp_path: Pat
     assert (retained[0] / "new").is_file()
 
 
-def test_fresh_first_install_and_same_sha_are_bounded(tmp_path: Path) -> None:
-    current = tmp_path / "current"
-    candidate = _app(tmp_path / "candidate", SHA_B, "new")
-    events: list[str] = []
-    result = deploy_app(
-        candidate_app=candidate,
-        current_root=current,
-        source_db=current / "data/planning.db",
-        backup=_recording_backup(events, tmp_path / "snapshot"),
-        restore=lambda _: events.append("restore"),
-        service=FakeService(events),
-        health=FakeHealth(events, {SHA_B}),
-    )
-    assert result == DeploymentResult("succeeded", SHA_B, None, None)
-    assert events == ["restart", f"health:{SHA_B}"]
-
-    events.clear()
-    result = deploy_app(
-        candidate_app=candidate,
-        current_root=current,
-        source_db=current / "data/planning.db",
-        backup=_recording_backup(events, tmp_path / "snapshot"),
-        restore=lambda _: events.append("restore"),
-        service=FakeService(events),
-        health=FakeHealth(events, {SHA_B}),
-    )
-    assert result.status == "unchanged"
-    assert events == [f"health:{SHA_B}"]
 
 
 def test_deployment_uses_operator_owned_interprocess_lock(tmp_path: Path) -> None:

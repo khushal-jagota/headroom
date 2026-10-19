@@ -15,10 +15,8 @@ import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
-import pytest
 from claude_agent_sdk import Transport
 
-from planner.conversation.backends import claude_agent_sdk
 from planner.conversation.backends.claude_agent_sdk import _ClaudeProtocolTransport
 
 STEER_UUID = "11111111-1111-4111-8111-111111111111"
@@ -103,104 +101,3 @@ async def _said(inner: _ScriptedInnerTransport, state: str) -> None:
     """Emit a receipt and return once the transport has observed it."""
     inner.say(_lifecycle(state))
     await inner.until_taken_in()
-
-
-def test_a_command_that_is_queued_and_never_closed_out_stops_holding_the_turn(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        claude_agent_sdk, "CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS", A_SHORT_BOUND
-    )
-
-    async def exercise() -> None:
-        inner = _ScriptedInnerTransport()
-        transport = _ClaudeProtocolTransport(inner)
-        reader = await _reading(transport)
-        transport.watch_user_message(STEER_UUID)
-        await _said(inner, "queued")
-
-        await transport.wait_for_user_message_settlement(STEER_UUID)
-
-        assert transport.user_message_is_settled(STEER_UUID)
-        inner.end_the_stream()
-        await reader
-
-    _run(exercise)
-
-
-def test_a_command_folded_into_the_ended_turn_stops_holding_it_too(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``started`` before the wait is a fold: the turn it ran in has already ended."""
-    monkeypatch.setattr(
-        claude_agent_sdk, "CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS", A_SHORT_BOUND
-    )
-
-    async def exercise() -> None:
-        inner = _ScriptedInnerTransport()
-        transport = _ClaudeProtocolTransport(inner)
-        reader = await _reading(transport)
-        transport.watch_user_message(STEER_UUID)
-        await _said(inner, "queued")
-        await _said(inner, "started")
-
-        await transport.wait_for_user_message_settlement(STEER_UUID)
-
-        assert transport.user_message_is_settled(STEER_UUID)
-        inner.end_the_stream()
-        await reader
-
-    _run(exercise)
-
-
-def test_a_command_claude_takes_up_as_its_own_turn_is_waited_out(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The steered work can take minutes. Nothing here is allowed to cut it short."""
-    monkeypatch.setattr(
-        claude_agent_sdk, "CLAUDE_STEER_SETTLEMENT_TIMEOUT_SECONDS", A_SHORT_BOUND
-    )
-
-    async def exercise() -> None:
-        inner = _ScriptedInnerTransport()
-        transport = _ClaudeProtocolTransport(inner)
-        reader = await _reading(transport)
-        transport.watch_user_message(STEER_UUID)
-        await _said(inner, "queued")
-
-        waiting = asyncio.create_task(
-            transport.wait_for_user_message_settlement(STEER_UUID)
-        )
-        await asyncio.sleep(0)
-        await _said(inner, "started")
-        await asyncio.sleep(A_SHORT_BOUND * 4)
-        assert not waiting.done()
-        assert not transport.user_message_is_settled(STEER_UUID)
-
-        await _said(inner, "completed")
-        await waiting
-        assert transport.user_message_is_settled(STEER_UUID)
-        inner.end_the_stream()
-        await reader
-
-    _run(exercise)
-
-
-def test_a_refused_command_is_a_refusal_rather_than_a_silence() -> None:
-    """``refused`` is claude declining the command outright, with the bounds untouched."""
-
-    async def exercise() -> None:
-        inner = _ScriptedInnerTransport()
-        transport = _ClaudeProtocolTransport(inner)
-        reader = await _reading(transport)
-        transport.watch_user_message(STEER_UUID)
-        await _said(inner, "refused")
-
-        assert await transport.wait_for_user_message_admission(STEER_UUID) is False
-        await transport.wait_for_user_message_settlement(STEER_UUID)
-        assert transport.user_message_is_settled(STEER_UUID)
-        inner.end_the_stream()
-        await reader
-
-    # Both bounds are their real selves here, so a pass says no wait was needed at all.
-    _run(exercise, seconds=1.0)

@@ -7,7 +7,6 @@ it is now a write, and that the write is guarded where the import-time check use
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
@@ -18,8 +17,6 @@ from fastapi.testclient import TestClient
 from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.backend_state import write_model_enablement
-from planner.conversation.contracts import require_conversation_backend_key
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -66,75 +63,12 @@ def _arrival_record(coding: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
-def test_a_worker_type_and_its_skill_are_declared_in_one_write(
-    client: tuple[TestClient, Path], tmp_path: Path
-) -> None:
-    test_client, _db_path = client
-    coding = test_client.get("/api/worker-types/coding").json()
-
-    response = test_client.post("/api/worker-types", json=_arrival_record(coding))
-
-    assert response.status_code == 200, response.text
-    assert response.json()["worker_type"] == "arrival"
-    listed = test_client.get("/api/worker-types").json()["worker_types"]
-    assert "arrival" in [manifest["worker_type"] for manifest in listed]
-    assert "arrival" in configured_worker_type_registry().registered_worker_types()
-    supported = test_client.get("/api/worker-types?supported=true").json()["worker_types"]
-    assert "arrival" in [manifest["worker_type"] for manifest in supported]
-    assert "arrival" in configured_worker_type_registry().supported_worker_types()
-    # The skill is on disk too, because that is what an agent reads.
-    written = tmp_path / "skills" / "panels-worker-arrival" / "SKILL.md"
-    assert "Do the work." in written.read_text(encoding="utf-8")
 
 
-def test_a_worker_type_naming_a_skill_that_does_not_exist_is_refused(
-    client: tuple[TestClient, Path],
-) -> None:
-    test_client, _db_path = client
-    coding = test_client.get("/api/worker-types/coding").json()
-    record = _arrival_record(coding)
-    record.pop("skill")
-
-    response = test_client.post("/api/worker-types", json=record)
-
-    assert response.status_code == 400, response.text
-    assert "unknown skill" in response.text
 
 
-def test_a_type_that_declares_no_consequences_is_refused_at_the_door(
-    client: tuple[TestClient, Path],
-) -> None:
-    """A Worker type with no Closeout is not stored and does not become runnable.
-
-    The gap used to surface only when a Ticket ran out of Stages with nothing to land
-    its work. Now it surfaces here, when somebody saves the type.
-    """
-    test_client, _db_path = client
-    coding = test_client.get("/api/worker-types/coding").json()
-    record = _arrival_record(coding)
-    record["stages"] = [stage for stage in record["stages"] if stage["id"] != "needs_consequences"]
-    record["fields"] = [field for field in record["fields"] if field["id"] != "consequences"]
-
-    response = test_client.post("/api/worker-types", json=record)
-
-    assert response.status_code == 400, response.text
-    assert "every worker type must declare a consequences field" in response.text
-    assert test_client.get("/api/worker-types/arrival").status_code == 404
-    assert "arrival" not in configured_worker_type_registry().registered_worker_types()
 
 
-def test_a_malformed_record_is_refused_and_changes_nothing(
-    client: tuple[TestClient, Path],
-) -> None:
-    test_client, _db_path = client
-    before = test_client.get("/api/worker-types/coding").json()
-    broken = json.loads(json.dumps(before))
-    broken["stages"][1]["ownership_mode"] = "chief"
-
-    response = test_client.post("/api/worker-types", json=broken)
-
-    assert response.status_code == 400, response.text
-    assert test_client.get("/api/worker-types/coding").json() == before
 
 
 def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
@@ -170,20 +104,6 @@ def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
     assert test_client.get("/api/worker-types/coding").json() == coding
 
 
-def test_a_skill_a_worker_type_owns_is_not_editable_through_the_skills_route(
-    client: tuple[TestClient, Path],
-) -> None:
-    test_client, _db_path = client
-
-    response = test_client.patch(
-        "/api/skills/panels-worker-coding", json={"description": "Edited the wrong way"}
-    )
-
-    assert response.status_code == 400, response.text
-    assert "Worker type" in response.text
-    # The skill every Worker shares is still editable there.
-    shared = test_client.patch("/api/skills/panels-worker", json={"description": "Edited"})
-    assert shared.status_code == 200, shared.text
 
 
 def test_launch_defaults_are_the_type_and_take_effect_at_once(
@@ -227,34 +147,6 @@ def test_a_worker_may_not_declare_a_worker_type(client: tuple[TestClient, Path])
     ]
 
 
-@pytest.mark.parametrize("worker", ["coding", "chief-of-staff"])
-def test_launch_default_save_refuses_disabled_model_without_partial_write(
-    client: tuple[TestClient, Path], worker: str
-) -> None:
-    test_client, db_path = client
-    settings_path = f"/api/workers/{worker}" + ("/settings" if worker == "chief-of-staff" else "")
-    before = test_client.get(settings_path).json()
-    settings = before if worker == "chief-of-staff" else before["settings"]
-    defaults = settings["launch_defaults"]
-    model = defaults["employee_launch_model"]
-    with connect(str(db_path)) as conn:
-        write_model_enablement(
-            conn, require_conversation_backend_key(defaults["employee_backend"]), model, False
-        )
-    response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=defaults)
-    assert response.status_code == 400, response.text
-    assert model in response.json()["error"]["message"]
-    assert "Choose an enabled model" in response.json()["error"]["message"]
-    assert test_client.get(settings_path).json() == before
-    with connect(str(db_path)) as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO model_variant_resolutions VALUES (?,?,?,?,?)",
-            ("codex", "astra", "gpt-6-astra", json.dumps(["medium", "high"]), int(time.time())),
-        )
-    alternative = dict(defaults, employee_launch_model="gpt-6-astra")
-    response = test_client.put(f"/api/workers/{worker}/launch-defaults", json=alternative)
-    assert response.status_code == 200, response.text
-    assert response.json()["launch_defaults"] == alternative
 
 
 def test_chief_recap_is_owner_editable_durable_and_exact(

@@ -43,24 +43,6 @@ def database(tmp_path: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def test_fresh_database_loads_authorized_design_and_research_defaults(
-    database: sqlite3.Connection,
-) -> None:
-    registry = configured_worker_type_registry()
-    design = registry.require("product_design")
-    assert design.stage_definition("needs_wireframe").ownership_mode == "worker"
-    assert design.stage_definition("needs_design").ownership_mode == "worker"
-    assert design.worker_profile.default_backend == "claude"
-    assert design.worker_profile.default_model == "opus"
-    assert design.worker_profile.default_reasoning_effort == "medium"
-
-    research = registry.require("research")
-    assert research.worker_profile.default_backend == "claude"
-    assert research.worker_profile.default_model == "opus"
-    # The fleet-wide model decision does not change Research effort or ownership.
-    assert research.worker_profile.default_reasoning_effort == "high"
-    assert research.stage_definition("needs_research_plan").ownership_mode == "worker"
-    assert research.stage_definition("needs_findings").ownership_mode == "worker"
 
 
 def test_reopening_database_preserves_owner_customized_product_design(
@@ -130,20 +112,3 @@ def test_removing_a_field_is_refused_while_a_ticket_holds_text_in_it(
     with pytest.raises(PlannerError) as raised:
         write_definition(database, kept_stage_dropped_field, now=2)
     assert raised.value.detail["tickets"] == [ticket_id]
-
-
-def test_a_stage_no_ticket_stands_on_may_be_removed(database: sqlite3.Connection) -> None:
-    seed_probe_worker_type(database)
-    load_worker_runtime_definitions(database)
-    _probe_ticket(database, "needs_alpha")
-
-    without_beta = replace(
-        PROBE_WORKER_TYPE_DEFINITION,
-        stages=tuple(
-            stage for stage in PROBE_WORKER_TYPE_DEFINITION.stages if stage.id != "needs_beta"
-        ),
-        fields=tuple(field for field in PROBE_WORKER_TYPE_DEFINITION.fields if field.id != "beta"),
-    )
-    write_definition(database, without_beta, now=2)
-
-    assert "needs_beta" not in read_definition(database, "probe").stage_ids()

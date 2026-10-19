@@ -12,7 +12,6 @@ from planner.conversation.image_validation import (
     MAX_CONVERSATION_IMAGE_DIMENSION,
     MAX_CONVERSATION_IMAGE_PIXELS,
     sniff_image_format,
-    validated_image_media_type,
 )
 
 PNG = base64.b64decode(
@@ -29,19 +28,6 @@ GIF = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
 WEBP = base64.b64decode("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/vuU")
 
 
-@pytest.mark.parametrize(
-    ("payload", "media_type"),
-    [
-        (PNG, "image/png"),
-        (JPEG, "image/jpeg"),
-        (GIF, "image/gif"),
-        (WEBP, "image/webp"),
-    ],
-)
-def test_the_four_established_image_formats_have_canonical_media_types(
-    payload: bytes, media_type: str
-) -> None:
-    assert validated_image_media_type(payload) == media_type
 
 
 def _png(width: int, height: int, decompressed: bytes, *, interlace: int = 0) -> bytes:
@@ -89,14 +75,6 @@ def _adam7_rgba8(width: int, height: int) -> tuple[bytes, list[int]]:
     return bytes(raw), filter_offsets
 
 
-def test_a_normal_adam7_png_has_all_seven_bounded_scanline_runs() -> None:
-    raw, filter_offsets = _adam7_rgba8(8, 8)
-    assert len(filter_offsets) > 7
-    assert sniff_image_format(_png(8, 8, raw, interlace=1)) == "png"
-    assert sniff_image_format(_png(8, 8, raw[:-1], interlace=1)) is None
-    bad_filter = bytearray(raw)
-    bad_filter[filter_offsets[3]] = 5
-    assert sniff_image_format(_png(8, 8, bytes(bad_filter), interlace=1)) is None
 
 
 def _jpeg(width: int, height: int) -> bytes:

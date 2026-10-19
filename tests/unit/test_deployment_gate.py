@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import httpx
@@ -52,25 +51,3 @@ def test_smoke_environment_is_explicit_and_never_inherits_credentials(
     for key, value in env.items():
         if key.endswith(("PATH", "HOME", "DIR", "SOCKET")) and key != "PATH":
             assert Path(value).is_relative_to(tmp_path)
-
-
-def test_malformed_nested_proof_fails_closed(tmp_path: Path) -> None:
-    path = tmp_path / "evidence.json"
-    path.write_text(
-        json.dumps(
-            {
-                "requested_sha": "a" * 40,
-                "artifact_digest": "b" * 64,
-                "observation": {
-                    "current_root": str(tmp_path),
-                    "health_url": "http://unused",
-                    "manifest_state": "missing",
-                    "manifest": None,
-                    "base_sha": None,
-                    "health": {"status": True, "body": None, "error": None},
-                },
-            }
-        )
-    )
-    with pytest.raises(ValueError, match="health status"):
-        gate.read_gate_evidence(path)

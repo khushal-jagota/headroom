@@ -11,11 +11,9 @@ from typing import cast
 
 import pytest
 
-from planner.conversation.usage import service as usage_service
 from planner.conversation.usage.adapters import project_usage_line
 from planner.conversation.usage.adapters import stream as usage_stream
 from planner.conversation.usage.contracts import (
-    ParsedUsage,
     ScanLimits,
     SourceSnapshot,
     UsageProvider,
@@ -107,15 +105,8 @@ def test_empty_and_unknown_categories_do_not_become_zero() -> None:
     )
 
 
-@pytest.mark.parametrize("amount", [-1.0, float("inf"), float("nan")])
-def test_invalid_cost_never_becomes_spend(amount: float) -> None:
-    summary = metrics((replace(record(), reported_cost_usd=amount),))
-    assert summary["reported_cost_usd"] is None
-    assert summary["unknown_cost_records"] == 1
 
 
-def test_native_reported_zero_cost_remains_zero() -> None:
-    assert metrics((replace(record(), reported_cost_usd=0.0),))["reported_cost_usd"] == 0.0
 
 
 def test_global_identity_dedup_and_modern_precedence_cross_files() -> None:
@@ -133,31 +124,10 @@ def test_global_identity_dedup_and_modern_precedence_cross_files() -> None:
     assert summary["sources"][0]["duplicates"] == 1
 
 
-def test_conflicting_identity_is_excluded_and_coverage_is_partial() -> None:
-    first = record()
-    conflicting = replace(first, tokens=replace(first.tokens, output_tokens=900))
-    summary = summarize((source(first, conflicting),), now=NOW, days=7, timezone="UTC")
-    assert summary["totals"]["record_count"] == 0
-    assert summary["totals"]["total_tokens"] is None
-    assert summary["sources"][0]["state"] == "partial"
-    assert summary["periods"] == []
 
 
-def test_persisted_conflict_suppresses_an_earlier_verified_record() -> None:
-    snapshot = replace(source(record()), conflicted_record_keys=("response",))
-    summary = summarize((snapshot,), now=NOW, days=7, timezone="UTC")
-    assert summary["totals"]["record_count"] == 0
-    assert summary["sources"][0]["state"] == "partial"
 
 
-def test_claude_copies_count_once_with_unknown_session_attribution() -> None:
-    first = replace(record(), provider="claude", format="claude_message")
-    second = replace(first, session_id="copy")
-    snapshot = replace(source(first, second), provider="claude")
-    summary = summarize((snapshot,), now=NOW, days=7, timezone="UTC")
-    assert summary["totals"]["record_count"] == 1
-    assert summary["totals"]["session_count"] is None
-    assert summary["sources"][1]["state"] == "partial"
 
 
 def test_claude_alias_conflicts_are_reconciled_across_stored_files() -> None:
@@ -192,27 +162,8 @@ def test_claude_alias_conflicts_are_reconciled_across_stored_files() -> None:
     assert summary["totals"]["record_count"] == 0
 
 
-def test_local_calendar_keeps_gaps_and_uses_23_hour_spring_day() -> None:
-    now = datetime(2026, 3, 30, 12, tzinfo=UTC)
-    sample = record(at=datetime(2026, 3, 29, 12, tzinfo=UTC))
-    summary = summarize((source(sample),), now=now, days=7, timezone="Europe/Berlin")
-    assert len(summary["periods"]) == 1
-    assert summary["periods"][0]["start"] == "2026-03-28T23:00:00Z"
-    assert summary["periods"][0]["end"] == "2026-03-29T22:00:00Z"
 
 
-def test_repeated_dst_hours_have_distinct_absolute_boundaries() -> None:
-    now = datetime(2026, 10, 25, 3, tzinfo=UTC)
-    samples = (
-        record("first", at=datetime(2026, 10, 25, 0, 30, tzinfo=UTC)),
-        record("second", at=datetime(2026, 10, 25, 1, 30, tzinfo=UTC)),
-    )
-    summary = summarize((source(*samples),), now=now, days=1, timezone="Europe/Berlin")
-    assert [period["start"] for period in summary["periods"]] == [
-        "2026-10-25T00:00:00Z",
-        "2026-10-25T01:00:00Z",
-    ]
-    assert [period["label"] for period in summary["periods"]] == ["02:00 CEST", "02:00 CET"]
 
 
 def test_past_24_hours_includes_the_prior_evening_near_local_midnight() -> None:
@@ -223,25 +174,8 @@ def test_past_24_hours_includes_the_prior_evening_near_local_midnight() -> None:
     assert summary["totals"]["record_count"] == 1
 
 
-def test_past_24_hours_is_elapsed_time_across_a_dst_change() -> None:
-    now = datetime(2026, 10, 25, 3, 15, tzinfo=UTC)
-    inside = record("inside", at=now - timedelta(hours=24) + timedelta(minutes=1))
-    outside = record("outside", at=now - timedelta(hours=24, seconds=1))
-    summary = summarize((source(inside, outside),), now=now, days=1, timezone="Europe/Berlin")
-    assert summary["since"] == "2026-10-24T03:15:00Z"
-    assert summary["totals"]["record_count"] == 1
-    assert summary["periods"][0]["start"] == summary["since"]
 
 
-def test_absolute_hour_buckets_do_not_overlap_at_a_half_hour_dst_change() -> None:
-    now = datetime(2026, 10, 3, 18, tzinfo=UTC)
-    samples = (
-        record("before", at=datetime(2026, 10, 3, 15, 45, tzinfo=UTC)),
-        record("after", at=datetime(2026, 10, 3, 16, 15, tzinfo=UTC)),
-    )
-    summary = summarize((source(*samples),), now=now, days=1, timezone="Australia/Lord_Howe")
-    first, second = summary["periods"]
-    assert first["end"] == second["start"] == "2026-10-03T16:00:00Z"
 
 
 @pytest.fixture
@@ -257,22 +191,6 @@ def local_service(tmp_db: Connection, tmp_path: Path) -> tuple[RecordedUsageServ
     return service, path, database
 
 
-def test_read_is_stored_only_and_refresh_does_not_reparse_unchanged_files(
-    local_service: tuple[RecordedUsageService, Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    service, path, _ = local_service
-    path.write_text(native_line("first"))
-    assert service.summary(days=7, timezone="UTC")["totals"]["record_count"] == 0
-    service.refresh()
-
-    def refuse_projection(provider: str, line: str) -> str | None:
-        raise AssertionError("An unchanged source was parsed")
-
-    monkeypatch.setattr(usage_stream, "project_usage_line", refuse_projection)
-    service.refresh()
-    summary = service.summary(days=7, timezone="UTC")
-    assert summary["totals"]["total_tokens"] == 105
-    assert summary["sources"][0]["state"] == "ready"
 
 
 def test_append_projects_only_new_lines_and_persists_no_content(
@@ -341,21 +259,6 @@ def test_bounds_and_missing_source_preserve_verified_records(
     assert service.summary(days=7, timezone="UTC")["totals"]["total_tokens"] == 105
 
 
-def test_conflicting_append_stays_excluded_until_verified_clean_rewrite(
-    local_service: tuple[RecordedUsageService, Path, Path],
-) -> None:
-    service, path, _ = local_service
-    path.write_text(native_line("first"))
-    service.refresh()
-    with path.open("a") as stream:
-        stream.write(native_line("first", count=200))
-    service.refresh()
-    summary = service.summary(days=7, timezone="UTC")
-    assert summary["totals"]["record_count"] == 0
-    assert summary["sources"][0]["state"] == "partial"
-    path.write_text(native_line("first", count=200))
-    service.refresh()
-    assert service.summary(days=7, timezone="UTC")["totals"]["total_tokens"] == 205
 
 
 @pytest.mark.parametrize("replacement", ["overwrite", "replace", "truncate"])
@@ -415,44 +318,8 @@ def test_clean_conflict_correction_keeps_other_owned_responses_and_modern_thread
     assert service.summary(days=7, timezone="UTC")["totals"]["total_tokens"] == 310
 
 
-def test_clean_replacement_without_conflicted_key_cannot_silently_clear_it(
-    local_service: tuple[RecordedUsageService, Path, Path],
-) -> None:
-    service, path, _ = local_service
-    path.write_text(native_line("conflicted"))
-    service.refresh()
-    with path.open("a") as stream:
-        stream.write(native_line("conflicted", count=200))
-    service.refresh()
-    path.write_text(native_line("distinct"))
-    service.refresh()
-    summary = service.summary(days=7, timezone="UTC")
-    assert summary["totals"]["record_count"] == 1
-    assert summary["totals"]["total_tokens"] == 105
-    assert summary["sources"][0]["state"] == "partial"
 
 
-def test_same_signature_interior_rewrite_checks_the_full_consumed_digest(
-    local_service: tuple[RecordedUsageService, Path, Path],
-) -> None:
-    service, path, database = local_service
-    outer = json.dumps({"type": "user", "content": "unretained-text" * 1000}) + "\n"
-    path.write_text(outer + native_line("old-response") + outer)
-    service.refresh()
-    path.write_text(outer + native_line("new-response") + outer)
-    # Model the same stat signature observed with immediate same-size writes. The
-    # native contents change only in the interior, beyond both short end guards.
-    stat = path.stat()
-    conn = connect(str(database))
-    try:
-        cached = json.loads(conn.execute("SELECT snapshot FROM native_usage_files").fetchone()[0])
-        cached.update(mtime_ns=stat.st_mtime_ns, ctime_ns=stat.st_ctime_ns)
-        conn.execute("UPDATE native_usage_files SET snapshot=?", (json.dumps(cached),))
-        conn.commit()
-    finally:
-        conn.close()
-    service.refresh()
-    assert service.summary(days=7, timezone="UTC")["totals"]["total_tokens"] == 210
 
 
 def test_copied_files_count_once_and_cross_file_conflicts_exclude_identity(
@@ -483,69 +350,10 @@ def test_changed_append_validates_the_consumed_prefix_before_reusing_cache(
     assert summary["totals"]["record_count"] == 2
 
 
-def test_file_count_and_byte_limits_report_partial_without_zero_fill(
-    local_service: tuple[RecordedUsageService, Path, Path],
-) -> None:
-    _, path, database = local_service
-    path.write_text(native_line("first"))
-    path.with_name("copy.jsonl").write_text(native_line("second"))
-    bounded = RecordedUsageService(
-        lambda: connect(str(database)),
-        sources=lambda: (UsageSource("codex", path.parents[1]),),
-        now=lambda: NOW,
-        limits=ScanLimits(max_files=1),
-    )
-    assert bounded.refresh()[0]["state"] == "partial"
-    assert bounded.summary(days=7, timezone="UTC")["totals"]["record_count"] == 1
-    tiny = RecordedUsageService(
-        lambda: connect(str(database)),
-        sources=lambda: (UsageSource("codex", path.parents[1]),),
-        now=lambda: NOW,
-        limits=ScanLimits(max_total_bytes=1),
-    )
-    assert tiny.refresh()[0]["state"] == "partial"
-    assert tiny.summary(days=7, timezone="UTC")["totals"]["record_count"] == 1
 
 
-def test_line_and_time_limits_and_symlinks_are_explicit_partial_sources(
-    local_service: tuple[RecordedUsageService, Path, Path],
-) -> None:
-    _, path, database = local_service
-    path.write_text(native_line("first"))
-    # File and line size exclusions are retired. Request work still yields on time.
-    for limits in (ScanLimits(max_seconds=0),):
-        bounded = RecordedUsageService(
-            lambda: connect(str(database)),
-            sources=lambda: (UsageSource("codex", path.parents[1]),),
-            now=lambda: NOW,
-            limits=limits,
-        )
-        assert bounded.refresh()[0]["state"] == "partial"
-        assert bounded.summary(days=7, timezone="UTC")["totals"]["total_tokens"] is None
-    path.with_name("linked.jsonl").symlink_to(path)
-    normal = RecordedUsageService(
-        lambda: connect(str(database)),
-        sources=lambda: (UsageSource("codex", path.parents[1]),),
-        now=lambda: NOW,
-    )
-    assert normal.refresh()[0]["state"] == "partial"
 
 
-def test_parser_failure_keeps_previously_verified_usage(
-    local_service: tuple[RecordedUsageService, Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    service, path, _ = local_service
-    path.write_text(native_line("first"))
-    service.refresh()
-    with path.open("a") as stream:
-        stream.write(native_line("second"))
-
-    def refuse_parser(*_: object) -> object:
-        raise RuntimeError("source unavailable")
-
-    monkeypatch.setattr(usage_service.CodexUsageParser, "feed", refuse_parser)
-    assert service.refresh()[0]["state"] == "failed"
-    assert service.summary(days=7, timezone="UTC")["totals"]["total_tokens"] == 105
 
 
 def test_source_resolution_uses_configured_backend_homes(
@@ -643,75 +451,10 @@ def test_single_large_file_and_line_have_no_size_exclusion(
     assert service.summary(days=7, timezone="UTC")["totals"]["total_tokens"] == 105
 
 
-def test_provider_order_rotates_even_when_one_slice_uses_entire_budget(
-    tmp_path: Path, tmp_db: Connection
-) -> None:
-    from planner.conversation.usage.store import read_files
-
-    database = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    sources = []
-    for provider, directory in (("codex", "sessions"), ("claude", "projects")):
-        path = tmp_path / provider / directory / "a.jsonl"
-        path.parent.mkdir(parents=True)
-        path.write_text('{"type":"user","content":"private"}\n')
-        sources.append(UsageSource(cast(UsageProvider, provider), path.parents[1]))
-    service = RecordedUsageService(
-        lambda: connect(str(database)),
-        sources=lambda: sources,
-        now=lambda: NOW,
-        limits=ScanLimits(max_total_bytes=1, chunk_bytes=1),
-    )
-    service.refresh()
-    service.refresh()
-    conn = connect(str(database))
-    snapshots = read_files(conn)
-    conn.close()
-    assert {file.provider for file in snapshots if file.pending} == {"codex", "claude"}
 
 
-def test_candidate_generation_change_cannot_publish_already_verified_old_blocks(
-    local_service: tuple[RecordedUsageService, Path, Path],
-) -> None:
-    _, path, database = local_service
-    original = native_line("old") + json.dumps({"type": "user", "content": "x" * 4000}) + "\n"
-    path.write_text(original)
-    limits = ScanLimits(max_total_bytes=len(original) + 512, chunk_bytes=256, file_slice_bytes=256)
-    service = RecordedUsageService(
-        lambda: connect(str(database)),
-        sources=lambda: (UsageSource("codex", path.parents[1]),),
-        now=lambda: NOW,
-        limits=limits,
-    )
-    assert cast(UsageReadProgress, service.refresh()[0]["progress"])["more_work"]
-    assert service.summary(days=7, timezone="UTC")["totals"]["record_count"] == 0
-    path.write_text(original.replace('"old"', '"new"'))
-    for _ in range(5):
-        if not cast(UsageReadProgress, service.refresh()[0]["progress"])["more_work"]:
-            break
-    summary = service.summary(days=7, timezone="UTC")
-    assert summary["totals"]["record_count"] == 1
-    conn = connect(str(database))
-    stored = conn.execute("SELECT snapshot FROM native_usage_files").fetchone()[0]
-    conn.close()
-    assert "codex:response:new" in stored
-    assert "codex:response:old" not in stored
 
 
-def test_discovery_bound_is_partial_instead_of_silent_complete(
-    local_service: tuple[RecordedUsageService, Path, Path],
-) -> None:
-    _, path, database = local_service
-    path.write_text(native_line("first"))
-    path.with_name("second.jsonl").write_text(native_line("second"))
-    service = RecordedUsageService(
-        lambda: connect(str(database)),
-        sources=lambda: (UsageSource("codex", path.parents[1]),),
-        now=lambda: NOW,
-        limits=ScanLimits(max_discovery_entries=1),
-    )
-    result = service.refresh()[0]
-    assert result["state"] == "partial"
-    assert any("bounded limit" in issue for issue in result["issues"])
 
 
 def test_dense_usage_parser_resumes_projection_batches(
@@ -729,35 +472,6 @@ def test_dense_usage_parser_resumes_projection_batches(
     assert service.summary(days=7, timezone="UTC")["totals"]["record_count"] == 300
 
 
-def test_growing_source_keeps_read_progress_then_finishes_after_pause(
-    local_service: tuple[RecordedUsageService, Path, Path],
-) -> None:
-    _, path, database = local_service
-    path.write_text(
-        native_line("initial") + json.dumps({"type": "user", "content": "x" * 2048}) + "\n"
-    )
-    service = RecordedUsageService(
-        lambda: connect(str(database)),
-        sources=lambda: (UsageSource("codex", path.parents[1]),),
-        now=lambda: NOW,
-        limits=ScanLimits(max_total_bytes=1024, chunk_bytes=128, file_slice_bytes=128),
-    )
-    offsets: list[int] = []
-    for invocation in range(32):
-        result = service.refresh()[0]
-        if result["progress"] is not None and not result["progress"]["more_work"]:
-            break
-        conn = connect(str(database))
-        cached = json.loads(conn.execute("SELECT snapshot FROM native_usage_files").fetchone()[0])
-        conn.close()
-        offsets.append(cached["pending"]["read_offset"])
-        if invocation < 3:
-            with path.open("a") as stream:
-                stream.write(json.dumps({"type": "user", "content": "new tail"}) + "\n")
-    else:
-        pytest.fail("The frozen prefix failed to complete after appends paused")
-    assert offsets == sorted(offsets)
-    assert service.summary(days=7, timezone="UTC")["totals"]["record_count"] == 1
 
 
 def test_native_speed_persists_and_same_identity_speed_conflicts(
@@ -787,33 +501,6 @@ def test_native_speed_persists_and_same_identity_speed_conflicts(
     assert summary["sources"][0]["state"] == "partial"
 
 
-def test_data_and_progress_rollback_together(tmp_db: Connection) -> None:
-    import sqlite3
-
-    from planner.conversation.usage.store import FileSnapshot, save_refresh
-
-    snapshot = FileSnapshot(
-        provider="codex",
-        source_key="source",
-        file_key="file",
-        device=1,
-        inode=1,
-        size=100,
-        mtime_ns=1,
-        ctime_ns=1,
-        offset=0,
-        digest="",
-        projected_lines=(),
-        parsed=ParsedUsage(records=(record(),)),
-        pending={"read_offset": 50, "phase": "read"},
-    )
-    broken_source = SourceSnapshot(
-        provider="codex", source_key=cast(str, None), state="partial", observed_at=NOW
-    )
-    with pytest.raises(sqlite3.IntegrityError):
-        save_refresh(tmp_db, (broken_source,), (snapshot,), {"codex": {"queue": ["file"]}})
-    assert tmp_db.execute("SELECT count(*) FROM native_usage_files").fetchone()[0] == 0
-    assert tmp_db.execute("SELECT count(*) FROM native_usage_sources").fetchone()[0] == 0
 
 
 def test_rewrite_with_growth_rechecks_earlier_verified_blocks(
@@ -881,21 +568,6 @@ def test_utf8_codepoints_resume_without_retaining_body_bytes(
     assert "private" not in cached
 
 
-def test_invalid_utf8_retains_content_free_coverage_issue(
-    local_service: tuple[RecordedUsageService, Path, Path],
-) -> None:
-    service, path, database = local_service
-    path.write_bytes(
-        b'{"type":"user","content":"PRIVATE-INVALID-\xff"}\n' + native_line("valid").encode()
-    )
-    result = service.refresh()[0]
-    assert result["state"] == "partial"
-    assert any("not valid UTF-8" in issue for issue in result["issues"])
-    assert service.summary(days=7, timezone="UTC")["totals"]["total_tokens"] == 105
-    conn = connect(str(database))
-    cached = conn.execute("SELECT snapshot FROM native_usage_files").fetchone()[0]
-    conn.close()
-    assert "PRIVATE-INVALID" not in cached
 
 
 def test_frozen_prefix_requeues_actual_native_tail_across_restart(

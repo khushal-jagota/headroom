@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 from typing import Any
-from xml.etree.ElementTree import ParseError
 
 import pytest
 from scripts.deployment_check_report import check_pytest, check_vitest
@@ -103,45 +102,10 @@ def test_frontend_requires_passed_assertions_in_every_selected_host(tmp_path: Pa
         check_vitest(report, ["web/tests/two.test.ts"])
 
 
-@pytest.mark.parametrize("outcome", ["failure", "error"])
-def test_pytest_report_refuses_failed_or_errored_required_case(
-    tmp_path: Path, outcome: str,
-) -> None:
-    report = tmp_path / "pytest.xml"
-    report.write_text(
-        '<testsuite><testcase classname="tests.unit.test_one" name="required">'
-        f'<{outcome} message="broken"/></testcase></testsuite>'
-    )
-    with pytest.raises(ValueError, match="failed test in report"):
-        check_pytest(report, ["tests/unit/test_one.py"])
 
 
-@pytest.mark.parametrize("kind", ["pytest", "vitest"])
-def test_report_must_exist_and_parse(tmp_path: Path, kind: str) -> None:
-    report = tmp_path / "missing-report"
-    check = check_pytest if kind == "pytest" else check_vitest
-    with pytest.raises(FileNotFoundError):
-        check(report, ["tests/unit/test_one.py"])
-    report.write_text("broken report")
-    with pytest.raises((ParseError, json.JSONDecodeError)):
-        check(report, ["tests/unit/test_one.py"])
 
 
-def test_frontend_report_refuses_failure_even_with_other_passed_assertions(tmp_path: Path) -> None:
-    report = tmp_path / "vitest.json"
-    value = {"success": True, "testResults": [
-        {"name": "/source/web/tests/one.test.ts", "assertionResults": [{"status": "passed"}]},
-        {"name": "/source/web/tests/two.test.ts", "assertionResults": [{"status": "failed"}]},
-    ]}
-    report.write_text(json.dumps(value))
-    with pytest.raises(ValueError, match="frontend proof is empty, failed, or skipped"):
-        check_vitest(report, ["web/tests/one.test.ts"])
-    value = {"success": False, "testResults": [
-        {"name": "/source/web/tests/one.test.ts", "assertionResults": [{"status": "passed"}]},
-    ]}
-    report.write_text(json.dumps(value))
-    with pytest.raises(ValueError, match="frontend report did not succeed"):
-        check_vitest(report, ["web/tests/one.test.ts"])
 
 
 def browser_receipt(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:

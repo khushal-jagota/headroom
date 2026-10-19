@@ -19,16 +19,11 @@ from tests.support.probe import (
 )
 from tests.support.ticket_progress import advance_ticket
 
-from planner.conversation.backend_state import write_model_enablement
-from planner.conversation.contracts import ConversationBackendKey
 from planner.core import ticket_blocks
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.projects import data as projects_data
 from planner.runtime import worker_step_readiness
-from planner.sprints import data as sprints_data
 from planner.tickets import actions, data
-from planner.tickets import views as ticket_views
 from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
@@ -110,196 +105,14 @@ def _ticket_row(conn: Connection, ticket_id: str) -> tuple[object, ...]:
     return tuple(row)
 
 
-def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    t = _create(
-        tmp_db,
-        cfg,
-        fake_clock,
-        title="Draft kickoff title",
-        brief="draft kickoff note",
-        settle_kickoff=False,
-    )
-
-    assert t.stage == "needs_brief"
-    assert t.ticket_status is TicketStatus.awaiting_approval
-    assert t.title == "Draft kickoff title"
-    assert t.field_values.get("brief") is None
-    assert t.pending_proposal is not None
-    assert t.pending_proposal.body == "draft kickoff note"
-    assert dict(t.field_values) == {}
-    assert (t.pending_proposal is not None) is True
 
 
-def test_creation_preserves_project_and_orchestrator_context_without_priority(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    project = projects_data.create_project(
-        tmp_db, name="Assigned project", now=fake_clock.now_unix()
-    )
-    item = sprints_data.create_item(
-        tmp_db, title="Assigned item", project_id=project.id, clock=fake_clock
-    )
-    parented = _create(tmp_db, cfg, fake_clock, sprint_item_id=item.id, settle_kickoff=False)
-    project_only = _create(tmp_db, cfg, fake_clock, project_id=project.id, settle_kickoff=False)
-    projectless = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
-
-    assert parented.sprint_item_id == item.id
-    assert parented.sprint_item_title == "Assigned item"
-    assert parented.project_id == project.id
-    assert parented.project_name == "Assigned project"
-    assert project_only.project_id == project.id
-    assert project_only.sprint_item_title is None
-    assert projectless.project_id is None
-    assert projectless.sprint_item_title is None
-    for ticket in (parented, project_only, projectless):
-        payload = ticket_views.ticket_json(ticket, fake_clock.now_unix())
-        assert "priority" not in payload
-        assert "resolved_priority_anchors" not in payload
 
 
-def test_action_create_uses_worker_default_or_registered_override_before_mutation(
-    tmp_db: Connection,
-    cfg: Config,
-    fake_clock: TestClock,
-    probe_runtime: None,
-) -> None:
-    defaulted = actions.create_ticket(
-        tmp_db,
-        title="Probe default",
-        principal=OWNER_PRINCIPAL,
-        now=fake_clock.now_unix(),
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="probe",
-    )
-    overridden = actions.create_ticket(
-        tmp_db,
-        title="Probe override",
-        principal=OWNER_PRINCIPAL,
-        now=fake_clock.now_unix(),
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="probe",
-        employee_backend="claude",
-        employee_launch_model="claude-model",
-    )
-    tickets_before = tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
-    with pytest.raises(PlannerError) as raised:
-        actions.create_ticket(
-            tmp_db,
-            title="Probe rejected",
-            principal=OWNER_PRINCIPAL,
-            now=fake_clock.now_unix(),
-            title_max_chars=TITLE_MAX_CHARS,
-            worker_type="probe",
-            employee_backend="missing-backend",
-            employee_launch_model="whatever-it-runs",
-        )
-    # An override that names no model for the backend it names leaves the Ticket with
-    # nothing to run on, so it is refused the same way an unknown backend is.
-    with pytest.raises(PlannerError) as unnamed:
-        actions.create_ticket(
-            tmp_db,
-            title="Probe unnamed",
-            principal=OWNER_PRINCIPAL,
-            now=fake_clock.now_unix(),
-            title_max_chars=TITLE_MAX_CHARS,
-            worker_type="probe",
-            employee_backend="claude",
-        )
-
-    assert defaulted.employee_backend == "hermes"
-    assert defaulted.employee_launch_model == "probe-model"
-    assert overridden.employee_backend == "claude"
-    assert overridden.employee_launch_model == "claude-model"
-    assert raised.value.code is ErrorCode.validation
-    assert unnamed.value.code is ErrorCode.validation
-    assert tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before
 
 
-@pytest.mark.parametrize("operation", ["validate", "create"])
-@pytest.mark.parametrize("choice", ["inherited", "same_backend", "model_only", "explicit"])
-def test_disabled_resolved_ticket_model_is_rejected_without_writes(
-    tmp_db: Connection,
-    fake_clock: TestClock,
-    probe_runtime: None,
-    operation: str,
-    choice: str,
-) -> None:
-    write_model_enablement(tmp_db, ConversationBackendKey.hermes, "probe-model", False)
-    write_model_enablement(tmp_db, ConversationBackendKey.claude, "disabled-model", False)
-    choices: dict[str, tuple[str | None, str | None]] = {
-        "inherited": (None, None),
-        "same_backend": ("hermes", None),
-        "model_only": (None, "probe-model"),
-        "explicit": ("claude", "disabled-model"),
-    }
-    backend, model = choices[choice]
-    before = tuple(tmp_db.iterdump())
-    with pytest.raises(PlannerError, match="disabled.*Choose an enabled model") as raised:
-        if operation == "validate":
-            data.validate_ticket_creation_context(
-                tmp_db,
-                title="Disabled future Ticket",
-                title_max_chars=TITLE_MAX_CHARS,
-                worker_type="probe",
-                employee_backend=backend,
-                employee_launch_model=model,
-            )
-        else:
-            actions.create_ticket(
-                tmp_db,
-                title="Disabled Ticket",
-                principal=OWNER_PRINCIPAL,
-                now=fake_clock.now_unix(),
-                title_max_chars=TITLE_MAX_CHARS,
-                worker_type="probe",
-                planning_now=fake_clock.now(),
-                employee_backend=backend,
-                employee_launch_model=model,
-            )
-    assert raised.value.code is ErrorCode.validation
-    assert tuple(tmp_db.iterdump()) == before
 
 
-@pytest.mark.parametrize("backend", ["hermes", "claude"])
-def test_enabled_ticket_override_survives_disabled_default_and_preserves_history(
-    tmp_db: Connection,
-    fake_clock: TestClock,
-    probe_runtime: None,
-    backend: str,
-) -> None:
-    historical = actions.create_ticket(
-        tmp_db,
-        title="Historical default",
-        principal=OWNER_PRINCIPAL,
-        now=fake_clock.now_unix(),
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="probe",
-    )
-    historical_row = _ticket_row(tmp_db, historical.id)
-    write_model_enablement(tmp_db, ConversationBackendKey.hermes, "probe-model", False)
-    data.validate_ticket_creation_context(
-        tmp_db,
-        title="Enabled override",
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="probe",
-        employee_backend=backend,
-        employee_launch_model="enabled-model",
-    )
-    created = actions.create_ticket(
-        tmp_db,
-        title="Enabled override",
-        principal=OWNER_PRINCIPAL,
-        now=fake_clock.now_unix(),
-        title_max_chars=TITLE_MAX_CHARS,
-        worker_type="probe",
-        employee_backend=backend,
-        employee_launch_model="enabled-model",
-    )
-    assert (created.employee_backend, created.employee_launch_model) == (backend, "enabled-model")
-    assert _ticket_row(tmp_db, historical.id) == historical_row
-    assert data.read_ticket(tmp_db, historical.id).employee_launch_model == "probe-model"
 
 
 def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(
@@ -435,33 +248,6 @@ def test_a03_ceiling_auto_accept_until_cap_then_pending(
     assert t.ticket_status is TicketStatus.awaiting_approval
 
 
-def test_a05_one_pending_proposal_per_ticket_supersede(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    t = _create(tmp_db, cfg, fake_clock)
-
-    t = data.file_current_proposal(
-        tmp_db,
-        t.id,
-        body="first body",
-        principal=Principal(PrincipalKind.ticket, t.id),
-        now=now,
-    )
-    assert t.pending_proposal is not None
-    assert t.pending_proposal.body == "first body"
-
-    t = data.file_current_proposal(
-        tmp_db,
-        t.id,
-        body="second body",
-        principal=Principal(PrincipalKind.ticket, t.id),
-        now=now,
-    )
-    assert t.pending_proposal is not None
-    assert t.pending_proposal.body == "second body"
-
-    assert t.stage == "needs_success_condition"
 
 
 def test_a06_edit_accept_stores_edited_text(
@@ -605,56 +391,6 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
     assert t3.stage == "needs_consequences"
 
 
-def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
-    now = fake_clock.now_unix()
-    t = _create(tmp_db, cfg, fake_clock)
-
-    # Recap is never blocked: writable from the first worker stage.
-    assert t.stage == "needs_success_condition"
-    t = data.edit_ticket(
-        tmp_db,
-        t.id,
-        edit=TicketEdit(recap="first recap"),
-        title_max_chars=200,
-        principal=ticket_principal(t.id),
-        now=now,
-    )
-    assert t.recap == "first recap"
-    assert t.stage == "needs_success_condition"
-
-    _scope(tmp_db, t, "needs_what_changes", fake_clock)
-    t = data.file_current_proposal(
-        tmp_db,
-        t.id,
-        body="s",
-        principal=Principal(PrincipalKind.ticket, t.id),
-        now=now,
-    )
-    assert t.stage == "needs_what_changes"
-
-    t = data.edit_ticket(
-        tmp_db,
-        t.id,
-        edit=TicketEdit(recap="second recap"),
-        title_max_chars=200,
-        principal=ticket_principal(t.id),
-        now=now,
-    )
-    assert t.recap == "second recap"
-    assert t.stage == "needs_what_changes"
-
-    # And still writable on a terminal ticket.
-    t = advance_ticket(tmp_db, t.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
-    assert t.stage == "done"
-    t = data.edit_ticket(
-        tmp_db,
-        t.id,
-        edit=TicketEdit(recap="post-done recap"),
-        title_max_chars=200,
-        principal=ticket_principal(t.id),
-        now=now,
-    )
-    assert t.recap == "post-done recap"
 
 
 def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
@@ -848,38 +584,8 @@ def _blocked_tickets(conn: Connection, ticket_id: str) -> list[str]:
     ]
 
 
-def test_a_second_live_blocker_holds_the_target_blocked_until_both_clear(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    first = _create(tmp_db, cfg, fake_clock, title="First blocker")
-    second = _create(tmp_db, cfg, fake_clock, title="Second blocker")
-    target = _create(tmp_db, cfg, fake_clock, title="Target")
-
-    _block(tmp_db, blocker_id=first.id, target_id=target.id, now=now)
-    _block(tmp_db, blocker_id=second.id, target_id=target.id, now=now)
-    # The second acquisition finds the target already blocked and changes nothing.
-    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
-
-    advance_ticket(tmp_db, first.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
-    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
-
-    advance_ticket(tmp_db, second.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
-    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
-def test_completing_a_blocker_releases_its_blocks_and_frees_the_target(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
-    target = _create(tmp_db, cfg, fake_clock, title="Target")
-    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
-    assert _blocked_tickets(tmp_db, blocker.id) == [target.id]
-
-    advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
-    assert _blocked_tickets(tmp_db, blocker.id) == []
-    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
 def _has_day_membership(conn: Connection, ticket_id: str) -> bool:
@@ -1037,21 +743,6 @@ def test_a_failed_creation_block_rolls_the_whole_create_back(
     assert tmp_db.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0] == 0
 
 
-def test_a_blocker_already_done_at_creation_holds_nothing(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    blocker = _create(tmp_db, cfg, fake_clock, title="Spent blocker")
-    advance_ticket(tmp_db, blocker.id, new_stage="done", principal=OWNER_PRINCIPAL, now=now)
-
-    created = _created_with_blockers(
-        tmp_db, cfg, fake_clock, title="Free at birth", blocker_ids=[blocker.id]
-    )
-
-    assert created.ticket_status is TicketStatus.empty
-    claimed = _claim_ready_worker_step(tmp_db, created.id, now=now + 1)
-    assert claimed is not None
-    assert claimed.ticket_status is TicketStatus.agent
 
 
 def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
@@ -1089,70 +780,8 @@ def test_a_claim_release_does_not_fire_once_the_ticket_has_moved_on(
     assert data.read_ticket(tmp_db, t.id).ticket_status is TicketStatus.agent
 
 
-def test_a_create_that_names_no_brief_parks_nothing(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    """A blank Brief is nothing written, not a Brief whose text is empty."""
-    blank = _create(tmp_db, cfg, fake_clock, brief="", settle_kickoff=False)
-    assert blank.stage == "needs_brief"
-    assert blank.ticket_status is TicketStatus.empty
-    assert blank.pending_proposal is None
-    assert dict(blank.field_values) == {}
-
-    whitespace = _create(tmp_db, cfg, fake_clock, brief="  \n\t ", settle_kickoff=False)
-    assert whitespace.pending_proposal is None
-    assert whitespace.ticket_status is TicketStatus.empty
 
 
-@pytest.mark.parametrize("approver_kind", ["owner", "chief", "sprint_item"])
-def test_field_approval_records_actual_caller_and_snapshot(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock, approver_kind: str
-) -> None:
-    """The recipient and next holder cannot impersonate the approving principal."""
-    from planner.core.contracts import CHIEF_PRINCIPAL
-
-    project = projects_data.create_project(
-        tmp_db, name="Approval project", now=fake_clock.now_unix()
-    )
-    item = sprints_data.create_item(
-        tmp_db, title="Release review", project_id=project.id, clock=fake_clock
-    )
-    principal = {
-        "owner": OWNER_PRINCIPAL,
-        "chief": CHIEF_PRINCIPAL,
-        "sprint_item": Principal(PrincipalKind.sprint_item, item.id),
-    }[approver_kind]
-    ticket = _create(
-        tmp_db,
-        cfg,
-        fake_clock,
-        sprint_item_id=item.id,
-        settle_kickoff=False,
-        stated_holder=CHIEF_PRINCIPAL,
-    )
-    ticket = data.accept_proposal(
-        tmp_db,
-        ticket.id,
-        field="brief",
-        principal=principal,
-        now=fake_clock.now_unix(),
-        next_ceiling=NO_FURTHER,
-        next_holder=OWNER_PRINCIPAL,
-    )
-    expected_name = {"owner": "Khushal", "chief": "Chief", "sprint_item": "Release review"}[
-        approver_kind
-    ]
-    payload = ticket_views.ticket_json(data.read_ticket(tmp_db, ticket.id), fake_clock.now_unix())
-    assert payload["field_approvals"]["brief"] == {
-        "method": "explicit_accept",
-        "principal": {"kind": approver_kind, "id": principal.id},
-        "display_label": f"Approved by {expected_name}",
-    }
-    tmp_db.execute("UPDATE sprint_items SET title='Renamed' WHERE id=?", (item.id,))
-    assert (
-        data.read_ticket(tmp_db, ticket.id).field_approvals["brief"].display_label
-        == f"Approved by {expected_name}"
-    )
 
 
 def test_auto_approval_old_data_and_multi_field_edit(

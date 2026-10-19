@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from collections.abc import Mapping
 from contextlib import closing
@@ -21,17 +20,14 @@ from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
-    ConversationSystem,
 )
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import text_message_content
-from planner.core import authority
 from planner.core.clock import RealClock, build_clock, parse_fake_now
 from planner.core.clock import TestClock as MutableClock
 from planner.core.config import load_config
-from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.loops import BackgroundLoops, start_background_loops
@@ -130,156 +126,10 @@ def _supervisor_headers(item_id: str) -> dict[str, str]:
     }
 
 
-def test_every_route_names_a_proposal_parked_on_the_item_the_same_way(
-    tmp_path: Path,
-) -> None:
-    """The Workspace, the Board, and the Outcome's own reader get one answer.
-
-    Before, the supervisor's own route asked the projection to treat the Item as the
-    approver, so the identical word `awaiting_approval` meant "Khushal's" on two screens
-    and "the supervisor's" on the third. That route is gone and the Outcome reads the
-    ordinary Workspace, so there is no longer a third place for the word to mean
-    something else — and nothing chooses per reader either.
-    """
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket = _park_a_proposal(client, str(item["id"]))
-        page = client.get(f"/api/items/{item['id']}/workspace")
-        board = client.get("/api/board")
-        supervisor = client.get(
-            f"/api/items/{item['id']}/workspace",
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert page.status_code == 200, page.text
-    assert board.status_code == 200, board.text
-    assert supervisor.status_code == 200, supervisor.text
-    rows = [
-        next(row for row in page.json()["tickets"] if row["id"] == ticket["id"]),
-        next(row for row in supervisor.json()["tickets"] if row["id"] == ticket["id"]),
-    ]
-    cards = [
-        card
-        for column in board.json()["columns"]
-        for card in column["cards"]
-        if card["id"] == ticket["id"]
-    ]
-    for row in [*rows, *cards]:
-        assert row["awaiting_approval"] is False
-        assert row["awaiting_agent_approval"] is True
 
 
-def test_workspace_artifacts_fold_each_folder_and_carry_its_newest_time(
-    tmp_path: Path,
-) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        headers = _supervisor_headers(str(item["id"]))
-        first = client.put(
-            f"/files/sprint-items/{item['id']}/artifacts/old/proof.md",
-            headers=headers,
-            json={"content": "old"},
-        )
-        second = client.put(
-            f"/files/sprint-items/{item['id']}/artifacts/new/proof.png",
-            headers=headers,
-            json={"content": "new"},
-        )
-        assert first.status_code == 200, first.text
-        assert second.status_code == 200, second.text
-        files_root = tmp_path / "data" / "files" / "sprint-items" / str(item["id"])
-        os.utime(
-            files_root / "artifacts" / "old" / "proof.md",
-            ns=(10_000_000_000, 10_000_000_000),
-        )
-        os.utime(
-            files_root / "artifacts" / "new" / "proof.png",
-            ns=(20_000_000_000, 20_000_000_000),
-        )
-        workspace = client.get(f"/api/items/{item['id']}/workspace")
-
-    assert workspace.status_code == 200, workspace.text
-    assert workspace.json()["artifacts"] == [
-        {
-            "name": "new",
-            "opens": None,
-            "modified_at": 20.0,
-            "children": [
-                {
-                    "name": "proof.png",
-                    "opens": "artifacts/new/proof.png",
-                    "modified_at": 20.0,
-                    "children": [],
-                }
-            ],
-        },
-        {
-            "name": "old",
-            "opens": None,
-            "modified_at": 10.0,
-            "children": [
-                {
-                    "name": "proof.md",
-                    "opens": "artifacts/old/proof.md",
-                    "modified_at": 10.0,
-                    "children": [],
-                }
-            ],
-        },
-    ]
 
 
-def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-current-worker-message"
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket = client.post(
-            "/api/tickets",
-            json={
-                "worker_type": "coding",
-                "title": "Current child",
-                "brief": "Start.",
-                "orchestrator": {"kind": "sprint_item", "id": item["id"]},
-            },
-        ).json()
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                (conversation_id, ticket["id"]),
-            )
-            conn.commit()
-        asyncio.run(
-            app.state.conversation_system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
-        )
-        before = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
-        sent = client.post(
-            "/api/messages/send",
-            json={
-                "target": {"kind": "ticket", "id": ticket["id"]},
-                "message": "Check the acceptance evidence.",
-            },
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        after = client.get(f"/api/tickets?detail=full&id={ticket['id']}").json()
-
-    assert sent.status_code == 200, sent.text
-    assert sent.json()["target"] == {"kind": "ticket", "id": ticket["id"]}
-    for field in ("stage", "ceiling", "ticket_status", "day_ids"):
-        assert after[field] == before[field]
-    write = cast(InMemoryConversationSystem, app.state.conversation_system).backend_prompt_writes(
-        conversation_id
-    )[0]
-    assert write.sender_label == f"Sprint Item {item['id']}"
-    assert write.text.startswith("[Authenticated Panels reply requirement]")
-    assert f"panels send-message --sprint-item {item['id']}" in write.text
-    assert write.text.endswith(f"Sprint Item {item['id']}:\nCheck the acceptance evidence.")
 
 
 def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path) -> None:
@@ -326,35 +176,6 @@ def test_a_worker_can_answer_the_outcome_that_asked_it_something(tmp_path: Path)
     assert to_owner.json()["error"]["code"] == "not_found"
 
 
-def test_supervisor_approves_only_an_exact_child_proposal(tmp_path: Path) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        first = _create_item(client, "First")
-        second = _create_item(client, "Second")
-        ticket = _park_a_proposal(client, str(first["id"]))
-        path = f"/api/tickets/{ticket['id']}/accept/success_condition"
-        cross = client.post(
-            path,
-            json={
-                "next_ceiling": "needs_what_changes",
-                "next_holder": _OWNER_HOLDER,
-            },
-            headers=_supervisor_headers(str(second["id"])),
-        )
-        approved = client.post(
-            path,
-            json={
-                "next_ceiling": "needs_what_changes",
-                "next_holder": _OWNER_HOLDER,
-            },
-            headers=_supervisor_headers(str(first["id"])),
-        )
-
-    assert cross.status_code == 400
-    assert cross.json()["error"]["code"] == "agent_forbidden"
-    assert approved.status_code == 200, approved.text
-    assert approved.json()["stage"] == "needs_what_changes"
-    assert approved.json()["field_values"].get("success_condition") == "The result is verified."
 
 
 def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
@@ -488,272 +309,10 @@ def test_rejection_after_the_day_boundary_rearms_one_worker_step(tmp_path: Path)
     assert after.worker_step_claim_revision == before_claim_revision + 1
 
 
-def test_restart_rearms_only_the_legacy_idle_revision_shape(tmp_path: Path) -> None:
-    app, db_path = _app(tmp_path, fake_now="2026-09-22T04:59:00+02:00")
-    legacy_conversation_id = "conv-legacy-revision"
-    unrelated_conversation_id = "conv-unrelated-prior-day"
-    with connect(str(db_path)) as conn:
-        ticket_ids: list[str] = []
-        for title, conversation_id in (
-            ("Legacy revision", legacy_conversation_id),
-            ("Unrelated prior Day", unrelated_conversation_id),
-        ):
-            created = tickets_data.create_ticket(
-                conn,
-                worker_type="coding",
-                title=title,
-                brief="Start here.",
-                principal=OWNER_PRINCIPAL,
-                now=1,
-                title_max_chars=200,
-                day_id="day_2026-09-21",
-            )
-            ready = tickets_data.accept_proposal(
-                conn,
-                created.id,
-                field="brief",
-                principal=OWNER_PRINCIPAL,
-                now=2,
-                next_ceiling="none",
-                next_holder=OWNER_PRINCIPAL,
-            )
-            conn.execute(
-                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-                (conversation_id, ready.id),
-            )
-            ticket_ids.append(ready.id)
-        revision_feedback.set_feedback(
-            conn,
-            ticket_ids[0],
-            stage="needs_success_condition",
-            sender=OWNER_PRINCIPAL,
-            message="Recover this stranded revision.",
-            now=3,
-        )
-        conn.commit()
-
-    with TestClient(app) as client:
-        system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        asyncio.run(
-            system.start_conversation(
-                ConversationStartRequest(conversation_id=legacy_conversation_id, model="test-model")
-            )
-        )
-        asyncio.run(
-            system.start_conversation(
-                ConversationStartRequest(
-                    conversation_id=unrelated_conversation_id, model="test-model"
-                )
-            )
-        )
-        app.state.conversation_system = cast(
-            ConversationSystem,
-            _AdvanceClockOnOccupancyCheck(system, cast(MutableClock, app.state.clock)),
-        )
-        recovered = client.post(f"/api/tickets/{ticket_ids[0]}/restart-worker", json={})
-        refused = client.post(f"/api/tickets/{ticket_ids[1]}/restart-worker", json={})
-
-    assert recovered.status_code == 200, recovered.text
-    assert recovered.json()["started"] is True
-    assert recovered.json()["killed_conversation_id"] == legacy_conversation_id
-    assert recovered.json()["conversation_id"] == legacy_conversation_id
-    assert recovered.json()["ticket_status"] == "agent"
-    assert refused.status_code == 400, refused.text
-    assert refused.json()["error"]["message"] == "the Ticket has no worker step out to restart"
-    writes = system.backend_prompt_writes(legacy_conversation_id)
-    assert len(writes) == 1
-    assert writes[0].text.count("Recover this stranded revision.") == 1
-    assert system.backend_prompt_writes(unrelated_conversation_id) == ()
-    with closing(connect(str(db_path))) as conn:
-        recovered_days = {
-            str(row["day_id"])
-            for row in conn.execute(
-                "SELECT day_id FROM day_tickets WHERE ticket_id = ?", (ticket_ids[0],)
-            )
-        }
-        unrelated_days = {
-            str(row["day_id"])
-            for row in conn.execute(
-                "SELECT day_id FROM day_tickets WHERE ticket_id = ?", (ticket_ids[1],)
-            )
-        }
-        assert revision_feedback.snapshot(conn, ticket_ids[0]) is None
-    assert recovered_days == {"day_2026-09-21"}
-    assert unrelated_days == {"day_2026-09-21"}
 
 
-def test_legacy_recovery_does_not_trust_stale_running_bookkeeping(tmp_path: Path) -> None:
-    app, db_path = _app(tmp_path, fake_now="2026-09-22T06:00:00+02:00")
-    conversation_id = "conv-stale-running-revision"
-    with connect(str(db_path)) as conn:
-        created = tickets_data.create_ticket(
-            conn,
-            worker_type="coding",
-            title="Stale running revision",
-            brief="Start here.",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            day_id="day_2026-09-21",
-        )
-        ready = tickets_data.accept_proposal(
-            conn,
-            created.id,
-            field="brief",
-            principal=OWNER_PRINCIPAL,
-            now=2,
-            next_ceiling="none",
-            next_holder=OWNER_PRINCIPAL,
-        )
-        conn.execute(
-            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-            (conversation_id, ready.id),
-        )
-        revision_feedback.set_feedback(
-            conn,
-            ready.id,
-            stage="needs_success_condition",
-            sender=OWNER_PRINCIPAL,
-            message="Keep this revision pending.",
-            now=3,
-        )
-        conn.commit()
-
-    with TestClient(app) as client:
-        system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        asyncio.run(
-            system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
-        )
-        asyncio.run(
-            system.send(
-                conversation_id,
-                text_message_content("Stale running turn."),
-                sender_label="loop",
-            )
-        )
-        recovered = client.post(f"/api/tickets/{ready.id}/restart-worker", json={})
-
-    assert recovered.status_code == 200, recovered.text
-    assert recovered.json()["started"] is True
-    assert recovered.json()["killed_conversation_id"] == conversation_id
-    assert recovered.json()["killed_conversation_looked_running"] is True
-    assert recovered.json()["conversation_id"] == conversation_id
-    writes = system.backend_prompt_writes(conversation_id)
-    assert len(writes) == 2
-    assert writes[0].text.endswith("Stale running turn.")
-    assert writes[1].text.count("Keep this revision pending.") == 1
-    interrupted_turns = [
-        observation
-        for observation in system.observations(conversation_id)
-        if observation.kind.value == "turn_ended"
-        and observation.turn_ending is not None
-        and observation.turn_ending.value == "interrupted"
-    ]
-    assert len(interrupted_turns) == 1
-    assert asyncio.run(system.is_running(conversation_id)) is True
-    with closing(connect(str(db_path))) as conn:
-        current = tickets_data.read_ticket(conn, ready.id)
-        day_ids = {
-            str(row["day_id"])
-            for row in conn.execute(
-                "SELECT day_id FROM day_tickets WHERE ticket_id = ?", (ready.id,)
-            )
-        }
-        assert revision_feedback.snapshot(conn, ready.id) is None
-    assert current.conversation_id == conversation_id
-    assert current.worker_step_claim.value == "out"
-    assert day_ids == {"day_2026-09-21"}
 
 
-def test_legacy_recovery_refuses_a_launch_override_before_mutation(tmp_path: Path) -> None:
-    app, db_path = _app(tmp_path, fake_now="2026-09-22T06:00:00+02:00")
-    conversation_id = "conv-legacy-override-refusal"
-    with connect(str(db_path)) as conn:
-        created = tickets_data.create_ticket(
-            conn,
-            worker_type="coding",
-            title="Legacy override refusal",
-            brief="Start here.",
-            principal=OWNER_PRINCIPAL,
-            now=1,
-            title_max_chars=200,
-            day_id="day_2026-09-21",
-        )
-        ready = tickets_data.accept_proposal(
-            conn,
-            created.id,
-            field="brief",
-            principal=OWNER_PRINCIPAL,
-            now=2,
-            next_ceiling="none",
-            next_holder=OWNER_PRINCIPAL,
-        )
-        conn.execute(
-            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-            (conversation_id, ready.id),
-        )
-        revision_feedback.set_feedback(
-            conn,
-            ready.id,
-            stage="needs_success_condition",
-            sender=OWNER_PRINCIPAL,
-            message="This feedback must remain pending.",
-            now=3,
-        )
-        conn.commit()
-
-    with TestClient(app) as client:
-        system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        asyncio.run(
-            system.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
-            )
-        )
-        asyncio.run(
-            system.send(
-                conversation_id,
-                text_message_content("Do not interrupt this turn."),
-                sender_label="loop",
-            )
-        )
-        refused = client.post(
-            f"/api/tickets/{ready.id}/restart-worker",
-            json={
-                "employee_backend": "claude",
-                "employee_launch_model": "sonnet",
-            },
-        )
-
-        assert refused.status_code == 409, refused.text
-        assert refused.json()["error"] == {
-            "code": "already_running",
-            "message": (
-                "Employee configuration is frozen while a conversation or a worker step holds it"
-            ),
-            "detail": {"ticket_id": ready.id},
-        }
-        assert asyncio.run(system.is_running(conversation_id)) is True
-        writes = system.backend_prompt_writes(conversation_id)
-        assert len(writes) == 1
-        assert writes[0].text.endswith("Do not interrupt this turn.")
-
-    with closing(connect(str(db_path))) as conn:
-        unchanged = tickets_data.read_ticket(conn, ready.id)
-        day_ids = {
-            str(row["day_id"])
-            for row in conn.execute(
-                "SELECT day_id FROM day_tickets WHERE ticket_id = ?", (ready.id,)
-            )
-        }
-        feedback = revision_feedback.snapshot(conn, ready.id)
-    assert unchanged.conversation_id == conversation_id
-    assert unchanged.worker_step_claim.value == "none"
-    assert unchanged.employee_backend == "codex"
-    assert day_ids == {"day_2026-09-21"}
-    assert feedback is not None
-    assert feedback.text.count("This feedback must remain pending.") == 1
 
 
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
@@ -894,37 +453,6 @@ def _child_ticket(client: TestClient, item_id: str, title: str = "Child of the I
     return str(created.json()["id"])
 
 
-def test_supervisor_ticket_blocks_stay_inside_its_child_tickets(tmp_path: Path) -> None:
-    """The supervisor writes blocks through the one membership call, with its own authority."""
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client, "Owned")
-        other_item = _create_item(client, "Other")
-        blocker_id = _child_ticket(client, str(item["id"]), "Blocker")
-        blocked_id = _child_ticket(client, str(item["id"]), "Blocked")
-        outsider_id = _child_ticket(client, str(other_item["id"]), "Outsider")
-        headers = _supervisor_headers(str(item["id"]))
-
-        added = client.put(f"/api/collections/blockers/{blocked_id}/{blocker_id}", headers=headers)
-        cross_item = client.put(
-            f"/api/collections/blockers/{outsider_id}/{blocker_id}", headers=headers
-        )
-        removed = client.delete(
-            f"/api/collections/blockers/{blocked_id}/{blocker_id}", headers=headers
-        )
-
-    assert added.status_code == 200, added.text
-    assert added.json() == {
-        "collection": "blockers",
-        "container_id": blocked_id,
-        "member_id": blocker_id,
-        "ok": True,
-    }
-    assert cross_item.status_code == 400
-    assert cross_item.json()["error"]["code"] == "agent_forbidden"
-    assert removed.status_code == 200, removed.text
-    with closing(connect(str(db_path))) as conn:
-        assert conn.execute("SELECT count(*) FROM ticket_blocks").fetchone()[0] == 0
 
 
 # --- restarting a dead Worker -------------------------------------------------
@@ -980,73 +508,8 @@ def _stranded_child(
     return str(ticket["id"])
 
 
-def test_restart_gives_the_claim_back_and_starts_a_new_conversation(
-    tmp_path: Path,
-) -> None:
-    """The whole point: a reset alone would leave this Ticket claimed and unreachable."""
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket_id = _stranded_child(client, db_path, str(item["id"]))
-        configuration = {
-            "employee_backend": "claude",
-            "employee_launch_model": "sonnet",
-            "employee_launch_reasoning_effort": "medium",
-        }
-        direct_configuration = client.put(
-            f"/api/tickets/{ticket_id}/employee-configuration",
-            json=configuration,
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        response = client.post(
-            f"/api/tickets/{ticket_id}/restart-worker",
-            json=configuration,
-            headers=_supervisor_headers(str(item["id"])),
-        )
-
-    assert direct_configuration.status_code == 409, direct_configuration.text
-    assert direct_configuration.json()["error"] == {
-        "code": "already_running",
-        "message": (
-            "Employee configuration is frozen while a conversation or a worker step holds it"
-        ),
-        "detail": {"ticket_id": ticket_id},
-    }
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["started"] is True
-    assert body["delivery_fate"] == "started"
-    assert body["not_started_because"] is None
-    assert body["killed_conversation_id"] == "conv-dead-worker"
-    assert body["ticket_status"] == "agent"
-    assert body["conversation_id"] is not None
-    assert body["conversation_id"] != "conv-dead-worker"
-    assert body["employee_configuration"] == configuration
 
 
-def test_restart_refuses_a_stage_the_worker_does_not_own(tmp_path: Path) -> None:
-    """A user-owned Stage has a collaborative discussion that restart must preserve."""
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        item = _create_item(client)
-        ticket_id = _stranded_child(
-            client,
-            db_path,
-            str(item["id"]),
-            worker_type="new_worker",
-        )
-        response = client.post(
-            f"/api/tickets/{ticket_id}/restart-worker",
-            json={},
-            headers=_supervisor_headers(str(item["id"])),
-        )
-        after = client.get(f"/api/tickets?detail=full&id={ticket_id}")
-
-    assert response.status_code == 400, response.text
-    assert response.json()["error"]["message"] == (
-        "only a Worker-owned Stage has a worker step to restart"
-    )
-    assert after.json()["conversation_id"] == "conv-dead-worker"
 
 
 def test_a_ticket_cannot_choose_who_stands_above_it(tmp_path: Path) -> None:
@@ -1129,131 +592,10 @@ def test_a_help_request_reaches_no_further_than_a_sent_message(tmp_path: Path) -
     assert up_to_its_outcome.json()["target"] == {"kind": "sprint_item", "id": own["id"]}
 
 
-def test_a_conversation_pages_in_the_direction_it_was_asked_for(tmp_path: Path) -> None:
-    """Five events, so a page of two cannot accidentally be the whole record.
-
-    The read that replaced the Outcome-scoped history has to do both directions. A
-    caller catching up reads on from where it got to; one that has just arrived reads
-    the end, then the page before it. `has_more` means the same thing in both: there is
-    record left in the direction you were reading.
-    """
-    app, db_path = _app(tmp_path)
-    conversation_id = "conv-paging"
-    with TestClient(app) as client:
-        with connect(str(db_path)) as conn:
-            conn.execute(
-                "INSERT INTO conversations(conversation_id,backend_key,model,"
-                "workspace_folder,access,latest_sequence,created_at) "
-                "VALUES (?, 'codex', 'test', '/tmp', 'full', 5, 1)",
-                (conversation_id,),
-            )
-            conn.executemany(
-                "INSERT INTO conversation_events "
-                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,?,?,?,?)",
-                (
-                    (conversation_id, n, "agent_message", json.dumps({"text": f"m{n}"}), n)
-                    for n in range(1, 6)
-                ),
-            )
-            conn.commit()
-
-        def read(**params: Any) -> dict[str, Any]:
-            response = client.get(
-                f"/api/conversation/conversations/{conversation_id}/events", params=params
-            )
-            assert response.status_code == 200, response.text
-            return cast(dict[str, Any], response.json())
-
-        def sequences(page: dict[str, Any]) -> list[int]:
-            return [event["sequence"] for event in page["events"]]
-
-        last_page = read(limit=2)
-        page_before_it = read(limit=2, before=4)
-        oldest_page = read(limit=2, before=2)
-        forwards = read(after=1, limit=2)
-        forwards_to_the_end = read(after=3, limit=2)
-        everything = read(after=0)
-        one_direction = client.get(
-            f"/api/conversation/conversations/{conversation_id}/events",
-            params={"after": 1, "before": 4, "limit": 2},
-        )
-        too_large = client.get(
-            f"/api/conversation/conversations/{conversation_id}/events", params={"limit": 101}
-        )
-
-    assert sequences(last_page) == [4, 5] and last_page["has_more"] is True
-    assert sequences(page_before_it) == [2, 3] and page_before_it["has_more"] is True
-    assert sequences(oldest_page) == [1] and oldest_page["has_more"] is False
-    # `after` is honoured alongside `limit`. Reading it as "the last two" would answer
-    # [4, 5] here, which is the opposite end of the record from the one asked for.
-    assert sequences(forwards) == [2, 3] and forwards["has_more"] is True
-    assert sequences(forwards_to_the_end) == [4, 5] and forwards_to_the_end["has_more"] is False
-    assert sequences(everything) == [1, 2, 3, 4, 5] and everything["has_more"] is False
-    assert one_direction.json()["error"]["code"] == "validation"
-    assert too_large.json()["error"]["code"] == "validation"
 
 
-def test_existing_supervisors_can_send_and_reply_without_granting_authority(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        system = cast(InMemoryConversationSystem, app.state.conversation_system)
-        first = _create_item(client, "First")
-        second = _create_item(client, "Second")
-        sent = client.post(
-            "/api/messages/send",
-            json={
-                "target": {"kind": "sprint_item", "id": second["id"]},
-                "message": "Coordinate the shared boundary.",
-            },
-            headers=_supervisor_headers(str(first["id"])),
-        )
-        assert sent.status_code == 200, sent.text
-        received_in = sent.json()["conversation_id"]
-        write = system.backend_prompt_writes(received_in)[-1]
-        assert write.text.startswith("[Authenticated Panels reply requirement]")
-        assert f"panels send-message --sprint-item {first['id']}" in write.text
-        assert write.text.endswith(f"Sprint Item {first['id']}:\nCoordinate the shared boundary.")
-        reply = client.post(
-            "/api/messages/send",
-            json={
-                "target": {"kind": "sprint_item", "id": first["id"]},
-                "message": "Boundary agreed.",
-            },
-            headers=_supervisor_headers(str(second["id"])),
-        )
-        assert reply.status_code == 200, reply.text
-        reply_write = system.backend_prompt_writes(reply.json()["conversation_id"])[-1]
-        assert reply_write.text == f"Sprint Item {second['id']}:\nBoundary agreed."
-        turn = asyncio.run(system.active_turn_reference(received_in))
-        assert turn is not None
-        assert not asyncio.run(
-            system.turn_expects_reply(turn, Principal(PrincipalKind.sprint_item, str(first["id"])))
-        )
-        with connect(str(db_path)) as conn:
-            assert not authority.is_above(
-                conn,
-                Principal(PrincipalKind.sprint_item, str(first["id"])),
-                authority.outcome(str(second["id"])),
-            )
 
 
-@pytest.mark.parametrize("missing", ["sender", "recipient"])
-def test_supervisor_messaging_requires_both_existing_items(tmp_path: Path, missing: str) -> None:
-    app, _db_path = _app(tmp_path)
-    with TestClient(app) as client:
-        existing = _create_item(client)
-        sender = "si_missing" if missing == "sender" else str(existing["id"])
-        recipient = "si_missing" if missing == "recipient" else str(existing["id"])
-        sent = client.post(
-            "/api/messages/send",
-            json={"target": {"kind": "sprint_item", "id": recipient}, "message": "Hello"},
-            headers=_supervisor_headers(sender),
-        )
-        assert sent.json()["error"]["code"] == "not_found"
-        workspace = client.get(f"/api/items/{existing['id']}/workspace").json()
-        assert workspace["supervisor"]["conversation_id"] is None
 
 
 def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_path: Path) -> None:

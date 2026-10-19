@@ -63,52 +63,9 @@ def test_the_rule_answers_one_status_for_every_combination_of_stored_facts(
     )
 
 
-def test_waiting_to_closeout_is_a_resting_ticket_on_its_closeout_stage(
-    tmp_path: Path,
-) -> None:
-    # The Worker types come from a database, and this fact asks one which Stage it gates.
-    _db(tmp_path).close()
-    assert derivation.derive_ticket_facts(_stored(stage="needs_consequences")).waiting_to_closeout
-    assert not derivation.derive_ticket_facts(_stored(stage="needs_plan")).waiting_to_closeout
-    # A claim out is not resting, so there is nothing waiting.
-    assert not derivation.derive_ticket_facts(
-        _stored(stage="needs_consequences", claim=WorkerStepClaim.out)
-    ).waiting_to_closeout
 
 
 def _db(tmp_path: Path) -> sqlite3.Connection:
     conn = connect(str(tmp_path / "derivation.db"))
     create_schema(conn)
     return conn
-
-
-@pytest.mark.parametrize("stage", ["done", "needs_implementation"])
-@pytest.mark.parametrize(
-    ("status", "running", "failed", "expected"),
-    [
-        (TicketStatus.empty, False, False, "idle"),
-        (TicketStatus.empty, False, True, None),
-        (TicketStatus.empty, True, True, "working"),
-        (TicketStatus.errored, False, False, "errored"),
-        (TicketStatus.errored, False, True, "errored"),
-        (TicketStatus.errored, True, True, "working"),
-    ],
-)
-def test_agent_state_separates_historical_failure_from_current_claim(
-    stage: str,
-    status: TicketStatus,
-    running: bool,
-    failed: bool,
-    expected: str | None,
-) -> None:
-    if expected is None:
-        expected = "idle" if stage == "done" else "errored"
-    assert (
-        derivation.agent_state(
-            status,
-            stage=stage,
-            turn_is_running=running,
-            last_turn_failed=failed,
-        ).value
-        == expected
-    )

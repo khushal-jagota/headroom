@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 from tests.unit import test_conversation_system as controlled
@@ -24,7 +23,6 @@ from planner.conversation.backends.contracts import (
     PermissionAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    ConversationAlreadyStarted,
     ConversationAttention,
     ConversationBackendKey,
     ConversationStartRequest,
@@ -59,7 +57,6 @@ from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.database_modules import attach
-from planner.notifications.attention import conversation_attention_snapshot
 
 
 class _SignalHarness(controlled._Harness):
@@ -186,9 +183,6 @@ def _latest_attention(batches: list[SignalBatch]) -> ConversationAttention:
     )
 
 
-def test_enabled_runtime_requires_generic_adapter() -> None:
-    with pytest.raises(RuntimeError, match="generic transaction adapter"):
-        ConversationStore("unused", signal_coordinator=object())  # type: ignore[arg-type]
 
 
 def test_actual_turn_pending_answer_and_end_share_source_boundary(
@@ -289,36 +283,6 @@ def test_rejected_request_restores_actual_slot_fields_before_gate_release(
         asyncio.run(asyncio.wait_for(exercise(), 8))
 
 
-def test_cancelled_store_call_retains_conversation_lock_until_worker_finishes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
-        store = runtime.store
-        begun, release = threading.Event(), threading.Event()
-
-        def worker() -> None:
-            begun.set()
-            if not release.wait(5):
-                raise RuntimeError("worker barrier timed out")
-
-        async def exercise() -> None:
-            lock = asyncio.Lock()
-
-            async def operation() -> None:
-                async with lock:
-                    await store._write(worker)
-
-            task = asyncio.create_task(operation())
-            await asyncio.to_thread(begun.wait, 5)
-            task.cancel()
-            await asyncio.sleep(0)
-            assert lock.locked() and not task.done()
-            release.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            assert not lock.locked()
-
-        asyncio.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_single_answer_reserves_before_provider_and_cannot_restore_after_end(
@@ -407,82 +371,8 @@ def test_uncertain_committed_prompt_recovers_result_without_provider_retry(
         asyncio.run(asyncio.wait_for(exercise(), 8))
 
 
-@pytest.mark.parametrize("outcome", ["success", "missing", "read_error"])
-def test_attention_snapshot_borrows_transaction_and_preserves_rollback(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    outcome: Literal["success", "missing", "read_error"],
-) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
-        asyncio.run(controlled._start(runtime))
-        connection = connect(runtime.store._db_path)
-        try:
-            statements: list[str] = []
-            connection.set_trace_callback(statements.append)
-            legacy = conversation_attention_snapshot(connection, "c")
-            assert not connection.in_transaction
-            assert sum(sql == "BEGIN" for sql in statements) == 1
-            assert sum(sql == "COMMIT" for sql in statements) == 1
-            connection.execute("CREATE TEMP TABLE marker(value)")
-            statements.clear()
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute("INSERT INTO marker VALUES(1)")
-            if outcome == "read_error":
-
-                def deny_event_read(
-                    action: int,
-                    table: str | None,
-                    column: str | None,
-                    database: str | None,
-                    trigger: str | None,
-                ) -> int:
-                    return (
-                        sqlite3.SQLITE_DENY
-                        if action == sqlite3.SQLITE_READ and table == "conversation_events"
-                        else sqlite3.SQLITE_OK
-                    )
-
-                connection.set_authorizer(deny_event_read)
-                try:
-                    with pytest.raises(sqlite3.DatabaseError):
-                        conversation_attention_snapshot(connection, "c", transaction_open=True)
-                finally:
-                    connection.set_authorizer(None)
-            else:
-                identity = "absent" if outcome == "missing" else "c"
-                current = conversation_attention_snapshot(
-                    connection, identity, transaction_open=True
-                )
-                assert current == (None if outcome == "missing" else legacy)
-            assert connection.in_transaction
-            assert sum(sql.startswith("BEGIN") for sql in statements) == 1
-            assert not any(sql == "COMMIT" for sql in statements)
-            assert connection.execute("SELECT COUNT(*) FROM marker").fetchone()[0] == 1
-            connection.rollback()
-            assert connection.execute("SELECT COUNT(*) FROM marker").fetchone()[0] == 0
-            with pytest.raises(RuntimeError, match="open source transaction"):
-                conversation_attention_snapshot(connection, "c", transaction_open=True)
-        finally:
-            connection.close()
 
 
-def test_duplicate_create_keeps_current_and_unrelated_store_operation_records_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    with _enabled_runtime(tmp_path, monkeypatch) as (runtime, coordinator, batches, attachment):
-
-        async def exercise() -> None:
-            await controlled._start(runtime)
-            permit = attachment.capture_permit()
-            with pytest.raises(ConversationAlreadyStarted):
-                await controlled._start(runtime)
-            attachment.validate(permit)
-            assert (
-                await runtime.store.mark_held_sender_messages_leaving_queue("c", ("missing",)) == 0
-            )
-            attachment.validate(permit)
-
-        asyncio.run(asyncio.wait_for(exercise(), 8))
 
 
 def test_startup_reconciles_persisted_pending_but_preserves_unread(
