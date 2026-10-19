@@ -1,3 +1,4 @@
+# Disposable merge-queue proof entry: exercise the unchanged full deploy gate.
 name: Deploy exact commit
 on:
   push:
