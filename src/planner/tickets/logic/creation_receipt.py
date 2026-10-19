@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from planner.tickets.contracts import StageOwnershipMode, Ticket, TicketCreationReceipt
 from planner.tickets.logic.proposal_routing import ProposalRouteKind, route_proposal
-from planner.worker_types.contracts import BRIEF_FIELD_ID, WorkerTypeDefinition
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 def supervision_receipt(
@@ -46,8 +46,6 @@ def supervision_receipt(
         if autonomous
         else "No remaining Worker Stage runs unsupervised."
     )
-    if BRIEF_FIELD_ID in ticket.field_values:
-        parts.append("Brief is settled at creation.")
     user_stages = tuple(
         stage
         for stage in remaining

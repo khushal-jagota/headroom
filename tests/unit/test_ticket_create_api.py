@@ -461,15 +461,14 @@ def test_creation_receipt_matches_grant_and_excludes_settled_brief_from_remainin
     elif ceiling == "needs_consequences":
         assert receipt == (
             "Runs unsupervised: Success Condition, What Changes, Plan, Implementation. "
-            "Brief is settled at creation. First parks for review at Consequences, with Chief."
+            "First parks for review at Consequences, with Chief."
         )
         assert receipt.count("Success Condition") == 1
     else:
         assert receipt == (
             "Nothing in this grant ever parks for review. "
             "Runs unsupervised: Success Condition, What Changes, Plan, "
-            "Implementation, Consequences. "
-            "Brief is settled at creation."
+            "Implementation, Consequences."
         )
         assert receipt.startswith("Nothing in this grant ever parks for review.")
     detail = client.get(f"/api/tickets?detail=full&id={response.json()['id']}").json()
