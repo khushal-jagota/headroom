@@ -1233,7 +1233,7 @@ def ticket_create(
                 http.fail_validation("locale accepts one input source", as_json)
             structured_body["locale"] = locale
         data = http.send("POST", "/api/tickets", as_json=as_json, json_body=structured_body)
-        http.emit(data, as_json, f"{data['id']} {data['stage']}")
+        http.emit(data, as_json, f"{data['id']} {data['stage']}\n{data['supervision_receipt']}")
         return
     if title is None or worker_type is None:
         http.fail_validation(
@@ -1275,7 +1275,7 @@ def ticket_create(
         as_json=as_json,
         json_body=body,
     )
-    http.emit(data, as_json, f"{data['id']} {data['stage']}")
+    http.emit(data, as_json, f"{data['id']} {data['stage']}\n{data['supervision_receipt']}")
 
 
 @ticket.command("show")
