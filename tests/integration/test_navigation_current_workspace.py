@@ -14,7 +14,7 @@ from typing import cast
 
 import pytest
 from alembic import command
-from tests.integration.test_navigation_staging_merge import historical_snapshot
+from tests.integration.navigation_staging_merge_support import historical_snapshot
 from tests.support.navigation_current import (
     current_navigation_database,
     prepared_navigation_database,
