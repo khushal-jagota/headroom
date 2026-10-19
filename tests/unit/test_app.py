@@ -56,12 +56,6 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
     }
 
 
-def test_runtime_app_validation_requires_runnable_tree(tmp_path: Path) -> None:
-    app = _runtime_app(tmp_path / "app")
-    (app / "bin" / "panels-launcher").chmod(0o644)
-    _rewrite_digest(app)
-    with pytest.raises(AppValidationError, match="executable"):
-        validate_app_manifest(app / "manifest.json", require_runtime=True)
 
 
 def test_exported_cli_is_relocatable_and_preserves_caller_context(

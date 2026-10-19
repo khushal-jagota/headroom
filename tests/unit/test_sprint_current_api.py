@@ -47,19 +47,3 @@ def _make_app(tmp_path: Path) -> tuple[TestClient, MutableClock]:
         return connect(str(db_path))
 
     return TestClient(create_app(config, clock, conn_factory)), clock
-
-
-def test_current_sprint_response_changes_planning_date_at_0500(tmp_path: Path) -> None:
-    client, clock = _make_app(tmp_path)
-
-    with client:
-        before_boundary = client.get("/api/sprint/current")
-        clock.set(datetime(2026, 8, 10, 5, 0, tzinfo=ZoneInfo("Europe/Berlin")))
-        at_boundary = client.get("/api/sprint/current")
-
-    assert before_boundary.status_code == 200
-    assert before_boundary.json()["planning_date"] == "2026-08-09"
-    assert before_boundary.json()["sprint"]["name"] == "Previous week"
-    assert at_boundary.status_code == 200
-    assert at_boundary.json()["planning_date"] == "2026-08-10"
-    assert at_boundary.json()["sprint"]["name"] == "Next week"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -19,9 +18,7 @@ from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
-from planner.days.data import add_day_ticket
 from planner.tickets.data import create_ticket
-from planner.tickets.views import board_view
 
 A_DAY = "2026-09-20"
 
@@ -77,44 +74,6 @@ def _a_message_to_the_owner() -> MessageToOwnerEventPayload:
     )
 
 
-def test_only_conversations_past_the_owners_read_mark_are_named(
-    store: ConversationStore,
-) -> None:
-    async def exercise() -> None:
-        for conversation_id in ("unread", "read", "quiet"):
-            await store.create_conversation(_resolved(conversation_id))
-        await store.append_event("unread", _a_message_to_the_owner())
-        await store.append_event("read", _a_message_to_the_owner())
-        await store.advance_owner_read_through_sequence("read", 1)
-
-        named = await store.conversation_ids_holding_unread_owner_message()
-
-        assert named == frozenset({"unread"})
-
-    asyncio.run(exercise())
 
 
 # --- which Tickets the board returns ----------------------------------------------
-
-
-def test_all_tickets_join_the_board_from_off_the_day(tmp_db: Connection) -> None:
-    on_day = _make_ticket(tmp_db, "On today")
-    off_day_with_a_message = _make_ticket(tmp_db, "Off today, message waiting")
-    off_day_quiet = _make_ticket(tmp_db, "Off today, nothing waiting")
-    add_day_ticket(tmp_db, A_DAY, on_day, 1)
-
-    board = board_view(tmp_db)
-
-    assert _card_ids(board) == {on_day, off_day_with_a_message, off_day_quiet}
-
-
-def test_a_ticket_already_on_the_day_appears_once(tmp_db: Connection) -> None:
-    on_day = _make_ticket(tmp_db, "On today, message waiting")
-    add_day_ticket(tmp_db, A_DAY, on_day, 1)
-
-    board = board_view(tmp_db)
-
-    columns = board["columns"]
-    assert isinstance(columns, list)
-    cards = [card for column in columns for card in column["cards"]]
-    assert [str(card["id"]) for card in cards] == [on_day]

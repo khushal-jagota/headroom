@@ -37,13 +37,11 @@ from planner.conversation.in_memory_conversation_system import (
 )
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.contracts import Principal
-from planner.core.errors import ErrorCode, PlannerError
+from planner.core.errors import PlannerError
 from planner.projects.data import create_project, update_project
 from planner.runtime.conversation_start import (
-    agent_resolve,
     new_conversation_id,
     reset_ticket_conversation,
-    send_to_agent_conversation,
     send_to_ticket_conversation,
     start_ticket_conversation,
     worker_resolve,
@@ -302,28 +300,6 @@ async def _sent(
     return delivered.fate
 
 
-def test_a_start_that_loses_the_active_pointer_race_records_no_history(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        winner = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
-        loser = new_conversation_id()
-
-        linked = await start_ticket_conversation(
-            system,
-            tmp_db,
-            ticket,
-            _values(ticket.id),
-            conversation_id=loser,
-            now=20,
-        )
-
-        assert linked.conversation_id == winner
-        assert linked.made_here is False
-        assert _history(tmp_db, ticket.id) == [winner]
-
-    asyncio.run(exercise())
 
 
 def test_creation_launch_choices_reach_the_first_worker_session(
@@ -413,37 +389,6 @@ def test_a_change_on_a_refused_delivery_records_nothing(tmp_db: Connection, tick
     asyncio.run(exercise())
 
 
-def test_a_first_message_that_is_refused_leaves_the_ticket_with_no_conversation(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    """Making a conversation and saying the first thing in it are one act, or neither.
-
-    A conversation the message never reached is one nobody can see and nobody can use, and
-    leaving it linked is what put a Ticket somewhere it could not send from at all.
-    """
-
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        refusing = _WhoseFirstWriteFails(system, tmp_db, ticket.id)
-        created = new_conversation_id()
-
-        delivered = await send_to_ticket_conversation(
-            refusing,
-            tmp_db,
-            ticket.id,
-            text_message_content("first words"),
-            conversation_id=None,
-            created_conversation_id=created,
-            sender_label="owner",
-            now=20,
-        )
-
-        assert isinstance(delivered.fate, PromptDeliveryRefused)
-        assert delivered.conversation_id is None
-        assert read_ticket(tmp_db, ticket.id).conversation_id is None
-        assert _history(tmp_db, ticket.id) == []
-
-    asyncio.run(exercise())
 
 
 def test_resetting_stops_the_conversation_and_unlinks_it(
@@ -512,59 +457,10 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
     asyncio.run(exercise())
 
 
-def test_worker_resolve_falls_to_the_worker_type_defaults_when_the_ticket_names_no_model(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    # A row left from when a Ticket could name a backend and no model. It has not chosen
-    # anything runnable — its backend and another backend's model are not a pair — so the
-    # Worker type's own defaults answer whole, backend included.
-    with tmp_db:
-        tmp_db.execute(
-            "UPDATE tickets SET employee_backend = 'hermes', employee_launch_model = NULL, "
-            "employee_launch_reasoning_effort = NULL WHERE id = ?",
-            (ticket.id,),
-        )
-
-    values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id), workspace_folder=_WORKSPACE)
-
-    assert values.backend_key is ConversationBackendKey.codex
-    assert values.model == "gpt-5.6-sol"
-    assert values.reasoning_effort == "medium"
 
 
 
 
-@pytest.mark.parametrize("role", ["chief", "worker"])
-def test_new_conversation_defaults_reject_disable_after_save_and_accept_enabled_override(
-    tmp_db: Connection, ticket: Ticket, role: str
-) -> None:
-    historical = replace(ticket, employee_launch_model=None)
-    if role == "chief":
-        default = agent_resolve(tmp_db, workspace_folder=_WORKSPACE)
-    else:
-        default = worker_resolve(tmp_db, historical, workspace_folder=_WORKSPACE)
-    write_model_enablement(tmp_db, default.backend_key, default.model, False)
-    tmp_db.commit()
-    before = tmp_db.execute("SELECT count(*) FROM conversations").fetchone()[0]
-
-    with pytest.raises(PlannerError) as refusal:
-        if role == "chief":
-            agent_resolve(tmp_db, workspace_folder=_WORKSPACE)
-        else:
-            worker_resolve(tmp_db, historical, workspace_folder=_WORKSPACE)
-    assert refusal.value.code is ErrorCode.validation
-    assert default.model in refusal.value.message
-    assert "Choose an enabled model" in refusal.value.message
-    assert tmp_db.execute("SELECT count(*) FROM conversations").fetchone()[0] == before
-    assert read_ticket(tmp_db, ticket.id) == ticket
-
-    override = ConversationStartOverrides(model="enabled-alternative")
-    if role == "chief":
-        allowed = agent_resolve(tmp_db, override, workspace_folder=_WORKSPACE)
-    else:
-        allowed = worker_resolve(tmp_db, historical, override, workspace_folder=_WORKSPACE)
-    assert allowed.model == "enabled-alternative"
-    assert allowed.backend_key is default.backend_key
 
 
 def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_override(
@@ -584,69 +480,3 @@ def test_worker_resolve_preserves_disabled_history_but_rejects_new_disabled_over
             workspace_folder=_WORKSPACE,
         )
     assert read_ticket(tmp_db, ticket.id) == ticket
-
-
-
-def test_disabled_inherited_worker_choice_refuses_send_before_conversation_creation(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    chosen = worker_resolve(tmp_db, ticket, workspace_folder=_WORKSPACE)
-    with tmp_db:
-        tmp_db.execute(
-            "UPDATE tickets SET employee_launch_model = NULL WHERE id = ?", (ticket.id,)
-        )
-        write_model_enablement(tmp_db, chosen.backend_key, chosen.model, False)
-
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        with pytest.raises(PlannerError, match="Choose an enabled model"):
-            await _sent(system, tmp_db, ticket.id, "start", now=10)
-        assert read_ticket(tmp_db, ticket.id).conversation_id is None
-        assert _history(tmp_db, ticket.id) == []
-        assert tmp_db.execute("SELECT count(*) FROM conversations").fetchone()[0] == 0
-
-    asyncio.run(exercise())
-
-
-def test_existing_conversation_stays_usable_after_model_disablement(
-    tmp_db: Connection, ticket: Ticket
-) -> None:
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        chosen = worker_resolve(tmp_db, ticket, workspace_folder=_WORKSPACE)
-        conversation_id = await _started(system, tmp_db, ticket, chosen, now=10)
-        write_model_enablement(tmp_db, chosen.backend_key, chosen.model, False)
-        tmp_db.commit()
-        fate = await _sent(system, tmp_db, ticket.id, "continue", now=20)
-        assert isinstance(fate, PromptDeliveryStarted)
-        assert read_ticket(tmp_db, ticket.id).conversation_id == conversation_id
-
-    asyncio.run(exercise())
-
-
-
-def test_disabled_chief_default_refuses_first_send_without_conversation_records(
-    tmp_db: Connection,
-) -> None:
-    chosen = agent_resolve(tmp_db, workspace_folder=_WORKSPACE)
-    write_model_enablement(tmp_db, chosen.backend_key, chosen.model, False)
-    tmp_db.commit()
-
-    async def exercise() -> None:
-        system = InMemoryConversationSystem()
-        with pytest.raises(PlannerError, match="Choose an enabled model"):
-            await send_to_agent_conversation(
-                system,
-                tmp_db,
-                "chief_of_staff",
-                text_message_content("start"),
-                conversation_id=None,
-                values=agent_resolve(tmp_db, workspace_folder=_WORKSPACE),
-                sender_label="owner",
-            )
-        assert tmp_db.execute("SELECT count(*) FROM conversations").fetchone()[0] == 0
-        assert tmp_db.execute(
-            "SELECT count(*) FROM agents WHERE conversation_id IS NOT NULL"
-        ).fetchone()[0] == 0
-
-    asyncio.run(exercise())

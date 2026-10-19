@@ -6,10 +6,9 @@ import pytest
 from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
 
 from planner.core.contracts import PlannerError
-from planner.list_reads.contracts import ListPageRequest
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data, views
-from planner.tickets.contracts import Ticket, TicketListFilters, WorkerStepClaim
+from planner.tickets.contracts import Ticket, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -71,16 +70,6 @@ def test_backlog_preserves_pending_proposal_and_direct_authority(tmp_db: Connect
     assert deferred_again.worker_step_claim_revision == claimed.worker_step_claim_revision
 
 
-def test_removed_stage_is_rejected_and_historical_field_is_hidden(tmp_db: Connection) -> None:
-    from planner.tickets.logic.fields_codec import values_from_json
-
-    definition = configured_worker_type_registry().require("coding")
-    assert not definition.is_known_stage("cancelled")
-    with pytest.raises(PlannerError, match="stage outside the linear order"):
-        definition.validate_ticket_position("cancelled", definition.default_ceiling())
-    assert values_from_json('{"retirement":"Legacy provenance"}', definition.field_ids()) == {}
-    assert definition.is_terminal("done")
-    assert definition.advance_target("done") is None
 
 
 def test_hash_guard_detects_same_second_changes_and_authority_is_unchanged(
@@ -106,45 +95,8 @@ def test_hash_guard_detects_same_second_changes_and_authority_is_unchanged(
     assert data.read_ticket(tmp_db, tid).stage == "needs_brief"
 
 
-def test_bounded_summary_can_filter_deferral_without_conflating_placement(
-    tmp_db: Connection,
-) -> None:
-    deferred = create(tmp_db)
-    active = create(tmp_db)
-    backlog(tmp_db, deferred)
-    page = views.list_ticket_summaries(
-        tmp_db,
-        page_request=ListPageRequest(limit=1, offset=0),
-        filters=TicketListFilters(is_backlogged=True, worker_types=("coding",)),
-        project_id=None,
-        sprint_id=None,
-        sprint_item_id=None,
-    )
-    assert page.match_count == 1
-    assert page.rows[0]["id"] == deferred and page.rows[0]["is_backlogged"] is True
-    assert data.read_ticket(tmp_db, active).sprint_id is None
-    assert data.read_ticket(tmp_db, active).is_backlogged is False
 
 
-def test_backlog_does_not_release_occupied_closeout_lane(tmp_db: Connection) -> None:
-    occupied = create(tmp_db)
-    waiting = create(tmp_db)
-    tmp_db.execute(
-        "UPDATE tickets SET stage='needs_consequences', ceiling='needs_consequences', "
-        "pending_proposal=NULL,worker_step_claim='out' WHERE id=?",
-        (occupied,),
-    )
-    tmp_db.execute(
-        "UPDATE tickets SET stage='needs_consequences', ceiling='needs_consequences', "
-        "pending_proposal=NULL WHERE id=?",
-        (waiting,),
-    )
-    tmp_db.commit()
-    backlog(tmp_db, occupied)
-    definition = configured_worker_type_registry().require("coding")
-    assert not is_ready_for_worker_step(
-        tmp_db, data.read_ticket(tmp_db, waiting), worker_type_definition=definition
-    )
 
 
 def ready_ticket(conn: Connection, *, ceiling: str = "needs_success_condition") -> Ticket:

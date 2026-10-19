@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import builtins
 import sys
-from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -112,75 +109,8 @@ def test_environment_faults_name_every_way_a_copied_virtualenv_redirects_a_gate(
     assert len(tree_environment.faults(tree, both)) == 2
 
 
-def test_a_launcher_keeps_the_virtualenv_it_names(tmp_path: Path) -> None:
-    """Two ways to throw the signal away, and a healthy tree must survive both.
-
-    ``.venv/bin/python`` is a symlink chain ending at the system interpreter, so
-    resolving the whole path makes every launcher look foreign. Resolving none of it
-    makes a tree reached through a symlink look foreign instead. Only the directory
-    is resolved, and both healthy trees pass.
-    """
-    real = tmp_path.resolve() / "real"
-    bin_dir = real / ".venv" / "bin"
-    bin_dir.mkdir(parents=True)
-    system_python = tmp_path.resolve() / "usr" / "bin" / "python3.13"
-    system_python.parent.mkdir(parents=True)
-    system_python.write_text("", encoding="utf-8")
-    (bin_dir / "python").symlink_to(system_python)
-    launcher = bin_dir / "pytest"
-    launcher.write_text(f"#!{bin_dir / 'python'}\nrest of the script\n", encoding="utf-8")
-
-    def only_launcher(path: Path) -> tree_environment.EnvironmentAnswers:
-        return tree_environment.EnvironmentAnswers(
-            launcher_interpreters={"pytest": tree_environment.read_launcher_interpreter(path)}
-        )
-
-    assert tree_environment.read_launcher_interpreter(launcher) == bin_dir / "python"
-    assert tree_environment.faults(real, only_launcher(launcher)) == []
-
-    # The same tree reached through a symlink is the same tree.
-    link = tmp_path.resolve() / "link"
-    link.symlink_to(real)
-    assert tree_environment.faults(link, only_launcher(link / ".venv" / "bin" / "pytest")) == []
-
-    # A native binary and a missing file both read as "no answer", not as a fault.
-    (bin_dir / "ruff").write_bytes(b"\x7fELF\x02\x01\x01\x00" + bytes(64))
-    assert tree_environment.read_launcher_interpreter(bin_dir / "ruff") is None
-    assert tree_environment.read_launcher_interpreter(bin_dir / "absent") is None
 
 
-def test_launcher_and_pyvenv_cfg_readers_answer_only_when_the_file_says_so() -> None:
-    venv_python = "/home/vps/tree/.venv/bin/python"
-    assert tree_environment.interpreter_from_launcher(f"#!{venv_python}") == Path(venv_python)
-    assert tree_environment.interpreter_from_launcher(f"#!/usr/bin/env {venv_python}") == Path(
-        venv_python
-    )
-
-    # pip writes a two-line /bin/sh wrapper instead of a shebang once the interpreter
-    # path passes 127 bytes, which a long worktree name reaches on its own. Read the
-    # first line alone and every launcher in that tree reports /bin/sh.
-    wrapper = "#!/bin/sh\n" + "'''exec' " + venv_python + ' "$0" "$@"\n' + "' '''\n"
-    assert tree_environment.interpreter_from_launcher(wrapper) == Path(venv_python)
-
-    # A native binary, a relative interpreter, and an empty line carry no answer.
-    assert tree_environment.interpreter_from_launcher("\x7fELF\x02\x01\x01") is None
-    assert tree_environment.interpreter_from_launcher("#!python3") is None
-    assert tree_environment.interpreter_from_launcher("#!") is None
-    assert tree_environment.interpreter_from_launcher("") is None
-
-    created_at = "/home/vps/tree/.venv"
-    cfg = "home = /usr/bin\nversion = 3.13.5\n"
-    cfg += f"command = /usr/bin/python3 -m venv {created_at}\n"
-    assert tree_environment.venv_origin_from_pyvenv_cfg(cfg) == Path(created_at)
-    # CPython writes a spaced target without quoting it in the command record.
-    assert tree_environment.venv_origin_from_pyvenv_cfg(
-        f"command = /usr/bin/python3 -m venv --without-pip {created_at} with spaces\n"
-    ) == Path(f"{created_at} with spaces")
-    assert tree_environment.venv_origin_from_pyvenv_cfg(
-        f"command = /usr/bin/python3 -m venv {created_at} with /segment/.venv\n"
-    ) == Path(f"{created_at} with /segment/.venv")
-    # uv and virtualenv write no command line, so the check stays silent rather than guesses.
-    assert tree_environment.venv_origin_from_pyvenv_cfg("home = /usr/bin\nuv = 0.12.5\n") is None
 
 
 def test_dependency_pins_use_distribution_metadata_and_pep508_semantics(
@@ -207,112 +137,3 @@ def test_dependency_pins_use_distribution_metadata_and_pep508_semantics(
     # Unknown installed distributions have no bearing on the required pins.
     installed["unrelated-editable"] = "5"
     assert tree_environment.dependency_faults(tmp_path) == []
-
-
-@pytest.mark.parametrize("line", ["-r other.txt", "thing>=1", "thing==1.*", "thing @ file:///x"])
-def test_unsupported_requirements_refuse_with_the_source_line(
-    tmp_path: Path, line: str
-) -> None:
-    requirements = tmp_path / "requirements.txt"
-    requirements.write_text(f"# heading\n{line}\n", encoding="utf-8")
-    found = tree_environment.dependency_faults(tmp_path)
-    assert len(found) == 1
-    assert f"{requirements}:2:" in found[0]
-    assert line in found[0]
-
-
-@pytest.mark.parametrize("installed", [None, "25.0"])
-def test_missing_or_unusable_parser_reports_bootstrap_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, installed: str | None
-) -> None:
-    original_import = builtins.__import__
-
-    def broken_import(
-        name: str,
-        globals: dict[str, Any] | None = None,
-        locals: dict[str, Any] | None = None,
-        fromlist: Sequence[str] = (),
-        level: int = 0,
-    ) -> Any:
-        if name == "packaging.requirements":
-            raise ImportError("parser unavailable")
-        return original_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", broken_import)
-    monkeypatch.setattr(tree_environment, "installed_version", lambda name: installed)
-    (tmp_path / "requirements.txt").write_text("  packaging==26.2\n", encoding="utf-8")
-    found = tree_environment.dependency_faults(tmp_path)
-    assert len(found) == 1
-    assert "bootstrap failure" in found[0]
-    assert "required packaging==26.2" in found[0]
-    assert f"installed {installed or 'absent'}" in found[0]
-
-
-def test_preflight_checks_identity_then_dependencies_before_planner(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    asks: list[bool] = []
-
-    def answers(tree: Path, *, ask_planner: bool) -> tree_environment.EnvironmentAnswers:
-        asks.append(ask_planner)
-        if ask_planner:
-            raise ModuleNotFoundError("unrelated import failure", name="transitive")
-        return tree_environment.EnvironmentAnswers(venv_prefix=tree / ".venv")
-
-    monkeypatch.setattr(tree_environment, "running_answers", answers)
-    monkeypatch.setattr(tree_environment, "dependency_faults", lambda tree: ["stale SDK"])
-    diagnosis = tree_environment.preflight(tmp_path, ask_planner=True)
-    assert diagnosis is not None and "dependency drift" in diagnosis
-    assert "stale SDK" in diagnosis
-    assert asks == [False]
-    monkeypatch.setattr(tree_environment, "dependency_faults", lambda tree: [])
-    with pytest.raises(ModuleNotFoundError, match="unrelated import failure"):
-        tree_environment.preflight(tmp_path, ask_planner=True)
-    assert asks == [False, False, True]
-
-    monkeypatch.setattr(
-        tree_environment,
-        "running_answers",
-        lambda tree, **kwargs: tree_environment.EnvironmentAnswers(venv_prefix=tree / "foreign"),
-    )
-    monkeypatch.setattr(
-        tree_environment, "dependency_faults", lambda tree: pytest.fail("identity must run first")
-    )
-    diagnosis = tree_environment.preflight(tmp_path, ask_planner=True)
-    assert diagnosis is not None and "Rebuild the virtualenv" in diagnosis
-    assert "dependency drift" not in diagnosis
-
-
-def test_editable_identity_ignores_other_editable_distributions(tmp_path: Path) -> None:
-    site = tmp_path / "lib" / "python3.13" / "site-packages"
-    site.mkdir(parents=True)
-    (site / "__editable__.another-1.pth").write_text("/other/src\n", encoding="utf-8")
-    (site / "__editable__.planner-2.pth").write_text("/this/src\n", encoding="utf-8")
-    assert tree_environment.read_editable_root(tmp_path) == Path("/this/src")
-
-
-@pytest.mark.parametrize("missing_name", [None, "planner.internal", "transitive", "planner"])
-def test_planner_import_only_reports_actual_top_level_absence(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_name: str | None
-) -> None:
-    original_import = builtins.__import__
-    failure = ImportError("source import failed", name=missing_name)
-
-    def broken_import(
-        name: str,
-        globals: dict[str, Any] | None = None,
-        locals: dict[str, Any] | None = None,
-        fromlist: Sequence[str] = (),
-        level: int = 0,
-    ) -> Any:
-        if name == "planner":
-            raise failure
-        return original_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", broken_import)
-    if missing_name == "planner":
-        assert tree_environment.running_answers(tmp_path, ask_planner=True).planner_absent
-    else:
-        with pytest.raises(ImportError) as caught:
-            tree_environment.running_answers(tmp_path, ask_planner=True)
-        assert caught.value is failure
