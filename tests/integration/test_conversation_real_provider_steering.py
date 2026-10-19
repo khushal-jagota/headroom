@@ -2,7 +2,7 @@
 
 The adapter exercises prove each vendor protocol in isolation.  This exercise starts the
 production backend factory behind the real conversation system and HTTP API, then reads
-only the same durable view and event payloads that a browser receives.  It is deliberately
+the durable view, event payloads and live text that a browser receives.  It is deliberately
 opt-in because every case makes real model calls.
 
 What an active steer proves here, and what it does not.  A ``prompt`` event with a
@@ -44,6 +44,8 @@ from tests.support.real_provider_application import (
 )
 
 from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.events import AgentMessageDeltaFrame
+from planner.conversation.live_tail import ConversationLiveTail, ConversationTailSubscription
 from planner.core.db import connect, create_schema
 from planner.environments.hermes_home import hermes_src_root
 
@@ -111,6 +113,26 @@ def test_hermes_home_selection_uses_canonical_home_without_artifacts(
     assert set(home.rglob("*")) == before
 
 
+def test_live_text_oracle_reads_split_deltas_and_closes_subscription() -> None:
+    """Durable rows omit prose, so the oracle must retain live chunks without gaps."""
+
+    async def exercise() -> None:
+        tail = ConversationLiveTail()
+        receipts: dict[str, Any] = {"live_agent_text_deltas": []}
+        subscription = tail.subscribe("proof")
+        reader = asyncio.create_task(_collect_live_text(subscription, receipts))
+        tail.publish_frame("proof", AgentMessageDeltaFrame("AFTER-"))
+        tail.publish_frame("other", AgentMessageDeltaFrame("WRONG"))
+        tail.publish_frame("proof", AgentMessageDeltaFrame("STOP"))
+        await asyncio.sleep(0)
+        assert _agent_text(receipts) == "AFTER-STOP"
+        subscription.close()
+        await reader
+        assert tail.open_subscription_count() == 0
+
+    asyncio.run(exercise())
+
+
 async def _exercise(
     case: _BackendCase,
     runtime_root: Path,
@@ -157,11 +179,12 @@ async def _exercise(
         "runtime_root": str(runtime_root),
         "started_at": datetime.now(UTC).isoformat(),
         "responses": [],
+        "live_agent_text_deltas": [],
     }
 
     observe_hermes_spawn(monkeypatch, case.backend_key, receipts)
 
-    async with _api(database_path, receipts) as client:
+    async with _api(database_path, receipts, conversation_id) as client:
         started = await client.post(
             "/api/conversation/conversations",
             json={
@@ -175,6 +198,13 @@ async def _exercise(
         _keep_response(receipts, "start", started)
         assert started.status_code == 201, started.text
         receipts["effective_model"] = started.json()["model"]
+        receipts["model_selection"] = {
+            "requested": case.model,
+            "effective": receipts["effective_model"],
+            "matches_request": case.model == receipts["effective_model"],
+            "source": "production catalogue variant resolution in ModelResolutionService.resolve",
+            "claim": "provider evidence applies to the effective model, not the request spelling",
+        }
         await assert_navigation_attention(
             client, conversation_id, receipts, "created", working=False, awaiting_answer=False
         )
@@ -230,7 +260,7 @@ async def _exercise(
         ]
         assert len(model_steer_admissions) == 1
         receipts["model_steer_admission"] = model_steer_admissions[0]
-        first_events = await _wait_for_event_count(
+        await _wait_for_event_count(
             client,
             conversation_id,
             "turn_ended",
@@ -238,7 +268,7 @@ async def _exercise(
             timeout=240.0,
             receipts=receipts,
         )
-        model_echoed_steer_nonce = model_nonce in _agent_text(first_events)
+        model_echoed_steer_nonce = model_nonce in _agent_text(receipts)
         receipts["observations"]["model_echoed_steer_nonce"] = model_echoed_steer_nonce
         _write_evidence_from_receipts(receipts)
         print(
@@ -321,7 +351,9 @@ async def _exercise(
         )
         await asyncio.sleep(7)
         bounded_stop_events = await _events(client, conversation_id)
-        _assert_stopped_effect_absent(bounded_stop_events, forbidden_nonce, forbidden_file)
+        _assert_stopped_effect_absent(
+            bounded_stop_events, forbidden_nonce, forbidden_file, receipts
+        )
 
         ordinary = await _send(
             client,
@@ -338,8 +370,8 @@ async def _exercise(
             timeout=240.0,
             receipts=receipts,
         )
-        assert ordinary_nonce in _agent_text(ordinary_events)
-        _assert_stopped_effect_absent(ordinary_events, forbidden_nonce, forbidden_file)
+        assert ordinary_nonce in _agent_text(receipts)
+        _assert_stopped_effect_absent(ordinary_events, forbidden_nonce, forbidden_file, receipts)
         await _keep_and_assert_view(
             client,
             conversation_id,
@@ -348,7 +380,7 @@ async def _exercise(
             is_running=False,
         )
 
-    async with _api(database_path, receipts) as resumed_client:
+    async with _api(database_path, receipts, conversation_id) as resumed_client:
         resumed = await _send(
             resumed_client,
             conversation_id,
@@ -364,8 +396,8 @@ async def _exercise(
             timeout=240.0,
             receipts=receipts,
         )
-        assert resume_nonce in _agent_text(final_events)
-        _assert_stopped_effect_absent(final_events, forbidden_nonce, forbidden_file)
+        assert resume_nonce in _agent_text(receipts)
+        _assert_stopped_effect_absent(final_events, forbidden_nonce, forbidden_file, receipts)
         await _keep_and_assert_view(
             resumed_client,
             conversation_id,
@@ -401,7 +433,7 @@ async def _exercise(
     assert steer_prompts[1]["sequence"] < turn_endings[1]["sequence"]
     assert ordinary_prompts[2]["sequence"] < turn_endings[2]["sequence"]
     assert ordinary_prompts[3]["sequence"] < turn_endings[3]["sequence"]
-    _assert_stopped_effect_absent(final_events, forbidden_nonce, forbidden_file)
+    _assert_stopped_effect_absent(final_events, forbidden_nonce, forbidden_file, receipts)
     receipts["events"] = final_events
     receipts["assertions"] = {
         "active_steer_was_admitted_into_the_open_running_turn": True,
@@ -421,12 +453,32 @@ async def _exercise(
 
 
 @asynccontextmanager
-async def _api(database_path: Path, receipts: dict[str, Any]) -> AsyncIterator[httpx.AsyncClient]:
+async def _api(
+    database_path: Path, receipts: dict[str, Any], conversation_id: str
+) -> AsyncIterator[httpx.AsyncClient]:
     try:
-        async with provider_application(database_path, receipts) as (client, _runtime):
-            yield client
+        async with provider_application(database_path, receipts) as (client, runtime):
+            subscription = runtime.live_tail.subscribe(conversation_id)
+
+            reader = asyncio.create_task(_collect_live_text(subscription, receipts))
+            try:
+                yield client
+            finally:
+                # An early tail close loses live-only text and cannot certify absence.
+                closed_early = reader.done()
+                subscription.close()
+                await reader
+                assert not closed_early, "live tail closed before the proof finished"
     finally:
         _write_evidence_from_receipts(receipts)
+
+
+async def _collect_live_text(
+    subscription: ConversationTailSubscription, receipts: dict[str, Any]
+) -> None:
+    async for item in subscription:
+        if isinstance(item, AgentMessageDeltaFrame):
+            receipts["live_agent_text_deltas"].append(item.text_delta)
 
 
 async def _send(
@@ -469,6 +521,8 @@ async def _wait_for_event_count(
             receipts["latest_events"] = events
             _write_evidence_from_receipts(receipts)
         if sum(event["kind"] == kind for event in events) >= count:
+            # Live text precedes the durable ending. Let the subscribed reader drain it.
+            await asyncio.sleep(0)
             return events
         await asyncio.sleep(0.1)
     raise AssertionError(f"conversation never recorded {count} {kind} events")
@@ -526,10 +580,13 @@ def _tool_is_open(events: list[dict[str, Any]], tool_call_id: str) -> bool:
 
 
 def _assert_stopped_effect_absent(
-    events: list[dict[str, Any]], forbidden_nonce: str, forbidden_file: Path
+    events: list[dict[str, Any]],
+    forbidden_nonce: str,
+    forbidden_file: Path,
+    receipts: dict[str, Any],
 ) -> None:
     assert not forbidden_file.exists()
-    assert forbidden_nonce not in _agent_text(events)
+    assert forbidden_nonce not in _agent_text(receipts)
     assert not any(
         event["kind"] == "tool_call_started"
         and forbidden_nonce in str(event["payload"].get("detail", ""))
@@ -555,12 +612,8 @@ async def _keep_and_assert_view(
     )
 
 
-def _agent_text(events: list[dict[str, Any]]) -> str:
-    return " ".join(
-        str(event["payload"].get("text", ""))
-        for event in events
-        if event["kind"] == "agent_message"
-    )
+def _agent_text(receipts: dict[str, Any]) -> str:
+    return "".join(receipts["live_agent_text_deltas"])
 
 
 def _create_database(database_path: Path) -> None:
