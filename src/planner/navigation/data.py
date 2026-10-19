@@ -431,7 +431,7 @@ def _derive(
                 if version < PREPARED_SCHEMA_VERSION:
                     value["priority"] = t["priority"]
             if version >= 4:
-                value["recap_preview"] = recap_preview(str(t["body"]))
+                value["recap_preview"] = recap_preview(str(t["recap"]))
         else:
             key = "chief_of_staff"
             deps.add(("chief_settings", key))

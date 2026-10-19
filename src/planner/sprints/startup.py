@@ -1,4 +1,4 @@
-"""Deliver a saved orchestrator's brief through the ordinary supervisor message door."""
+"""Deliver a saved orchestrator's goal through the ordinary supervisor message door."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ async def start_created_orchestrator(
     item: SprintItem,
 ) -> OrchestratorStartupResult | None:
     """Keep creation successful when its separately attempted first message fails."""
-    if not item.body.strip():
+    if not item.goal.strip():
         return None
     try:
         delivered = await message_delivery_service.send_message(
@@ -36,7 +36,7 @@ async def start_created_orchestrator(
             clock,
             ctx,
             Principal(PrincipalKind.sprint_item, item.id),
-            item.body,
+            item.goal,
             sender_message_id=str(uuid4()),
             retain_created_conversation=True,
         )
@@ -45,12 +45,12 @@ async def start_created_orchestrator(
             {"conversation_id": delivered.conversation_id, **delivery_fate_json(delivered.fate)},
         )
     except Exception:
-        logger.exception("Saved orchestrator %s but its initial brief failed to start", item.id)
+        logger.exception("Saved orchestrator %s but its initial goal failed to start", item.id)
         return {
             "conversation_id": conversation_start.read_agent_conversation(
                 conn, item.supervisor_agent_key
             ),
             "fate": "failed",
             "error": "The orchestrator was saved, but startup did not complete. "
-            "Inspect its conversation before you retry the brief.",
+            "Inspect its conversation before you retry the goal.",
         }

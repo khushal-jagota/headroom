@@ -562,7 +562,7 @@ def _board_sprint_items(
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        f"SELECT i.id, i.title, i.body, i.project_id, p.name AS project, "
+        f"SELECT i.id, i.title, i.recap, i.project_id, p.name AS project, "
         f"i.created_at, i.settled FROM sprint_items i JOIN projects p ON p.id=i.project_id "
         f"WHERE i.id IN ({placeholders})",
         item_ids,
@@ -574,7 +574,7 @@ def _board_sprint_items(
         BoardSprintItemSource(
             id=str(row["id"]),
             title=str(row["title"]),
-            recap_preview=recap_preview(str(row["body"])),
+            recap_preview=recap_preview(str(row["recap"])),
             settled=bool(row["settled"]),
             project_id=str(row["project_id"]),
             project=str(row["project"]),
