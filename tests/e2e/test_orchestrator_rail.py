@@ -20,13 +20,11 @@ from tests.e2e.harness import (
     ApiHelper,
     JsonObject,
     ServerHandle,
-    _append_rows,
     capture_success,
 )
-from tests.support.connected_rows import _conversation, _message
+from tests.support.connected_rows import _bind, _conversation, _message, _post
 from tests.support.server_fixtures import rail_server as rail_server
 
-from planner.conversation.events import UserInputQuestion, UserInputRequestedEventPayload
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 
 EVIDENCE = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_9fh1vzxc/artifacts/rail")
@@ -100,55 +98,18 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
         {"next_ceiling": "none", "next_holder": {"kind": "owner", "id": "owner"}},
     )
     _conversation(server, "rail-question")
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET conversation_id=? WHERE id=?", ("rail-question", question["id"])
-        )
-        conn.execute(
-            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
-            ("rail-question", question["id"]),
-        )
-    _append_rows(
-        server,
-        "rail-question",
-        UserInputRequestedEventPayload(
-            request_id="rail-question",
-            questions=(
-                UserInputQuestion(
-                    question_id="scope",
-                    header="Scope",
-                    question="Which result do you want?",
-                    options=(),
-                    multi_select=False,
-                    allow_other=True,
-                ),
-            ),
-        ),
-    )
+    _bind(server, "ticket", question["id"], "rail-question")
+    _post(server, "/api/test/signals/rail-question/start", {})
+    _post(server, "/api/test/signals/rail-question/questions", {})
     _conversation(server, "rail-unread")
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET conversation_id=? WHERE id=?", ("rail-unread", ticket["id"])
-        )
-        conn.execute(
-            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
-            ("rail-unread", ticket["id"]),
-        )
+    _bind(server, "ticket", ticket["id"], "rail-unread")
     _message(
         server, "rail-unread", Principal(PrincipalKind.ticket, ticket["id"]), "Rail direct message"
     )
     for conversation in ("rail-chief", "rail-supervisor"):
         _conversation(server, conversation)
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE agents SET conversation_id=? WHERE agent_key=?",
-            ("rail-supervisor", item["supervisor"]["agent_key"]),
-        )
-        conn.execute(
-            "INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?) "
-            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id",
-            ("rail-chief",),
-        )
+    _bind(server, "agent", item["supervisor"]["agent_key"], "rail-supervisor")
+    _bind(server, "agent", "chief_of_staff", "rail-chief")
     return item, empty, ticket
 
 

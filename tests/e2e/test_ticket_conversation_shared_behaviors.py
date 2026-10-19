@@ -6,7 +6,6 @@ Only the backend wire is scripted. No installed provider participates.
 """
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 
 import httpx
@@ -16,6 +15,7 @@ from tests.e2e.test_conversation_signals import (  # noqa: F401
     _post,
     signal_server,
 )
+from tests.support.connected_rows import _bind
 
 
 def _create_ticket_conversation(
@@ -29,15 +29,7 @@ def _create_ticket_conversation(
         server, "ticket", "create", "--worker-type", "coding", "--title", title,
     )["id"]
     _post(server, f"/api/test/signals/{conversation_id}/start")
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
-            (conversation_id, ticket_id),
-        )
-        conn.execute(
-            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-            (conversation_id, ticket_id),
-        )
+    _bind(server, "ticket", ticket_id, conversation_id)
     return ticket_id
 
 
@@ -105,7 +97,7 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
         "proof": {"answers": ["Recorded event replay"]},
     }
     assert submitted.value.post_data_json == {
-        "request_id": "input-1", "answers": expected_answers,
+        "request_id": "1:user_input:input-1", "answers": expected_answers,
     }
     assert answered.value.json() == {"landed": True}
     receipts = httpx.get(
@@ -117,7 +109,7 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
         server.base + f"/api/conversation/conversations/{conversation_id}/events", timeout=10,
     ).json()["events"]
     assert [event["payload"] for event in events if event["kind"] == "user_input_answered"] == [
-        {"request_id": "input-1", "answers": expected_answers},
+        {"request_id": "1:user_input:input-1", "answers": expected_answers},
     ]
     page.wait_for_selector('[data-conversation-user-input-state="answered"]', timeout=WAIT_MS)
     assert "Recorded event replay" in page.locator(

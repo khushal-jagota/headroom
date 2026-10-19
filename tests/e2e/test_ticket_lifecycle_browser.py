@@ -7,12 +7,11 @@ proof uses the existing deterministic conversation adapter and no provider calls
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 
 from playwright.sync_api import BrowserContext, Page, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
-from tests.support.connected_rows import _conversation, _message, _propose
+from tests.support.connected_rows import _bind, _conversation, _message, _propose
 from tests.support.principals import ticket_principal
 from tests.support.server_fixtures import rail_server  # noqa: F401
 
@@ -61,15 +60,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
     proposal = f"Pending success evidence survives deferral. [Original artifact]({artifact_href})"
     _propose(server, ticket_id, proposal)
     _conversation(server, "synthetic-lifecycle-conversation")
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET conversation_id=? WHERE id=?",
-            ("synthetic-lifecycle-conversation", ticket_id),
-        )
-        conn.execute(
-            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
-            ("synthetic-lifecycle-conversation", ticket_id),
-        )
+    _bind(server, "ticket", ticket_id, "synthetic-lifecycle-conversation")
 
     transcript = "Conversation evidence remains readable after deferral."
     _message(server, "synthetic-lifecycle-conversation", ticket_principal(ticket_id), transcript)
