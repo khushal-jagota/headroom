@@ -720,6 +720,52 @@ def test_message_to_owner_is_one_ordered_idempotent_row(harness: _Harness) -> No
     _run(exercise)
 
 
+def test_owner_system_notice_does_not_answer_an_active_owner_prompt(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        worker = Principal(PrincipalKind.ticket, "t_worker")
+        await harness.system.send(
+            "c",
+            text_message_content("Please report back"),
+            sender_label="owner",
+            sender=OWNER_PRINCIPAL,
+            recipient=worker,
+        )
+        turn = await harness.system.active_turn_reference("c")
+        assert turn is not None
+        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is True
+
+        notice = text_message_content("Your review was taken by Chief")
+        await harness.system.record_message_to_owner(
+            "c",
+            notice,
+            sender_label="Panels",
+            sender=worker,
+            recipient=OWNER_PRINCIPAL,
+            credit_explicit_reply=False,
+        )
+        payload = (await harness.events("c"))[-1].payload
+        assert isinstance(payload, MessageToOwnerEventPayload)
+        assert payload.content == notice
+        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is True
+
+        await harness.system.record_message_to_owner(
+            "c",
+            text_message_content("The requested report"),
+            sender_label="Worker",
+            sender=worker,
+            recipient=OWNER_PRINCIPAL,
+        )
+        assert await harness.system.turn_expects_reply(turn, OWNER_PRINCIPAL) is False
+        await harness.complete_turn("c")
+        assert not any(
+            isinstance(event.payload, ExplicitReplyMissingEventPayload)
+            for event in await harness.events("c")
+        )
+
+    _run(exercise)
+
+
 def test_backend_prose_is_runtime_only_and_silence_is_explicit(
     harness: _Harness,
 ) -> None:

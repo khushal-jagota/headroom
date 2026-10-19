@@ -40,6 +40,7 @@ from planner.tickets.contracts import (
     NextCeiling,
     PendingTicketProposal,
     ResolvedTicketCreationContext,
+    ReviewTransferNotice,
     StageOwnershipMode,
     Ticket,
     TicketApprovalMethod,
@@ -59,6 +60,7 @@ from planner.tickets.logic import (
     machine,
     proposal_routing,
     resolution,
+    review_transfer,
 )
 from planner.tickets.logic.decisions import Decision
 from planner.tickets.logic.locale import require_ticket_locale, resolve_ticket_locale
@@ -1672,6 +1674,34 @@ def _release_a_holder_the_move_left_below(
     capture_ticket_attention(conn, ticket_id, now)
 
 
+def _review_transfer_notice(
+    conn: sqlite3.Connection, before: Ticket, after: Ticket
+) -> ReviewTransferNotice | None:
+    if not review_transfer.review_transferred(before, after):
+        return None
+    holder = after.ceiling_holder
+    if holder.kind is PrincipalKind.owner:
+        name = "The user"
+    elif holder.kind is PrincipalKind.chief:
+        name = "The Chief"
+    else:
+        table = "sprint_items" if holder.kind is PrincipalKind.sprint_item else "tickets"
+        row = conn.execute(f"SELECT title FROM {table} WHERE id=?", (holder.id,)).fetchone()
+        assert row is not None
+        name = str(row["title"])
+    return ReviewTransferNotice(after.id, after.title, before.ceiling_holder, name)
+
+
+def _collect_review_transfer(
+    conn: sqlite3.Connection,
+    notice: ReviewTransferNotice | None,
+    notices: list[ReviewTransferNotice] | None,
+) -> None:
+    # A savepoint release is not a commit. Outer transaction owners cannot publish yet.
+    if notice is not None and notices is not None and not conn.in_transaction:
+        notices.append(notice)
+
+
 def edit_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1680,6 +1710,7 @@ def edit_ticket(
     title_max_chars: int,
     principal: Principal,
     now: int,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
 ) -> Ticket:
     """Change Ticket fields, under the one rule, asked here where the write happens.
 
@@ -1898,7 +1929,9 @@ def edit_ticket(
                     proposal_field=updated.pending_proposal.field,
                     now=now,
                 )
-        return updated
+        notice = _review_transfer_notice(conn, ticket, updated)
+    _collect_review_transfer(conn, notice, review_transfer_notices)
+    return updated
 
 
 def classify_ticket(
@@ -1908,6 +1941,7 @@ def classify_ticket(
     sprint_item_id: str,
     principal: Principal,
     now: int,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
@@ -1935,7 +1969,10 @@ def classify_ticket(
             ticket_id,
             now=now,
         )
-        return _load_ticket_for_write(conn, ticket_id)
+        updated = _load_ticket_for_write(conn, ticket_id)
+        notice = _review_transfer_notice(conn, ticket, updated)
+    _collect_review_transfer(conn, notice, review_transfer_notices)
+    return updated
 
 
 def unclassify_ticket(
@@ -1945,6 +1982,7 @@ def unclassify_ticket(
     sprint_item_id: str,
     principal: Principal,
     now: int,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
@@ -1978,7 +2016,10 @@ def unclassify_ticket(
             ticket_id,
             now=now,
         )
-        return _load_ticket_for_write(conn, ticket_id)
+        updated = _load_ticket_for_write(conn, ticket_id)
+        notice = _review_transfer_notice(conn, ticket, updated)
+    _collect_review_transfer(conn, notice, review_transfer_notices)
+    return updated
 
 
 def ticket_record_sha256(conn: sqlite3.Connection, ticket_id: str) -> str:
