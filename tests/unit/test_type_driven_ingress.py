@@ -388,41 +388,40 @@ def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> 
     app, db_path = app_db
     with TestClient(app) as client:
         ticket_id = _create(client, "coding")
-    original = "  Historical boundary\n\nKeep this. λ\x00  "
-    with connect(str(db_path)) as conn:
-        conn.execute("UPDATE tickets SET guidance=? WHERE id=?", (original, ticket_id))
-        before = hashlib.sha256(
-            conn.execute("SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket_id,))
-            .fetchone()[0]
-        ).hexdigest()
-        active_record = dict(conn.execute(
-            "SELECT * FROM tickets WHERE id=?", (ticket_id,)
-        ).fetchone())
-        del active_record["guidance"]
-        expected_record_hash = hashlib.sha256(json.dumps(
-            active_record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-        ).encode()).hexdigest()
-        # Reopening an existing database must leave the historical column alone.
-        conn.set_authorizer(_deny_retired_ticket_guidance)
-        create_schema(conn)
-        assert tickets_data.ticket_record_sha256(conn, ticket_id) == expected_record_hash
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        conn.execute(
-            "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
-            "access, created_at) VALUES (?, ?, ?, '/work', 'full', ?)",
-            ("retired-guidance-proof", ticket.employee_backend, ticket.employee_launch_model,
-             ticket.updated_at),
-        )
-        tickets_data.write_ticket_conversation_start(
-            conn, ticket_id, conversation_id="retired-guidance-proof",
-            backend=ticket.employee_backend, model=ticket.employee_launch_model,
-            reasoning_effort=ticket.employee_launch_reasoning_effort, now=ticket.updated_at,
-        )
-        assert tickets_data.read_ticket_by_conversation_id(
-            conn, "retired-guidance-proof"
-        ).id == ticket_id
-    path = f"/api/tickets/{ticket_id}"
-    with TestClient(app) as client:
+        original = "  Historical boundary\n\nKeep this. λ\x00  "
+        with connect(str(db_path)) as conn:
+            conn.execute("UPDATE tickets SET guidance=? WHERE id=?", (original, ticket_id))
+            before = hashlib.sha256(
+                conn.execute("SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket_id,))
+                .fetchone()[0]
+            ).hexdigest()
+            active_record = dict(conn.execute(
+                "SELECT * FROM tickets WHERE id=?", (ticket_id,)
+            ).fetchone())
+            del active_record["guidance"]
+            expected_record_hash = hashlib.sha256(json.dumps(
+                active_record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ).encode()).hexdigest()
+            # Reopening an existing database must leave the historical column alone.
+            conn.set_authorizer(_deny_retired_ticket_guidance)
+            create_schema(conn)
+            assert tickets_data.ticket_record_sha256(conn, ticket_id) == expected_record_hash
+            ticket = tickets_data.read_ticket(conn, ticket_id)
+            conn.execute(
+                "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+                "access, created_at) VALUES (?, ?, ?, '/work', 'full', ?)",
+                ("retired-guidance-proof", ticket.employee_backend, ticket.employee_launch_model,
+                 ticket.updated_at),
+            )
+            tickets_data.write_ticket_conversation_start(
+                conn, ticket_id, conversation_id="retired-guidance-proof",
+                backend=ticket.employee_backend, model=ticket.employee_launch_model,
+                reasoning_effort=ticket.employee_launch_reasoning_effort, now=ticket.updated_at,
+            )
+            assert tickets_data.read_ticket_by_conversation_id(
+                conn, "retired-guidance-proof"
+            ).id == ticket_id
+        path = f"/api/tickets/{ticket_id}"
         read_path = f"/api/tickets?detail=full&id={ticket_id}"
         saved = client.get(read_path)
         assert saved.status_code == 200, saved.json()
@@ -455,17 +454,17 @@ def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> 
         assert "guidance:" not in copied.text and "Historical boundary" not in copied.text
         assert client.get("/api/tickets?detail=summary&search=Historical").json()["tickets"] == []
         assert client.put(path + "/notes/plan", json={"body": "old"}).status_code == 404
-    with connect(str(db_path)) as conn:
-        conn.set_authorizer(_deny_retired_ticket_guidance)
-        old_hash = tickets_data.ticket_record_sha256(conn, ticket_id)
-        conn.execute("UPDATE tickets SET recap='Same-second change' WHERE id=?", (ticket_id,))
-        assert tickets_data.ticket_record_sha256(conn, ticket_id) != old_hash
-        conn.set_authorizer(None)
-        after = hashlib.sha256(
-            conn.execute("SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket_id,))
-            .fetchone()[0]
-        ).hexdigest()
-    assert before == after
+        with connect(str(db_path)) as conn:
+            conn.set_authorizer(_deny_retired_ticket_guidance)
+            old_hash = tickets_data.ticket_record_sha256(conn, ticket_id)
+            conn.execute("UPDATE tickets SET recap='Same-second change' WHERE id=?", (ticket_id,))
+            assert tickets_data.ticket_record_sha256(conn, ticket_id) != old_hash
+            conn.set_authorizer(None)
+            after = hashlib.sha256(
+                conn.execute("SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket_id,))
+                .fetchone()[0]
+            ).hexdigest()
+        assert before == after
 
 
 def test_a_create_naming_no_brief_parks_nothing_at_the_http_door(
