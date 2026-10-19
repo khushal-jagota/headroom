@@ -55,6 +55,7 @@ from planner.runtime.logic.conversation_start_resolution import (
 )
 from planner.tickets.contracts import Ticket
 from planner.tickets.data import create_ticket, read_ticket
+from planner.worker_types.store import read_definition, write_definition
 
 _WORKSPACE = Path("/tmp/panels-workspace")
 
@@ -102,12 +103,14 @@ class _LinkWatchingConversationSystem:
         self._system = system
         self._conn = conn
         self._ticket_id = ticket_id
+        self.start_requests: list[ConversationStartRequest] = []
         self.link_when_the_conversation_existed: str | None = "not observed"
 
     async def run_if_idle(self, conversation_id: str, operation: Callable[[], None]) -> bool:
         return await self._system.run_if_idle(conversation_id, operation)
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
+        self.start_requests.append(request)
         await self._system.start_conversation(request)
         self.link_when_the_conversation_existed = read_ticket(
             self._conn, self._ticket_id
@@ -319,6 +322,76 @@ def test_a_start_that_loses_the_active_pointer_race_records_no_history(
         assert linked.conversation_id == winner
         assert linked.made_here is False
         assert _history(tmp_db, ticket.id) == [winner]
+
+    asyncio.run(exercise())
+
+
+def test_creation_launch_choices_reach_the_first_worker_session(
+    tmp_db: Connection,
+) -> None:
+    definition = read_definition(tmp_db, "coding")
+    write_definition(
+        tmp_db,
+        replace(
+            definition,
+            worker_profile=replace(
+                definition.worker_profile,
+                default_backend="codex",
+                default_model="gpt-5.6-sol",
+                default_reasoning_effort="medium",
+            ),
+        ),
+        now=1,
+    )
+    chosen = create_ticket(
+        tmp_db,
+        title="Start with the requested launch choices",
+        principal=OWNER_PRINCIPAL,
+        now=2,
+        title_max_chars=200,
+        worker_type="coding",
+        employee_backend="claude",
+        employee_launch_model="opus",
+        employee_launch_reasoning_effort="high",
+    )
+    stored = read_ticket(tmp_db, chosen.id)
+    assert stored.conversation_id is None
+    assert stored.employee_backend == "claude"
+    assert stored.employee_launch_model == "opus"
+    assert stored.employee_launch_reasoning_effort == "high"
+
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        watching = _LinkWatchingConversationSystem(system, tmp_db, chosen.id)
+        delivered = await send_to_ticket_conversation(
+            watching,
+            tmp_db,
+            chosen.id,
+            text_message_content("Work the first step"),
+            conversation_id=None,
+            sender_label="loop",
+            now=3,
+        )
+
+        assert isinstance(delivered.fate, PromptDeliveryStarted)
+        conversation_id = delivered.conversation_id
+        assert conversation_id is not None
+        assert len(watching.start_requests) == 1
+        first_start = watching.start_requests[0]
+        assert first_start.backend_key is ConversationBackendKey.claude
+        assert first_start.model == "opus"
+        assert first_start.reasoning_effort == "high"
+        assert system.backend_model(conversation_id) == "opus"
+        assert system.backend_reasoning_effort(conversation_id) == "high"
+        assert len(system.backend_prompt_writes(conversation_id)) == 1
+        persisted = tmp_db.execute(
+            "SELECT backend_key,model,reasoning_effort FROM conversations "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        assert persisted is not None
+        assert tuple(persisted) == ("claude", "opus", "high")
+        assert _history(tmp_db, chosen.id) == [conversation_id]
 
     asyncio.run(exercise())
 

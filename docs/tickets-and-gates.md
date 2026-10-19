@@ -110,6 +110,17 @@ Ticket reads and search show only declared fields. Later edits and approvals pre
 historical text, but new writes and proposals must use declared fields. Invalid stored
 values still fail validation, even when their fields are no longer declared.
 
+Each settled field shows who approved its current text. Explicit approval records the
+actual approver, separately from the proposal recipient and the next approval holder.
+The UI says “Approved by Khushal”, “Approved by Chief”, or “Approved by Orchestrator”.
+CLI text uses the orchestrator’s human-readable title. Ticket JSON includes the approval
+method, the principal kind and ID, and the readable label captured at approval.
+
+A field that settles below its ceiling says “Auto-accepted”. A settled Brief at creation
+uses the same label. Older records and direct user completion say “Approval unknown”.
+Unknown never means auto-accepted. An edit that changes the text clears its approval.
+An identical edit preserves it. Ticket history stays unchanged.
+
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
 honor the user's direction without mixing that direction into Success Condition,
@@ -331,6 +342,14 @@ approval. The Brief is then judged by the stated ceiling exactly as a later prop
 it settles and the Ticket starts at the next Stage when the stated ceiling is past
 the Brief, and it parks for approval otherwise. State nothing and the default leash holds,
 which is the ordinary case for intake the human wants to sense-check.
+
+The creation receipt explains this grant in plain words. It lists only the Stages that
+remain unsupervised and the first review gate with its recipient.
+If no review gate remains, the receipt opens with:
+"Nothing in this grant ever parks for review." Stage ownership still
+controls user participation. A Ticket holder routes a parked proposal to the owner, and the
+receipt names that actual destination. The receipt changes no ceiling or holder rule.
+See `cli.md` for the JSON input and effort choice at creation.
 
 ### Changing a ceiling on a running Ticket
 

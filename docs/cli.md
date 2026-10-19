@@ -38,6 +38,13 @@ worker-self route. It includes the Worker type and specialist identity. A named 
 the ordinary Ticket record route. Neither form reads conversation history. Use `ticket
 history` when that record is necessary.
 
+Settled Ticket fields carry an inline approval label in text output, both in the manifest
+and beside an expanded value. Explicit approval names Khushal, Chief, or the approving
+orchestrator's title. `Auto-accepted` and `Approval unknown` remain distinct. Unsettled
+fields carry no approval label. JSON includes an `approval` object on each settled field
+with `method`, `principal` (kind and ID), and `display_label`. Principal IDs appear in
+JSON only. These reads do not add approval information to `ticket history`.
+
 List commands return bounded summaries. `ticket list`, `sprint list`, `sprint item list`,
 and `project list` use pages of 30 by default. Every result reports omissions and the
 next offset. Ticket list no longer filters live work by Day or Sprint.
@@ -85,8 +92,51 @@ flags with `--input-json`.
 
 Create rejects unknown JSON keys before it creates anything. The validation error
 identifies the offending key. Use `brief` for the Brief text. The old `kickoff_note`
-JSON key and unsupported launch options such as `employee_launch_reasoning_effort`
-produce an error. Hidden legacy `--kickoff-note` flags send the text as `brief`.
+JSON key produces an error. Hidden legacy `--kickoff-note` flags send the text as
+`brief`.
+
+Create accepts `employee_launch_reasoning_effort` with the selected backend and model:
+
+```json
+{
+  "title": "Review the import path",
+  "worker_type": "coding",
+  "employee_backend": "claude",
+  "employee_launch_model": "opus",
+  "employee_launch_reasoning_effort": "high",
+  "ceiling": "needs_implementation",
+  "ceiling_holder": {"kind": "owner", "id": "owner"}
+}
+```
+
+The model must be enabled and offer the requested effort. A blank, non-string, or
+unsupported effort fails before Ticket creation. If the catalogue cannot validate an
+explicit effort, creation fails with a clear error. No effort is silently replaced.
+
+An omitted or null effort keeps the existing creation defaults. The Worker type's
+effort applies only to its own backend and model. Other selections store null.
+Null means no effort override: Claude receives no effort option, Codex receives null,
+and Hermes receives no effort configuration. The backend controls the effort in that
+case. The existing catalogue-unavailable fallback remains for omitted effort.
+
+The creation response adds `supervision_receipt`, a plain-language explanation of the
+effective grant. Normal CLI output prints it, and `--json` retains it beside the Ticket
+fields. It lists only the Stages that remain unsupervised and the first review gate with
+its recipient. For example:
+
+> Runs unsupervised: Success Condition, What Changes, Plan, Implementation. First parks for review at Consequences, with Chief.
+
+The default receipt reads:
+
+> Nothing runs unsupervised. First parks for review at Brief, with the owner.
+
+Stages that require user participation still require it. A grant with no unsupervised
+Stage states that explicitly. If no review gate remains, the first sentence states:
+"Nothing in this grant ever parks for review." Ordinary Ticket reads keep their existing shape.
+
+Earlier model-selection work required a model for a different backend. A later correction
+used each model's own effort options for validation. Neither change accepted an explicit
+effort at creation. The create input now provides that choice without a Worker restart.
 
 `ticket edit` sends one JSON object to the existing Ticket PATCH route. One request can
 change one or more fields that the route already accepts.

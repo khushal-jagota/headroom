@@ -143,6 +143,24 @@ class TicketListFilters:
 TicketFieldValues = Mapping[str, str]
 
 
+class TicketApprovalMethod(StrEnum):
+    explicit_accept = "explicit_accept"
+    auto_accept = "auto_accept"
+    unknown = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class TicketFieldApproval:
+    """Approval of the current field text, with a readable identity snapshot."""
+
+    method: TicketApprovalMethod
+    principal: Principal | None
+    display_label: str
+
+
+TicketFieldApprovals = Mapping[str, TicketFieldApproval]
+
+
 @dataclass(frozen=True)
 class PendingTicketProposal:
     """The one current result awaiting agreement on a Ticket."""
@@ -174,6 +192,9 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # Ticket to run on unless the creator names one.
     employee_backend: str
     employee_launch_model: str
+    # Null or omission keeps the existing defaults. A nonblank explicit effort must
+    # validate against the resolved model before creation, even for direct callers.
+    employee_launch_reasoning_effort: str | None
     locale: str
     title: str  # default ""
     brief: str  # default ""; intake text for the Brief field
@@ -190,6 +211,16 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     # name any holder here without holding anything first: this is how a Ticket is opened
     # for somebody else to review.
     ceiling_holder: object  # full Principal
+
+
+class TicketCreationReceipt(TypedDict):
+    """Creation-only explanation, added to the ordinary Ticket response fields.
+
+    Normal CLI output and JSON consumers receive the same plain-language receipt.
+    It describes the grant, remaining autonomous work, and first review destination.
+    """
+
+    supervision_receipt: str
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
@@ -278,6 +309,7 @@ class Ticket:  # §3.3 — column names match exactly
     worker_step_claim_revision: int
     conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     field_values: TicketFieldValues
+    field_approvals: TicketFieldApprovals = field(default_factory=dict, kw_only=True)
     pending_proposal: PendingTicketProposal | None
     created_at: int
     updated_at: int

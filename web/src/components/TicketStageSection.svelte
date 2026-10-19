@@ -3,6 +3,7 @@
   import StageMark from "./StageMark.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
+  import type { TicketFieldApproval } from "../lib/types";
   import { type FieldStageVisualState } from "../lib/ui";
   import {
     fieldIsPassedFor,
@@ -15,6 +16,7 @@
     name,
     value = "",
     ticketStage,
+    approval,
     lifecycle = null,
     stageState = "upcoming",
     variant = "ticket",
@@ -31,6 +33,7 @@
     name: string;
     value?: string;
     ticketStage: string;
+    approval?: TicketFieldApproval;
     lifecycle?: Lifecycle | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
@@ -48,6 +51,9 @@
     onCompleteGate?: (raw: string) => Promise<unknown>;
   } = $props();
 
+  let approvalLabel = $derived(approval?.method === "explicit_accept" && approval.principal?.kind === "sprint_item"
+    ? "Approved by Orchestrator"
+    : approval?.display_label);
   let reviewVariant = $derived(variant === "review");
   let fieldLabel = $derived(fieldLabelFor(lifecycle, name));
   let isGating = $derived(gatingFieldFor(lifecycle, ticketStage) === name);
@@ -89,6 +95,9 @@
     {#snippet summary()}
       <StageMark state={stageState} />
       <span class="disclosure-stage-name">{fieldLabel}</span>
+      {#if approvalLabel}
+        <span class="ticket-field-approval">{approvalLabel}</span>
+      {/if}
       {#if runLabel}
         <span
           class="ticket-stage-run"
@@ -102,3 +111,22 @@
     {@render stageBody()}
   </Disclosure>
 {/if}
+
+<style>
+  .ticket-field-approval {
+    font-family: var(--font-ui);
+    font-size: var(--type-sm);
+    font-weight: 400;
+    color: var(--text-faintest);
+    margin-left: auto;
+    text-align: right;
+  }
+
+  @media (max-width: 420px) {
+    .ticket-field-approval {
+      font-size: var(--type-xs);
+      max-width: 52%;
+      overflow-wrap: anywhere;
+    }
+  }
+</style>

@@ -185,3 +185,39 @@ def test_capture_requests_health_proof_for_the_exact_requested_sha(
     )
     assert (gate / "final-health.json").read_bytes() == payload
     assert not (gate / "final-health-error.txt").exists()
+
+
+@pytest.mark.parametrize("workflow_name,job_name,preceding", [
+    ("deploy.yml", "deploy", "Deploy exact app"),
+    ("recover-private-route.yml", "recover", "Restore private HTTPS route"),
+])
+def test_published_http2_guard_is_required_after_route_changes(
+    workflow_name: str, job_name: str, preceding: str, tmp_path: Path,
+) -> None:
+    workflow = yaml.safe_load((WORKFLOW.parent / workflow_name).read_text())
+    job = workflow["jobs"][job_name]
+    steps = job["steps"]
+    guard_index = next(index for index, step in enumerate(steps)
+                       if step.get("name") == "Check published HTTP/2")
+    guard = steps[guard_index]
+    assert steps[guard_index - 1]["name"] == preceding
+    assert guard["env"] == {"PANELS_PUBLISHED_ORIGIN": "${{ vars.PANELS_PUBLISHED_ORIGIN }}"}
+    assert not guard.get("continue-on-error", False)
+    assert not job.get("continue-on-error", False)
+    if job_name == "deploy":
+        assert guard["if"] == "${{ !inputs.rehearsal }}"
+        assert guard_index < next(index for index, step in enumerate(steps)
+                                  if step.get("name") == "Finalize deployment lifecycle")
+    else:
+        assert "if" not in guard
+        assert steps[0]["uses"] == "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        assert workflow["permissions"] == {"contents": "read"}
+    # Execute the exact shell step. A helper failure must reach the runner exit.
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "check_published_http2.py").write_text("raise SystemExit(23)\n")
+    result = subprocess.run(
+        ["bash", "-euc", guard["run"]],
+        env=os.environ | {"GITHUB_WORKSPACE": str(tmp_path)}, check=False,
+    )
+    assert result.returncode == 23
