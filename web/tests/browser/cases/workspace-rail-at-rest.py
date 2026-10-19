@@ -350,9 +350,18 @@ def run(browser, urls):
         elif path.startswith("tickets/") or path == "tickets":
             result = ticket
         elif path == "recap-requests":
+            target = route.request.post_data_json["target"]
             recap_requests.append(route.request.post_data_json)
+            # The real route clears the line and wakes the agent. The projection this page
+            # reads has to say the same, or the pending state has nothing to stand on.
+            for summary in board["sprint_items"]:
+                if summary["id"] == target["id"]:
+                    summary["recap_preview"] = ""
+                    summary["conversation_signal"] = dict(
+                        working=True, message_for_owner=False
+                    )
             result = {
-                "target": route.request.post_data_json["target"],
+                "target": target,
                 "conversation_id": "c_hover",
                 "fate": "started",
             }
@@ -565,11 +574,25 @@ def run(browser, urls):
         panel.hover()
         expect(panel).to_have_attribute("aria-hidden", "false")
         ask.click()
-        expect(ask).to_have_text("Asked")
-        expect(panel.locator("[data-request-recap-note]")).to_have_text("started it up")
+        # The real server pushes the cleared line down its own source. This host owns that
+        # push, so it makes it rather than waiting for one that cannot arrive.
+        page.evaluate("window.__refresh()")
+        # The press clears the line, and the empty line beside a working agent is what
+        # says a recap is coming. The ask steps aside while it does.
+        expect(panel.locator("[data-request-recap-action]")).to_have_count(0)
+        expect(panel.locator("[data-recap-pending]")).to_have_count(1)
         assert recap_requests == [{"target": {"kind": "sprint_item", "id": "si_needs_him"}}], (
             recap_requests
         )
+        # The written recap lands in that same place, and the ask comes back with it.
+        for summary in board["sprint_items"]:
+            if summary["id"] == "si_needs_him":
+                summary["recap_preview"] = ORCHESTRATOR_RECAP
+                summary["conversation_signal"] = dict(working=False, message_for_owner=False)
+        page.evaluate("window.__refresh()")
+        expect(panel.locator("[data-recap-pending]")).to_have_count(0)
+        expect(panel.locator("[data-recap-text]")).to_have_text(ORCHESTRATOR_RECAP)
+        expect(panel.locator("[data-request-recap-action]")).to_have_count(1)
         page.mouse.move(1200, 900)
         expect(panel).to_have_attribute("aria-hidden", "true")
         for viewport, label in [

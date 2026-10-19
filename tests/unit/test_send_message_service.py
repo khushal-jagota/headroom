@@ -232,7 +232,7 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
     asyncio.run(exercise())
 
 
-def test_a_recap_request_reaches_the_agent_and_asks_for_no_reply_message(
+def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_message(
     tmp_db: Connection,
     fake_clock: PlannerTestClock,
     monkeypatch: pytest.MonkeyPatch,
@@ -260,6 +260,12 @@ def test_a_recap_request_reaches_the_agent_and_asks_for_no_reply_message(
             tickets_data,
             "read_ticket",
             lambda _conn, _ticket_id: SimpleNamespace(conversation_id="c_worker"),
+        )
+        cleared: list[object] = []
+        monkeypatch.setattr(
+            tickets_data,
+            "edit_ticket",
+            lambda _conn, ticket_id, **kwargs: cleared.append((ticket_id, kwargs["edit"])),
         )
         modes: list[object] = []
 
@@ -291,6 +297,9 @@ def test_a_recap_request_reaches_the_agent_and_asks_for_no_reply_message(
             worker,
         )
 
+        # The line being replaced goes before the ask leaves, so no surface shows a spent
+        # recap beside a working agent.
+        assert cleared == [("t_worker", {"recap": ""})]
         write = conversations.backend_prompt_writes("c_worker")[-1]
         assert recap_request.RECAP_REQUEST_MESSAGE in write.text
         assert "Authenticated Panels reply requirement" not in write.text

@@ -11,6 +11,11 @@ the browser that presses the button.
 The answer to this message is the recap the agent writes, not words it sends back. So the
 send carries no reply requirement: a press leaves the owner's attention alone and the
 fresh recap is the whole result.
+
+Asking also clears the recap being replaced. The owner read that line before pressing, so
+it is spent, and leaving it in place makes a pending recap look like a current one. The
+clear is the owner's own decision and it is permanent: a refused send leaves the line
+empty, and every surface showing that recap shows it empty at once.
 """
 
 from __future__ import annotations
@@ -24,6 +29,9 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import service
 from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliveryResult
+from planner.sprints import data as sprints_data
+from planner.tickets import data as tickets_data
+from planner.worker_settings import service as worker_settings_service
 
 RECAP_REQUEST_MESSAGE = "Owner has requested a recap. Remember to keep it short and top level."
 
@@ -48,6 +56,7 @@ async def request_recap(
             "a recap can be asked of a ticket, an orchestrator, or the Chief",
             {"kind": recipient.kind.value},
         )
+    _clear_recap(conn, clock, ctx, recipient)
     return await service.send_message(
         conversations,
         conn,
@@ -58,3 +67,26 @@ async def request_recap(
         MessageDeliveryMode.steer,
         expects_reply=False,
     )
+
+
+def _clear_recap(
+    conn: sqlite3.Connection, clock: Clock, ctx: RequestContext, recipient: Principal
+) -> None:
+    """Empty the line being replaced, through each kind's own canonical writer."""
+    if recipient.kind is PrincipalKind.ticket:
+        tickets_data.edit_ticket(
+            conn,
+            recipient.id,
+            edit={"recap": ""},
+            title_max_chars=_UNUSED_TITLE_LIMIT,
+            principal=ctx.principal,
+            now=clock.now_unix(),
+        )
+    elif recipient.kind is PrincipalKind.sprint_item:
+        sprints_data.update_item(conn, recipient.id, edits={"body": ""}, clock=clock)
+    else:
+        worker_settings_service.update_chief_recap(conn, {"recap": ""})
+
+
+# No title is edited here, so the limit is never reached. The writer takes one anyway.
+_UNUSED_TITLE_LIMIT = 10_000

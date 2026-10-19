@@ -8,6 +8,8 @@
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import RequestRecapAction from "./RequestRecapAction.svelte";
+  import RecapPending from "./RecapPending.svelte";
+  import { recapPending } from "../lib/recapPending";
   /* ``recapTarget`` is the agent that can be asked for a fresh recap, and its own canonical
    * recap. The panel's line is not always that recap — for an orchestrator it is a composed
    * list — and the ask has to watch the real thing it asked for, not a line that moves for
@@ -19,7 +21,7 @@
     recap?: string; worker?: WorkItemTicketFacts | null;
     rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
     signal?: Partial<ConversationSignal>; conversationId?: string | null;
-    recapTarget?: { kind: "ticket" | "sprint_item" | "chief"; id: string; recap: string } | null;
+    recapTarget?: { kind: "ticket" | "sprint_item" | "chief"; id: string; recap?: string } | null;
     onKeepOpen?: () => void; onLeave?: () => void;
     element?: HTMLDivElement | null;
   } = $props();
@@ -27,6 +29,8 @@
   let currentWorker = $derived(worker);
   let stageSentence = $derived(currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
   let recapText = $derived(worker ? (currentWorker?.recap_preview ?? "") : recap);
+  let panelSignal = $derived(currentWorker?.conversation_signal ?? signal);
+  let pendingRecap = $derived(recapTarget !== null && recapPending(recapTarget.recap, panelSignal));
   let left = $state(0);
   let top = $state(0);
   /* The panel can only take the pointer where it is clear of the rail. A narrow window
@@ -56,13 +60,18 @@
 <div bind:this={element} class="rail-hover-panel" class:visible class:instant class:interactive={visible && clearOfRail} style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}
   onpointerenter={() => onKeepOpen?.()} onpointerleave={() => onLeave?.()}
   onfocusin={() => onKeepOpen?.()}
-  onfocusout={(event) => { if (!element?.contains(event.relatedTarget as Node | null)) onLeave?.(); }}>
+  onfocusout={(event) => {
+    // Focus landing somewhere outside is someone leaving. Focus landing nowhere is the
+    // control they just pressed being replaced by what it did, and they are still here.
+    const moved = event.relatedTarget as Node | null;
+    if (moved !== null && !element?.contains(moved)) onLeave?.();
+  }}>
   <div class="kicker">{kicker}</div>
   <div class="title"><span>{currentWorker?.title ?? title}</span><ConversationSignalMark signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   {#if recapText || recapTarget}
     <div class="recap">
-      {#if recapText}<span data-recap-text>{recapText}</span>{/if}
-      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} recap={recapTarget.recap} class="recap-ask" />{/if}
+      {#if pendingRecap}<RecapPending />{:else if recapText}<span data-recap-text>{recapText}</span>{/if}
+      {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} pending={pendingRecap} class="recap-ask" />{/if}
     </div>
   {/if}
   {#if worker && stageSentence}<div class="doing">{stageSentence}</div>{/if}

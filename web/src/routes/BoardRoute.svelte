@@ -108,9 +108,9 @@
     : hoverChief ? workspace?.chief?.conversation_signal : hoveredItem?.conversationSignal);
   let hoverConversationId = $derived(hoverConversationIdOverride ?? (hoverChief ? workspace?.chief?.conversation_id : hoveredItem?.conversationId));
   // Every agent the panel can show keeps a recap, so every one of them can be asked.
-  let hoverRecapTarget = $derived<{ kind: "ticket" | "sprint_item" | "chief"; id: string; recap: string } | null>(
+  let hoverRecapTarget = $derived<{ kind: "ticket" | "sprint_item" | "chief"; id: string; recap?: string } | null>(
     hoverWorker ? { kind: "ticket", id: hoverWorker.id, recap: hoverWorker.recap_preview ?? "" }
-      : hoverChief ? { kind: "chief", id: "chief", recap: "" }
+      : hoverChief ? { kind: "chief", id: "chief" }
       : hoveredItem ? { kind: "sprint_item", id: hoveredItem.id, recap: hoveredItem.recapPreview } : null);
   let currentHoverTitle = $derived(hoverWorker?.title ?? (hoverChief ? workspace?.chief?.label : hoveredItem?.title) ?? hoverTitle);
   let currentHoverKicker = $derived.by(() => {

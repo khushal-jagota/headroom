@@ -4,28 +4,28 @@
    * The same words in every place it appears, because it does the same thing in every
    * place: it sends one message to the agent behind this piece of work.
    *
-   * A request in flight is held here and nowhere else. The press remembers the line it
-   * was unhappy with, and the ask clears itself the moment a different line arrives —
-   * so the server stores nothing, and a reload is simply someone who has not asked yet.
+   * Pressing clears the recap, so the empty line and its working agent are what say one
+   * is coming — on every surface, after a reload, and for a request somebody else made.
+   * Nothing is held here but the moment between the press and the server answering.
    */
   import { mutateJson } from "../lib/mutate";
   import { fateSentence } from "../lib/conversation/composer";
   import type { PromptDeliveryFate } from "../lib/conversation/wire";
 
-  let { kind, id, recap = "", class: extraClass = "" }: {
+  let { kind, id, pending = false, class: extraClass = "" }: {
     kind: "ticket" | "sprint_item" | "chief";
     id: string;
-    recap?: string;
+    /** The recap is already on its way. The line says so, so the ask steps aside. */
+    pending?: boolean;
     class?: string;
   } = $props();
 
   let sending = $state(false);
-  let askedAgainst = $state<string | null>(null);
   let note = $state<string | null>(null);
-  let asked = $derived(askedAgainst !== null && askedAgainst === recap);
+  let quiet = $derived(sending || pending);
 
   async function ask(): Promise<void> {
-    if (sending || asked) return;
+    if (quiet) return;
     sending = true;
     note = null;
     try {
@@ -33,10 +33,9 @@
         method: "POST",
         body: { target: { kind, id } }
       });
-      askedAgainst = recap;
-      // A started turn is the press waking an idle agent. Nothing on this surface shows
-      // that on its own, so the one place that knows says it.
-      note = fate.fate === "started" ? "started it up" : fateSentence(fate);
+      // The shimmering line is the whole of "it is coming", so only a fate that line
+      // cannot show gets words: a refusal, or a send nobody can vouch for.
+      note = fateSentence(fate);
     } catch (problem) {
       note = problem instanceof Error ? problem.message : "not delivered";
     } finally {
@@ -46,15 +45,17 @@
 </script>
 
 <span class={`request-recap${extraClass ? ` ${extraClass}` : ""}`} data-request-recap={`${kind}:${id}`}>
-  <!-- Marked rather than disabled: a disabled control loses focus the instant it is
-       pressed, and inside a hover panel losing focus is how the panel decides you left. -->
-  <button
-    type="button"
-    class="request-recap-action"
-    aria-disabled={sending || asked}
-    data-request-recap-action
-    onclick={() => void ask()}
-  >{asked ? "Asked" : "Ask for a recap"}</button>
+  {#if !pending}
+    <!-- Marked rather than disabled: a disabled control loses focus the instant it is
+         pressed, and inside a hover panel losing focus is how the panel decides you left. -->
+    <button
+      type="button"
+      class="request-recap-action"
+      aria-disabled={quiet}
+      data-request-recap-action
+      onclick={() => void ask()}
+    >Ask for a recap</button>
+  {/if}
   {#if note}<span class="request-recap-note" data-request-recap-note>{note}</span>{/if}
 </span>
 
