@@ -3,8 +3,8 @@
 
 
 def _catalogs(browser, url):
-    import json
-    from urllib.parse import urlsplit, parse_qs
+    from urllib.parse import parse_qs, urlsplit
+
     from playwright.sync_api import expect
 
     page = browser.new_page(viewport={"width": 1100, "height": 800})
@@ -24,7 +24,8 @@ def _catalogs(browser, url):
             "entries":[{"conversation_id":f"c{index:03}","created_at":index,"label":f"History {index:03}"} for index in range(offset,min(offset+60,135))]})
     def artifacts(route):
         args = parse_qs(urlsplit(route.request.url).query)
-        offset = int(args.get("offset", [0])[0]); limit = int(args.get("limit", [60])[0])
+        offset = int(args.get("offset", [0])[0])
+        limit = int(args.get("limit", [60])[0])
         directory = args.get("directory", [""])[0]
         count = 3 if directory else 135
         rows = []
@@ -48,9 +49,11 @@ def _catalogs(browser, url):
         expect(box.get_by_role("option")).to_have_count(15)
         box.press("Enter")
         expect(page.locator("[data-history-selection]")).to_have_text("c134")
-        trigger.click(); box.press("Home")
+        trigger.click()
+        box.press("Home")
         expect(page.locator("[data-listbox-picker-active]")).to_have_attribute("data-listbox-picker-value","__current__")
-        box.press("h"); box.press("i"); box.press("s"); box.press("t"); box.press("o"); box.press("r"); box.press("y"); box.press(" "); box.press("1"); box.press("2"); box.press("3")
+        for key in ("h", "i", "s", "t", "o", "r", "y", " ", "1", "2", "3"):
+            box.press(key)
         expect(page.locator("[data-listbox-picker-active]")).to_have_attribute("data-listbox-picker-value","c123")
         box.press("Escape")
         expect(trigger).to_be_focused()
@@ -70,8 +73,9 @@ def _catalogs(browser, url):
 
 
 def _preview_lifecycle(browser, url):
-    import time
     import base64
+    import time
+
     from playwright.sync_api import expect
 
     started = time.monotonic()
