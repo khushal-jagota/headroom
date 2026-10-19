@@ -318,7 +318,7 @@ def test_record_reads_share_manifests_selection_and_identity(
         "Record reads",
         "--project-id",
         "project_other",
-        "--body-file",
+        "--goal-file",
         "-",
         stdin="Show one part. 🌱",
     )
@@ -351,7 +351,7 @@ def test_record_reads_share_manifests_selection_and_identity(
         actor="worker",
     )
     sprint_manifest = cli(server, "sprint", "show", "current")
-    item_part = cli(server, "sprint", "item", "show", item["id"], "body")
+    item_part = cli(server, "sprint", "item", "show", item["id"], "goal")
     day_manifest = cli(server, "day", "show", "2026-07-04")
     day_part = cli(
         server,
@@ -374,7 +374,7 @@ def test_record_reads_share_manifests_selection_and_identity(
         "checkpoint",
         "review",
     ]
-    assert item_part["parts"]["body"]["value"] == "Show one part. 🌱"
+    assert item_part["parts"]["goal"]["value"] == "Show one part. 🌱"
     assert "rollup" not in item_part["header"]
     assert "tickets" not in day_manifest
     assert "tickets" not in day_manifest["header"]

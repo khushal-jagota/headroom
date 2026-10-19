@@ -422,7 +422,8 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
 
 export type SprintItemWorkspace = SprintItemSummary & {
   conversation_signal?: ConversationSignal;
-  body: string;
+  goal: string;
+  recap: string;
   supervisor: {
     agent_key: string;
     conversation_id: string | null;
@@ -590,4 +591,4 @@ export type WorkspaceMessageConversation = {
 };
 
 /** Exact detail-only reply, independent of shared navigation facts. */
-export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "body" | "artifacts" | "conversation_history">;
+export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "goal" | "recap" | "artifacts" | "conversation_history">;

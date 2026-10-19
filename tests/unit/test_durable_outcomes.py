@@ -44,7 +44,7 @@ def test_historical_sprint_records_preserve_context_and_exact_partition(
     outcome = data.create_item(
         tmp_db,
         title="Durable intent",
-        body="Keep this context",
+        goal="Keep this context",
         project_id="project_vylo",
         clock=fake_clock,
     )

@@ -86,7 +86,8 @@ const indexPath = join(scratchRoot, `ideas-shell-index-${process.pid}.html`);
     }
     if (path === "/api/items/item_offboard/workspace-content") {
       return json({
-        body: "The off-board brief remains readable.",
+        goal: "The off-board goal remains readable.",
+        recap: "",
         artifacts: [],
         conversation_history: []
       });

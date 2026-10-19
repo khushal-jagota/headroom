@@ -142,18 +142,21 @@ def test_summary_preserves_canonical_consequences_wait(tmp_db: Connection) -> No
     assert page.rows[0]["waiting_to_closeout"] is True
 
 
-def test_board_orchestrator_recap_uses_authoritative_body_without_changes(
+def test_board_orchestrator_recap_uses_the_authoritative_recap_without_changes(
     tmp_db: Connection,
 ) -> None:
     item = seed_item(tmp_db, "Recap owner")
     seed(tmp_db, title="Recap child", item=item)
-    body = "  Ship the sidebar.\n\t" + "Keep attention concise. " * 10
-    tmp_db.execute("UPDATE sprint_items SET body=? WHERE id=?", (body, item))
+    recap = "  Ship the sidebar.\n\t" + "Keep attention concise. " * 10
+    tmp_db.execute(
+        "UPDATE sprint_items SET goal=?, recap=? WHERE id=?", ("Why it exists.", recap, item)
+    )
     before = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())
 
     board = views.board_view(tmp_db)
 
-    assert board["sprint_items"][0]["recap"] == body
+    # The goal never stands in for the recap on the board.
+    assert board["sprint_items"][0]["recap"] == recap
     assert len(board["sprint_items"][0]["recap_preview"]) == 160
     assert board["sprint_items"][0]["recap_preview"].endswith("…")
     after = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item,)).fetchone())

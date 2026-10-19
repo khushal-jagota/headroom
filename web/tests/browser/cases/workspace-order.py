@@ -94,7 +94,8 @@ def run(browser, urls):
         return {
             **item(item_id),
             "title": title,
-            "body": "",
+            "goal": "",
+            "recap": "",
             "project_id": None,
             "project": None,
             "created_at": {"si_old": 1, "si_peer": 2, "si_newer": 3, "si_direct": 4}[item_id],
@@ -204,7 +205,7 @@ def run(browser, urls):
                 return
             result = {
                 key: workspace(item_id)[key]
-                for key in ["body", "artifacts", "conversation_history"]
+                for key in ["goal", "recap", "artifacts", "conversation_history"]
             }
         elif path == "tickets":
             route.fulfill(
@@ -280,7 +281,10 @@ def run(browser, urls):
     delay_old = False
     fulfill(
         held.pop(),
-        {key: workspace("si_old")[key] for key in ["body", "artifacts", "conversation_history"]},
+        {
+            key: workspace("si_old")[key]
+            for key in ["goal", "recap", "artifacts", "conversation_history"]
+        },
     )
     expect(
         page.locator('[data-sprint-item-workspace="si_old"] .sprint-workspace-title')

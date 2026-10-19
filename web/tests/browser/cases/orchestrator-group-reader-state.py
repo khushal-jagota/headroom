@@ -65,7 +65,8 @@ def run(browser, urls):
         return {
             "id": item["id"],
             "title": "Mirror Item",
-            "body": "[Open proof](/files/sprint-items/si_mirror/artifacts/proof.md)",
+            "goal": "[Open proof](/files/sprint-items/si_mirror/artifacts/proof.md)",
+            "recap": "",
             "project_id": project["id"],
             "project": "Mirror project",
             "created_at": 10,
@@ -142,7 +143,10 @@ def run(browser, urls):
             raise AssertionError("competing Board summary read")
         elif path.endswith("/workspace-content"):
             payload = workspace_payload()
-            result = {key: payload[key] for key in ("body", "artifacts", "conversation_history")}
+            result = {
+                key: payload[key]
+                for key in ("goal", "recap", "artifacts", "conversation_history")
+            }
         elif path == "/api/workers":
             raise AssertionError("competing Item worker roster request")
         elif path == "/api/backends":

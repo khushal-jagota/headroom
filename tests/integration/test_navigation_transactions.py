@@ -356,7 +356,9 @@ def test_metadata_edits_publish_source_values_without_status_changes(tmp_path: P
         recap = '\t"雪" \\\n ' + "😀" * 200 + " SOURCE-BODY-TAIL"
         conn.execute("BEGIN")
         conn.execute("UPDATE tickets SET recap=? WHERE id='t'", (recap,))
-        conn.execute("UPDATE sprint_items SET body=? WHERE id='a'", ("\n Parent\tline\nRésumé ",))
+        conn.execute(
+            "UPDATE sprint_items SET recap=? WHERE id='a'", ("\n Parent\tline\nRésumé ",)
+        )
         conn.commit()
         previews = values(conn)
         assert previews["ticket", "t"] == {
@@ -385,7 +387,7 @@ def test_metadata_edits_publish_source_values_without_status_changes(tmp_path: P
         conn.execute(
             "UPDATE tickets SET updated_at=100,created_at=13,recap='rollback' WHERE id='t'"
         )
-        conn.execute("UPDATE sprint_items SET body='rollback' WHERE id='a'")
+        conn.execute("UPDATE sprint_items SET recap='rollback' WHERE id='a'")
         conn.execute("DELETE FROM tickets WHERE id='t'")
         conn.execute("DELETE FROM sprint_items WHERE id='a'")
         conn.rollback()

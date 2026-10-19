@@ -2033,7 +2033,7 @@ def sprint_item_create(
             else:
                 human_result += (
                     f"\nRetry on this orchestrator: panels send-message --sprint-item {item_id}"
-                    ' --message "<brief>"'
+                    ' --message "<goal>"'
                 )
     http.emit(data, as_json, human_result)
 

@@ -88,7 +88,8 @@ def run(browser, urls):
         row = dict(
             id=id,
             title=title,
-            body="Shared work and owner decisions",
+            goal="Shared work and owner decisions",
+            recap="",
             project_id=None,
             project=None,
             created_at=1,
@@ -172,7 +173,7 @@ def run(browser, urls):
     delivered_pointer = "delivered-local"
     content_failure = False
     mutations = []
-    body_writes = []
+    recap_field_writes = []
 
     def respond(route):
         path = route.request.url.split("/api/", 1)[1].split("?")[0]
@@ -201,8 +202,8 @@ def run(browser, urls):
             workers["chief_of_staff"]["recap"] = route.request.post_data_json["recap"]
             result = workers["chief_of_staff"]
         elif path == "items/si_focus" and route.request.method == "PATCH":
-            if "body" in route.request.post_data_json:
-                body_writes.append(route.request.post_data_json)
+            if "recap" in route.request.post_data_json:
+                recap_field_writes.append(route.request.post_data_json)
             items[0].update(route.request.post_data_json)
             fence = {
                 "version": 1,
@@ -273,7 +274,7 @@ def run(browser, urls):
                 return
             result = {
                 key: next(i for i in items if i["id"] == path.split("/")[1])[key]
-                for key in ["body", "artifacts", "conversation_history"]
+                for key in ["goal", "recap", "artifacts", "conversation_history"]
             }
         elif path == "conversation/backends":
             result = {"backends": []}
@@ -541,7 +542,7 @@ def run(browser, urls):
     page.evaluate("window.__refresh()")
     expect(page.locator(".sprint-item-doc .error-code")).to_have_text("content_unavailable")
     expect(page.locator(".sprint-workspace-title")).to_contain_text("Updated orchestrator title")
-    expect(page.locator("[data-sprint-item-brief]")).to_contain_text(
+    expect(page.locator("[data-sprint-item-goal]")).to_contain_text(
         "Shared work and owner decisions"
     )
     content_failure = False
@@ -856,7 +857,7 @@ def run(browser, urls):
     recap.fill(replacement)
     with page.expect_response("**/api/items/si_focus"):
         recap.press("Control+Enter")
-    assert body_writes == [{"body": replacement}], body_writes
+    assert recap_field_writes == [{"recap": replacement}], recap_field_writes
     page.reload()
     expect(recap).to_contain_text("Recap preserves")
     page.route(
