@@ -28,6 +28,7 @@ from tests.support.real_permission_mapping import (
 )
 from tests.support.real_provider_application import (
     assert_navigation_attention,
+    observe_hermes_spawn,
     provider_application,
     require_provider_auth,
 )
@@ -69,7 +70,7 @@ async def _exercise(
     workspace.mkdir()
     target = workspace / f"permission-{uuid.uuid4().hex}.txt"
     nonce = uuid.uuid4().hex
-    require_provider_auth(backend)
+    authentication_route = require_provider_auth(backend)
     for key, value in {
         "PLAN_DB_PATH": root / "planner.db",
         "PLAN_LOGS_DIR": root / "logs",
@@ -81,6 +82,7 @@ async def _exercise(
     install_permission_mapping(monkeypatch, backend, observations)
     receipts: dict[str, Any] = {
         "backend": str(backend),
+        "authentication_route": authentication_route,
         "decision": decision,
         "model": MODELS[str(backend)],
         "source_revision": _command(["git", "rev-parse", "HEAD"]),
@@ -101,6 +103,8 @@ async def _exercise(
         # Only these selected records are stored: never process environments, homes,
         # SDK initialization payloads, or arbitrary stderr that can contain credentials.
         destination.write_text(json.dumps(receipts, indent=2) + "\n")
+
+    observe_hermes_spawn(monkeypatch, backend, receipts)
 
     database = root / "planner.db"
     connection = connect(str(database), 5_000)

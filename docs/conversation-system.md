@@ -95,9 +95,10 @@ explicit native test-only permission mapping. Enable it with
 and an explicit fresh `PANELS_PROVIDER_RUNTIME_ROOT`. Select only the commissioned
 allow case per backend. It records native request/wait/answer/file outcomes and
 canonical start, pending and end attention. Calls use real accounts and model usage.
-No supported no-copy authentication route is currently provisioned for these fresh
-synthetic homes. The host fails before provider startup with the specific prerequisite;
-unset opt-in flags alone are not that prerequisite. No connection-drop recovery is claimed.
+The commissioned route uses the owner's normal authenticated native profiles, including
+normal login refresh, locks and fresh vendor session metadata. It never copies or links
+credentials or opens an existing conversation. Missing native authentication or model
+access stops that backend with its observed outcome. No connection-drop recovery is claimed.
 
 ## The notebook
 
@@ -932,16 +933,21 @@ General coverage would require tracing helpers, branches, filesystem operations 
 launch paths. The bounded checks do not provide that general guarantee; review
 must enforce the invariant.
 
-The commissioned steering and permission hosts use fresh synthetic databases,
-conversations, workspaces, runtime paths and homes. They do not copy credentials,
-configuration, `.env` files or whole homes, and they do not create credential symlinks.
-They require a separately reviewed supported no-copy authentication route before calls.
-Hermes needs a native canonical authentication and refresh-lock route for the isolated
-home. Codex needs a supported external-authentication or verified OS-store route for a
-fresh home. Claude needs a provisioned supported token/API-key/profile route for its
-fresh configuration directory. These are missing prerequisites, not model-access
-verdicts. A canonical login cannot serve as disposable test state. No new login,
-purchase or authentication workaround is authorized by these tests.
+The commissioned steering and permission hosts use fresh synthetic Panels databases,
+conversations, workspaces and runtime paths. Owner authorization permits normal canonical
+HOME and native authenticated profiles, including login refresh/locks and newly created
+provider session metadata. Existing native configuration is consumed in place, never
+copied. No credentials, configuration, `.env` file or whole home is copied or linked.
+The canonical home is retained and never treated as disposable fixture state.
+
+Codex uses its normal CODEX_HOME. Claude uses its normal CLAUDE_CONFIG_DIR. Hermes uses
+its normal HERMES_HOME and PLAN_HERMES_HOME together, preserving the one native auth and
+refresh-lock identity, with its installed interpreter explicitly configured. No new login,
+purchase or authentication workaround is authorized. Native provider caches/logs/temp
+follow the production launcher; parent Panels process XDG/temp paths are synthetic.
+Hermes trims inherited environment names, so this is not a claim that every native
+provider temporary path is synthetic. Missing supported native authentication or model
+access is an observed prerequisite failure, not permission to create a workaround.
 
 Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
 `tests/unit/test_no_codex_credential_copies.py`,
@@ -1213,21 +1219,20 @@ failure, denial and uncertainty coverage.
 Both integration hosts require a clean source tree, absolute evidence destinations and
 an explicit fresh `PANELS_PROVIDER_RUNTIME_ROOT` containing their synthetic databases
 and runtime paths. The steering evidence destination is `PANELS_STEERING_EVIDENCE_ROOT`.
-The permission destination is `PANELS_PERMISSION_EVIDENCE_ROOT`. Isolate the whole
-process environment, including HOME, XDG directories, provider homes and temporary
-files, before application import. Never point these paths at a real agent home or
-production database. The former home-template variables and credential-sharing helpers
-are removed. All three backends currently fail closed at the safe-authentication
-prerequisite described above. Do not run provider calls until the authentication route
-and harness receive independent review. The bounded commission is one steering/stop/
+The permission destination is `PANELS_PERMISSION_EVIDENCE_ROOT`. Before application
+import, isolate Panels databases, logs, backups, locks, workspaces, XDG and parent temporary
+paths. Normal HOME and native profile paths are the explicit owner-authorized exception.
+Never open a production Panels database or an existing provider conversation. The former
+home-template variables and credential-sharing helpers are removed. The supported native
+routing and exact host/launcher receive independent review before provider calls. The bounded commission is one steering/stop/
 resume scenario and one explicit-allow permission roundtrip per backend; it does not
 commission additional paid denial or failure permutations.
 
 ### Historical adapter observations
 
 The following observations describe earlier runs, not current-tree execution or a
-current pass/fail count. The commissioned integration hosts are now blocked before
-provider startup by the authentication prerequisites above.
+current pass/fail count. Current integration results must identify their exact source,
+normal native profile routing and fresh Panels state.
 
 - **The steering exercise.** The current source explicitly refuses an idle steer with
   `no_running_turn_to_steer_into`; the integration assertion preserves that contract.

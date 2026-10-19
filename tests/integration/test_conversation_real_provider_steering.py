@@ -38,6 +38,7 @@ import httpx
 import pytest
 from tests.support.real_provider_application import (
     assert_navigation_attention,
+    observe_hermes_spawn,
     provider_application,
     require_provider_auth,
 )
@@ -91,8 +92,9 @@ async def _exercise(
     assert planner_file.is_relative_to(REPOSITORY_ROOT), (
         f"planner resolved outside the proof worktree: {planner_file}"
     )
-    require_provider_auth(case.backend_key)
+    authentication_route = require_provider_auth(case.backend_key)
     database_path = runtime_root / "state" / "planner.db"
+    monkeypatch.setenv("PLAN_DB_PATH", str(database_path))
     workspace = runtime_root / "workspace"
     database_path.parent.mkdir(parents=True)
     workspace.mkdir(parents=True)
@@ -101,7 +103,7 @@ async def _exercise(
     monkeypatch.setenv("TMPDIR", str(temporary_root))
     _create_database(database_path)
 
-    conversation_id = f"real-system-steer-{case.backend_key}"
+    conversation_id = f"real-system-steer-{case.backend_key}-{uuid.uuid4().hex}"
     model_nonce = f"MODEL-STEER-{uuid.uuid4()}"
     refused_nonce = f"REFUSED-STEER-{uuid.uuid4()}"
     forbidden_nonce = f"STOPPED-STEER-{uuid.uuid4()}"
@@ -113,6 +115,7 @@ async def _exercise(
     assert source_status == "", f"real-provider proof requires a clean tree: {source_status}"
     receipts: dict[str, Any] = {
         "backend": str(case.backend_key),
+        "authentication_route": authentication_route,
         "model": case.model,
         # Observed, never asserted, and kept above the bulk of the file so a reader sees it
         # without scrolling.  Every case reporting no model effect is what a real steering
@@ -127,6 +130,8 @@ async def _exercise(
         "started_at": datetime.now(UTC).isoformat(),
         "responses": [],
     }
+
+    observe_hermes_spawn(monkeypatch, case.backend_key, receipts)
 
     async with _api(database_path, receipts) as client:
         started = await client.post(
@@ -413,8 +418,11 @@ async def _exercise(
 
 @asynccontextmanager
 async def _api(database_path: Path, receipts: dict[str, Any]) -> AsyncIterator[httpx.AsyncClient]:
-    async with provider_application(database_path, receipts) as (client, _runtime):
-        yield client
+    try:
+        async with provider_application(database_path, receipts) as (client, _runtime):
+            yield client
+    finally:
+        _write_evidence_from_receipts(receipts)
 
 
 async def _send(
