@@ -122,6 +122,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     def delay_transcript(route: Route) -> None:
         pending_events.append(route)
         diagnostics.record("transcript-held", url=route.request.url)
+        route.request.frame.page.evaluate("() => { window.__proofTranscriptHeld = true; }")
 
     try:
         diagnostics.record("transcript-route-install-start")
@@ -195,6 +196,9 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         page.wait_for_function(
             "() => document.querySelector('[data-conversation-state=peeked]')", timeout=WAIT_MS
         )
+        # Peeked is local UI state; metadata and reader bootstrap can still be pending.
+        # Establish that the interceptor holds delivery before testing the read boundary.
+        page.wait_for_function("() => window.__proofTranscriptHeld === true", timeout=WAIT_MS)
         # The snapshot can name an unread latest sequence, but undelivered rows cannot be read.
         assert pending_events
         assert _read_position(server, "dot-ticket") == 0
