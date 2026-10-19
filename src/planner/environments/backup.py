@@ -25,7 +25,7 @@ SNAPSHOT_METADATA_NAME = "metadata.json"
 SNAPSHOT_FILES_DIR_NAME = "files"
 SNAPSHOT_FILES_MANIFEST_NAME = "manifest.json"
 SNAPSHOT_FORMAT = "panels-backup-v2"
-RETENTION_COUNT = 7
+RETENTION_COUNT = 3
 
 
 def managed_file_roots(database_path: Path) -> dict[str, Path]:
