@@ -1210,6 +1210,9 @@ def run(browser, urls):
     expect(page.locator("[data-shell-presence]")).to_have_text("0 working")
     expect(page.locator(".review-empty-meta")).to_have_text("0 agents in progress")
     artifact_started = time.monotonic()
+    # End the deliberate incompatible-manifest scenario before the next Ticket visit.
+    manifest["worker_types"] = json.loads(json.dumps(canonical_worker_types))
+    page.evaluate("window.__manifest()")
     page.evaluate("window.__showTicket('t_artifacts')")
     page.locator('[data-ticket-id="t_artifacts"]').wait_for()
     page.locator("[data-conversation-rest-bar], [data-conversation-input]").first.wait_for()
