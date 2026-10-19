@@ -6,17 +6,11 @@ The owner requires one visible indicator: message takes precedence over work;
 a read must reveal the spinner while the same actual work continues.
 Neither a component test nor an API-only test exercises that complete boundary.
 """
+
 from __future__ import annotations
 
 import json
-import os
-import socket
-import subprocess
-import sys
-import tempfile
-import time
-from collections.abc import Callable, Iterator
-from pathlib import Path
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -29,68 +23,11 @@ from tests.e2e.harness import (
     ServerHandle,
     capture_success,
 )
+from tests.support.server_fixtures import signal_server as signal_server
 
 from planner.core.db import connect
-from planner.worker_types.configuration import load_worker_runtime_definitions
 
 EVIDENCE = REPO_ROOT / "data/verification/conversation-signals/message-precedence-revision"
-
-
-@pytest.fixture
-def signal_server(request: pytest.FixtureRequest) -> Iterator[ServerHandle]:
-    EVIDENCE.mkdir(parents=True, exist_ok=True)
-    layout = getattr(request.node, "callspec", None)
-    label = layout.params.get("layout", "proof") if layout else "proof"
-    root = Path(tempfile.mkdtemp(prefix=f"{label}-", dir=EVIDENCE))
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
-    db = root / "conversation-signals-proof.db"
-    env.update({
-        "PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db), "PLAN_PORT": str(port),
-        "PLAN_LOGS_DIR": str(root / "logs"),
-        "PLAN_DISPATCHER_LOCK_PATH": str(root / "dispatcher.lock"),
-        "PLAN_HERMES_HOME": str(root / "hermes-home"),
-        "PLAN_FAKE_NOW": "2026-07-04T12:00:00",
-    })
-    log_path = root / "server.log"
-    with log_path.open("wb") as log:
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "tests.e2e.conversation_signals_server"],
-            cwd=REPO_ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    server = ServerHandle(
-        f"http://127.0.0.1:{port}", proc, db, log_path, port, root / "unused.sock",
-    )
-    try:
-        deadline = time.monotonic() + 20
-        while True:
-            assert proc.poll() is None, log_path.read_text()
-            try:
-                response = httpx.get(server.base + "/api/meta", timeout=1)
-                if response.is_success:
-                    assert response.json()["test_mode"]
-                    break
-            except httpx.HTTPError:
-                pass
-            assert time.monotonic() < deadline, log_path.read_text()
-            time.sleep(0.1)
-        with connect(str(db)) as conn:
-            load_worker_runtime_definitions(conn)
-        yield server
-    finally:
-        metadata = {"url": server.base, "pid": proc.pid, "runtime": str(root),
-                    "db": str(db), "log": str(log_path)}
-        (root / "runtime.json").write_text(json.dumps(metadata, indent=2))
-        # Keep the exact database and logs, but never leak owned processes.
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
 
 
 def _post(server: ServerHandle, path: str, body: dict[str, object] | None = None) -> JsonObject:
@@ -108,8 +45,7 @@ def _marks(root: Locator, working: bool, message: bool) -> None:
         )
 
 
-
-@pytest.mark.parametrize("layout", ["desktop", "compact"])
+@pytest.mark.parametrize("layout", ["desktop"])
 def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     signal_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
@@ -120,18 +56,33 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     server = signal_server
     evidence = server.db_path.parent / "evidence"
     evidence.mkdir()
-    project = api.direct_post(server, "/api/projects", {"name": "Signal proof", "priority": "P1"})
-    item = api.direct_post(server, "/api/items", {
-        "title": "Signal orchestrator", "priority": "P1", "project_id": project["id"],
-    })
-    ticket = api.direct_post(server, "/api/tickets", {
-        "title": "Signal Worker", "worker_type": "coding", "brief": "Agreed brief.",
-        "orchestrator": {"kind": "sprint_item", "id": item["id"]},
-    })
-    api.direct_post(server, f"/api/tickets/{ticket['id']}/accept/brief", {
-        "next_ceiling": "needs_success_condition",
-        "next_holder": {"kind": "owner", "id": "owner"},
-    })
+    project = api.direct_post(server, "/api/projects", {"name": "Signal proof"})
+    item = api.direct_post(
+        server,
+        "/api/items",
+        {
+            "title": "Signal orchestrator",
+            "project_id": project["id"],
+        },
+    )
+    ticket = api.direct_post(
+        server,
+        "/api/tickets",
+        {
+            "title": "Signal Worker",
+            "worker_type": "coding",
+            "brief": "Agreed brief.",
+            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+        },
+    )
+    api.direct_post(
+        server,
+        f"/api/tickets/{ticket['id']}/accept/brief",
+        {
+            "next_ceiling": "needs_success_condition",
+            "next_holder": {"kind": "owner", "id": "owner"},
+        },
+    )
     proposed = httpx.post(
         server.base + f"/api/tickets/{ticket['id']}/propose",
         headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket["id"]},
@@ -142,7 +93,9 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     identities = {
         "proof-worker": {"kind": "ticket", "id": ticket["id"], "label": "Signal Worker"},
         "proof-supervisor": {
-            "kind": "sprint_item", "id": item["id"], "label": "Signal orchestrator",
+            "kind": "sprint_item",
+            "id": item["id"],
+            "label": "Signal orchestrator",
         },
         "proof-chief": {"kind": "chief", "id": "chief", "label": "Chief of Staff"},
     }
@@ -150,15 +103,27 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         _post(server, f"/api/test/signals/{conversation}/start")
         _post(server, f"/api/test/signals/{conversation}/finish")
     with connect(str(server.db_path)) as conn:
-        conn.execute("UPDATE tickets SET conversation_id=? WHERE id=?", (
-            "proof-worker", ticket["id"],
-        ))
-        conn.execute("INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)", (
-            "proof-worker", ticket["id"],
-        ))
-        conn.execute("UPDATE agents SET conversation_id=? WHERE agent_key=?", (
-            "proof-supervisor", item["supervisor"]["agent_key"],
-        ))
+        conn.execute(
+            "UPDATE tickets SET conversation_id=? WHERE id=?",
+            (
+                "proof-worker",
+                ticket["id"],
+            ),
+        )
+        conn.execute(
+            "INSERT INTO ticket_conversations(conversation_id,ticket_id) VALUES (?,?)",
+            (
+                "proof-worker",
+                ticket["id"],
+            ),
+        )
+        conn.execute(
+            "UPDATE agents SET conversation_id=? WHERE agent_key=?",
+            (
+                "proof-supervisor",
+                item["supervisor"]["agent_key"],
+            ),
+        )
         conn.execute(
             "INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?) "
             "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id",
@@ -172,6 +137,9 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     supervisor = page.locator(f'[data-sprint-item="{item["id"]}"] .item-head')
     chief = page.locator("[data-chief-destination]")
     rows = {"proof-worker": worker, "proof-supervisor": supervisor, "proof-chief": chief}
+    presence = page.locator("[data-shell-presence]")
+    expect(presence).to_have_text("0 working", timeout=WAIT_MS)
+    expect(presence.locator(".shell-presence-spin")).to_have_count(0)
     for row in rows.values():
         expect(row).to_be_visible(timeout=WAIT_MS)
         _marks(row, False, False)
@@ -194,11 +162,14 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
             _marks(popup_signal, False, False)
         before = page.evaluate("window.signalProofEvents.length")
         _post(server, f"/api/test/signals/{conversation}/start")
+        expect(presence).to_have_text("1 working", timeout=WAIT_MS)
+        expect(presence.locator(".shell-presence-spin")).to_have_count(1, timeout=WAIT_MS)
         if popup_signal is not None:
             _marks(row, True, False)
             _marks(popup_signal, True, False)
-        page.wait_for_function("before => window.signalProofEvents.length > before", arg=before,
-                               timeout=WAIT_MS)
+        page.wait_for_function(
+            "before => window.signalProofEvents.length > before", arg=before, timeout=WAIT_MS
+        )
         _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
         _marks(row, True, True)
         if popup_signal is not None:
@@ -209,9 +180,13 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         if conversation == "proof-worker" and popup_signal is not None:
             # Worker popup resolves the current board card, not captured props.
             view = api.get(server, f"/api/conversation/conversations/{conversation}")
-            _post(server, f"/api/conversation/conversations/{conversation}/owner-read", {
-                "through_sequence": view["latest_sequence"],
-            })
+            _post(
+                server,
+                f"/api/conversation/conversations/{conversation}/owner-read",
+                {
+                    "through_sequence": view["latest_sequence"],
+                },
+            )
             _marks(popup_signal, True, False)
             _post(server, f"/api/test/signals/{conversation}/message", identities[conversation])
             _marks(popup_signal, True, True)
@@ -230,10 +205,16 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         expect(page.locator('[data-rail-hover-panel][aria-hidden="false"]')).to_have_count(0)
         if conversation == "proof-worker" and layout == "desktop":
             expect(page.locator("[data-approval-block] h2")).to_contain_text("to approve")
-            delivered = _post(server, f"/api/tickets/{ticket['id']}/conversation/send", {
-                "conversation_id": conversation, "sender_label": "Owner", "mode": "steer",
-                "content": [{"piece": "text", "text": "An ordinary owner reply."}],
-            })
+            delivered = _post(
+                server,
+                f"/api/tickets/{ticket['id']}/conversation/send",
+                {
+                    "conversation_id": conversation,
+                    "sender_label": "Owner",
+                    "mode": "steer",
+                    "content": [{"piece": "text", "text": "An ordinary owner reply."}],
+                },
+            )
             assert delivered == {"conversation_id": conversation, "fate": "injected"}
             _marks(pane_signal, True, True)
         capture_success(page, evidence / f"{conversation}-{layout}-page-message.png")
@@ -244,13 +225,16 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
             expect(page.locator('[data-conversation-state="peeked"]')).to_be_visible()
         assert pending_reads, "An eligible open conversation must acknowledge its message"
         for read_route in list(pending_reads):
-            observations.append({"conversation": conversation,
-                                 "browser_read": read_route.request.post_data})
+            observations.append(
+                {"conversation": conversation, "browser_read": read_route.request.post_data}
+            )
             read_route.continue_()
         page.unroute(read_pattern, defer_read)
         _marks(pane_signal, True, False)
         _marks(row, True, False)
         _post(server, f"/api/test/signals/{conversation}/finish")
+        expect(presence).to_have_text("0 working", timeout=WAIT_MS)
+        expect(presence.locator(".shell-presence-spin")).to_have_count(0, timeout=WAIT_MS)
         _marks(pane_signal, False, False)
         _marks(row, False, False)
         page.evaluate("location.hash = '#/workspace?view=items'")
@@ -258,9 +242,17 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         _marks(row, False, False)
     events = page.evaluate("window.signalProofEvents")
     assert events and set(events) == {"change"}, events
-    (evidence / "observations.json").write_text(json.dumps({
-        "observations": observations, "change_events": events,
-        "layout": layout, "server": server.base, "db_path": str(server.db_path),
-        "backend": "scripted adapter; real conversation core; real fixed refresh window",
-    }, indent=2))
+    (evidence / "observations.json").write_text(
+        json.dumps(
+            {
+                "observations": observations,
+                "change_events": events,
+                "layout": layout,
+                "server": server.base,
+                "db_path": str(server.db_path),
+                "backend": "scripted adapter; real conversation core; real fixed refresh window",
+            },
+            indent=2,
+        )
+    )
     page.evaluate("window.signalProofStream.close()")

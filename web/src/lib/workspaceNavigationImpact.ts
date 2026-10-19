@@ -18,10 +18,10 @@ export function workspaceRailImpact(impact:RecordImpact,presentation:NavigationP
   const visibleTickets=new Set([...groupedTickets,...settledMessages.map(message=>message.id)]);
   if(impact.kind==='ticket') {
     if(touches(impact,['is_backlogged','blocked','stage','ticket_status','orchestrator_kind','sprint_item_id'])) return true;
-    return visibleTickets.has(impact.id) && touches(impact,['title','recap_preview','worker_type','updated_at','priority','project_id','conversation_id','ceiling_holder','gating_field','stage_ownership']);
+    return visibleTickets.has(impact.id) && touches(impact,['title','recap_preview','worker_type','updated_at','project_id','conversation_id','ceiling_holder','gating_field','stage_ownership']);
   }
   if(impact.kind==='orchestrator') return touches(impact,['settled']) || items.some(item=>item.id===impact.id)
-    && touches(impact,['title','priority','created_at','project_id','conversation_id']);
+    && touches(impact,['title','created_at','project_id','conversation_id']);
   if(impact.kind==='chief') return touches(impact,['label','conversation_id']);
   if(impact.kind==='project') return rail.items.some(item=>item.projectId===impact.id) && touches(impact,['name']);
   if(impact.kind==='conversation') {
@@ -83,7 +83,7 @@ export function orchestratorChildrenImpact(impact:RecordImpact,principal:Orchest
 }
 
 /** Body updates project only their canonical preview; Item updated_at is not public. */
-export const orchestratorEditImpact=(id:string,field:'title'|'body'|'priority'):CommandImpact=>({complete:true,records:[{
+export const orchestratorEditImpact=(id:string,field:'title'|'body'):CommandImpact=>({complete:true,records:[{
   kind:'orchestrator',id,fields:[field==='body' ? 'recap_preview' : field],
 }]});
 export const orchestratorSettleImpact=(id:string):CommandImpact=>({complete:true,records:[{kind:'orchestrator',id,fields:['settled']}]});

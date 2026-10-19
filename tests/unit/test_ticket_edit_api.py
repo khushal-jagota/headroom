@@ -171,13 +171,12 @@ def _employee_configuration_body(
     }
 
 
-def test_creation_defaults_to_chief_without_calendar_and_preserves_priority_anchors(
+def test_creation_defaults_to_chief_without_calendar_and_preserves_project_context(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     with connect(str(db_path)) as conn:
         _seed_sprint(conn)  # Existing history does not choose live placement.
-        conn.execute("UPDATE projects SET priority='P1' WHERE id='project_vylo'")
     with TestClient(app) as client:
         defaulted = client.post("/api/tickets", json={"title": "Default", "worker_type": "coding"})
         project = client.post(
@@ -189,17 +188,7 @@ def test_creation_defaults_to_chief_without_calendar_and_preserves_priority_anch
                 "orchestrator": {"kind": "chief", "id": "chief"},
             },
         )
-        explicit = client.post(
-            "/api/tickets",
-            json={
-                "title": "Explicit priority",
-                "worker_type": "coding",
-                "priority": "P0",
-                "project_id": "project_vylo",
-                "orchestrator": {"kind": "chief", "id": "chief"},
-            },
-        )
-        for response in (defaulted, project, explicit):
+        for response in (defaulted, project):
             assert response.status_code == 200, response.text
             assert response.json()["orchestrator"] == {"kind": "chief", "id": "chief"}
             assert response.json()["sprint_id"] is None
@@ -207,12 +196,9 @@ def test_creation_defaults_to_chief_without_calendar_and_preserves_priority_anch
             detail = client.get(f"/api/tickets?detail=full&id={response.json()['id']}")
             assert detail.json()["day_ids"] == []
         assert project.json()["project_id"] == "project_vylo"
-        assert project.json()["priority"] == "P1"
-        assert explicit.json()["priority"] == "P0"
-        assert project.json()["resolved_priority_anchors"] == {
-            "sprint_item": None,
-            "project": {"id": "project_vylo", "name": "Vylo", "priority": "P1"},
-        }
+        for response in (defaulted, project):
+            assert "priority" not in response.json()
+            assert "resolved_priority_anchors" not in response.json()
         with connect(str(db_path)) as conn:
             before = tuple(conn.iterdump())
         for removed in ({"sprint_id": None}, {"sprint_id": "sp_edit"}, {"sprint_item_id": None}):
@@ -516,10 +502,9 @@ def test_an_active_worker_does_not_block_an_ordinary_edit(
     with TestClient(app) as client:
         response = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"priority": "P1", "title": "Edited during active work"},
+            json={"title": "Edited during active work"},
         )
 
     assert response.status_code == 200, response.json()
     assert response.json()["ticket_status"] == "agent"
     assert response.json()["title"] == "Edited during active work"
-    assert response.json()["priority"] == "P1"

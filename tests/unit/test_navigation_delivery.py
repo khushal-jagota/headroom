@@ -16,8 +16,8 @@ from planner.navigation.delivery_contracts import (
 def test_cursor_roundtrip_preserves_large_decimal_revision() -> None:
     value: Continuity = {
         "scope": "workspace",
-        "schema_version": 4,
-        "semantics": "attention-knowledge-v4",
+        "schema_version": 6,
+        "semantics": "attention-knowledge-v6",
         "epoch": "epoch",
         "revision": "9007199254740993",
     }
@@ -31,8 +31,8 @@ def test_cursor_rejects_noncanonical_revision(revision: object) -> None:
     raw = {
         "wire_version": 2,
         "scope": "s",
-        "schema_version": 4,
-        "semantics": "attention-knowledge-v4",
+        "schema_version": 6,
+        "semantics": "attention-knowledge-v6",
         "epoch": "e",
         "revision": revision,
     }

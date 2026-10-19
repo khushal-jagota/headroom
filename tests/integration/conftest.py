@@ -7,7 +7,7 @@ functions into this conftest scopes them to ``tests/integration`` the way the ol
 declaration was meant to.
 """
 
-from tests.e2e.conftest import (  # noqa: F401  imported to register them as fixtures here
+from tests.support.server_fixtures import (  # noqa: F401  imported to register them as fixtures here
     _reusable_server,
     api,
     cli,

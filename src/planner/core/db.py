@@ -859,10 +859,10 @@ def _adopt_database_left_by_the_collapsed_chain(connection: Connection) -> None:
     """Give a database the old chain left behind the version marker this build reads.
 
     A new database needs nothing here, and neither does a database standing on any
-    revision this build carries — the upgrade that follows builds the first and moves the
-    second to the head. A database at the head the old chain finished at holds the
-    baseline's schema and the row rewrites that chain performed, so it is adopted at the
-    baseline once that schema is confirmed.
+    set of revisions this build carries — the upgrade that follows builds the first
+    and moves the second through its packaged DAG to the head. A database at the head
+    the old chain finished at holds the baseline's schema and the row rewrites that chain
+    performed, so it is adopted at the baseline once that schema is confirmed.
 
     Every other state is refused. The revisions that would carry such a database forward
     are not in this build, so the only honest answer is to say which build has them.
@@ -886,9 +886,9 @@ def _adopt_database_left_by_the_collapsed_chain(connection: Connection) -> None:
     revisions = [
         str(row[0]) for row in connection.exec_driver_sql("SELECT version_num FROM alembic_version")
     ]
-    # Any revision this build carries is left for the upgrade below. Naming the baseline
-    # alone would refuse every start after the first revision added on top of it.
-    if len(revisions) == 1 and revisions[0] in _revisions_this_build_carries(connection):
+    # Leave every nonempty, wholly known head set to Alembic's normal DAG upgrade.
+    # A source branch may have committed before the navigation join was attempted.
+    if revisions and set(revisions) <= _revisions_this_build_carries(connection):
         return
     if revisions != [PRE_COLLAPSE_HEAD_REVISION]:
         held = ", ".join(revisions) if revisions else "nothing"

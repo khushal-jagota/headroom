@@ -185,7 +185,7 @@ def test_older_backup_fresh_runtime_resets_cursor_and_proves_only_surviving_comm
 
     def create_project(client: TestClient, name: str) -> str:
         response = client.post(
-            "/api/projects", json={"name": name, "summary": "Synthetic", "priority": "P2"}
+            "/api/projects", json={"name": name, "summary": "Synthetic"}
         )
         assert response.status_code == 200, response.text
         return str(response.headers[FENCE_HEADER.decode()])

@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Final, Literal, Required, TypedDict
 
 from planner.conversation.contracts import ConversationSignal
-from planner.core.contracts import JsonDict, Principal, Priority
+from planner.core.contracts import JsonDict, Principal
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
 # `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
@@ -31,28 +31,6 @@ class ResolvedTicketCreationContext:
 class StageOwnershipMode(StrEnum):
     worker = "worker"
     user = "user"
-
-
-@dataclass(frozen=True, slots=True)
-class SprintItemPriorityAnchor:
-    id: str
-    title: str
-    priority: Priority
-
-
-@dataclass(frozen=True, slots=True)
-class ProjectPriorityAnchor:
-    id: str
-    name: str
-    priority: Priority | None
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedTicketPriorityAnchors:
-    """The authoritative placement context used when a Ticket is created."""
-
-    sprint_item: SprintItemPriorityAnchor | None
-    project: ProjectPriorityAnchor | None
 
 
 class WorkerStepClaim(StrEnum):
@@ -92,7 +70,6 @@ class BoardCardSource(TypedDict):
     id: str
     title: str
     recap_preview: str
-    priority: str
     deadline: str | None
     project_id: str | None
     project: str | None
@@ -114,7 +91,6 @@ class BoardCardSource(TypedDict):
     waiting_to_closeout: bool
     sprint_item_id: str | None
     sprint_item_title: str | None
-    sprint_item_priority: str | None
     orchestrator: JsonDict
 
 
@@ -134,7 +110,6 @@ class BoardSprintItemSource(TypedDict):
     id: str
     title: str
     recap_preview: str
-    priority: str
     project_id: str
     project: str
     created_at: int
@@ -200,7 +175,6 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     locale: str
     title: str  # default ""
     brief: str  # default ""; intake text for the Brief field
-    priority: str | None  # Explicit Priority value; omission resolves from placement
     deadline: str | None  # ISO date
     project: str | None  # legacy project name
     project_id: str | None
@@ -225,7 +199,6 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     """
 
     title: str
-    priority: Priority
     deadline: str | None
     project_id: str | None
     sprint_id: str | None
@@ -281,15 +254,14 @@ class Ticket:  # §3.3 — column names match exactly
     employee_launch_model: str | None = field(default=None, kw_only=True)
     employee_launch_reasoning_effort: str | None = field(default=None, kw_only=True)
     stage: str  # directly stored Stage id
-    priority: Priority  # default P3
     deadline: str | None  # ISO date
     project_id: str | None  # effective Project placement, derived from the parent when present
     project_name: str | None
     sprint_id: str | None  # canonical Ticket Sprint placement; NULL is backlog
     sprint_item_id: str | None
     orchestrator_kind: str = field(default="chief", kw_only=True)
+    sprint_item_title: str | None
     effective_sprint_id: str | None  # historical Sprint association
-    resolved_priority_anchors: ResolvedTicketPriorityAnchors
     recap: str  # writable only past the type's first worker Stage
     guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
     ceiling: str  # ceiling id; a member of the type's ceiling_range

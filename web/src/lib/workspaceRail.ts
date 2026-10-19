@@ -3,7 +3,6 @@ import { workspaceChildMessageConversations } from "./workspaceMessageDiscovery"
 import type {
   BoardCard,
   BoardSprintItem,
-  Priority,
   WorkspaceMessageConversation,
 } from "./types";
 import {
@@ -17,7 +16,7 @@ import {
 /** Only fields the workspace presentation reads, independent of detail/config responses. */
 export type WorkspaceTicket = WorkItemTicketFacts & Pick<BoardCard, 'orchestrator' | 'sprint_item_id' | 'sprint_item_title'>;
 export type WorkspaceOrchestrator = Pick<BoardSprintItem,
-  'id' | 'title' | 'priority' | 'created_at' | 'settled' | 'project_id' | 'project' | 'recap_preview' | 'conversation_id'>
+  'id' | 'title' | 'created_at' | 'settled' | 'project_id' | 'project' | 'recap_preview' | 'conversation_id'>
   & WorkItemAttentionFacts & {conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>; tickets: readonly WorkItemTicketFacts[]};
 export type WorkspaceChief = Pick<import('./types').ChiefManagementSettings,'label' | 'conversation_id'>
   & {awaiting_reply:boolean | null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>};
@@ -32,7 +31,6 @@ export type WorkspaceTicketGroup = {
 export type WorkspaceRailItem = {
   id: string;
   title: string;
-  priority: Priority;
   createdAt: number;
   conversationSignal: WorkspaceOrchestrator["conversation_signal"];
   conversationId: string | null;
@@ -52,13 +50,7 @@ export type WorkspaceRail = {
   chiefGroups: WorkspaceTicketGroup[];
 };
 
-const PRIORITY_ORDER: readonly Priority[] = ["P0", "P1", "P2", "P3"];
-
 export const workspaceCardGroupKey = workItemTicketGroupKey;
-function priorityRank(priority: Priority): number {
-  return PRIORITY_ORDER.indexOf(priority);
-}
-
 function railGroups(
   cards: readonly WorkItemTicketFacts[],
   sidebarPresentation = false
@@ -175,7 +167,6 @@ export function buildWorkspaceRail(
   const items = sprintItems.map((item) => ({
     id: item.id,
     title: item.title,
-    priority: item.priority,
     createdAt: item.created_at,
     conversationSignal: item.conversation_signal,
     conversationId: item.conversation_id,
@@ -190,7 +181,6 @@ export function buildWorkspaceRail(
 
   items.sort(
     (left, right) =>
-      priorityRank(left.priority) - priorityRank(right.priority) ||
       left.createdAt - right.createdAt ||
       left.id.localeCompare(right.id)
   );

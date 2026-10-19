@@ -105,6 +105,11 @@ def is_navigation_command(method: str, path: str) -> bool:
 # operations do not change the current navigation source record contract.
 EXCLUDED_COMMAND_ROUTES = (
     *_routes(
+        "PUT",
+        "Chief recap is dedicated content, outside navigation records",
+        "/workers/chief-of-staff/recap",
+    ),
+    *_routes(
         "POST",
         "Feedback is outside navigation records",
         "/feedback",

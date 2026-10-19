@@ -1,13 +1,13 @@
 import type { OrchestratorChildFilter } from "./types";
 
-/** Active retains all unfinished children. Backlog is an explicit subset. */
+/** Page sections are exclusive. Terminal history wins over a retained backlog flag. */
 export function filterOrchestratorChildren<T extends { stage: string; is_backlogged: boolean }>(
   tickets: readonly T[], filter: OrchestratorChildFilter
 ): T[] {
   return tickets.filter((ticket) => {
     if (filter === "done") return ticket.stage === "done";
     if (ticket.stage === "done") return false;
-    return filter !== "backlogged" || ticket.is_backlogged;
+    return filter === "backlogged" ? ticket.is_backlogged : !ticket.is_backlogged;
   });
 }
 
@@ -15,8 +15,8 @@ export function filterOrchestratorChildren<T extends { stage: string; is_backlog
 export function chiefChildrenPage<T extends {id:string; created_at:number; terminal:boolean; stage:string; is_backlogged:boolean}>(
   tickets:readonly T[], filter:OrchestratorChildFilter, offset:number, limit=30
 ) {
-  const matches=tickets.filter(ticket=>filter==='done' ? ticket.stage==='done'
-    : !ticket.terminal && (filter!=='backlogged' || ticket.is_backlogged))
+  const matches=filterOrchestratorChildren(tickets, filter)
+    .filter(ticket => filter === 'done' || !ticket.terminal)
     .sort((left,right)=>left.created_at-right.created_at || (left.id<right.id ? -1 : left.id>right.id ? 1 : 0));
   const rows=matches.slice(offset,offset+limit);
   const before=Math.min(offset,matches.length);

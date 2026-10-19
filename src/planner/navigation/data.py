@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from planner.core.ticket_blocks import LIVE_BLOCKER_PREDICATE
 from planner.navigation.contracts import (
+    PREPARED_SCHEMA_VERSION,
     SCHEMA_VERSION,
     SUPPORTED_SEMANTICS,
     Continuity,
@@ -81,6 +82,11 @@ def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
         raise RuntimeError("navigation schema requires a transaction")
     if schema_version not in (1, 2, 3):
         raise ValueError("unsupported navigation schema version")
+    # Historical migration helpers run on either side of the joined DAG. Select
+    # an explicit prepared shape when staging has already removed priority.
+    legacy_source = _priority_source_shape(conn)
+    if not legacy_source:
+        schema_version = PREPARED_SCHEMA_VERSION
     attach(conn)
     for statement in SCHEMA:
         conn.execute(statement)
@@ -88,11 +94,37 @@ def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
         "INSERT INTO navigation_meta VALUES(1,?,?,?,0)",
         (str(uuid.uuid4()), schema_version, str(uuid.uuid4())),
     )
+    _install_source_triggers(conn)
+    if schema_version >= 2:
+        for statement in INDEXES:
+            conn.execute(statement)
+    rebuild(conn)
+
+
+def _priority_source_shape(conn: sqlite3.Connection) -> bool:
+    """Recognize the two accepted canonical histories before changing any rows."""
+    tables = ("projects", "sprint_items", "tickets", "scheduled_ticket_schedules")
+    shapes = []
+    for table in tables:
+        columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not columns:
+            raise RuntimeError(f"navigation source table is missing: {table}")
+        shapes.append("priority" in columns)
+    if any(shapes) != all(shapes):
+        raise RuntimeError("navigation source has inconsistent priority columns")
+    return all(shapes)
+
+
+def _install_source_triggers(conn: sqlite3.Connection) -> None:
     for table, (column, update_columns) in SOURCES.items():
         for operation in ("INSERT", "UPDATE", "DELETE"):
+            conn.execute(f"DROP TRIGGER IF EXISTS navigation_{table}_{operation.lower()}")
             clause = operation
             if operation == "UPDATE" and update_columns:
-                clause += " OF " + update_columns
+                actual = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+                clause += " OF " + ",".join(
+                    name for name in update_columns.split(",") if name in actual
+                )
             aliases = (
                 ("NEW",)
                 if operation == "INSERT"
@@ -118,15 +150,31 @@ def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
                 + capture
                 + " END"
             )
-    if schema_version >= 2:
-        for statement in INDEXES:
-            conn.execute(statement)
+
+
+def upgrade_current_workspace(conn: sqlite3.Connection) -> None:
+    """Join accepted source removal and navigation without granting Signal authority."""
+    if not conn.in_transaction:
+        raise RuntimeError("navigation upgrade requires a transaction")
+    if _priority_source_shape(conn):
+        raise RuntimeError("current navigation requires priority removal")
+    version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+    if version not in (3, 4, PREPARED_SCHEMA_VERSION):
+        raise RuntimeError("current workspace upgrade requires prepared navigation")
+    _install_source_triggers(conn)
+    conn.execute("UPDATE navigation_meta SET schema_version=?", (PREPARED_SCHEMA_VERSION,))
     rebuild(conn)
 
 
 def upgrade_compact_lifecycle(conn: sqlite3.Connection) -> None:
     if not conn.in_transaction:
         raise RuntimeError("navigation upgrade requires a transaction")
+    _priority_source_shape(conn)
+    if (
+        conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+        == PREPARED_SCHEMA_VERSION
+    ):
+        return
     if conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] != 1:
         raise RuntimeError("compact lifecycle upgrade requires navigation schema 1")
     for statement in INDEXES:
@@ -138,6 +186,12 @@ def upgrade_compact_lifecycle(conn: sqlite3.Connection) -> None:
 def upgrade_consumer_metadata(conn: sqlite3.Connection) -> None:
     if not conn.in_transaction:
         raise RuntimeError("navigation upgrade requires a transaction")
+    _priority_source_shape(conn)
+    if (
+        conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+        == PREPARED_SCHEMA_VERSION
+    ):
+        return
     if conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] != 2:
         raise RuntimeError("consumer metadata upgrade requires navigation schema 2")
     conn.execute("UPDATE navigation_meta SET schema_version=3")
@@ -318,7 +372,6 @@ def _derive(
                 "title",
                 "worker_type",
                 "stage",
-                "priority",
                 "deadline",
                 "orchestrator_kind",
                 "sprint_item_id",
@@ -327,6 +380,8 @@ def _derive(
                 "locale",
             )
         }
+        if version < PREPARED_SCHEMA_VERSION:
+            value["priority"] = t["priority"]
         value.update(
             ticket_status=status.value,
             project_id=t["effective_project"],
@@ -367,7 +422,9 @@ def _derive(
             }
             version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
             if version >= 3:
-                value.update(priority=t["priority"], created_at=t["created_at"])
+                value.update(created_at=t["created_at"])
+                if version < PREPARED_SCHEMA_VERSION:
+                    value["priority"] = t["priority"]
             if version >= 4:
                 value["recap_preview"] = recap_preview(str(t["body"]))
         else:
@@ -383,8 +440,14 @@ def _derive(
         records.append(_record(kind, identity, value))
     elif kind == "project":
         deps.add(("projects", identity))
-        found = rows(conn, "SELECT name,priority FROM projects WHERE id=?", (identity,))
-        records.extend(_record(kind, identity, item) for item in found)
+        version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+        columns = "name,priority" if version < PREPARED_SCHEMA_VERSION else "name"
+        found = rows(conn, f"SELECT {columns} FROM projects WHERE id=?", (identity,))
+        for item in found:
+            value = {"name": item["name"]}
+            if version < PREPARED_SCHEMA_VERSION:
+                value["priority"] = item["priority"]
+            records.append(_record(kind, identity, value))
     elif kind == "conversation":
         deps.update(
             (table, identity)
@@ -420,7 +483,7 @@ def _derive(
             value["lifecycle"] = lifecycle_payload(conn, identity)
         else:
             value["lifecycle_summary"] = read_summary(conn, identity)
-        if version >= 4:
+        if version == 4 or version == SCHEMA_VERSION:
             from planner.navigation.signal_publication import read_current_attention
 
             deps.add(("navigation_signal_publications", identity))
@@ -615,6 +678,8 @@ def _continuity(conn: sqlite3.Connection) -> dict[str, Any]:
         "schema_version": row["schema_version"],
         "semantics": (
             SUPPORTED_SEMANTICS
+            if row["schema_version"] == SCHEMA_VERSION
+            else "attention-knowledge-v4"
             if row["schema_version"] == 4
             else f"generic-source-facts-v{row['schema_version']}"
         ),
@@ -706,6 +771,12 @@ def reset_epoch(conn: sqlite3.Connection) -> Continuity:
 def rebuild(conn: sqlite3.Connection) -> None:
     if not conn.in_transaction:
         raise RuntimeError("navigation rebuild requires a transaction")
+    legacy_source = _priority_source_shape(conn)
+    version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+    if version >= PREPARED_SCHEMA_VERSION and legacy_source:
+        raise RuntimeError("current navigation requires priority removal")
+    if version < PREPARED_SCHEMA_VERSION and not legacy_source:
+        conn.execute("UPDATE navigation_meta SET schema_version=?", (PREPARED_SCHEMA_VERSION,))
     for table in (
         "navigation_records",
         "navigation_dependencies",

@@ -418,7 +418,9 @@ def test_calendar_cli_writes_are_retired_and_planning_types_reject_creation(
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
-    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper,
+    server: ServerHandle,
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The backend and the model travel together, at both doors the CLI has.
@@ -427,9 +429,11 @@ def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
     on its own: creation takes the model with the backend it overrides to, and changing a
     Ticket's choice afterwards is a command that names the whole configuration.
     """
+
     # Both fictional selections come from scripted provider catalogues at the real boundary.
     async def snapshot(
-        backend_key: ConversationBackendKey, **kwargs: object,
+        backend_key: ConversationBackendKey,
+        **kwargs: object,
     ) -> BackendSnapshot:
         model = {
             ConversationBackendKey.hermes: "hermes-model",
@@ -779,9 +783,7 @@ def test_structured_ticket_create_keeps_the_brief(
     }
     if scoped:
         body["ceiling"] = "needs_implementation"
-    created = cli(
-        server, "ticket", "create", "--input-json", "-", stdin=json.dumps(body)
-    )
+    created = cli(server, "ticket", "create", "--input-json", "-", stdin=json.dumps(body))
     detail = api.get(server, f"/api/tickets?detail=full&id={created['id']}")
     if scoped:
         assert detail["field_values"]["brief"] == body["brief"]
@@ -801,9 +803,37 @@ def test_legacy_ticket_create_flags_populate_the_brief(
     flags = ("--kickoff-note-file", "-") if from_file else ("--kickoff-note", brief)
     created = cli(
         server,
-        "ticket", "create", "--worker-type", "coding", "--title", "Legacy Brief flags",
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Legacy Brief flags",
         *flags,
         stdin=brief if from_file else None,
     )
     assert created["pending_proposal"]["field"] == "brief"
     assert created["pending_proposal"]["body"] == brief
+
+
+def test_locale_cli_default_read_and_noop_preserve_the_canonical_record(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
+    created = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "Default locale",
+        "--worker-type",
+        "coding",
+        "--kickoff-note",
+        "Check locale.",
+    )
+    assert created["locale"] == "vps"
+    shown = cli(server, "ticket", "show", created["id"])
+    assert shown["header"]["locale"] == "vps"
+    before = api.get(server, f"/api/tickets?detail=full&id={created['id']}")
+    moved = cli(server, "ticket", "move", created["id"], "--locale", "vps")
+    assert moved["locale"] == "vps"
+    assert api.get(server, f"/api/tickets?detail=full&id={created['id']}") == before

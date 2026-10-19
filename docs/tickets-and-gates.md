@@ -82,6 +82,11 @@ what moves the ticket one stage forward. **done** records successful completion.
 Stages advance through approval or direct completion of a current user-owned gate;
 there is no arbitrary Stage jump.
 
+Artifact links in Ticket fields and the conversation open in the Ticket viewer when their
+format supports a preview. JSON receipts and unsupported formats keep their download
+behavior. Explicit preview links still open the viewer for any managed file. Download
+links and requests for another tab keep normal browser behavior.
+
 ## Backlog, resume, and delete
 
 Explicit backlog prevents the next automatic Worker step. It preserves the current
@@ -100,6 +105,10 @@ the write transaction. The browser sends that precondition automatically.
 Delete removes a Ticket's record. Files under `/files/tickets/<ticket-id>` survive
 Ticket deletion. Backlog is the reversible way to pause work while keeping the Ticket.
 The Stage ladder ends only at Done; there is no retirement state or retirement field.
+Historical text for a field that the Worker type no longer declares stays in storage.
+Ticket reads and search show only declared fields. Later edits and approvals preserve
+historical text, but new writes and proposals must use declared fields. Invalid stored
+values still fail validation, even when their fields are no longer declared.
 
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -194,9 +203,15 @@ existing Ticket id with its worker identity. Direct callers keep the same access
 complete change once. It writes nothing to the blocked Ticket, because what that Ticket
 reads as is worked out from the block itself.
 
+### List order
+
+Ticket API and CLI lists show oldest-created Tickets first, then identifier. Day-scoped
+lists retain stored position. The stage board places dated Tickets first, earliest
+deadline first, then oldest-created.
+
 ### Ordinary Ticket edits
 
-One ordinary edit may change a Ticket's title, priority, deadline, Project, Sprint, and
+One ordinary edit may change a Ticket's title, deadline, Project, Sprint, and
 optional Sprint Item together. Panels checks the whole request before saving any of it. All requested
 changes succeed together or none do, and the history records
 only fields that really changed. Sending values the Ticket already has leaves it

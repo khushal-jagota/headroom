@@ -15,8 +15,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-HISTORICAL_TIP = "f0977a512ba9a6bb1736e15ee9760aa39989a0fc"
-DEFAULT_SOURCE = Path(__file__).resolve().parents[3] / "t_jghnv9gu-baseline-f097"
+HISTORICAL_TIP = "595eb08ee85e60cb51b28332a850c59f3df26cb6"
+F097_TIP = "f0977a512ba9a6bb1736e15ee9760aa39989a0fc"
+PUBLIC_FOUR_TIP = "82d50c14f4057196883843640dae2ff1aa1d7850"
+DEFAULT_SOURCE = Path(__file__).resolve().parents[3] / "t_3p0mtprp-baseline-595"
 
 
 def historical_source() -> Path:
@@ -25,7 +27,13 @@ def historical_source() -> Path:
     ).resolve()
 
 
-def run_historical(source: Path, database: Path, action: str) -> dict[str, Any]:
+def run_historical(
+    source: Path,
+    database: Path,
+    action: str,
+    *,
+    expected_tip: str = HISTORICAL_TIP,
+) -> dict[str, Any]:
     """Use the old tree without its cwd, inherited runtime paths, or credentials."""
     root = database.parent / ("historical-" + action)
     root.mkdir(parents=True, exist_ok=True)
@@ -63,6 +71,7 @@ def run_historical(source: Path, database: Path, action: str) -> dict[str, Any]:
             action,
             str(database),
             str(source),
+            expected_tip,
         ],
         cwd=root,
         env=environment,
@@ -175,12 +184,13 @@ def _seed(database: Path) -> None:
 
 
 def _main() -> None:
-    action, path, source_text = sys.argv[1:]
+    action, path, source_text, expected_tip = sys.argv[1:]
     source, database = Path(source_text), Path(path)
     observed = subprocess.check_output(
         ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
     ).strip()
-    assert observed == HISTORICAL_TIP, observed
+    assert expected_tip in {HISTORICAL_TIP, F097_TIP, PUBLIC_FOUR_TIP}
+    assert observed == expected_tip, observed
     subprocess.run(
         [
             "git",
@@ -201,10 +211,21 @@ def _main() -> None:
 
     assert Path(planner.__file__).resolve() == source / "src/planner/__init__.py"
     assert Path(sys.prefix) == source / ".venv"
-    if action == "seed":
+    public_snapshot = None
+    if action in {"seed", "seed_public4"}:
         _seed(database)
+        if action == "seed_public4":
+            assert expected_tip == PUBLIC_FOUR_TIP
+            sys.path.insert(0, str(source))
+            from tests.support.navigation_current import current_navigation_database
+
+            from planner.navigation import snapshot
+
+            with current_navigation_database(database) as current:
+                public_snapshot = snapshot(current)
+                assert public_snapshot["schema_version"] == 4
     else:
-        assert action == "read", action
+        assert action in {"read", "read_incompatible"}, action
     connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")
@@ -214,6 +235,25 @@ def _main() -> None:
         from planner.worker_types.configuration import load_worker_runtime_definitions
 
         load_worker_runtime_definitions(connection)
+        if action == "read_incompatible":
+            assert expected_tip == F097_TIP
+            failures: dict[str, str] = {}
+            for name, read in (
+                ("projects", lambda: list_projects(connection)),
+                ("ticket", lambda: read_ticket(connection, "t_historical")),
+            ):
+                try:
+                    read()
+                except (sqlite3.OperationalError, IndexError) as error:
+                    failures[name] = str(error)
+                else:
+                    raise AssertionError(f"obsolete {name} reader unexpectedly succeeded")
+            print(
+                json.dumps(
+                    {"tip": observed, "failures": failures, "source": source_facts(connection)}
+                )
+            )
+            return
         ticket = read_ticket(connection, "t_historical")
         denied: list[str] = []
         for statement in (
@@ -229,6 +269,7 @@ def _main() -> None:
                 raise AssertionError("legacy reader connection admitted a write")
         result = {
             "tip": observed,
+            "public_snapshot": public_snapshot,
             "module": str(Path(planner.__file__).resolve()),
             "python_prefix": sys.prefix,
             "migration": hashlib.sha256(

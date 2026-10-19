@@ -245,15 +245,11 @@ def seed_application(app: Any, root: Path, count: int) -> dict[str, Any]:
             name="Measured workspace",
             summary="Synthetic",
             folder_path=root / "workspace",
-            priority=contracts.Priority.P2,
             now=1,
         )
-        for name, priority in (
-            ("Measured Alpha", contracts.Priority.P1),
-            ("Measured Beta", contracts.Priority.P2),
-        ):
+        for name in ("Measured Alpha", "Measured Beta"):
             item = items.create_item(
-                conn, title=name, project_id=project.id, priority=priority, clock=app.state.clock
+                conn, title=name, project_id=project.id, clock=app.state.clock
             )
             result["items"].append(item.id)
         for index in range(count):

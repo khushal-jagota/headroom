@@ -278,10 +278,6 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
         lambda s: Call("GET", f"/api/tickets?detail=full&id={s.ticket_a}"),
     ),
     (
-        "PATCH  /tickets/{t} priority",
-        lambda s: Call("PATCH", f"/api/tickets/{s.ticket_a}", {"priority": "P2"}),
-    ),
-    (
         "PATCH  /tickets/{t} title",
         lambda s: Call("PATCH", f"/api/tickets/{s.ticket_a}", {"title": "Renamed"}),
     ),
@@ -440,7 +436,7 @@ OPERATIONS: Final[tuple[Operation, ...]] = (
     ("POST   /projects", lambda s: Call("POST", "/api/projects", {"name": "New project"})),
     (
         "PATCH  /projects/{p}",
-        lambda s: Call("PATCH", "/api/projects/project_other", {"priority": "P2"}),
+        lambda s: Call("PATCH", "/api/projects/project_other", {"name": "Renamed project"}),
     ),
     (
         "PUT    /workers/{w}/launch-defaults",

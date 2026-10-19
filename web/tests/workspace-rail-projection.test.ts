@@ -4,20 +4,20 @@ import { tick } from "svelte";
 import type { BoardCard, BoardSprintItem, SprintItemWorkspaceTicket } from "../src/lib/types";
 import { buildLifecycle, type WorkerTypeManifest } from "../src/lib/lifecycle";
 import { buildWorkspaceRail, refreshWorkspaceRailSignals, stabilizeWorkspaceRail, workspaceWorkerStageSentence, workspaceListRecap } from "../src/lib/workspaceRail";
-import { createRailMotionController } from "../src/lib/workspaceRailMotion";
+import { createRailMotionController, type WorkspaceRailPresentation } from "../src/lib/workspaceRailMotion";
 
 const quiet = {
   awaiting_reply: false, awaiting_answer: false, awaiting_approval: false,
   awaiting_agent_approval: false, assigned: false, agent_state: "idle" as const
 };
 const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & SprintItemWorkspaceTicket => ({
-  id, title: id, is_backlogged:false, priority: "P2", activity_at: 0, stage: "needs_implementation",
+  id, title: id, is_backlogged:false, activity_at: 0, stage: "needs_implementation",
   ticket_status: "agent", worker_type: "coding", sprint_item_id: null,
   day_ids: [], sprint_id: null, sprint_name: null,
   ...quiet, ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id: string, values: Partial<BoardSprintItem> = {}): BoardSprintItem => ({
-  id, title: id, recap_preview: "", priority: "P2", created_at: 1, tickets: [], conversation_id: null,
+  id, title: id, recap_preview: "", created_at: 1, tickets: [], conversation_id: null,
   ticket_rollup: quiet, ...quiet, ...values
 });
 
@@ -143,22 +143,42 @@ describe("orchestrator rail projection", () => {
     expect(frozen.chiefGroups[0].cards[2]).toEqual({...reentered.chiefGroups[0].cards[2],
       conversation_id:"rebound", conversation_signal:{working:true,message_for_owner:false}});
     // A pointer can arrive after drain captures the answer but before exits settle.
-    let presented = reentered;
+    let presented: WorkspaceRailPresentation = {rail:reentered, settledOpen:false, settledMessages:{}};
     const motion = createRailMotionController(() => null, () => presented, (next) => presented = next);
-    motion.update(updated);
+    motion.update({...presented, rail:updated});
     motion.freeze(true);
     await tick();
-    expect(presented).toEqual(frozen);
+    expect(presented.rail).toEqual(frozen);
     motion.freeze(false);
     await tick();
-    expect(presented).toEqual(stabilizeWorkspaceRail(updated, frozen));
+    expect(presented.rail).toEqual(stabilizeWorkspaceRail(updated, frozen));
     motion.dispose();
+    // A frozen message can disappear from discovery after it is read or its
+    // parent reopens. Membership waits, but facts come from the complete rail.
+    const child = card("child", {conversation_id:"old-conversation",
+      conversation_signal:{working:true, message_for_owner:true}});
+    presented = {rail:buildWorkspaceRail([], [item("settled", {settled:true, tickets:[child]})]),
+      settledOpen:true, settledMessages:{settled:[{kind:"ticket", id:"child", title:"Original title",
+        parentId:"settled", parentTitle:"Original parent", settled:true,
+        conversationId:"old-conversation", conversationSignal:child.conversation_signal}]}};
+    const childMotion = createRailMotionController(() => null, () => presented, (next) => presented = next);
+    childMotion.freeze(true);
+    childMotion.update({rail:buildWorkspaceRail([], [item("reopened", {tickets:[{...child,
+      title:"Changed title", conversation_id:"new-conversation",
+      conversation_signal:{working:false, message_for_owner:false}}]})]), settledOpen:true, settledMessages:{}});
+    expect(presented.settledMessages.settled).toEqual([{kind:"ticket", id:"child", title:"Original title",
+      parentId:"settled", parentTitle:"Original parent", settled:true, conversationId:"new-conversation",
+      conversationSignal:{working:false, message_for_owner:false}}]);
+    childMotion.freeze(false);
+    await tick();
+    expect(presented.settledMessages).toEqual({});
+    childMotion.dispose();
   });
 
-  it("preserves priority order and exact direct-conversation message marks", () => {
+  it("preserves creation and ID order and exact direct-conversation message marks", () => {
     const rail = buildWorkspaceRail([], [
       item("newer", { created_at: 20 }), item("older", { created_at: 10 }),
-      item("urgent", { priority: "P0", awaiting_reply: true, conversation_signal: {working:true,message_for_owner:true} }),
+      item("urgent", { created_at: 0, awaiting_reply: true, conversation_signal: {working:true,message_for_owner:true} }),
       item("children-message", { ticket_rollup: { ...quiet, awaiting_reply: true } })
     ]);
     expect(rail.items.map((row) => row.id)).toEqual(["urgent", "children-message", "older", "newer"]);
@@ -193,13 +213,13 @@ import { encodeCursor } from '../src/lib/navigation/validation';
 import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
 const sourceTicket:TicketRecord={kind:'ticket',id:'source-ticket',value:{
   title:'Source Ticket',recap_preview:'Source recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
-  updated_at:11,worker_step_claim_out:false,priority:'P2',deadline:null,project_id:'project',orchestrator_kind:'sprint_item',
+  updated_at:11,worker_step_claim_out:false,deadline:null,project_id:'project',orchestrator_kind:'sprint_item',
   sprint_item_id:'item',conversation_id:'conversation',is_backlogged:false,ceiling:'needs_implementation',
   ceiling_holder:{kind:'owner',id:'owner'},gating_field:'implementation',proposal_field:null,proposal_revision:0,
   proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'en'}};
 const sourceRecords:NavigationRecord[]=[sourceTicket,conversation('conversation'),
-  {kind:'orchestrator',id:'item',value:{title:'Parent',recap_preview:'Parent recap',priority:'P1',created_at:1,project_id:'project',settled:false,conversation_id:null}},
-  {kind:'project',id:'project',value:{name:'Project',priority:null}},
+  {kind:'orchestrator',id:'item',value:{title:'Parent',recap_preview:'Parent recap',created_at:1,project_id:'project',settled:false,conversation_id:null}},
+  {kind:'project',id:'project',value:{name:'Project'}},
   {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:null}},
   {kind:'address',id:'address',value:{owner_kind:'ticket',owner_id:'source-ticket',conversation_id:'conversation',current:true,parent_kind:'orchestrator',parent_id:'item'}}];
 
@@ -214,7 +234,7 @@ describe('canonical navigation workspace presentation',()=>{
       expect(read(sourceRecords)).toMatchObject({id:sourceTicket.id,title:'Source Ticket',project:'Project',conversation_id:'conversation',
         conversation_signal:{working:true,message_for_owner:true}});
       const distinctParent:NavigationRecord[]=sourceRecords.map(record=>record.kind==='orchestrator' ? {...record,value:{...record.value,project_id:'parent-project'}} : record);
-      distinctParent.push({kind:'project',id:'parent-project',value:{name:'Parent Project',priority:null}});
+      distinctParent.push({kind:'project',id:'parent-project',value:{name:'Parent Project'}});
       expect(read(distinctParent)?.project).toBe('Parent Project');
       expect(read(sourceRecords.filter(record=>record.kind!=='orchestrator'))).toBeUndefined();
       expect(read(sourceRecords.map(record=>record.kind==='ticket' ? {...record,value:{...record.value,sprint_item_id:null,orchestrator_kind:'chief'}} : record))?.project).toBe('Project');

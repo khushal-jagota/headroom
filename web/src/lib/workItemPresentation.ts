@@ -1,4 +1,4 @@
-import type { Priority, WorkAttention } from "./types";
+import type { WorkAttention } from "./types";
 import { agentHoldsTicket, primaryWorkAttention } from "./workAttentionPresentation";
 
 export type WorkItemAttentionFacts = Omit<WorkAttention, 'awaiting_reply' | 'awaiting_answer' | 'agent_state'> & {
@@ -13,7 +13,6 @@ export type WorkItemTicketFacts = WorkItemAttentionFacts & {
   title: string;
   recap_preview?: string;
   blocked?: boolean;
-  priority: Priority;
   stage: string;
   worker_type?: string;
   conversation_id?: string | null;

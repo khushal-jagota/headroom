@@ -52,6 +52,11 @@ single document. It is read whole, written whole, and checked whole, because its
 mean nothing apart: stages that gate fields the type does not declare are not a partly
 valid Worker type, they are not one at all.
 
+A historical Ticket can hold text for a field its current Worker type no longer declares.
+Reads omit that text, and later Ticket writes preserve it in storage. This does not add
+a Stage or field to the current definition. Definition edits still refuse to remove a
+field that an unfinished Ticket uses. New values and pending proposals still require declared fields.
+
 Opening a database loads its Worker types into the process, and that is what the rest of
 Panels reads. Declaring or changing one is therefore a write, not a release: the change is
 in force as soon as it is stored.
@@ -87,9 +92,9 @@ the frame and reach the decision together; its other non-terminal Stages use wor
 ownership. `initiative_planning` uses user ownership for Question Answers, where
 consequential cross-Ticket choices are settled with the user; its other non-terminal
 Stages use worker ownership. `product_design` uses user ownership for Wireframe
-and Design, while its Best Guess and Open Options Stage and its handoff are
-worker-owned. Each Worker type chooses ownership for each Stage. It does not inherit
-that choice from registry order or another definition.
+and Design, while its Brief and its handoff are worker-owned. Each Worker type
+chooses ownership for each Stage. It does not inherit that choice from registry
+order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
 workflow. Ticket contracts still own universal Ticket facts such as the worker-step claim
@@ -277,6 +282,17 @@ check` is what says so. It reads the build itself — the CLI command tree, the 
 Worker types declare, the Stage ladders they spell out, and the retired skill names — and
 lists every stored skill naming something absent. It reports; it never rewrites a row.
 `GET /api/skills/stale` serves the same list.
+
+The check also reports unsupported fields in literal Ticket-create examples. It reads
+only a shell code block with one `panels ticket create --input-json -` command, a quoted
+heredoc delimiter, and a complete JSON object. It checks only the object's top-level
+fields against the accepted create fields. Prose, nested fields, dynamic values,
+malformed examples, and blocks with extra shell commands stay outside this check.
+
+This field check reads both stored skills and packaged seeds. A stored skill can omit
+an example that the seed still teaches to a fresh database. The report identifies
+stored examples as `ticket_create_field` and seed examples as
+`packaged_ticket_create_field`. Other checks read stored skills only.
 
 A Stage is named two ways, and the check reads them differently on purpose. Its id,
 `needs_something`, is unmistakable anywhere. Its label is an ordinary phrase: `approach` is

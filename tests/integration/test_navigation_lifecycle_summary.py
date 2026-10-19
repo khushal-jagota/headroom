@@ -70,8 +70,8 @@ def test_summary_preserves_all_old_uncertainty_without_history_arrays(tmp_path: 
         record = next(r for r in snapshot(conn)["records"] if r["kind"] == "conversation")
         assert "lifecycle" not in record["value"]
         assert record["value"]["lifecycle_summary"] == _summary_expected()
-        assert snapshot(conn)["semantics"] == "attention-knowledge-v4"
-        assert snapshot(conn)["schema_version"] == 4
+        assert snapshot(conn)["semantics"] == "attention-knowledge-v6"
+        assert snapshot(conn)["schema_version"] == 6
         conn.close()
 
 
@@ -316,7 +316,7 @@ def test_actual_v1_list_upgrade_and_failure_preserve_old_continuity(
     conn = connect(str(path))
     after = historical_snapshot(conn)
     assert after["scope"] == before[1]
-    assert after["schema_version"] == 3
+    assert after["schema_version"] == 5
     assert after["epoch"] != before[3]
     assert after["revision"] == "0"
     value = next(r for r in after["records"] if r["kind"] == "conversation")["value"]
@@ -414,7 +414,7 @@ def test_schema_two_metadata_upgrade_is_atomic_and_rejects_old_protocol(
         assert list(raw.iterdump()) == before
         command.upgrade(_alembic_config(connection), "head")
         current = historical_snapshot(raw)
-        assert current["schema_version"] == 3
+        assert current["schema_version"] == 5
         assert current["scope"] == scope
         assert current["epoch"] != epoch
         assert current["revision"] == "0"

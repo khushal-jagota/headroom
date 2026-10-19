@@ -60,10 +60,10 @@ def _add_ticket(
     conn: sqlite3.Connection, ticket_id: str, *, claim: str, conversation_id: str
 ) -> None:
     conn.execute(
-        "INSERT INTO tickets (id, worker_type, employee_backend, title, stage, priority, "
+        "INSERT INTO tickets (id, worker_type, employee_backend, title, stage, "
         "ceiling, field_values, created_at, updated_at, worker_step_claim, "
         "conversation_id) VALUES (?, 'coding', 'claude', ?, "
-        "'needs_plan', 'P2', 'done', '{}', 0, 0, ?, ?)",
+        "'needs_plan', 'done', '{}', 0, 0, ?, ?)",
         (ticket_id, ticket_id, claim, conversation_id),
     )
 

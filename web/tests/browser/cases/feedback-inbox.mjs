@@ -1,0 +1,70 @@
+import { writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+export async function prepare({ scratchRoot }) {
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
+  const webRoot = root;
+  const scratch = scratchRoot;
+const repositoryRoot = join(webRoot, "..");
+const suffix = process.pid;
+const hostPath = join(scratchRoot, `feedback-host-${suffix}.svelte`);
+const mainPath = join(scratchRoot, `feedback-main-${suffix}.ts`);
+const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
+
+  await writeFile(hostPath, `
+<script lang="ts">
+  import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
+  let notes: any[] = [{
+    id: "f_1", text: "The button moved", page_address: "#/review", page_label: "Review",
+    state: "open", ticket_id: null, created_at: Date.now() / 1000,
+    updated_at: Date.now() / 1000, handled_at: null
+  }];
+  const requests: any[] = [];
+  class QuietEventSource { onopen = null; onmessage = null; onerror = null; close() {} }
+  (globalThis as any).EventSource = QuietEventSource;
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
+    status, headers: { "Content-Type": "application/json" }
+  });
+  const response = () => ({
+    open_count: notes.filter((note) => note.state === "open").length,
+    open: notes.filter((note) => note.state === "open"),
+    handled_groups: notes.some((note) => note.state === "handled")
+      ? [{ ticket: null, notes: notes.filter((note) => note.state === "handled") }]
+      : []
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const path = String(input); const method = init.method || "GET";
+    const body = init.body ? JSON.parse(String(init.body)) : null;
+    requests.push({ path, method, body });
+    if (path === "/api/review") return json({ items: [], running_worker_count: 0 });
+    if (path === "/api/feedback/count" && method === "GET") return json({ open_count: response().open_count });
+    if (path === "/api/feedback" && method === "GET") return json(response());
+    if (path === "/api/feedback" && method === "POST") {
+      if (body.text === "fail") return json({ error: { code: "offline", message: "offline" } }, 503);
+      const note = { id: "f_" + (notes.length + 1), ...body, state: "open", ticket_id: null,
+        created_at: Date.now() / 1000, updated_at: Date.now() / 1000, handled_at: null };
+      notes = [note, ...notes]; return json(note);
+    }
+    const match = path.match(/^\\/api\\/feedback\\/(f_\\d+)\\/(dismiss|reopen)$/);
+    if (match && method === "POST") {
+      notes = notes.map((note) => note.id === match[1] ? { ...note, state: match[2] === "dismiss" ? "handled" : "open" } : note);
+      return json({});
+    }
+    return json({ error: { code: "unexpected", message: path } }, 500);
+  }) as typeof fetch;
+  (window as any).__requests = () => requests;
+</script>
+<AppWithQueryClient />
+`, "utf8");
+  await writeFile(mainPath, `
+import { mount } from "svelte";
+import Host from "./${hostPath.split("/").at(-1)}";
+import "../../assets/tokens.css";
+import "../../assets/app.css";
+mount(Host, { target: document.getElementById("app")! });
+`, "utf8");
+  await writeFile(indexPath, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body><div id="app"></div><script type="module" src="./${mainPath.split("/").at(-1)}"></script></body></html>`, "utf8");
+
+  return {inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./feedback-inbox.py", import.meta.url))};
+}

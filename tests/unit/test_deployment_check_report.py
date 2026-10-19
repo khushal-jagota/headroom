@@ -1,6 +1,9 @@
 """Prove deployment cannot credit missing collection or skipped required cases."""
 
+import json
 from pathlib import Path
+from typing import Any
+from xml.etree.ElementTree import ParseError
 
 import pytest
 from scripts.deployment_check_report import check_pytest, check_vitest
@@ -84,8 +87,6 @@ def test_pytest_provider_opt_in_cannot_excuse_required_skip(tmp_path: Path) -> N
 
 
 def test_frontend_requires_passed_assertions_in_every_selected_host(tmp_path: Path) -> None:
-    import json
-
     report = tmp_path / "vitest.json"
     second_assertions: list[dict[str, str]] = []
     value = {"success": True, "testResults": [
@@ -100,3 +101,113 @@ def test_frontend_requires_passed_assertions_in_every_selected_host(tmp_path: Pa
     report.write_text(json.dumps(value))
     with pytest.raises(ValueError, match="empty, failed, or skipped"):
         check_vitest(report, ["web/tests/two.test.ts"])
+
+
+@pytest.mark.parametrize("outcome", ["failure", "error"])
+def test_pytest_report_refuses_failed_or_errored_required_case(
+    tmp_path: Path, outcome: str,
+) -> None:
+    report = tmp_path / "pytest.xml"
+    report.write_text(
+        '<testsuite><testcase classname="tests.unit.test_one" name="required">'
+        f'<{outcome} message="broken"/></testcase></testsuite>'
+    )
+    with pytest.raises(ValueError, match="failed test in report"):
+        check_pytest(report, ["tests/unit/test_one.py"])
+
+
+@pytest.mark.parametrize("kind", ["pytest", "vitest"])
+def test_report_must_exist_and_parse(tmp_path: Path, kind: str) -> None:
+    report = tmp_path / "missing-report"
+    check = check_pytest if kind == "pytest" else check_vitest
+    with pytest.raises(FileNotFoundError):
+        check(report, ["tests/unit/test_one.py"])
+    report.write_text("broken report")
+    with pytest.raises((ParseError, json.JSONDecodeError)):
+        check(report, ["tests/unit/test_one.py"])
+
+
+def test_frontend_report_refuses_failure_even_with_other_passed_assertions(tmp_path: Path) -> None:
+    report = tmp_path / "vitest.json"
+    value = {"success": True, "testResults": [
+        {"name": "/source/web/tests/one.test.ts", "assertionResults": [{"status": "passed"}]},
+        {"name": "/source/web/tests/two.test.ts", "assertionResults": [{"status": "failed"}]},
+    ]}
+    report.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="frontend proof is empty, failed, or skipped"):
+        check_vitest(report, ["web/tests/one.test.ts"])
+    value = {"success": False, "testResults": [
+        {"name": "/source/web/tests/one.test.ts", "assertionResults": [{"status": "passed"}]},
+    ]}
+    report.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="frontend report did not succeed"):
+        check_vitest(report, ["web/tests/one.test.ts"])
+
+
+def browser_receipt(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
+    source = tmp_path / "source"
+    catalog = source / "web/tests/browser/catalog.json"
+    catalog.parent.mkdir(parents=True)
+    catalog.write_text(json.dumps({"schema": 1, "entries": [
+        {"id": "workspace", "path": "web/tests/workspace-browser.test.mjs",
+         "cases": ["workspace-rail-at-rest", "workspace-order"],
+         "companions": ["web/tests/workspace-rail-projection.test.ts"]},
+    ]}))
+    companion = {"schema": 1, "revision": "a" * 40, "invocationId": "gate-one",
+                 "outcome": "passed", "compiler": "passed", "runtime": [
+                     {"path": "web/tests/workspace-rail-projection.test.ts", "cases": [
+                         {"name": "node without DOM", "status": "passed"},
+                     ]},
+                 ]}
+    value = {"schema": 1, "outcome": "passed", "revision": "a" * 40,
+             "invocationId": "gate-one",
+             "selected": ["web/tests/workspace-browser.test.mjs"],
+             "cases": [{"entry": "workspace", "id": identity, "status": "passed"}
+                       for identity in ("workspace-rail-at-rest", "workspace-order")],
+             "companion": companion}
+    return tmp_path / "browser.json", source, value
+
+
+@pytest.mark.parametrize("fault", [
+    "missing-case", "duplicate-case", "extra-case", "empty", "skip", "failed",
+    "revision", "invocation", "selection", "outcome", "companion-missing", "companion-empty",
+    "companion-skipped", "companion-file", "companion-typecheck", "companion-revision",
+])
+def test_browser_report_refuses_incomplete_or_unbound_proof(tmp_path: Path, fault: str) -> None:
+    """New case receipts must refuse omissions that a process exit cannot detect."""
+    from scripts.deployment_check_report import check_browser
+
+    report, source, value = browser_receipt(tmp_path)
+    report.write_text(json.dumps(value))
+    check_browser(report, value["selected"], source, "a" * 40, "gate-one")
+    selected = list(value["selected"])
+    if fault == "missing-case":
+        value["cases"].pop()
+    elif fault == "duplicate-case":
+        value["cases"].append(value["cases"][0])
+    elif fault == "extra-case":
+        value["cases"].append({"entry": "workspace", "id": "extra", "status": "passed"})
+    elif fault == "empty":
+        value["cases"] = []
+    elif fault in ("skip", "failed"):
+        value["cases"][0]["status"] = fault
+    elif fault == "outcome":
+        value["outcome"] = "failed"
+    elif fault in ("revision", "invocation", "selection"):
+        key = {"revision": "revision", "invocation": "invocationId", "selection": "selected"}[fault]
+        value[key] = [] if fault == "selection" else "another"
+    elif fault == "companion-missing":
+        value["companion"] = None
+    elif fault == "companion-empty":
+        value["companion"]["runtime"][0]["cases"] = []
+    elif fault == "companion-skipped":
+        value["companion"]["runtime"][0]["cases"][0]["status"] = "skipped"
+    elif fault == "companion-file":
+        value["companion"]["runtime"][0]["path"] = "web/tests/unrelated.test.ts"
+    elif fault == "companion-typecheck":
+        value["companion"]["compiler"] = "not-passed"
+    elif fault == "companion-revision":
+        value["companion"]["revision"] = "b" * 40
+    report.write_text(json.dumps(value))
+    with pytest.raises(ValueError):
+        check_browser(report, selected, source, "a" * 40, "gate-one")

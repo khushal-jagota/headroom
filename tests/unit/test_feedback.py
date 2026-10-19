@@ -67,9 +67,12 @@ def test_capture_list_use_dismiss_reopen_and_ticket_deletion(
     first = _create_note(
         feedback_client,
         "Tighten the heading",
-        page_address="#/workspace",
+        page_address="#/workspace/chief-of-staff",
         page_label="Workspace",
     )
+    assert first["text"] == "Tighten the heading"
+    assert first["page_address"] == "#/workspace/chief-of-staff"
+    assert first["page_label"] == "Workspace"
     second = _create_note(feedback_client, "Explain the empty state")
     ticket = _create_ticket(feedback_client, "Improve the workspace")
 

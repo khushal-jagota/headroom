@@ -265,7 +265,7 @@ def test_physical_migration_waits_for_complete_install_and_failed_activation_rol
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn = prepared.connect()
-    assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 3
+    assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 5
     assert conn.execute("SELECT COUNT(*) FROM navigation_signal_publications").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM navigation_signal_installation").fetchone()[0] == 0
     assert all(
@@ -284,7 +284,10 @@ def test_physical_migration_waits_for_complete_install_and_failed_activation_rol
         with pytest.raises(RuntimeError, match="injected activation failure"):
             prepared.attach()
     assert list(conn.iterdump()) == before
-    assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 3
+    from tests.integration.test_navigation_current_workspace import assert_prepared_rejected
+
+    assert_prepared_rejected(Path(prepared.composition.db_path))
+    assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 5
     with pytest.raises(RuntimeError, match="runtime admission is not open"):
         snapshot(conn)
     conn.close()
@@ -304,14 +307,14 @@ def test_physical_migration_waits_for_complete_install_and_failed_activation_rol
         rebuild(connection)
 
     try:
-        assert check.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 3
+        assert check.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 5
         with monkeypatch.context() as patch:
             patch.setattr(data, "rebuild", count_rebuild)
             resumed.attach()
         assert calls == 1
         current = snapshot(check)
-        assert current["schema_version"] == 4
-        assert current["semantics"] == "attention-knowledge-v4"
+        assert current["schema_version"] == 6
+        assert current["semantics"] == "attention-knowledge-v6"
         assert current["revision"] == "0"
         assert all(
             record["value"]["attention"]["current"] is not None
@@ -334,12 +337,12 @@ def test_empty_physical_runtime_cannot_activate_attention_without_complete_insta
     conn = composition.connect()
     attachment: SignalAttachment | None = None
     try:
-        assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 3
+        assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 5
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
         with bind_admission(conn, composition.initialization):
             conn.execute("BEGIN IMMEDIATE")
         data.rebuild(conn)
-        assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 3
+        assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 5
         with pytest.raises(ValueError, match="unsupported navigation schema version"):
             data.create_schema(conn, schema_version=4)
         conn.commit()
@@ -351,8 +354,8 @@ def test_empty_physical_runtime_cannot_activate_attention_without_complete_insta
         )
         composition.coordinator.admit_runtime()
         current = snapshot(conn)
-        assert current["schema_version"] == 4
-        assert current["semantics"] == "attention-knowledge-v4"
+        assert current["schema_version"] == 6
+        assert current["semantics"] == "attention-knowledge-v6"
         assert all(record["kind"] != "conversation" for record in current["records"])
         assert (
             conn.execute("SELECT COUNT(*) FROM navigation_signal_publications").fetchone()[0] == 0

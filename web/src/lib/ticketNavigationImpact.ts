@@ -17,14 +17,13 @@ export function ticketMastheadImpact(impact:RecordImpact,record:TicketRecord | u
     || impact.kind==='conversation' && impact.id===record.value.conversation_id && impactHas(impact,['attention']);
 }
 
-export type TicketNavigationOperation='title'|'priority'|'recap'|'blocker'|'scope'|'stage'|'backlog'|'conversation'|'private'|'configuration';
+export type TicketNavigationOperation='title'|'recap'|'blocker'|'scope'|'stage'|'backlog'|'conversation'|'private'|'configuration';
 
 /** Potential canonical effects from the existing Ticket writers, before dispatch. */
 export function ticketCommandImpact(view:EffectiveNavigationView | null | undefined,id:string,operation:TicketNavigationOperation):CommandImpact {
   const record=view?.publication.records.find(record=>record.kind==='ticket' && record.id===id);
   if(!view || !record || record.kind!=='ticket') return {complete:false,reason:'missing_ticket_source'};
   const fields:readonly (keyof TicketRecord['value'])[]=operation==='title' ? ['title','updated_at']
-    : operation==='priority' ? ['priority','updated_at']
     : operation==='recap' ? ['recap_preview','updated_at']
     : operation==='blocker' ? ['blocked','ticket_status','updated_at']
     : operation==='scope' ? ['ceiling','ceiling_holder','proposal_revision','ticket_status','updated_at']

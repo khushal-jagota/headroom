@@ -376,7 +376,7 @@
           {:else if route.name === "review"}
             <ReviewRoute />
           {:else if route.name === "workspace" && route.workspace}
-            <BoardRoute address={route.workspace} />
+            <BoardRoute address={route.workspace} onDismissed={showDismissedToast} />
           {:else if route.name === "sprint"}
             <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} sprintId={route.params.sprint || null} />
           {:else if route.name === "ideas"}

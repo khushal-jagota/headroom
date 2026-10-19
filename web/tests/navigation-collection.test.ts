@@ -7,20 +7,20 @@ import { railTicketEligible } from '../src/lib/workspaceRail';
 import { currentSnapshot, degradedSnapshot, envelope } from './support/navigation/fixtures';
 import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from '../src/lib/navigation/contracts';
 import type { WorkItemTicketFacts } from '../src/lib/workItemPresentation';
-const snapshot = (revision:string, ids:string[]):Snapshot => ({scope:'navigation',schema_version:SCHEMA_VERSION,semantics:SUPPORTED_SEMANTICS,epoch:'a',revision,records:ids.map(id => ({kind:'project',id,value:{name:id,priority:null}}))});
+const snapshot = (revision:string, ids:string[]):Snapshot => ({scope:'navigation',schema_version:SCHEMA_VERSION,semantics:SUPPORTED_SEMANTICS,epoch:'a',revision,records:ids.map(id => ({kind:'project',id,value:{name:id}}))});
 describe('TanStack source publication', () => {
   it('publishes masked status and independent blockers together for the accepted rail classifier', () => {
     // Amendment/classifier boundary only: synthetic attention facts do not prove Signal parity.
     const adapter = createNavigationCollection();
     const record: TicketRecord = {kind:'ticket',id:'t',value:{
       title:'Ticket',recap_preview:'Ticket recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',
-      blocked:false,created_at:1,updated_at:10,worker_step_claim_out:false,priority:'P2',deadline:null,
+      blocked:false,created_at:1,updated_at:10,worker_step_claim_out:false,deadline:null,
       project_id:null,orchestrator_kind:'chief',sprint_item_id:null,conversation_id:null,
       is_backlogged:false,ceiling:'needs_implementation',ceiling_holder:{kind:'owner',id:'owner'},
       gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',
       terminal:false,locale:'en'
     }};
-    const known: WorkItemTicketFacts = {id:'t',title:'Ticket',priority:'P2',stage:'needs_implementation',
+    const known: WorkItemTicketFacts = {id:'t',title:'Ticket',stage:'needs_implementation',
       ticket_status:'empty',awaiting_reply:false,awaiting_answer:false,awaiting_approval:false,
       awaiting_agent_approval:false,assigned:false,agent_state:'idle'};
     const observed: Array<[string,boolean,boolean]> = [];

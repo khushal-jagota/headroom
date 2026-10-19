@@ -14,7 +14,6 @@ from tests.support.principals import OWNER_PRINCIPAL
 from planner.conversation.backend_state import write_model_enablement
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core.clock import TestClock as MutableClock
-from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.scheduled_tickets import actions, data
@@ -51,7 +50,6 @@ def _template(
         title=title,
         worker_type=worker_type,
         kickoff_note=kickoff_note,
-        priority=Priority.P3,
         deadline=None,
         project_id=project_id,
         placement_mode=placement_mode,

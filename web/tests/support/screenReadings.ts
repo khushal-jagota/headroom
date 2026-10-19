@@ -1,4 +1,3 @@
-import { conversationSignalReading } from "./conversationSignalReading";
 import type { ConversationSignal } from "../../src/lib/conversationSignal";
 // One Ticket, read by every screen that says whose it is and whether a worker has it.
 //
@@ -96,7 +95,6 @@ function boardCard(facts: TicketFacts): BoardCard {
     id: "t_reading",
     title: "One Ticket",
     recap_preview: "",
-    priority: "P1",
     deadline: null,
     project_id: null,
     project: null,
@@ -118,7 +116,6 @@ function boardCard(facts: TicketFacts): BoardCard {
     waiting_to_closeout: facts.waiting_to_closeout,
     sprint_item_id: null,
     sprint_item_title: null,
-    sprint_item_priority: null,
     awaiting_reply: facts.awaiting_reply,
     awaiting_answer: facts.awaiting_answer,
     awaiting_approval: facts.awaiting_approval,
@@ -159,8 +156,7 @@ function ticketDetail(facts: TicketFacts): TicketDetail {
     stage: facts.stage,
     ceiling: "needs_plan",
     ceiling_holder: OWNER,
-    priority: "P1",
-    resolved_priority_anchors: { project: null, sprint_item: null },
+    sprint_item_title: null,
     ticket_status: facts.ticket_status,
     conversation_id: "c_reading",
     conversation_history: [],
@@ -188,7 +184,7 @@ export function sprintItemWord(facts: TicketFacts): string {
 
 /** The heading the Ticket sits under on the Sprint Item page. */
 export function sprintItemHeading(facts: TicketFacts): string {
-  const key = workItemTicketGroupKey({ id: "", title: "", priority: "P3", ...facts });
+  const key = workItemTicketGroupKey({ id: "", title: "", ...facts });
   return WORK_ITEM_TICKET_GROUPS.find((group) => group.key === key)?.label ?? key;
 }
 
@@ -208,20 +204,11 @@ export function feedbackLabel(facts: TicketFacts): string {
   });
 }
 
-export function feedbackMark(facts: TicketFacts): FieldStageVisualState | null {
-  return conversationSignalReading(facts).includes('data-conversation-signal="message"') ? "current-awaiting-approval" : null;
-}
-
 /** The tiles Home shows for a Day holding this one Ticket, as "Label count". */
 export function homeTiles(facts: TicketFacts): string[] {
   return dayActionTiles([dayVisualTicket(dayTicket(facts))]).map(
     (tile) => `${tile.label} ${tile.count}`
   );
-}
-
-/** What Home's dot for this Ticket is announced as. */
-export function homeDotLabel(facts: TicketFacts): string {
-  return conversationSignalReading(facts).includes('data-conversation-signal="message"') ? "Unread message" : "";
 }
 
 /** The mark on the Ticket's own page, against the field its Stage is gated on. */

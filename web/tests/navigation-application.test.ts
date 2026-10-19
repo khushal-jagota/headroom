@@ -10,8 +10,8 @@ import { workspaceHoverImpact,orchestratorChildrenImpact,workspaceRailImpact } f
 import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 import { runtimeCountImpact,reviewBadgeImpact } from '../src/lib/reviewNavigationImpact';
 
-const ticket:TicketRecord={kind:'ticket',id:'a',value:{title:'A',recap_preview:'',worker_type:'coding',stage:'needs_plan',ticket_status:'empty',blocked:false,created_at:1,updated_at:1,worker_step_claim_out:false,priority:'P2',deadline:null,project_id:'p',orchestrator_kind:'sprint_item',sprint_item_id:'parent',conversation_id:'a-conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'test'}};
-const records:NavigationRecord[]=[ticket,conversation('a-conversation'),{kind:'orchestrator',id:'parent',value:{title:'Parent',recap_preview:'',priority:'P1',created_at:1,project_id:'p',settled:false,conversation_id:null}},{kind:'project',id:'p',value:{name:'Project',priority:null}}];
+const ticket:TicketRecord={kind:'ticket',id:'a',value:{title:'A',recap_preview:'',worker_type:'coding',stage:'needs_plan',ticket_status:'empty',blocked:false,created_at:1,updated_at:1,worker_step_claim_out:false,deadline:null,project_id:'p',orchestrator_kind:'sprint_item',sprint_item_id:'parent',conversation_id:'a-conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'test'}};
+const records:NavigationRecord[]=[ticket,conversation('a-conversation'),{kind:'orchestrator',id:'parent',value:{title:'Parent',recap_preview:'',created_at:1,project_id:'p',settled:false,conversation_id:null}},{kind:'project',id:'p',value:{name:'Project'}}];
 const titleImpact:RecordImpact={kind:'ticket',id:'a',fields:['title','updated_at']};
 const fence={...continuity,version:1,coverage:'complete',witnesses:['a'.repeat(64)],signature:'synthetic'};
 

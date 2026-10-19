@@ -1,4 +1,4 @@
-"""Shared vocabulary used across every domain: principals, priorities,
+"""Shared vocabulary used across every domain: principals,
 Ticket blockers, and the structured-error contract that pure logic raises.
 
 Stdlib only. Nothing here imports another planner module."""
@@ -58,13 +58,6 @@ def principal_legacy_actor(principal: Principal) -> str:
         PrincipalKind.sprint_item: "sprint_item_supervisor",
         PrincipalKind.ticket: "worker",
     }[principal.kind]
-
-
-class Priority(StrEnum):  # SPEC §3.2/§3.3 — homed in core (shared vocabulary)
-    P0 = "P0"
-    P1 = "P1"
-    P2 = "P2"
-    P3 = "P3"
 
 
 @dataclass(frozen=True)

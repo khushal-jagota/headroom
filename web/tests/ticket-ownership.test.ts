@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   feedbackLabel,
-  homeDotLabel,
   homeTiles,
   sprintItemHeading,
   sprintItemWord,
@@ -24,7 +23,6 @@ describe("a Stage the worker owns", () => {
     expect(sprintItemWord(workerOwned)).not.toBe("yours");
     expect(feedbackLabel(workerOwned)).not.toBe("Yours");
     expect(homeTiles(workerOwned)).not.toContain("Assigned 1");
-    expect(homeDotLabel(workerOwned)).not.toBe("Assigned");
     expect(ticketPageMark(workerOwned)).not.toBe("current-assigned");
   });
 
@@ -44,7 +42,6 @@ describe("a Stage the owner owns", () => {
     expect(sprintItemWord(userOwned)).toBe("yours");
     expect(feedbackLabel(userOwned)).toBe("Yours");
     expect(homeTiles(userOwned)).toEqual(["Assigned 1"]);
-    expect(homeDotLabel(userOwned)).toBe("");
     expect(ticketPageMark(userOwned)).toBe("current-assigned");
   });
 

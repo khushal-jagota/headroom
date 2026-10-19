@@ -1,6 +1,6 @@
 import type { TicketValue, TicketRecord, OrchestratorRecord, ProjectRecord, AddressRecord } from './contracts';
 import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
-import type { AgentState, Priority } from '../types';
+import type { AgentState } from '../types';
 import type { WorkspaceTicket, WorkspaceOrchestrator, WorkspaceChief } from '../workspaceRail';
 import type { ConversationSignal } from '../conversationSignal';
 import type { WorkspaceMessageConversation } from '../types';
@@ -17,10 +17,6 @@ const value = (fact: KnownFact<boolean> | undefined): boolean | null => fact && 
 function signal(knowledge: ConversationKnowledge | undefined): Partial<ConversationSignal> {
   const working=value(knowledge?.working), message=value(knowledge?.message_for_owner);
   return {...(working === null ? {} : {working}),...(message === null ? {} : {message_for_owner:message})};
-}
-function priority(raw: string): Priority {
-  if (raw === 'P0' || raw === 'P1' || raw === 'P2' || raw === 'P3') return raw;
-  throw new Error('Invalid navigation priority');
 }
 /** Same existing agent-state precedence; unknown runtime never becomes an idle fact. */
 function agentState(status: string | null, stage: string | null, knowledge: ConversationKnowledge | undefined): AgentState | null {
@@ -52,7 +48,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       if(row.worker_step_claim_out) exactOutClaimCount+=1;
       if(row.ticket_status==='awaiting_approval' && row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner'
         && row.gating_field!==null && row.proposal_field!==null && row.proposal_created_at!==null) {
-        reviewItems.push({priority:priority(row.priority),review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
+        reviewItems.push({review_item_type:'proposal',ticket_id:record.id,field:row.gating_field,
           title:row.title,waiting_since:row.proposal_created_at,proposal_field:row.proposal_field,proposal_revision:row.proposal_revision});
       }
     }
@@ -72,7 +68,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const owner=row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner';
     const parked=row.ticket_status==='awaiting_approval';
     const parent=row.orchestrator_kind==='chief' ? null : row.sprint_item_id;
-    return [{id:record.id,created_at:row.created_at,terminal:row.terminal,title:row.title,priority:priority(row.priority),stage:row.stage,worker_type:row.worker_type,
+    return [{id:record.id,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,worker_type:row.worker_type,
       ticket_status:row.ticket_status,is_backlogged:row.is_backlogged,blocked:row.blocked,
       activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
@@ -101,7 +97,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const orchestrators: WorkspaceOrchestrator[]=orchestratorRecords.map(record=>{
     const row=record.value;
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
-    return {id:record.id,title:row.title,priority:priority(row.priority),created_at:row.created_at,
+    return {id:record.id,title:row.title,created_at:row.created_at,
       settled:row.settled,project_id:row.project_id,project:projects.get(row.project_id)?.name,
       recap_preview:row.recap_preview,conversation_id:row.conversation_id,
       conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`orchestrator:${record.id}`) ?? [],

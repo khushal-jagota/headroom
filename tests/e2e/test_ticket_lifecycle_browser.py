@@ -12,10 +12,9 @@ from collections.abc import Callable
 
 from playwright.sync_api import BrowserContext, Page, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, ServerHandle
-from tests.e2e.test_approval_groups_message_dots import _conversation, _message
-from tests.e2e.test_orchestrator_rail import rail_server  # noqa: F401
-from tests.e2e.test_retired_page_interiors import _propose
+from tests.support.connected_rows import _conversation, _message, _propose
 from tests.support.principals import ticket_principal
+from tests.support.server_fixtures import rail_server  # noqa: F401
 
 
 def test_ticket_backlog_resume_and_settled_discovery(
@@ -25,9 +24,7 @@ def test_ticket_backlog_resume_and_settled_discovery(
     api: ApiHelper,
 ) -> None:
     server = rail_server
-    project = api.direct_post(
-        server, "/api/projects", {"name": "Lifecycle proof", "priority": "P2"}
-    )
+    project = api.direct_post(server, "/api/projects", {"name": "Lifecycle proof"})
     item = api.direct_post(
         server, "/api/items", {"title": "Synthetic lifecycle review", "project_id": project["id"]}
     )
@@ -110,8 +107,9 @@ def test_ticket_backlog_resume_and_settled_discovery(
     expect(page.locator("[data-backlog-tickets]")).to_have_count(0)
     page.goto(server.base + f"/#/workspace/item/{item['id']}")
     children = page.locator(f'[data-orchestrator-children="sprint_item:{item["id"]}"]')
-    state_filter = children.get_by_label("Worker state", exact=True)
-    state_filter.select_option("backlogged")
+    backlog_group = children.locator('[data-workspace-group="backlog"]')
+    backlog_group.locator(":scope > summary").click()
+    expect(backlog_group).to_have_attribute("open", "")
     deferred_row = children.locator(f'[data-sprint-ticket-id="{ticket_id}"]')
     expect(deferred_row).to_be_visible()
     expect(deferred_row).to_contain_text(ticket["title"])

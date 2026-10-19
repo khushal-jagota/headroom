@@ -79,7 +79,7 @@ JSON
 ```
 
 `title` and `worker_type` are required. Existing optional keys cover launch overrides,
-priority, deadline, canonical placement IDs, blockers, Brief, ceiling, and ceiling
+deadline, canonical placement IDs, blockers, Brief, ceiling, and ceiling
 holder. Hidden legacy flags remain callable during migration. A call cannot mix those
 flags with `--input-json`.
 
@@ -94,7 +94,6 @@ change one or more fields that the route already accepts.
 ```sh
 panels ticket edit t_example --input-json - <<'JSON'
 {
-  "priority": "P1",
   "recap": "Ready for review.",
   "guidance_append": "Keep the public surface small."
 }

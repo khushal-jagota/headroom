@@ -117,7 +117,7 @@ def test_complete_install_activates_attention_and_rollback_restores_historical_s
     conn = signal_db
     before = dump(conn)
     old_epoch = conn.execute("SELECT epoch FROM navigation_meta").fetchone()[0]
-    assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 3
+    assert conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] == 5
     assert "attention" not in json.loads(
         conn.execute(
             "SELECT value FROM navigation_records WHERE kind='conversation' AND id='current'"
@@ -130,7 +130,7 @@ def test_complete_install_activates_attention_and_rollback_restores_historical_s
     addresses = [value for (kind, _), value in actual.items() if kind == "address"]
     assert any(value["conversation_id"] == "historical" and value["current"] for value in addresses)
     assert navigation_snapshot(conn)["epoch"] != old_epoch
-    assert navigation_snapshot(conn)["schema_version"] == 4
+    assert navigation_snapshot(conn)["schema_version"] == 6
     assert actual["conversation", "current"]["attention"] == {
         "current": {
             "signal": {"working": True, "message_for_owner": False},

@@ -1,5 +1,4 @@
 import type {
-  Priority,
   Principal,
   ScheduleCadence,
   ScheduledTask
@@ -12,7 +11,6 @@ export type ScheduledTaskForm = {
   title: string;
   worker_type: string;
   kickoff_note: string;
-  priority: Priority;
   deadline: string;
   project_id: string | null;
   employee_backend: string;
@@ -28,7 +26,6 @@ export function blankScheduledTaskForm(workerType = ""): ScheduledTaskForm {
     title: "",
     worker_type: workerType,
     kickoff_note: "",
-    priority: "P3",
     deadline: "",
     project_id: null,
     employee_backend: "",
@@ -47,7 +44,6 @@ export function scheduledTaskFormFromSchedule(schedule: ScheduledTask): Schedule
     title: schedule.title,
     worker_type: schedule.worker_type,
     kickoff_note: schedule.kickoff_note,
-    priority: schedule.priority,
     deadline: schedule.deadline || "",
     project_id: schedule.project_id,
     employee_backend: schedule.employee_backend || "",
@@ -72,7 +68,6 @@ export function scheduledTaskPayload(form: ScheduledTaskForm): Record<string, un
     title: form.title.trim(),
     worker_type: form.worker_type,
     kickoff_note: form.kickoff_note,
-    priority: form.priority,
     deadline: form.deadline.trim() || null,
     project_id: form.project_id,
     employee_backend: form.employee_backend.trim() || null,

@@ -62,6 +62,17 @@ def insert_project(conn: sqlite3.Connection, identity: str) -> None:
     )
 
 
+def _current_project_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # These fixtures contain Chief/totals/projects only. The sole shape change is
+    # the approved project priority removal; every other byte remains comparable.
+    return [
+        {**record, "value": {"name": record["value"]["name"]}}
+        if record["kind"] == "project"
+        else record
+        for record in records
+    ]
+
+
 def test_additive_upgrade_second_open_and_rebuild_preserve_witnesses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -78,7 +89,7 @@ def test_additive_upgrade_second_open_and_rebuild_preserve_witnesses(
     with current_navigation_database(tmp_path / "synthetic.db") as conn:
         after = snapshot(conn)
         assert after["scope"] == before["scope"]
-        assert after["records"] == before["records"]
+        assert after["records"] == _current_project_records(before["records"])
         assert after["epoch"] != before["epoch"]
         assert after["revision"] == "0"
         with capture_command_commits(str(tmp_path / "synthetic.db")) as capture:
@@ -163,7 +174,7 @@ def test_failed_additive_migration_rolls_back_storage(
     db.create_schema(conn)
     after = historical_snapshot(conn)
     assert after["scope"] == before["scope"]
-    assert after["records"] == before["records"]
+    assert after["records"] == _current_project_records(before["records"])
     assert after["epoch"] != before["epoch"]
     assert after["revision"] == "0"
     conn.close()

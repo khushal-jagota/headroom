@@ -15,7 +15,9 @@
   import { conversationOwnerImpact } from "../lib/workspaceNavigationImpact";
   import { actualMark, expectedMark } from "../lib/conversationSignalDom";
   import { createQuery } from "@tanstack/svelte-query";
-  import ConversationSignalMark from "./ConversationSignalMark.svelte";
+  import OrchestratorHeader from "./OrchestratorHeader.svelte";
+  import OrchestratorWorkspace from "./OrchestratorWorkspace.svelte";
+  import type { ConversationState } from "../lib/conversation/conversationState";
   import ErrorLine from "./ErrorLine.svelte";
   import OrchestratorChildren from "./OrchestratorChildren.svelte";
   import LiveConversation from "./conversation/LiveConversation.svelte";
@@ -43,6 +45,7 @@
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let chief = $derived(displayed ? navigation.presentationFor(displayed).chief : null);
+  let conversationState = $state<ConversationState>("rest");
   let conversationId = $state<string | null>(null);
   let observedPointer: string | undefined = $state();
   let backends = $state<readonly BackendSnapshot[]>([]);
@@ -50,6 +53,7 @@
   // arrival because the owner changes it on the Config screen, and this must not go on
   // showing what the Chief was configured on before they did.
   const startValues = createQuery(() => queries.chiefConversationStartValues());
+  const chiefSettings = createQuery(() => queries.chiefSettings());
 
   $effect(() => {
     if (!chief) return;
@@ -72,9 +76,9 @@
     void tick().then(() => {
       if (obsolete || !element.isConnected || navigation.selectors.effective !== effective
         || navigation.state.generation !== generation || conversationId !== source.conversation_id) return;
-      const pane = element.querySelector('.chief-conversation [data-conversation-pane]');
+      const pane = element.querySelector('[data-conversation-pane]');
       if (pane?.getAttribute('data-conversation-id') !== (source.conversation_id ?? '')) return;
-      const region=element.querySelector('.chief-signal');
+      const region=element.querySelector('.sprint-workspace-title');
       if(JSON.stringify(region ? actualMark(region) : [null,null]) !== JSON.stringify(expectedMark(source.conversation_signal,source.conversation_id))) return;
       observer.acknowledgeRender(publication,observation);
     });
@@ -87,6 +91,9 @@
       mutateJson<DeliveredMessage>("/api/chief/conversation/send",{method:"POST",body,responseMetadata}),"send Chief message");
     if(delivered.conversation_id!==null) conversationId=delivered.conversation_id;
     return delivered;
+  }
+  function saveRecap(recap: string): Promise<unknown> {
+    return mutateJson("/api/workers/chief-of-staff/recap", { method: "PUT", body: { recap } });
   }
   async function newConversation():Promise<void> {
     const view=navigation.state.effective;
@@ -104,12 +111,16 @@
   });
 </script>
 
-<div class="chief-workspace" bind:this={root}>
-  {#if chief?.conversation_signal?.working || chief?.conversation_signal?.message_for_owner}
-    <div class="chief-signal"><ConversationSignalMark signal={chief?.conversation_signal} conversationId={chief?.conversation_id} /></div>
-  {/if}
-  <div class="chief-workers"><OrchestratorChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} /></div>
-  <div class="chief-conversation">
+<div class="chief-workspace-host" bind:this={root}>
+<OrchestratorWorkspace class="chief-workspace" bind:conversationState>
+  <OrchestratorHeader signal={chief?.conversation_signal} conversationId={chief?.conversation_id}
+    recap={chiefSettings.data?.recap} onSaveRecap={saveRecap}>
+    {#snippet title()}Chief of Staff{/snippet}
+  </OrchestratorHeader>
+  <section class="orchestrator-workers" aria-label="Workers">
+    <OrchestratorChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} />
+  </section>
+  {#snippet conversation()}
 {#if navigation.state.error}
   <div class="chief-conversation-resource" data-chief-conversation-error>
     {#if showRequestErrorLine}<ErrorLine error={navigation.state.error} />{/if}
@@ -128,6 +139,7 @@
   </div>
 {:else}
   <LiveConversation
+    bind:conversationState
     {conversationId}
     persistenceKey="owner:chief"
     label="Chief of Staff"
@@ -139,11 +151,10 @@
   />
 {/if}
 
-  </div>
+  {/snippet}
+</OrchestratorWorkspace>
 </div>
 <style>
-  .chief-signal { padding:var(--space-3) var(--space-5) 0; }
-  .chief-workspace { display:flex; flex-direction:column; width:100%; min-height:0; }
-  .chief-workers { padding:var(--space-5); max-height:45%; overflow:auto; flex:none; }
-  .chief-conversation { display:flex; flex:1; min-height:0; }
+  .chief-workspace-host { display:contents; }
+  .orchestrator-workers { margin-top:var(--space-5); }
 </style>

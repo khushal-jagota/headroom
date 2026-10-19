@@ -1,11 +1,12 @@
-"""Navigation schema 4 with explicit current and independently durable attention."""
+"""Navigation schema 6 with explicit current and independently durable attention."""
 
 from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-SCHEMA_VERSION = 4
-SUPPORTED_SEMANTICS = "attention-knowledge-v4"
+PREPARED_SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+SUPPORTED_SEMANTICS = "attention-knowledge-v6"
 RecordKind = Literal[
     "ticket", "orchestrator", "chief", "conversation", "address", "totals", "project"
 ]
@@ -31,7 +32,6 @@ class TicketValue(TypedDict):
     updated_at: int
     created_at: int
     worker_step_claim_out: bool
-    priority: str
     deadline: str | None
     project_id: str | None
     orchestrator_kind: str
@@ -52,7 +52,6 @@ class TicketValue(TypedDict):
 class OrchestratorValue(TypedDict):
     title: str
     recap_preview: str
-    priority: str
     created_at: int
     project_id: str
     settled: bool
@@ -147,7 +146,6 @@ class TotalsValue(TypedDict):
 
 class ProjectValue(TypedDict):
     name: str
-    priority: str | None
 
 
 class TicketRecord(TypedDict):
@@ -206,7 +204,7 @@ type NavigationRecord = (
 class Continuity(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v4"]
+    semantics: Literal["attention-knowledge-v6"]
     epoch: str
     revision: str
 
@@ -218,7 +216,7 @@ class Snapshot(Continuity):
 class RevisionBatch(TypedDict):
     scope: str
     schema_version: int
-    semantics: Literal["attention-knowledge-v4"]
+    semantics: Literal["attention-knowledge-v6"]
     epoch: str
     base_revision: str
     revision: str

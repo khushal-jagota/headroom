@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Never, cast
 
 import pytest
 from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
+from tests.support.navigation_current import current_navigation_database
 
 from planner.conversation.storage import ConversationStore
 from planner.core.commit_capture import register_capture_task
@@ -30,7 +33,14 @@ def command_app(tmp_path: Path) -> FastAPI:
     )
     conn.commit()
     conn.close()
-    app = FastAPI()
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Physical preparation is not public authority. Reuse the actual producer
+        # for this middleware-only app rather than rewriting metadata to "current".
+        with current_navigation_database(path):
+            yield
+
+    app = FastAPI(lifespan=lifespan)
     app.add_middleware(
         NavigationCommandFenceMiddleware, db_path=str(path), conn_factory=lambda: connect(str(path))
     )
@@ -76,17 +86,19 @@ def test_multi_commit_capture_includes_awaited_conversation_tasks_and_not_backgr
 
     with TestClient(app) as client:
         response = client.post("/api/conversation/conversations/c/send")
-    assert response.json() == {"fate": "uncertain", "receipt": "preserved"}
-    issued = fence(response)
-    assert issued["coverage"] == "complete"
-    assert len(issued["witnesses"]) == 2
-    conn = connect(str(tmp_path / "planner.db"))
-    try:
-        conn.execute("BEGIN")
-        assert proof.certify(conn, issued)["status"] == "included"
-        assert conn.execute("SELECT count(*) FROM navigation_commit_witnesses").fetchone()[0] >= 3
-    finally:
-        conn.close()
+        assert response.json() == {"fate": "uncertain", "receipt": "preserved"}
+        issued = fence(response)
+        assert issued["coverage"] == "complete"
+        assert len(issued["witnesses"]) == 2
+        conn = connect(str(tmp_path / "planner.db"))
+        try:
+            conn.execute("BEGIN")
+            assert proof.certify(conn, issued)["status"] == "included"
+            assert (
+                conn.execute("SELECT count(*) FROM navigation_commit_witnesses").fetchone()[0] >= 3
+            )
+        finally:
+            conn.close()
 
 
 def test_204_and_noop_preserve_body_status_and_prove_noop(tmp_path: Path) -> None:
@@ -210,7 +222,7 @@ def test_real_application_command_families_and_store_writes(
         project = accepted(
             client.post(
                 "/api/projects",
-                json={"name": "Navigation proof", "summary": "Synthetic", "priority": "P2"},
+                json={"name": "Navigation proof", "summary": "Synthetic"},
             )
         )
         accepted(client.patch(f"/api/projects/{project['id']}", json={"name": "Renamed"}))

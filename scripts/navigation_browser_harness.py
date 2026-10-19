@@ -53,6 +53,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--mode", choices=("baseline", "candidate"), required=True)
+    parser.add_argument(
+        "--baseline-revision",
+        help="Required exact named current-staging comparison source for baseline mode",
+    )
     parser.add_argument("--runtime-parent", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--tickets", type=int, default=500)
@@ -678,8 +682,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                     "dom_observed_ns": time.perf_counter_ns(),
                 }
             )
-            manual = page.locator('select[aria-label="Worker state"]')
-            await manual.select_option("active")
+            # Current staging shows exclusive sections instead of a state selector.
+            # Preserve a real manual disclosure choice across the background update.
             await page.locator("details[data-workspace-group]").first.evaluate(
                 "node=>{node.open=false}"
             )
@@ -1023,7 +1027,7 @@ def main() -> None:
             revision = subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=args.source_root, text=True
             ).strip()
-            if revision != "f0977a512ba9a6bb1736e15ee9760aa39989a0fc":
+            if not args.baseline_revision or revision != args.baseline_revision:
                 raise ValueError("Baseline source differs from the selected immutable source")
         root = Path(tempfile.mkdtemp(prefix="actual-app-", dir=args.runtime_parent)).resolve()
         env = isolated_environment(root, args.source_root, os.environ)

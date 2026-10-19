@@ -71,28 +71,28 @@ def _expected_reader_values(result: dict[str, Any], *, later: bool = False) -> N
         assert json.loads(payload)["text"] == "Synthetic receipt α\nKeep exact bytes."
 
 
-def test_exact_f097_ingress_reader_reversal_and_lossy_fixture_restore(
+def test_exact_595_ingress_reader_reversal_and_lossy_fixture_restore(
     tmp_path: Path,
 ) -> None:
     source = historical_source()
     if not (source / ".venv/bin/python").exists():
         pytest.skip(
-            "exact f097 tree/interpreter unavailable; set PANELS_NAVIGATION_HISTORICAL_SOURCE"
+            "exact 595 tree/interpreter unavailable; set PANELS_NAVIGATION_HISTORICAL_SOURCE"
         )
     # The old source executes its migrations and seed, then exits before transfer.
-    original = tmp_path / "f097-source.db"
+    original = tmp_path / "595-source.db"
     before = run_historical(source, original, "seed")
     _expected_reader_values(before)
-    assert before["source"]["heads"] == [["remove_ticket_retirement"]]
+    assert before["source"]["heads"] == [["remove_priority"]]
     candidate = tmp_path / "upgraded.db"
     _copy_closed_database(original, candidate)
 
     with current_navigation_database(candidate) as connection:
         current = snapshot(connection)
-        assert current["schema_version"] == 4
+        assert current["schema_version"] == 6
         initial_epoch = current["epoch"]
         facts = source_facts(connection)
-        assert facts["heads"] == [["prepare_navigation_attention"]]
+        assert facts["heads"] == [["navigation_current_workspace"]]
         assert {key: value for key, value in facts.items() if key != "heads"} == {
             key: value for key, value in before["source"].items() if key != "heads"
         }
@@ -128,15 +128,26 @@ def test_exact_f097_ingress_reader_reversal_and_lossy_fixture_restore(
     assert after["source"] == later_facts
     assert candidate.read_bytes() == contents
 
+    # f097 positively read the old candidate, but cannot read approved priority
+    # removal. Exercise the actual old readers read-only; do not invent defaults.
+    from tests.support.navigation_historical_source import F097_TIP
+
+    f097 = source.parent / "t_jghnv9gu-baseline-f097"
+    unsupported = run_historical(f097, candidate, "read_incompatible", expected_tip=F097_TIP)
+    assert set(unsupported["failures"]) == {"projects", "ticket"}
+    assert "priority" in unsupported["failures"]["projects"]
+    assert unsupported["source"] == later_facts
+    assert candidate.read_bytes() == contents
+
     # Restore the old synthetic backup into another target, never over the candidate.
-    restored = tmp_path / "restored-f097.db"
+    restored = tmp_path / "restored-595.db"
     _copy_closed_database(original, restored)
     reopened = run_historical(source, restored, "read")
     _expected_reader_values(reopened)
     assert reopened["source"] == before["source"]
     with current_navigation_database(restored) as connection:
         restored_snapshot = snapshot(connection)
-        assert restored_snapshot["schema_version"] == 4
+        assert restored_snapshot["schema_version"] == 6
         assert restored_snapshot["epoch"] != initial_epoch
         ticket = next(
             row

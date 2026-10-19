@@ -1,4 +1,4 @@
-"""Refuse to run when the tests and the code under test come from different trees.
+"""Refuse foreign environments and dependency drift before test collection.
 
 A virtualenv copied from another worktree points ``import planner`` at that other
 worktree. The tests then pass or fail on somebody else's code while every path on
@@ -23,14 +23,6 @@ import tree_environment  # noqa: E402  # reached via sys.path.insert above
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    found = tree_environment.faults(
-        TREE, tree_environment.running_answers(TREE, ask_planner=True)
-    )
-    if found:
-        raise pytest.UsageError(
-            f"this environment does not belong to {TREE}:\n  "
-            + "\n  ".join(found)
-            + "\nRebuild it in place: rm -rf .venv && python3 -m venv .venv && "
-            ".venv/bin/python -m pip install -r requirements.txt && "
-            ".venv/bin/python -m pip install --editable ."
-        )
+    diagnosis = tree_environment.preflight(TREE, ask_planner=True)
+    if diagnosis:
+        raise pytest.UsageError(diagnosis)

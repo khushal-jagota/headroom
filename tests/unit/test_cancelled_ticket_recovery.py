@@ -4,15 +4,18 @@ import hashlib
 import json
 import os
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
+from tests.support.model_catalogue import seed_test_model_catalogue
+from tests.unit.test_db import _migration_tree_through
 
 from planner.cli import http
 from planner.cli.main import main
-from planner.core.db import create_schema
+from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.maintenance import recovery
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
@@ -50,8 +53,18 @@ def _path(conn: sqlite3.Connection) -> Path:
     return Path(conn.execute("PRAGMA database_list").fetchone()[2])
 
 
-def _old_revision(conn: sqlite3.Connection) -> None:
-    conn.execute("UPDATE alembic_version SET version_num='current_model_variants'")
+@pytest.fixture
+def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Connection]:
+    # Recovery starts from the actual pre-retirement schema, including priority columns.
+    conn = connect(str(tmp_path / "planning-test.db"))
+    with monkeypatch.context() as historical:
+        _migration_tree_through(tmp_path, historical, "current_model_variants")
+        create_schema(conn)
+    seed_test_model_catalogue(conn)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def test_upgrade_refuses_whole_transaction_and_names_offline_resolution(
@@ -59,7 +72,6 @@ def test_upgrade_refuses_whole_transaction_and_names_offline_resolution(
 ) -> None:
     _ticket(tmp_db, "t_cancelled")
     _ticket(tmp_db, "t_personal", "needs_brief")
-    _old_revision(tmp_db)
     before = list(tmp_db.iterdump())
     with pytest.raises(RuntimeError, match="archive-cancelled-tickets") as error:
         create_schema(tmp_db)
@@ -93,7 +105,6 @@ def test_archive_then_delete_preserves_private_snapshot_artifacts_and_upgrade_re
     _ticket(tmp_db, "t_cancelled")
     for index in range(19):
         _ticket(tmp_db, f"t_personal_{index}", "needs_brief")
-    _old_revision(tmp_db)
     definition = json.loads(
         tmp_db.execute(
             "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
@@ -260,7 +271,6 @@ def test_offline_cli_requires_owner_confirmation_and_exclusive_stopped_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _ticket(tmp_db, "t_cancelled")
-    _old_revision(tmp_db)
     monkeypatch.setenv("PLAN_DB_PATH", str(_path(tmp_db)))
     lease_path = tmp_path / "lifecycle.lock"
     monkeypatch.setenv("PLAN_SERVER_LIFECYCLE_LEASE_PATH", str(lease_path))
@@ -351,7 +361,7 @@ def test_pre_cutover_snapshot_recovers_materialized_cancelled_records_without_ol
         create_schema(conn)
         assert conn.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
         assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
-            "remove_ticket_retirement"
+            "remove_priority"
         )
     finally:
         conn.close()

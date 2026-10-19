@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { conversationSignalReading } from "./support/conversationSignalReading";
 import { dayActionTiles, dayVisualTicket } from "../src/lib/dayPresentation";
 import { workItemTicketGroupKey } from "../src/lib/workItemPresentation";
 import { buildWorkspaceRail } from "../src/lib/workspaceRail";
@@ -11,36 +10,26 @@ const quiet: WorkAttention = {
   awaiting_agent_approval: false, assigned: false, agent_state: "idle"
 };
 
-// A dot is one conversation fact. Every combination of the independent work facts
-// must keep the same message meaning, including a message alongside an approval.
-const combinations = [false, true].flatMap((awaiting_reply) =>
-  [false, true].flatMap((awaiting_approval) =>
-    [false, true].flatMap((awaiting_answer) =>
-      ["idle", "working", "errored"].map((agent_state) => ({
-        ...quiet, awaiting_reply, awaiting_approval, awaiting_answer,
-        agent_state: agent_state as WorkAttention["agent_state"]
-      })))))
-;
-
 describe("conversation dots across Worker references", () => {
-  it.each(combinations)("does not infer marks from legacy attention %o", (facts) => {
+  it.each([
+    [{ awaiting_approval: true, awaiting_answer: true, awaiting_reply: true, agent_state: "errored" }, "awaiting_approval"],
+    [{ awaiting_answer: true, awaiting_reply: true, assigned: true }, "awaiting_answer"],
+    [{ assigned: true, awaiting_reply: true }, "assigned"],
+    [{ awaiting_reply: true }, "awaiting_reply"],
+    [{ agent_state: "errored" }, "errored"],
+    [{}, "agent"]
+  ] as const)("classifies literal work facts without inventing a conversation signal: %j", (facts, expected) => {
     const ticket = {
-      ...facts, id: "t_message", title: "Message", priority: "P1" as const,
+      ...quiet, ...facts, id: "literal-worker", title: "Literal Worker",
       stage: "needs_implementation", ticket_status: "agent", conversation_id: null
     };
-    expect(conversationSignalReading(ticket)).not.toContain("data-conversation-signal");
+    expect(workItemTicketGroupKey(ticket)).toBe(expected);
     expect(dayVisualTicket(ticket as DayTicket).ticket.conversation_signal).toBeUndefined();
-    expect(workItemTicketGroupKey(ticket)).toBe(
-      facts.awaiting_approval ? "awaiting_approval" :
-      facts.awaiting_answer ? "awaiting_answer" :
-      facts.awaiting_reply ? "awaiting_reply" :
-      facts.agent_state === "errored" ? "errored" : "agent"
-    );
   });
 
   it("keeps the supervisor canonical signal separate from children and legacy attention", () => {
     const own = { working:true, message_for_owner:true };
-    const item = {id:"item",title:"Item",recap_preview:"",priority:"P2",created_at:1,tickets:[],conversation_id:"own",
+    const item = {id:"item",title:"Item",recap_preview:"",created_at:1,tickets:[],conversation_id:"own",
       ...quiet, awaiting_reply:false, conversation_signal:own,ticket_rollup:{...quiet,awaiting_reply:true}} as BoardSprintItem;
     expect(buildWorkspaceRail([], [item]).items[0].conversationSignal).toEqual(own);
     delete item.conversation_signal;

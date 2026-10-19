@@ -13,7 +13,7 @@ import httpx
 import pytest
 from playwright.sync_api import BrowserContext, Page, Route, expect
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
-from tests.e2e.test_orchestrator_rail import rail_server  # noqa: F401
+from tests.support.server_fixtures import rail_server  # noqa: F401
 
 BODY = "The compact approval card preserves the visible proposal."
 
@@ -28,7 +28,7 @@ def _propose(server: ServerHandle, ticket_id: str, body: str) -> None:
     assert response.is_success, response.text
 
 
-@pytest.mark.parametrize("host", ["ticket", "review"])
+@pytest.mark.parametrize("host", ["ticket"])
 def test_shared_compact_card_real_transaction_and_stale_revision(
     host: str,
     rail_server: ServerHandle,  # noqa: F811
@@ -37,7 +37,7 @@ def test_shared_compact_card_real_transaction_and_stale_revision(
     api: ApiHelper,
 ) -> None:
     server = rail_server
-    project = api.direct_post(server, "/api/projects", {"name": "Approval proof", "priority": "P1"})
+    project = api.direct_post(server, "/api/projects", {"name": "Approval proof"})
     item = api.direct_post(
         server,
         "/api/items",

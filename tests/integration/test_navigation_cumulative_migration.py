@@ -52,6 +52,8 @@ SOURCE_BRANCH = (
     "native_usage_prices",
     "current_model_variants",
     "remove_ticket_retirement",
+    "chief_recap",
+    "remove_priority",
 )
 
 
@@ -278,14 +280,13 @@ def _assert_canonical(conn: sqlite3.Connection) -> None:
 
 def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dict[str, Any]]:
     current = historical_snapshot(conn)
-    assert current["schema_version"] == (4 if activated else 3)
+    assert current["schema_version"] == (6 if activated else 5)
     records = current["records"]
     values = {(record["kind"], record["id"]): record["value"] for record in records}
-    assert values["project", "fixture-project"] == {"name": "Fixture project", "priority": "P1"}
+    assert values["project", "fixture-project"] == {"name": "Fixture project"}
     assert values["orchestrator", "parent"] == {
         "title": "Fixture parent",
-        **({"recap_preview": ""} if activated else {}),
-        "priority": "P0",
+        "recap_preview": "",
         "created_at": 13,
         "project_id": "fixture-project",
         "settled": False,
@@ -294,15 +295,15 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
     held = values["ticket", "held"]
     assert held == {
         "title": "held",
-        **({"recap_preview": ""} if activated else {}),
+        "recap_preview": "",
         "worker_type": "coding",
         "stage": "needs_plan",
         "ticket_status": "awaiting_approval",
         "blocked": True,
         "updated_at": 18,
-        **({"created_at": 17, "gating_field": "plan"} if activated else {}),
+        "created_at": 17,
+        "gating_field": "plan",
         "worker_step_claim_out": True,
-        "priority": "P3",
         "deadline": None,
         "project_id": "fixture-project",
         "orchestrator_kind": "sprint_item",
@@ -399,7 +400,7 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
                     row[0] for row in conn.execute("SELECT version_num FROM alembic_version")
                 } == {
                     "navigation_delivery_proof",
-                    "remove_ticket_retirement",
+                    "remove_priority",
                 }
                 _assert_canonical(conn)
                 before = list(conn.iterdump())
@@ -416,6 +417,7 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
                     "reconcile_navigation_staging",
                     "navigation_consumer_metadata",
                     "prepare_navigation_attention",
+                    "navigation_current_workspace",
                 ):
                     command.upgrade(_alembic_config(connection), revision)
                 _assert_canonical(conn)
@@ -442,7 +444,7 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
             _assert_canonical(conn)
             records = _assert_projection(conn, activated=True)
             installed = snapshot(conn)
-            assert installed["semantics"] == "attention-knowledge-v4"
+            assert installed["semantics"] == "attention-knowledge-v6"
             assert installed["epoch"] != physical["epoch"]
             assert installed["scope"] == physical["scope"]
             assert installed["revision"] == "0"

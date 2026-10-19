@@ -2,7 +2,7 @@
 
 Navigation is a derived view of canonical database facts. It does not own Ticket or conversation state.
 
-The public contract uses schema 4 and `attention-knowledge-v4` semantics. It contains Ticket metadata, canonical status, assignment, approval references, orchestrator metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
+The public contract uses schema 6 and `attention-knowledge-v6` semantics. It contains Ticket metadata, canonical status, assignment, approval references, orchestrator metadata, Chief metadata, conversations, addresses, Projects, and complete child/conversation counts.
 
 Conversation attention comes from the accepted Signal producer. Each conversation carries complete current attention or explicitly unavailable runtime knowledge, plus independently durable message and failure facts. Raw lifecycle counters, read positions, and Ticket status never substitute for that source. Consumer adoption is in progress. Complete production parity, render proof, recovery, and performance acceptance remain open.
 
@@ -24,37 +24,67 @@ The finalizer expands old indexed dependencies and current canonical relations. 
 
 The original navigation migration creates six tables and four indexes plus source triggers. The version 2 migration adds two partial indexes. A migration transaction backfills synthetic or existing canonical rows and initializes continuity. Rebuild replaces derived records, dependencies, and history in one transaction. Source facts remain unchanged. `reset_epoch` clears journal continuity under a write transaction and returns the new continuity. The scope persists across rebuild and reset. A consistent database copy also copies its scope. Authentication and workspace routing remain downstream responsibilities.
 
+## Current staging migration
+
+`navigation_current_workspace` joins `prepare_navigation_attention` and staging's
+`remove_priority`. The source branch also carries `chief_recap`. The accepted source
+migrations remain unchanged. Chief recap stays a separate editable content query;
+no new Chief navigation field or recap writer exists.
+
+The source shape must agree across Projects, orchestrators, Tickets and schedule
+configuration: either all four tables still contain historical priority columns,
+or none do. Mixed shapes fail before projection conversion. On old source,
+historical navigation schemas1–4 retain their priority fields and semantics. When
+source-first migration has already removed the columns, historical helpers select
+explicit prepared5 instead of inventing priority values. The join refreshes source
+triggers and rebuilds prepared5. Its records omit priority and conversation attention.
+Snapshot, journal and replay reads reject prepared5, including after failure/reopen.
+Only complete canonical Signal installation activates public6.
+
+Normal schema admission accepts a nonempty set of wholly carried migration heads
+and lets Alembic perform its normal DAG upgrade. It rejects empty sets and sets
+containing unknown revisions. It does not stamp or rewrite them. This permits retry
+after source removal committed separately and the joined rebuild failed. That
+failure restores the join's immediate checkpoint, not the earlier source commit.
+
+Old schema4 clients/cursors require snapshot replacement and updated assets. Their
+schema/semantics cannot certify current navigation. Selected current-staging595
+readers work read-only against upgraded synthetic data; f097 readers requiring
+priority are intentionally unsupported on this result. Their earlier positive
+proof belongs to the older candidate. Matching-source backup restoration remains
+lossy: it discards writes made after the backup and requires a fresh upgrade/start.
+
 ## Exact records
 
 All records have `kind`, `id`, and `value`. `navigation/contracts.py` declares a tag-discriminated typed union.
 
 | Tag | Value fields |
 | --- | --- |
-| `ticket` | `title`, `recap_preview`, `worker_type`, `stage`, `ticket_status`, `priority`, `deadline`, effective `project_id`, `orchestrator_kind`, `sprint_item_id`, `conversation_id`, `is_backlogged`, `ceiling`, `ceiling_holder`, `proposal_field`, `proposal_revision`, `proposal_created_at`, `updated_at`, `created_at`, `worker_step_claim_out`, `blocked`, `stage_ownership`, `gating_field`, `terminal`, `locale` |
-| `orchestrator` | `title`, `recap_preview`, `priority`, `created_at`, `project_id`, `settled`, current `conversation_id` |
+| `ticket` | `title`, `recap_preview`, `worker_type`, `stage`, `ticket_status`, `deadline`, effective `project_id`, `orchestrator_kind`, `sprint_item_id`, `conversation_id`, `is_backlogged`, `ceiling`, `ceiling_holder`, `proposal_field`, `proposal_revision`, `proposal_created_at`, `updated_at`, `created_at`, `worker_step_claim_out`, `blocked`, `stage_ownership`, `gating_field`, `terminal`, `locale` |
+| `orchestrator` | `title`, `recap_preview`, `created_at`, `project_id`, `settled`, current `conversation_id` |
 | `chief` | `label`, current `conversation_id` |
-| `project` | `name`, `priority` |
+| `project` | `name` |
 | `conversation` | raw `latest_sequence`, `owner_read_through_sequence`, `latest_agent_activity_sequence`, `latest_agent_activity_at`, `error_acknowledged_through_sequence`, `lifecycle_summary`, `attention` |
 | `address` | `owner_kind`, `owner_id`, `conversation_id`, `current`, `parent_kind`, `parent_id` |
 | `totals` | `child_count`, `distinct_conversation_count` |
 
-Ticket status uses the canonical pure status rule. Stage ownership, terminal state, and `gating_field` use the stored Worker definition from the same database transaction. The required nullable gate comes from `definition.gating_field` for the exact Ticket stage. Null means that the stage has no gate. A manifest never supplies category authority. Gating-only definition changes publish affected Ticket records without changing status or ownership. This field belongs to schema4 only; historical schema1/2/3 layouts stay unchanged. Approval data contains the field, revision, creation time, and holder. It excludes the proposal body and field values.
+Ticket status uses the canonical pure status rule. Stage ownership, terminal state, and `gating_field` use the stored Worker definition from the same database transaction. The required nullable gate comes from `definition.gating_field` for the exact Ticket stage. Null means that the stage has no gate. A manifest never supplies category authority. Gating-only definition changes publish affected Ticket records without changing status or ownership. This field was introduced in schema4 and remains in schema6; historical schema1/2/3 layouts stay unchanged. Approval data contains the field, revision, creation time, and holder. It excludes the proposal body and field values.
 
-Ticket and orchestrator `recap_preview` are required schema4 strings. They use the unchanged canonical helper over `tickets.recap` and `sprint_items.body`. The helper compacts whitespace and applies the configured 160-character bound and ellipsis. Row, title, and preview enter the same publication. Chief retains its existing list-count fallback. No browser truncation or separate preview writer supplies these values. Historical schema1/2/3 shapes stay unchanged.
+Ticket and orchestrator `recap_preview` are required strings introduced in schema4 and retained in schema6. They use the unchanged canonical helper over `tickets.recap` and `sprint_items.body`. The helper compacts whitespace and applies the configured 160-character bound and ellipsis. Row, title, and preview enter the same publication. Chief retains its existing list-count fallback. No browser truncation or separate preview writer supplies these values. Historical schema1/2/3 shapes stay unchanged.
 
 The character bound is not a byte or memory bound. UTF-8 and JSON escaping change the encoded cost. Initial full-payload cost, removed preview requests, recurring-update savings, and browser memory require separate matched-candidate evidence. Final cost acceptance remains open.
 
-Ticket `created_at` comes from exact stored `tickets.created_at`. This required integer belongs to schema4 only. Existing Chief children use filtered creation-time/identity order before their 30-row page and grouping. Navigation does not substitute update time or conversation activity for that order.
+Ticket `created_at` comes from exact stored `tickets.created_at`. This required integer was introduced in schema4 and remains in schema6. Existing Chief children use filtered creation-time/identity order before their 30-row page and grouping. Navigation does not substitute update time or conversation activity for that order.
 
-Schema 3 introduced six required source facts. Orchestrator `priority` and `created_at` come from the corresponding `sprint_items` columns. Ticket `updated_at` comes from its stored timestamp. `proposal_created_at` comes from the strict canonical proposal decoder and is null exactly when no proposal exists. `worker_step_claim_out` is true exactly when the stored claim is `out`. Summing that flag across all Ticket records matches the existing unfiltered Worker claim count, including terminal, blocked, and backlogged Tickets. These fields preserve existing ordering by orchestrator priority/creation time, Ticket update time, and proposal creation time. Conversation activity never substitutes for these values.
+Schema 3 introduced six required source facts. Orchestrator `priority` and `created_at` come from the corresponding `sprint_items` columns. Ticket `updated_at` comes from its stored timestamp. `proposal_created_at` comes from the strict canonical proposal decoder and is null exactly when no proposal exists. `worker_step_claim_out` is true exactly when the stored claim is `out`. Summing that flag across all Ticket records matches the existing unfiltered Worker claim count, including terminal, blocked, and backlogged Tickets. Schema6 removes the priority fields to match current staging. Orchestrators retain creation-time/identity ordering. Grouped child rows retain activity/title/identity ordering; the Chief child page retains creation-time/identity ordering. Ticket update time and proposal creation time remain independent. Conversation activity never substitutes for these values.
 
 Ticket `blocked` is the canonical live-blocker predicate, independently of status precedence. A proposal, an outstanding claim, or an errored claim can mask the blocked status without clearing this fact. Existing dependency capture handles edge changes and blocker completion, reopening, or deletion in the same source transaction. No blocker identities or names enter navigation.
 
-The explicit schema 2 to 3 migration rebuilds the projection in one transaction. It rotates the epoch and clears the journal once through the existing rebuild operation. That schema migration retained wire version 1. The current transport uses wire version 2. Command fence and lifecycle input versions remain 1. Historical schema 1 and 2 projections retain their original layouts and historical cancelled/blocker rules. The compact lifecycle migration stays explicitly version 2. Schema 3 uses the accepted current source rules. Current public reads reject historical schemas 1, 2, and 3. Failed migrations restore all source and projection rows and continuity. Full body, transcript, and configuration detail reads remain separate.
+The explicit schema 2 to 3 migration rebuilds the projection in one transaction. It rotates the epoch and clears the journal once through the existing rebuild operation. That schema migration retained wire version 1. The current transport uses wire version 2. Command fence and lifecycle input versions remain 1. Historical schema 1 and 2 projections retain their original layouts and historical cancelled/blocker rules. The compact lifecycle migration stays explicitly version 2. Schema 3 uses the accepted current source rules. Current public reads reject every schema except6, including prepared5. A failed migration transaction restores its immediate source/projection checkpoint; source migrations committed earlier remain committed. Full body, transcript, and configuration detail reads remain separate.
 
 Schema 4 adds required conversation `attention`. Its `current` value contains the producer's `signal` (`working`, `message_for_owner`), `awaiting_answer`, and `last_turn_failed`. Its separate `durable` value contains `message_for_owner` and `last_turn_failed`. Current records require both durable booleans to equal their current counterparts. Degraded delivery replaces only this attention field with `current:null` and coherent canonical durable values. No missing fact receives a false default.
 
-Physical migration prepares attention storage while metadata remains schema3. Complete producer installation alone activates schema4 and rebuilds its records. Historical migrations retain their schema1/2/3 layouts and meanings. Restart or generic rebuild does not grant current delivery authority.
+The current joined migration prepares schema5 without conversation attention. Complete producer installation alone activates schema6 and rebuilds its records. Historical schema1–4 layouts and meanings remain reproducible on genuine priority-bearing source. Restart or generic rebuild does not grant current delivery authority.
 
 Conversation lifecycle entries contain the compact raw summary described below. They preserve uncertainty. They do not imply provider capability, active public Signal state, or automatic recovery. Detailed lifecycle identities remain in the canonical source, outside navigation.
 
@@ -62,7 +92,7 @@ Address IDs are canonical JSON arrays of owner kind, owner ID, and conversation 
 
 ## Snapshots and replay
 
-`navigation.snapshot(conn)` returns scope, schema version, `semantics`, epoch, revision, and records in one read transaction. `semantics` is exactly `attention-knowledge-v4`. Stored records and journal upserts contain the complete current attention profile. Reads reject a caller transaction that contains pending canonical changes. They do not finalize it early.
+`navigation.snapshot(conn)` returns scope, schema version, `semantics`, epoch, revision, and records in one read transaction. `semantics` is exactly `attention-knowledge-v6`. Stored records and journal upserts contain the complete current attention profile. Reads reject a caller transaction that contains pending canonical changes. They do not finalize it early.
 
 `navigation.journal(conn, epoch, after_revision, limit)` returns the same continuity plus complete batches and `has_more`. Limits range from 1 to 1,000 batches. Each batch contains scope, schema version, semantics, epoch, `base_revision`, resulting `revision`, typed upserts, and typed deletion keys. Revisions use exact canonical decimal strings. A relevant transaction creates one batch even when the public delta is empty. Unrelated transactions create none.
 
@@ -86,9 +116,9 @@ Focused tests assert rollback, savepoint rollback, source failure, alias counts,
 
 Composition enables SQLite recursive triggers. `REPLACE` performs an implicit deletion, and SQLite otherwise skips its deletion triggers. This setting lets old dependency capture remove the replaced identity. Current source triggers contain immutable-history and assignment guards. Legacy supervisor mutation triggers disappear in the earlier table rebuild. Navigation triggers write only the dirty table, so they do not recurse into canonical source writes. A raw connection without module composition cannot change relevant source rows because it lacks the guard function.
 
-Project names and priorities belong to separate Project records. A Project rename updates only its Project record. Ticket records contain the effective Project identity and do not depend on Project display metadata. An orchestrator's Project reassignment still updates each affected child's effective identity.
+Project names belong to separate Project records. Priority no longer exists in current canonical storage or navigation. A Project rename updates only its Project record. Ticket records contain the effective Project identity and do not depend on Project display metadata. An orchestrator's Project reassignment still updates each affected child's effective identity.
 
-Update capture names actual navigation inputs. Project updates capture `id`, `name`, and `priority`. Worker type updates capture `worker_type` and `definition_json`. Chief settings updates capture `employee_id` and `label`. Excluded column-only updates create no navigation batch. Examples include timestamps and Chief launch columns. Worker launch defaults reside in `definition_json`, so an update to those defaults still captures referencing Tickets. An actual Worker definition update derives each referencing Ticket's ownership and terminal facts from the same transaction. It does not derive their conversations or parent totals because those counts do not depend on Worker definitions. A captured update with equal public values still creates an empty batch.
+Update capture names actual navigation inputs. Current Project updates capture `id` and `name`. Worker type updates capture `worker_type` and `definition_json`. Chief settings updates capture `employee_id` and `label`. Excluded column-only updates create no navigation batch. Examples include timestamps and Chief launch columns. Worker launch defaults reside in `definition_json`, so an update to those defaults still captures referencing Tickets. An actual Worker definition update derives each referencing Ticket's ownership and terminal facts from the same transaction. It does not derive their conversations or parent totals because those counts do not depend on Worker definitions. A captured update with equal public values still creates an empty batch.
 
 
 ## Compact lifecycle contract, schema 2
@@ -205,7 +235,7 @@ _Last verified: 2026-10-18._
 ## Signal installation and delivery
 
 The application connects the accepted Signal producer to navigation storage and
-delivery admission. The public schema4/wire2 contract now exists. Consumer adoption
+delivery admission. The public schema6/wire2 contract now exists. Consumer adoption
 and complete product acceptance remain separate work.
 
 `core.db` accepts a registered transaction guard before an outer transaction starts.
@@ -249,10 +279,10 @@ transaction, then rebuilds navigation with a fresh navigation epoch. Batch accep
 checks exact continuity, duplicate content, and conversation versions. Deletion
 records retain version fences. Association-only batches advance the producer cursor.
 
-The forward physical migration prepares private tables while public metadata stays
-at schema3. Generic schema creation and rebuild cannot activate schema4. Complete
-installation validates the exact conversation inventory, installs publications,
-changes public metadata to schema4, and rebuilds once in the same transaction. A
+The joined physical migration prepares schema5 and its private tables. Generic
+schema creation and rebuild cannot activate schema6. Complete installation validates
+the exact conversation inventory, installs publications, changes public metadata to
+schema6, and rebuilds once in the same transaction. A
 failed install restores the prior SQL state. Committed installation alone grants
 no current delivery if callback registration fails.
 

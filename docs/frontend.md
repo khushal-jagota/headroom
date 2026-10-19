@@ -46,17 +46,25 @@ One screen per part of the system:
   attention facts. Unread alone does not change a row’s category, order, or tone.
   The rail omits the Messages group. The sidebar preserves all facts, global unread
   discovery, and the shared classifier on other surfaces.
-  Empty cards say “Nothing in this list.” Priority is not displayed in the rail.
+  Empty cards say “Nothing in this list.”
 
   Attention rows are bright. Ongoing rows and their working spinners are dim.
   Unread message dots stay bright and take precedence over working spinners.
   Single-line titles clip before a reserved mark column. Existing category members keep
   their displayed order across refreshes and selection. Entries and re-entries append
-  within their category. Orchestrator priority and creation order remain unchanged.
+  within their category. Ordinary orchestrators use oldest-created order, then identifier.
+  Active and Settled remain separate categories. Worker groups use most recent activity
+  first, then title and identifier, before the rail preserves displayed positions.
 
   A card opens its orchestrator. A row opens its Worker. The address preserves selection
   across reload and Back. Opening a detail pane never replaces rail classification.
-  Hover lights the card edge and title. Worker rows retain the existing hover wash.
+  Selection uses the existing bright accent outline without a background fill. The
+  outline stays bright through hover and focus. Hover lights unselected card edges and
+  titles. Worker rows retain the existing hover wash.
+  The four utility links open Usage and Backends, Settings, Ideas, or Feedback in the
+  right pane. The workspace address preserves these selections across reload and Back.
+  Standalone utility routes remain available. The open utility uses the same accent-bright
+  border as a selected orchestrator card.
   Fine pointers with hover capability reveal a popup after 200 milliseconds. Visible
   keyboard focus reveals it immediately. Touch reveals it after a 400 millisecond hold.
   Movement, release, or cancellation stops an unfinished hold. Taps and clicks select.
@@ -69,14 +77,16 @@ One screen per part of the system:
   The popup has no stage ladder or named blockers. Recaps arrive through the existing
   board and orchestrator projections, without detail requests or another transport.
   Orchestrator popups show their existing concise body preview in a recessed recap.
-  Chief has no recap source, so its popup states only the eligible Ticket count.
+  The Chief popup states the eligible Ticket count.
   Empty orchestrator recaps use that same factual fallback. The panel stays
   inside the viewport and does not capture the pointer.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group
   moves take 360–560 milliseconds according to distance. A new row opens space before
-  its fade. An exit fades before its space closes. Moving surfaces stay opaque, and the
-  travelling row and its card stay above their neighbors. Row and spinner colors blend
+  its fade. An exit fades before its space closes. Each moving surface uses its effective
+  background before motion starts. Its opaque edge uses the surrounding background,
+  so an active row keeps its shape. Selected cards keep their accent border through motion.
+  The travelling row and its card stay above their neighbors. Row and spinner colors blend
   across group changes. Structural updates wait while a pointer rests on a Worker row.
   Exact conversation signals and their conversation IDs stay live during that wait.
   Updates stay serial and retain the latest pending answer. Reduced motion stops CSS
@@ -92,16 +102,24 @@ One screen per part of the system:
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
 
-  In full workspace lists, backlogged Tickets use one Backlog header after the attention headers and before Agent.
-  This rule applies to every backlogged Ticket supplied to the shared presentation,
-  including terminal history. Backlog uses normal rows and starts open. It does not
-  add review badges or explanations. Approval, reviewer, message, and readiness facts
-  remain independent. Resume restores ordinary classification and readiness checks.
-  The sidebar excludes Backlog without changing the shared classifier or unread index.
-  The existing history filters still determine which Tickets reach full lists.
+  Settling fades the active card and its rows out over 160 milliseconds before
+  the Settled row arrives with the usual 140 millisecond delay and 320 millisecond
+  fade. Reopening uses the same sequence in reverse: the card and headings arrive
+  first, then its Workers. Layout changes share the existing 340 millisecond
+  space adjustment. A closed Settled section stays closed and its count crossfades.
+  Opening and closing change section height and rotate the chevron together;
+  contents fade within that movement. Child-message arrivals and departures use
+  the same queue, so the rows below slide when their height changes. The latest
+  requested state waits through a transition. Reduced motion applies the final
+  state immediately, and closing returns focus to the header if it hid focus.
+
+  Orchestrator pages show active groups first, then Backlogged and Done headers.
+  Backlogged contains unfinished deferred Tickets. Done contains every completed Ticket,
+  including completed Tickets that retain a backlog flag. Both headers start closed.
+  Active groups start open. The sidebar excludes Backlog without a change to the shared
+  classifier or unread index. Resume restores ordinary classification and readiness checks.
   Historical Day counts and Feedback labels keep their separate rules.
 
-  Unfinished groups on the orchestrator page start open. Done starts closed.
   Manual choices survive ordinary data refreshes in that page, including a group that
   disappears and returns. They do not persist across visits. These rounded group headers
   show ordinary Worker counts without unread suffixes. The unread facts and row dots
@@ -175,8 +193,6 @@ One screen per part of the system:
   board, because the Ticket resource answers for it rather than the board card.
 - **Worker** — one document with a clickable Project and human-readable Ticket type above its title and
   recap. The title is 28px, recap 17px, body 15px, labels 13px, and quiet text 11px.
-  Priority does not appear here. Priority keeps its stored
-  resolution, order, API/CLI controls, and the existing Review edit path.
 
   One card holds the current step. A pending proposal names its reviewer and keeps
   one editable ceiling/reviewer picker that opens directly with one click. A ceiling choice followed by a reviewer choice completes the gesture. An explicit raise past the visible pending stage accepts that exact
@@ -196,18 +212,21 @@ One screen per part of the system:
   configuration, and conversation behavior remain available in their existing states.
   Backlog and Resume remain the deferral controls.
 - **Orchestrator** — project and parent navigation, title, recap, and a Settle control
-  above closed Worker bands. Worker rows show title and an exact-conversation dot.
+  above grouped Workers. Worker rows show title and an exact-conversation dot.
   Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
   and order, including exceptional states. The local page omits only the duplicate
   Messages group: unread Workers appear in their ordinary group with their own dot.
   Global Messages and rail discovery remain unchanged. Closed group headers include
   distinct unread-conversation counts as text. Artifacts occupy their own closed band
-  below the Workers. Chief keeps its existing conversation screen and cannot settle.
+  below the Workers. Chief shares the same header, reading column, and conversation layer.
+  Chief keeps an editable recap in its managed settings, through the same header control.
+  Chief cannot settle and has no Project or parent navigation.
 - **Historical Sprint** — retained dated links and documents remain readable. These
   screens do not supply planning or change Worker continuation. See `sprints.md`.
-- **Chief children** — the existing Chief workspace provides a scoped, bounded child
-  section with Active, Backlogged, and Done views. It reuses the child
-  groups and rows. Ordinary orchestrators retain their own scoped children and filters.
+- **Chief children** — the Chief and ordinary orchestrators show one scoped Worker list.
+  Active groups stay visible. Backlogged and Done have independent collapsible headers.
+  Each Chief section retains its own bounded pages and reader choices. Ordinary
+  orchestrators use their full workspace data and retain independent reader choices.
   The standalone Workers page is removed. Former `#/backlog` addresses redirect to
   Workspace. Project facts remain text. The browser New Ticket form and global
   project/type list are removed; API and CLI creation remain available.
@@ -481,10 +500,6 @@ hand-rolling the same shapes per screen. Each does one job:
 - **Button** — the one button (or link), in a primary, quiet, or pill look.
 - **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
 - **Chip** — the small project tag, and the plain tag with no variant.
-- **PriorityTile** — the shared always-coloured P0–P3 square. It appears in the
-  Workspace Item's eyebrow, the editable Ticket and Review identity control,
-  both Sprint priority positions, and once in each Backlog priority group heading.
-  Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
 - **WorkerProposalCard** — the single approval card on both the Ticket and Review
   screens: editable proposal, reviewer heading, Approve, and send-back action. Approve
@@ -494,7 +509,7 @@ hand-rolling the same shapes per screen. Each does one job:
   A new proposal revision resets the draft; an unrelated refresh preserves it.
   Review supplies its existing voice revision box through the card.
 - **ReviewProposalCard** — one waiting proposal as a card: the ticket's title and recap,
-  the priority control on a Brief, the approval control, and the send-back box. It is named by a
+  the approval control and the send-back box. It is named by a
   ticket id and a field and reads that ticket itself, so any screen can raise the same
   ask. Which ask is current — walking, skipping, the keyboard shortcuts — stays with the
   screen. The Review screen mounts it.
@@ -523,6 +538,9 @@ hand-rolling the same shapes per screen. Each does one job:
 
   The textarea grows with its content. Its height stops at the smaller of 44% of the
   conversation pane or 12 lines, rounded down to whole lines, then scrolls internally.
+  A hidden textarea measures each draft with the same text layout and scrollbar width.
+  Only the final height and overflow reach the visible input. A same-line edit therefore
+  keeps the transcript in place without a temporary collapse of the composer.
   Pending pictures and files share one horizontal strip in attachment order. Pictures
   show thumbnails; files show their type, name, and size. The footer keeps one row at
   phone widths, with a truncated model name and equal-height controls. Stop keeps its
@@ -534,6 +552,14 @@ hand-rolling the same shapes per screen. Each does one job:
   and the Ticket page is that screen. While an earlier conversation is on screen the pane
   is read only: the actions go, the picker stays, and it is the way back to the current
   conversation.
+
+  The transcript keeps a settled visible paragraph or message as its position reference.
+  Rows, folds, late images, Markdown previews, and viewport size changes share one position
+  decision after layout. A reader who follows the end keeps the newest content in sight.
+  A reader who scrolls back keeps the same visible text. If every saved reference disappears,
+  the view keeps the nearest valid scroll position. Latest reflects the actual content,
+  separately from the answer room below a sent message. Reply content consumes that room.
+  A resize counts the reply already present and cannot recreate exhausted room.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and
@@ -547,19 +573,20 @@ hand-rolling the same shapes per screen. Each does one job:
   or a turn starting never opens it, which is why the line at rest has to carry that news.
   It is a layer and never a mode: nothing is locked, and the ticket underneath stays
   readable and scrollable. And it is one conversation at three heights, never three
-  screens — a move changes how tall it is and nothing else, so the reader keeps their
-  place in the transcript and keeps whatever they had half-typed.
+  screens. A move between peeked and opened keeps the reader's place in the transcript.
+  Reopening from rest lands on the newest unanswered request or the end of the conversation.
+  Every state keeps whatever the person had half-typed.
 
-  Which state it opens in is the page's to choose, and the page can change it later. A
-  page that says nothing gets no layer at all: the Chief of Staff and the Workspace desk
-  each keep a conversation that fills the space it is given.
+  The Chief and ordinary orchestrators share one layout with this layer and the same
+  outside-click dismissal. Both start at rest. The person controls rest, peeked, and
+  opened states, and a refresh keeps that choice.
 - **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
   `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and
   plugins. The list narrows as text is typed. A choice inserts its exact catalog text
   into the draft. Sending and transcript display still use ordinary text. Codex resolves
   that text at its adapter boundary. The browser does not store vendor identifiers or
   construct structured Codex input.
-- **SegmentedControl** — a small set of toggle options (Backlog Project/priority).
+- **SegmentedControl** — a small set of toggle options.
 - **CeilingPicker** — the whole ceiling in one control. Both halves — how far the Worker
   may go, and who reviews it — sit in a rail on the left, so either can be edited on its
   own. A half-finished choice stays in the open panel: dismissing it writes nothing and
@@ -622,3 +649,43 @@ styling), `web/dist/` (built app served by FastAPI).
 ---
 
 _Last verified: 2026-10-18._
+
+
+## Frontend test commands
+
+`npm --prefix web run test:vitest` runs runtime tests under Node and checks the full
+TypeScript test project. Its normal footer lists the runtime files that ran and names
+absent browser, Python, Svelte, and build proof. A focused successful command prints
+PARTIAL and keeps exit zero. Unlisted runtime files receive no credit from that command.
+
+`npm --prefix web run test:browser` runs the shared browser catalog. Add entry names after
+`--` to select `shell-feedback`, `ticket-review`, `configuration-schedules`, `conversation`,
+`composer-voice`, `workspace`, `artifacts`, or `historical-sprint`. One invocation shares
+the build, static server, and Chromium process. Independent cases keep fresh contexts.
+
+The workspace entry first runs `workspace-rail-projection.test.ts` with typechecked
+Vitest. A missing, empty, skipped, failed, or invalid companion result stops the browser
+setup. The compiler checks the whole frontend test project, including unrelated typed
+fixtures. The retained direct `node web/tests/workspace-rail-at-rest-browser.test.mjs`
+command invokes workspace and carries the same companion requirement.
+
+Other former direct host commands move to their catalog entry. Ideas and feedback use
+`shell-feedback`. Approval, Stage owner, and guidance use `ticket-review`. Worker setup
+and scheduled tasks use `configuration-schedules`. Pane, conversation switches,
+unanswered sends, and open-state cases use `conversation`. Composer and voice use
+`composer-voice`. Rail, order, Settled groups, children, and reader state use `workspace`.
+File preview uses `artifacts`. Sprint documents use `historical-sprint`.
+
+`npm --prefix web test` runs full Vitest and the browser catalog. `test:legacy` remains
+an alias for `test:browser`. Browser output names executed and omitted boundaries and
+never supplies backend or production build credit.
+
+The conversation entry keeps the named position regressions from the conversation fix.
+The composer entry also checks trailing-newline measurement, focus, and selection.
+
+Run `.venv/bin/python web/tests/browser/conversation-position-controls.py OUTPUT_DIRECTORY`
+to replay the same position cases against the pinned unfixed source. This explicit audit
+creates a disposable worktree and its own pinned virtualenv. It requires the eight known
+geometric failures and four preventative passes. An infrastructure error cannot substitute
+for an expected defect. The command records diagnostics and test hashes, then removes the
+worktree. The normal catalog requires all twelve position cases to pass on current source.

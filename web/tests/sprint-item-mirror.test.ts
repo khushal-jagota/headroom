@@ -8,7 +8,6 @@ import type {
   SprintItemWorkspaceTicket
 } from "../src/lib/types";
 import {
-  WORK_ITEM_TICKET_GROUPS,
   workItemTicketGroupKey,
   workItemTicketGroups,
   type WorkItemTicketFacts
@@ -29,7 +28,6 @@ function ticket(
     title: id,
     recap_preview: "",
     stage: "needs_implementation",
-    priority: "P1",
     activity_at: 1,
     is_backlogged: false,
     ticket_status: "empty",
@@ -66,7 +64,6 @@ function boardCard(row: SprintItemWorkspaceTicket, itemId = "si_mirror"): BoardC
     employee_backend: "codex",
     sprint_item_id: itemId,
     sprint_item_title: "Mirror Item",
-    sprint_item_priority: "P1"
   };
 }
 
@@ -84,7 +81,6 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
     id: "si_mirror",
     title: "Mirror Item",
     body: "",
-    priority: "P1",
     project_id: "project_panels",
     project: "Panels",
     created_at: 1,
@@ -111,7 +107,7 @@ function workspace(rows: SprintItemWorkspaceTicket[]): SprintItemWorkspace {
 
 function boardItem(rows: SprintItemWorkspaceTicket[]): BoardSprintItem {
   const full = workspace(rows);
-  return { id: full.id, title: full.title, recap_preview: "", priority: full.priority,
+  return { id: full.id, title: full.title, recap_preview: "",
     created_at: full.created_at, conversation_id: null, tickets: rows,
     ticket_rollup: quiet, ...quiet };
 }
@@ -134,13 +130,13 @@ describe("the shared Item and Ticket presentation", () => {
   });
 
   it.each([
-    { awaiting_approval: true, has_pending_proposal: true },
-    { awaiting_agent_approval: true, has_pending_proposal: true },
-    { awaiting_answer: true }, { assigned: true }, { awaiting_reply: true },
-    { agent_state: "errored" }, { agent_state: "working" },
-    { waiting_to_closeout: true }, { ticket_status: "blocked" },
-    { stage: "done" }
-  ] as const)("gives supplied backlogged work one group while preserving %o", (facts) => {
+    [{ awaiting_approval: true, has_pending_proposal: true }, "awaiting_approval"],
+    [{ awaiting_agent_approval: true, has_pending_proposal: true }, "status_awaiting_approval"],
+    [{ awaiting_answer: true }, "awaiting_answer"], [{ assigned: true }, "assigned"], [{ awaiting_reply: true }, "awaiting_reply"],
+    [{ agent_state: "errored" }, "errored"], [{ agent_state: "working" }, "agent"],
+    [{ waiting_to_closeout: true }, "waiting_to_closeout"], [{ ticket_status: "blocked" }, "blocked"],
+    [{ stage: "done" }, "done"]
+  ] as const)("gives supplied backlogged work one group while preserving %o", (facts, resumedGroup) => {
     const row = ticket("backlogged", { ...facts, is_backlogged: true });
     const original = { ...row };
     const groups = workItemTicketGroups([row]);
@@ -149,8 +145,7 @@ describe("the shared Item and Ticket presentation", () => {
     expect(groups[0].tickets[0]).toBe(row);
     expect(groups[0].quiet).toBe(false);
     expect(sprintTicketCondition(row).word).toBe("backlog");
-    expect(workItemTicketGroupKey({ ...row, is_backlogged: false }))
-      .toBe(workItemTicketGroupKey(ticket(row.id, facts)));
+    expect(workItemTicketGroupKey({ ...row, is_backlogged: false })).toBe(resumedGroup);
   });
 
   it("forwards explicit backlog through each shared screen adapter", () => {
@@ -217,6 +212,21 @@ describe("the shared Item and Ticket presentation", () => {
   });
 
   it("uses the approved group order for overlaps", () => {
+    const rows = [
+      ticket("done", { stage: "done" }), ticket("blocked", { ticket_status: "blocked" }),
+      ticket("empty"), ticket("agent-review", { awaiting_agent_approval: true }),
+      ticket("closeout", { waiting_to_closeout: true }), ticket("working", { agent_state: "working" }),
+      ticket("deferred", { is_backlogged: true }), ticket("failed", { agent_state: "errored" }),
+      ticket("reply", { awaiting_reply: true }), ticket("assigned", { assigned: true }),
+      ticket("answer", { awaiting_answer: true }), ticket("approval", { awaiting_approval: true })
+    ];
+    expect(workItemTicketGroups(rows).map(group => [group.key, group.tickets.map(row => row.id)])).toEqual([
+      ["awaiting_approval", ["approval"]], ["awaiting_answer", ["answer"]], ["assigned", ["assigned"]],
+      ["awaiting_reply", ["reply"]], ["errored", ["failed"]], ["backlog", ["deferred"]],
+      ["agent", ["working"]], ["waiting_to_closeout", ["closeout"]],
+      ["status_awaiting_approval", ["agent-review"]], ["empty", ["empty"]],
+      ["blocked", ["blocked"]], ["done", ["done"]]
+    ]);
     expect(
       workItemTicketGroupKey(
         ticket("overlap", {
@@ -309,33 +319,17 @@ describe("the shared Item and Ticket presentation", () => {
     expect(buildWorkspaceRail([], []).items).toEqual([]);
   });
 
-  it("keeps board membership and priority, age, ID order with complete children", () => {
+  it("keeps board membership and age, ID order with complete children", () => {
     const summaries = [
       { ...boardItem([]), id: "si_newer", created_at: 2 },
       { ...boardItem([ticket("done", { stage: "done" }), ticket("off-day", { assigned: true })]), id: "si_mirror", created_at: 1 },
-      { ...boardItem([]), id: "si_urgent", priority: "P0" as const },
+      { ...boardItem([]), id: "si_oldest", created_at: 0 },
       { ...boardItem([]), id: "si_after", created_at: 1 }
     ];
     const rail = buildWorkspaceRail([], summaries);
-    expect(rail.items.map((item) => item.id)).toEqual(["si_urgent", "si_after", "si_mirror", "si_newer"]);
+    expect(rail.items.map((item) => item.id)).toEqual(["si_oldest", "si_after", "si_mirror", "si_newer"]);
     expect(rail.items.find((item) => item.id === "si_mirror")?.rested).toBe(false);
     expect(rail.items.find((item) => item.id === "si_mirror")?.groups[0].cards[0].id).toBe("off-day");
   });
 
-  it("publishes the exact approved group order", () => {
-    expect(WORK_ITEM_TICKET_GROUPS.map((group) => group.key)).toEqual([
-      "awaiting_approval",
-      "awaiting_answer",
-      "assigned",
-      "awaiting_reply",
-      "errored",
-      "backlog",
-      "agent",
-      "waiting_to_closeout",
-      "status_awaiting_approval",
-      "empty",
-      "blocked",
-      "done"
-    ]);
-  });
 });

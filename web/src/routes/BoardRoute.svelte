@@ -9,7 +9,7 @@
   import type { NavigationPublication } from "../lib/navigation/collection";
   import { railDomMatches, hoverDomMatches } from "../lib/workspaceRailDom";
   import { workspaceRailImpact, workspaceHoverImpact, orchestratorSettleImpact } from "../lib/workspaceNavigationImpact";
-  import { createRailMotionController } from "../lib/workspaceRailMotion";
+  import { createRailMotionController, type WorkspaceRailPresentation } from "../lib/workspaceRailMotion";
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
@@ -28,8 +28,12 @@
   import WorkspaceRailCard from "../components/WorkspaceRailCard.svelte";
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
   import TicketRoute from "./TicketRoute.svelte";
+  import BackendsRoute from "./BackendsRoute.svelte";
+  import SettingsRoute from "./SettingsRoute.svelte";
+  import IdeasRoute from "./IdeasRoute.svelte";
+  import FeedbackRoute from "./FeedbackRoute.svelte";
 
-  let { address }: { address: WorkspaceAddress } = $props();
+  let { address, onDismissed = () => undefined }: { address: WorkspaceAddress; onDismissed?: (noteId: string) => void } = $props();
   const navigation = (() => {
     const context = navigationApplication();
     if (!context) throw new Error("Workspace requires the application navigation owner");
@@ -54,12 +58,20 @@
   const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspaceContent(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
   let allCards = $derived(workspace?.tickets ?? []);
   let desiredRail = $derived(buildWorkspaceRail(allCards, workspace?.orchestrators ?? []));
-  let rail = $state(buildWorkspaceRail([]));
+  let presentation = $state<WorkspaceRailPresentation>({rail:buildWorkspaceRail([]), settledOpen:false, settledMessages:{}});
+  let rail = $derived(presentation.rail);
+  let settledOpen = $derived(presentation.settledOpen);
+  let requestedSettledOpen = $state(false);
   let messages = $derived(workspace?.messages ?? []);
   let itemPane = $derived(opening.markedItemId !== null);
   let railElement = $state<HTMLElement | null>(null);
-  const motion = createRailMotionController(() => railElement, () => rail, (next) => rail = next);
-  $effect(() => { const next = desiredRail; untrack(() => motion.update(next)); });
+  const motion = createRailMotionController(() => railElement, () => presentation, (next) => presentation = next);
+  $effect(() => {
+    const next = {rail:desiredRail, settledOpen:requestedSettledOpen,
+      settledMessages:Object.fromEntries(desiredRail.settledItems.map((item) =>
+        [item.id, workspaceRailChildMessageConversations(messages, item, allCards)]))};
+    untrack(() => motion.update(next));
+  });
   function freezeRows(event: PointerEvent, leaving: boolean): void {
     if (event.pointerType === "touch") return;
     const target = (leaving ? event.relatedTarget : event.target) as HTMLElement | null;
@@ -69,7 +81,6 @@
   let railWidth = $state<number | null>(null);
   let measuredRailWidth = $state(272);
   let resizing = $state(false);
-  let settledOpen = $state(false);
   let busyItem = $state<string | null>(null);
   let settleError = $state("");
   let hoverVisible = $state(false);
@@ -254,17 +265,17 @@
             {/each}
             {#if settleError}<p role="alert">{settleError}</p>{/if}
             </div>
-            <div class="settled" class:settled--open={settledOpen}>
-              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => settledOpen = !settledOpen}><span>Settled <span class="count" data-settled-count>({rail.settledItems.length})</span></span><span class="rule"></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+            <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
+              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => requestedSettledOpen = !requestedSettledOpen}><span>Settled <span class="settled-count"><span class="count" data-settled-count>({rail.settledItems.length})</span></span></span><span class="rule"></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
               {#if settledOpen}
                 <div class="settled-body" data-settled-scroll onscroll={() => hover.leave()}>
                 {#each rail.settledItems as item (item.id)}
-                  <div class="settled-item" data-settled-item={item.id}>
+                  <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
                   <div class="settled-row">
                     <button class="settled-title" type="button" onclick={() => selectItem(item.id)} use:railPreview={{show:(target, immediate) => hoverItem(target,item,immediate), leave:() => hover.leave()}}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
                     <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
                   </div>
-                  <WorkspaceMessages conversations={workspaceRailChildMessageConversations(workspace?.messagesByParent.get(item.id) ?? [], item, allCards)} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
+                  <WorkspaceMessages conversations={presentation.settledMessages[item.id] ?? []} motionPrefix={item.id} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
                   </div>
                 {/each}
                 </div>
@@ -272,10 +283,10 @@
             </div>
           </div>
           <nav class="rail-utilities" aria-label="Workspace utilities">
-            <a href="#/backends" aria-label="Usage and Backends" title="Usage and Backends"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></a>
-            <a href="#/settings" aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m8 3-.5 2-1.4.8-2-.5-2 3.4L3.5 10l.1 1.6-1.4 1.4 2 3.4 2-.5 1.4.8.5 2h4l.5-2 1.4-.8 2 .5 2-3.4-1.4-1.4.1-1.6 1.4-1.3-2-3.4-2 .5-1.4-.8-.5-2Z" transform="translate(0 -1)" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2" /></svg></a>
-            <a href="#/ideas" aria-label="Ideas" title="Ideas"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 14h6m-5 3h4M6 10a5 5 0 1 1 8 0l-1 2H7Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg></a>
-            <a href="#/feedback" aria-label="Feedback" title="Feedback"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 4h14v10H8l-5 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>{#if (feedbackCount.data?.open_count || 0) > 0}<span class="fb-count">{feedbackCount.data?.open_count}</span>{/if}</a>
+            <a href={workspaceAddress({kind:"utility",utility:"usage"}, opening.view)} aria-current={opening.markedUtility === "usage" ? "page" : undefined} aria-label="Usage and Backends" title="Usage and Backends"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></a>
+            <a href={workspaceAddress({kind:"utility",utility:"settings"}, opening.view)} aria-current={opening.markedUtility === "settings" ? "page" : undefined} aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m8 3-.5 2-1.4.8-2-.5-2 3.4L3.5 10l.1 1.6-1.4 1.4 2 3.4 2-.5 1.4.8.5 2h4l.5-2 1.4-.8 2 .5 2-3.4-1.4-1.4.1-1.6 1.4-1.3-2-3.4-2 .5-1.4-.8-.5-2Z" transform="translate(0 -1)" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2" /></svg></a>
+            <a href={workspaceAddress({kind:"utility",utility:"ideas"}, opening.view)} aria-current={opening.markedUtility === "ideas" ? "page" : undefined} aria-label="Ideas" title="Ideas"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 14h6m-5 3h4M6 10a5 5 0 1 1 8 0l-1 2H7Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg></a>
+            <a href={workspaceAddress({kind:"utility",utility:"feedback"}, opening.view)} aria-current={opening.markedUtility === "feedback" ? "page" : undefined} aria-label="Feedback" title="Feedback"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 4h14v10H8l-5 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>{#if (feedbackCount.data?.open_count || 0) > 0}<span class="fb-count">{feedbackCount.data?.open_count}</span>{/if}</a>
           </nav>
         </section>
         <!-- A focusable separator implements the WAI-ARIA window splitter keyboard pattern. -->
@@ -285,13 +296,12 @@
           class:board-workspace-right--ticket={Boolean(opening.markedTicketId)}
           class:board-workspace-right--chief={opening.chiefMarked}
           class:board-workspace-right--item={itemPane}
+          class:board-workspace-right--utility={opening.markedUtility !== null}
           class="board-workspace-right"
           aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Orchestrator workspace" : "Workspace inspector"}
         >
           {#if opening.chiefMarked}
-            <div class="board-workspace-chief-conversation">
-              <ChiefConversation showRequestErrorLine={false} />
-            </div>
+            <ChiefConversation showRequestErrorLine={false} />
           {:else if opening.markedTicketId}
             {#key opening.markedTicketId}
               <TicketRoute
@@ -315,6 +325,14 @@
                 }}
               />
             {/key}
+          {:else if opening.markedUtility === "usage"}
+            <BackendsRoute />
+          {:else if opening.markedUtility === "settings"}
+            <SettingsRoute />
+          {:else if opening.markedUtility === "ideas"}
+            <IdeasRoute />
+          {:else if opening.markedUtility === "feedback"}
+            <FeedbackRoute {onDismissed} />
           {:else}
             <div class="board-workspace-empty-inspector">
               <span>Select an orchestrator or Worker to inspect it.</span>
@@ -340,10 +358,12 @@
   .settled { display:flex; flex-direction:column; flex:0 1 auto; min-height:0; max-height:var(--settled-max-height); }
   .settled-head { flex:none; display:flex; align-items:center; gap:var(--space-3); padding:var(--space-2) 0; border:0; background:none; width:100%; font:inherit; color:var(--text-faint); cursor:pointer; }
   .settled-head:hover { color:var(--text-strong); }
+  .settled-count { position:relative; display:inline-block; }
   .settled-chevron { width:16px; height:16px; flex:none; }
   .settled--open .settled-chevron { transform:rotate(180deg); }
   .rail-utilities { display:flex; flex:none; align-items:center; gap:var(--space-1); padding-top:var(--space-2); border-top:var(--border-hairline) solid var(--border-color); }
-  .rail-utilities a { display:flex; align-items:center; justify-content:center; width:32px; height:32px; color:var(--text-faintest); border-radius:var(--radius-sm); }
+  .rail-utilities a { display:flex; align-items:center; justify-content:center; width:32px; height:32px; color:var(--text-faintest); border:var(--border-hairline) solid transparent; border-radius:var(--radius-sm); }
+  .rail-utilities a[aria-current="page"], .rail-utilities a[aria-current="page"]:hover, .rail-utilities a[aria-current="page"]:focus-within { border-color:var(--accent-bright); }
   .rail-utilities a:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .rail-utilities svg { width:18px; height:18px; }
   .rail-utilities a:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }

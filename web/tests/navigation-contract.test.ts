@@ -6,12 +6,12 @@ const continuity: import('../src/lib/navigation/contracts').Continuity = {scope:
 describe('canonical browser protocol boundary', () => {
   it('requires canonical metadata fields and exact nullability instead of compatibility defaults', () => {
     const ticket={kind:'ticket',id:'t',value:{title:'Ticket',recap_preview:'Ticket recap',worker_type:'coding',stage:'needs_plan',
-      ticket_status:'empty',blocked:false,created_at:1,updated_at:12,worker_step_claim_out:false,priority:'P2',
+      ticket_status:'empty',blocked:false,created_at:1,updated_at:12,worker_step_claim_out:false,
       deadline:null,project_id:null,orchestrator_kind:'chief',sprint_item_id:null,conversation_id:null,
       is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'owner',id:'owner'},gating_field:'plan',proposal_field:null,
       proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'en'}};
     const orchestrator={kind:'orchestrator',id:'o',value:{title:'Orchestrator',recap_preview:'Orchestrator recap',project_id:'p',
-      priority:'P1',created_at:3,settled:false,conversation_id:null}};
+      created_at:3,settled:false,conversation_id:null}};
     const parse=(records:unknown[])=>parseSnapshotResponse({wire_version:WIRE_VERSION,mode:'current',authority:authority('navigation'),cursor:encodeCursor(continuity),
       snapshot:{...continuity,records},proof:null});
     expect(parse([ticket,orchestrator]).snapshot.records).toHaveLength(2);
@@ -21,7 +21,7 @@ describe('canonical browser protocol boundary', () => {
       const value: Record<string,unknown>={...ticket.value};delete value[field];
       expect(()=>parse([{...ticket,value}])).toThrow();
     }
-    for (const field of ['priority','created_at','recap_preview']) {
+    for (const field of ['created_at','recap_preview']) {
       const value: Record<string,unknown>={...orchestrator.value};delete value[field];
       expect(()=>parse([{...orchestrator,value}])).toThrow();
     }
@@ -29,7 +29,10 @@ describe('canonical browser protocol boundary', () => {
       ['worker_step_claim_out',1],['proposal_created_at',false],['gating_field',true],['recap_preview',null]]) {
       expect(()=>parse([{...ticket,value:{...ticket.value,[field as string]:bad}}])).toThrow();
     }
-    expect(()=>parse([{...orchestrator,value:{...orchestrator.value,priority:null}}])).toThrow();
+    // Removed source policy cannot reappear through a current record or defaults.
+    for (const record of [ticket,orchestrator,{kind:'project',id:'p',value:{name:'Project'}}]) {
+      expect(()=>parse([{...record,value:{...record.value,priority:'P1'}}])).toThrow();
+    }
     expect(()=>parse([{...orchestrator,value:{...orchestrator.value,created_at:true}}])).toThrow();
   });
   it('keeps revisions exact and cursor canonical', () => {
@@ -46,6 +49,12 @@ describe('canonical browser protocol boundary', () => {
     expect(() => parseSnapshotResponse({...value,snapshot:{...value.snapshot,records:[{...record,value:{...record.value,child_count:9007199254740992}}]}})).toThrow();
     expect(() => parseSnapshotResponse({...value,snapshot:{...value.snapshot,revision:'3'}})).toThrow();
     expect(() => parseSnapshotResponse({...value,wire_version:1})).toThrow();
+    // Prepared storage and the prior public shape are never current browser data.
+    for (const version of [4,5]) {
+      expect(() => decodeCursor(encodeCursor({...continuity,schema_version:version}))).toThrow();
+      expect(() => parseSnapshotResponse({...value,snapshot:{...value.snapshot,schema_version:version}})).toThrow();
+    }
+    expect(() => parseSnapshotResponse({...value,snapshot:{...value.snapshot,semantics:'attention-knowledge-v4'}})).toThrow();
     expect(() => parseRevisionBatch({...continuity,base_revision:'0',upserts:[record],deletes:[{kind:'totals',id:'x'}]})).toThrow();
   });
 });

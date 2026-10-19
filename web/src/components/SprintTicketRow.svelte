@@ -1,11 +1,8 @@
 <script lang="ts">
-  import type { Priority } from "../lib/types";
-  import PriorityTile from "./PriorityTile.svelte";
   import ConversationSignalMark from "./ConversationSignalMark.svelte";
   import type { ConversationSignal } from "../lib/conversationSignal";
 
   let {
-    priority,
     title,
     signal = undefined,
     conversationId = null,
@@ -16,9 +13,6 @@
     class: extraClass = "",
     ...rest
   }: {
-    // No priority when the row's own container already answers for it: inside a
-    // Sprint Item the tile is repeated noise.
-    priority: Priority | null;
     title: string;
     signal?: Partial<ConversationSignal>;
     conversationId?: string | null;
@@ -32,7 +26,6 @@
 </script>
 
 {#snippet content()}
-  {#if priority}<PriorityTile {priority} />{/if}
   <span class="ticket-row-title">{title}</span>
   <ConversationSignalMark {signal} {conversationId} />
 

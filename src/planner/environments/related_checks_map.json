@@ -20,7 +20,7 @@
         "tests/unit/test_ticket_derivation.py",
         "tests/unit/test_feedback.py",
         "tests/e2e/test_feedback_inbox.py",
-        "web/tests/feedback-inbox-browser.test.mjs",
+        "web/tests/shell-feedback-browser.test.mjs",
         "tests/unit/test_authority_matrix.py"
       ],
       "tests": {
@@ -29,11 +29,9 @@
           "tests/unit/test_feedback.py",
           "tests/unit/test_ticket_derivation.py"
         ],
-        "e2e": [
-          "tests/e2e/test_feedback_inbox.py"
-        ],
+        "e2e": [],
         "browser": [
-          "web/tests/feedback-inbox-browser.test.mjs"
+          "web/tests/shell-feedback-browser.test.mjs"
         ]
       }
     },
@@ -51,7 +49,7 @@
         "tests/unit/test_schedule_locale.py",
         "tests/integration/test_ticket_locale.py",
         "web/tests/scheduled-tasks.test.ts",
-        "web/tests/scheduled-tasks-browser.test.mjs",
+        "web/tests/configuration-schedules-browser.test.mjs",
         "tests/unit/test_authority_matrix.py"
       ],
       "tests": {
@@ -62,16 +60,15 @@
           "tests/unit/test_scheduled_tickets.py",
           "tests/unit/test_supported_worker_catalog.py",
           "tests/unit/test_worker_step_readiness.py",
-          "tests/unit/test_worker_step_readiness_loop.py"
+          "tests/unit/test_worker_step_readiness_loop.py",
+          "tests/unit/test_ticket_locale_creation.py"
         ],
-        "integration": [
-          "tests/integration/test_ticket_locale.py"
-        ],
+        "integration": [],
         "vitest": [
           "web/tests/scheduled-tasks.test.ts"
         ],
         "browser": [
-          "web/tests/scheduled-tasks-browser.test.mjs"
+          "web/tests/configuration-schedules-browser.test.mjs"
         ]
       }
     },
@@ -90,8 +87,8 @@
         "tests/e2e/test_sprint_item_workspace.py",
         "tests/e2e/test_ticket_file_previews.py",
         "web/tests/ticket-page-artifacts.test.ts",
-        "web/tests/sprint-documents-browser.test.mjs",
-        "web/tests/file-preview-browser.test.mjs",
+        "web/tests/historical-sprint-browser.test.mjs",
+        "web/tests/artifacts-browser.test.mjs",
         "web/tests/managed-file-read.test.ts",
         "tests/unit/test_authority_matrix.py",
         "web/src/lib/artifactStrip.ts",
@@ -106,10 +103,10 @@
           "tests/unit/test_authority_matrix.py",
           "tests/unit/test_orchestrator_artifact_cli.py",
           "tests/unit/test_ticket_artifact_listing.py",
-          "tests/unit/test_ticket_files.py"
+          "tests/unit/test_ticket_files.py",
+          "tests/unit/test_sprint_item_supervisors.py"
         ],
         "e2e": [
-          "tests/e2e/test_sprint_item_workspace.py",
           "tests/e2e/test_ticket_file_previews.py"
         ],
         "vitest": [
@@ -117,8 +114,9 @@
           "web/tests/ticket-page-artifacts.test.ts"
         ],
         "browser": [
-          "web/tests/file-preview-browser.test.mjs",
-          "web/tests/sprint-documents-browser.test.mjs"
+          "web/tests/artifacts-browser.test.mjs",
+          "web/tests/historical-sprint-browser.test.mjs",
+          "web/tests/workspace-browser.test.mjs"
         ]
       }
     },

@@ -83,8 +83,8 @@ RESTS_PREDICATE = "t.worker_step_claim = 'none' AND t.pending_proposal IS NULL"
 
 def derive_ticket_facts(stored: StoredTicketFacts) -> TicketFacts:
     ticket_status = derive_ticket_status(stored)
-    gating_field = configured_worker_type_registry().require(stored.worker_type).gating_field(
-        stored.stage
+    gating_field = (
+        configured_worker_type_registry().require(stored.worker_type).gating_field(stored.stage)
     )
     return TicketFacts(
         ticket_id=stored.ticket_id,

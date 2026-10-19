@@ -9,10 +9,10 @@ import { NavigationRequestError, type NavigationStreamHandlers, type NavigationT
 import { continuity, currentSnapshot, degradedSnapshot, envelope, authority, conversation } from './support/navigation/fixtures';
 function snapshot(revision = '0', epoch = 'e1', proof: SnapshotResponse['proof'] = null): CurrentSnapshotResponse {
   const value = {...continuity, revision, epoch};
-  return {...currentSnapshot({...value,records:[{kind:'project',id:'p',value:{name:`name-${revision}`,priority:null}}]}),proof};
+  return {...currentSnapshot({...value,records:[{kind:'project',id:'p',value:{name:`name-${revision}`}}]}),proof};
 }
 function batch(base: string, revision: string, extra = {}): RevisionBatch {
-  return {...continuity,base_revision:base,revision,upserts:[{kind:'project',id:'p',value:{name:`name-${revision}`,priority:null}}],deletes:[],...extra};
+  return {...continuity,base_revision:base,revision,upserts:[{kind:'project',id:'p',value:{name:`name-${revision}`}}],deletes:[],...extra};
 }
 function fixture() {
   let handlers: NavigationStreamHandlers;

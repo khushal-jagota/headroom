@@ -14,7 +14,7 @@ from planner.conversation.api import OwnerSendBody, conversation_message_content
 from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import authority
 from planner.core.authority import require_above, require_above_or_self
-from planner.core.contracts import JsonDict, Principal, PrincipalKind, Priority
+from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date
 from planner.files import sprint_item_files
@@ -50,14 +50,13 @@ from planner.tickets.api import (
     MessageFiles,
     body_opt_str,
     body_str,
-    parse_enum,
 )
 from planner.work_attention import add_work_attention
 
 router = APIRouter()
 
 _SPRINT_TEXT_FIELDS = ("name", "primary_bet") + SPRINT_DOCUMENT_FIELDS
-_ITEM_PLAIN_FIELDS = ("title", "body", "priority", "project_id")
+_ITEM_PLAIN_FIELDS = ("title", "body", "project_id")
 
 
 # --- request-body marshallers (contract shapes in sprints/contracts.py) ---------
@@ -71,7 +70,6 @@ def _marshal_create_item(raw: JsonDict) -> CreateItemBody:
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
         body=body_str(raw, "body"),
-        priority=body_opt_str(raw, "priority"),
     )
 
 
@@ -96,17 +94,11 @@ async def create_item(
         conn, project_id=body["project_id"], project_name=body["project"], required=True
     )
     assert project is not None
-    priority = (
-        parse_enum(Priority, body["priority"], "priority")
-        if body["priority"] is not None
-        else Priority.P3
-    )
     item = sprints_data.create_item(
         conn,
         title=body["title"],
         project_id=project.id,
         body=body["body"],
-        priority=priority,
         clock=clk,
     )
     startup = await sprints_startup.start_created_orchestrator(conversations, conn, clk, ctx, item)
@@ -346,7 +338,7 @@ async def patch_item(
         if field in body:
             if field == "project_id":
                 continue
-            if field in ("title", "body", "priority"):
+            if field in ("title", "body"):
                 value = body_str(body, field)
             else:
                 value = body[field]

@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -26,7 +27,7 @@ REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger a current build holds: the baseline plus what the
 # revisions after it add.
-CURRENT_SCHEMA_OBJECT_COUNT = 120
+CURRENT_SCHEMA_OBJECT_COUNT = 122
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -950,4 +951,79 @@ def test_model_resolution_migration_preserves_saved_choices_and_removes_pinned_t
         is None
     )
     assert conn.execute("SELECT COUNT(*) FROM model_variant_resolutions").fetchone()[0] == 0
+    conn.close()
+
+
+def test_priority_removal_preserves_other_values_constraints_and_dependents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "chief_recap")
+    conn = connect(str(tmp_path / "without-priority.db"))
+    create_schema(conn)
+    conn.execute("UPDATE chief_settings SET recap='Keep the owner recap'")
+    chief_before = tuple(conn.execute("SELECT * FROM chief_settings").fetchone())
+    project_id = str(conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0])
+    conn.execute(
+        "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
+        "supervisor_reasoning_effort,created_at,updated_at) "
+        "VALUES ('si_kept','Item',?,'codex','model','medium',1,2)",
+        (project_id,),
+    )
+    _insert_ticket(conn, "t_kept", "Kept")
+    _insert_ticket(conn, "t_child", "Child")
+    conn.execute(
+        "UPDATE tickets SET sprint_item_id='si_kept',orchestrator_kind='sprint_item',"
+        "project_id=NULL,priority='P0' WHERE id='t_kept'"
+    )
+    conn.execute("INSERT INTO ticket_blocks VALUES ('t_kept','t_child')")
+    conn.execute(
+        "INSERT INTO scheduled_ticket_schedules(id,enabled,cadence,local_time,title,"
+        "worker_type,priority,placement_mode,created_at,updated_at) "
+        "VALUES ('schedule_kept',1,'daily','09:00','Keep schedule','coding','P1','backlog',3,4)"
+    )
+    tables = ("projects", "sprint_items", "tickets", "scheduled_ticket_schedules")
+    before = {}
+    structures = {}
+    for table in tables:
+        columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")]
+        retained = ",".join(f'"{column}"' for column in columns if column != "priority")
+        before[table] = (
+            retained,
+            list(conn.execute(f"SELECT {retained} FROM {table} ORDER BY id")),
+        )
+        structures[table] = _table_structure(conn, table)
+    dependents = _schema_objects(conn)
+    conn.commit()
+    shutil.copy(shipped / "versions" / "remove_priority.py", tree / "versions")
+    create_schema(conn)
+
+    for table in tables:
+        projection, rows = before[table]
+        assert list(conn.execute(f"SELECT {projection} FROM {table} ORDER BY id")) == rows
+        structure = _table_structure(conn, table)
+        assert structure["columns"] == [
+            column
+            for column in cast(
+                list[tuple[str, str, int, str | None, int]], structures[table]["columns"]
+            )
+            if column[0] != "priority"
+        ]
+        assert structure["foreign_keys"] == structures[table]["foreign_keys"]
+        assert structure["indexes"] == structures[table]["indexes"]
+        sql = conn.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()[0]
+        assert "priority" not in sql
+    assert tuple(conn.execute("SELECT * FROM chief_settings").fetchone()) == chief_before
+    after = _schema_objects(conn)
+    assert {key: value for key, value in after.items() if key not in tables} == {
+        key: value for key, value in dependents.items() if key not in tables
+    }
+    assert [tuple(row) for row in conn.execute("SELECT * FROM ticket_blocks")] == [
+        ("t_kept", "t_child")
+    ]
+    assert list(conn.execute("PRAGMA foreign_key_check")) == []
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE tickets SET worker_step_claim='invalid' WHERE id='t_kept'")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE scheduled_ticket_schedules SET enabled=5 WHERE id='schedule_kept'")
     conn.close()

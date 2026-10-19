@@ -1,7 +1,7 @@
 <script lang="ts">
   /** One waiting proposal, as a card.
    *
-   * This is the ask itself — the Ticket's title, its recap, the kickoff priority,
+   * This is the ask itself — the Ticket's title, its recap,
    * the approval control, and the send-back box — and nothing about a queue. It is
    * named by the shared queue's exact proposal identity, and it fetches its detail and the
    * Worker-type manifest itself, so a caller only has to know which decision it
@@ -28,7 +28,6 @@
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
-  import TicketPriorityControl from "./TicketPriorityControl.svelte";
   import {
     createVoiceCapture,
     formatVoiceTime,
@@ -70,8 +69,7 @@
   let revisionError = $state<unknown>(null);
   let revisionBusy = $state(false);
   let decisionKey = $state<string | null>(null);
-  let priorityError = $state<unknown>(null);
-  let priorityBusy = $state(false);
+
   let resolvedAnnounced = false;
 
   // --- speaking a revision -----------------------------------------------------------------
@@ -107,7 +105,7 @@
     detail.data?.sprint_item_id
       ? {
           id: detail.data.sprint_item_id,
-          title: detail.data.resolved_priority_anchors?.sprint_item?.title || "Sprint Item"
+          title: detail.data.sprint_item_title || "Sprint Item"
         }
       : null
   );
@@ -173,8 +171,7 @@
       revisionDraft = "";
       revisionError = null;
       revisionBusy = false;
-      priorityError = null;
-      priorityBusy = false;
+
       resolvedAnnounced = false;
       // The box — and anything being spoken into it — belongs to one proposal.
       voice?.cancel();
@@ -224,26 +221,6 @@
       method: "PATCH",
       body: { title: raw }
     },"title");
-  }
-
-  async function savePriority(
-    priority: string,
-    select: HTMLSelectElement,
-    previousPriority: string
-  ): Promise<void> {
-    priorityError = null;
-    priorityBusy = true;
-    try {
-      await write(`/api/tickets/${ticketId}`, {
-        method: "PATCH",
-        body: { priority }
-      },"priority");
-    } catch (err) {
-      priorityError = err;
-      select.value = previousPriority;
-    } finally {
-      priorityBusy = false;
-    }
   }
 
   async function returnForRevision(): Promise<void> {
@@ -328,25 +305,6 @@
             </div>
           {/if}
         </div>
-        {#if acceptField === "brief"}
-          <div class="review-kickoff-priority">
-            <TicketPriorityControl
-              priority={identity.priority}
-              disabled={priorityBusy}
-              surface="review"
-              onChange={(priority, select) => {
-                if (priority !== identity.priority) {
-                  void savePriority(priority, select, identity.priority);
-                }
-              }}
-            />
-            {#if priorityError}
-              <div data-review-priority-error>
-                <ErrorLine error={priorityError} />
-              </div>
-            {/if}
-          </div>
-        {/if}
       </div>
 
       {#if ticketDetail.guidance}
@@ -360,7 +318,7 @@
             {#key `${ticketDetail.pending_proposal.field}:${ticketDetail.pending_proposal.created_at}:${ticketDetail.pending_proposal.revision}:${lc.workerType}:${lc.stageOrder.join(",")}:${lc.ceilingRange.join(",")}`}
             <WorkerProposalCard proposal={ticketDetail.pending_proposal} lifecycle={lc} stage={ticketDetail.stage}
               ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} sprintItem={reviewSprintItem}
-              disabled={revisionBusy || (acceptField === "brief" && priorityBusy)} canReturn={Boolean(ticketDetail.conversation_id)}
+              disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
               onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body },"scope"); }}
               onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } },"stage"); announceResolved(); }}

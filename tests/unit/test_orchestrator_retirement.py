@@ -10,7 +10,7 @@ from click.testing import CliRunner
 
 from planner.cli.main import main
 from planner.core.clock import TestClock as MutableClock
-from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Priority
+from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.data import read_day
 from planner.scheduled_tickets import actions, data
@@ -28,7 +28,6 @@ def _template() -> ScheduledTicketTemplate:
         title="Ordinary task",
         worker_type="general",
         kickoff_note="Prepare one result",
-        priority=Priority.P3,
         deadline=None,
         project_id="project_other",
         placement_mode=ScheduledTicketPlacementMode.backlog,

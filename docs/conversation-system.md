@@ -534,7 +534,12 @@ refuses the turn if the resolved model does not support it.
 Catalogue failure does not stop a variant with a last known-good resolution. Panels
 uses that resolution and reports that the catalogue is unavailable. Without a last
 known-good resolution, it refuses the turn with a clear error. The shared picker
-shows the selected variant and resolved model, plus the catalogue warning when present.
+keeps that catalogue warning visible. Its closed face shows the readable resolved model
+and its applicable effort, for example “Opus 5.5 medium.” Context qualifiers remain
+visible. Models without effort show only their name. If resolution is unavailable, the
+face uses the available name without an invented version. Each option in the open
+list shows the same resolved model name on one line, without an alias or detail row.
+The effort has its own selection step. The selected value remains unchanged.
 
 Ticket creation also tries to resolve its model. If no usable catalogue or cached
 resolution exists, creation preserves the requested model and reasoning effort. It

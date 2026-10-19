@@ -154,7 +154,7 @@ def _registered_command_paths() -> tuple[tuple[str, ...], ...]:
             ),
             2,
             (
-                "error: Invalid value for '--priority': 'PX' is not one of 'P0', 'P1', 'P2', 'P3'.",
+                'error: "--priority" is not an option for panels ticket create.',
                 "Use: panels ticket create --input-json FILE",
             ),
         ),

@@ -24,6 +24,8 @@ from planner.conversation.contracts import (
 )
 from planner.navigation import data
 from planner.navigation.contracts import (
+    PREPARED_SCHEMA_VERSION,
+    SCHEMA_VERSION,
     CompleteAttention,
     CurrentAttentionKnowledge,
     parse_revision,
@@ -158,6 +160,11 @@ def read_current_attention(
 def install(conn: sqlite3.Connection, snapshot: SignalSnapshot, /) -> None:
     """Accept a complete producer snapshot without commit or public producer reads."""
     _require_transaction(conn)
+    version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+    if version not in (PREPARED_SCHEMA_VERSION, SCHEMA_VERSION):
+        raise SignalInstallationError("Signal installation requires prepared or current navigation")
+    if data._priority_source_shape(conn):
+        raise SignalInstallationError("current navigation requires priority removal")
     _cursor(snapshot.cursor)
     if not snapshot.installation_id:
         raise SignalInstallationError("Signal installation requires an identity")
@@ -183,10 +190,7 @@ def install(conn: sqlite3.Connection, snapshot: SignalSnapshot, /) -> None:
             str(snapshot.cursor.sequence),
         ),
     )
-    version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
-    if version not in (3, 4):
-        raise SignalInstallationError("Signal installation requires navigation schema 3 or 4")
-    conn.execute("UPDATE navigation_meta SET schema_version=4 WHERE singleton=1")
+    conn.execute("UPDATE navigation_meta SET schema_version=? WHERE singleton=1", (SCHEMA_VERSION,))
     data.rebuild(conn)
 
 

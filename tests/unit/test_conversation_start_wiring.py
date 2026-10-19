@@ -36,7 +36,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
-from planner.core.contracts import Principal, Priority
+from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects.data import create_project, update_project
 from planner.runtime.conversation_start import (
@@ -410,7 +410,6 @@ def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_c
         project = create_project(
             tmp_db,
             name="Moved Project",
-            priority=Priority.P1,
             folder_path=original_folder,
             now=2,
         )

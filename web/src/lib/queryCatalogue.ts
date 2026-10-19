@@ -6,6 +6,7 @@ import type { UsageDays, UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BoardResponse,
+  ChiefManagementSettings,
   OrchestratorPrincipal,
   OrchestratorChildFilter,
   CurrentSprintResponse,
@@ -58,7 +59,7 @@ export const queries = {
   orchestratorTicketSummaries: (principal: OrchestratorPrincipal, filter: OrchestratorChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
       ["tickets", "orchestrator", { principal, filter, offset, limit }],
-      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&orchestrator_kind=${principal.kind}${principal.kind === "sprint_item" ? `&orchestrator_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : ""}`
+      `/api/tickets?detail=summary&limit=${limit}&offset=${offset}&orchestrator_kind=${principal.kind}${principal.kind === "sprint_item" ? `&orchestrator_id=${encodeURIComponent(principal.id)}` : ""}${filter === "backlogged" ? "&is_backlogged=true" : filter === "done" ? "&include_terminal=true&stage=done" : "&is_backlogged=false"}`
     ),
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   feedback: () => jsonQuery<FeedbackResponse>(["feedback"], "/api/feedback"),
@@ -102,6 +103,10 @@ export const queries = {
     jsonQuery<ConversationStartValues>(
       ["ticket", ticketId, "conversation-start-values"],
       `/api/tickets/${encodeURIComponent(ticketId)}/conversation/start-values`
+    ),
+  chiefSettings: () =>
+    jsonQuery<Pick<ChiefManagementSettings, "employee_id" | "label" | "recap" | "skill" | "launch_defaults">>(
+      ["chief", "settings"], "/api/workers/chief-of-staff/settings"
     ),
   chiefConversationStartValues: () =>
     jsonQuery<ConversationStartValues>(

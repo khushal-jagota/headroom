@@ -60,6 +60,10 @@ export function threadGeometry(
     const laidOut: Element[] = [];
     const consider = (element: Element): void => {
       if (element === reservedSpaceElement) return;
+      if (element.hasAttribute("data-conversation-content")) {
+        for (const inside of element.children) consider(inside);
+        return;
+      }
       if (element.getClientRects().length > 0) {
         laidOut.push(element);
         return;
@@ -157,7 +161,7 @@ export function threadGeometry(
         0,
         Math.ceil(
           thread.clientHeight
-          - message.getBoundingClientRect().height
+          - (newestLineBottom() - topWithin(message))
           - SENT_MESSAGE_TOP_GAP_PIXELS
         )
       );
@@ -171,15 +175,32 @@ export function threadGeometry(
       const lines: HeldView["lines"] = [];
       for (const element of contentElements()) {
         const top = topWithin(element);
-        if (top + element.getBoundingClientRect().height <= thread.scrollTop) continue;
+        const height = element.getBoundingClientRect().height;
+        if (top + height <= thread.scrollTop) continue;
+        // Even a short message can grow above its visible paragraph when delayed
+        // media arrives. Prefer that paragraph before its unchanged article top.
+        if (lines.length < MOST_HELD_LINES - 2) {
+          const blocks = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_ELEMENT, {
+            acceptNode: (node) => (node as Element).matches("p, li, pre, h1, h2, h3, h4, h5, h6")
+              ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+          });
+          for (let block = blocks.nextNode() as Element | null; block !== null; block = blocks.nextNode() as Element | null) {
+            if (!block.textContent?.trim() || block.getClientRects().length === 0) continue;
+            const blockTop = topWithin(block);
+            if (blockTop + block.getBoundingClientRect().height <= thread.scrollTop) continue;
+            lines.push({ element: block, top: blockTop });
+            // Stop the lazy walk and reserve room for message/survivor fallbacks.
+            if (lines.length >= MOST_HELD_LINES - 2) break;
+          }
+        }
         lines.push({ element, top });
-        if (lines.length === MOST_HELD_LINES) break;
+        if (lines.length >= MOST_HELD_LINES) break;
       }
       return { scrollTop: thread.scrollTop, lines };
     },
 
     restoredScrollTop(held: HeldView): number | null {
-      const survivor = held.lines.find((line) => thread.contains(line.element));
+      const survivor = held.lines.find((line) => thread.contains(line.element) && line.element.getClientRects().length > 0);
       if (survivor === undefined) return null;
       return Math.max(
         0,

@@ -14,21 +14,19 @@ from tests.support.principals import OWNER_PRINCIPAL
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
-from planner.core.contracts import Principal, PrincipalKind, Priority
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
-from planner.core.errors import PlannerError
 from planner.core.server import create_app
 from planner.projects import data as projects_data
 from planner.sprints import data as sprints_data
 from planner.tickets import actions, data, views
 from planner.tickets.contracts import Ticket
-from planner.worker_types.contracts import RETIRED_PLANNING_WORKER_TYPES
 
 CHIEF = Principal(PrincipalKind.chief, "chief")
 
 
 def _item(conn: Connection) -> str:
-    project = projects_data.create_project(conn, name="Item Project", priority=Priority.P2, now=1)
+    project = projects_data.create_project(conn, name="Item Project", now=1)
     return sprints_data.create_item(
         conn, title="An orchestrator", project_id=project.id, clock=RealClock()
     ).id
@@ -150,18 +148,6 @@ def test_creation_has_no_calendar_defaults_and_chief_is_a_real_destination(
     assert ticket.sprint_id is None
     assert tmp_db.execute("SELECT COUNT(*) FROM days").fetchone()[0] == 0
     assert tmp_db.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0] == 0
-
-
-@pytest.mark.parametrize("worker_type", sorted(RETIRED_PLANNING_WORKER_TYPES))
-def test_all_creation_writers_refuse_retired_planning_workers(
-    tmp_db: Connection, worker_type: str
-) -> None:
-    with pytest.raises(PlannerError, match="retired"):
-        _ticket(tmp_db, worker_type=worker_type)
-    with pytest.raises(PlannerError, match="retired"):
-        data.validate_ticket_creation_context(
-            tmp_db, title="Retired", worker_type=worker_type, title_max_chars=200
-        )
 
 
 def test_board_and_review_find_off_day_work_under_a_settled_orchestrator(

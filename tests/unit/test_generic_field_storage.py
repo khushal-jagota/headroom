@@ -1,6 +1,8 @@
 """Generic Worker-type coverage for sparse values and one current proposal."""
 
+import json
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
@@ -15,6 +17,7 @@ from tests.support.probe import NEEDS_LANDING as CLOSEOUT_STAGE
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.core.clock import TestClock
+from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.tickets import data
 from planner.tickets.contracts import (
@@ -22,6 +25,8 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     PendingTicketProposal,
 )
+from planner.tickets.logic import fields_codec
+from planner.tickets.logic.decisions import Decision
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 
@@ -64,6 +69,13 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
 ) -> None:
     now = fake_clock.now_unix()
     tid = _create(tmp_db, now)
+    historical = {"retired_probe_field": "  Historical text\nwith Unicode: café.  "}
+    tmp_db.execute(
+        "UPDATE tickets SET field_values=? WHERE id=?", (json.dumps(historical), tid)
+    )
+    tmp_db.commit()
+    assert data.read_ticket(tmp_db, tid).field_values == {}
+    data.audit_ticket_registry_integrity(tmp_db)
     ticket = data.accept_proposal(
         tmp_db,
         tid,
@@ -74,6 +86,19 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         next_holder=OWNER_PRINCIPAL,
     )
     assert ticket.stage == A and ticket.field_values == {"brief": "Agreed brief."}
+    ticket = data.edit_ticket(
+        tmp_db, tid, edit={"field_values": {"brief": "Corrected brief."}},
+        title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=now,
+    )
+    assert ticket.field_values == {"brief": "Corrected brief."}
+    assert json.loads(tmp_db.execute(
+        "SELECT field_values FROM tickets WHERE id=?", (tid,)
+    ).fetchone()[0]) == {**historical, "brief": "Corrected brief."}
+    with pytest.raises(PlannerError):
+        data.edit_ticket(
+            tmp_db, tid, edit={"field_values": {"retired_probe_field": "New text"}},
+            title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=now,
+        )
     ticket = data.file_current_proposal(
         tmp_db, tid, body="alpha", principal=ticket_principal(tid), now=now
     )
@@ -121,3 +146,38 @@ def test_probe_drive_uses_one_current_proposal_and_sparse_values(
         and ticket.field_values["consequences"] == "landed"
         and ticket.pending_proposal is None
     )
+
+    stored = json.loads(tmp_db.execute(
+        "SELECT field_values FROM tickets WHERE id=?", (tid,)
+    ).fetchone()[0])
+    assert stored == {**historical, **ticket.field_values}
+    # Decisions replace declared state. Cleared values must not return from raw storage.
+    with tmp_db:
+        ticket = data._apply_decision(
+            tmp_db, ticket,
+            replace(Decision.from_ticket(ticket), field_values={"brief": "Corrected brief."}),
+            now,
+        )
+    assert ticket.field_values == {"brief": "Corrected brief."}
+    assert json.loads(tmp_db.execute(
+        "SELECT field_values FROM tickets WHERE id=?", (tid,)
+    ).fetchone()[0]) == {**historical, "brief": "Corrected brief."}
+
+
+@pytest.mark.parametrize("raw", ["{", "[]", '"text"', '{"alpha": 1}', '{"removed": null}'])
+def test_field_read_does_not_hide_corrupt_storage(raw: str) -> None:
+    with pytest.raises((PlannerError, json.JSONDecodeError)):
+        fields_codec.values_from_json(raw, ("alpha",))
+
+
+def test_unknown_proposed_and_new_values_stay_invalid(
+    probe_registry: WorkerTypeDefinition,
+) -> None:
+    for values, proposal in (
+        ({"removed": "New text"}, None),
+        ({}, PendingTicketProposal("removed", "New text", "worker", 1)),
+    ):
+        with pytest.raises(PlannerError, match="corrupt ticket field state"):
+            fields_codec.validate_state(
+                values, proposal, A, worker_type_definition=probe_registry,
+            )

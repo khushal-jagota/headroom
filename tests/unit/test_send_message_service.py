@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from sqlite3 import Connection
 from types import SimpleNamespace
 from typing import cast
@@ -145,6 +146,7 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
 
 def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_wire(
     tmp_db: Connection,
+    tmp_path: Path,
     fake_clock: PlannerTestClock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -194,6 +196,7 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
                         conversation_id=f"c_{principal.id}",
                         backend_key=ConversationBackendKey.hermes,
                         model="test-model",
+                        workspace_folder=tmp_path,
                     )
                 )
             for sender, recipient, text in (

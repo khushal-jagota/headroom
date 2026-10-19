@@ -9,7 +9,7 @@ import { currentSnapshot, continuity, conversation } from './support/navigation/
 
 const record:TicketRecord={kind:'ticket',id:'ticket',value:{title:'Ticket',recap_preview:'',worker_type:'coding',stage:'needs_plan',
   gating_field:'plan',stage_ownership:'worker',terminal:false,ticket_status:'awaiting_approval',blocked:false,created_at:1,updated_at:2,
-  worker_step_claim_out:false,priority:'P2',deadline:null,project_id:null,orchestrator_kind:'chief',sprint_item_id:null,
+  worker_step_claim_out:false,deadline:null,project_id:null,orchestrator_kind:'chief',sprint_item_id:null,
   conversation_id:'conversation',is_backlogged:false,ceiling:'needs_plan',ceiling_holder:{kind:'chief',id:'chief'},
   proposal_field:'plan',proposal_created_at:1,proposal_revision:2,locale:'en'}};
 const configuration:WorkerTypeManifest={worker_type:'coding',label:'Coding',stages:[
@@ -19,8 +19,8 @@ const configuration:WorkerTypeManifest={worker_type:'coding',label:'Coding',stag
   worker_profile_id:'coding',default_backend:'codex',default_model:null,default_reasoning_effort:null};
 const detail:TicketDetail={id:'ticket',title:'Ticket',worker_type:'coding',stage:'needs_plan',ceiling:'needs_plan',
   ceiling_holder:{kind:'chief',id:'chief'},ticket_status:'awaiting_approval',is_backlogged:false,blocked:false,sprint_item_id:null,
-  conversation_id:'conversation',conversation_history:[],priority:'P2',employee_backend:'codex',employee_launch_model:null,
-  employee_launch_reasoning_effort:null,employee_configuration_editable:false,resolved_priority_anchors:{project:null,sprint_item:null},
+  conversation_id:'conversation',conversation_history:[],employee_backend:'codex',employee_launch_model:null,
+  employee_launch_reasoning_effort:null,employee_configuration_editable:false,sprint_item_title:null,
   guidance:'',field_values:{},pending_proposal:{field:'plan',body:'Exact body',proposed_by:'agent',created_at:1,revision:2}};
 
 describe('Ticket section admission',()=>{

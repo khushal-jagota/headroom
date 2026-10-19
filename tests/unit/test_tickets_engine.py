@@ -18,7 +18,7 @@ from tests.support.ticket_progress import advance_ticket
 from planner.conversation.backend_state import write_model_enablement
 from planner.conversation.contracts import ConversationBackendKey
 from planner.core import ticket_blocks
-from planner.core.contracts import Principal, PrincipalKind, Priority
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects import data as projects_data
 from planner.runtime import worker_step_readiness
@@ -127,92 +127,31 @@ def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
     assert (t.pending_proposal is not None) is True
 
 
-def test_creation_priority_uses_nearest_assessed_anchor_and_exposes_context(
+def test_creation_preserves_project_and_orchestrator_context_without_priority(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     project = projects_data.create_project(
-        tmp_db, name="Assessed project", priority=Priority.P1, now=fake_clock.now_unix()
+        tmp_db, name="Assigned project", now=fake_clock.now_unix()
     )
     item = sprints_data.create_item(
-        tmp_db,
-        title="Assessed item",
-        project_id=project.id,
-        priority=Priority.P0,
-        clock=fake_clock,
+        tmp_db, title="Assigned item", project_id=project.id, clock=fake_clock
     )
-
-    parented = _create(
-        tmp_db,
-        cfg,
-        fake_clock,
-        sprint_item_id=item.id,
-        settle_kickoff=False,
-    )
-    overridden = _create(
-        tmp_db,
-        cfg,
-        fake_clock,
-        sprint_item_id=item.id,
-        priority=Priority.P2,
-        settle_kickoff=False,
-    )
-    assessed_project = _create(
-        tmp_db,
-        cfg,
-        fake_clock,
-        project_id=project.id,
-        settle_kickoff=False,
-    )
-    unassessed_project = _create(
-        tmp_db,
-        cfg,
-        fake_clock,
-        project_id="project_other",
-        settle_kickoff=False,
-    )
+    parented = _create(tmp_db, cfg, fake_clock, sprint_item_id=item.id, settle_kickoff=False)
+    project_only = _create(tmp_db, cfg, fake_clock, project_id=project.id, settle_kickoff=False)
     projectless = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
 
-    assert parented.priority is Priority.P0
-    assert overridden.priority is Priority.P2
-    assert assessed_project.priority is Priority.P1
-    assert unassessed_project.priority is Priority.P3
-    assert projectless.priority is Priority.P3
-
-    anchors = parented.resolved_priority_anchors
-    assert anchors.sprint_item is not None
-    assert (
-        anchors.sprint_item.id,
-        anchors.sprint_item.title,
-        anchors.sprint_item.priority,
-    ) == (
-        item.id,
-        "Assessed item",
-        Priority.P0,
-    )
-    assert anchors.project is not None
-    assert (anchors.project.id, anchors.project.name, anchors.project.priority) == (
-        project.id,
-        "Assessed project",
-        Priority.P1,
-    )
-    assert ticket_views.ticket_json(parented, fake_clock.now_unix())[
-        "resolved_priority_anchors"
-    ] == {
-        "sprint_item": {
-            "id": item.id,
-            "title": "Assessed item",
-            "priority": "P0",
-        },
-        "project": {
-            "id": project.id,
-            "name": "Assessed project",
-            "priority": "P1",
-        },
-    }
-    assert unassessed_project.resolved_priority_anchors.project is not None
-    assert unassessed_project.resolved_priority_anchors.project.priority is None
-    assert projectless.resolved_priority_anchors.sprint_item is None
-    assert projectless.resolved_priority_anchors.project is None
+    assert parented.sprint_item_id == item.id
+    assert parented.sprint_item_title == "Assigned item"
+    assert parented.project_id == project.id
+    assert parented.project_name == "Assigned project"
+    assert project_only.project_id == project.id
+    assert project_only.sprint_item_title is None
+    assert projectless.project_id is None
+    assert projectless.sprint_item_title is None
+    for ticket in (parented, project_only, projectless):
+        payload = ticket_views.ticket_json(ticket, fake_clock.now_unix())
+        assert "priority" not in payload
+        assert "resolved_priority_anchors" not in payload
 
 
 def test_action_create_uses_worker_default_or_registered_override_before_mutation(

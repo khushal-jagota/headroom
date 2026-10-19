@@ -104,7 +104,6 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                     "created_at": row.get("created_at", 1),
                     "updated_at": row.get("activity_at", 0),
                     "worker_step_claim_out": status == "agent",
-                    "priority": row["priority"],
                     "deadline": row.get("deadline"),
                     "project_id": row.get("project_id"),
                     "orchestrator_kind": "sprint_item" if parent else "chief",
@@ -138,7 +137,6 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                 "value": {
                     "title": row["title"],
                     "recap_preview": row.get("recap_preview", ""),
-                    "priority": row["priority"],
                     "created_at": row["created_at"],
                     "project_id": project_id,
                     "settled": row.get("settled", False),
@@ -150,7 +148,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
             {
                 "kind": "project",
                 "id": project_id,
-                "value": {"name": row.get("project") or "", "priority": None},
+                "value": {"name": row.get("project") or ""},
             }
         )
         address("orchestrator", row["id"], conv)

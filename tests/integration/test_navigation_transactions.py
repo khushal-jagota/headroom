@@ -324,11 +324,11 @@ def test_metadata_edits_publish_source_values_without_status_changes(tmp_path: P
         conn.commit()
         before = snapshot(conn)
         conn.execute("BEGIN")
-        conn.execute("UPDATE sprint_items SET priority='P0',created_at=88 WHERE id='a'")
+        conn.execute("UPDATE sprint_items SET created_at=88 WHERE id='a'")
         conn.execute("UPDATE tickets SET updated_at=99 WHERE id='t'")
         conn.commit()
         actual = values(conn)
-        assert actual["orchestrator", "a"]["priority"] == "P0"
+        assert "priority" not in actual["orchestrator", "a"]
         assert actual["orchestrator", "a"]["created_at"] == 88
         assert actual["ticket", "t"]["updated_at"] == 99
         assert actual["ticket", "t"]["ticket_status"] == "empty"
@@ -787,7 +787,7 @@ def test_replace_unique_collision_deletes_old_identity(tmp_path: Path) -> None:
         conn.commit()
         actual = values(conn)
         assert ("project", "old") not in actual
-        assert actual["project", "new"] == {"name": "Replacement", "priority": None}
+        assert actual["project", "new"] == {"name": "Replacement"}
         delta = journal(conn, baseline["epoch"], baseline["revision"])["batches"][0]
         assert {"kind": "project", "id": "old"} in delta["deletes"]
         assert actual["totals", "workspace"] == {"child_count": 0, "distinct_conversation_count": 0}

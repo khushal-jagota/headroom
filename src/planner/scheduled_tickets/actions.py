@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import cast
 
-from planner.core.contracts import OWNER_PRINCIPAL, Priority
+from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.errors import ErrorCode, PlannerError
 from planner.scheduled_tickets import data
 from planner.scheduled_tickets.contracts import (
@@ -38,8 +38,10 @@ _LOG = logging.getLogger(__name__)
 
 
 def _validate_template(
-    conn: sqlite3.Connection, template: ScheduledTicketTemplate,
-    *, model_source_is_historical: bool = False,
+    conn: sqlite3.Connection,
+    template: ScheduledTicketTemplate,
+    *,
+    model_source_is_historical: bool = False,
 ) -> ScheduledTicketTemplate:
     require_creatable_worker_type(template.worker_type)
     if template.orchestrator_kind not in {"chief", "sprint_item"} or (
@@ -152,7 +154,6 @@ def _update_schedule_locked(
         "title": current.template.title,
         "worker_type": current.template.worker_type,
         "kickoff_note": current.template.kickoff_note,
-        "priority": current.template.priority,
         "deadline": current.template.deadline,
         "project_id": current.template.project_id,
         "sprint_id": current.template.sprint_id,
@@ -176,11 +177,6 @@ def _update_schedule_locked(
         title=str(template_values["title"]),
         worker_type=str(template_values["worker_type"]),
         kickoff_note=str(template_values["kickoff_note"]),
-        priority=(
-            template_values["priority"]
-            if isinstance(template_values["priority"], Priority)
-            else Priority(str(template_values["priority"]))
-        ),
         deadline=(
             None if template_values["deadline"] is None else str(template_values["deadline"])
         ),
@@ -215,7 +211,8 @@ def _update_schedule_locked(
         ),
     )
     template = _validate_template(
-        conn, template,
+        conn,
+        template,
         model_source_is_historical=not (
             {"employee_backend", "employee_launch_model"} & changes.keys()
         ),
@@ -260,7 +257,6 @@ def _settle_occurrence(
                 brief=schedule.template.kickoff_note,
                 project_id=project_id,
                 sprint_id=None,
-                priority=schedule.template.priority,
                 deadline=schedule.template.deadline,
                 sprint_item_id=sprint_item_id,
                 blocked_by_ticket_ids=list(schedule.template.blocked_by_ticket_ids),
