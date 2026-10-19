@@ -10,6 +10,7 @@
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
   import { resourceStateForQueries } from "../lib/resourceStateForQueries";
+  import { saveSkillField } from "../lib/skills";
   import type { ConfigSelection } from "../lib/shellRouting";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
   import { errorMessage, labelize } from "../lib/ui";
@@ -91,38 +92,6 @@
 
   function displaySkillForEdit(settings: WorkerManagementSettings): ManagedSkill {
     return settings.candidate_specialist_skill || settings.specialist_skill;
-  }
-
-  async function saveWorkerSkillField(
-    settings: WorkerManagementSettings,
-    field: "description" | "markdown_body",
-    raw: string
-  ): Promise<void> {
-    await mutateJson<WorkerManagementSettings>(
-      `/api/workers/${encodeURIComponent(settings.worker_type)}/skill`,
-      { method: "PATCH", body: { [field]: raw } }
-    );
-  }
-
-  async function saveChiefSkillField(
-    field: "description" | "markdown_body",
-    raw: string
-  ): Promise<void> {
-    await mutateJson<ChiefManagementSettings>("/api/workers/chief-of-staff/skill", {
-      method: "PATCH",
-      body: { [field]: raw }
-    });
-  }
-
-  async function saveRoleSkillField(
-    skillName: string,
-    field: "description" | "markdown_body",
-    raw: string
-  ): Promise<void> {
-    await mutateJson<ManagedSkill>(`/api/skills/${encodeURIComponent(skillName)}`, {
-      method: "PATCH",
-      body: { [field]: raw }
-    });
   }
 
   function saveWorkerLaunchDefaults(
@@ -336,7 +305,7 @@
                 descriptionAriaLabel="Chief skill description"
                 bodyAriaLabel="Chief skill Markdown body"
                 bodyPlaceholder="Write the complete Chief skill body..."
-                onSave={saveChiefSkillField}
+                onSave={(field, raw) => saveSkillField(chief.skill.name, field, raw)}
               />
             </div>
           </article>
@@ -373,7 +342,7 @@
                 descriptionAriaLabel={roleSkillProfile.descriptionAriaLabel}
                 bodyAriaLabel={roleSkillProfile.bodyAriaLabel}
                 bodyPlaceholder={roleSkillProfile.bodyPlaceholder}
-                onSave={(field, raw) => saveRoleSkillField(roleSkill.name, field, raw)}
+                onSave={(field, raw) => saveSkillField(roleSkill.name, field, raw)}
               />
             </div>
           </article>
@@ -467,7 +436,7 @@
                 descriptionAriaLabel="Specialist skill description"
                 bodyAriaLabel="Specialist skill Markdown body"
                 bodyPlaceholder="Write the complete specialist skill body..."
-                onSave={(field, raw) => saveWorkerSkillField(detail.settings, field, raw)}
+                onSave={(field, raw) => saveSkillField(editableSkill.name, field, raw)}
               />
             </div>
           </article>

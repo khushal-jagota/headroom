@@ -38,6 +38,7 @@ def _materialized_tokens(call: str) -> list[str]:
         "FIELD": field,
         "FILE": "pyproject.toml",
         "ITEM_ID": "si_example",
+        "NAME": "example-skill",
         "PART_NAMES": "brief",
         "PROJECT_ID": "project_example",
         "SCHEDULE_ID": "schedule_example",
@@ -426,4 +427,25 @@ def test_retired_calendar_writes_name_only_a_historical_read(
         "error: Calendar planning writes are retired.",
         f"Use: {recovery}",
     ]
+    _assert_registered_call(recovery)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "stdin", "cause"),
+    (
+        ((), "", "supply --description or a skill body on redirected stdin"),
+        (("--description", "Description"), " \n", "markdown_body must not be blank"),
+        (("--description", " "), "", "description must not be blank"),
+    ),
+)
+def test_skill_input_refusals_name_a_complete_registered_edit(
+    arguments: tuple[str, ...], stdin: str, cause: str
+) -> None:
+    result = CliRunner().invoke(
+        cli_main, ["skill", "edit", "example-skill", *arguments], input=stdin
+    )
+
+    assert result.exit_code == 1
+    recovery = "panels skill edit NAME --description TEXT < SKILL_FILE"
+    assert _lines(result.stderr) == [f"error: {cause}", f"Use: {recovery}"]
     _assert_registered_call(recovery)

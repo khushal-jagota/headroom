@@ -20,6 +20,26 @@ Host, deployment, schedules, feedback, Worker types, skills, launch configuratio
 conversation recovery remain callable administrative paths. They do not appear in
 ordinary root help. A specialist skill names one when approved work needs it.
 
+## Skill edits
+
+`panels skill list` lists every managed skill. `panels skill show NAME` prints its
+Markdown body. Add `--json` to read the description and name as well.
+
+```sh
+panels skill edit panels-worker-coding < BODY_FILE
+panels skill edit panels-worker-coding --description "Coding guidance"
+panels skill edit panels-worker-coding --description "Coding guidance" < BODY_FILE
+```
+
+A body edit preserves the description. A description edit preserves the body.
+Empty redirected input with a description means description-only. Blank body text fails.
+The skill name cannot change. The old Worker-type skill command remains an adapter,
+with an optional description. Both commands use the same server writer and authority.
+
+If a save fails after the row commits, the error states whether the file also changed.
+Read the current skill before retry. An incomplete save does not undo the committed row.
+See [Worker types](worker-types.md#skills-and-the-config-page) for publication behavior.
+
 ## Record reads
 
 `project show`, `day show`, `ticket show`, `sprint show`, and `sprint item show` return a

@@ -264,7 +264,7 @@ One screen per part of the system:
   Config details retain the shared launch picker, per-Stage owner controls, and skill
   editors. Owner writes remain serialized whole-record updates. Each skill field saves
   independently, and a failed save retains its error and retry behavior. These screens
-  use the existing owner-only endpoints and preserve candidate specialist skills.
+  use one owner-only skill endpoint and the displayed skill name, including a candidate skill.
 
 The workspace keeps its resize handle within its own visual layer. Open shell menus
 cover that handle and receive pointer actions above it. The handle keeps its pointer

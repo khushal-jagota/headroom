@@ -7,13 +7,18 @@ export async function prepareConfigurationGaps(scratchRoot) {
 import { QueryClientProvider } from '@tanstack/svelte-query';
 import StreamConsumer from './${stem}-consumer.svelte';
 import BackendsRoute from '../src/routes/BackendsRoute.svelte';
+import ConfigRoute from '../src/routes/ConfigRoute.svelte';
 import UsageChart from '../src/components/usage/UsageChart.svelte';
 import { queryClient } from '../src/lib/queryClient';
 import { startChangeStream, stopChangeStream } from '../src/lib/changeStream';
 import type { UsageMetrics, UsageSummary } from '../src/lib/conversation/recordedUsageWire';
+import type { ConfigSelection } from '../src/lib/shellRouting';
 import { onMount } from 'svelte';
 let shown = $state(true);
 const mode = new URLSearchParams(location.search).get('mode');
+const selection = new URLSearchParams(location.search);
+const roleKind = (selection.get('roleKind') ?? 'index') as ConfigSelection['roleKind'];
+const roleId = selection.get('roleId') ?? undefined;
 (window as Window & { hideBackend?: () => void }).hideBackend = () => shown = false;
 const metrics = (total: number): UsageMetrics => ({input_tokens:total,uncached_input_tokens:total,cached_input_tokens:0,cache_creation_tokens:0,output_tokens:0,reasoning_tokens:0,total_tokens:total,reported_cost_usd:null,cost_usd:null,estimated_cost_usd:null,provider_reported_cost_usd:null,category_cost_usd:null,speed_cost_usd:null,cache_savings_usd:null,speed_premium_usd:null,unpriced_records:1,model_priced_records:0,provider_reported_records:0,record_count:1,session_count:1,unknown_records:0,unknown_cost_records:1});
 const summary: UsageSummary = {scope:'local_cli',days:1,timezone:'UTC',since:'2026-10-16T10:00:00Z',until:'2026-10-16T13:00:00Z',observed_at:null,pricing:{status:'unavailable',source:'fixture',fetched_at:null,known_models:0},sources:[],totals:metrics(666),providers:[],models:[],periods:[10,11,12].map((hour,index)=>({...metrics([111,222,333][index]),start:'2026-10-16T'+hour+':00:00Z',end:'2026-10-16T'+(hour+1)+':00:00Z',label:hour+':00',providers:[{...metrics([111,222,333][index]),provider:'codex'}]}))};
@@ -22,6 +27,7 @@ onMount(() => { if(mode !== 'stream') return; startChangeStream(); return stopCh
 <QueryClientProvider client={queryClient}>
 {#if mode === 'chart'}<UsageChart {summary} providers={['codex']} metric="tokens" />
 {:else if mode === 'stream'}<StreamConsumer />
+{:else if mode === 'config'}<ConfigRoute {roleKind} {roleId} />
 {:else if shown}<BackendsRoute />{/if}
 </QueryClientProvider>
 `);

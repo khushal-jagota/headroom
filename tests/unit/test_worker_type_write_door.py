@@ -26,6 +26,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
+from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -170,20 +171,96 @@ def test_a_rewrite_that_would_strand_a_live_ticket_is_refused(
     assert test_client.get("/api/worker-types/coding").json() == coding
 
 
-def test_a_skill_a_worker_type_owns_is_not_editable_through_the_skills_route(
+def test_generic_skill_edit_and_legacy_adapters_use_the_same_partial_writer(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, db_path = client
+    before = test_client.get("/api/skills/panels-worker-coding").json()
+    response = test_client.patch(
+        "/api/skills/panels-worker-coding",
+        json={"description": "common writer", "markdown_body": "# Updated"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["description"] == "common writer"
+    assert response.json()["markdown_body"] == "\n# Updated\n"
+    assert response.json()["name"] == before["name"]
+    for method in ("put", "patch"):
+        response = test_client.request(
+            method, "/api/workers/coding/skill", json={"body": f"# {method}"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["specialist_skill"]["description"] == "common writer"
+        assert response.json()["specialist_skill"]["markdown_body"] == f"\n# {method}\n"
+    for method in ("put", "patch"):
+        response = test_client.request(
+            method, "/api/workers/chief-of-staff/skill", json={"body": f"# Chief {method}"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["skill"]["markdown_body"] == f"\n# Chief {method}\n"
+    missing = test_client.patch("/api/skills/missing", json={"description": "no create"})
+    assert missing.status_code == 404
+    with connect(str(db_path)) as conn:
+        assert (
+            conn.execute("SELECT 1 FROM managed_skills WHERE skill_name = 'missing'").fetchone()
+            is None
+        )
+
+
+def test_skill_write_authority_is_preserved_at_every_http_entrypoint(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, db_path = client
+    coding = test_client.get("/api/worker-types/coding").json()
+    writes = [
+        ("patch", "/api/skills/panels-worker-coding", {"description": "authority checked"}),
+        ("put", "/api/workers/coding/skill", {"description": "authority checked"}),
+        ("patch", "/api/workers/coding/skill", {"description": "authority checked"}),
+        ("put", "/api/workers/chief-of-staff/skill", {"description": "authority checked"}),
+        ("patch", "/api/workers/chief-of-staff/skill", {"description": "authority checked"}),
+        ("post", "/api/worker-types", dict(coding, skill={"description": "authority checked"})),
+    ]
+    for method, path, payload in writes:
+        chief = test_client.request(method, path, json=payload, headers={"X-Plan-Actor": "chief"})
+        assert chief.status_code == 200, chief.text
+        before = test_client.get("/api/skills").json()
+        for headers in (
+            {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+            {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
+        ):
+            refused = test_client.request(method, path, json=payload, headers=headers)
+            assert refused.status_code == 400, refused.text
+            assert refused.json()["error"]["code"] == "agent_forbidden"
+        assert test_client.get("/api/skills").json() == before
+    skill = test_client.get("/api/skills/panels-worker-coding").json()
+    assert skill["description"] == "authority checked"
+    assert (db_path.parent / "skills/panels-worker-coding/SKILL.md").is_file()
+
+
+def test_embedded_skill_validates_the_original_payload_and_requires_initial_fields(
     client: tuple[TestClient, Path],
 ) -> None:
     test_client, _db_path = client
-
-    response = test_client.patch(
-        "/api/skills/panels-worker-coding", json={"description": "Edited the wrong way"}
-    )
-
-    assert response.status_code == 400, response.text
-    assert "Worker type" in response.text
-    # The skill every Worker shares is still editable there.
-    shared = test_client.patch("/api/skills/panels-worker", json={"description": "Edited"})
-    assert shared.status_code == 200, shared.text
+    coding = test_client.get("/api/worker-types/coding").json()
+    for skill in (
+        {"description": "initial"},
+        {"body": "initial body"},
+        {"name": "wrong", "description": "initial", "body": "body"},
+        {"description": "initial", "body": "body", "unknown": "bad"},
+        {"description": "initial", "body": "one", "markdown_body": "two"},
+    ):
+        record = _arrival_record(coding)
+        record["skill"] = skill
+        response = test_client.post("/api/worker-types", json=record)
+        assert response.status_code == 400, response.text
+        assert "field" in response.json()["error"]["detail"]
+        assert test_client.get("/api/skills/panels-worker-arrival").status_code == 404
+    record = _arrival_record(coding)
+    record["skill"] = {
+        "name": "panels-worker-arrival",
+        "description": "initial",
+        "body": "new body",
+    }
+    assert test_client.post("/api/worker-types", json=record).status_code == 200
 
 
 def test_launch_defaults_are_the_type_and_take_effect_at_once(
@@ -291,3 +368,25 @@ def test_chief_recap_is_owner_editable_durable_and_exact(
     response = test_client.put(write_path, json={"recap": ""})
     assert response.status_code == 200, response.text
     assert response.json() == before
+
+
+def test_skill_file_failure_reaches_http_as_an_incomplete_save(
+    client: tuple[TestClient, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_client, _db_path = client
+
+    def fail_replace(*args: object, **kwargs: object) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(worker_settings_service, "atomic_replace_text", fail_replace)
+    response = test_client.patch("/api/skills/panels", json={"description": "saved"})
+    assert response.status_code == 500, response.text
+    error = response.json()["error"]
+    assert error["code"] == "skill_save_incomplete"
+    assert error["detail"] == {
+        "skill_name": "panels",
+        "saved": True,
+        "published": False,
+        "phase": "file",
+    }
+    assert "Read the canonical skill before retry" in error["message"]

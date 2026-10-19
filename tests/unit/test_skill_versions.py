@@ -22,10 +22,18 @@ from planner.conversation.events import (
 )
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
+from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
-from planner.managed_skills import managed_skills_home, read_skill_source, write_skill_source
+from planner.managed_skills import (
+    atomic_replace_text,
+    managed_skills_home,
+    read_skill_source,
+    write_skill_home,
+    write_skill_source,
+)
 from planner.skill_versions import (
     bind_worker_step_skills,
+    reconcile_managed_skill_versions,
 )
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -200,7 +208,7 @@ def test_owner_edit_stands_in_the_row_and_the_file_when_version_history_fails(
 
     monkeypatch.setattr(worker_settings_service, "capture_skill_version", fail_capture)
     try:
-        with pytest.raises(RuntimeError, match="database unavailable"):
+        with pytest.raises(PlannerError) as error:
             worker_settings_service.save_skill(
                 conn,
                 "panels",
@@ -208,9 +216,73 @@ def test_owner_edit_stands_in_the_row_and_the_file_when_version_history_fails(
                 now=1,
                 database_parent=tmp_path,
             )
+        assert error.value.code == ErrorCode.skill_save_incomplete
+        assert error.value.detail == {
+            "skill_name": "panels",
+            "saved": True,
+            "published": True,
+            "phase": "history",
+        }
+        assert "Read the canonical skill before retry" in error.value.message
         edited = read_skill_source(conn, "panels")
         assert edited != before.decode("utf-8")
         assert 'description: "changed"' in edited
         assert path.read_bytes() == edited.encode("utf-8")
+        reconcile_managed_skill_versions(conn)
+        assert (
+            conn.execute(
+                "SELECT content FROM managed_skill_versions WHERE skill_name = ? AND content = ?",
+                ("panels", edited.encode("utf-8")),
+            ).fetchone()
+            is not None
+        )
+    finally:
+        conn.close()
+
+
+def test_file_failure_reports_saved_state_and_startup_repairs_the_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, conn = _database(tmp_path)
+    path = managed_skills_home(tmp_path) / "panels/SKILL.md"
+    old_bytes = path.read_bytes()
+    original_replace = atomic_replace_text
+
+    def fail_replace(*args: object, **kwargs: object) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(worker_settings_service, "atomic_replace_text", fail_replace)
+    try:
+        with pytest.raises(PlannerError) as error:
+            worker_settings_service.save_skill(
+                conn,
+                "panels",
+                {"description": "saved despite file failure"},
+                now=1,
+                database_parent=tmp_path,
+            )
+        assert error.value.code == ErrorCode.skill_save_incomplete
+        assert error.value.detail == {
+            "skill_name": "panels",
+            "saved": True,
+            "published": False,
+            "phase": "file",
+        }
+        assert "Read the canonical skill before retry" in error.value.message
+        assert path.read_bytes() == old_bytes
+        source = read_skill_source(conn, "panels")
+        assert 'description: "saved despite file failure"' in source
+        write_skill_home(conn, tmp_path)
+        assert path.read_text() == source
+        monkeypatch.setattr(worker_settings_service, "atomic_replace_text", original_replace)
+        repaired = worker_settings_service.save_skill(
+            conn,
+            "panels",
+            {"markdown_body": "# Retry from current row"},
+            now=2,
+            database_parent=tmp_path,
+        )
+        assert repaired.description == "saved despite file failure"
+        assert path.read_text() == repaired.source_text
     finally:
         conn.close()

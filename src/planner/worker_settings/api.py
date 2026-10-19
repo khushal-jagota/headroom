@@ -27,7 +27,6 @@ from planner.tickets.api import (
     Conversations,
     DbConn,
     ModelResolver,
-    body_str,
     get_config,
 )
 from planner.worker_settings import service
@@ -37,7 +36,6 @@ from planner.worker_settings.contracts import (
     ManagedWorkerLaunchDefaults,
     ManagedWorkerSettings,
     SkillsHome,
-    SpecialistSkillPatch,
     WorkerManagementDetail,
     WorkerManagementSummary,
 )
@@ -228,30 +226,11 @@ async def get_skill(skill_name: str, conn: DbConn) -> JsonDict:
     return _skill_json(service.read_skill(conn, skill_name))
 
 
-def _refuse_a_worker_type_skill(skill_name: str) -> None:
-    """Send an edit of a specialist skill to the Worker it belongs to.
-
-    A Worker type owns its skill, and editing it there is what reloads the Worker. Two
-    doors to the same text would let one of them be the stale one.
-    """
-    registry = configured_worker_runtime_definitions().worker_type_registry
-    for worker_type in registry.registered_worker_types():
-        if registry.require(worker_type).worker_profile.specialist_skill == skill_name:
-            raise PlannerError(
-                ErrorCode.validation,
-                "this skill belongs to a Worker type; edit it on that Worker",
-                {"skill_name": skill_name, "worker_type": worker_type},
-            )
-
-
 @router.patch("/skills/{skill_name}")
 async def patch_skill(
     skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("skills"))
-    if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
-        raise PlannerError(ErrorCode.validation, "skill patch requires exactly one field", {})
-    _refuse_a_worker_type_skill(skill_name)
     skill = service.save_skill(
         conn,
         skill_name,
@@ -299,8 +278,6 @@ async def patch_chief_skill(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
-    if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
-        raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
     settings = service.save_chief_skill(
         conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
     )
@@ -363,23 +340,12 @@ async def patch_worker_skill(
     clk: Clk,
 ) -> JsonDict:
     require_above(conn, ctx.principal, owner_only("worker_settings"))
-    if set(raw) not in ({"description"}, {"markdown_body"}):
-        raise PlannerError(
-            ErrorCode.validation,
-            "specialist skill patch requires exactly one field",
-            {"fields": sorted(raw)},
-        )
-    patch: SpecialistSkillPatch = {}
-    if "description" in raw:
-        patch["description"] = body_str(raw, "description")
-    else:
-        patch["markdown_body"] = body_str(raw, "markdown_body")
     registry = configured_worker_runtime_definitions().worker_type_registry
-    settings = service.patch_specialist_skill(
+    settings = service.save_specialist_skill(
         conn,
         registry,
         worker_type,
-        patch,
+        raw,
         now=clk.now_unix(),
         database_parent=_database_parent(config),
     )
