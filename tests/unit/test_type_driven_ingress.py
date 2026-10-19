@@ -14,8 +14,11 @@ filter, which compares stored data directly without resolving a Worker type, and
 
 from __future__ import annotations
 
+import hashlib
 import json
+import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -33,10 +36,24 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
 from planner.core.clock import build_clock
 from planner.core.config import load_config
+from planner.core.contracts import OWNER_PRINCIPAL
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import TITLE_MAX_CHARS
 from planner.worker_types.configuration import load_worker_runtime_definitions
 from planner.worker_types.store import read_definition
+
+
+def _deny_retired_ticket_guidance(
+    action: int, table: str | None, column: str | None, _db: str | None, _trigger: str | None,
+) -> int:
+    if action in (sqlite3.SQLITE_READ, sqlite3.SQLITE_UPDATE) and (
+        table, column
+    ) == ("tickets", "guidance"):
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
 
 AppDb = tuple[FastAPI, Path]
 OWNER = {"kind": "owner", "id": "owner"}
@@ -109,7 +126,9 @@ def app_db(
     )
 
     def conn_factory() -> Connection:
-        return connect(str(db_path))
+        conn = connect(str(db_path))
+        conn.set_authorizer(_deny_retired_ticket_guidance)
+        return conn
 
     return create_app(
         config,
@@ -308,9 +327,9 @@ def test_stage_filter_non_reserved_needs_no_worker_type(
 
 
 def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> None:
-    """Five places a Ticket keeps words, and each one alone is enough to find it.
+    """Each active place a Ticket keeps words alone is enough to find it.
 
-    Title, recap, guidance, a settled field value, and the body of a proposal still waiting
+    Title, recap, a settled field value, and the body of a proposal still waiting
     for its owner. Each Ticket here carries its invented word in exactly one of them, so a
     search that quietly narrowed to fewer sources returns the wrong Ticket instead of
     staying green. The word written nowhere proves the filter runs at all: a search that
@@ -325,7 +344,10 @@ def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> 
         client.patch(f"/api/tickets/{in_the_recap}", json={"recap": "florbish"})
 
         in_the_guidance = _create(client, "coding")
-        client.patch(f"/api/tickets/{in_the_guidance}", json={"guidance": "wemsley"})
+        with connect(str(_db)) as conn:
+            conn.execute(
+                "UPDATE tickets SET guidance='wemsley' WHERE id=?", (in_the_guidance,)
+            )
 
         # A settled value is an accepted proposal, so this word is proposed and accepted.
         in_a_field_value = _create(client, "coding")
@@ -354,7 +376,7 @@ def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> 
         for term, expected in (
             ("zarquon", [in_the_title]),
             ("florbish", [in_the_recap]),
-            ("wemsley", [in_the_guidance]),
+            ("wemsley", []),
             ("quinvex", [in_a_field_value]),
             ("tarnabel", [in_a_pending_proposal]),
             ("nobodywrotethis", []),
@@ -365,35 +387,93 @@ def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> 
             assert [t["id"] for t in found.json()["tickets"]] == expected, term
 
 
-def test_guidance_round_trip_validation_and_retired_field_routes(app_db: AppDb) -> None:
-    app, _db = app_db
+def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> None:
+    app, db_path = app_db
+    original = "  Historical boundary\n\nKeep this. λ\x00  "
+    # Schema reopen runs before the actual runtime owns this synthetic database.
+    with closing(connect(str(db_path))) as conn:
+        with conn:
+            ticket_id = tickets_data.create_ticket(
+                conn, title="coding", worker_type="coding", brief="k",
+                principal=OWNER_PRINCIPAL, now=1, title_max_chars=TITLE_MAX_CHARS,
+            ).id
+            conn.execute("UPDATE tickets SET guidance=? WHERE id=?", (original, ticket_id))
+            before = hashlib.sha256(
+                conn.execute("SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket_id,))
+                .fetchone()[0]
+            ).hexdigest()
+            active_record = dict(conn.execute(
+                "SELECT * FROM tickets WHERE id=?", (ticket_id,)
+            ).fetchone())
+            del active_record["guidance"]
+            expected_record_hash = hashlib.sha256(json.dumps(
+                active_record, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ).encode()).hexdigest()
+        conn.set_authorizer(_deny_retired_ticket_guidance)
+        create_schema(conn)
+        assert tickets_data.ticket_record_sha256(conn, ticket_id) == expected_record_hash
     with TestClient(app) as client:
-        ticket_id = _create(client, "coding")
+        with connect(str(db_path)) as conn:
+            conn.set_authorizer(_deny_retired_ticket_guidance)
+            ticket = tickets_data.read_ticket(conn, ticket_id)
+            conn.execute(
+                "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+                "access, created_at) VALUES (?, ?, ?, '/work', 'full', ?)",
+                ("retired-guidance-proof", ticket.employee_backend, ticket.employee_launch_model,
+                 ticket.updated_at),
+            )
+            tickets_data.write_ticket_conversation_start(
+                conn, ticket_id, conversation_id="retired-guidance-proof",
+                backend=ticket.employee_backend, model=ticket.employee_launch_model,
+                reasoning_effort=ticket.employee_launch_reasoning_effort, now=ticket.updated_at,
+            )
+            assert tickets_data.read_ticket_by_conversation_id(
+                conn, "retired-guidance-proof"
+            ).id == ticket_id
         path = f"/api/tickets/{ticket_id}"
         read_path = f"/api/tickets?detail=full&id={ticket_id}"
-        original = "  Scope boundary\n\nKeep this.  "
-        saved = client.patch(path, json={"guidance": original})
-        assert saved.status_code == 200
-        assert saved.json()["guidance"] == original
+        saved = client.get(read_path)
+        assert saved.status_code == 200, saved.json()
+        assert "guidance" not in saved.json()
         assert saved.json()["field_values"] == {}
         assert saved.json()["pending_proposal"]["field"] == "brief"
         for body in (
-            {},
+            {"guidance": "replacement", "recap": "must not change"},
             {"guidance": None},
-            {"guidance": 3},
-            {"guidance": "lost", "key": "plan"},
+            {"guidance_append": "new text"},
+            {"guidance_append": ""},
             {"key": "plan"},
         ):
-            assert client.patch(path, json=body).status_code == 400
-            assert client.get(read_path).json()["guidance"] == original
-        assert client.patch(path, json={"guidance_append": ""}).json() == saved.json()
-        appended = client.patch(path, json={"guidance_append": "\nNew direction  "})
-        assert appended.json()["guidance"] == original + "\n\n\nNew direction  "
-        assert client.patch(path, json={"guidance": ""}).json()["guidance"] == ""
-        assert (
-            client.put(f"/api/tickets/{ticket_id}/notes/plan", json={"body": "old"}).status_code
-            == 404
+            rejected = client.patch(path, json=body)
+            assert rejected.status_code == 400
+            assert client.get(read_path).json() == saved.json()
+        edited = client.patch(path, json={"recap": "Current work"})
+        assert edited.status_code == 200, edited.json()
+        assert "guidance" not in edited.json()
+        accepted = client.post(
+            path + "/accept/brief",
+            json={"next_ceiling": "needs_success_condition", "next_holder": OWNER},
         )
+        assert accepted.status_code == 200, accepted.json()
+        _propose(client, ticket_id, "A current proposal")
+        rejected = client.post(path + "/reject", json={"message": "Revise this."})
+        assert rejected.status_code == 200, rejected.json()
+        copied = client.get(path + "/copy-text")
+        assert copied.status_code == 200
+        assert "guidance:" not in copied.text and "Historical boundary" not in copied.text
+        assert client.get("/api/tickets?detail=summary&search=Historical").json()["tickets"] == []
+        assert client.put(path + "/notes/plan", json={"body": "old"}).status_code == 404
+        with connect(str(db_path)) as conn:
+            conn.set_authorizer(_deny_retired_ticket_guidance)
+            old_hash = tickets_data.ticket_record_sha256(conn, ticket_id)
+            conn.execute("UPDATE tickets SET recap='Same-second change' WHERE id=?", (ticket_id,))
+            assert tickets_data.ticket_record_sha256(conn, ticket_id) != old_hash
+            conn.set_authorizer(None)
+            after = hashlib.sha256(
+                conn.execute("SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket_id,))
+                .fetchone()[0]
+            ).hexdigest()
+        assert before == after
 
 
 def test_a_create_naming_no_brief_parks_nothing_at_the_http_door(

@@ -181,14 +181,10 @@ class _ObservingSink:
     async def model_thinking_happened(self, turn_token: TurnToken) -> None:
         await self._sink.model_thinking_happened(turn_token)
 
-    async def plan_updated(
-        self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]
-    ) -> None:
+    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
         await self._sink.plan_updated(turn_token, entries)
 
-    async def agent_message_completed(
-        self, turn_token: TurnToken, content: MessageContent
-    ) -> None:
+    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
         await self._sink.agent_message_completed(turn_token, content)
 
     async def tool_call_started(
@@ -211,9 +207,7 @@ class _ObservingSink:
     async def tool_call_progress(
         self, turn_token: TurnToken, *, tool_call_id: str, detail: str
     ) -> None:
-        await self._sink.tool_call_progress(
-            turn_token, tool_call_id=tool_call_id, detail=detail
-        )
+        await self._sink.tool_call_progress(turn_token, tool_call_id=tool_call_id, detail=detail)
 
     async def tool_call_finished(
         self,
@@ -230,9 +224,7 @@ class _ObservingSink:
             detail=detail,
         )
 
-    async def permission_ask_raised(
-        self, turn_token: TurnToken, ask: BackendPermissionAsk
-    ) -> None:
+    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
         await self._sink.permission_ask_raised(turn_token, ask)
         self._conversation.ask_ids_in_order.append(ask.ask_id)
         self._conversation.permission_asks_reported += 1
@@ -246,9 +238,7 @@ class _ObservingSink:
     async def user_input_failed(
         self, turn_token: TurnToken, *, request_id: str, detail: str
     ) -> None:
-        await self._sink.user_input_failed(
-            turn_token, request_id=request_id, detail=detail
-        )
+        await self._sink.user_input_failed(turn_token, request_id=request_id, detail=detail)
 
     async def turn_ended(
         self,
@@ -355,9 +345,7 @@ class _CountedChild:
         sender_label: str,
     ) -> BackendSteerOutcome:
         if self._conversation.known_prewrite_failure:
-            return BackendSteerRefused(
-                PromptDeliveryRefusalReason.write_to_backend_failed
-            )
+            return BackendSteerRefused(PromptDeliveryRefusalReason.write_to_backend_failed)
         return await self._child.steer(
             turn_token,
             content,
@@ -503,9 +491,17 @@ class ConversationSystemUnderTest:
 
     async def backend_permission_answer(self, conversation_id: str, ask_id: str) -> str | None:
         conversation = self._conversation(conversation_id)
-        if ask_id not in conversation.ask_ids_in_order:
+        public_asks = [
+            event.payload.ask_id
+            for event in await self._store.read_events_after(conversation_id, 0)
+            if isinstance(event.payload, PermissionAskedEventPayload)
+        ]
+        if ask_id not in public_asks:
             return None
-        raised_at = conversation.ask_ids_in_order.index(ask_id)
+        provider_id = conversation.ask_ids_in_order[public_asks.index(ask_id)]
+        if provider_id not in conversation.ask_ids_in_order:
+            return None
+        raised_at = conversation.ask_ids_in_order.index(provider_id)
         report = await self._account(conversation_id)
         asks = report["asks"]
         if raised_at >= len(asks):
@@ -560,7 +556,11 @@ class ConversationSystemUnderTest:
             lambda: conversation.permission_asks_reported > asks_before
         )
         await self.settle()
-        return conversation.ask_ids_in_order[-1]
+        return next(
+            event.payload.ask_id
+            for event in reversed(await self._store.read_events_after(conversation_id, 0))
+            if isinstance(event.payload, PermissionAskedEventPayload)
+        )
 
     async def answer_permission_ask(
         self, conversation_id: str, ask_id: str, option_id: str
@@ -773,9 +773,7 @@ async def open_conversation_system_under_test(
 
     monotonic_now = time.monotonic if clock is None else clock
     unix_time_now = time.time if clock is None else clock
-    store = ConversationStore(
-        str(database_path), integer_now=lambda: int(unix_time_now())
-    )
+    store = ConversationStore(str(database_path), integer_now=lambda: int(unix_time_now()))
     subject: ConversationSystemUnderTest | None = None
 
     def make_child(

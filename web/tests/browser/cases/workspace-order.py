@@ -1,9 +1,15 @@
 # ruff: noqa: E501
-"""Independent browser case, extracted without assertion changes."""
+"""Shared browser case with canonical navigation-source coverage."""
 
 
 def run(browser, urls):
+    import runpy
+    from pathlib import Path
 
+    fixture = runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
+    )
+    navigation_response = fixture["navigation_response"]
     import json
     import re
 
@@ -29,7 +35,7 @@ def run(browser, urls):
             "gating_field_label": "Implementation",
             "is_done": False,
             "blocked": False,
-            "conversation_id": None,
+            "conversation_id": "fixture-ticket-" + ticket_id,
             "waiting_to_closeout": False,
             "sprint_item_id": item_id,
             "sprint_item_title": item_title,
@@ -55,14 +61,11 @@ def run(browser, urls):
         return {
             "id": item_id,
             "created_at": 0,
-            "conversation_id": None,
+            "conversation_id": "fixture-item-" + item_id,
             "ticket_rollup": dict(quiet),
             **quiet,
         }
 
-    # The old Item has only a done child on today’s board. Its full workspace also
-    # contains unfinished, off-day children. The board includes those children before
-    # opening it, and delayed detail delivery must change neither rail nor completion.
     old = card("t_done", "si_old", "Old Item", stage="done", is_done=True)
     peer = card("t_peer", "si_peer", "Peer Item")
     newer = card("t_newer", "si_newer", "Newer Item")
@@ -118,6 +121,7 @@ def run(browser, urls):
         summary.update(title=detail["title"], tickets=detail["tickets"])
     workers = {
         "chief_of_staff": {
+            "conversation_id": "fixture-chief",
             "label": "Chief of Staff",
             "needs_me": False,
             "awaiting_reply": False,
@@ -128,24 +132,80 @@ def run(browser, urls):
     }
     held = []
     delay_old = True
+    snapshot_failure = True
+    conversation_reads = []
+    chief_sends = []
+    chief_resets = []
 
     def fulfill(route, result):
         route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
 
     def respond(route):
         path = route.request.url.split("/api/", 1)[1].split("?")[0]
-        if path == "board":
-            result = board
-        elif path == "workers":
-            result = workers
-        elif path.startswith("items/") and path.endswith("/workspace"):
+        if path == "navigation/snapshot":
+            if snapshot_failure:
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "error": {
+                                "code": "unavailable",
+                                "message": "Workspace unavailable",
+                                "detail": None,
+                            }
+                        }
+                    ),
+                )
+                return
+            result = navigation_response(board, workers)
+        elif path == "chief/conversation":
+            raise AssertionError("competing Chief pointer query remains")
+        elif path == "chief/conversation/send":
+            chief_sends.append(route.request.post_data_json)
+            result = {"conversation_id": "chief-delivered", "fate": "started"}
+        elif path == "chief/conversation/reset":
+            chief_resets.append(True)
+            result = {}
+        elif path.startswith("conversation/conversations/"):
+            identity = path.split("/")[2]
+            if path.endswith("/events"):
+                result = {"events": []}
+            else:
+                conversation_reads.append(identity)
+                result = dict(
+                    conversation_id=identity,
+                    backend_key="codex",
+                    supports_steer=True,
+                    model="fixture",
+                    reasoning_effort=None,
+                    workspace_folder="/tmp",
+                    access="full",
+                    role_text=None,
+                    identity_environment_variable_names=[],
+                    latest_sequence=0,
+                    owner_read_through_sequence=0,
+                    is_running=False,
+                    held_prompts=[],
+                    pending_permission_ask=None,
+                    pending_user_input=None,
+                    composer_catalog=[],
+                )
+        elif path == "workers/chief-of-staff/settings":
+            result = workers["chief_of_staff"]
+        elif path == "board" or path == "workers":
+            raise AssertionError("summary query remains active: " + path)
+        elif path.endswith("/recap-preview"):
+            raise AssertionError("unexpected preview request: " + path)
+        elif path.startswith("items/") and path.endswith("/workspace-content"):
             item_id = path.split("/")[1]
             if item_id == "si_old" and delay_old:
                 held.append(route)
                 return
-            result = workspace(item_id)
-        # The child click exercises the actual TicketRoute boundary without inventing
-        # another complete Ticket fixture. A missing Ticket still preserves its address.
+            result = {
+                key: workspace(item_id)[key]
+                for key in ["body", "artifacts", "conversation_history"]
+            }
         elif path == "tickets":
             route.fulfill(
                 status=404, content_type="application/json", body='{"detail":"Ticket not found"}'
@@ -175,7 +235,9 @@ def run(browser, urls):
             actual = page.locator(".board-workspace-left [data-sprint-item]").evaluate_all(
                 "nodes => nodes.map(n => n.dataset.sprintItem)"
             )
-            raise AssertionError(f"Item order changed: expected {expected}, actual {actual}") from None
+            raise AssertionError(
+                f"Item order changed: expected {expected}, actual {actual}"
+            ) from None
 
     def title(page, item_id):
         return page.locator('[data-sprint-item="' + item_id + '"] .item-title')
@@ -186,9 +248,22 @@ def run(browser, urls):
     page.route("**/api/**", respond)
     page.goto([__file__, *urls][1] + "#/workspace?view=items")
     expected = ["si_old", "si_peer", "si_newer"]
+    expect(page.locator(".error-line .error-code")).to_have_text("unavailable")
+    expect(page.locator(".error-line .error-message")).to_have_text("Workspace unavailable")
+    expect(page.locator(".quiet-line", has_text="Loading workspace")).to_have_count(0)
+    snapshot_failure = False
+    page.evaluate("window.__recover()")
+    expect(page.locator(".error-line")).to_have_count(0)
     order(page, expected)
-    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
-
+    snapshot_failure = True
+    page.evaluate("window.__recover()")
+    expect(page.locator(".error-line .error-code")).to_have_text("unavailable")
+    order(page, expected)
+    snapshot_failure = False
+    page.evaluate("window.__recover()")
+    expect(page.locator(".error-line")).to_have_count(0)
+    order(page, expected)
+    expect(title(page, "si_old")).to_have_class(re.compile("\\bitem-title\\b"))
     page.locator('[data-sprint-item="si_old"] .item-head').click()
     expect(page.locator('[data-sprint-item="si_old"] .item-head')).to_have_attribute(
         "aria-current", "page"
@@ -197,11 +272,29 @@ def run(browser, urls):
     page.wait_for_function(
         "() => document.querySelector('[data-sprint-item-workspace=si_old]') !== null"
     )
-    # Python route interception keeps this response pending until selection is proven.
+    for _ in range(100):
+        if held:
+            break
+        page.wait_for_timeout(10)
     assert len(held) == 1, "the full workspace request was not delayed"
     delay_old = False
-    fulfill(held.pop(), workspace("si_old"))
-    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
+    fulfill(
+        held.pop(),
+        {key: workspace("si_old")[key] for key in ["body", "artifacts", "conversation_history"]},
+    )
+    expect(
+        page.locator('[data-sprint-item-workspace="si_old"] .sprint-workspace-title')
+    ).to_contain_text("Old Item")
+    snapshot_failure = True
+    page.evaluate("window.__recover()")
+    expect(page.locator(".error-line")).to_have_count(1)
+    expect(
+        page.locator('[data-sprint-item-workspace="si_old"] .sprint-workspace-title')
+    ).to_contain_text("Old Item")
+    snapshot_failure = False
+    page.evaluate("window.__recover()")
+    expect(page.locator(".error-line")).to_have_count(0)
+    expect(title(page, "si_old")).to_have_class(re.compile("\\bitem-title\\b"))
     order(page, expected)
     rows = page.locator('[data-sprint-item="si_old"] [data-ticket-id]')
     expect(rows).to_have_count(2)
@@ -209,12 +302,20 @@ def run(browser, urls):
         "t_recent",
         "t_older",
     ]
-
     page.locator('[data-sprint-item="si_old"] [data-ticket-id="t_recent"]').click()
     page.wait_for_function("() => location.hash === '#/workspace/item/si_old/t_recent'")
     order(page, expected)
+    expect(page.locator(".ticket-screen .error-line")).to_have_count(1)
+    snapshot_failure = True
+    page.evaluate("window.__recover()")
+    expect(page.locator(".error-line")).to_have_count(2)
+    expect(page.locator(".error-code", has_text="unavailable")).to_have_count(1)
+    expect(page.locator(".ticket-screen .error-line")).to_have_count(1)
+    snapshot_failure = False
+    page.evaluate("window.__recover()")
+    expect(page.locator(".error-line")).to_have_count(1)
     expect(page.locator('[data-sprint-item="si_old"] [data-ticket-id="t_recent"]')).to_have_class(
-        re.compile(r"\bticket-row--active\b")
+        re.compile("\\bticket-row--active\\b")
     )
     assert page.locator(".orchestrator-card.selected").count() == 0
     page.go_back()
@@ -227,11 +328,8 @@ def run(browser, urls):
     page.go_back()
     order(page, expected)
     page.reload()
-    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
+    expect(title(page, "si_old")).to_have_class(re.compile("\\bitem-title\\b"))
     order(page, expected)
-
-    # Creation order still moves an Item. Child activity changes do not reorder the
-    # sidebar: persistent group entry order survives invalidation and selection.
     board["sprint_items"][1]["created_at"] = 0
     page.evaluate("window.__refresh()")
     order(page, ["si_peer", "si_old", "si_newer"])
@@ -242,9 +340,6 @@ def run(browser, urls):
     page.evaluate("window.__refresh()")
     expect(rows.first).to_have_attribute("data-ticket-id", "t_recent")
     order(page, ["si_peer", "si_old", "si_newer"])
-
-    # Completion and clearing a direct unread mark do not settle or reorder an Item.
-    # Only the owner Settle action changes settlement, never child completion.
     page.goto([__file__, *urls][1] + "#/workspace?view=items")
     summary = board["sprint_items"][0]
     summary["tickets"] = [old]
@@ -254,19 +349,123 @@ def run(browser, urls):
     expect(page.locator('[data-sprint-item="si_old"] .item-head .stage-mark')).to_have_attribute(
         "data-conversation-signal", "message"
     )
-    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
+    expect(title(page, "si_old")).to_have_class(re.compile("\\bitem-title\\b"))
     order(page, ["si_peer", "si_old", "si_newer"])
     summary["awaiting_reply"] = False
     summary["conversation_signal"] = dict(working=False, message_for_owner=False)
     page.evaluate("window.__refresh()")
-    expect(title(page, "si_old")).to_have_class(re.compile(r"\bitem-title\b"))
+    expect(title(page, "si_old")).to_have_class(re.compile("\\bitem-title\\b"))
     order(page, ["si_peer", "si_old", "si_newer"])
-
-    # A direct-linked Item absent from the board opens its pane without joining the rail.
     page.goto([__file__, *urls][1] + "#/workspace/item/si_direct")
     order(page, ["si_peer", "si_old", "si_newer"])
     expect(page.locator('[data-sprint-item-workspace="si_direct"]')).to_have_count(1)
     page.reload()
     order(page, ["si_peer", "si_old", "si_newer"])
+    source_row = page.locator('[data-sprint-item="si_peer"] [data-ticket-id]').first
+    source_row.evaluate(
+        "e=>{for(let p=e.parentElement;p;p=p.parentElement)if(p instanceof HTMLDetailsElement)p.open=true;}"
+    )
+    source_row.focus()
+    panel = page.locator("[data-rail-hover-panel]").last
+    expect(panel).to_have_attribute("aria-hidden", "false")
+    page.evaluate("window.__startHoverWait()")
+    page.wait_for_function("window.__hoverWaitStatus==='included'")
+    deleted_id = source_row.get_attribute("data-ticket-id")
+    source_row.evaluate("e=>e.remove()")
+    for column in board["columns"]:
+        column["cards"] = [row for row in column["cards"] if row["id"] != deleted_id]
+    for summary in board["sprint_items"]:
+        summary["tickets"] = [row for row in summary["tickets"] if row["id"] != deleted_id]
+    page.evaluate("window.__refresh()")
+    expect(panel).to_have_attribute("aria-hidden", "false")
+    page.evaluate("window.__startHoverWait()")
+    page.wait_for_function("window.__hoverWaitStatus==='unknown'")
+    workers["chief_of_staff"]["conversation_signal"] = {"working": True, "message_for_owner": False}
+    page.evaluate("window.__refresh()")
+    page.goto([__file__, *urls][1] + "#/workspace/chief-of-staff")
+    expect(
+        page.locator(".chief-workspace .sprint-workspace-title [data-conversation-signal]")
+    ).to_have_attribute("data-conversation-signal", "working")
+    page.locator(
+        ".chief-workspace [data-conversation-rest-bar], .chief-workspace [data-conversation-input]"
+    ).first.wait_for()
+    rest = page.locator(".chief-workspace [data-conversation-rest-bar]")
+    if rest.count() and rest.is_visible():
+        rest.click()
+    expect(page.locator(".chief-workspace [data-conversation-input]")).to_be_visible()
+    assert page.evaluate("window.__waitChief()")["status"] == "included"
+    page.locator(".chief-workspace [data-conversation-pane]").evaluate(
+        "node=>node.dataset.conversationId='wrong-pane'"
+    )
+    page.evaluate("window.__refresh()")
+    assert page.evaluate("window.__waitChief()")["status"] == "unknown"
+    page.locator(".chief-workspace [data-conversation-pane]").evaluate(
+        "node=>node.dataset.conversationId='fixture-chief'"
+    )
+    page.evaluate("window.__refresh()")
+    assert page.evaluate("window.__waitChief()")["status"] == "included"
+    snapshot_failure = True
+    page.evaluate("window.__recover()")
+    expect(
+        page.locator(".chief-workspace .sprint-workspace-title [data-conversation-signal]")
+    ).to_have_count(0)
+    expect(page.locator("[data-chief-conversation-retry]")).to_have_count(1)
+    expect(page.locator(".error-line")).to_have_count(1)
+    snapshot_failure = False
+    page.locator("[data-chief-conversation-retry]").click()
+    expect(page.locator(".error-line")).to_have_count(0)
+    expect(
+        page.locator(".chief-workspace .sprint-workspace-title [data-conversation-signal]")
+    ).to_have_attribute("data-conversation-signal", "working")
+    workers["chief_of_staff"]["conversation_signal"] = {"working": True, "message_for_owner": True}
+    page.evaluate("window.__refresh()")
+    snapshot_failure = True
+    page.evaluate("window.__recover()")
+    expect(
+        page.locator(".chief-workspace .sprint-workspace-title [data-conversation-signal]")
+    ).to_have_attribute("data-conversation-signal", "message")
+    snapshot_failure = False
+    page.locator("[data-chief-conversation-retry]").click()
+    expect(page.locator("[data-chief-conversation-retry]")).to_have_count(0)
+    composer = page.locator(".chief-workspace [data-conversation-input]")
+    composer.fill("Chief continuation")
+    composer.press("Enter")
+    for _ in range(100):
+        if "chief-delivered" in conversation_reads:
+            break
+        page.wait_for_timeout(10)
+    assert chief_sends and "chief-delivered" in conversation_reads
+    evidence = page.evaluate("window.__navigation.commandEvidence.at(-1)")
+    assert evidence["status"] == "unknown" and evidence["reason"] == "missing_or_invalid_fence"
+    assert evidence["impact"]["complete"] is True
+    assert evidence["impact"]["records"][0]["kind"] == "chief"
+    assert any(identity.startswith("chief-conversation:") for identity in evidence["observers"])
+    assert not any(
+        identity.startswith("orchestrator-section:") for identity in evidence["observers"]
+    )
+    assert evidence["domainCompletedAt"] >= evidence["startedAt"]
+    old_reads = conversation_reads.count("fixture-chief")
+    page.evaluate("window.__refresh()")
+    assert conversation_reads.count("fixture-chief") == old_reads
+    assert page.evaluate("window.__waitChief()")["status"] == "unknown"
+    workers["chief_of_staff"]["conversation_id"] = "chief-delivered"
+    page.evaluate("window.__refresh()")
+    assert page.evaluate("window.__waitChief()")["status"] == "included"
+    composer = page.locator(".chief-workspace [data-conversation-input]")
+    composer.click()
+    page.locator('.chief-workspace [aria-label="Conversation options"]').click()
+    page.locator("[data-conversation-new-arm]").click()
+    page.locator("[data-conversation-new-confirm]").click()
+    for _ in range(100):
+        if chief_resets:
+            break
+        page.wait_for_timeout(10)
+    delivered_reads = conversation_reads.count("chief-delivered")
+    page.evaluate("window.__refresh()")
+    assert chief_resets and conversation_reads.count("chief-delivered") == delivered_reads
+    assert page.evaluate("window.__waitChief()")["status"] == "unknown"
+    workers["chief_of_staff"]["conversation_id"] = None
+    page.evaluate("window.__refresh()")
+    assert page.evaluate("window.__waitChief()")["status"] == "included"
     assert not errors, errors
-    pass  # Shared runner owns the browser lifecycle.
+    pass

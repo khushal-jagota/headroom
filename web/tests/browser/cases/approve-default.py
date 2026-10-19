@@ -1,9 +1,15 @@
 # ruff: noqa: E501
-"""Independent browser case, extracted without assertion changes."""
+"""Shared browser case with canonical navigation-source coverage."""
 
 
 def run(browser, urls):
+    import runpy
+    from pathlib import Path
 
+    fixture = runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
+    )
+    navigation_response = fixture["navigation_response"]
     import json
     import os
     from pathlib import Path
@@ -72,6 +78,7 @@ def run(browser, urls):
             "project": "Panels",
             "sprint_id": None,
             "sprint_item_id": "item_one",
+            "sprint_item_title": "Outcome",
             "id": ticket_id,
             "title": "Restore compact approval",
             "worker_type": worker_type,
@@ -81,17 +88,17 @@ def run(browser, urls):
             "employee_configuration_editable": False,
             "stage": stage,
             "ceiling": stage,
-            "sprint_item_title": "Outcome",
             "ticket_status": "awaiting_approval",
             "ceiling_holder": {"kind": "sprint_item", "id": "item_one"},
             "conversation_id": None,
             "conversation_history": [],
             "day_ids": [],
             "blocked": False,
+            "is_backlogged": False,
             "blocker_summary": {"blocked_by": []},
             "recap": "Orientation",
-            "guidance": "",
             "field_values": {"brief": "Request"},
+            "pending_proposal_revision": 1,
             "pending_proposal": {
                 "field": field,
                 "body": body,
@@ -122,28 +129,75 @@ def run(browser, urls):
     }
     approvals = []
     scope_writes = []
-    review_ticket = "t_coding"
     accept_attempts = []
     read_count = 0
     lifecycle_writes = []
     refuse_resume = True
+
+    def navigation_snapshot():
+        parent = {
+            "id": "item_one",
+            "title": "Outcome",
+            "created_at": 1,
+            "project_id": "project_one",
+            "project": "Panels",
+            "conversation_id": None,
+            "tickets": [],
+        }
+        response = navigation_response(
+            {
+                "columns": [{"cards": list(tickets.values())}],
+                "sprint_items": [
+                    {**parent, "id": identity}
+                    for identity in {
+                        "item_one",
+                        *(
+                            row["sprint_item_id"]
+                            for row in tickets.values()
+                            if row["sprint_item_id"]
+                        ),
+                    }
+                ],
+            },
+            {"chief_of_staff": {"label": "Chief of Staff", "conversation_id": None}},
+        )
+        for record in response["snapshot"]["records"]:
+            if record["kind"] == "ticket":
+                row = tickets[record["id"]]
+                proposal = row["pending_proposal"]
+                definition = next(
+
+                        worker
+                        for worker in manifest["worker_types"]
+                        if worker["worker_type"] == row["worker_type"]
+
+                )
+                stage = next(
+                    stage for stage in definition["stages"] if stage["id"] == row["stage"]
+                )
+                record["value"].update(
+                    ceiling=row["ceiling"],
+                    ceiling_holder=row["ceiling_holder"],
+                    gating_field=stage["gating_field"],
+                    stage_ownership=stage["ownership_mode"],
+                    terminal=stage["is_terminal"],
+                    proposal_field=None if proposal is None else proposal["field"],
+                    proposal_created_at=None if proposal is None else proposal["created_at"],
+                    proposal_revision=row["pending_proposal_revision"]
+                    if proposal is None
+                    else proposal["revision"],
+                )
+        return response
 
     def respond(route):
         nonlocal read_count, refuse_resume
         path = route.request.url.split("/api/", 1)[1]
         if path.startswith("tickets?"):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
-        if path == "review":
-            result = {
-                "items": [
-                    {
-                        "ticket_id": review_ticket,
-                        "field": tickets[review_ticket]["pending_proposal"]["field"],
-                        "title": tickets[review_ticket]["title"],
-                    }
-                ],
-                "running_worker_count": 0,
-            }
+        if path.split("?")[0] == "navigation/snapshot":
+            result = navigation_snapshot()
+        elif path == "review":
+            raise AssertionError("competing Review summary read")
         elif path.endswith("/backlog") or path.endswith("/resume"):
             _, ticket_id, action = path.split("/")
             lifecycle_writes.append({"action": action, "body": route.request.post_data_json})
@@ -163,10 +217,21 @@ def run(browser, urls):
             tickets[ticket_id]["record_sha256"] = "record-after-" + action
             result = tickets[ticket_id]
         elif (
-            path.startswith("tickets/") and path.count("/") == 1 and route.request.method == "PATCH"
+            path.startswith("tickets/")
+            and path.count("/") == 1
+            and (route.request.method == "PATCH")
         ):
             scope_writes.append(route.request.post_data_json)
-            tickets[path.split("/")[1]].update(route.request.post_data_json)
+            target = tickets[path.split("/")[1]]
+            change = route.request.post_data_json
+            if (
+                "ceiling_holder" in change
+                and change["ceiling_holder"] != target["ceiling_holder"]
+                and (target["pending_proposal"] is not None)
+            ):
+                target["pending_proposal"]["revision"] += 1
+                target["pending_proposal_revision"] = target["pending_proposal"]["revision"]
+            target.update(change)
             result = tickets[path.split("/")[1]]
         elif path == "test/replace-coding":
             tickets["t_coding"]["pending_proposal"] = {
@@ -174,7 +239,7 @@ def run(browser, urls):
                 "body": "Replacement result",
                 "proposed_by": "agent",
                 "created_at": 1,
-                "revision": 2,
+                "revision": tickets["t_coding"]["pending_proposal"]["revision"] + 1,
             }
             result = {}
         elif path == "test/replace-review":
@@ -221,7 +286,12 @@ def run(browser, urls):
                 )
                 return
             approvals.append(attempt)
-            result = {**tickets[ticket_id], "pending_proposal": None, "ticket_status": "empty"}
+            tickets[ticket_id].update(
+                pending_proposal_revision=tickets[ticket_id]["pending_proposal"]["revision"],
+                pending_proposal=None,
+                ticket_status="empty",
+            )
+            result = tickets[ticket_id]
         elif path.endswith("/conversation/start-values"):
             result = {}
         elif path.startswith("tickets/") and path.count("/") == 1:
@@ -238,7 +308,6 @@ def run(browser, urls):
     page.on("pageerror", lambda error: print(str(error), flush=True))
     page.route("**/api/**", respond)
     page.goto([__file__, *urls][1])
-
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
 
@@ -268,13 +337,14 @@ def run(browser, urls):
     assert (
         block().locator("[data-scope-ceiling], [data-ceiling-effect], .approves-mark").count() == 0
     )
-    # Capture both actual product hosts with exactly the same proposal and reviewer.
+    tickets["t_coding"]["ceiling_holder"] = {"kind": "owner", "id": "owner"}
+    page.evaluate("window.__refresh()")
     artifact_dir = os.environ.get("PANELS_APPROVAL_ARTIFACT_DIR")
     evidence = []
     for host_kind in ["ticket", "review"]:
         if host_kind == "review":
             page.evaluate("window.__showReview('t_coding', 'success_condition')")
-        expect(block().locator("[data-reviewer-heading]")).to_have_text("Orchestrator")
+        expect(block().locator("[data-reviewer-heading]")).to_have_text("User")
         expect(block().locator("[contenteditable]")).to_have_text("Coding result")
         for width, label in [(1280, "desktop"), (390, "compact")]:
             page.set_viewport_size({"width": width, "height": 1000})
@@ -293,7 +363,7 @@ def run(browser, urls):
             open_approval()
             panel = page.locator("[data-ceiling-picker-panel]")
             box = panel.bounding_box()
-            assert box and box["x"] >= -1 and box["x"] + box["width"] <= width + 1
+            assert box and box["x"] >= -1 and (box["x"] + box["width"] <= width + 1)
             assert (
                 panel.locator("[data-ceiling-effect], .approves-mark, .holder-detail").count() == 0
             )
@@ -309,9 +379,6 @@ def run(browser, urls):
                 evidence.append(path)
             page.get_by_role("listbox").press("Escape")
             assert approvals == [] and scope_writes == []
-
-    # Review shortcuts cannot steal listbox typeahead: s stays in this proposal,
-    # and o selects the role without opening the Ticket route.
     hash_before = page.evaluate("location.hash")
     open_approval()
     page.get_by_role("listbox").press("s")
@@ -329,7 +396,6 @@ def run(browser, urls):
     assert page.evaluate("location.hash") == hash_before
     assert approvals == [] and scope_writes == []
     page.get_by_role("listbox").press("Escape")
-    # A delegated Worker and the assigned orchestrator retain distinct roles and IDs.
     tickets["t_worker_holder"] = ticket(
         "t_worker_holder", "coding", "needs_plan", "plan", "Worker-held plan", 10
     )
@@ -346,31 +412,30 @@ def run(browser, urls):
     page.get_by_role("listbox").press("Escape")
     assert approvals == [] and scope_writes == []
     page.evaluate("window.__showTicket('t_coding')")
-    # Reviewer heading only reroutes; pending proposal and revision stay intact.
     block().locator("[data-reviewer-heading]").click()
     expect(page.get_by_role("listbox")).to_have_attribute("aria-label", "Who holds the ceiling")
     page.locator('[data-ceiling-picker-choice="chief"]').click()
     wait_count(scope_writes, 1)
+    page.evaluate("window.__refresh()")
     assert scope_writes[-1] == {"ceiling_holder": {"kind": "chief", "id": "chief"}}
     assert approvals == []
-    # Opening Approve then changing only the reviewer never accepts a proposal.
     open_approval()
     page.locator('[data-ceiling-part="holder"]').click()
     page.locator('[data-ceiling-picker-choice="owner"]').click()
     wait_count(scope_writes, 2)
+    page.evaluate("window.__refresh()")
     assert scope_writes[-1] == {"ceiling_holder": {"kind": "owner", "id": "owner"}}
     assert approvals == []
-    # Same and lower boundaries never approve, even from Approve.
-    for stage in ["needs_success_condition", "needs_brief"]:
+    for index, stage in enumerate(["needs_success_condition", "needs_brief"], start=3):
         choose(stage)
+        wait_count(scope_writes, index)
+        page.evaluate("window.__refresh()")
     wait_count(scope_writes, 4)
     assert scope_writes[-1] == {
         "ceiling": "needs_brief",
         "ceiling_holder": {"kind": "owner", "id": "owner"},
     }
     assert approvals == []
-    # Draft navigation, letters, Escape, and outside cancellation send no writes.
-    # The request count precedes the response and rendered mutation completion.
     expect(block().locator("[data-accept]")).to_be_enabled()
     block().locator("[data-accept]").focus()
     block().locator("[data-accept]").press("ArrowDown")
@@ -387,7 +452,6 @@ def run(browser, urls):
     page.locator("[data-ticket-identity]").click()
     expect(page.get_by_role("listbox")).to_have_count(0)
     assert len(scope_writes) == 4 and approvals == []
-    # Same revision refetch retains the local edit; replacement resets it.
     proposal = block().locator("[contenteditable]")
     proposal.fill("Local edit")
     proposal.press("Tab")
@@ -400,28 +464,27 @@ def run(browser, urls):
     expect(proposal).to_have_text("Replacement result")
     expect(page.get_by_role("listbox")).to_have_count(0)
     assert approvals == []
+    expected_revision = 4
+    assert tickets["t_coding"]["pending_proposal"]["revision"] == expected_revision
     choose("needs_what_changes")
     wait_count(approvals, 1)
     assert approvals[-1]["body"] == {
         "next_ceiling": "needs_what_changes",
         "next_holder": {"kind": "owner", "id": "owner"},
-        "expected_proposal_revision": 2,
+        "expected_proposal_revision": expected_revision,
     }
-
-    review_ticket = "t_findings"
+    tickets["t_findings"]["ceiling_holder"] = {"kind": "owner", "id": "owner"}
     page.evaluate("window.__showReview('t_findings', 'findings')")
     expect(block()).to_have_attribute("data-field", "findings")
     choose("needs_answer")
     wait_count(approvals, 2)
     assert approvals[-1]["body"]["expected_proposal_revision"] == 1
     assert approvals[-1]["body"]["next_ceiling"] == "needs_answer"
-
     page.evaluate("window.__showTicket('t_consequences')")
     expect(block()).to_have_attribute("data-field", "consequences")
     choose("done")
     wait_count(approvals, 3)
     assert approvals[-1]["body"]["next_ceiling"] == "done"
-    # A failed request remains editable and a deliberate retry sends the same revision.
     page.evaluate("window.__showTicket('t_failure')")
     expect(block()).to_have_attribute("data-field", "what_changes")
     proposal = block().locator("[contenteditable]")
@@ -442,7 +505,6 @@ def run(browser, urls):
         "expected_proposal_revision": 1,
         "edited_body": "Edited retry",
     }
-    # A stale response cannot accept a replacement; refresh starts a fresh deliberate gesture.
     page.evaluate("window.__showTicket('t_stale')")
     expect(block()).to_have_attribute("data-field", "plan")
     choose("needs_implementation")
@@ -453,8 +515,7 @@ def run(browser, urls):
     choose("needs_implementation")
     wait_count(approvals, 5)
     assert approvals[-1]["body"]["expected_proposal_revision"] == 2
-    # Review also discards an open old-revision gesture before replacement can accept.
-    review_ticket = "t_review_replace"
+    tickets["t_review_replace"]["ceiling_holder"] = {"kind": "owner", "id": "owner"}
     page.evaluate("window.__showReview('t_review_replace', 'plan')")
     expect(block().locator("[contenteditable]")).to_have_text("Original Review plan")
     open_approval()
@@ -464,7 +525,6 @@ def run(browser, urls):
     expect(block().locator("[contenteditable]")).to_have_text("Replacement Review plan")
     expect(page.get_by_role("listbox")).to_have_count(0)
     assert len(approvals) == 5
-    # Steps retain circular marks in every current state and stop motion on request.
     step_states = []
     for status, expected in [
         ("agent", "current-running"),
@@ -502,14 +562,12 @@ def run(browser, urls):
             page.emulate_media(reduced_motion="no-preference")
             assert mark.evaluate("(element) => getComputedStyle(element).animationName") != "none"
             page.emulate_media(reduced_motion="reduce")
-    # Brief approval needs no unrelated control write.
-    review_ticket = "t_brief"
+    tickets["t_brief"]["ceiling_holder"] = {"kind": "owner", "id": "owner"}
     page.evaluate("window.__showReview('t_brief', 'brief')")
     expect(block()).to_have_attribute("data-field", "brief")
     expect(block().locator("[data-send-back]")).to_have_count(0)
     expect(block().locator("[data-accept]")).to_be_enabled()
     assert len(approvals) == 5
-    # Each actual approval request preserves the complete chosen principal.
     for index, principal in enumerate(
         [
             {"kind": "owner", "id": "owner"},
@@ -536,14 +594,13 @@ def run(browser, urls):
             "next_holder": principal,
             "expected_proposal_revision": 1,
         }
-
-    # Backlog and Resume use the record guard and preserve the exact server proposal.
     lifecycle = ticket("t_lifecycle", "coding", "needs_plan", "plan", "Retained proposal body", 200)
     lifecycle.update(is_backlogged=False, record_sha256="record-before-backlog")
     lifecycle["pending_proposal"]["revision"] = 7
     tickets["t_lifecycle"] = lifecycle
     page.evaluate("window.__showTicket('t_lifecycle')")
     page.get_by_role("button", name="Backlog ticket", exact=True).click()
+    page.evaluate("window.__refresh()")
     expect(page.get_by_role("button", name="Resume ticket", exact=True)).to_be_visible()
     assert lifecycle_writes[-1] == {
         "action": "backlog",
@@ -556,6 +613,7 @@ def run(browser, urls):
     expect(block().locator("[contenteditable]")).to_have_text("Retained proposal body")
     assert lifecycle["pending_proposal"]["revision"] == 7
     page.get_by_role("button", name="Resume ticket", exact=True).click()
+    page.evaluate("window.__refresh()")
     expect(page.get_by_role("button", name="Backlog ticket", exact=True)).to_be_visible()
     assert lifecycle_writes[-1] == {
         "action": "resume",
@@ -588,7 +646,8 @@ def run(browser, urls):
                 {
                     "hosts": ["TicketRoute", "ReviewRoute"],
                     "same_proposal_revision": 1,
-                    "same_reviewer": "Orchestrator",
+                    "same_reviewer": "User",
+                    "preceding_ticket_reviewer": "Orchestrator",
                     "screenshots": evidence,
                     "browser_errors": errors,
                     "steps": step_states,
@@ -598,4 +657,4 @@ def run(browser, urls):
                 indent=2,
             )
         )
-    pass  # Shared runner owns the browser lifecycle.
+    pass

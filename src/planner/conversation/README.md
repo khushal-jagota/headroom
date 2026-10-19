@@ -60,6 +60,22 @@ facts remain outside this send and use their canonical domain actions.
 
 ## The real build lives here too
 
+The authoritative Signal producer lives in `publication/`. Its public types remain in
+`contracts.py`. It publishes complete attention for each exact conversation, with a
+producer epoch, conversation revision and a cursor across conversations.
+
+The producer shares a short synchronous gate with runtime mutations and source
+transactions. It changes actual runtime fields and restores them on rollback. It never
+reconstructs live work from persisted lifecycle status. Explicit persistence repair uses
+private operation evidence and cannot repeat a provider action.
+
+The runtime accepts an injected producer and the retained transaction adapters. Enabling
+the producer without those adapters fails explicitly. The coordinator borrows the
+existing conversation-owner handle and never acquires or closes another lease. Generic
+connection admission, navigation installation and delivery remain separate integrations.
+See [producer composition and repair](publication/README.md) for the exact domain setup
+and the limits of isolated fixture evidence.
+
 What the contract deferred has since been built, in this same package: the event
 record and storage (`events.py`, `storage.py`, one migration), the real system
 (`system.py`), the three backend adapters (`backends/`), and the reading side —

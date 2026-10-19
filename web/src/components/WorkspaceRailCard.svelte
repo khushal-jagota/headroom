@@ -9,7 +9,7 @@
   import OrchestratorEyebrow from "./OrchestratorEyebrow.svelte";
   import chiefProfile from "../assets/chief-of-staff-profile.webp";
   let { id, title, project = null, chief = false, signal = undefined, conversationId = null, selected, selectedTicketId, groups, busy = false, onSelect, onTicket, onSettle, onHover, onWorkerHover, onLeave }: {
-    id: string; title: string; project?: string | null; chief?: boolean; signal?: ConversationSignal; conversationId?: string | null; selected: boolean;
+    id: string; title: string; project?: string | null; chief?: boolean; signal?: Partial<ConversationSignal>; conversationId?: string | null; selected: boolean;
     selectedTicketId: string | null; groups: WorkspaceTicketGroup[]; busy?: boolean;
     onSelect: () => void; onTicket: (id: string) => void; onSettle: () => void;
     onHover: (target: HTMLElement, immediate?: boolean) => void; onWorkerHover: (target: HTMLElement, ticket: WorkItemTicketFacts, immediate?: boolean) => void; onLeave: () => void;

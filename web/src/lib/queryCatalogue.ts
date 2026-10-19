@@ -6,6 +6,7 @@ import type { UsageDays, UsageSummary } from "./conversation/recordedUsageWire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BoardResponse,
+  ChiefManagementSettings,
   OrchestratorPrincipal,
   OrchestratorChildFilter,
   CurrentSprintResponse,
@@ -14,12 +15,12 @@ import type {
   IdeasResponse,
   NotificationSettingsResponse,
   ProjectsResponse,
-  ReviewResponse,
   SchedulesResponse,
   SkillsHomeResponse,
   SprintsResponse,
   SprintItemsResponse,
   SprintItemWorkspace,
+  SprintItemWorkspaceContent,
   SprintTrackingBody,
   TicketDetail,
   TicketSummariesResponse,
@@ -54,7 +55,6 @@ export const queries = {
   vpsStatusSummary: () =>
     jsonQuery<VpsStatusSummary>(["vps-status-summary"], "/api/vps-status-summary"),
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
-  review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
   orchestratorTicketSummaries: (principal: OrchestratorPrincipal, filter: OrchestratorChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
@@ -76,6 +76,11 @@ export const queries = {
       ["sprint", sprintId, "tracking"],
       `/api/sprints/${encodeURIComponent(sprintId)}/tracking`
     ),
+  sprintItemWorkspaceContent: (itemId: string) =>
+    jsonQuery<SprintItemWorkspaceContent>(
+      ["sprint-item", itemId, "workspace-content"],
+      `/api/items/${encodeURIComponent(itemId)}/workspace-content`
+    ),
   sprintItemWorkspace: (itemId: string) =>
     jsonQuery<SprintItemWorkspace>(
       ["sprint-item", itemId, "workspace"],
@@ -88,6 +93,9 @@ export const queries = {
     ),
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets?detail=full&id=${encodeURIComponent(ticketId)}`),
+  reviewProposal: (item: import('./types').NavigationReviewItem) =>
+    jsonQuery<TicketDetail>(["ticket",item.ticket_id,"proposal",item.field,item.proposal_field,item.waiting_since,item.proposal_revision],
+      `/api/tickets?detail=full&id=${encodeURIComponent(item.ticket_id)}`),
   // What a conversation started right now would run on, for each owner that starts one.
   // It follows the change stream because the owner can change it: Config sets the
   // Chief's, and a Ticket's own last-chosen values move when its worker is talked to.
@@ -95,6 +103,10 @@ export const queries = {
     jsonQuery<ConversationStartValues>(
       ["ticket", ticketId, "conversation-start-values"],
       `/api/tickets/${encodeURIComponent(ticketId)}/conversation/start-values`
+    ),
+  chiefSettings: () =>
+    jsonQuery<Pick<ChiefManagementSettings, "employee_id" | "label" | "recap" | "skill" | "launch_defaults">>(
+      ["chief", "settings"], "/api/workers/chief-of-staff/settings"
     ),
   chiefConversationStartValues: () =>
     jsonQuery<ConversationStartValues>(

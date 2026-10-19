@@ -12,6 +12,7 @@ import logging
 import sqlite3
 import threading
 from collections.abc import Callable
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
@@ -44,7 +45,6 @@ from planner.days import data as days_data
 from planner.runtime import worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     MEMORY_LOSS_NOTICE,
-    READ_YOUR_TICKET_COMMAND,
 )
 from planner.runtime.worker_step_readiness_loop import (
     WorkerStepDeliveryFate,
@@ -55,7 +55,7 @@ from planner.runtime.worker_step_readiness_loop import (
 )
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback, worker_restart
-from planner.tickets.contracts import Ticket, TicketEdit, TicketStatus, WorkerStepClaim
+from planner.tickets.contracts import Ticket, TicketStatus, WorkerStepClaim
 from planner.worker_types.configuration import configured_worker_type_registry
 
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
@@ -71,7 +71,7 @@ class _World:
 
     def __init__(self, tmp_path: Path) -> None:
         self.db_path = str(tmp_path / "readiness-loop.db")
-        with connect(self.db_path) as conn:
+        with closing(connect(self.db_path)) as conn:
             create_schema(conn)
         self.clock = TestClock(FIXED_NOW)
         self.conversations = InMemoryConversationSystem()
@@ -385,7 +385,7 @@ def test_an_uncertain_send_marks_the_exact_claim_errored_for_supervisor_restart(
     assert ticket.ticket_status is TicketStatus.errored
     assert world.conversations.backend_prompt_writes("conv-uncertain") == ()
     assert world.skill_bindings() == []
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         assert worker_restart.require_restartable(conn, OWNER_PRINCIPAL, ticket_id).id == ticket_id
         uncertain_restart = asyncio.run(
             worker_restart.restart_worker(
@@ -455,7 +455,7 @@ def test_restart_preserves_a_worker_completion_that_lands_during_kill(world: _Wo
     async def unexpected_start() -> WorkerStepStartResult:
         raise AssertionError("a moved Ticket must not start another worker step")
 
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         with pytest.raises(PlannerError) as raised:
             asyncio.run(
                 worker_restart.restart_worker(
@@ -516,7 +516,7 @@ def test_restart_preserves_a_new_errored_claim_generation_during_kill(world: _Wo
     async def unexpected_start() -> WorkerStepStartResult:
         raise AssertionError("a moved Ticket must not start another worker step")
 
-    with world.connect() as conn:
+    with closing(world.connect()) as conn:
         with pytest.raises(PlannerError) as raised:
             asyncio.run(
                 worker_restart.restart_worker(
@@ -558,7 +558,7 @@ def test_next_worker_opener_waits_until_a_racing_restart_settles(world: _World) 
         async def unexpected_restart_start() -> WorkerStepStartResult:
             raise AssertionError("a moved restart must not start another worker step")
 
-        with world.connect() as restart_conn:
+        with closing(world.connect()) as restart_conn:
             restart_task = asyncio.create_task(
                 worker_restart.restart_worker(
                     cast(ConversationSystem, pausing),
@@ -708,13 +708,9 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
     world.start_conversation("conv-revision-feedback")
     world.add_revision_feedback(ticket_id, "  Preserve this exact feedback.  ")
     with world.connect() as conn:
-        tickets_data.edit_ticket(
-            conn,
-            ticket_id,
-            edit=TicketEdit(guidance="Mutable guidance changed independently."),
-            title_max_chars=200,
-            principal=OWNER_PRINCIPAL,
-            now=2,
+        conn.execute(
+            "UPDATE tickets SET guidance = ? WHERE id = ?",
+            ("Historical guidance remains stored.", ticket_id),
         )
     world.conversations.arm_backend_write_failure("conv-revision-feedback")
 
@@ -729,9 +725,8 @@ def test_revision_feedback_is_consumed_only_after_an_actual_worker_send(world: _
     assert len(writes) == 1
     assert "Revision feedback from owner owner for stage needs_success_condition" in writes[0].text
     assert "  Preserve this exact feedback.  " in writes[0].text
-    # Guidance moves on its own and the worker reads it off the Ticket, so a rejection
-    # carries only the feedback that explains the rejection.
-    assert "Mutable guidance changed independently." not in writes[0].text
+    # A rejection delivers its own feedback, independently of retired historical data.
+    assert "Historical guidance remains stored." not in writes[0].text
     assert world.pending_revision_feedback(ticket_id) is False
 
 
@@ -875,14 +870,7 @@ def test_the_opener_carries_only_what_the_worker_cannot_get_for_itself(world: _W
     world.start_conversation("conv-opener")
     guidance = "Keep the owner’s boundary.\n\n  Exact whitespace stays.  "
     with world.connect() as conn:
-        tickets_data.edit_ticket(
-            conn,
-            ticket_id,
-            edit=TicketEdit(guidance=guidance),
-            title_max_chars=200,
-            principal=OWNER_PRINCIPAL,
-            now=0,
-        )
+        conn.execute("UPDATE tickets SET guidance = ? WHERE id = ?", (guidance, ticket_id))
     assert world.start_step(ticket_id).started is True
 
     writes = world.conversations.backend_prompt_writes("conv-opener")
@@ -894,8 +882,8 @@ def test_the_opener_carries_only_what_the_worker_cannot_get_for_itself(world: _W
     assert f"Work ticket {ticket_id} — Ship it" in writes[0].text
     assert "propose the 'success_condition' field for approval" in writes[0].text
     assert "Stage owner: worker" in writes[0].text
-    assert f"Read your Ticket first: {READ_YOUR_TICKET_COMMAND}." in writes[0].text
-    # The Ticket is a read the worker makes, so neither of these rides the message.
+    assert "Read your Ticket first: panels worker my-ticket brief." in writes[0].text
+    # The brief is read separately, and historical guidance is no longer a live input.
     assert "Ticket guidance" not in writes[0].text
     assert "Exact whitespace stays" not in writes[0].text
     assert "Ticket brief" not in writes[0].text
@@ -917,6 +905,7 @@ def test_a_wake_after_a_compaction_leads_with_the_memory_loss_notice(world: _Wor
 
     text = world.conversations.backend_prompt_writes("conv-compacted")[0].text
     assert MEMORY_LOSS_NOTICE in text
+    assert "Re-read your Ticket with panels worker my-ticket brief," in text
     assert f"Work ticket {ticket_id} — Ship it" in text
     # It leads: a worker reads why it is confused before it reads what to do.
     assert text.index(MEMORY_LOSS_NOTICE) < text.index("Work ticket")
@@ -950,6 +939,7 @@ def test_a_worker_compacted_part_way_through_a_step_is_told_without_waiting_for_
 
     notice = world.conversations.backend_prompt_writes("conv-mid-step")[1]
     assert MEMORY_LOSS_NOTICE in notice.text
+    assert "Re-read your Ticket with panels worker my-ticket brief," in notice.text
     assert f"part-way through a step on ticket {ticket_id}" in notice.text
     assert notice.mode is PromptDeliveryMode.queue
     # The step keeps its claim: the worker was never sent away, only told.

@@ -1,15 +1,10 @@
-import type {
-  BoardCard,
-  BoardSprintItem,
-  ChiefManagementSettings,
-  WorkAttention,
-  WorkspaceMessageConversation
-} from "./types";
+import type { WorkspaceMessageConversation } from "./types";
+import type { WorkspaceTicket, WorkspaceOrchestrator, WorkspaceChief } from "./workspaceRail";
 import type { WorkItemTicketFacts } from "./workItemPresentation";
 
 /** Count conversations, not rows or messages. An ask without an unread reply adds none. */
 export function workspaceUnreadConversationCount(
-  tickets: readonly (Pick<WorkAttention, "awaiting_reply"> & { conversation_id?: string | null })[]
+  tickets: readonly (Pick<WorkItemTicketFacts, "awaiting_reply"> & { conversation_id?: string | null })[]
 ): number {
   return new Set(tickets.filter((ticket) => ticket.awaiting_reply && ticket.conversation_id)
     .map((ticket) => ticket.conversation_id)).size;
@@ -17,7 +12,7 @@ export function workspaceUnreadConversationCount(
 
 export function workspaceSettledUnreadCount(
   rows: readonly WorkspaceMessageConversation[],
-  items: readonly BoardSprintItem[] = []
+  items: readonly WorkspaceOrchestrator[] = []
 ): number {
   // One conversation can have more than one served reference. Its primary row need
   // not belong to the settled parent, so count membership before discarding aliases.
@@ -36,8 +31,8 @@ export function workspaceSettledUnreadCount(
 /** Retain each parent's real child access before deduplicating within that parent. */
 export function workspaceChildMessageConversations(
   rows: readonly WorkspaceMessageConversation[],
-  parent: Pick<BoardSprintItem, "id" | "title" | "settled"> & {tickets: readonly WorkItemTicketFacts[]},
-  cards: readonly BoardCard[] = []
+  parent: Pick<WorkspaceOrchestrator, "id" | "title" | "settled"> & {tickets: readonly WorkItemTicketFacts[]},
+  cards: readonly WorkspaceTicket[] = []
 ): WorkspaceMessageConversation[] {
   const unread = new Set(rows.map((row) => row.conversationId));
   const byTicket = new Map(cards.map((card) => [card.id,card]));
@@ -64,7 +59,7 @@ export function workspaceChildMessageConversations(
   return [...children.values()];
 }
 
-function ticketParentId(card: BoardCard): string {
+function ticketParentId(card: WorkspaceTicket): string {
   return card.orchestrator?.kind === "chief" ? "chief"
     : card.orchestrator?.kind === "sprint_item" ? card.orchestrator.id
     : card.sprint_item_id ?? "chief";
@@ -72,9 +67,9 @@ function ticketParentId(card: BoardCard): string {
 
 /** Existing durable unread facts form this index; settlement never limits discovery. */
 export function workspaceMessageConversations(
-  cards: readonly BoardCard[],
-  items: readonly BoardSprintItem[],
-  chief?: ChiefManagementSettings | null
+  cards: readonly WorkspaceTicket[],
+  items: readonly WorkspaceOrchestrator[],
+  chief?: WorkspaceChief | null
 ): WorkspaceMessageConversation[] {
   const byItem = new Map(items.map((item) => [item.id, item]));
   const byTicket = new Map(cards.map((card) => [card.id, card]));

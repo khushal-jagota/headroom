@@ -1,13 +1,19 @@
 # ruff: noqa: E501
-"""Independent browser case, extracted without assertion changes."""
+"""Shared browser case with canonical navigation-source coverage."""
 
 
 def run(browser, urls):
+    import runpy
+    from pathlib import Path
 
+    fixture = runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
+    )
+    navigation_response = fixture["navigation_response"]
     import json
     import os
     import pathlib
-    from urllib.parse import parse_qs, urlparse
+    from urllib.parse import urlparse
 
     from playwright.sync_api import expect
 
@@ -42,55 +48,39 @@ def run(browser, urls):
     fail_backlog = False
 
     def respond(route):
-        query = parse_qs(urlparse(route.request.url).query)
-        requests.append(query)
-        assert query["orchestrator_kind"] == ["chief"]
-        assert query["limit"] == ["30"]
-        section = (
-            "done"
-            if query.get("stage") == ["done"]
-            else "backlogged"
-            if query.get("is_backlogged") == ["true"]
-            else "active"
-        )
-        if section == "active":
-            assert query["is_backlogged"] == ["false"]
-        if section == "done":
-            assert query["include_terminal"] == ["true"]
-        if section == "backlogged" and fail_backlog:
-            route.fulfill(status=500, body="Backlog unavailable")
+        path = urlparse(route.request.url).path
+        requests.append(path)
+        assert path == "/api/navigation/snapshot", "competing summary request: " + path
+        if fail_backlog:
+            route.fulfill(status=503, body="Canonical navigation unavailable")
             return
-        offset = int(query["offset"][0])
-        total = totals[section]
         rows = [
             child(
                 f"{section}-{i}",
                 "done" if section == "done" else "needs_implementation",
                 section != "active",
+                created_at=i,
+                activity_at=100 - i,
             )
-            for i in range(offset, min(offset + 30, total))
+            for section, total in totals.items()
+            for i in range(total)
         ]
-        after = max(0, total - offset - len(rows))
-        page = dict(
-            match_count=total,
-            return_count=len(rows),
-            limit=30,
-            offset=offset,
-            omitted_before=min(offset, total),
-            omitted_after=after,
-            complete=offset == 0 and after == 0,
-            next_offset=offset + len(rows) if after else None,
-        )
+        board = {"columns": [{"cards": list(reversed(rows))}], "sprint_items": []}
+        workers = {
+            "chief_of_staff": {"label": "Chief of Staff", "conversation_id": None},
+            "workers": [],
+        }
         route.fulfill(
             status=200,
             content_type="application/json",
-            body=json.dumps(dict(tickets=rows, page=page)),
+            body=json.dumps(navigation_response(board, workers)),
         )
 
     page = browser.new_page(viewport=dict(width=1100, height=900))
-    page.route("**/api/tickets?**", respond)
+    page.route("**/api/**", respond)
     page.goto([__file__, *urls][1])
     active = page.locator('[data-worker-section="active"]')
+
     backlog = page.locator('[data-workspace-group="backlog"]')
     done = page.locator('[data-workspace-group="done"]')
     expect(active.get_by_role("link", name="active-0", exact=True)).to_be_visible()
@@ -108,6 +98,7 @@ def run(browser, urls):
     expect(done.get_by_role("link", name="done-0", exact=True)).to_be_visible()
     done.get_by_role("button", name="Next", exact=True).click()
     expect(done.get_by_role("link", name="done-30", exact=True)).to_be_visible()
+    assert len(requests) == 1, "independent local pages must not request another summary"
     totals.update(active=1, backlogged=0, done=1)
     page.evaluate("window.__refresh()")
     expect(active.get_by_role("link", name="active-0", exact=True)).to_be_visible()
@@ -115,14 +106,15 @@ def run(browser, urls):
     expect(done.get_by_role("link", name="done-0", exact=True)).to_be_visible()
     expect(active.get_by_role("button", name="Previous", exact=True)).to_have_count(0)
     expect(backlog.get_by_role("button", name="Previous", exact=True)).to_have_count(0)
-    # Failed section reads retain independent errors without hiding other sections.
     fail_backlog = True
-    page.evaluate("window.__refresh()")
-    expect(backlog.locator(".error-line")).to_be_visible()
+    page.evaluate("window.__navigation.owner.recover().catch(()=>undefined)")
+    expect(active.locator(".error-line")).to_be_visible()
     expect(active.get_by_role("link", name="active-0", exact=True)).to_be_visible()
     expect(done.get_by_role("link", name="done-0", exact=True)).to_be_visible()
     backlog.locator(":scope > summary").click()
-    page.evaluate("window.__refresh()")
+    fail_backlog = False
+    page.evaluate("window.__navigation.owner.recover().catch(()=>undefined)")
+    expect(active.locator(".error-line")).to_have_count(0)
     assert not backlog.evaluate("n=>n.open")
     source = [
         child("item-quiet"),
@@ -143,6 +135,7 @@ def run(browser, urls):
         ),
         child("Completed workspace history", "done", True, awaiting_approval=True),
     ]
+
     count = len(requests)
     page.evaluate("rows => window.__setItem(rows)", source)
     expect(page.get_by_role("link", name="item-quiet", exact=True)).to_have_attribute(
@@ -199,5 +192,13 @@ def run(browser, urls):
         0
     )
     assert len(requests) == count
-    pass  # Shared runner owns the browser lifecycle.
+    captured = page.evaluate(
+        "window.__navigation.captureRenderBoundaries().map(observer=>observer.id)"
+    )
+    assert len(captured) == 3
+    assert len(set(captured)) == 3
+    page.evaluate("window.__unmount()")
+    page.wait_for_function("window.__navigation.captureRenderBoundaries().length===0")
+    assert page.evaluate("window.__navigation.owner.getState().connection==='subscribed'")
+    pass
     print("Scoped child browser checks passed")

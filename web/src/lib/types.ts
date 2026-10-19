@@ -320,7 +320,6 @@ export type TicketDetail = {
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
   recap?: string | null;
-  guidance: string;
   field_values: TicketFieldValues;
   pending_proposal: PendingTicketProposal | null;
   awaiting_reply?: boolean;
@@ -454,6 +453,11 @@ export type ReviewProposalItem = {
   waiting_since: number;
 };
 
+export type NavigationReviewItem = ReviewProposalItem & {
+  proposal_field: string;
+  proposal_revision: number;
+};
+
 export type ReviewItem = ReviewProposalItem;
 
 export type ReviewResponse = {
@@ -572,7 +576,7 @@ export type NotificationSettingsResponse = {
 
 // One row names one durable unread conversation, independent of settlement.
 export type WorkspaceMessageConversation = {
-  conversationSignal?: ConversationSignal;
+  conversationSignal?: Partial<ConversationSignal>;
   kind: "chief" | "sprint_item" | "ticket";
   id: string;
   title: string;
@@ -581,3 +585,6 @@ export type WorkspaceMessageConversation = {
   parentTitle: string | null;
   settled: boolean;
 };
+
+/** Exact detail-only reply, independent of shared navigation facts. */
+export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "body" | "artifacts" | "conversation_history">;

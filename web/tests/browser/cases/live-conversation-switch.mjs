@@ -15,6 +15,18 @@ const indexPath = join(scratchRoot, `live-switch-index-${process.pid}.html`);
     hostPath,
     String.raw`<script lang="ts">
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
+  import { provideNavigationApplication, navigationApplication } from "../src/lib/navigation/application.svelte";
+
+  const navigation = provideNavigationApplication();
+  (window as any).__navigation = navigation;
+  (window as any).__sameNavigation = navigationApplication() === navigation;
+  (window as any).__beforeRecover = [];
+  const recover = navigation.owner.recover;
+  navigation.owner.recover = () => {
+    (window as any).__beforeRecover.push(Object.fromEntries(['conversation-a','conversation-b'].map(id =>
+      [id,navigation.state.effective?.conversations.get(id)?.message_for_owner])));
+    return recover();
+  };
 
   let conversationId = $state("conversation-a");
   let conversationState = $state<"rest" | "peeked" | "opened">("opened");
@@ -43,7 +55,13 @@ const indexPath = join(scratchRoot, `live-switch-index-${process.pid}.html`);
   );
   await writeFile(
     mainPath,
-    String.raw`const snapshots: Record<string, any> = Object.fromEntries(
+    String.raw`import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from "../src/lib/navigation/contracts";
+import { encodeCursor } from "../src/lib/navigation/validation";
+import { authority, conversation } from "../tests/support/navigation/fixtures";
+(globalThis as any).__navigationSnapshots = 0;
+(globalThis as any).__navigationStreams = 0;
+(globalThis as any).__closedNavigationStreams = 0;
+const snapshots: Record<string, any> = Object.fromEntries(
   ["conversation-a", "conversation-b"].map((conversationId) => [conversationId, {
     conversation_id: conversationId,
     backend_key: "codex",
@@ -92,11 +110,30 @@ let delayNextASnapshot = false;
 let delayedASnapshotRequested = false;
 let releaseDelayedASnapshot: (() => void) | null = null;
 const recordedBRows: unknown[] = [];
+const navigationBoundaries: Record<string,number> = {'conversation-a':0,'conversation-b':0};
+(globalThis as any).__navigationBoundaries=navigationBoundaries;
+let holdNavigation = false;
+let releaseNavigation: (()=>void) | undefined;
+(globalThis as any).__holdNextNavigation = () => {holdNavigation=true;};
+(globalThis as any).__releaseNavigation = () => releaseNavigation?.();
+
 (globalThis as any).__delayNextASnapshot = () => (delayNextASnapshot = true);
 (globalThis as any).__delayedASnapshotRequested = () => delayedASnapshotRequested;
 (globalThis as any).__releaseDelayedASnapshot = () => releaseDelayedASnapshot?.();
 (globalThis as any).fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
+  if (url === "/api/navigation/snapshot") {
+    (globalThis as any).__navigationSnapshots += 1;
+    if (holdNavigation) {
+      holdNavigation=false;
+      await new Promise<void>(resolve=>releaseNavigation=resolve);
+      releaseNavigation=undefined;
+    }
+    const continuity = {scope: "workspace", schema_version: SCHEMA_VERSION,
+      semantics: SUPPORTED_SEMANTICS, epoch: "read-fixture", revision: String((globalThis as any).__navigationSnapshots)};
+    return Response.json({wire_version: 2, mode: 'current', authority: authority(), cursor: encodeCursor(continuity),
+      snapshot: {...continuity, records: [conversation("conversation-a",navigationBoundaries["conversation-a"]),conversation("conversation-b",navigationBoundaries["conversation-b"])]}, proof: null});
+  }
   const ownerReadMatch = url.match(/conversations\/(conversation-[ab])\/owner-read$/);
   if (ownerReadMatch) {
     const body = JSON.parse(String(init?.body));
@@ -144,7 +181,10 @@ class FakeEventSource {
   static sources = new Map<string, FakeEventSource>();
   listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
 
+  navigation: boolean;
   constructor(url: string) {
+    this.navigation = url.startsWith("/api/navigation/events?");
+    if (this.navigation) (globalThis as any).__navigationStreams += 1;
     const conversationId = url.match(/conversations\/(conversation-[ab])\/tail/)?.[1];
     if (conversationId) FakeEventSource.sources.set(conversationId, this);
   }
@@ -161,7 +201,9 @@ class FakeEventSource {
 
   // Deliberately keep queued callbacks callable after close. This models a browser event
   // that was already dispatched when the pane switched conversations.
-  close(): void {}
+  close(): void {
+    if (this.navigation) (globalThis as any).__closedNavigationStreams += 1;
+  }
 }
 
 (globalThis as any).EventSource = FakeEventSource;
@@ -179,9 +221,10 @@ async function start(): Promise<void> {
     (globalThis as any).__readRefreshes += 1;
     return invalidate(...args);
   };
-  const { mount } = await import("svelte");
+  const { mount, unmount } = await import("svelte");
   const { default: Host } = await import("./${hostPath.split("/").at(-1)}");
-  mount(Host, { target: document.getElementById("app")! });
+  const host = mount(Host, { target: document.getElementById("app")! });
+  (globalThis as any).__unmountHost = () => unmount(host);
 }
 void start();
 `,
@@ -194,7 +237,6 @@ void start();
       .at(-1)}"></script></body></html>`,
     "utf8"
   );
-
 
   return {inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./live-conversation-switch.py", import.meta.url))};
 }

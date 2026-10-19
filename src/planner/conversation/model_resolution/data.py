@@ -70,7 +70,7 @@ class ModelResolutionStore:
                 for value in models
             )
         )
-        with closing(connect(self._db_path, self._busy_timeout_ms)) as conn, conn:
+        with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
             conn.execute("BEGIN IMMEDIATE")
             stored_resolutions = [
                 tuple(row)

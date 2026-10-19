@@ -298,6 +298,7 @@
 <div
   class="chat-panel"
   data-conversation-pane
+  data-conversation-id={conversationId}
   data-conversation-read-only={readOnly ? "true" : undefined}
   data-conversation-read-only-boundary={readOnly ? "true" : undefined}
   data-conversation-state={conversationState}

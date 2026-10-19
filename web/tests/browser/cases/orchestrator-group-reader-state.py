@@ -4,6 +4,12 @@
 
 def run(browser, urls):
 
+    import runpy
+    from pathlib import Path
+
+    navigation_response = runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
+    )["navigation_response"]
     import json
     import os
     import pathlib
@@ -124,12 +130,21 @@ def run(browser, urls):
 
     def mirror_reads(route):
         path = urlsplit(route.request.url).path
-        if path == "/api/board":
-            result = board_payload()
-        elif path.endswith("/workspace"):
-            result = workspace_payload()
+        if path == "/api/navigation/snapshot":
+            result = navigation_response(
+                board_payload(),
+                {
+                    "chief_of_staff": {"label": "Chief of Staff", "conversation_id": None},
+                    "workers": [],
+                },
+            )
+        elif path == "/api/board":
+            raise AssertionError("competing Board summary read")
+        elif path.endswith("/workspace-content"):
+            payload = workspace_payload()
+            result = {key: payload[key] for key in ("body", "artifacts", "conversation_history")}
         elif path == "/api/workers":
-            result = {"chief_of_staff": {"label": "Chief of Staff"}, "workers": []}
+            raise AssertionError("competing Item worker roster request")
         elif path == "/api/backends":
             result = {"backends": []}
         elif path.endswith("/start-values"):

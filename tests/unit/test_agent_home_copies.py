@@ -45,33 +45,12 @@ def test_copied_script_reports_its_invalid_default_root(tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
-def test_real_provider_sites_accept_current_and_credential_only_repair() -> None:
-    permissions = "tests/integration/test_conversation_real_provider_permissions.py"
-    steering = "tests/integration/test_conversation_real_provider_steering.py"
-    first = inspect_source((ROOT / permissions).read_text(), permissions)
-    source = (ROOT / steering).read_text()
-    second = inspect_source(source, steering)
-    dismissals = [item for item in first + second if item.classification == "dismissal"]
-    accusations = [item for item in first + second if item.classification == "accusation"]
-    assert len(dismissals) == 2
-    assert len(accusations) <= 1
-    for finding in first + second:
-        actual_line = (ROOT / finding.path).read_text().splitlines()[finding.line - 1]
-        assert "shutil.copy2(" in actual_line
-    if accusations:
-        assert accusations[0].files == (".credentials.json",)
-        # Simulate the approved repair: only credentials become a link.
-        source = source.replace(
-            "            shutil.copy2(candidate, destination / name)",
-            '            if name == ".credentials.json":\n'
-            "                (destination / name).symlink_to(candidate)\n"
-            "            else:\n"
-            "                shutil.copy2(candidate, destination / name)",
-        )
-    assert [item.classification for item in first + inspect_source(source)] == [
-        "dismissal",
-        "dismissal",
-    ]
+def test_real_provider_sites_have_no_home_copy_findings() -> None:
+    for path in (
+        "tests/integration/test_conversation_real_provider_permissions.py",
+        "tests/integration/test_conversation_real_provider_steering.py",
+    ):
+        assert inspect_source((ROOT / path).read_text(), path) == []
 
 
 def test_prefixed_credential_copy_proof_and_credential_only_repair() -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,7 @@ from planner.worker_types.configuration import configured_worker_type_registry
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "worker-types.db"
-    with connect(str(db_path)) as boot:
+    with closing(connect(str(db_path))) as boot:
         create_schema(boot)
         seed_test_model_catalogue(boot)
     config = load_config(

@@ -1,9 +1,12 @@
 <script lang="ts">
-  import type { OrchestratorPrincipal, OrchestratorChildFilter, SprintItemWorkspaceTicket } from "../lib/types";
+  import type { OrchestratorPrincipal, OrchestratorChildFilter } from "../lib/types";
+  import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import OrchestratorChildrenSection from "./OrchestratorChildrenSection.svelte";
-  let { principal, tickets, onHover = undefined, onLeave = () => undefined }: {
+  let { principal, tickets, publication, navigationErrorHandledByParent = false, onHover = undefined, onLeave = () => undefined }: {
     principal: OrchestratorPrincipal;
-    tickets?: readonly SprintItemWorkspaceTicket[];
+    tickets?: readonly (WorkItemTicketFacts & {is_backlogged:boolean})[];
+    publication?: import("../lib/navigation/collection").NavigationPublication;
+    navigationErrorHandledByParent?: boolean;
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave?: () => void;
   } = $props();
@@ -14,7 +17,7 @@
 <section class="orchestrator-children" aria-label="Workers" data-orchestrator-children={scope}>
   {#key scope}
     {#each sections as filter}
-      <OrchestratorChildrenSection {principal} {tickets} {filter} {onHover} {onLeave} />
+      <OrchestratorChildrenSection {principal} {tickets} {publication} {navigationErrorHandledByParent} {filter} {onHover} {onLeave} />
     {/each}
   {/key}
 </section>

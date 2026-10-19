@@ -64,6 +64,35 @@ def test_claude_observer_rejects_production_bypass_mode(monkeypatch: pytest.Monk
     assert observations == [{"cli_permission_mode": "bypassPermissions"}]
 
 
+def test_claude_catalogue_command_is_unchanged_and_cannot_certify_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options = ClaudeAgentOptions(cli_path="/unused/native-claude", max_turns=1)
+    transport = SubprocessCLITransport(prompt="", options=options)
+    expected = transport._build_command()
+    observations: list[dict[str, Any]] = []
+    install_permission_mapping(monkeypatch, ConversationBackendKey.claude, observations)
+    assert transport._build_command() == expected
+    assert "--permission-mode" not in expected
+    assert observations == []
+    with pytest.raises(AssertionError, match="no effective native configuration"):
+        assert_native_configuration(ConversationBackendKey.claude, observations)
+
+    # Actual conversation options include can_use_tool. A missing flag must still fail.
+    async def can_use_tool(*args: Any, **kwargs: Any) -> Any:
+        return None
+
+    options.can_use_tool = can_use_tool
+    with pytest.raises(ValueError, match="permission-mode"):
+        transport._build_command()
+    assert observations == []
+    options.permission_mode = "default"
+    command = transport._build_command()
+    assert command[command.index("--permission-mode") + 1] == "default"
+    assert "--dangerously-skip-permissions" not in command
+    assert_native_configuration(ConversationBackendKey.claude, observations)
+
+
 def test_hermes_observer_rejects_production_dont_ask_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     observations: list[dict[str, Any]] = []
     install_permission_mapping(monkeypatch, ConversationBackendKey.hermes, observations)

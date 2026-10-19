@@ -86,9 +86,12 @@ async function page(name, markup) {
     `<script lang="ts">
 import { QueryClient, QueryClientProvider } from '@tanstack/svelte-query';
 import TicketRoute from '../src/routes/TicketRoute.svelte';
+import { provideNavigationApplication } from '../src/lib/navigation/application.svelte';
+const navigation=provideNavigationApplication();
+globalThis.EventSource=class extends EventTarget {onerror=null;close(){}} as typeof EventSource;
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 // What the change stream does when the server says something changed.
-(window as any).__refresh = () => client.invalidateQueries();
+(window as any).__refresh = () => Promise.all([client.invalidateQueries(),navigation.owner.recover()]);
 </script>
 <QueryClientProvider {client}><TicketRoute id="t_open" /></QueryClientProvider>`
   );
@@ -125,7 +128,6 @@ const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }
 </script>
 <QueryClientProvider client={queryClient}><SprintRoute sub="documents" sprintId="sp_open" /></QueryClientProvider>`
   );
-
 
   return {inputs: [join(root, conversation), join(root, ticket), join(root, sprint)], arguments: [join(root, conversation), join(root, ticket), join(root, sprint)], python: fileURLToPath(new URL("./open-stays-open.py", import.meta.url))};
 }

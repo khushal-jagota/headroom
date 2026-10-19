@@ -11,7 +11,7 @@ from planner.worker_types.contracts import RETIRED_WORKER_TYPES, WorkerTypeDefin
 REVISION_GUIDANCE_MAX_CHARACTERS: Final = 10_000
 
 # The TicketEdit keys that only somebody standing above the Ticket may set. A Worker
-# drives its own Ticket's deadline, recap and guidance, so those are the
+# drives its own Ticket's deadline and recap, so those are the
 # Ticket's own record and are absent here. These are not: renaming a Ticket, moving it
 # between projects or sprints, rewriting a settled field, re-addressing a parked
 # proposal, and above all raising its own ceiling. A ceiling is a Ticket's leash, and a

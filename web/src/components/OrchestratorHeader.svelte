@@ -10,7 +10,7 @@
     eyebrow?: Snippet;
     recap?: string;
     onSaveRecap?: (value: string) => Promise<unknown>;
-    signal?: ConversationSignal;
+    signal?: Partial<ConversationSignal>;
     conversationId?: string | null;
   } = $props();
 </script>

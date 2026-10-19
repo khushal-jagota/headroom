@@ -983,8 +983,6 @@ async def patch_ticket(
         "project_id",
         "orchestrator",
         "recap",
-        "guidance",
-        "guidance_append",
         "field_values",
         "ceiling",
         "ceiling_holder",
@@ -994,10 +992,6 @@ async def patch_ticket(
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
-    if "guidance" in body and "guidance_append" in body:
-        raise PlannerError(
-            ErrorCode.validation, "guidance is either replaced or appended to, not both", {}
-        )
     # The floor: a stranger is refused here, before any of this body is looked at. Which
     # of these fields need a caller above the Ticket rather than the Ticket itself is
     # edit_ticket's question, asked once, where the write happens.
@@ -1020,10 +1014,6 @@ async def patch_ticket(
         edit["orchestrator"] = _parse_orchestrator(body["orchestrator"])
     if "recap" in body:
         edit["recap"] = body_str(body, "recap")
-    if "guidance" in body:
-        edit["guidance"] = body_str(body, "guidance")
-    if "guidance_append" in body:
-        edit["guidance_append"] = body_str(body, "guidance_append")
     if "ceiling" in body:
         edit["ceiling"] = body_str(body, "ceiling")
     if "ceiling_holder" in body:

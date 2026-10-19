@@ -1,29 +1,29 @@
 # ruff: noqa: E501
-"""Independent browser case, extracted without assertion changes."""
+"""Shared browser case with canonical navigation-source coverage."""
 
 
 def run(browser, urls):
-
     page = browser.new_page(viewport={"width": 900, "height": 700})
-    page.set_default_timeout(5_000)
+    page.set_default_timeout(5000)
     page.goto([__file__, *urls][1], wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
+    page.wait_for_function("window.__navigation?.state.connection === 'subscribed'")
+    assert page.evaluate("window.__sameNavigation") is True
+    assert page.evaluate("window.__navigationSnapshots") == 1
+    assert page.evaluate("window.__navigationStreams") == 1
     full_choice = page.locator('[data-conversation-lens-choice="full"]')
     focus_choice_first = page.locator('[data-conversation-lens-choice="focus"]')
     assert focus_choice_first.get_attribute("aria-pressed") == "true"
     full_choice.click()
     assert full_choice.get_attribute("aria-pressed") == "true"
     assert focus_choice_first.get_attribute("aria-pressed") == "false"
-    # The pair is one control: the keyboard still moves it back and forth.
     page.keyboard.press("f")
     assert focus_choice_first.get_attribute("aria-pressed") == "true"
     page.keyboard.press("f")
     assert full_choice.get_attribute("aria-pressed") == "true"
-
     page.evaluate("window.__switchConversation('conversation-b')")
     page.wait_for_function("window.__tailExists?.('conversation-b')")
     assert full_choice.get_attribute("aria-pressed") == "true"
-
     page.locator('[aria-label="Conversation options"]').click()
     page.locator("[data-conversation-new-arm]").click()
     page.locator("[data-conversation-new-confirm]").click()
@@ -34,30 +34,16 @@ def run(browser, urls):
     focus_choice = page.locator('[data-conversation-lens-choice="focus"]')
     focus_choice.click()
     assert focus_choice.get_attribute("aria-pressed") == "true"
-
-    page.evaluate("""window.__emitConversationRow('conversation-a', {
-      conversation_id: 'conversation-a',
-      sequence: 9,
-      kind: 'prompt',
-      payload: { text: 'stale A row', sender_label: 'owner', mode: 'queue' },
-      created_at: 9
-    })""")
+    page.evaluate(
+        "window.__emitConversationRow('conversation-a', {\n      conversation_id: 'conversation-a',\n      sequence: 9,\n      kind: 'prompt',\n      payload: { text: 'stale A row', sender_label: 'owner', mode: 'queue' },\n      created_at: 9\n    })"
+    )
     page.wait_for_timeout(100)
     assert page.get_by_text("stale A row", exact=True).count() == 0
     assert page.evaluate("window.__ownerReads") == []
-
-    page.evaluate("""window.__emitConversationRow('conversation-b', {
-      conversation_id: 'conversation-b',
-      sequence: 4,
-      kind: 'message_to_owner',
-      payload: {
-        text: 'current B reply',
-        sender_label: 'Ticket B',
-        sender: { kind: 'ticket', id: 'b' },
-        recipient: { kind: 'owner', id: 'owner' }
-      },
-      created_at: 10
-    })""")
+    assert page.evaluate("window.__navigationSnapshots") == 1
+    page.evaluate(
+        "window.__emitConversationRow('conversation-b', {\n      conversation_id: 'conversation-b',\n      sequence: 4,\n      kind: 'message_to_owner',\n      payload: {\n        text: 'current B reply',\n        sender_label: 'Ticket B',\n        sender: { kind: 'ticket', id: 'b' },\n        recipient: { kind: 'owner', id: 'owner' }\n      },\n      created_at: 10\n    })"
+    )
     page.get_by_text("current B reply", exact=True).wait_for()
     page.wait_for_function("window.__ownerReads.length === 1")
     assert page.evaluate("window.__ownerReads") == [
@@ -65,27 +51,15 @@ def run(browser, urls):
     ]
     full_choice.click()
     assert full_choice.get_attribute("aria-pressed") == "true"
-    page.evaluate("""window.__emitConversationRow('conversation-b', {
-      conversation_id: 'conversation-b',
-      sequence: 5,
-      kind: 'message_to_owner',
-      payload: {
-        text: 'current B full reply',
-        sender_label: 'Ticket B',
-        sender: { kind: 'ticket', id: 'b' },
-        recipient: { kind: 'owner', id: 'owner' }
-      },
-      created_at: 11
-    })""")
+    page.evaluate(
+        "window.__emitConversationRow('conversation-b', {\n      conversation_id: 'conversation-b',\n      sequence: 5,\n      kind: 'message_to_owner',\n      payload: {\n        text: 'current B full reply',\n        sender_label: 'Ticket B',\n        sender: { kind: 'ticket', id: 'b' },\n        recipient: { kind: 'owner', id: 'owner' }\n      },\n      created_at: 11\n    })"
+    )
     page.get_by_text("current B full reply", exact=True).wait_for()
     page.wait_for_function("window.__ownerReads.length === 2")
     assert page.evaluate("window.__ownerReads") == [
         {"conversationId": "conversation-b", "sequence": 4},
         {"conversationId": "conversation-b", "sequence": 5},
     ]
-
-    # A delayed snapshot also loses authority when B opens before it returns. Without
-    # the post-await guard, A creates a new stream and replaces B's active feed.
     page.evaluate("window.__delayNextASnapshot()")
     page.evaluate("window.__switchConversation('conversation-a')")
     page.wait_for_function("window.__delayedASnapshotRequested()")
@@ -100,16 +74,9 @@ def run(browser, urls):
         {"conversationId": "conversation-b", "sequence": 5},
     ]
 
-    # Snapshot latest_sequence is ahead of delivered rows at startup; it never grants
-    # read credit. Rest, focus loss and hidden documents likewise cannot grant credit.
     def emit_message(sequence):
         page.evaluate(
-            """sequence => window.__emitConversationRow('conversation-b', {
-          conversation_id: 'conversation-b', sequence, kind: 'message_to_owner',
-          payload: { text: 'B message ' + sequence, sender_label: 'Ticket B',
-            sender: {kind: 'ticket', id: 'b'}, recipient: {kind: 'owner', id: 'owner'} },
-          created_at: sequence
-        })""",
+            "sequence => window.__emitConversationRow('conversation-b', {\n          conversation_id: 'conversation-b', sequence, kind: 'message_to_owner',\n          payload: { text: 'B message ' + sequence, sender_label: 'Ticket B',\n            sender: {kind: 'ticket', id: 'b'}, recipient: {kind: 'owner', id: 'owner'} },\n          created_at: sequence\n        })",
             sequence,
         )
 
@@ -121,7 +88,6 @@ def run(browser, urls):
     page.evaluate("window.__setConversationState('peeked')")
     page.wait_for_function("window.__ownerReads.length === 3")
     assert page.evaluate("window.__ownerReads.at(-1).sequence") == 6
-
     for focused, visible, sequence in [(False, True, 7), (True, False, 8)]:
         page.evaluate("([f,v]) => window.__setAttention(f,v)", [focused, visible])
         emit_message(sequence)
@@ -131,9 +97,6 @@ def run(browser, urls):
         page.wait_for_function(
             "sequence => window.__ownerReads.at(-1).sequence === sequence", arg=sequence
         )
-
-    # A response acknowledging one delivered position must not consume a newer
-    # message that arrives after the owner closes the transcript.
     page.evaluate("window.__delayNextRead()")
     emit_message(9)
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 9")
@@ -145,21 +108,15 @@ def run(browser, urls):
     assert page.evaluate("window.__ownerReads.at(-1).sequence") == 9
     page.evaluate("window.__setConversationState('opened')")
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 10")
-
     page.wait_for_function("window.__readRefreshes === 7")
+    page.wait_for_function("window.__navigationSnapshots === 8")
 
     def emit_tool(sequence):
         page.evaluate(
-            """sequence => window.__emitConversationRow('conversation-b', {
-          conversation_id: 'conversation-b', sequence, kind: 'tool_call_started',
-          payload: { tool_call_id: 'tool-' + sequence, title: 'Tool ' + sequence,
-            tool_kind: 'read', detail: null }, created_at: sequence
-        })""",
+            "sequence => window.__emitConversationRow('conversation-b', {\n          conversation_id: 'conversation-b', sequence, kind: 'tool_call_started',\n          payload: { tool_call_id: 'tool-' + sequence, title: 'Tool ' + sequence,\n            tool_kind: 'read', detail: null }, created_at: sequence\n        })",
             sequence,
         )
 
-    # A newer acknowledgment can cover the same message first. The late older response
-    # neither repeats invalidation nor moves the accepted position backward.
     page.evaluate("window.__holdRead(11); window.__holdRead(12)")
     emit_message(11)
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 11")
@@ -167,8 +124,10 @@ def run(browser, urls):
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 12")
     assert page.evaluate("window.__readRefreshes") == 7
     page.evaluate("window.__finishRead(12)")
+    page.wait_for_function("window.__navigationSnapshots === 9")
     page.wait_for_function("window.__readRefreshes === 8")
     page.evaluate("window.__finishRead(11)")
+    page.wait_for_function("window.__navigationSnapshots === 10")
     page.wait_for_timeout(100)
     assert page.evaluate("window.__readRefreshes") == 8
     assert page.evaluate("window.__ownerReads.filter(r => r.sequence === 12).length") == 1
@@ -176,9 +135,7 @@ def run(browser, urls):
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 13")
     page.wait_for_timeout(100)
     assert page.evaluate("window.__readRefreshes") == 8
-
-    # A failed earlier request must not suppress refresh when the overlapping request
-    # succeeds, or erase that newer request's pending marker.
+    page.wait_for_function("window.__navigationSnapshots === 11")
     page.evaluate("window.__holdRead(14); window.__holdRead(15)")
     emit_message(14)
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 14")
@@ -187,14 +144,13 @@ def run(browser, urls):
     page.evaluate("window.__finishRead(14, false)")
     page.wait_for_timeout(100)
     assert page.evaluate("window.__readRefreshes") == 8
+    assert page.evaluate("window.__navigationSnapshots") == 11
     page.evaluate("window.__setAttention(true,true)")
     page.wait_for_timeout(100)
     assert page.evaluate("window.__ownerReads.filter(r => r.sequence === 15).length") == 1
     page.evaluate("window.__finishRead(15)")
     page.wait_for_function("window.__readRefreshes === 9")
-
-    # A successful response still refreshes canonical mounted queries after switching.
-    # It does not write B's watermark into A or assume a reply-required dot cleared.
+    page.wait_for_function("window.__navigationSnapshots === 12")
     page.evaluate("window.__holdRead(16)")
     emit_message(16)
     page.wait_for_function("window.__ownerReads.at(-1).sequence === 16")
@@ -202,20 +158,76 @@ def run(browser, urls):
     page.wait_for_timeout(100)
     page.evaluate("window.__finishRead(16)")
     page.wait_for_function("window.__readRefreshes === 10")
-    page.evaluate("""window.__emitConversationRow('conversation-a', {
-      conversation_id: 'conversation-a', sequence: 1, kind: 'message_to_owner',
-      payload: {text: 'A first message', sender_label: 'Ticket A',
-        sender: {kind: 'ticket', id: 'a'}, recipient: {kind: 'owner', id: 'owner'}},
-      created_at: 1
-    })""")
+    page.wait_for_function("window.__navigationSnapshots === 13")
+    page.evaluate(
+        "window.__emitConversationRow('conversation-a', {\n      conversation_id: 'conversation-a', sequence: 1, kind: 'message_to_owner',\n      payload: {text: 'A first message', sender_label: 'Ticket A',\n        sender: {kind: 'ticket', id: 'a'}, recipient: {kind: 'owner', id: 'owner'}},\n      created_at: 1\n    })"
+    )
     page.wait_for_function(
         "window.__ownerReads.at(-1).conversationId === 'conversation-a' && window.__ownerReads.at(-1).sequence === 1"
     )
     page.wait_for_function("window.__readRefreshes === 11")
-
+    page.wait_for_function("window.__navigationSnapshots === 14")
+    assert page.evaluate("window.__navigationStreams - window.__closedNavigationStreams") == 1
+    page.evaluate(
+        "Object.assign(window.__navigationBoundaries, {'conversation-a':1,'conversation-b':16})"
+    )
+    page.evaluate("window.__navigation.owner.recover()")
+    page.wait_for_function(
+        "window.__navigation.state.effective.conversations.get('conversation-b').message_for_owner.state === 'fresh'"
+    )
+    page.evaluate("window.__switchConversation('conversation-a')")
+    page.wait_for_function("window.__tailExists('conversation-a')")
+    page.evaluate("window.__holdRead(17); window.__holdRead(18)")
+    for sequence in [17, 18]:
+        page.evaluate(
+            "sequence => window.__emitConversationRow('conversation-a', {\n          conversation_id:'conversation-a',sequence,kind:'message_to_owner',\n          payload:{text:'A delayed read '+sequence,sender_label:'Ticket A',sender:{kind:'ticket',id:'a'},recipient:{kind:'owner',id:'owner'}},created_at:sequence})",
+            sequence,
+        )
+        page.wait_for_function(
+            "sequence => window.__ownerReads.some(read=>read.conversationId==='conversation-a' && read.sequence===sequence)",
+            arg=sequence,
+        )
+    page.evaluate("window.__switchConversation('conversation-b')")
+    page.wait_for_function("window.__tailExists('conversation-b')")
+    page.evaluate(
+        "window.__navigationBoundaries['conversation-a']=17; window.__holdNextNavigation(); window.__finishRead(18)"
+    )
+    page.wait_for_function("window.__beforeRecover.at(-1)['conversation-a'].state==='unknown'")
+    before_recovery = page.evaluate("window.__beforeRecover.at(-1)")
+    assert before_recovery["conversation-a"]["state"] == "unknown"
+    assert before_recovery["conversation-b"]["state"] == "fresh"
+    page.evaluate("window.__releaseNavigation()")
+    page.wait_for_function("window.__navigation.state.connection==='subscribed'")
+    assert (
+        page.evaluate(
+            "window.__navigation.state.effective.conversations.get('conversation-a').message_for_owner.state"
+        )
+        == "unknown"
+    )
+    refreshes = page.evaluate("window.__readRefreshes")
+    previous_snapshots = page.evaluate("window.__navigationSnapshots")
+    page.evaluate("window.__finishRead(17)")
+    page.wait_for_function("count=>window.__navigationSnapshots>count", arg=previous_snapshots)
+    page.wait_for_function("window.__navigation.state.connection==='subscribed'")
+    assert (
+        page.evaluate(
+            "window.__navigation.state.effective.conversations.get('conversation-a').message_for_owner.state"
+        )
+        == "unknown"
+    )
+    assert page.evaluate("window.__readRefreshes") == refreshes
+    page.evaluate(
+        "window.__navigationBoundaries['conversation-a']=18; window.__navigation.owner.recover()"
+    )
+    restored = page.evaluate(
+        "window.__navigation.state.effective.conversations.get('conversation-a').message_for_owner"
+    )
+    assert restored["state"] == "fresh" and restored["provenance"]["boundary"] == 18
+    page.evaluate("window.__unmountHost()")
+    assert page.evaluate("window.__navigation.state.connection") == "disposed"
+    assert page.evaluate("window.__navigationStreams - window.__closedNavigationStreams") == 0
     page.reload(wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
     assert full_choice.get_attribute("aria-pressed") == "true"
-    pass  # Shared runner owns the browser lifecycle.
-
+    pass
     print("live-conversation-switch-browser.test.mjs: all assertions passed")

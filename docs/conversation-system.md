@@ -19,6 +19,53 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Durable lifecycle facts
+
+The notebook keeps completed receipts. A separate conversation-owned source keeps
+version 1 facts about turns, external attempts, and requests. These facts contain
+identities and outcomes, without message content, process handles, or callbacks.
+Turn numbers come from a database transaction and do not repeat after a restart.
+Public request IDs include that durable turn identity. A live runtime maps them to
+the provider's request IDs. An old answer cannot address a later request that reuses
+the same provider ID.
+
+Panels commits intent before a prompt, steer, answer, or cancellation reaches the
+backend. Intent proves no delivery. A prompt outcome says `started` only when the
+adapter reports a successful wire write. A steer says `injected` only when the adapter
+reports admission to its target turn. Unknown external outcomes remain `unknown`.
+The public ordinary-send API still maps `PromptWriteFailed` to refusal. That mapping
+can conceal admission uncertainty and requires a separate approved receipt change.
+The durable source does not change that public mapping or claim proven non-admission.
+
+Related lifecycle facts and notebook receipts share their existing SQLite transaction.
+Read positions, attention, notices, model changes, and skill bindings keep their existing
+rules and commit boundaries. A synchronous transaction participant receives the same
+connection and typed candidate facts before commit. It can write related records within
+that transaction. It cannot commit, await, or call a provider. Any failure rolls back
+all those writes. Settled memory and live-tail publication follow commit.
+
+An answer first reserves its request durably. Concurrent answers cannot repeat the
+callback. After a successful external write, a failed database settlement retains the
+reservation and retries only the database operation after explicit reconciliation.
+Caller cancellation does not cancel that owned settlement. A proven callback write
+failure restores the pending request only after its failure facts commit.
+
+One runtime holds an exclusive lock beside the canonical database. A second runtime
+fails before schema changes or reconciliation and cannot invalidate the first runtime's live work.
+The application acquires this lock in its lifespan thread before migrations. The
+conversation system then accepts that exact handle. Startup failures release the
+handle through its current owner. Shutdown stops local writers before release.
+Startup converts lost turns and requests to unavailable facts and incomplete attempts
+to unknown facts before admissions, subscriptions, the janitor, or worker loops.
+It creates no provider ending, answer, or missing-reply marker. Historical notebook
+rows remain unchanged. Old databases have no recoverable live identities, so migration
+adds no invented lifecycle facts. An absent fact does not establish capability.
+
+Restart restores no queue content or callbacks. It sends no prompt or answer and resumes
+no interrupted work. Queue persistence, replay, and automatic continuation remain separate
+product decisions. The source contract lives in `conversation/lifecycle.py` and its
+transaction and terminal-transition rules live beside the conversation store.
+
 ## Exercising permission requests
 
 Real work always runs with full access. There is no selectable ask posture on a
@@ -41,15 +88,17 @@ dot: those dots mean an unread reply. The earlier inherited claim that an ask ha
 its own white mark was false; visible request and attention state coverage replace
 that check.
 
-Run `tests/integration/test_conversation_real_provider_permissions.py` with
+The real-provider permission host uses the production application lifespan, including
+Signal initialization, current navigation installation and shutdown. It retains the
+explicit native test-only permission mapping. Enable it with
 `PANELS_REAL_PERMISSION_TESTS=1`, an absolute `PANELS_PERMISSION_EVIDENCE_ROOT`,
-and the relevant `PANELS_REAL_HERMES_HOME_TEMPLATE` or
-`PANELS_REAL_CLAUDE_CONFIG_TEMPLATE`. These calls use real accounts and model
-usage. The tests save selected request, wait, answer, native configuration,
-version, source revision and file outcome receipts, including partial receipts
-when a case fails. They keep Codex on its existing credential home. Other homes
-isolate test configuration while sharing any rotating credential file instead of
-copying a login grant. These tests do not claim connection-drop recovery coverage.
+and an explicit fresh `PANELS_PROVIDER_RUNTIME_ROOT`. Select only the commissioned
+allow case per backend. It records native request/wait/answer/file outcomes and
+canonical start, pending and end attention. Calls use real accounts and model usage.
+The commissioned route uses the owner's normal authenticated native profiles, including
+normal login refresh, locks and fresh vendor session metadata. It never copies or links
+credentials or opens an existing conversation. Missing native authentication or model
+access stops that backend with its observed outcome. No connection-drop recovery is claimed.
 
 ## The notebook
 
@@ -855,10 +904,12 @@ A rotating refresh token must have one owner: refreshing a copied login in a sec
 home can leave the original holding a spent token. Hardlinks are unsafe too: they
 share a file only until a refresh replaces the canonical path by rename.
 
-Synthetic homes with invented credentials are fine. Tests can also copy configuration
-files while symlinking the credential path to the canonical file. That link follows
-the current credential rather than keeping a second copy. Copying a whole real home
-or a credential first is still unsafe.
+Synthetic homes with invented credentials are fine. Claude tests can copy settings
+while linking the credential path to the canonical file. That link follows the current
+credential rather than keeping a second copy. Copying a whole real home or a credential
+first is still unsafe. For Hermes, linking only the credential is insufficient: its
+auth lock is derived from the home path, so a second home separates lock identity even
+when both credential paths reach the same file.
 
 **The existing checks cover only part of this rule.** Before launching a Codex child,
 Panels compares its home with the home selected by the server's own environment.
@@ -884,12 +935,29 @@ General coverage would require tracing helpers, branches, filesystem operations 
 launch paths. The bounded checks do not provide that general guarantee; review
 must enforce the invariant.
 
-The steering harness now follows the permission harness's canonical-credential pattern.
-Hermes copies only `config.yaml` and `.env`, and symlinks `auth.json` to the source home.
-Claude copies optional `settings.json`, and symlinks optional `.credentials.json` to its
-source home. Codex continues to use its real home because a copied login loses refresh
-rotation. The former whole-home Hermes copy and Claude credential copy are resolved.
-The current helper explains why credentials stay canonical.
+The commissioned steering and permission hosts use fresh synthetic Panels databases,
+conversations, workspaces and runtime paths. Owner authorization permits normal canonical
+HOME and native authenticated profiles, including login refresh/locks and newly created
+provider session metadata. Existing native configuration is consumed in place, never
+copied. No credentials, configuration, `.env` file or whole home is copied or linked.
+The canonical home is retained and never treated as disposable fixture state.
+
+Codex uses its normal CODEX_HOME. Claude uses its normal CLAUDE_CONFIG_DIR. Hermes uses
+its normal HERMES_HOME and PLAN_HERMES_HOME together, preserving the one native auth and
+refresh-lock identity, with its installed interpreter explicitly configured. No new login,
+purchase or authentication workaround is authorized. Native provider caches/logs/temp
+follow the production launcher; parent Panels process XDG/temp paths are synthetic.
+Hermes requests a filtered environment for the ACP child. The installed ACP transport
+merges a trimmed default environment that excludes `PYTEST_CURRENT_TEST`. The commissioned
+observer checks the actual ACP spawn and refuses that child if the marker is present.
+The model catalogue follows a separate production probe path that inherits the parent
+environment, including the marker. The observer records that catalogue environment and
+forwards it unchanged, so any native auth guard keeps its normal authority. A catalogue
+failure is not evidence that an ACP child failed. Do not remove the marker or bypass a
+native guard. Canonical home selection alone does not certify this execution prerequisite.
+Native provider temporary paths are not all synthetic. Missing supported native
+authentication or model access requires actual provider evidence, not an inference from a
+generic catalogue failure.
 
 Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
 `tests/unit/test_no_codex_credential_copies.py`,
@@ -918,10 +986,10 @@ conditional alias merges, byte transfers, or runtime paths. Synthetic credential
 and skill symlinks are not copies. Reviewers must inspect those omitted routes themselves.
 A clean result does not certify safety.
 
-This standalone command is invoked explicitly rather than enforced in CI. Against the
-current source, it reports zero accusations and two Hermes configuration dismissals,
-exiting with status 0. That result verifies the checked source pattern; it does not
-certify credential safety, external configuration contents, or the omitted copy routes.
+This standalone command is invoked explicitly rather than enforced in CI. The two
+real-provider harnesses now contain no Hermes copy sites to dismiss. A clean scan
+verifies only the supported source patterns; it does not certify credential safety,
+external configuration contents, or the omitted copy routes.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
@@ -1151,46 +1219,37 @@ virtual environment:
 | `PANELS_REAL_HERMES_TESTS=1` | `tests/unit/test_conversation_hermes_acp.py` | 4 |
 | `PANELS_REAL_SYSTEM_STEERING_TESTS=1` | `tests/integration/test_conversation_real_provider_steering.py` | 3 |
 
-The first three drive one adapter directly. The fourth is the only one that runs the whole
-conversation system and its HTTP API against all three real agent processes, and it is
-where a steer is proved to cross into a live turn.
+The first three drive one adapter directly. The fourth uses `create_app` and its actual
+application lifespan against the real agent processes: Signal composition, navigation
+installation, conversation API, janitor and shutdown. Test mode omits background Worker
+scheduling. No conversation facade or transaction driver substitutes for production.
+The permission integration host uses the same lifespan. Controlled tests retain the
+failure, denial and uncertainty coverage.
 
-That fourth exercise asks for more before it will start. It refuses a dirty tree, so
-`git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs these source directories
-for the isolated test homes:
+Both integration hosts require a clean source tree, absolute evidence destinations and
+an explicit fresh `PANELS_PROVIDER_RUNTIME_ROOT` containing their synthetic databases
+and runtime paths. The steering evidence destination is `PANELS_STEERING_EVIDENCE_ROOT`.
+The permission destination is `PANELS_PERMISSION_EVIDENCE_ROOT`. Before application
+import, isolate Panels databases, logs, backups, locks, workspaces, XDG and parent temporary
+paths. Normal HOME and native profile paths are the explicit owner-authorized exception.
+Never open a production Panels database or an existing provider conversation. The former
+home-template variables and credential-sharing helpers are removed. The supported native
+routing and exact host/launcher receive independent review before provider calls. The bounded commission is one steering/stop/
+resume scenario and one explicit-allow permission roundtrip per backend; it does not
+commission additional paid denial or failure permutations.
 
-- `PANELS_REAL_HERMES_HOME_TEMPLATE` — the canonical Hermes home itself, normally
-  `~/.hermes`. Do not make a copy. The harness copies `config.yaml` and `.env`
-  into an isolated home and symlinks `auth.json` back to this source. This requires
-  the canonical home: a symlink into a copied home still separates rotating auth
-  from the real login.
-- `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — the canonical Claude home itself, normally
-  `~/.claude`. Do not make a copy. The harness copies optional `settings.json`
-  into an isolated home and symlinks optional `.credentials.json` back to this source.
-  A symlink into a copied home still separates rotating credentials from the real login.
-  The copied settings must contain no secrets.
+### Historical adapter observations
 
-If you followed the old instructions, switch both variables to their canonical homes
-and remove the obsolete copies. Neither source requires a directory that you prepare
-by hand.
+The following observations describe earlier runs, not current-tree execution or a
+current pass/fail count. Current integration results must identify their exact source,
+normal native profile routing and fresh Panels state.
 
-Codex is the exception, and deliberately. It keeps one account in one file and refreshes
-that file in whichever home it is pointed at, so a private copy takes the new token with
-it and leaves the real login holding one the server has already spent. Everything that
-uses codex afterwards then fails, and codex reports it as the subsystem that happened to
-ask first rather than as a login. So this exercise uses the real codex home, and Panels
-refuses to start any codex child whose `CODEX_HOME` holds a copy of that login.
-
-### A red run is expected today
-
-Seven or eight of the twenty-seven fail, and none of it is Panels being wrong. Expect it,
-and do not go looking for a defect you did not cause. Four groups:
-
-- **The whole steering exercise, one failure per backend.** All three die on the same
-  assertion, that a steer sent while nothing is running is refused. Panels now starts a turn
-  instead, and has since the send modes were named. Worth repairing, and it is one line:
-  these three cases are the only thing here that runs the contract against real adapters.
+- **The steering exercise.** Direct `steer` starts a new ordinary turn when idle in
+  current staging and the candidate. The no-running-turn refusal belongs to the separate
+  held-prompt promotion API. The paid integration host omits its obsolete idle-refusal
+  assertion; controlled conformance coverage owns idle normalization. Active steer
+  admission proves the provider accepted the exact running-turn request, not that the
+  model obeyed it. Requested and catalogue-resolved effective models remain distinct.
 - **Two claude cases, and they are not reliably red.** Both plant a codeword and ask for it
   back, and the model reads that as an attempt to smuggle instructions past it — sometimes.
   One run fails both, the next fails one. A case that turns on whether a model feels like
@@ -1205,8 +1264,9 @@ and do not go looking for a defect you did not cause. Four groups:
   weight — that a model sent with a turn reaches the model call — is proved by the case next
   to it, which sends a model that does not exist and reads the refusal back.
 
-What passes is worth knowing too. Every run so far has each of the three backends accept a
-steer into a turn that was genuinely running, on a receipt from the provider process itself.
+Earlier provider receipts show active-steer admission into a genuinely running turn.
+They remain evidence about their exact historical source, not execution of the current
+application lifespan with fresh synthetic homes.
 
 ## Code paths
 

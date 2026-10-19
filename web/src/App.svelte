@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
+  import { provideNavigationApplication } from "./lib/navigation/application.svelte";
+  import { reviewBadgeImpact } from "./lib/reviewNavigationImpact";
+  import { reviewBadgeDomMatches } from "./lib/shellDom";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
@@ -37,7 +40,29 @@
     workspace?: WorkspaceAddress;
   };
 
-  const review = createQuery(() => queries.review());
+  const navigation = provideNavigationApplication();
+  let displayed = $state.raw<import("./lib/navigation/knowledge").EffectiveNavigationView | null>(null);
+  $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
+  let reviewItems = $derived(displayed ? navigation.presentationFor(displayed).review.items : []);
+  const reviewBadgeObserver = navigation.registerRenderBoundary(`review-badge:${crypto.randomUUID()}`,reviewBadgeImpact);
+  onDestroy(() => navigation.disposeRenderBoundary(reviewBadgeObserver));
+  let reviewLink = $state<HTMLElement | null>(null);
+  $effect(() => {
+    const effective = displayed;
+    const generation = navigation.state.generation;
+    const element = reviewLink;
+    const count = reviewItems.length;
+    if (!effective?.runtimeCurrent || !element) return;
+    const publication = effective.publication;
+    const observation = reviewBadgeObserver.observeSelectors(publication,generation);
+    let obsolete = false;
+    void tick().then(() => {
+      if (!obsolete && element.isConnected && navigation.state.generation === generation
+        && navigation.selectors.effective === effective && reviewBadgeDomMatches(element,count)) reviewBadgeObserver.acknowledgeRender(publication,observation);
+    });
+    return () => { obsolete = true; };
+  });
+
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let route = $state<Route>(parseRoute());
   let moreOpen = $state(false);
@@ -278,10 +303,10 @@
   </header>
   <header class="shell-nav">
     <nav class="shell-links">
-      <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
+      <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" bind:this={reviewLink} href="#/review">
         Review
-        {#if (review.data?.items || []).length > 0}
-          <span class="nav-badge">{(review.data?.items || []).length}</span>
+        {#if reviewItems.length > 0}
+          <span class="nav-badge">{reviewItems.length}</span>
         {:else}
           <span class="nav-badge hidden"></span>
         {/if}
@@ -330,7 +355,6 @@
   <div class="shell-statuses">
     <ShellStatus
       connectionState={$connectionStatus}
-      runningWorkerCount={review.data?.running_worker_count || 0}
     />
     <FeedbackCapture context={currentFeedbackContext} openCount={feedbackCount.data?.open_count || 0} onSaved={showSavedToast} />
   </div>

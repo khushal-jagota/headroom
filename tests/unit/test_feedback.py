@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -19,7 +20,7 @@ from planner.core.server import create_app
 @pytest.fixture
 def feedback_client(tmp_path: Path) -> Iterator[TestClient]:
     db_path = tmp_path / "feedback.db"
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         create_schema(conn)
     config = load_config(
         path=None,

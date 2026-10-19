@@ -80,7 +80,6 @@ def _ticket_record(ticket_id: str) -> dict[str, Any]:
         "field_values": {"brief": "The brief."},
         "pending_proposal": None,
         "recap": "",
-        "guidance": "Keep it exact.",
     }
 
 
@@ -98,14 +97,13 @@ def test_ticket_show_reads_selected_parts_from_current_worker_ticket(
     monkeypatch.setattr(http, "send", fake_send)
     result = CliRunner().invoke(
         main,
-        ["ticket", "show", "brief,guidance", "--json"],
+        ["ticket", "show", "brief", "--json"],
         env={"PLAN_TICKET_ID": "t_current"},
     )
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["parts"] == {
         "brief": {"value": "The brief.", "proposal": None},
-        "guidance": {"value": "Keep it exact.", "proposal": None},
     }
     assert calls[0][1] == "/api/tickets/t_current/worker-self"
 
@@ -124,11 +122,11 @@ def test_ticket_show_reads_selected_parts_from_named_ticket(
     monkeypatch.setattr(http, "send", fake_send)
     result = CliRunner().invoke(
         main,
-        ["ticket", "show", "t_named", "brief,guidance", "--json"],
+        ["ticket", "show", "t_named", "brief", "--json"],
     )
 
     assert result.exit_code == 0, result.output
-    assert list(json.loads(result.stdout)["parts"]) == ["brief", "guidance"]
+    assert list(json.loads(result.stdout)["parts"]) == ["brief"]
     assert calls[0] == (
         "GET",
         "/api/tickets",
@@ -187,7 +185,6 @@ def test_batch_edit_forwards_one_existing_patch_body(
     monkeypatch.setattr(http, "send", fake_send)
     body = {
         "recap": "Ready.",
-        "guidance_append": "Keep the route exact.",
         "field_values": {"success_condition": "Done means done."},
     }
     result = CliRunner().invoke(
@@ -252,3 +249,31 @@ def test_proposal_action_uses_worker_ticket_when_id_is_omitted(
 
     assert result.exit_code == 0, result.output
     assert calls == ["/api/tickets/t_current/propose"]
+
+
+@pytest.mark.parametrize("command", ("ticket", "worker"))
+def test_guidance_is_not_a_ticket_record_part(
+    monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        if path == "/api/worker-types":
+            return {"worker_types": [{"worker_type": "coding", "fields": [{"id": "brief"}]}]}
+        return _ticket_record("t_current")
+
+    monkeypatch.setattr(http, "send", fake_send)
+    arguments = ["ticket", "show", "t_current"] if command == "ticket" else ["worker", "my-ticket"]
+    result = CliRunner().invoke(
+        main, [*arguments, "guidance", "--json"], env={"PLAN_TICKET_ID": "t_current"}
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["error"]["message"] == (
+        "unknown part names: guidance; valid part names: brief, proposal, recap"
+    )
+
+
+def test_worker_note_command_is_removed() -> None:
+    result = CliRunner().invoke(main, ["worker", "note", "t_current"], input="Old note.")
+
+    assert result.exit_code == 2
+    assert '"note" is not a command under panels worker.' in result.output

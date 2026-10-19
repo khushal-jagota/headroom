@@ -260,18 +260,11 @@ rejects it and says what is wrong.
 Nothing keeps a withdrawn draft. A rejected proposal is gone, and deleting a Ticket
 takes whatever was parked on it.
 
-Each Ticket has one **guidance** document for durable user corrections and constraints.
-It is separate from settled field values and is never approved as a proposal. Review
-shows this document, while the Ticket page does not. The CLI reads it with
-`panels ticket show guidance` and writes it with `panels ticket edit --input-json -`
-using `guidance` or `guidance_append`. Ticket search and supervisor
-context include it too.
-
-No Worker step prompt carries this document. The Stage instruction names the command
-that reads it, and the Worker reads it at the start of every step. A direct edit keeps
-the existing generic Ticket-changed notice. Saving guidance is not an immediate
-conversation intervention: ordinary chat and rejection keep their existing send
-behavior.
+Ticket guidance is retired. Its historical database column and existing text remain
+intact. No active Ticket feature reads or writes that column. The API, CLI, search,
+copy text, supervisor context, Review, and Worker prompts do not expose it.
+There is no replacement field. Messages, artifacts, and revision feedback keep their
+existing roles.
 
 The **recap** is a short cold-reader
 orientation line that works beside the title: what the ticket is, where it stands now,
@@ -302,8 +295,7 @@ when the ceiling is written.
 address. Authority comes from the Ticket's current Sprint Item, so moving a Ticket to
 another Sprint Item — or out of every Sprint Item — can leave the Sprint Item that holds
 the ceiling below it.
-When a move does that, the ceiling returns to the user in the same transaction, and the
-Ticket's guidance gains one line naming the move that sent it back. The user stands above
+When a move does that, the ceiling returns to the user in the same transaction. The user stands above
 everything, so the ceiling always has somewhere valid to go, and only the user or the
 Chief can move a Ticket between Sprint Items in the first place. It is the same question on
 every move, whether or not a proposal is parked right now: a wrong address is wrong before
@@ -420,7 +412,7 @@ The Ticket transaction validates authority and route. It stores the exact attrib
 comment as one-use feedback for the current Stage, clears the pending proposal, and
 returns the Ticket to its resting control status. A Worker-owned Stage also returns to the
 current Day in that transaction. The commit wakes normal readiness, and readiness reuses
-the Ticket conversation. Ticket guidance is unchanged. The next normal worker-step prompt
+the Ticket conversation. The next normal worker-step prompt
 carries the feedback, which is consumed only after that prompt is accepted. The ticket's
 stage never changes. Settled values remain. The gated field can
 therefore be revised

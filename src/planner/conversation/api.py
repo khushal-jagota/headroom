@@ -21,7 +21,6 @@ from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -37,12 +36,7 @@ from planner.conversation.backend_state import (
 from planner.conversation.backend_usage import (
     BackendUsageOutcome,
     BackendUsageResult,
-    BackendUsageService,
     BackendUsageWindow,
-    production_backend_usage_service,
-)
-from planner.conversation.backends.codex_app_server.login import (
-    CodexLoginRejectionMemory,
 )
 from planner.conversation.backends.codex_app_server.login_session import (
     CodexSignIn,
@@ -50,7 +44,6 @@ from planner.conversation.backends.codex_app_server.login_session import (
     CodexSignInUnavailable,
     UnknownSignInSession,
 )
-from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import (
     ConversationAccess,
     ConversationAlreadyStarted,
@@ -86,7 +79,7 @@ from planner.conversation.image_validation import (
     MAX_CONVERSATION_MESSAGE_IMAGE_BYTES,
     validated_image_media_type,
 )
-from planner.conversation.live_tail import ConversationLiveTail, ConversationTailItem
+from planner.conversation.live_tail import ConversationTailItem
 from planner.conversation.message_content import (
     MessageContent,
     MessageFile,
@@ -104,19 +97,20 @@ from planner.conversation.model_corrections.contracts import (
     CorrectionPreviewRequest,
 )
 from planner.conversation.model_corrections.service import apply_corrections, preview_corrections
-from planner.conversation.model_resolution.data import ModelResolutionStore
-from planner.conversation.model_resolution.service import ModelResolutionService
+from planner.conversation.runtime_composition import (
+    ConversationRuntime as ConversationRuntime,
+)
+from planner.conversation.runtime_composition import (
+    build_conversation_runtime as build_conversation_runtime,
+)
 from planner.conversation.snapshot import (
     BackendSnapshot,
-    BackendSnapshotService,
     BackendUpdateResult,
 )
 from planner.conversation.storage import (
     ConversationRecord,
-    ConversationStore,
     StoredConversationEvent,
 )
-from planner.conversation.system import SqliteProcessConversationSystem
 from planner.conversation.voice_transcription import (
     VoiceTranscriptionFailed,
     VoiceTranscriptionUnconfigured,
@@ -139,93 +133,6 @@ router = APIRouter()
 
 
 # --- what the routes are given ------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class ConversationRuntime:
-    """The conversation system as one running thing, built once for the process."""
-
-    store: ConversationStore
-    system: SqliteProcessConversationSystem
-    live_tail: ConversationLiveTail
-    backend_snapshots: BackendSnapshotService
-    backend_usage: BackendUsageService
-    message_files: ConversationMessageFiles
-    database_path: str
-    sse_heartbeat_ms: int
-    model_resolution: ModelResolutionService | None = None
-    backend_state: BackendStateStore | None = None
-    # Absent when this process has no backend that can start a sign-in. The routes say
-    # so rather than pretending the affordance exists.
-    codex_sign_in: CodexSignInService | None = None
-
-    async def shutdown(self) -> None:
-        """Let the watchers go first, then stop the system's children.
-
-        A tail is idle nearly all the time and only ends when its browser leaves, so a
-        server that waited for them to finish on their own would never finish at all.
-        """
-        self.live_tail.close_all_subscriptions()
-        await self.system.shutdown()
-        if self.codex_sign_in is not None:
-            await self.codex_sign_in.shutdown()
-
-
-def build_conversation_runtime(
-    *,
-    db_path: str,
-    db_busy_timeout_ms: int,
-    sse_heartbeat_ms: int,
-    backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory],
-    remembered_codex_login_rejection: CodexLoginRejectionMemory | None = None,
-) -> ConversationRuntime:
-    """Compose the conversation system, its record, the files it keeps, and the tail."""
-    store = ConversationStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
-    live_tail = ConversationLiveTail()
-    message_files = ConversationMessageFiles(db_path)
-    backend_snapshots = BackendSnapshotService(
-        remembered_codex_login_rejection=remembered_codex_login_rejection
-    )
-
-    backend_state = BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
-    model_resolution = ModelResolutionService(
-        snapshots=backend_snapshots,
-        store=ModelResolutionStore(db_path, busy_timeout_ms=db_busy_timeout_ms),
-        backend_state=backend_state,
-    )
-
-    async def codex_app_server_argv() -> tuple[str, ...] | None:
-        """How to run a codex app-server here, read when a sign-in starts, not at boot.
-
-        A machine can gain or lose codex while the server runs, so the path comes from the
-        current card rather than being captured once.
-        """
-        snapshot = await backend_snapshots.snapshot(ConversationBackendKey.codex)
-        executable = snapshot.executable_path
-        return None if executable is None else (executable, "app-server")
-
-    return ConversationRuntime(
-        store=store,
-        system=SqliteProcessConversationSystem(
-            store=store,
-            backend_child_factories=backend_child_factories,
-            message_files=message_files,
-            live_tail=live_tail,
-            model_resolver=model_resolution,
-        ),
-        live_tail=live_tail,
-        backend_snapshots=backend_snapshots,
-        backend_usage=production_backend_usage_service(),
-        message_files=message_files,
-        database_path=db_path,
-        sse_heartbeat_ms=sse_heartbeat_ms,
-        backend_state=backend_state,
-        model_resolution=model_resolution,
-        codex_sign_in=CodexSignInService(
-            resolve_argv=codex_app_server_argv,
-            remembered_login_rejection=remembered_codex_login_rejection,
-        ),
-    )
 
 
 def _runtime(request: Request) -> ConversationRuntime:
@@ -1575,5 +1482,6 @@ async def apply_model_corrections(
         )
         if any(item.applied and item.target.kind == "worker-default" for item in results):
             from planner.worker_types.configuration import load_worker_runtime_definitions
+
             load_worker_runtime_definitions(conn)
     return CorrectionBatch(corrections=results).model_dump(mode="json")

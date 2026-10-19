@@ -33,7 +33,6 @@ def _ticket(*, stage: str = "needs_success_condition") -> Ticket:
         effective_sprint_id=None,
         sprint_item_title=None,
         recap="",
-        guidance="keep this guidance",
         ceiling="done",
         ceiling_holder=OWNER_PRINCIPAL,
         ticket_status=TicketStatus.awaiting_approval,

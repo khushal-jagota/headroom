@@ -203,3 +203,156 @@ describe("orchestrator rail projection", () => {
     expect(workspaceWorkerStageSentence(reviewing, null)).toBe("");
   });
 });
+
+// Shared-publication adoption: these are browser adapters, not a new Signal policy.
+import { createNavigationCollection } from '../src/lib/navigation/collection';
+import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
+import { navigationWorkspacePresentation, navigationTicketMasthead, navigationReviewPresentation, reviewProposalDetailMatches } from '../src/lib/navigation/presentation';
+import { currentSnapshot, conversation, continuity, envelope } from './support/navigation/fixtures';
+import { encodeCursor } from '../src/lib/navigation/validation';
+import type { TicketRecord, NavigationRecord } from '../src/lib/navigation/contracts';
+const sourceTicket:TicketRecord={kind:'ticket',id:'source-ticket',value:{
+  title:'Source Ticket',recap_preview:'Source recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',blocked:false,created_at:1,
+  updated_at:11,worker_step_claim_out:false,deadline:null,project_id:'project',orchestrator_kind:'sprint_item',
+  sprint_item_id:'item',conversation_id:'conversation',is_backlogged:false,ceiling:'needs_implementation',
+  ceiling_holder:{kind:'owner',id:'owner'},gating_field:'implementation',proposal_field:null,proposal_revision:0,
+  proposal_created_at:null,stage_ownership:'worker',terminal:false,locale:'en'}};
+const sourceRecords:NavigationRecord[]=[sourceTicket,conversation('conversation'),
+  {kind:'orchestrator',id:'item',value:{title:'Parent',recap_preview:'Parent recap',created_at:1,project_id:'project',settled:false,conversation_id:null}},
+  {kind:'project',id:'project',value:{name:'Project'}},
+  {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:null}},
+  {kind:'address',id:'address',value:{owner_kind:'ticket',owner_id:'source-ticket',conversation_id:'conversation',current:true,parent_kind:'orchestrator',parent_id:'item'}}];
+
+describe('canonical navigation workspace presentation',()=>{
+  it('joins masthead Project through the assigned parent without a raw Ticket fallback',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    try {
+      const read=(records:NavigationRecord[])=>{
+        adapter.publishSnapshot(currentSnapshot({...continuity,records}),'masthead');
+        return navigationTicketMasthead(knowledge.accept(adapter.getPublication()!),sourceTicket.id);
+      };
+      expect(read(sourceRecords)).toMatchObject({id:sourceTicket.id,title:'Source Ticket',project:'Project',conversation_id:'conversation',
+        conversation_signal:{working:true,message_for_owner:true}});
+      const distinctParent:NavigationRecord[]=sourceRecords.map(record=>record.kind==='orchestrator' ? {...record,value:{...record.value,project_id:'parent-project'}} : record);
+      distinctParent.push({kind:'project',id:'parent-project',value:{name:'Parent Project'}});
+      expect(read(distinctParent)?.project).toBe('Parent Project');
+      expect(read(sourceRecords.filter(record=>record.kind!=='orchestrator'))).toBeUndefined();
+      expect(read(sourceRecords.map(record=>record.kind==='ticket' ? {...record,value:{...record.value,sprint_item_id:null,orchestrator_kind:'chief'}} : record))?.project).toBe('Project');
+      expect(read(sourceRecords.filter(record=>record.kind!=='ticket'))).toBeUndefined();
+    } finally {adapter.destroy();}
+  });
+  it('preserves independent canonical structural facts and exact known/unknown conversation values',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    try {
+      const source={...sourceTicket,value:{...sourceTicket.value,ticket_status:'awaiting_approval',blocked:true,
+        stage_ownership:'user',ceiling_holder:{kind:'owner',id:'owner'}}};
+      adapter.publishSnapshot(currentSnapshot({...continuity,records:[source,...sourceRecords.slice(1)]}),'source');
+      const view=knowledge.accept(adapter.getPublication()!);
+      const first=navigationWorkspacePresentation(view);
+      expect(first.tickets[0]).toMatchObject({blocked:true,assigned:true,awaiting_approval:true,awaiting_agent_approval:false,
+        agent_state:'working',awaiting_reply:true,conversation_signal:{working:true,message_for_owner:true}});
+      expect(buildWorkspaceRail(first.tickets,first.orchestrators).items[0].groups).toEqual([]);
+      const retained=navigationWorkspacePresentation(knowledge.loseRuntime()!);
+      expect(retained.tickets[0]).toMatchObject({agent_state:'errored',awaiting_reply:true,awaiting_answer:null,
+        conversation_signal:{message_for_owner:true}});
+      expect(retained.tickets[0].conversation_signal).not.toHaveProperty('working');
+      expect(retained.orchestrators[0].tickets).toHaveLength(1);
+      expect(retained.orchestrators[0].project).toBe('Project');
+      knowledge.invalidateDurableFact('conversation','message_for_owner',10);
+      const unknown=navigationWorkspacePresentation(knowledge.getView()!);
+      expect(unknown.tickets[0].awaiting_reply).toBeNull();
+      expect(unknown.tickets[0].conversation_signal).not.toHaveProperty('message_for_owner');
+      expect(unknown.tickets[0].agent_state).toBe('errored');
+      const done={...source,value:{...source.value,stage:'done',ticket_status:'empty',terminal:true}};
+      adapter.publishSnapshot(currentSnapshot({...continuity,revision:'1',records:[done,...sourceRecords.slice(1)]}),'done');
+      knowledge.accept(adapter.getPublication()!);knowledge.loseRuntime();
+      expect(navigationWorkspacePresentation(knowledge.getView()!).tickets[0].agent_state).toBeNull();
+      const agentApproval={...done,value:{...done.value,ticket_status:'awaiting_approval',ceiling_holder:{kind:'owner',id:'another'}}};
+      adapter.publishSnapshot(currentSnapshot({...continuity,revision:'2',records:[agentApproval]}),'agent-approval');
+      const last=navigationWorkspacePresentation(knowledge.accept(adapter.getPublication()!)).tickets[0];
+      expect(last.awaiting_approval).toBe(false);expect(last.awaiting_agent_approval).toBe(true);
+    } finally {adapter.destroy();}
+  });
+  it('moves the Consequences category from the same publication even while the label manifest stays stale',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    const staleLabels=buildLifecycle({worker_type:'coding',label:'Coding',stages:[{id:'needs_implementation',label:'Implementation',gating_field:'implementation',is_terminal:false,ownership_mode:'worker'}],advance:{},fields:[{id:'implementation',label:'Implementation'}],ceiling_range:[],default_ceiling:'needs_implementation',worker_profile_id:'worker',default_backend:'codex',default_model:null,default_reasoning_effort:null});
+    const records=[{...sourceTicket,value:{...sourceTicket.value,conversation_id:null}},...sourceRecords.slice(2)];
+    const seen:string[]=[];
+    adapter.subscribe(publication=>{
+      const projected=navigationWorkspacePresentation(knowledge.accept(publication));
+      seen.push(buildWorkspaceRail(projected.tickets,projected.orchestrators).items[0].groups[0].key);
+    });
+    try {
+      adapter.publishSnapshot(currentSnapshot({...continuity,records}),'before');
+      const batch={...continuity,base_revision:'0',revision:'1',upserts:[{...sourceTicket,value:{...sourceTicket.value,conversation_id:null,gating_field:'consequences'}}],deletes:[]};
+      adapter.publishBatch(envelope(batch),encodeCursor(batch),'gating-only');
+      expect(seen).toEqual(['empty','waiting_to_closeout']);
+      expect(staleLabels.gatingField.needs_implementation).toBe('implementation');
+      const ticket=navigationWorkspacePresentation(knowledge.getView()!).tickets[0];
+      expect(ticket.gating_field).toBe('consequences');
+      expect(workspaceWorkerStageSentence(ticket,staleLabels)).toBe('At Implementation.');
+    } finally {adapter.destroy();}
+  });
+  it('retains exact historical unread addresses independently of current conversation and visible sidebar classification',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    const historical:NavigationRecord={kind:'address',id:'historical',value:{owner_kind:'ticket',owner_id:'source-ticket',conversation_id:'past',current:false,parent_kind:'orchestrator',parent_id:'item'}};
+    try {
+      adapter.publishSnapshot(currentSnapshot({...continuity,records:[...sourceRecords,conversation('past'),historical]}),'aliases');
+      const projected=navigationWorkspacePresentation(knowledge.accept(adapter.getPublication()!));
+      expect(projected.messages.map(row=>[row.id,row.conversationId,row.parentId])).toEqual([
+        ['source-ticket','conversation','item'],['source-ticket','past','item']]);
+      expect(projected.tickets[0].conversation_id).toBe('conversation');
+      expect(projected.messages.every(row=>row.conversationSignal?.message_for_owner)).toBe(true);
+      const readPast=conversation('past',20,false);
+      readPast.value.attention.current!.signal.working=false;
+      const batch={...continuity,base_revision:'0',revision:'1',upserts:[readPast],deletes:[]};
+      adapter.publishBatch(envelope(batch),encodeCursor(batch),'read-history');
+      const afterRead=navigationWorkspacePresentation(knowledge.accept(adapter.getPublication()!));
+      expect(afterRead.messages.map(row=>row.conversationId)).toEqual(['conversation']);
+      expect(afterRead.conversationSignals.get('past')).toEqual({working:false,message_for_owner:false});
+      expect(afterRead.conversationSignals.get('conversation')).toEqual({working:true,message_for_owner:true});
+      expect(afterRead.conversationSignals.get('deleted-history')).toBeUndefined();
+    } finally {adapter.destroy();}
+  });
+});
+
+
+describe('shared Review and runtime counts',()=>{
+  it('keeps canonical queue ordering, current-pointer union and all outclaims independent through atomic loss and replacement',()=>{
+    const adapter=createNavigationCollection(),knowledge=createNavigationKnowledge();
+    const ask=(id:string,stamp:number,changes:Partial<TicketRecord['value']>={}):TicketRecord=>({kind:'ticket',id,value:{...sourceTicket.value,
+      ticket_status:'awaiting_approval',proposal_field:'plan',gating_field:'implementation',proposal_created_at:stamp,proposal_revision:1,...changes}});
+    const records:NavigationRecord[]=[ask('b',2,{is_backlogged:true,blocked:true,terminal:true,worker_step_claim_out:true}),
+      ask('a',2),ask('earliest',1),ask('supervisor',0,{ceiling_holder:{kind:'chief',id:'chief'}}),
+      ask('claim-only',0,{ticket_status:'empty',worker_step_claim_out:true,conversation_id:null}),
+      ...sourceRecords.slice(1).filter(record=>record.kind!=='chief').map(record=>record.kind==='orchestrator' ? {...record,value:{...record.value,conversation_id:'supervisor-current'}} : record),conversation('historical'),conversation('supervisor-current'),
+      {kind:'chief',id:'chief',value:{label:'Chief',conversation_id:'conversation'}},
+      {kind:'address',id:'history',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'historical',current:false,parent_kind:'chief',parent_id:'chief'}}];
+    try {
+      const initial=records.find(record=>record.kind==='conversation' && record.id==='conversation');
+      if (initial?.kind==='conversation') initial.value.attention.current!.signal.working=false;
+      const supervisor=records.find(record=>record.kind==='conversation' && record.id==='supervisor-current');
+      if (supervisor?.kind==='conversation') supervisor.value.attention.current!.signal.working=false;
+      adapter.publishSnapshot(currentSnapshot({...continuity,records}),'counts');
+      let view=knowledge.accept(adapter.getPublication()!);
+      expect(navigationReviewPresentation(view)).toMatchObject({runningConversationCount:0,exactOutClaimCount:2,
+        items:[{ticket_id:'earliest',field:'implementation',proposal_field:'plan'},{ticket_id:'a'},{ticket_id:'b'}]});
+      const active=conversation('conversation');active.value.attention.current!.signal.working=true;
+      const historical=conversation('historical');historical.value.attention.current!.signal.working=true;
+      adapter.publishBatch(envelope({...continuity,base_revision:'0',revision:'1',upserts:[active,historical,conversation('supervisor-current')],deletes:[]}),encodeCursor({...continuity,revision:'1'}),'counts-batch');
+      view=knowledge.accept(adapter.getPublication()!);
+      expect(navigationReviewPresentation(view).runningConversationCount).toBe(2);
+      const lost=knowledge.loseRuntime()!;
+      expect(navigationReviewPresentation(lost)).toMatchObject({runningConversationCount:null,exactOutClaimCount:2});
+      expect(navigationReviewPresentation(lost).items.map(item=>item.ticket_id)).toEqual(['earliest','a','b']);
+      const missing={...view,conversations:new Map([...view.conversations].filter(([id])=>id!=='conversation'))};
+      expect(navigationReviewPresentation(missing).runningConversationCount).toBeNull();
+      const empty={...view,publication:{...view.publication,records:[]}};
+      expect(navigationReviewPresentation(empty).runningConversationCount).toBe(0);
+      // Identity is stricter than same-field membership; a newer body cannot wear an older stamp.
+      const item=navigationReviewPresentation(view).items[0];
+      const detail={id:item.ticket_id,pending_proposal:{field:'plan',created_at:1,revision:2,body:'replacement',proposed_by:'agent'}};
+      expect(reviewProposalDetailMatches(item,detail)).toBe(false);
+    } finally {adapter.destroy();}
+  });
+});

@@ -384,7 +384,6 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
     assert rejected.status_code == 200, rejected.text
     assert after.pending_proposal is None
     assert after.ticket_status.value == "empty"
-    assert after.guidance == ""
     assert feedback is not None
     assert feedback.items[0].sender.kind.value == "sprint_item"
     assert feedback.items[0].sender.id == str(item["id"])

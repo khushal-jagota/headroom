@@ -17,9 +17,13 @@ const indexPath = join(scratchRoot, `voice-everywhere-index-${process.pid}.html`
   import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
   import ReviewProposalCard from "../src/components/ReviewProposalCard.svelte";
+  import { provideNavigationApplication } from "../src/lib/navigation/application.svelte";
+  import { navigationReviewPresentation } from "../src/lib/navigation/presentation";
 
   const parameters = new URLSearchParams(location.search);
   const review = parameters.get("mode") === "review";
+  const navigation=review ? provideNavigationApplication() : undefined;
+  let identity=$derived(navigation?.selectors.effective ? navigationReviewPresentation(navigation.selectors.effective).items.find(item=>item.ticket_id==='review-voice') : undefined);
   const conversationId = parameters.get("conversation") === "1" ? "conv-existing" : null;
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   let sent = $state<string[]>([]);
@@ -28,7 +32,7 @@ const indexPath = join(scratchRoot, `voice-everywhere-index-${process.pid}.html`
 
 {#if review}
   <QueryClientProvider client={queryClient}>
-    <ReviewProposalCard ticketId="review-voice" field="implementation" />
+    {#if identity}<ReviewProposalCard {identity} ticketId="review-voice" field="implementation" />{/if}
   </QueryClientProvider>
 {:else}
   <ConversationComposer
@@ -46,7 +50,8 @@ const indexPath = join(scratchRoot, `voice-everywhere-index-${process.pid}.html`
   );
   await writeFile(
     mainPath,
-    String.raw`const parameters = new URLSearchParams(location.search);
+    String.raw`globalThis.EventSource=class extends EventTarget {onerror=null;close(){}};
+const parameters = new URLSearchParams(location.search);
 Object.defineProperty(window, "matchMedia", {
   value: () => ({
     matches: parameters.get("coarse") === "1",
@@ -89,7 +94,6 @@ mount(Host, { target: document.getElementById("app")! });
       .at(-1)}"></script></body></html>`,
     "utf8"
   );
-
 
   return {inputs: [indexPath], arguments: [indexPath], python: fileURLToPath(new URL("./voice-everywhere.py", import.meta.url))};
 }

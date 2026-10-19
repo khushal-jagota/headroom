@@ -32,11 +32,11 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable, Coroutine, Mapping
-from contextlib import suppress
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
-from typing import Any
+from typing import IO, Any
 from uuid import uuid4
 
 from planner.conversation.backends.contracts import (
@@ -109,6 +109,12 @@ from planner.conversation.events import (
     UserInputQuestion,
     UserInputRequestedEventPayload,
 )
+from planner.conversation.lifecycle import (
+    LifecycleFact,
+    LifecycleKind,
+    LifecycleOperation,
+    LifecycleStatus,
+)
 from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.logic.addressed_reply import (
     with_authenticated_reply_directive,
@@ -129,6 +135,7 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.model_resolution.contracts import CurrentModelResolver, ModelResolution
+from planner.conversation.publication.mutations import PlainFieldMutation, SignalRuntimeMutation
 from planner.conversation.storage import (
     ConversationRecord,
     ConversationRecordNamesNoModel,
@@ -136,6 +143,7 @@ from planner.conversation.storage import (
     StoredConversationEvent,
 )
 from planner.core import change_signal
+from planner.core.commit_capture import register_capture_task
 from planner.core.contracts import PlannerError, Principal, PrincipalKind
 
 LOGGER = logging.getLogger("planner.conversation")
@@ -187,6 +195,26 @@ def completed_backend_text_event(content: MessageContent) -> None:
     return None
 
 
+def _turn_fact(token: TurnToken, status: LifecycleStatus) -> LifecycleFact:
+    return LifecycleFact(
+        LifecycleKind.turn,
+        str(token.turn_number),
+        token.turn_number,
+        LifecycleOperation.turn,
+        status,
+    )
+
+
+def _prompt_fact(token: TurnToken, status: LifecycleStatus) -> LifecycleFact:
+    return LifecycleFact(
+        LifecycleKind.attempt,
+        f"prompt:{token.turn_number}",
+        token.turn_number,
+        LifecycleOperation.prompt,
+        status,
+    )
+
+
 class _ConversationPhase(StrEnum):
     """What a conversation is in the middle of. One phase, one owner.
 
@@ -224,6 +252,8 @@ class _RunningTurn:
     automatic_compaction: bool = False
     compaction_confirmed: bool = False
     pending_permission_ask_ids: set[str] = field(default_factory=set)
+    permission_provider_ids: dict[str, str] = field(default_factory=dict)
+    user_input_provider_ids: dict[str, str] = field(default_factory=dict)
     pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
         default_factory=dict
     )
@@ -326,7 +356,6 @@ class _ConversationState:
     last_ended_turn_was_automatic_compaction: bool = False
     child: BackendChild | None = None
     child_is_quarantined: bool = False
-    next_turn_number: int = 1
     has_delivered_prompt: bool = False
     last_touched_monotonic: float = 0.0
     # When this conversation last said its model was thinking. Kept per conversation
@@ -358,6 +387,7 @@ class SqliteProcessConversationSystem:
         idle_child_sweep_interval_seconds: float = IDLE_CHILD_SWEEP_INTERVAL_SECONDS,
         unix_time_now: Callable[[], float] = time.time,
         model_resolver: CurrentModelResolver | None = None,
+        runtime_ownership: IO[bytes] | None = None,
     ) -> None:
         missing = sorted(set(ConversationBackendKey) - set(backend_child_factories))
         if missing:
@@ -376,6 +406,12 @@ class SqliteProcessConversationSystem:
         self._conversations: dict[str, _ConversationState] = {}
         self._conversations_lock = asyncio.Lock()
         self._idle_child_janitor: asyncio.Task[None] | None = None
+        self._signal = store.signal_coordinator
+        self._runtime_ownership = store.claim_runtime(existing_ownership=runtime_ownership)
+        if self._signal is not None:
+            self._signal.bind_runtime(self._runtime_turn)
+        self._shutting_down = False
+        self._shutdown_task: asyncio.Task[None] | None = None
 
     # --- the contract -------------------------------------------------------------------
 
@@ -402,6 +438,7 @@ class SqliteProcessConversationSystem:
             return True
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
+        self._require_runtime_ownership()
         """Create the conversation. Writing its row is the first thing that happens.
 
         The row exists the moment it is committed, so a message can arrive for this
@@ -421,7 +458,8 @@ class SqliteProcessConversationSystem:
         record = await self._store.create_conversation(resolved)
         async with self._conversations_lock:
             if record.conversation_id not in self._conversations:
-                self._conversations[record.conversation_id] = _ConversationState(record=record)
+                with nullcontext() if self._signal is None else self._signal.runtime_registry():
+                    self._conversations[record.conversation_id] = _ConversationState(record=record)
 
     async def send(
         self,
@@ -861,6 +899,12 @@ class SqliteProcessConversationSystem:
             running.explicit_reply_recipients.add(recipient)
 
     async def kill(self, conversation_id: str) -> None:
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return
+        await self._own_settlement(state, self._kill(conversation_id))
+
+    async def _kill(self, conversation_id: str) -> None:
         """Stop the running turn and throw away everything that was waiting behind it.
 
         Unlike an interrupt, this is the end of the conversation's traffic: the queue is
@@ -887,14 +931,21 @@ class SqliteProcessConversationSystem:
             await self._discard_held_prompts(state)
             running = state.running_turn
             try:
+                cancel_fact = None
                 child = state.child
                 if child is not None:
                     if running is not None:
-                        await self._cancel_child_turn(state, child)
+                        cancel_fact = await self._cancel_child_turn(state, child)
                     if state.child is child:
                         await self._discard_child(state, child)
                 if running is not None:
-                    await self._end_turn(state, running, ConversationTurnEnding.interrupted, None)
+                    await self._end_turn(
+                        state,
+                        running,
+                        ConversationTurnEnding.interrupted,
+                        None,
+                        cancel_fact=cancel_fact,
+                    )
             finally:
                 self._settle_phase(state)
         finally:
@@ -908,13 +959,15 @@ class SqliteProcessConversationSystem:
         would only make a question the browser asks constantly wait behind a spawn.
         """
         state = await self._conversation_state(conversation_id)
-        return state is not None and state.running_turn is not None
+        with self._signal_read():
+            return state is not None and state.running_turn is not None
 
     async def has_pending_permission_ask(self, conversation_id: str) -> bool:
         state = await self._conversation_state(conversation_id)
-        if state is None or state.running_turn is None:
-            return False
-        return bool(state.running_turn.pending_permission_ask_ids)
+        with self._signal_read():
+            if state is None or state.running_turn is None:
+                return False
+            return bool(state.running_turn.pending_permission_ask_ids)
 
     async def pending_permission_ask_ids(self, conversation_id: str) -> frozenset[str]:
         """Which asks are waiting for an answer right now.
@@ -924,21 +977,24 @@ class SqliteProcessConversationSystem:
         working out for itself which one is still live.
         """
         state = await self._conversation_state(conversation_id)
-        if state is None or state.running_turn is None:
-            return frozenset()
-        return frozenset(state.running_turn.pending_permission_ask_ids)
+        with self._signal_read():
+            if state is None or state.running_turn is None:
+                return frozenset()
+            return frozenset(state.running_turn.pending_permission_ask_ids)
 
     async def has_pending_user_input(self, conversation_id: str) -> bool:
         state = await self._conversation_state(conversation_id)
-        if state is None or state.running_turn is None:
-            return False
-        return bool(state.running_turn.pending_user_input_questions)
+        with self._signal_read():
+            if state is None or state.running_turn is None:
+                return False
+            return bool(state.running_turn.pending_user_input_questions)
 
     async def pending_user_input_request_ids(self, conversation_id: str) -> frozenset[str]:
         state = await self._conversation_state(conversation_id)
-        if state is None or state.running_turn is None:
-            return frozenset()
-        return frozenset(state.running_turn.pending_user_input_questions)
+        with self._signal_read():
+            if state is None or state.running_turn is None:
+                return frozenset()
+            return frozenset(state.running_turn.pending_user_input_questions)
 
     async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
         """Return a stable FIFO snapshot of the messages waiting in this process."""
@@ -1021,7 +1077,7 @@ class SqliteProcessConversationSystem:
                 del state.held_prompts[position]
                 self._begin_held_deliveries(state, (held,))
                 self._publish_held_prompts_changed(state)
-                reservation = self._reserve_turn(state)
+                reservation = await self._reserve_turn(state)
             else:
                 del state.held_prompts[position]
                 self._begin_held_deliveries(state, (held,))
@@ -1143,6 +1199,7 @@ class SqliteProcessConversationSystem:
 
         assert steer_child is not None
         assert steer_turn_token is not None
+        attempt = await self._begin_attempt(state, steer_turn_token, LifecycleOperation.steer)
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
@@ -1179,6 +1236,14 @@ class SqliteProcessConversationSystem:
             steer_outcome.refusal_reason
             is PromptDeliveryRefusalReason.command_cannot_join_running_turn
         ):
+            await self._persist(
+                state,
+                partial(
+                    self._store.transition_lifecycle,
+                    state.record.conversation_id,
+                    (replace(attempt, status=LifecycleStatus.refused),),
+                ),
+            )
             # A command the backend takes only as its own turn. Promoting it was the
             # right gesture at the wrong moment, so the message goes back to the line
             # rather than being written down as undeliverable and thrown away.
@@ -1205,6 +1270,7 @@ class SqliteProcessConversationSystem:
             fate = await self._record_steer_outcome(
                 state,
                 steer_outcome,
+                attempt=attempt,
                 turn_token=steer_turn_token,
                 content=held.content,
                 sender_label=held.sender_label,
@@ -1271,6 +1337,16 @@ class SqliteProcessConversationSystem:
     async def answer_permission_ask(
         self, conversation_id: str, ask_id: str, option_id: str
     ) -> bool:
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return False
+        return await self._own_settlement(
+            state, self._answer_permission_ask(conversation_id, ask_id, option_id)
+        )
+
+    async def _answer_permission_ask(
+        self, conversation_id: str, ask_id: str, option_id: str
+    ) -> bool:
         """Give the backend the option a person chose, and say whether it landed.
 
         It lands only if the ask is still pending on the turn that is live now *and* the
@@ -1292,12 +1368,37 @@ class SqliteProcessConversationSystem:
                 return False
             # Taken out of the pending set before the wire write, so a second answer
             # arriving at the same time finds nothing to answer.
-            running.pending_permission_ask_ids.discard(ask_id)
+            provider_id = running.permission_provider_ids[ask_id]
+            request_fact = LifecycleFact(
+                LifecycleKind.request,
+                ask_id,
+                running.token.turn_number,
+                LifecycleOperation.permission,
+                LifecycleStatus.answering,
+                provider_id,
+            )
+            attempt = await self._begin_attempt(
+                state,
+                running.token,
+                LifecycleOperation.permission_answer,
+                provider_id,
+                (request_fact,),
+                runtime_mutation=self._runtime_mutation(
+                    state,
+                    PlainFieldMutation(
+                        running,
+                        "pending_permission_ask_ids",
+                        running.pending_permission_ask_ids - {ask_id},
+                    ),
+                ),
+            )
+            if self._signal is None:
+                running.pending_permission_ask_ids.discard(ask_id)
             answered_turn_token = running.token
 
         reached_the_backend = True
         try:
-            await child.answer_permission_ask(ask_id, option_id)
+            await child.answer_permission_ask(provider_id, option_id)
         except PermissionAnswerWriteFailed:
             reached_the_backend = False
 
@@ -1305,18 +1406,69 @@ class SqliteProcessConversationSystem:
             running = state.running_turn
             if running is None or running.token != answered_turn_token:
                 # The turn ended while the answer was on its way, so the ask died with it.
+                await self._persist(
+                    state,
+                    partial(
+                        self._store.transition_lifecycle,
+                        conversation_id,
+                        (
+                            replace(
+                                attempt,
+                                status=(
+                                    LifecycleStatus.accepted
+                                    if reached_the_backend
+                                    else LifecycleStatus.refused
+                                ),
+                            ),
+                        ),
+                    ),
+                )
                 return False
             if not reached_the_backend:
                 # The backend never got it, so the ask is still waiting to be answered.
-                running.pending_permission_ask_ids.add(ask_id)
+                await self._persist(
+                    state,
+                    partial(
+                        self._store.transition_lifecycle,
+                        conversation_id,
+                        (
+                            replace(attempt, status=LifecycleStatus.refused),
+                            replace(request_fact, status=LifecycleStatus.pending),
+                        ),
+                    ),
+                    runtime_mutation=self._runtime_mutation(
+                        state,
+                        PlainFieldMutation(
+                            running,
+                            "pending_permission_ask_ids",
+                            running.pending_permission_ask_ids | {ask_id},
+                        ),
+                    ),
+                )
+                if self._signal is None:
+                    running.pending_permission_ask_ids.add(ask_id)
                 return False
             await self._append_event(
                 state,
                 PermissionAnsweredEventPayload(ask_id=ask_id, option_id=option_id),
+                lifecycle=(
+                    replace(attempt, status=LifecycleStatus.accepted),
+                    replace(request_fact, status=LifecycleStatus.answered),
+                ),
             )
             return True
 
     async def answer_user_input(
+        self, conversation_id: str, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> bool:
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return False
+        return await self._own_settlement(
+            state, self._answer_user_input(conversation_id, request_id, answers)
+        )
+
+    async def _answer_user_input(
         self,
         conversation_id: str,
         request_id: str,
@@ -1359,25 +1511,95 @@ class SqliteProcessConversationSystem:
                 for question, answer in zip(questions, ordered_answers, strict=True)
             ):
                 return False
-            del running.pending_user_input_questions[request_id]
+            provider_id = running.user_input_provider_ids[request_id]
+            request_fact = LifecycleFact(
+                LifecycleKind.request,
+                request_id,
+                running.token.turn_number,
+                LifecycleOperation.user_input,
+                LifecycleStatus.answering,
+                provider_id,
+            )
+            attempt = await self._begin_attempt(
+                state,
+                running.token,
+                LifecycleOperation.user_input_answer,
+                provider_id,
+                (request_fact,),
+                runtime_mutation=self._runtime_mutation(
+                    state,
+                    PlainFieldMutation(
+                        running,
+                        "pending_user_input_questions",
+                        {
+                            key: value
+                            for key, value in running.pending_user_input_questions.items()
+                            if key != request_id
+                        },
+                    ),
+                ),
+            )
+            if self._signal is None:
+                del running.pending_user_input_questions[request_id]
             answered_turn_token = running.token
 
         reached_the_backend = True
         try:
-            await child.answer_user_input(request_id, ordered_answers)
+            await child.answer_user_input(provider_id, ordered_answers)
         except UserInputAnswerWriteFailed:
             reached_the_backend = False
 
         async with state.lock:
             running = state.running_turn
             if running is None or running.token != answered_turn_token:
+                await self._persist(
+                    state,
+                    partial(
+                        self._store.transition_lifecycle,
+                        conversation_id,
+                        (
+                            replace(
+                                attempt,
+                                status=(
+                                    LifecycleStatus.accepted
+                                    if reached_the_backend
+                                    else LifecycleStatus.refused
+                                ),
+                            ),
+                        ),
+                    ),
+                )
                 return False
             if not reached_the_backend:
-                running.pending_user_input_questions[request_id] = questions
+                await self._persist(
+                    state,
+                    partial(
+                        self._store.transition_lifecycle,
+                        conversation_id,
+                        (
+                            replace(attempt, status=LifecycleStatus.refused),
+                            replace(request_fact, status=LifecycleStatus.pending),
+                        ),
+                    ),
+                    runtime_mutation=self._runtime_mutation(
+                        state,
+                        PlainFieldMutation(
+                            running,
+                            "pending_user_input_questions",
+                            {**running.pending_user_input_questions, request_id: questions},
+                        ),
+                    ),
+                )
+                if self._signal is None:
+                    running.pending_user_input_questions[request_id] = questions
                 return False
             await self._append_event(
                 state,
                 UserInputAnsweredEventPayload(request_id=request_id, answers=ordered_answers),
+                lifecycle=(
+                    replace(attempt, status=LifecycleStatus.accepted),
+                    replace(request_fact, status=LifecycleStatus.answered),
+                ),
             )
             return True
 
@@ -1385,35 +1607,61 @@ class SqliteProcessConversationSystem:
 
     async def start_idle_child_janitor(self) -> None:
         """Begin stopping children that have sat idle long enough to have been forgotten."""
+        self._require_runtime_ownership()
         if self._idle_child_janitor is None:
             self._idle_child_janitor = asyncio.create_task(self._sweep_idle_children_forever())
 
     async def shutdown(self) -> None:
-        """Stop the janitor, stop taking backend news, and stop every child."""
-        janitor = self._idle_child_janitor
-        self._idle_child_janitor = None
-        if janitor is not None:
-            janitor.cancel()
-            with suppress(asyncio.CancelledError):
-                await janitor
-        async with self._conversations_lock:
-            states = list(self._conversations.values())
-        for state in states:
-            for task in tuple(state.settlement_tasks):
+        """Own complete cleanup, retaining the database lease if the caller leaves."""
+        if self._signal is not None:
+            self._signal.invalidate("shutdown")
+        self._shutting_down = True
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(self._shutdown_owned())
+        await asyncio.shield(self._shutdown_task)
+
+    async def _shutdown_owned(self) -> None:
+        """Stop every local writer before releasing exclusive reconciliation ownership."""
+        try:
+            janitor = self._idle_child_janitor
+            self._idle_child_janitor = None
+            if janitor is not None:
+                janitor.cancel()
+                await asyncio.gather(janitor, return_exceptions=True)
+            async with self._conversations_lock:
+                states = list(self._conversations.values())
+            # Stop all event producers and settlements before a slow child stop can
+            # delay teardown. These tasks can no longer write ahead of a successor.
+            tasks: list[asyncio.Task[Any]] = []
+            for state in states:
+                tasks.extend(state.settlement_tasks)
+                pump = state.backend_event_pump
+                state.backend_event_pump = None
+                if pump is not None:
+                    tasks.append(pump)
+            for task in tasks:
                 task.cancel()
-            for task in tuple(state.settlement_tasks):
-                with suppress(asyncio.CancelledError):
-                    await task
-            pump = state.backend_event_pump
-            state.backend_event_pump = None
-            if pump is not None:
-                pump.cancel()
-                with suppress(asyncio.CancelledError):
-                    await pump
-            child = state.child
-            state.child = None
-            if child is not None:
-                await self._stop_child(state, child)
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            for state in states:
+                child = state.child
+                state.child = None
+                if child is not None:
+                    try:
+                        await self._stop_child(state, child)
+                    except asyncio.CancelledError:
+                        # An adapter can abort its own stop. No local callback or writer
+                        # survives this cleanup, but provider termination is unproven.
+                        LOGGER.error(
+                            "conversation %s backend stop was cancelled; "
+                            "provider termination remains unknown",
+                            state.record.conversation_id,
+                        )
+        finally:
+            try:
+                await self._store.finish_writes()
+            finally:
+                self._runtime_ownership.close()
 
     async def wait_until_quiescent(self) -> None:
         """Return once everything the system was going to do on its own has happened.
@@ -1504,9 +1752,9 @@ class SqliteProcessConversationSystem:
                     queue_reason=queue_reason,
                     owner_read_through_sequence=owner_read_through_sequence,
                 )
-                automatic_reservation = self._reserve_turn(state, automatic_compaction=True)
+                automatic_reservation = await self._reserve_turn(state, automatic_compaction=True)
             else:
-                reservation = self._reserve_turn(state)
+                reservation = await self._reserve_turn(state)
 
         if automatic_reservation is not None:
             await self._deliver_automatic_compaction(state, automatic_reservation)
@@ -1685,9 +1933,11 @@ class SqliteProcessConversationSystem:
                         reply_requested=reply_requested,
                         owner_read_through_sequence=owner_read_through_sequence,
                     )
-                    automatic_reservation = self._reserve_turn(state, automatic_compaction=True)
+                    automatic_reservation = await self._reserve_turn(
+                        state, automatic_compaction=True
+                    )
                 else:
-                    reservation = self._reserve_turn(state)
+                    reservation = await self._reserve_turn(state)
             finally:
                 state.lock.release()
         except asyncio.CancelledError:
@@ -1748,7 +1998,7 @@ class SqliteProcessConversationSystem:
                 and state.phase is _ConversationPhase.idle
                 and not state.held_prompts
             ):
-                reservation = self._reserve_turn(state)
+                reservation = await self._reserve_turn(state)
             elif any(not isinstance(piece, MessageText) for piece in content):
                 queued = self._hold_prompt(
                     state,
@@ -1837,6 +2087,7 @@ class SqliteProcessConversationSystem:
             return queued
         assert child is not None
         assert running is not None
+        attempt = await self._begin_attempt(state, running.token, LifecycleOperation.steer)
         adapter_error: Exception | None = None
         try:
             wire_content = with_authenticated_reply_directive(
@@ -1868,6 +2119,14 @@ class SqliteProcessConversationSystem:
             steer_outcome = BackendSteerUncertain()
 
         if isinstance(steer_outcome, BackendSteerRefused):
+            await self._persist(
+                state,
+                partial(
+                    self._store.transition_lifecycle,
+                    state.record.conversation_id,
+                    (replace(attempt, status=LifecycleStatus.refused),),
+                ),
+            )
             assert barrier is not None
             state.steer_settlements.discard(barrier)
             barrier.set()
@@ -1893,6 +2152,7 @@ class SqliteProcessConversationSystem:
             fate = await self._record_steer_outcome(
                 state,
                 steer_outcome,
+                attempt=attempt,
                 turn_token=running.token,
                 content=content,
                 sender_label=sender_label,
@@ -2247,6 +2507,26 @@ class SqliteProcessConversationSystem:
         async with state.lock:
             try:
                 if refusal is not None:
+                    # A write error cannot prove non-admission. Preserve the public
+                    # receipt mapping pending its separate contract decision.
+                    status = (
+                        LifecycleStatus.unknown
+                        if refusal is PromptDeliveryRefusalReason.write_to_backend_failed
+                        else LifecycleStatus.refused
+                    )
+                    refused_facts = (
+                        _turn_fact(reservation.token, LifecycleStatus.unavailable),
+                        _prompt_fact(reservation.token, status),
+                    )
+                    if not record_refusal:
+                        await self._persist(
+                            state,
+                            partial(
+                                self._store.transition_lifecycle,
+                                state.record.conversation_id,
+                                refused_facts,
+                            ),
+                        )
                     if record_refusal:
                         await self._append_event(
                             state,
@@ -2261,6 +2541,7 @@ class SqliteProcessConversationSystem:
                                 sender=sender,
                                 recipient=recipient,
                             ),
+                            lifecycle=refused_facts,
                             owner_read_through_sequence=owner_read_through_sequence,
                         )
                         for message in also_delivered:
@@ -2300,6 +2581,24 @@ class SqliteProcessConversationSystem:
                         ),
                     )
 
+                accepted_turn = _RunningTurn(
+                    token=reservation.token,
+                    automatic_compaction=reservation.automatic_compaction,
+                    prompt_senders={
+                        principal: None
+                        for principal in (
+                            (sender if reply_requested and composed_content_delivered else None),
+                            *(
+                                message.sender
+                                if message.reply_requested and composed_content_delivered
+                                else None
+                                for message in also_delivered
+                            ),
+                        )
+                        if principal is not None
+                    },
+                    automatic_notice=reservation.automatic_notice,
+                )
                 # One transaction: the change, the conversation's new values and the
                 # prompt are one fact about one delivery, and a half-written one would
                 # leave the record saying something that never happened.
@@ -2317,6 +2616,10 @@ class SqliteProcessConversationSystem:
                             sender=sender,
                             recipient=recipient,
                         ),
+                        lifecycle=(
+                            _turn_fact(reservation.token, LifecycleStatus.running),
+                            _prompt_fact(reservation.token, LifecycleStatus.started),
+                        ),
                         model_change=carried_change,
                         extra_prompts=tuple(
                             PromptEventPayload(
@@ -2331,6 +2634,10 @@ class SqliteProcessConversationSystem:
                             for message in also_delivered
                         ),
                         owner_read_through_sequence=owner_read_through_sequence,
+                    ),
+                    runtime_mutation=self._runtime_mutation(
+                        state,
+                        PlainFieldMutation(state, "running_turn", accepted_turn),
                     ),
                 )
                 self._take_in_written_rows(state, written)
@@ -2360,24 +2667,8 @@ class SqliteProcessConversationSystem:
                         reasoning_effort=carried_change.reasoning_effort,
                     )
                 state.has_delivered_prompt = True
-                state.running_turn = _RunningTurn(
-                    token=reservation.token,
-                    automatic_compaction=reservation.automatic_compaction,
-                    prompt_senders={
-                        principal: None
-                        for principal in (
-                            (sender if reply_requested and composed_content_delivered else None),
-                            *(
-                                message.sender
-                                if message.reply_requested and composed_content_delivered
-                                else None
-                                for message in also_delivered
-                            ),
-                        )
-                        if principal is not None
-                    },
-                    automatic_notice=reservation.automatic_notice,
-                )
+                if self._signal is None:
+                    state.running_turn = accepted_turn
                 self._set_phase(state, _ConversationPhase.running)
                 # The prompt commit can announce before this process-owned state is
                 # visible. Publish again after the runtime transition, so a reader of
@@ -2389,6 +2680,33 @@ class SqliteProcessConversationSystem:
                     state.reserved_turn = None
                     reservation.resolved.set()
 
+    async def _begin_attempt(
+        self,
+        state: _ConversationState,
+        token: TurnToken,
+        operation: LifecycleOperation,
+        provider_identity: str | None = None,
+        related: tuple[LifecycleFact, ...] = (),
+        *,
+        runtime_mutation: SignalRuntimeMutation | None = None,
+    ) -> LifecycleFact:
+        attempt = LifecycleFact(
+            LifecycleKind.attempt,
+            uuid4().hex,
+            token.turn_number,
+            operation,
+            LifecycleStatus.intent,
+            provider_identity,
+        )
+        await self._persist(
+            state,
+            partial(
+                self._store.transition_lifecycle, state.record.conversation_id, (attempt, *related)
+            ),
+            runtime_mutation=runtime_mutation,
+        )
+        return attempt
+
     async def _own_settlement[T](
         self, state: _ConversationState, operation: Coroutine[Any, Any, T]
     ) -> T:
@@ -2396,14 +2714,41 @@ class SqliteProcessConversationSystem:
         if asyncio.current_task() in state.settlement_tasks:
             return await operation
         task = asyncio.create_task(operation)
+        register_capture_task(task)
         state.settlement_tasks.add(task)
         task.add_done_callback(state.settlement_tasks.discard)
         return await asyncio.shield(task)
 
+    def _runtime_turn(self, conversation_id: str) -> object | None:
+        state = self._conversations.get(conversation_id)
+        return None if state is None else state.running_turn
+
+    def _signal_read(self) -> AbstractContextManager[None]:
+        return nullcontext() if self._signal is None else self._signal.current_read()
+
+    def _runtime_mutation(
+        self,
+        state: _ConversationState,
+        *operations: PlainFieldMutation,
+    ) -> SignalRuntimeMutation | None:
+        if self._signal is None:
+            return None
+        return SignalRuntimeMutation(
+            conversation_id=state.record.conversation_id,
+            runtime_epoch=self._signal.runtime_epoch,
+            expected_turn=state.running_turn,
+            operations=operations,
+        )
+
     async def _persist[T](
-        self, state: _ConversationState, operation: Callable[[], Coroutine[Any, Any, T]]
+        self,
+        state: _ConversationState,
+        operation: Callable[[], Coroutine[Any, Any, T]],
+        *,
+        runtime_mutation: SignalRuntimeMutation | None = None,
     ) -> T:
-        return await self._store.settle_recording(state.record.conversation_id, operation)
+        with self._store.signal_mutation(runtime_mutation):
+            return await self._store.settle_recording(state.record.conversation_id, operation)
 
     async def _drain_held_prompts(self, state: _ConversationState) -> None:
         await self._own_settlement(state, self._drain_held_prompts_owned(state))
@@ -2450,7 +2795,7 @@ class SqliteProcessConversationSystem:
                 rest = batch[1:]
                 combined = one_prompt_from(batch)
                 self._publish_held_prompts_changed(state)
-                reservation = self._reserve_turn(state)
+                reservation = await self._reserve_turn(state)
 
             try:
                 reservation.automatic_notice = await self._persist(
@@ -2580,6 +2925,7 @@ class SqliteProcessConversationSystem:
         outcome: BackendSteerOutcome,
         *,
         turn_token: TurnToken | None,
+        attempt: LifecycleFact | None = None,
         content: MessageContent,
         sender_label: str,
         sender_message_id: str | None,
@@ -2602,6 +2948,9 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
+                ),
+                lifecycle=(
+                    () if attempt is None else (replace(attempt, status=LifecycleStatus.injected),)
                 ),
                 owner_read_through_sequence=(
                     owner_read_through_sequence
@@ -2633,6 +2982,9 @@ class SqliteProcessConversationSystem:
                     sender=sender,
                     recipient=recipient,
                 ),
+                lifecycle=(
+                    () if attempt is None else (replace(attempt, status=LifecycleStatus.refused),)
+                ),
                 owner_read_through_sequence=(
                     owner_read_through_sequence
                     if sender is not None and sender.kind is PrincipalKind.owner
@@ -2651,6 +3003,9 @@ class SqliteProcessConversationSystem:
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
+            ),
+            lifecycle=(
+                () if attempt is None else (replace(attempt, status=LifecycleStatus.unknown),)
             ),
             owner_read_through_sequence=(
                 owner_read_through_sequence
@@ -2674,14 +3029,15 @@ class SqliteProcessConversationSystem:
 
     # --- turns --------------------------------------------------------------------------
 
-    def _reserve_turn(
+    async def _reserve_turn(
         self, state: _ConversationState, *, automatic_compaction: bool = False
     ) -> _ReservedTurn:
         """Name the turn that is about to be written. The lock must be held."""
+        turn_number = await self._store.reserve_turn(state.record.conversation_id)
         reservation = _ReservedTurn(
             token=TurnToken(
                 conversation_id=state.record.conversation_id,
-                turn_number=state.next_turn_number,
+                turn_number=turn_number,
             ),
             resolved=asyncio.Event(),
             automatic_compaction=automatic_compaction,
@@ -2690,7 +3046,6 @@ class SqliteProcessConversationSystem:
         # because the turn before it had just said so would silence the very moment this
         # exists for: a turn that has started and has nothing to show yet.
         state.model_thinking_shown_at_monotonic = 0.0
-        state.next_turn_number += 1
         state.reserved_turn = reservation
         self._set_phase(state, _ConversationPhase.starting)
         return reservation
@@ -2727,13 +3082,16 @@ class SqliteProcessConversationSystem:
         self._set_phase(state, _ConversationPhase.ending)
         running.ending_is_the_cores = True
         child = state.child
+        cancel_fact = None
         state.lock.release()
         try:
             if child is not None:
-                await self._cancel_child_turn(state, child)
+                cancel_fact = await self._cancel_child_turn(state, child)
         finally:
             await state.lock.acquire()
-        await self._end_turn(state, running, ConversationTurnEnding.interrupted, None)
+        await self._end_turn(
+            state, running, ConversationTurnEnding.interrupted, None, cancel_fact=cancel_fact
+        )
 
     async def _end_turn(
         self,
@@ -2741,6 +3099,8 @@ class SqliteProcessConversationSystem:
         running: _RunningTurn,
         ending: ConversationTurnEnding,
         error_summary: str | None,
+        *,
+        cancel_fact: LifecycleFact | None = None,
     ) -> StoredConversationEvent | None:
         """Record a turn's ending, once. The lock must be held.
 
@@ -2784,6 +3144,17 @@ class SqliteProcessConversationSystem:
                 self._store.append_turn_ending,
                 state.record.conversation_id,
                 payloads,
+                lifecycle=(
+                    _turn_fact(running.token, LifecycleStatus(ending.value)),
+                    *((cancel_fact,) if cancel_fact is not None else ()),
+                    *(
+                        replace(fact, status=LifecycleStatus.unavailable)
+                        for fact in await self._store.lifecycle_facts(state.record.conversation_id)
+                        if fact.kind is LifecycleKind.request
+                        and fact.turn_number == running.token.turn_number
+                        and fact.status in (LifecycleStatus.pending, LifecycleStatus.answering)
+                    ),
+                ),
                 agent_activity=not running.automatic_compaction,
                 automatic_compaction_confirmed=running.compaction_confirmed,
                 automatic_compaction_result=automatic_compaction_result,
@@ -2791,13 +3162,29 @@ class SqliteProcessConversationSystem:
                     ending is ConversationTurnEnding.failed and not running.automatic_notice
                 ),
             ),
+            runtime_mutation=self._runtime_mutation(
+                state,
+                PlainFieldMutation(running, "ended", True),
+                PlainFieldMutation(running, "pending_permission_ask_ids", set()),
+                PlainFieldMutation(running, "pending_user_input_questions", {}),
+                PlainFieldMutation(running, "permission_provider_ids", {}),
+                PlainFieldMutation(running, "user_input_provider_ids", {}),
+                PlainFieldMutation(state, "last_ended_turn_token", running.token),
+                PlainFieldMutation(
+                    state, "last_ended_turn_was_automatic_compaction", running.automatic_compaction
+                ),
+                PlainFieldMutation(state, "running_turn", None),
+            ),
         )
-        running.ended = True
-        running.pending_permission_ask_ids.clear()
-        running.pending_user_input_questions.clear()
-        state.last_ended_turn_token = running.token
-        state.last_ended_turn_was_automatic_compaction = running.automatic_compaction
-        state.running_turn = None
+        if self._signal is None:
+            running.ended = True
+            running.pending_permission_ask_ids.clear()
+            running.pending_user_input_questions.clear()
+            running.permission_provider_ids.clear()
+            running.user_input_provider_ids.clear()
+            state.last_ended_turn_token = running.token
+            state.last_ended_turn_was_automatic_compaction = running.automatic_compaction
+            state.running_turn = None
         self._take_in_written_rows(state, written)
         ended = written[-1]
         if not running.automatic_compaction:
@@ -2899,7 +3286,9 @@ class SqliteProcessConversationSystem:
             return False
         return True
 
-    async def _cancel_child_turn(self, state: _ConversationState, child: BackendChild) -> None:
+    async def _cancel_child_turn(
+        self, state: _ConversationState, child: BackendChild
+    ) -> LifecycleFact | None:
         """Tell the child to stop its turn, and deal honestly with a cancel that failed.
 
         The ending is the core's and it stands either way: an agent that would not take
@@ -2911,9 +3300,15 @@ class SqliteProcessConversationSystem:
         its own, because "the agent was interrupted" and "the agent was told to stop" have
         just stopped being the same statement.
         """
+        running = state.running_turn
+        attempt = (
+            None
+            if running is None
+            else await self._begin_attempt(state, running.token, LifecycleOperation.cancel)
+        )
         try:
             await child.cancel_running_turn()
-            return
+            return None if attempt is None else replace(attempt, status=LifecycleStatus.accepted)
         except Exception as cancel_failure:
             LOGGER.error(
                 "conversation turn cancel failed conversation_id=%s backend=%s error=%r",
@@ -2922,6 +3317,7 @@ class SqliteProcessConversationSystem:
                 cancel_failure,
             )
         await self._discard_child(state, child)
+        return None if attempt is None else replace(attempt, status=LifecycleStatus.unknown)
 
     async def _compose_prompt_content(
         self, state: _ConversationState, content: MessageContent
@@ -3115,17 +3511,47 @@ class SqliteProcessConversationSystem:
         if running is None:
             return
         try:
+            identity = f"{turn_token.turn_number}:permission:{ask.ask_id}"
+            if any(
+                fact.kind is LifecycleKind.request and fact.identity == identity
+                for fact in await self._store.lifecycle_facts(state.record.conversation_id)
+            ):
+                return
+            request_fact = LifecycleFact(
+                LifecycleKind.request,
+                identity,
+                turn_token.turn_number,
+                LifecycleOperation.permission,
+                LifecycleStatus.pending,
+                ask.ask_id,
+            )
             await self._append_backend_event(
                 state,
                 turn_token,
                 PermissionAskedEventPayload(
-                    ask_id=ask.ask_id,
+                    ask_id=identity,
                     title=ask.title,
                     detail=ask.detail,
                     options=ask.options,
                 ),
+                lifecycle=(request_fact,),
+                runtime_mutation=self._runtime_mutation(
+                    state,
+                    PlainFieldMutation(
+                        running,
+                        "pending_permission_ask_ids",
+                        running.pending_permission_ask_ids | {identity},
+                    ),
+                    PlainFieldMutation(
+                        running,
+                        "permission_provider_ids",
+                        {**running.permission_provider_ids, identity: ask.ask_id},
+                    ),
+                ),
             )
-            running.pending_permission_ask_ids.add(ask.ask_id)
+            if self._signal is None:
+                running.pending_permission_ask_ids.add(identity)
+                running.permission_provider_ids[identity] = ask.ask_id
         finally:
             state.lock.release()
 
@@ -3139,14 +3565,42 @@ class SqliteProcessConversationSystem:
         if running is None:
             return
         try:
+            identity = f"{turn_token.turn_number}:user_input:{request.request_id}"
+            if any(
+                fact.kind is LifecycleKind.request and fact.identity == identity
+                for fact in await self._store.lifecycle_facts(state.record.conversation_id)
+            ):
+                return
+            request_fact = LifecycleFact(
+                LifecycleKind.request,
+                identity,
+                turn_token.turn_number,
+                LifecycleOperation.user_input,
+                LifecycleStatus.pending,
+                request.request_id,
+            )
             await self._append_backend_event(
                 state,
                 turn_token,
-                UserInputRequestedEventPayload(
-                    request_id=request.request_id, questions=request.questions
+                UserInputRequestedEventPayload(request_id=identity, questions=request.questions),
+                lifecycle=(request_fact,),
+                runtime_mutation=self._runtime_mutation(
+                    state,
+                    PlainFieldMutation(
+                        running,
+                        "pending_user_input_questions",
+                        {**running.pending_user_input_questions, identity: request.questions},
+                    ),
+                    PlainFieldMutation(
+                        running,
+                        "user_input_provider_ids",
+                        {**running.user_input_provider_ids, identity: request.request_id},
+                    ),
                 ),
             )
-            running.pending_user_input_questions[request.request_id] = request.questions
+            if self._signal is None:
+                running.pending_user_input_questions[identity] = request.questions
+                running.user_input_provider_ids[identity] = request.request_id
         finally:
             state.lock.release()
 
@@ -3163,7 +3617,9 @@ class SqliteProcessConversationSystem:
             await self._append_backend_event(
                 state,
                 turn_token,
-                UserInputFailedEventPayload(request_id=request_id, detail=detail),
+                UserInputFailedEventPayload(
+                    request_id=f"{turn_token.turn_number}:user_input:{request_id}", detail=detail
+                ),
             )
         finally:
             state.lock.release()
@@ -3304,7 +3760,7 @@ class SqliteProcessConversationSystem:
             async with state.lock:
                 if state.phase is _ConversationPhase.idle and not state.held_prompts:
                     if self._automatic_compaction_is_due(state):
-                        reservation = self._reserve_turn(state, automatic_compaction=True)
+                        reservation = await self._reserve_turn(state, automatic_compaction=True)
             if reservation is not None:
                 await self._deliver_automatic_compaction(state, reservation)
 
@@ -3337,6 +3793,14 @@ class SqliteProcessConversationSystem:
 
     # --- shared internals ---------------------------------------------------------------
 
+    def require_runtime_ownership(self) -> None:
+        """Authorize publication using the reconciled runtime's exclusive live lease."""
+        self._require_runtime_ownership()
+
+    def _require_runtime_ownership(self) -> None:
+        if self._shutting_down or self._runtime_ownership.closed:
+            raise RuntimeError("the conversation runtime is shut down")
+
     async def _conversation_state(self, conversation_id: str) -> _ConversationState | None:
         """This process's state for a conversation, read from its row the first time.
 
@@ -3344,6 +3808,7 @@ class SqliteProcessConversationSystem:
         nothing running, which is the honest answer after a restart: the record is all
         there, and the next message resumes the session.
         """
+        self._require_runtime_ownership()
         async with self._conversations_lock:
             state = self._conversations.get(conversation_id)
             if state is not None:
@@ -3352,7 +3817,8 @@ class SqliteProcessConversationSystem:
             if record is None:
                 return None
             state = _ConversationState(record=record)
-            self._conversations[conversation_id] = state
+            with nullcontext() if self._signal is None else self._signal.runtime_registry():
+                self._conversations[conversation_id] = state
             return state
 
     async def _append_event(
@@ -3363,6 +3829,8 @@ class SqliteProcessConversationSystem:
         agent_activity: bool = False,
         automatic_compaction_confirmed: bool = False,
         owner_read_through_sequence: int | None = None,
+        lifecycle: tuple[LifecycleFact, ...] = (),
+        runtime_mutation: SignalRuntimeMutation | None = None,
     ) -> StoredConversationEvent:
         stored = await self._persist(
             state,
@@ -3370,10 +3838,12 @@ class SqliteProcessConversationSystem:
                 self._store.append_event,
                 state.record.conversation_id,
                 payload,
+                lifecycle=lifecycle,
                 agent_activity=agent_activity,
                 automatic_compaction_confirmed=automatic_compaction_confirmed,
                 owner_read_through_sequence=owner_read_through_sequence,
             ),
+            runtime_mutation=runtime_mutation,
         )
         self._take_in_written_rows(state, (stored,))
         if agent_activity:
@@ -3407,11 +3877,16 @@ class SqliteProcessConversationSystem:
         state: _ConversationState,
         turn_token: TurnToken,
         payload: ConversationEventPayload,
+        *,
+        lifecycle: tuple[LifecycleFact, ...] = (),
+        runtime_mutation: SignalRuntimeMutation | None = None,
     ) -> StoredConversationEvent:
         """Append durable backend output and move the ordinary activity watermark."""
         return await self._append_event(
             state,
             payload,
+            lifecycle=lifecycle,
+            runtime_mutation=runtime_mutation,
             agent_activity=not self._is_automatic_compaction_turn(state, turn_token),
         )
 
@@ -3498,6 +3973,8 @@ class SqliteProcessConversationSystem:
         answers that fast is answering the newest turn, not a dead one. What is refused is
         a token this conversation has left behind.
         """
+        if self._shutting_down or self._runtime_ownership.closed:
+            return False
         running = state.running_turn
         if running is not None and running.token == turn_token:
             return True

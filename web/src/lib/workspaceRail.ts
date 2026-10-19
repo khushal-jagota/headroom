@@ -8,8 +8,18 @@ import type {
 import {
   workItemTicketGroupKey,
   workItemTicketGroups,
+  type WorkItemAttentionFacts,
   type WorkItemTicketFacts
 } from "./workItemPresentation";
+
+
+/** Only fields the workspace presentation reads, independent of detail/config responses. */
+export type WorkspaceTicket = WorkItemTicketFacts & Pick<BoardCard, 'orchestrator' | 'sprint_item_id' | 'sprint_item_title'>;
+export type WorkspaceOrchestrator = Pick<BoardSprintItem,
+  'id' | 'title' | 'created_at' | 'settled' | 'project_id' | 'project' | 'recap_preview' | 'conversation_id'>
+  & WorkItemAttentionFacts & {conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>; tickets: readonly WorkItemTicketFacts[]};
+export type WorkspaceChief = Pick<import('./types').ChiefManagementSettings,'label' | 'conversation_id'>
+  & {awaiting_reply:boolean | null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>};
 
 export type WorkspaceTicketGroup = {
   key: string;
@@ -22,7 +32,7 @@ export type WorkspaceRailItem = {
   id: string;
   title: string;
   createdAt: number;
-  conversationSignal: BoardSprintItem["conversation_signal"];
+  conversationSignal: WorkspaceOrchestrator["conversation_signal"];
   conversationId: string | null;
   groups: WorkspaceTicketGroup[];
   rested: boolean;
@@ -58,7 +68,7 @@ function railGroups(
   }));
 }
 
-export function workspaceGroups(cards: readonly BoardCard[]): WorkspaceTicketGroup[] {
+export function workspaceGroups(cards: readonly WorkspaceTicket[]): WorkspaceTicketGroup[] {
   return railGroups(cards);
 }
 
@@ -93,14 +103,14 @@ export function refreshWorkspaceRailSignals(current: WorkspaceRail, next: Worksp
   const refreshTicket = (ticket: WorkItemTicketFacts): WorkItemTicketFacts => {
     const fresh = tickets.get(ticket.id);
     return fresh ? {...ticket, conversation_signal: fresh.conversation_signal,
-      conversation_id: fresh.conversation_id} : ticket;
+      conversation_id: fresh.conversation_id} : {...ticket,conversation_signal:undefined};
   };
   const refreshGroups = (groups: WorkspaceTicketGroup[]) => groups.map((group) =>
     ({...group, cards: group.cards.map(refreshTicket)}));
   const refreshItems = (rows: WorkspaceRailItem[]) => rows.map((item) => {
     const fresh = heads.get(item.id);
     return {...item, ...(fresh ? {conversationSignal: fresh.conversationSignal,
-      conversationId: fresh.conversationId} : {}), groups: refreshGroups(item.groups),
+      conversationId: fresh.conversationId} : {conversationSignal:undefined}), groups: refreshGroups(item.groups),
       tickets: item.tickets.map(refreshTicket)};
   });
   return {...current, groups: refreshGroups(current.groups), chiefGroups: refreshGroups(current.chiefGroups),
@@ -136,8 +146,8 @@ export function workspaceListRecap(groups: readonly WorkspaceTicketGroup[], reca
 /** Sidebar visibility stays separate from the durable unread conversation index. */
 export function workspaceRailChildMessageConversations(
   rows: readonly WorkspaceMessageConversation[],
-  parent: Pick<BoardSprintItem, "id" | "title" | "settled"> & { tickets: readonly WorkItemTicketFacts[] },
-  cards: readonly BoardCard[] = []
+  parent: Pick<WorkspaceOrchestrator, "id" | "title" | "settled"> & { tickets: readonly WorkItemTicketFacts[] },
+  cards: readonly WorkspaceTicket[] = []
 ): WorkspaceMessageConversation[] {
   const byTicket = new Map(parent.tickets.map((ticket) => [ticket.id, ticket]));
   for (const card of cards) byTicket.set(card.id, card);
@@ -150,8 +160,8 @@ export function workspaceRailChildMessageConversations(
 }
 
 export function buildWorkspaceRail(
-  cards: readonly BoardCard[],
-  sprintItems: readonly BoardSprintItem[] = []
+  cards: readonly WorkspaceTicket[],
+  sprintItems: readonly WorkspaceOrchestrator[] = []
 ): WorkspaceRail {
   // Complete children come from each orchestrator, never the currently open pane.
   const items = sprintItems.map((item) => ({
@@ -162,7 +172,7 @@ export function buildWorkspaceRail(
     conversationId: item.conversation_id,
     groups: workspaceAttentionGroups(item.tickets),
     recapPreview: item.recap_preview,
-    tickets: item.tickets,
+    tickets: [...item.tickets],
     settled: item.settled === true,
     rested: item.settled === true,
     project: item.project ?? null,

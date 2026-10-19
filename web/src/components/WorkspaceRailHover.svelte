@@ -6,26 +6,23 @@
   import { fetchJson } from "../lib/api";
   import { lifecycleFor, type WorkerTypesResponse } from "../lib/lifecycle";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
-  import type { BoardCard } from "../lib/types";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
-  let { visible, instant, target, title, kicker, recap = "", worker = null, cards, rail, signal = undefined, conversationId = null }: {
+  let { visible, instant, target, title, kicker, recap = "", worker = null, rail, signal = undefined, conversationId = null, element = $bindable<HTMLDivElement | null>(null) }: {
     visible: boolean; instant: boolean; target: HTMLElement | null; title: string; kicker: string;
     recap?: string; worker?: WorkItemTicketFacts | null;
-    cards: BoardCard[]; rail: HTMLElement | null;
-    signal?: ConversationSignal; conversationId?: string | null;
+    rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
+    signal?: Partial<ConversationSignal>; conversationId?: string | null; element?: HTMLDivElement | null;
   } = $props();
   const manifests = createQuery(() => ({ queryKey: ["worker-types"], queryFn: () => fetchJson<WorkerTypesResponse>("/api/worker-types") }));
-  let card = $derived(cards.find((entry) => entry.id === worker?.id));
-  let currentWorker = $derived(card ?? worker);
+  let currentWorker = $derived(worker);
   let stageSentence = $derived(currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
-  let panel = $state<HTMLDivElement | null>(null);
   let left = $state(0);
   let top = $state(0);
   $effect(() => {
-    if (!target || !rail || !visible || !panel) return;
+    if (!target || !rail || !visible || !element) return;
     const currentTarget = target;
     const currentRail = rail;
-    const currentPanel = panel;
+    const currentPanel = element;
     const place = () => {
       const rect = currentTarget.getBoundingClientRect();
       left = Math.max(12, Math.min(currentRail.getBoundingClientRect().right + 14, window.innerWidth - currentPanel.offsetWidth - 12));
@@ -39,7 +36,7 @@
     return () => { observer.disconnect(); window.removeEventListener("resize", place); };
   });
 </script>
-<div bind:this={panel} class="rail-hover-panel" class:visible class:instant style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}>
+<div bind:this={element} class="rail-hover-panel" class:visible class:instant style:left={`${left}px`} style:top={`${top}px`} data-rail-hover-panel aria-hidden={!visible}>
   <div class="kicker">{kicker}</div>
   <div class="title"><span>{currentWorker?.title ?? title}</span><ConversationSignalMark signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
   {#if worker}

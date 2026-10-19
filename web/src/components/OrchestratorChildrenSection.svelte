@@ -1,20 +1,23 @@
 <script lang="ts">
-  import { untrack } from "svelte";
-  import { createQuery } from "@tanstack/svelte-query";
+  import { untrack, tick, onDestroy } from "svelte";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { orchestratorChildrenImpact } from "../lib/workspaceNavigationImpact";
+  import { childrenSectionDomMatches } from "../lib/orchestratorSectionDom";
   import { railPreview } from "../lib/workspaceRailInteraction";
-  import { queries } from "../lib/queryCatalogue";
-  import { filterOrchestratorChildren } from "../lib/orchestratorChildren";
+  import { chiefChildrenPage, filterOrchestratorChildren } from "../lib/orchestratorChildren";
   import { orchestratorPageGroups } from "../lib/orchestratorPage";
   import { workItemTicketOrder, type WorkItemTicketFacts } from "../lib/workItemPresentation";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import type { OrchestratorPrincipal, OrchestratorChildFilter, SprintItemWorkspaceTicket } from "../lib/types";
+  import type { OrchestratorPrincipal, OrchestratorChildFilter } from "../lib/types";
   import Disclosure from "./Disclosure.svelte";
   import ResourceState from "./ResourceState.svelte";
   import SprintTicketRow from "./SprintTicketRow.svelte";
 
-  let { principal, tickets, filter, onHover, onLeave }: {
+  let { principal, tickets, publication, navigationErrorHandledByParent = false, filter, onHover, onLeave }: {
     principal: OrchestratorPrincipal;
-    tickets?: readonly SprintItemWorkspaceTicket[];
+    tickets?: readonly (WorkItemTicketFacts & {is_backlogged:boolean})[];
+    publication?: import("../lib/navigation/collection").NavigationPublication;
+    navigationErrorHandledByParent?: boolean;
     filter: OrchestratorChildFilter;
     onHover?: (element: HTMLElement, ticketId: string, immediate?: boolean) => void;
     onLeave: () => void;
@@ -22,18 +25,28 @@
   let offset = $state(0);
   let groupOpen = $state<Record<string, boolean>>({});
   let root = $state<HTMLElement | null>(null);
-  const children = createQuery(() => ({
-    ...queries.orchestratorTicketSummaries(principal, filter, offset),
-    enabled: tickets === undefined
-  }));
-  let rows = $derived(tickets === undefined ? children.data?.tickets ?? [] : filterOrchestratorChildren(tickets, filter));
-  let page = $derived(tickets === undefined ? children.data?.page : undefined);
+  const navigation = navigationApplication();
+  let effective = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | undefined>(undefined);
+  $effect(() => { const view = navigation?.selectors.effective; if (view) effective = view; });
+  let shared = $derived(effective && navigation ? navigation.presentationFor(effective) : undefined);
+  let parentKey = $derived(principal.kind === "chief" ? "chief:chief" : `orchestrator:${principal.id}`);
+  let sharedPage = $derived(shared ? chiefChildrenPage(shared.ticketsByParent.get(parentKey) ?? [], filter, offset) : undefined);
+  let rows = $derived(tickets === undefined ? sharedPage?.tickets ?? [] : filterOrchestratorChildren(tickets, filter));
+  let page = $derived(tickets === undefined ? sharedPage?.page : undefined);
+  let groups = $derived(filter === "active" ? orchestratorPageGroups<WorkItemTicketFacts>(rows) : []);
+  let sectionOpen = $state(false);
+  let observedGroups = $derived(filter === "active" ? groups : [{key:filter === "backlogged" ? "backlog" : "done",tickets:rows}]);
+  let observedOpen = $derived(filter === "active" ? groupOpen : {[filter === "backlogged" ? "backlog" : "done"]:sectionOpen});
+  const observer = navigation?.registerRenderBoundary(`orchestrator-section:${crypto.randomUUID()}`, impact => {
+    const view = navigation?.state.effective;
+    return orchestratorChildrenImpact(impact,principal,view && navigation ? navigation.presentationFor(view) : undefined,rows,observedGroups,observedOpen);
+  });
+  onDestroy(() => { if (observer) navigation?.disposeRenderBoundary(observer); });
   let count = $derived(page?.match_count ?? rows.length);
   let label = $derived(filter === "backlogged" ? "Backlogged" : "Done");
-  let groups = $derived(filter === "active" ? orchestratorPageGroups<WorkItemTicketFacts>(rows) : []);
   $effect(() => {
     // A membership change can empty the last page. Return to the last remaining page.
-    if (page && page.return_count === 0 && page.offset > 0 && !children.isFetching) {
+    if (page && page.return_count === 0 && page.offset > 0) {
       offset = Math.max(0, Math.floor((page.match_count - 1) / page.limit) * page.limit);
     }
   });
@@ -46,6 +59,23 @@
         if (key) groupOpen[key] = group.open;
       }
     });
+  });
+  $effect(() => {
+    const view = effective, element = root, generation = navigation?.state.generation;
+    const expectedRows = rows, expectedGroups = groups, expectedPage = page;
+    const expectedFilter = filter, expectedPrincipal = principal;
+    const expectedOpen = {...groupOpen}, expectedSectionOpen = sectionOpen;
+    const expectedCount = count;
+    if (!navigation || !observer || !view?.runtimeCurrent || !element || generation === undefined
+      || navigation.selectors.effective !== view || (tickets !== undefined && publication !== view.publication)) return;
+    const observation = observer.observeSelectors(view.publication,generation);
+    let obsolete = false;
+    void tick().then(() => {
+      if (obsolete || !element.isConnected || navigation.state.generation !== generation || navigation.selectors.effective !== view) return;
+      if (childrenSectionDomMatches(element,expectedPrincipal,expectedFilter,expectedRows,expectedGroups,expectedPage,expectedOpen,expectedSectionOpen,expectedCount))
+        observer.acknowledgeRender(view.publication,observation);
+    });
+    return () => { obsolete = true; };
   });
 </script>
 
@@ -64,8 +94,8 @@
     </div>
   {/snippet}
   {#snippet contents()}
-    <ResourceState error={tickets === undefined ? children.error : null} loading={tickets === undefined && children.isLoading}
-      hasData={tickets !== undefined || children.data !== undefined} loadingText={`Loading ${filter === "active" ? "Workers" : label}…`}>
+    <ResourceState error={tickets === undefined && !navigationErrorHandledByParent ? navigation?.state.error : null} loading={tickets === undefined && !shared}
+      hasData={tickets !== undefined || shared !== undefined} loadingText={`Loading ${filter === "active" ? "Workers" : label}…`}>
       {#if filter === "active"}
         {#each groups as group (group.key)}
           <Disclosure variant="orchestrator-group" class="sprint-workspace-status" data-workspace-group={group.key}
@@ -94,7 +124,7 @@
     {@render contents()}
   {:else}
     <Disclosure variant="orchestrator-group" class="sprint-workspace-status" data-workspace-group={filter === "backlogged" ? "backlog" : "done"}
-      defaultOpen={false} chevron="none">
+      defaultOpen={false} onReaderToggle={(open) => sectionOpen = open} chevron="none">
       {#snippet summary()}
         <span class="sprint-workspace-status-label">{label}</span>
         <span class="sprint-workspace-count" data-group-count>{count}</span>

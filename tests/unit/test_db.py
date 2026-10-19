@@ -8,6 +8,7 @@ from typing import cast
 from unittest.mock import patch
 
 import pytest
+from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 from planner.core import db as db_module
@@ -26,7 +27,7 @@ REVISION_FROM_THE_COLLAPSED_CHAIN = "proposal_delivery_failures"
 
 # Every table, index and trigger a current build holds: the baseline plus what the
 # revisions after it add.
-CURRENT_SCHEMA_OBJECT_COUNT = 68
+CURRENT_SCHEMA_OBJECT_COUNT = 122
 
 # The one state-of-control value this build stores, as the CHECK constraint renders it.
 FINAL_WORKER_STEP_CLAIM_CHECK = "worker_step_claim IN ('none','out','errored')"
@@ -82,21 +83,9 @@ def _revision(conn: sqlite3.Connection) -> str:
 
 def _head_revision() -> str:
     """The revision this build finishes at, which moves as revisions are added."""
-    versions = db_module.MIGRATIONS_DIRECTORY / "versions"
-    down_revisions = {
-        line.split("=", 1)[1].strip().strip("\"'")
-        for path in versions.glob("*.py")
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.startswith("down_revision = ")
-    }
-    heads = {
-        line.split("=", 1)[1].strip().strip("\"'")
-        for path in versions.glob("*.py")
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.startswith("revision = ")
-    } - down_revisions
-    (head,) = heads
-    return head
+    config = Config()
+    config.set_main_option("script_location", str(db_module.MIGRATIONS_DIRECTORY))
+    return str(ScriptDirectory.from_config(config).get_current_head())
 
 
 def _build_database_at_the_pre_collapse_head(path: Path) -> sqlite3.Connection:

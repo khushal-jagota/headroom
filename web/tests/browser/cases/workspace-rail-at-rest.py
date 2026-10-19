@@ -1,9 +1,15 @@
 # ruff: noqa: E501
-"""Independent browser case, extracted without assertion changes."""
+"""Shared browser case with canonical navigation-source coverage."""
 
 
 def run(browser, urls):
+    import runpy
+    from pathlib import Path
 
+    fixture = runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
+    )
+    navigation_response = fixture["navigation_response"]
     import json
     import os
     import pathlib
@@ -37,7 +43,7 @@ def run(browser, urls):
             "gating_field_label": "Implementation",
             "is_done": False,
             "blocked": False,
-            "conversation_id": None,
+            "conversation_id": "fixture-ticket-" + ticket_id,
             "waiting_to_closeout": False,
             "recap_preview": "A concise recap from the current projection.",
             "sprint_item_id": item_id,
@@ -64,13 +70,11 @@ def run(browser, urls):
         return {
             "id": item_id,
             "created_at": 0,
-            "conversation_id": None,
+            "conversation_id": "fixture-item-" + item_id,
             "ticket_rollup": dict(quiet),
             **quiet,
         }
 
-    # One orchestrator mixes attention, ongoing work, and ineligible overlap rows.
-    # The other has no eligible work, so its existing quiet line must remain visible.
     board = {
         "columns": [
             {
@@ -101,8 +105,6 @@ def run(browser, urls):
                         ticket_status="awaiting_approval",
                         awaiting_agent_approval=True,
                     ),
-                    # A broken worker still holding a proposal for him. It is his to approve, and the
-                    # Item at rest keeps the three groups, so it belongs under Needs your approval.
                     card(
                         "t_broken",
                         "si_needs_him",
@@ -213,6 +215,7 @@ def run(browser, urls):
         summary["recap_preview"] = ORCHESTRATOR_RECAP
     workers = {
         "chief_of_staff": {
+            "conversation_id": "fixture-chief",
             "label": "Chief of Staff",
             "needs_me": False,
             "awaiting_reply": False,
@@ -221,7 +224,6 @@ def run(browser, urls):
         },
         "workers": [],
     }
-
     FIELDS = ["brief", "success_condition", "what_changes", "plan", "implementation"]
     STAGE_OF = {f: "needs_" + f for f in FIELDS}
     stages = [
@@ -264,7 +266,6 @@ def run(browser, urls):
         employee_configuration_editable=False,
         stage="needs_what_changes",
         ceiling="done",
-        sprint_item_title=None,
         ticket_status="agent",
         ceiling_holder={"kind": "owner", "id": "owner"},
         conversation_id=None,
@@ -273,7 +274,6 @@ def run(browser, urls):
         blocked=False,
         blocker_summary={"blocked_by": []},
         recap="Orientation",
-        guidance="",
         pending_proposal=None,
         field_values={
             "brief": "The request",
@@ -281,7 +281,6 @@ def run(browser, urls):
             "what_changes": "The change",
         },
     )
-
     workspace = dict(
         id="si_needs_him",
         title="Needs him",
@@ -297,13 +296,39 @@ def run(browser, urls):
         ticket_rollup={},
         settled=False,
     )
+    preview_requests = []
+    snapshot_reads = 0
+    source_revision = 0
+    last_source = None
+
+    def navigation_snapshot():
+        nonlocal snapshot_reads, source_revision, last_source
+        snapshot_reads += 1
+        authored = json.dumps({"board": board, "workers": workers}, sort_keys=True)
+        if authored != last_source:
+            source_revision += 1
+            last_source = authored
+        navigation_response.__globals__["_navigation_revision"] = source_revision - 1
+        return navigation_response(board, workers)
 
     def respond(route):
         path = route.request.url.split("/api/", 1)[1].split("?")[0]
-        if path == "board":
-            result = board
+        if path == "navigation/snapshot":
+            result = navigation_snapshot()
+        elif path == "board":
+            raise AssertionError("sidebar summary query remains active: " + path)
+        elif path == "workers/chief-of-staff/settings":
+            result = workers["chief_of_staff"]
         elif path == "workers":
+            assert any(
+
+                    selection in route.request.frame.url
+                    for selection in ("#/workspace/utility/settings", "#/workspace/utility/usage")
+
+            ), ("sidebar must not request the worker roster", route.request.frame.url)
             result = workers
+        elif path.endswith("/recap-preview"):
+            raise AssertionError("unexpected preview request: " + path)
         elif path == "worker-types":
             result = manifest
         elif path == "skills":
@@ -316,8 +341,8 @@ def run(browser, urls):
             result = {"backends": []}
         elif path == "backends":
             result = {"backends": []}
-        elif path.endswith("/workspace"):
-            result = {**workspace, "tickets": board["sprint_items"][0]["tickets"]}
+        elif path.endswith("/workspace-content"):
+            result = {key: workspace[key] for key in ["body", "artifacts", "conversation_history"]}
         elif path.endswith("/start-values"):
             result = {"backend_key": "codex", "model": None, "reasoning_effort": None}
         elif path.startswith("tickets/") or path == "tickets":
@@ -340,16 +365,13 @@ def run(browser, urls):
         )
         page.context.route("**/api/**", respond)
         page.goto([__file__, *urls][1])
-
         needs_him = page.locator('[data-sprint-item="si_needs_him"]')
         needs_him.wait_for()
-
-        # Nothing is selected, and the groups are already there.
+        page.evaluate("window.__startRailWait()")
+        page.wait_for_function("window.__railWaitStatus === 'included'")
+        assert preview_requests == [], "initial source load must not prefetch every preview"
         assert page.locator('[data-sprint-item] [aria-current="page"]').count() == 0
         assert page.locator(".orchestrator-card.selected").count() == 0
-
-        # Backlog stays outside the sidebar. An answer
-        # he owes sits under the decision he owes and above the Stage that is merely his.
         headers = needs_him.locator("[data-bucket-key]")
         expect(headers).to_have_count(7)
         assert [headers.nth(i).get_attribute("data-bucket-key") for i in range(7)] == [
@@ -361,8 +383,6 @@ def run(browser, urls):
             "status_awaiting_approval",
             "empty",
         ]
-
-        # The rows are there too, one Ticket under one header.
         for ticket_id, key in [
             ("t_approval", "awaiting_approval"),
             ("t_broken", "awaiting_approval"),
@@ -379,22 +399,14 @@ def run(browser, urls):
                 ).count()
                 == 1
             )
-
-        # Ongoing agent work is visible beside owner attention. Ineligible rows
-        # stay absent even when stale attention flags overlap.
         expect(needs_him.locator('[data-ticket-id="t_agents_approval"]')).to_have_count(1)
         for excluded in ["t_done_overlap", "t_blocked_overlap", "t_parent_blocked"]:
             expect(needs_him.locator('[data-ticket-id="' + excluded + '"]')).to_have_count(0)
         expect(needs_him.locator('[data-bucket-key="empty"]')).to_contain_text("Other")
-
-        # An orchestrator with no eligible children uses the existing quiet line.
         quiet = page.locator('[data-sprint-item="si_quiet"]')
         assert quiet.locator("[data-bucket-key]").count() == 0
         assert quiet.locator("[data-ticket-id]").count() == 0
         expect(quiet.locator(".board-workspace-quiet-line")).to_have_text("Nothing in this list")
-
-        # Only an exact conversation message creates a dot. Child attention does not
-        # create a supervisor dot, and approval/ask/running/error rows have no mark.
         expect(needs_him.locator(".item-head .stage-mark")).to_have_count(0)
         expect(needs_him.locator('[data-ticket-id="t_message"] .stage-mark')).to_have_count(1)
         expect(needs_him.locator('[data-ticket-id="t_agent"] .stage-mark')).to_have_attribute(
@@ -402,8 +414,6 @@ def run(browser, urls):
         )
         expect(quiet.locator(".stage-mark")).to_have_count(0)
         expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
-
-        # Chief's ask/running/error-like work facts cannot create its message dot.
         chief = workers["chief_of_staff"]
         chief.update(needs_me=True, agent_working=True)
         page.evaluate("window.__refresh()")
@@ -419,8 +429,6 @@ def run(browser, urls):
         chief["conversation_signal"] = dict(working=False, message_for_owner=False)
         page.evaluate("window.__refresh()")
         expect(page.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
-
-        # Backlogged owner/supervisor/unread rows never re-enter active or Chief cards.
         chief_card = page.locator(".orchestrator-card.chief")
 
         def assert_backlog_absent():
@@ -455,13 +463,7 @@ def run(browser, urls):
         page.get_by_role("button", name="Settled (1)").click()
         expect(page.locator('[data-message-conversation="ordinary-settled"]')).to_be_visible()
         assert_backlog_absent()
-
-        # Keep the global settled-message discovery above proved, then close it
-        # so captures isolate the active rail's approved group structure.
         page.get_by_role("button", name="Settled (1)").click()
-
-        # The revision preserves unread facts and clears the actual query signal
-        # without recategorizing, reordering, or brightening the quiet row.
         artifact_dir = pathlib.Path(
             os.environ.get(
                 "PANELS_SIDEBAR_ARTIFACT_DIR",
@@ -493,7 +495,7 @@ def run(browser, urls):
                 "e=>({group:e.closest('[data-bucket-key]').dataset.bucketKey,tone:e.closest('[data-tone]').dataset.tone,color:getComputedStyle(e).color,order:[...e.closest('[data-bucket-key]').querySelectorAll('[data-ticket-id]')].map(x=>x.dataset.ticketId)})"
             )
 
-        before_unread, before_working = row_state(unread_row), row_state(working_row)
+        before_unread, before_working = (row_state(unread_row), row_state(working_row))
         assert before_unread["tone"] == before_working["tone"] == "quiet"
         page.wait_for_timeout(600)
         page.screenshot(path=str(artifact_dir / "sidebar-unread-quiet-working-and-needs-you.png"))
@@ -512,7 +514,7 @@ def run(browser, urls):
             "data-conversation-signal", "working"
         )
         page.wait_for_timeout(600)
-        after_unread, after_working = row_state(unread_row), row_state(working_row)
+        after_unread, after_working = (row_state(unread_row), row_state(working_row))
         assert before_unread == after_unread
         assert before_working == after_working
         expect(approval_row.locator(".stage-mark")).to_have_count(0)
@@ -533,8 +535,6 @@ def run(browser, urls):
                 indent=2,
             )
         )
-
-        # Parent hover uses the authoritative recap, with no child inventory.
         needs_him.locator(".item-head").hover()
         panel = page.locator("[data-rail-hover-panel]")
         expect(panel).to_have_attribute("aria-hidden", "false")
@@ -546,7 +546,6 @@ def run(browser, urls):
         expect(panel).to_contain_text("Chief of Staff")
         expect(panel.locator(".recap")).to_have_text("Nothing in this list right now.")
         expect(panel).not_to_contain_text("Revisit workspace navigation")
-        # Capture both real popup branches at desktop and compact widths.
         for viewport, label in [
             (dict(width=1440, height=1000), "desktop"),
             (dict(width=560, height=1000), "compact"),
@@ -573,8 +572,6 @@ def run(browser, urls):
                 page.screenshot(path=str(artifact_dir / f"sidebar-{name}-{label}-popup.png"))
         page.mouse.move(1200, 900)
         expect(panel).to_have_attribute("aria-hidden", "true")
-
-        # The relocated rail proof keeps real keyboard/pointer/CSS and local persistence.
         page.set_viewport_size(dict(width=1440, height=1000))
         left = page.locator(".board-workspace-left")
         grip = page.get_by_role("separator", name="Resize workspace panel")
@@ -624,8 +621,6 @@ def run(browser, urls):
         expect(row).to_be_focused()
         expect(row).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-
-        # Each popup branch consumes changed query responses while continuously open.
         page.set_viewport_size(dict(width=1440, height=1000))
         worker = board["columns"][0]["cards"][0]
         supervisor = board["sprint_items"][0]
@@ -662,14 +657,13 @@ def run(browser, urls):
                         "data-conversation-signal", winner
                     )
                 assert all(
-                    abs(target.bounding_box()[key] - source_bounds[key]) < 1
-                    for key in ["x", "y", "width", "height"]
+
+                        abs(target.bounding_box()[key] - source_bounds[key]) < 1
+                        for key in ["x", "y", "width", "height"]
+
                 )
                 assert identity.evaluate("e=>e===document.querySelector('[data-rail-hover-panel]')")
                 expect(panel).to_have_attribute("aria-hidden", "false")
-
-        # Real keyboard modality opens the popup. A pointer click must not leave
-        # a keyboard-style popup open while the mouse is outside the rail.
         page.mouse.move(1200, 950)
         page.locator("body").click(position=dict(x=1100, y=920))
         row.focus()
@@ -684,9 +678,44 @@ def run(browser, urls):
         row.click()
         page.mouse.move(1200, 950)
         expect(panel).to_have_attribute("aria-hidden", "true")
-
-        # Each utility opens in the workspace pane, restores from a reloadable
-        # address, and opens from that copied address in a second page.
+        page.mouse.move(1200, 950)
+        expect(panel).to_have_attribute("aria-hidden", "true")
+        preview_metrics = []
+        for cached, trigger in [(False, "pointer"), (True, "pointer"), (False, "focus")]:
+            before_requests = len(preview_requests)
+            page.evaluate(
+                "() => {\n              const root=document.querySelector('[data-rail-hover-panel]');\n              window.__previewTiming={start:performance.now(),visible:null,recap:null,firstText:null};\n              window.__previewObserver?.disconnect();\n              window.__previewObserver=new MutationObserver(() => {\n                const t=window.__previewTiming;\n                if(root.getAttribute('aria-hidden')==='false' && t.visible===null) {\n                  t.visible=performance.now()-t.start;t.firstText=root.querySelector('.recap')?.textContent ?? '';\n                }\n                if(t.visible!==null && root.querySelector('.recap')?.textContent==='A concise recap from the current projection.' && t.recap===null) t.recap=performance.now()-t.start;\n              });\n              window.__previewObserver.observe(root,{subtree:true,childList:true,characterData:true,attributes:true});\n            }"
+            )
+            if trigger == "pointer":
+                row.hover()
+            else:
+                page.locator("body").click(position=dict(x=1100, y=920))
+                row.focus()
+                page.keyboard.press("Tab")
+                page.keyboard.press("Shift+Tab")
+            expect(panel).to_have_attribute("aria-hidden", "false")
+            expect(panel.locator(".recap")).to_have_text(
+                "A concise recap from the current projection."
+            )
+            page.wait_for_function("window.__previewTiming.recap !== null")
+            measurement = dict(
+                cached=cached,
+                trigger=trigger,
+                requests=len(preview_requests) - before_requests,
+                **page.evaluate("window.__previewTiming"),
+            )
+            assert measurement["requests"] == 0
+            assert measurement["firstText"] == "A concise recap from the current projection."
+            preview_metrics.append(measurement)
+            page.mouse.move(1200, 950)
+            page.locator("body").click(position=dict(x=1100, y=920))
+            expect(panel).to_have_attribute("aria-hidden", "true")
+        page.evaluate("window.__previewObserver.disconnect()")
+        metric_path = (
+            pathlib.Path(os.environ["PANELS_SIDEBAR_ARTIFACT_DIR"]) / "inline-preview-timing.json"
+        )
+        metric_path.parent.mkdir(parents=True, exist_ok=True)
+        metric_path.write_text(json.dumps(preview_metrics, indent=2))
         utility_cases = [
             ("Usage and Backends", "usage", "backends"),
             ("Settings", "settings", "settings"),
@@ -705,14 +734,9 @@ def run(browser, urls):
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             expect(link).to_have_attribute("aria-current", "page")
             expect(page.locator('.rail-utilities a[aria-current="page"]')).to_have_count(1)
-            accent_border = page.evaluate("""() => {
-                const probe = document.createElement('span');
-                probe.style.borderColor = 'var(--accent-bright)';
-                document.body.append(probe);
-                const color = getComputedStyle(probe).borderTopColor;
-                probe.remove();
-                return color;
-            }""")
+            accent_border = page.evaluate(
+                "() => {\n                const probe = document.createElement('span');\n                probe.style.borderColor = 'var(--accent-bright)';\n                document.body.append(probe);\n                const color = getComputedStyle(probe).borderTopColor;\n                probe.remove();\n                return color;\n            }"
+            )
             assert (
                 link.evaluate("element => getComputedStyle(element).borderTopColor")
                 == accent_border
@@ -757,16 +781,10 @@ def run(browser, urls):
             ).to_be_visible()
             shared_context.close()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-
-        # The utility content stacks with the rail on a compact viewport and
-        # remains inside the viewport without horizontal scrolling.
         page.set_viewport_size(dict(width=820, height=1000))
         expect(page.locator('.board-workspace-right [data-screen="feedback"]')).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         page.set_viewport_size(dict(width=1440, height=1000))
-
-        # Hover freezes structure through a live refetch. Leaving applies the latest
-        # answer, and a row that rejoins a group enters below its existing members.
         ordinary = next(r for r in board["columns"][0]["cards"] if r["id"] == "t_parent_quiet")
         needs_him.locator('[data-ticket-id="t_parent_quiet"]').hover()
         expect(panel).to_have_attribute("aria-hidden", "false")
@@ -776,14 +794,18 @@ def run(browser, urls):
         ordinary["conversation_id"] = "rebound-quiet-worker"
         ordinary["conversation_signal"] = dict(working=True, message_for_owner=False)
         page.evaluate("window.__refresh()")
+        page.evaluate("window.__startRailWait()")
+        assert page.evaluate("window.__railWaitStatus") == "pending"
         expect(
             frozen_row.locator(
                 '[data-conversation-id="rebound-quiet-worker"] [data-conversation-signal="working"]'
             )
         ).to_have_count(1)
         assert all(
-            abs(frozen_row.bounding_box()[key] - frozen_bounds[key]) < 1
-            for key in ["x", "y", "width", "height"]
+
+                abs(frozen_row.bounding_box()[key] - frozen_bounds[key]) < 1
+                for key in ["x", "y", "width", "height"]
+
         )
         expect(
             needs_him.locator('[data-bucket-key="empty"] [data-ticket-id="t_parent_quiet"]')
@@ -799,10 +821,12 @@ def run(browser, urls):
                 '[data-bucket-key="awaiting_answer"] [data-ticket-id="t_parent_quiet"]'
             )
         ).to_have_count(1)
+        page.wait_for_function("window.__railWaitStatus === 'included'")
         expect(
             needs_him.locator('[data-bucket-key="awaiting_answer"] [data-ticket-id]').last
         ).to_have_attribute("data-ticket-id", "t_parent_quiet")
         ordinary["awaiting_answer"] = False
+        ordinary["conversation_signal"] = dict(working=False, message_for_owner=False)
         page.evaluate("window.__refresh()")
         expect(
             needs_him.locator('[data-bucket-key="empty"] [data-ticket-id="t_parent_quiet"]')
@@ -812,14 +836,11 @@ def run(browser, urls):
         expect(
             needs_him.locator('[data-bucket-key="awaiting_answer"] [data-ticket-id]').last
         ).to_have_attribute("data-ticket-id", "t_parent_quiet")
-        # Query activity never becomes a recency sort inside the group.
         ordinary["activity_at"] = 9999
         page.evaluate("window.__refresh()")
         expect(
             needs_him.locator('[data-bucket-key="awaiting_answer"] [data-ticket-id]').first
         ).to_have_attribute("data-ticket-id", "t_answer")
-
-        # Width limits protect real text layout and title ellipsis, not a mock box.
         artifact_dir = pathlib.Path(
             os.environ.get(
                 "PANELS_SIDEBAR_ARTIFACT_DIR",
@@ -842,10 +863,7 @@ def run(browser, urls):
                 "getComputedStyle(document.querySelector('[data-rail-hover-panel]')).opacity === '1'"
             )
             page.screenshot(path=str(artifact_dir / f"sidebar-{width}-popup.png"))
-
         page.set_viewport_size(dict(width=1440, height=1400))
-        # Cross-parent motion preserves membership and measurable intermediate geometry.
-        # The sentinel underlay detects occlusion without a fixed decorative palette.
         page.mouse.move(1200, 950)
         page.locator("body").click(position=dict(x=1100, y=920))
         mover = next(r for r in board["columns"][0]["cards"] if r["id"] == "t_agent")
@@ -856,11 +874,9 @@ def run(browser, urls):
         page.mouse.move(1200, 950)
         page.evaluate("location.hash='#/workspace/item/si_quiet'")
         page.wait_for_timeout(100)
-        page.wait_for_function("""() => {
-          const card=document.querySelector('.orchestrator-card.selected'),css=getComputedStyle(card);
-          const color=document.createElement('span').style;color.color=css.getPropertyValue('--accent-bright');
-          return css.borderTopColor===color.color;
-        }""")
+        page.wait_for_function(
+            "() => {\n          const card=document.querySelector('.orchestrator-card.selected'),css=getComputedStyle(card);\n          const color=document.createElement('span').style;color.color=css.getPropertyValue('--accent-bright');\n          return css.borderTopColor===color.color;\n        }"
+        )
         selected_card = page.locator('[data-sprint-item="si_quiet"]')
         selected_before = selected_card.evaluate(
             "e=>({background:getComputedStyle(e).backgroundColor,border:getComputedStyle(e).borderTopColor})"
@@ -869,31 +885,12 @@ def run(browser, urls):
         before_y = mover_row.bounding_box()["y"]
         source["tickets"] = [r for r in source["tickets"] if r["id"] != "t_agent"]
         destination["tickets"].append(mover)
+        mover["sprint_item_id"] = destination["id"]
+        mover["sprint_item_title"] = destination["title"]
         mover["assigned"] = True
-        page.evaluate("""() => {
-          window.__motionEvidence=[];
-          const start=performance.now();
-          const sample=()=>{
-            const row=document.querySelector('[data-ticket-id="t_agent"]');
-            const mark=row?.querySelector('.stage-mark');
-            const css=row&&getComputedStyle(row);
-            const rect=row?.getBoundingClientRect();
-            const animations=row?.getAnimations().map(a=>({duration:a.effect.getTiming().duration,easing:a.effect.getTiming().easing}));
-            const overlaps=rect&&[...document.querySelectorAll('.worker-row')].some(other=>{const r=other.getBoundingClientRect();return other!==row&&r.top<rect.bottom&&r.bottom>rect.top&&r.left<rect.right&&r.right>rect.left;});
-            const top=rect&&document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2)?.closest('[data-ticket-id]')?.getAttribute('data-ticket-id');
-            window.__motionEvidence.push({ms:performance.now()-start,y:row?.getBoundingClientRect().y,
-              color:css?.color,background:css?.backgroundColor,z:css?.zIndex,
-              cardBackground:row&&getComputedStyle(row.closest(".orchestrator-card")).backgroundColor,
-              selectedBorder:getComputedStyle(document.querySelector('.orchestrator-card.selected')).borderTopColor,
-              cardZ:row&&getComputedStyle(row.closest('.orchestrator-card')).zIndex,
-              selectedTravellingCard:row?.closest('.orchestrator-card')?.matches('.selected.rail-travelling-card'),
-              spinner:mark&&getComputedStyle(mark).borderTopColor,
-              animations,overlaps,top,travelling:row?.classList.contains('rail-travelling'),
-              parent:row?.closest('[data-sprint-item]')?.getAttribute('data-sprint-item')});
-            if(performance.now()-start<1100)requestAnimationFrame(sample);
-          };
-          requestAnimationFrame(sample); void window.__refresh();
-        }""")
+        page.evaluate(
+            "() => {\n          window.__motionEvidence=[];\n          const start=performance.now();\n          const sample=()=>{\n            const row=document.querySelector('[data-ticket-id=\"t_agent\"]');\n            const mark=row?.querySelector('.stage-mark');\n            const css=row&&getComputedStyle(row);\n            const rect=row?.getBoundingClientRect();\n            const animations=row?.getAnimations().map(a=>({duration:a.effect.getTiming().duration,easing:a.effect.getTiming().easing}));\n            const overlaps=rect&&[...document.querySelectorAll('.worker-row')].some(other=>{const r=other.getBoundingClientRect();return other!==row&&r.top<rect.bottom&&r.bottom>rect.top&&r.left<rect.right&&r.right>rect.left;});\n            const top=rect&&document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2)?.closest('[data-ticket-id]')?.getAttribute('data-ticket-id');\n            window.__motionEvidence.push({ms:performance.now()-start,y:row?.getBoundingClientRect().y,\n              color:css?.color,background:css?.backgroundColor,z:css?.zIndex,\n              cardBackground:row&&getComputedStyle(row.closest(\".orchestrator-card\")).backgroundColor,\n              selectedBorder:getComputedStyle(document.querySelector('.orchestrator-card.selected')).borderTopColor,\n              cardZ:row&&getComputedStyle(row.closest('.orchestrator-card')).zIndex,\n              selectedTravellingCard:row?.closest('.orchestrator-card')?.matches('.selected.rail-travelling-card'),\n              spinner:mark&&getComputedStyle(mark).borderTopColor,\n              animations,overlaps,top,travelling:row?.classList.contains('rail-travelling'),\n              parent:row?.closest('[data-sprint-item]')?.getAttribute('data-sprint-item')});\n            if(performance.now()-start<1100)requestAnimationFrame(sample);\n          };\n          requestAnimationFrame(sample); void window.__refresh();\n        }"
+        )
         page.wait_for_timeout(350)
         page.screenshot(path=str(artifact_dir / "sidebar-motion-mid.png"))
         page.wait_for_timeout(1000)
@@ -910,7 +907,9 @@ def run(browser, urls):
         assert moving, "No actual cross-parent travelling frames"
         after_y = mover_row.bounding_box()["y"]
         assert abs(after_y - before_y) > 10
-        assert any(min(before_y, after_y) + 1 < x["y"] < max(before_y, after_y) - 1 for x in moving)
+        assert any(
+            min(before_y, after_y) + 1 < x["y"] < max(before_y, after_y) - 1 for x in moving
+        )
         assert all(x["background"].startswith("rgb(") for x in moving), (
             "Traveller surface must be immediately opaque"
         )
@@ -924,70 +923,27 @@ def run(browser, urls):
         page.screenshot(path=str(artifact_dir / "sidebar-motion-settled.png"))
         assert page.locator('[style*="--rail-motion-"]').count() == 0
 
-        # Reuse the live host to exercise a whole-card reorder and in-card group
-        # moves. These expose ancestor contamination and active-row edge halos.
-
         def surface_motion(name, selection, mutate, cancel=False):
             page.evaluate("hash=>location.hash=hash", selection)
             page.wait_for_timeout(100)
             page.wait_for_function("!document.querySelector('[data-rail-motion-busy]')")
-            page.wait_for_function("""() => {
-              const card=document.querySelector('.orchestrator-card.selected');
-              if(!card)return true;
-              const css=getComputedStyle(card),color=document.createElement('span').style;
-              color.color=css.getPropertyValue('--accent-bright');
-              return css.borderTopColor===color.color && css.backgroundColor==='rgba(0, 0, 0, 0)';
-            }""")
+            page.wait_for_function(
+                "() => {\n              const card=document.querySelector('.orchestrator-card.selected');\n              if(!card)return true;\n              const css=getComputedStyle(card),color=document.createElement('span').style;\n              color.color=css.getPropertyValue('--accent-bright');\n              return css.borderTopColor===color.color && css.backgroundColor==='rgba(0, 0, 0, 0)';\n            }"
+            )
             mutate()
-            page.evaluate(r"""() => {
-              const effective=node=>{
-                while(node) {const color=getComputedStyle(node).backgroundColor;
-                  if(color!=='rgba(0, 0, 0, 0)') return color; node=node.parentElement;}
-              };
-              window.__surfaceExpected=Object.fromEntries([...document.querySelectorAll('.orchestrator-card')].map(card=>
-                [card.dataset.railMotion,{own:effective(card),edge:effective(card.parentElement),border:getComputedStyle(card).borderTopColor}]));
-              const active=document.querySelector('.worker-row.ticket-row--active');
-              window.__activeFill=active&&effective(active);
-              window.__surfaceEvidence=[];
-              const start=performance.now();
-              const sample=()=>{
-                const visibility=node=>{
-                  let opacity=1,fading=false;
-                  for(let ancestor=node;ancestor;ancestor=ancestor.parentElement){
-                    opacity*=Number(getComputedStyle(ancestor).opacity);
-                    fading ||= ancestor.getAnimations().some(a=>a.effect.getKeyframes().some(f=>f.opacity!==undefined));
-                  }
-                  return {opacity,fading};
-                };
-                const nodes=[...document.querySelectorAll('.orchestrator-card.rail-moving,.bucket-label.rail-moving,.worker-row.rail-moving')];
-                window.__surfaceEvidence.push({ms:performance.now()-start,nodes:nodes.map(node=>{
-                  const css=getComputedStyle(node), card=node.closest('.orchestrator-card');
-                  const resting=window.__surfaceExpected[card.dataset.railMotion];
-                  const active=node.classList.contains('ticket-row--active');
-                  const visible=visibility(node);
-                  return {id:node.dataset.railMotion,background:css.backgroundColor,edge:css.outlineColor,
-                    expected:active?window.__activeFill:resting.own,expectedEdge:node===card?resting.edge:resting.own,
-                    border:css.borderTopColor,expectedBorder:resting.border,selected:node===card&&card.classList.contains("selected"),
-                    opacity:css.opacity,effectiveOpacity:visible.opacity,fading:visible.fading,active,width:css.outlineWidth};
-                })});
-                if(performance.now()-start<850)requestAnimationFrame(sample);
-              }; requestAnimationFrame(sample); void window.__refresh();
-            }""")
+            page.evaluate(
+                "() => {\n              const effective=node=>{\n                while(node) {const color=getComputedStyle(node).backgroundColor;\n                  if(color!=='rgba(0, 0, 0, 0)') return color; node=node.parentElement;}\n              };\n              window.__surfaceExpected=Object.fromEntries([...document.querySelectorAll('.orchestrator-card')].map(card=>\n                [card.dataset.railMotion,{own:effective(card),edge:effective(card.parentElement),border:getComputedStyle(card).borderTopColor}]));\n              const active=document.querySelector('.worker-row.ticket-row--active');\n              window.__activeFill=active&&effective(active);\n              window.__surfaceEvidence=[];\n              const start=performance.now();\n              const sample=()=>{\n                const visibility=node=>{\n                  let opacity=1,fading=false;\n                  for(let ancestor=node;ancestor;ancestor=ancestor.parentElement){\n                    opacity*=Number(getComputedStyle(ancestor).opacity);\n                    fading ||= ancestor.getAnimations().some(a=>a.effect.getKeyframes().some(f=>f.opacity!==undefined));\n                  }\n                  return {opacity,fading};\n                };\n                const nodes=[...document.querySelectorAll('.orchestrator-card.rail-moving,.bucket-label.rail-moving,.worker-row.rail-moving')];\n                window.__surfaceEvidence.push({ms:performance.now()-start,nodes:nodes.map(node=>{\n                  const css=getComputedStyle(node), card=node.closest('.orchestrator-card');\n                  const resting=window.__surfaceExpected[card.dataset.railMotion];\n                  const active=node.classList.contains('ticket-row--active');\n                  const visible=visibility(node);\n                  return {id:node.dataset.railMotion,background:css.backgroundColor,edge:css.outlineColor,\n                    expected:active?window.__activeFill:resting.own,expectedEdge:node===card?resting.edge:resting.own,\n                    border:css.borderTopColor,expectedBorder:resting.border,selected:node===card&&card.classList.contains(\"selected\"),\n                    opacity:css.opacity,effectiveOpacity:visible.opacity,fading:visible.fading,active,width:css.outlineWidth};\n                })});\n                if(performance.now()-start<850)requestAnimationFrame(sample);\n              }; requestAnimationFrame(sample); void window.__refresh();\n            }"
+            )
             page.wait_for_function(
                 "document.querySelector('.orchestrator-card.rail-moving,.worker-row.rail-moving')"
             )
             page.wait_for_timeout(80)
             if name == "selected-card-reorder":
-                # Hit testing and clip geometry protect interaction and layout.
-                # This deliberately does not claim exact raster-paint coverage.
-                paint = page.evaluate(r"""() => {
-                  const card=document.querySelector('.orchestrator-card.selected');
-                  const r=card.getBoundingClientRect();
-                  return {cardRect:r.toJSON(),clipRect:card.parentElement.getBoundingClientRect().toJSON(),
-                    borderHit:document.elementFromPoint(r.right-1,r.top+r.height/2)?.closest('[data-rail-motion]')?.getAttribute('data-rail-motion')};
-                }""")
+                paint = page.evaluate(
+                    "() => {\n                  const card=document.querySelector('.orchestrator-card.selected');\n                  const r=card.getBoundingClientRect();\n                  return {cardRect:r.toJSON(),clipRect:card.parentElement.getBoundingClientRect().toJSON(),\n                    borderHit:document.elementFromPoint(r.right-1,r.top+r.height/2)?.closest('[data-rail-motion]')?.getAttribute('data-rail-motion')};\n                }"
+                )
                 assert paint["borderHit"] == "card:si_quiet", paint
-                card_rect, clip_rect = paint["cardRect"], paint["clipRect"]
+                card_rect, clip_rect = (paint["cardRect"], paint["clipRect"])
                 assert (
                     clip_rect["left"]
                     <= card_rect["left"]
@@ -1019,27 +975,8 @@ def run(browser, urls):
                 == 0
             )
             assert page.locator("[data-rail-motion-busy]").count() == 0
-
             surviving = page.evaluate(
-                r"""ids => ids.filter(id=>id.startsWith('card:')||id.startsWith('row:')).map(id=>{
-              const node=document.querySelector(`[data-rail-motion="${CSS.escape(id)}"]`);
-              if(!node)return {id,missing:true};
-              const r=node.getBoundingClientRect();
-              let opacity=1,left=0,top=0,right=innerWidth,bottom=innerHeight;
-              for(let ancestor=node;ancestor;ancestor=ancestor.parentElement){
-                const css=getComputedStyle(ancestor);opacity*=Number(css.opacity);
-                if(ancestor!==node&&[css.overflowX,css.overflowY].some(value=>value!=='visible')){
-                  const clip=ancestor.getBoundingClientRect();
-                  left=Math.max(left,clip.left);top=Math.max(top,clip.top);
-                  right=Math.min(right,clip.right);bottom=Math.min(bottom,clip.bottom);
-                }
-              }
-              const x=(Math.max(r.left,left)+Math.min(r.right,right))/2;
-              const y=(Math.max(r.top,top)+Math.min(r.bottom,bottom))/2;
-              const hit=document.elementFromPoint(x,y)?.closest(id.startsWith('card:')?'.orchestrator-card':'.worker-row');
-              return {id,opacity,width:r.width,height:r.height,visibleWidth:Math.min(r.right,right)-Math.max(r.left,left),
-                visibleHeight:Math.min(r.bottom,bottom)-Math.max(r.top,top),hit:hit?.dataset.railMotion};
-            })""",
+                "ids => ids.filter(id=>id.startsWith('card:')||id.startsWith('row:')).map(id=>{\n              const node=document.querySelector(`[data-rail-motion=\"${CSS.escape(id)}\"]`);\n              if(!node)return {id,missing:true};\n              const r=node.getBoundingClientRect();\n              let opacity=1,left=0,top=0,right=innerWidth,bottom=innerHeight;\n              for(let ancestor=node;ancestor;ancestor=ancestor.parentElement){\n                const css=getComputedStyle(ancestor);opacity*=Number(css.opacity);\n                if(ancestor!==node&&[css.overflowX,css.overflowY].some(value=>value!=='visible')){\n                  const clip=ancestor.getBoundingClientRect();\n                  left=Math.max(left,clip.left);top=Math.max(top,clip.top);\n                  right=Math.min(right,clip.right);bottom=Math.min(bottom,clip.bottom);\n                }\n              }\n              const x=(Math.max(r.left,left)+Math.min(r.right,right))/2;\n              const y=(Math.max(r.top,top)+Math.min(r.bottom,bottom))/2;\n              const hit=document.elementFromPoint(x,y)?.closest(id.startsWith('card:')?'.orchestrator-card':'.worker-row');\n              return {id,opacity,width:r.width,height:r.height,visibleWidth:Math.min(r.right,right)-Math.max(r.left,left),\n                visibleHeight:Math.min(r.bottom,bottom)-Math.max(r.top,top),hit:hit?.dataset.railMotion};\n            })",
                 list({node["id"] for node in nodes}),
             )
             assert surviving
@@ -1054,7 +991,6 @@ def run(browser, urls):
                 page.emulate_media(reduced_motion="no-preference")
             return nodes
 
-        # Reverse the real ordering key. The two cards travel as one measured batch.
         reordered = surface_motion(
             "selected-card-reorder",
             "#/workspace/item/si_quiet",
@@ -1069,7 +1005,6 @@ def run(browser, urls):
         )
         assert any(n["active"] for n in active)
         assert any(n["id"].startswith("heading:") for n in active)
-        # The real selected state has an accent border and no background fill.
         surface_motion(
             "selected-card-return",
             "#/workspace/item/si_quiet",
@@ -1083,21 +1018,10 @@ def run(browser, urls):
         )
         page.evaluate("location.hash='#/workspace'")
 
-        # A departure fades before its space closes. An arrival opens its space
-        # before its row fades in; its new heading also fades instead of jumping.
         def sample_phase(name):
-            page.evaluate("""() => {
-              window.__phaseEvidence=[]; const start=performance.now();
-              const sample=()=>{
-                const row=document.querySelector('[data-ticket-id="t_agent"]');
-                const card=document.querySelector('[data-sprint-item="si_quiet"]');
-                const heading=card.querySelector('.bucket-label');
-                window.__phaseEvidence.push({ms:performance.now()-start,
-                  opacity:row&&Number(getComputedStyle(row).opacity),height:card.getBoundingClientRect().height,
-                  heading:heading&&Number(getComputedStyle(heading).opacity)});
-                if(performance.now()-start<900)requestAnimationFrame(sample);
-              };requestAnimationFrame(sample);void window.__refresh();
-            }""")
+            page.evaluate(
+                "() => {\n              window.__phaseEvidence=[]; const start=performance.now();\n              const sample=()=>{\n                const row=document.querySelector('[data-ticket-id=\"t_agent\"]');\n                const card=document.querySelector('[data-sprint-item=\"si_quiet\"]');\n                const heading=card.querySelector('.bucket-label');\n                window.__phaseEvidence.push({ms:performance.now()-start,\n                  opacity:row&&Number(getComputedStyle(row).opacity),height:card.getBoundingClientRect().height,\n                  heading:heading&&Number(getComputedStyle(heading).opacity)});\n                if(performance.now()-start<900)requestAnimationFrame(sample);\n              };requestAnimationFrame(sample);void window.__refresh();\n            }"
+            )
             page.wait_for_timeout(85 if name == "departure" else 220)
             page.screenshot(path=str(artifact_dir / f"sidebar-{name}-mid.png"))
             page.wait_for_timeout(950)
@@ -1119,8 +1043,6 @@ def run(browser, urls):
         assert any(0 < x["opacity"] < 1 for x in entered)
         assert all(abs(x["height"] - entered[-1]["height"]) < 1 for x in entered)
         assert any(x["heading"] is not None and 0 < x["heading"] < 1 for x in arrival)
-
-        # Reduced motion must stop both CSS spinner and scripted row travel.
         page.emulate_media(reduced_motion="reduce")
         spinner = page.locator('[data-ticket-id="t_agent"] [data-conversation-signal="working"]')
         expect(spinner).to_have_count(1)
@@ -1149,9 +1071,6 @@ def run(browser, urls):
         )
         page.mouse.move(1200, 950)
         page.emulate_media(reduced_motion="no-preference")
-
-        # A phone dispatches pointerover before touchstart. No-hover devices never
-        # open from that event, and a cancelled hold does not open after 400ms.
         phone = browser.new_context(
             viewport=dict(width=560, height=900), is_mobile=True, has_touch=True
         )
@@ -1182,8 +1101,6 @@ def run(browser, urls):
         expect(phone_panel).to_have_attribute("aria-hidden", "false")
         phone_page.screenshot(path=str(artifact_dir / "sidebar-phone-hold.png"))
         touch("touchEnd", [])
-
-        # The existing Settled title and unread child use this same input gate.
         phone_page.get_by_role("button", name="Settled (1)").click()
         for target in [
             phone_page.locator(".settled-title"),
@@ -1200,9 +1117,6 @@ def run(browser, urls):
             phone_page.wait_for_timeout(440)
             expect(phone_panel).to_have_attribute("aria-hidden", "false")
             touch("touchEnd", [])
-
-        # The actual item pane is a separate shared-popup caller. Its blocked
-        # child stays in the full list and states the stage truthfully.
         phone_page.evaluate("location.hash='#/workspace/item/si_needs_him'")
         item_pane = phone_page.locator('[data-sprint-item-workspace="si_needs_him"]')
         blocked_group = item_pane.locator('[data-workspace-group="blocked"]')
@@ -1230,10 +1144,7 @@ def run(browser, urls):
         phone_page.screenshot(path=str(artifact_dir / "sidebar-item-phone-popup.png"))
         touch("touchEnd", [])
         assert phone_page.evaluate("location.hash") == "#/workspace/item/si_needs_him"
-
         phone.close()
-
-        # Compact destinations use the real address, selected pane and browser return.
         page.evaluate("location.hash = '#/workspace'")
         page.set_viewport_size(dict(width=560, height=1000))
         for selector, pane in [
@@ -1255,8 +1166,6 @@ def run(browser, urls):
             target.focus()
             expect(target).to_be_focused()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-
-        # Native keyboard focus uses the same popup inside the actual item pane.
         page.set_viewport_size(dict(width=1440, height=1000))
         page.evaluate("location.hash='#/workspace/item/si_needs_him'")
         blocked_group = page.locator(
@@ -1276,8 +1185,6 @@ def run(browser, urls):
         expect(child_panel.locator(".kicker")).to_contain_text("Needs him")
         expect(child_panel).to_contain_text("Blocked at implementation.")
         expect(child_panel).not_to_contain_text("Stages")
-
-        # Selection is the card. No count line stands in for the groups any more.
         assert page.locator(".board-workspace-item-line").count() == 0
         assert errors == [], errors
-    pass  # Shared runner owns the browser lifecycle.
+    pass

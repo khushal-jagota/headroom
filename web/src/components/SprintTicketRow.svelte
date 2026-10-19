@@ -14,7 +14,7 @@
     ...rest
   }: {
     title: string;
-    signal?: ConversationSignal;
+    signal?: Partial<ConversationSignal>;
     conversationId?: string | null;
     href?: string | null;
     active?: boolean;

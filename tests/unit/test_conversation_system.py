@@ -67,6 +67,7 @@ from planner.conversation.events import (
     HeldPromptsChangedFrame,
     MessageToOwnerEventPayload,
     ModelThinkingFrame,
+    PermissionAskedEventPayload,
     PermissionAskOption,
     PromptDiscardedEventPayload,
     PromptEventPayload,
@@ -492,7 +493,11 @@ class _Harness:
             ),
         )
         await self.settle()
-        return ask_id
+        return next(
+            event.payload.ask_id
+            for event in reversed(await self.events(conversation_id))
+            if isinstance(event.payload, PermissionAskedEventPayload)
+        )
 
     async def request_user_input(self, conversation_id: str) -> BackendUserInputRequest:
         backend = self.backend(conversation_id)
@@ -524,7 +529,12 @@ class _Harness:
         )
         await backend.sink.user_input_requested(token, request)
         await self.settle()
-        return request
+        public = next(
+            event.payload
+            for event in reversed(await self.events(conversation_id))
+            if isinstance(event.payload, UserInputRequestedEventPayload)
+        )
+        return BackendUserInputRequest(request_id=public.request_id, questions=public.questions)
 
     async def agent_message(self, conversation_id: str, content: MessageContent) -> None:
         backend = self.backend(conversation_id)
@@ -1240,7 +1250,7 @@ def test_an_answer_the_backend_would_not_take_has_not_landed(harness: _Harness) 
         assert await harness.system.has_pending_permission_ask("c") is True
         harness.backend("c").permission_answer_write_fails = False
         assert await harness.system.answer_permission_ask("c", ask_id, "deny") is True
-        assert harness.backend("c").permission_answers == {ask_id: "deny"}
+        assert harness.backend("c").permission_answers == {"ask-1": "deny"}
 
     _run(exercise)
 
@@ -1276,7 +1286,7 @@ def test_user_input_is_distinct_durable_and_recorded_only_after_delivery(
 
         harness.backend("c").user_input_answer_write_fails = False
         assert await harness.system.answer_user_input("c", request.request_id, answers) is True
-        assert harness.backend("c").user_input_answers == {request.request_id: answers}
+        assert harness.backend("c").user_input_answers == {"input-1": answers}
         assert await harness.system.has_pending_user_input("c") is False
         answered = [
             event.payload
@@ -2531,6 +2541,14 @@ def test_real_writer_lock_preserves_each_delivery_and_ordered_completion(
             return original(*args)
 
         monkeypatch.setattr(harness.store, "_append_event_sync", count_attempts)
+        original_intent = harness.store._transition_lifecycle_sync
+
+        def count_intent_attempts(*args):  # type: ignore[no-untyped-def]
+            nonlocal attempts
+            attempts += 1
+            return original_intent(*args)
+
+        monkeypatch.setattr(harness.store, "_transition_lifecycle_sync", count_intent_attempts)
         # For queue drains, the previous ending commits before the held receipt fails.
         if delivery in ("queued", "promoted"):
             await harness.system.send(
@@ -3167,10 +3185,23 @@ def test_turn_replacement_waits_for_accepted_steer_receipt_and_sender_obligation
     _run(exercise)
 
 
-@pytest.mark.parametrize("outstanding", ["running", "held", "reserved", "phase", "admitted",
-                                         "delivering", "steer", "settlement", "lock"])
+@pytest.mark.parametrize(
+    "outstanding",
+    [
+        "running",
+        "held",
+        "reserved",
+        "phase",
+        "admitted",
+        "delivering",
+        "steer",
+        "settlement",
+        "lock",
+    ],
+)
 def test_idle_write_refuses_every_outstanding_activity(
-    harness: _Harness, outstanding: str,
+    harness: _Harness,
+    outstanding: str,
 ) -> None:
     async def exercise() -> None:
         await _start(harness)
@@ -3181,7 +3212,9 @@ def test_idle_write_refuses_every_outstanding_activity(
             await harness.system.send("c", text_message_content("work"), sender_label="Owner")
             if outstanding == "held":
                 await harness.system.send(
-                    "c", text_message_content("waiting"), sender_label="Owner",
+                    "c",
+                    text_message_content("waiting"),
+                    sender_label="Owner",
                 )
                 # Isolate the waiting-line guard from the running-turn guard. A
                 # delivery settlement can leave a held line before its drain begins.
@@ -3220,6 +3253,7 @@ def test_idle_write_refuses_every_outstanding_activity(
             state.admitted_sender_messages.clear()
             state.sender_messages_being_delivered.clear()
             state.steer_settlements.clear()
+
     _run(exercise)
 
 
@@ -3229,15 +3263,20 @@ def test_idle_write_refuses_a_send_reserved_before_backend_write(harness: _Harne
         backend = harness.backend("c")
         backend.write_has_begun = asyncio.Event()
         backend.writes_wait_for_release = asyncio.Event()
-        sending = asyncio.create_task(harness.system.send(
-            "c", text_message_content("work"), sender_label="Owner",
-        ))
+        sending = asyncio.create_task(
+            harness.system.send(
+                "c",
+                text_message_content("work"),
+                sender_label="Owner",
+            )
+        )
         await backend.write_has_begun.wait()
         written: list[str] = []
         assert not await harness.system.run_if_idle("c", lambda: written.append("moved"))
         assert written == []
         backend.writes_wait_for_release.set()
         await sending
+
     _run(exercise)
 
 
@@ -3246,17 +3285,26 @@ def test_idle_write_holds_admission_lock_during_canonical_write(harness: _Harnes
         await _start(harness)
         observed: list[bool] = []
         assert await harness.system.run_if_idle(
-            "c", lambda: observed.append(harness.system._conversations["c"].lock.locked()),
+            "c",
+            lambda: observed.append(harness.system._conversations["c"].lock.locked()),
         )
         assert observed == [True]
-        assert isinstance(await harness.system.send(
-            "c", text_message_content("work"), sender_label="Owner",
-        ), PromptDeliveryStarted)
+        assert isinstance(
+            await harness.system.send(
+                "c",
+                text_message_content("work"),
+                sender_label="Owner",
+            ),
+            PromptDeliveryStarted,
+        )
+
     _run(exercise)
 
 
 def test_held_promotion_and_locale_move_cannot_cross(
-    harness: _Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    harness: _Harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from planner.core.errors import PlannerError
     from planner.tickets import data as tickets_data
@@ -3268,7 +3316,8 @@ def test_held_promotion_and_locale_move_cannot_cross(
         await _start(harness)
         _link_test_ticket_to_conversation(tmp_path / "conversations.db", "c")
         monkeypatch.setitem(
-            locale_configuration.LOCALE_SUPPORTED_BACKENDS, TicketLocale.macos,
+            locale_configuration.LOCALE_SUPPORTED_BACKENDS,
+            TicketLocale.macos,
             frozenset({"codex"}),
         )
         conn = connect(str(tmp_path / "conversations.db"))
@@ -3279,15 +3328,23 @@ def test_held_promotion_and_locale_move_cannot_cross(
             # The move cannot take an already held prompt across machines.
             with pytest.raises(PlannerError, match="activity or waiting messages"):
                 await move_ticket_locale(
-                    harness.system, conn, "t_failed", locale=TicketLocale.macos,
-                    principal=OWNER_PRINCIPAL, now=2,
+                    harness.system,
+                    conn,
+                    "t_failed",
+                    locale=TicketLocale.macos,
+                    principal=OWNER_PRINCIPAL,
+                    now=2,
                 )
             backend = harness.backend("c")
             backend.write_has_begun = asyncio.Event()
             backend.writes_wait_for_release = asyncio.Event()
-            promoting = asyncio.create_task(harness.system.promote_held_prompt(
-                "c", held[0].held_prompt_id, HeldPromptPromotionMode.send_now,
-            ))
+            promoting = asyncio.create_task(
+                harness.system.promote_held_prompt(
+                    "c",
+                    held[0].held_prompt_id,
+                    HeldPromptPromotionMode.send_now,
+                )
+            )
             await backend.write_has_begun.wait()
             # Promotion has removed the held prompt and is out at the backend wire.
             # The locale move must still refuse immediately, before that write settles.
@@ -3295,14 +3352,22 @@ def test_held_promotion_and_locale_move_cannot_cross(
             assert not state.held_prompts
             assert state.reserved_turn is not None
             with pytest.raises(PlannerError, match="activity or waiting messages"):
-                await asyncio.wait_for(move_ticket_locale(
-                    harness.system, conn, "t_failed", locale=TicketLocale.macos,
-                    principal=OWNER_PRINCIPAL, now=3,
-                ), timeout=1)
+                await asyncio.wait_for(
+                    move_ticket_locale(
+                        harness.system,
+                        conn,
+                        "t_failed",
+                        locale=TicketLocale.macos,
+                        principal=OWNER_PRINCIPAL,
+                        now=3,
+                    ),
+                    timeout=1,
+                )
             assert tickets_data.read_ticket(conn, "t_failed").locale is TicketLocale.vps
             backend.writes_wait_for_release.set()
             assert await promoting == PromptDeliveryStarted()
             assert backend.written_texts() == ("incumbent", "selected")
         finally:
             conn.close()
+
     _run(exercise)

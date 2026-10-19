@@ -3,23 +3,27 @@
    *
    * This is the ask itself — the Ticket's title, its recap,
    * the approval control, and the send-back box — and nothing about a queue. It is
-   * named by a Ticket id and a field, and it fetches that Ticket's detail and the
+   * named by the shared queue's exact proposal identity, and it fetches its detail and the
    * Worker-type manifest itself, so a caller only has to know which decision it
    * wants shown. Everything about *which* decision is current — walking, skipping,
    * keyboard shortcuts — belongs to the caller.
    *
    * The Review screen (`ReviewRoute`) mounts the card.
    */
-  import { onMount, type Snippet } from "svelte";
+  import { onMount, onDestroy, tick, type Snippet } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import { queries } from "../lib/queryCatalogue";
-  import { gatingFieldFor, lifecycleFor } from "../lib/lifecycle";
-  import type { TicketDetail } from "../lib/types";
+  import { lifecycleFor } from "../lib/lifecycle";
+  import { navigationApplication } from "../lib/navigation/application.svelte";
+  import { reviewProposalIdentity, reviewProposalDetailMatches } from "../lib/navigation/presentation";
+  import { reviewProposalImpact } from "../lib/reviewNavigationImpact";
+  import { ticketCommandImpact, type TicketNavigationOperation } from "../lib/ticketNavigationImpact";
+  import { reviewProposalDomMatches } from "../lib/reviewDom";
+  import type { NavigationReviewItem, TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
-  import Disclosure from "./Disclosure.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import WorkerProposalCard from "./WorkerProposalCard.svelte";
@@ -33,6 +37,8 @@
   } from "../lib/conversation/voiceCapture";
 
   let {
+    identity,
+    onRendered,
     ticketId,
     field,
     title = null,
@@ -40,6 +46,8 @@
     onResolved,
     footer
   }: {
+    identity: NavigationReviewItem;
+    onRendered?: () => void;
     /** The Ticket whose proposal this is. */
     ticketId: string;
     /** The Ticket field the proposal is filed against. */
@@ -74,9 +82,13 @@
 
   // The Ticket behind the proposal on screen. The key follows the Ticket, so
   // moving to the next ask switches the query rather than re-opening a handle.
-  const detail = createQuery(() => queries.ticket(ticketId));
+  const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review proposal requires the application navigation owner"); return value; })();
+  const observer = navigation.registerRenderBoundary(`review-proposal:${crypto.randomUUID()}`,impact => reviewProposalImpact(impact,ticketId));
+  onDestroy(() => navigation.disposeRenderBoundary(observer));
+  let cardElement = $state<HTMLElement | null>(null);
+  const detail = createQuery(() => queries.reviewProposal(identity));
 
-  let currentKey = $derived(`${ticketId}:${field}`);
+  let currentKey = $derived(reviewProposalIdentity(identity));
   let ticketHref = $derived(workspaceAddress({ kind: "ticket", id: ticketId }));
 
   // Per-Worker-type lifecycle for this decision's detail. Null while the manifest or
@@ -131,9 +143,18 @@
   });
 
   function isStale(ticketDetail: TicketDetail): boolean {
-    if (!acceptField) return true;
-    if (ticketDetail.pending_proposal?.field !== acceptField) return true;
-    return gatingFieldFor(lc, String(ticketDetail.stage)) !== acceptField;
+    return !reviewProposalDetailMatches(identity,ticketDetail) || ticketDetail.pending_proposal?.field !== field;
+  }
+
+  function currentIdentity(): boolean {
+    const effective = navigation.state.effective;
+    return Boolean(effective && navigation.presentationFor(effective).review.items.some(item => reviewProposalIdentity(item) === currentKey));
+  }
+
+  async function write(path: string, options: Parameters<typeof mutateJson>[1], operation:TicketNavigationOperation): Promise<unknown> {
+    if (!currentIdentity() || !detail.data || isStale(detail.data)) throw new Error("the visible proposal changed; read it again before accepting");
+    return navigation.runCommand(ticketCommandImpact(navigation.state.effective,ticketId,operation),responseMetadata =>
+      mutateJson(path,{...options,responseMetadata}),`review proposal ${operation}`);
   }
 
   /** One announcement per proposal, whichever way it left the queue. */
@@ -156,31 +177,49 @@
     }
   });
 
-  // A detail that no longer holds this proposal means the queue that named it is
-  // behind the Ticket. Say so once; the caller decides what to do about it. Only a
-  // loaded lifecycle can tell a resolved decision from an unloaded manifest, so
-  // nothing is announced until there is one.
+  let reconciledMismatch: string | null = null;
   $effect(() => {
-    const ticketDetail = detail.data;
-    if (!lc || !ticketDetail) return;
-    if (isStale(ticketDetail)) announceResolved();
+    const loaded = detail.data;
+    if (!loaded || detail.isFetching || !isStale(loaded)) return;
+    const mismatch = JSON.stringify([currentKey,loaded.pending_proposal?.field,loaded.pending_proposal?.created_at,loaded.pending_proposal?.revision]);
+    if (reconciledMismatch === mismatch) return;
+    reconciledMismatch = mismatch;
+    // Detail can be behind or ahead. Only the shared queue can settle membership.
+    void detail.refetch().catch(() => undefined);
+    void navigation.owner.recover().catch(() => undefined);
+  });
+  $effect(() => {
+    const effective = navigation.selectors.effective;
+    const generation = navigation.state.generation;
+    const element = cardElement;
+    const loaded = detail.data;
+    const expected = identity;
+    if (!effective?.runtimeCurrent || !element || !loaded || isStale(loaded) || !currentIdentity()) return;
+    const publication = effective.publication;
+    const observation = observer.observeSelectors(publication,generation);
+    let obsolete = false;
+    void tick().then(() => {
+      if (!obsolete && element.isConnected && navigation.state.generation === generation
+        && navigation.selectors.effective === effective && reviewProposalDomMatches(element,expected,loaded)) { observer.acknowledgeRender(publication,observation); onRendered?.(); }
+    });
+    return () => { obsolete = true; };
   });
 
   async function accept(payload: Record<string, unknown>): Promise<unknown> {
     if (!acceptField) throw new Error("Review decision is not a Ticket field");
-    const result = await mutateJson(`/api/tickets/${ticketId}/accept/${acceptField}`, {
+    const result = await write(`/api/tickets/${ticketId}/accept/${acceptField}`, {
       method: "POST",
       body: payload
-    });
+    },"stage");
     announceResolved();
     return result;
   }
 
   function saveTitle(raw: string): Promise<unknown> {
-    return mutateJson(`/api/tickets/${ticketId}`, {
+    return write(`/api/tickets/${ticketId}`, {
       method: "PATCH",
       body: { title: raw }
-    });
+    },"title");
   }
 
   async function returnForRevision(): Promise<void> {
@@ -189,10 +228,10 @@
     revisionError = null;
     revisionBusy = true;
     try {
-      await mutateJson(`/api/tickets/${ticketId}/reject`, {
+      await write(`/api/tickets/${ticketId}/reject`, {
         method: "POST",
         body: { message }
-      });
+      },"stage");
       revisionDraft = "";
       announceResolved();
     } catch (err) {
@@ -235,6 +274,8 @@
     <div class="quiet-line">Loading approval...</div>
   {:else}
     <div
+      bind:this={cardElement}
+      data-proposal-identity={currentKey}
       class="modern-review-content"
       data-review-card
       data-review-item-type="proposal"
@@ -252,7 +293,7 @@
         <div class="review-ticket-heading-main">
           <div class="review-ticket-title">
             <InlineEdit
-              value={ticketDetail.title}
+              value={identity.title}
               placeholder="Untitled"
               onSave={(raw) => saveTitle(raw)}
             />
@@ -265,11 +306,6 @@
         </div>
       </div>
 
-      {#if ticketDetail.guidance}
-        <Disclosure title="Guidance" variant="support" defaultOpen={false} data-ticket-guidance>
-          <MarkdownBlock text={ticketDetail.guidance} />
-        </Disclosure>
-      {/if}
       <div class="review-arrive review-arrive--3">
         {#if acceptField}
           {#if lc && ticketDetail.pending_proposal}
@@ -278,8 +314,8 @@
               ceiling={ticketDetail.ceiling} holder={ticketDetail.ceiling_holder} sprintItem={reviewSprintItem}
               disabled={revisionBusy} canReturn={Boolean(ticketDetail.conversation_id)}
               onAccept={accept}
-              onScope={async (body) => { await mutateJson(`/api/tickets/${ticketId}`, { method:"PATCH", body }); }}
-              onReturn={async (message) => { await mutateJson(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } }); announceResolved(); }}
+              onScope={async (body) => { await write(`/api/tickets/${ticketId}`, { method:"PATCH", body },"scope"); }}
+              onReturn={async (message) => { await write(`/api/tickets/${ticketId}/reject`, { method:"POST", body:{ message } },"stage"); announceResolved(); }}
               {revisionEditor} />
             {/key}
           {/if}

@@ -42,6 +42,7 @@
     watchOwnerReadAttention
   } from "../../lib/conversation/ownerRead";
   import { queryClient } from "../../lib/queryClient";
+  import { navigationApplication } from "../../lib/navigation/application.svelte";
   import { connectionStatus } from "../../lib/changeStream";
   import {
     afterTheRecordHasBeenRead,
@@ -210,6 +211,7 @@
   ));
   let ask = $derived(liveAskFrom(visibleRows));
   let userInput = $derived(liveUserInputFrom(visibleRows));
+  const navigation = navigationApplication();
   const refreshedReadThrough = new Map<string, number>();
   let advancingRead: { conversationId: string; sequence: number } | null = null;
   $effect(() => {
@@ -241,6 +243,10 @@
       advancingRead = request;
       void advanceOwnerRead(reading.conversation_id, eligibleSequence)
         .then((advanced) => {
+          // A confirmed read invalidates its exact conversation before any recovery can
+          // reuse older knowledge, even after a pane switch or the Query optimization.
+          navigation?.owner.invalidateDurableFact(reading.conversation_id, "message_for_owner", advanced);
+          void navigation?.owner.recover().catch(() => undefined);
           const previouslyReadThrough = Math.max(
             reading.owner_read_through_sequence,
             refreshedReadThrough.get(reading.conversation_id) ?? 0

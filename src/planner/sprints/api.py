@@ -8,7 +8,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
 from planner.conversation.contracts import require_conversation_backend_key
@@ -38,6 +38,7 @@ from planner.sprints.contracts import (
     SPRINT_DOCUMENT_FIELDS,
     CreateIdeaBody,
     CreateItemBody,
+    ItemWorkspaceContent,
 )
 from planner.tickets.api import (
     Cfg,
@@ -154,6 +155,22 @@ async def read_items(
     )
     await add_work_attention(conn, conversations, conversation_record, sprint_items=page.rows)
     return page.response("items")
+
+
+@router.get("/items/{item_id}/workspace-content")
+async def get_item_workspace_content(
+    item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg, response: Response
+) -> ItemWorkspaceContent:
+    require_above_or_self(conn, ctx.principal, authority.outcome(item_id))
+    document = sprints_views.item_workspace_document(conn, item_id)
+    result: ItemWorkspaceContent = {
+        **document,
+        "artifacts": sprint_item_files.list_artifact_entries(
+            conn, ctx.principal, item_id, cfg.db_path
+        ),
+    }
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @router.get("/items/{item_id}/workspace")
