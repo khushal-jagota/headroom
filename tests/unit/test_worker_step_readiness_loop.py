@@ -20,7 +20,6 @@ from typing import cast
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
-from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.contracts import (
     ConversationStartRequest,
@@ -1084,28 +1083,6 @@ def test_the_poll_starts_an_ordinary_worker_without_any_day_rows(world: _World) 
     try:
         assert readiness_loop.poll_once() == [ticket_id]
         assert _waited_for(lambda: world.ticket(ticket_id).ticket_status is TicketStatus.agent)
-    finally:
-        readiness_loop.stop()
-        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
-        thread.join(5)
-        asyncio_loop.close()
-
-
-def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
-    first = world.ready_ticket(title="Closeout one")
-    second = world.ready_ticket(title="Closeout two")
-    with world.connect() as conn:
-        for ticket_id in (first, second):
-            advance_ticket(
-                conn, ticket_id, new_stage="needs_consequences", principal=OWNER_PRINCIPAL, now=0
-            )
-        conn.execute("UPDATE tickets SET updated_at = 10 WHERE id = ?", (first,))
-        conn.execute("UPDATE tickets SET updated_at = 20 WHERE id = ?", (second,))
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
-    try:
-        # The lane looks free to both waiters until one of them actually flips, so the
-        # poll itself has to hold the lane for the one it picks.
-        assert readiness_loop.poll_once() == [first]
     finally:
         readiness_loop.stop()
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)

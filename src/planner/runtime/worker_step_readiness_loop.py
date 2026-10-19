@@ -379,7 +379,6 @@ class WorkerStepReadinessLoop:
         try:
             rows = conn.execute(_CANDIDATE_SQL).fetchall()
             ready_ticket_ids: list[str] = []
-            claimed_closeout_lanes: set[worker_step_readiness.CloseoutLaneIdentity] = set()
             registry = configured_worker_type_registry()
             for row in rows:
                 ticket = tickets_data.read_ticket(conn, str(row["id"]))
@@ -390,18 +389,6 @@ class WorkerStepReadinessLoop:
                     worker_type_definition=worker_type_definition,
                 ):
                     continue
-                closeout_lane = worker_step_readiness.closeout_lane_identity(
-                    conn,
-                    ticket,
-                    worker_type_definition=worker_type_definition,
-                )
-                if closeout_lane is not None:
-                    # One Closeout lane takes one Ticket per pass. The lane looks free to
-                    # every waiter until one of them actually flips, so without this the
-                    # same pass would send several into the same lane.
-                    if closeout_lane in claimed_closeout_lanes:
-                        continue
-                    claimed_closeout_lanes.add(closeout_lane)
                 ready_ticket_ids.append(ticket.id)
             return ready_ticket_ids
         finally:

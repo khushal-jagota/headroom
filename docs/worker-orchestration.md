@@ -32,9 +32,9 @@ all of these hold right now:
    it.
 3. If the Stage's owner is the user, its one opening turn has not run yet. The opener
    fact belongs to that Stage entry, so a later entry gets its own turn.
-4. If the blank is Consequences, no other Ticket in the same project-and-Worker-type
-   lane is at Consequences and not resting. One poll sends at most one Ticket into
-   each free lane.
+
+Each ready Ticket can start independently, including at Consequences. Git changes land
+through pull requests into `staging`.
 
 The ceiling is not one of these questions. It decides what a finished step does with its
 answer, not whether the step may run.
