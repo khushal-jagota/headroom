@@ -42,6 +42,27 @@ def values(conn: sqlite3.Connection) -> dict[tuple[str, str], dict[str, Any]]:
     }
 
 
+def projection_tables(conn: sqlite3.Connection) -> dict[str, list[tuple[Any, ...]]]:
+    return {
+        table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY 1,2,3")]
+        for table in ("navigation_records", "navigation_root_records", "navigation_dependencies")
+    }
+
+
+def assert_rebuild_preserves_projection(conn: sqlite3.Connection) -> None:
+    before = projection_tables(conn)
+    # Incremental deletion retains dependencies for now-empty roots. Compare the
+    # dependencies of roots that still own records; rebuild drops obsolete roots.
+    live_roots = {(row[0], row[1]) for row in before["navigation_root_records"]}
+    before["navigation_dependencies"] = [
+        row for row in before["navigation_dependencies"] if (row[2], row[3]) in live_roots
+    ]
+    conn.execute("BEGIN")
+    rebuild(conn)
+    assert projection_tables(conn) == before
+    conn.commit()
+
+
 def test_durable_batch_survives_closed_connection_without_wake(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -160,6 +181,7 @@ def add_parent(conn: sqlite3.Connection, identity: str) -> None:
 def test_aliases_historical_memberships_moves_and_deletes(tmp_path: Path) -> None:
     with current_navigation_database(tmp_path / "planner.db") as conn:
         add_conversation(conn)
+        add_conversation(conn, "unowned")
         conn.execute("BEGIN")
         add_parent(conn, "a")
         add_parent(conn, "b")
@@ -169,6 +191,7 @@ def test_aliases_historical_memberships_moves_and_deletes(tmp_path: Path) -> Non
         conn.execute("INSERT INTO ticket_conversations VALUES('c','t')")
         conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_a','c')")
         conn.commit()
+        assert_rebuild_preserves_projection(conn)
         actual = values(conn)
         assert actual["totals", "orchestrator:a"] == {
             "child_count": 1,
@@ -181,6 +204,7 @@ def test_aliases_historical_memberships_moves_and_deletes(tmp_path: Path) -> Non
         conn.execute("UPDATE tickets SET sprint_item_id='middle' WHERE id='t'")
         conn.execute("UPDATE tickets SET sprint_item_id='b',conversation_id=NULL WHERE id='t'")
         conn.commit()
+        assert_rebuild_preserves_projection(conn)
         actual = values(conn)
         assert actual["totals", "orchestrator:a"] == {
             "child_count": 0,
@@ -205,6 +229,7 @@ def test_aliases_historical_memberships_moves_and_deletes(tmp_path: Path) -> Non
         conn.execute("BEGIN")
         conn.execute("DELETE FROM tickets WHERE id='t'")
         conn.commit()
+        assert_rebuild_preserves_projection(conn)
         actual = values(conn)
         assert ("ticket", "t") not in actual
         assert actual["totals", "orchestrator:b"] == {
@@ -213,6 +238,69 @@ def test_aliases_historical_memberships_moves_and_deletes(tmp_path: Path) -> Non
         }
         assert len([k for k in actual if k[0] == "address"]) == 1
         conn.close()
+
+
+def test_rebuild_refreshes_ownership_within_transaction_and_preserves_incremental_fallback(
+    tmp_path: Path,
+) -> None:
+    from planner.navigation import data
+
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        for identity in ("old", "current", "unowned"):
+            add_conversation(conn, identity)
+        conn.execute("BEGIN")
+        add_parent(conn, "a")
+        add_parent(conn, "b")
+        add_ticket(conn, "t", "a")
+        conn.execute("UPDATE tickets SET conversation_id='old' WHERE id='t'")
+        conn.execute("INSERT INTO ticket_conversations VALUES('old','t')")
+        rebuild(conn)
+        first = values(conn)
+        assert first["address", '["ticket","t","old"]']["parent_id"] == "a"
+        conn.execute("UPDATE tickets SET sprint_item_id='b',conversation_id='current' WHERE id='t'")
+        add_ticket(conn, "shared")
+        conn.execute("UPDATE tickets SET conversation_id='current' WHERE id='shared'")
+        rebuild(conn)
+        assert conn.in_transaction
+        actual = values(conn)
+        assert actual["address", '["ticket","t","old"]'] == {
+            "owner_kind": "ticket",
+            "owner_id": "t",
+            "conversation_id": "old",
+            "current": False,
+            "parent_kind": "orchestrator",
+            "parent_id": "b",
+        }
+        assert actual["address", '["ticket","t","current"]']["current"] is True
+        assert actual["address", '["ticket","shared","current"]']["parent_kind"] == "chief"
+        assert actual["totals", "orchestrator:a"]["distinct_conversation_count"] == 0
+        assert actual["totals", "orchestrator:b"]["distinct_conversation_count"] == 2
+        # Exercise the no-lookup path directly, proving its query still supplies
+        # complete records and dependencies for historical, shared and empty roots.
+        stored = projection_tables(conn)
+        traced: list[str] = []
+        conn.set_trace_callback(traced.append)
+        try:
+            for identity in ("old", "current", "unowned"):
+                records, deps = data._derive(conn, ("conversation", identity))
+                expected_records = {
+                    (row[2], row[3])
+                    for row in stored["navigation_root_records"]
+                    if row[:2] == ("conversation", identity)
+                }
+                assert {(record["kind"], record["id"]) for record in records} == expected_records
+                assert all(
+                    actual[record["kind"], record["id"]] == record["value"] for record in records
+                )
+                assert deps == {
+                    (row[0], row[1])
+                    for row in stored["navigation_dependencies"]
+                    if row[2:] == ("conversation", identity)
+                }
+        finally:
+            conn.set_trace_callback(None)
+        assert sum("LEFT JOIN ticket_conversations tc" in query for query in traced) == 3
+        conn.rollback()
 
 
 def test_blocker_status_old_dependencies_and_same_transaction_definition(tmp_path: Path) -> None:
@@ -251,6 +339,7 @@ def test_historical_supervisor_identity_survives_current_pointer_reset(tmp_path:
             "UPDATE agents SET conversation_id=NULL WHERE agent_key='sprint_item_supervisor_a'"
         )
         conn.commit()
+        assert_rebuild_preserves_projection(conn)
         actual = values(conn)
         address = [value for key, value in actual.items() if key[0] == "address"][0]
         assert address["current"] is False
@@ -718,6 +807,7 @@ def test_two_ticket_aliases_count_one_conversation_per_parent(tmp_path: Path) ->
         add_ticket(conn, "second", "a")
         conn.execute("UPDATE tickets SET conversation_id='c' WHERE id IN ('first','second')")
         conn.commit()
+        assert_rebuild_preserves_projection(conn)
         actual = values(conn)
         assert actual["totals", "orchestrator:a"] == {
             "child_count": 2,
@@ -814,9 +904,10 @@ def test_project_rename_and_private_timestamps_avoid_ticket_roots(
             connection: sqlite3.Connection,
             root: tuple[str, str],
             definitions: dict[str, WorkerTypeDefinition] | None = None,
+            ticket_owners: dict[str, dict[str, dict[str, Any]]] | None = None,
         ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
             derived.append(root)
-            return original(connection, root, definitions)
+            return original(connection, root, definitions, ticket_owners)
 
         monkeypatch.setattr(navigation_data, "_derive", capture)
         baseline = snapshot(conn)
@@ -863,9 +954,10 @@ def test_actual_worker_definition_change_updates_each_referencing_ticket_only(
             connection: sqlite3.Connection,
             root: tuple[str, str],
             definitions: dict[str, WorkerTypeDefinition] | None = None,
+            ticket_owners: dict[str, dict[str, dict[str, Any]]] | None = None,
         ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
             derived.append(root)
-            return original(connection, root, definitions)
+            return original(connection, root, definitions, ticket_owners)
 
         monkeypatch.setattr(navigation_data, "_derive", capture)
         definition = json.loads(

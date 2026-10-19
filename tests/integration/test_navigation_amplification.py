@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tests.integration.test_navigation_transactions import (
@@ -55,9 +56,10 @@ def test_conversation_derivation_is_shared_by_closure_and_publication(
             connection: sqlite3.Connection,
             root: tuple[str, str],
             definitions: dict[str, WorkerTypeDefinition] | None = None,
+            ticket_owners: dict[str, dict[str, dict[str, Any]]] | None = None,
         ) -> tuple[list[NavigationRecord], set[tuple[str, str]]]:
             calls.append(root)
-            return original(connection, root, definitions)
+            return original(connection, root, definitions, ticket_owners)
 
         monkeypatch.setattr(data, "_derive", capture)
         conn.execute("UPDATE conversations SET latest_sequence=7 WHERE conversation_id='c'")
@@ -106,3 +108,50 @@ def test_worker_definition_decode_cache_is_local_to_each_final_transaction(
         assert len(calls) == 3
         assert values(conn) == actual
         conn.close()
+
+
+def test_rebuild_ticket_ownership_reads_are_constant_as_conversations_grow(tmp_path: Path) -> None:
+    with current_navigation_database(tmp_path / "planner.db") as conn:
+        add_conversation(conn, "owned")
+        conn.execute("BEGIN")
+        add_ticket(conn, "t")
+        conn.execute("UPDATE tickets SET conversation_id='owned' WHERE id='t'")
+        conn.execute("INSERT INTO ticket_conversations VALUES('owned','t')")
+        conn.commit()
+        for population in (2, 40):
+            conn.execute("BEGIN")
+            for index in range(population):
+                conn.execute(
+                    "INSERT OR IGNORE INTO conversations("
+                    "conversation_id,backend_key,workspace_folder,access,created_at) "
+                    "VALUES(?,'codex','/synthetic','full',0)",
+                    (f"unowned{index}",),
+                )
+            conn.commit()
+            conn.execute("BEGIN")
+            traced: list[str] = []
+            conn.set_trace_callback(traced.append)
+            try:
+                data.rebuild(conn)
+            finally:
+                conn.set_trace_callback(None)
+            assert (
+                sum(
+                    query == "SELECT id,sprint_item_id,conversation_id FROM tickets"
+                    for query in traced
+                )
+                == 1
+            )
+            assert (
+                sum(
+                    query == "SELECT conversation_id,ticket_id FROM ticket_conversations"
+                    for query in traced
+                )
+                == 1
+            )
+            assert not any("LEFT JOIN ticket_conversations tc" in query for query in traced)
+            actual = values(conn)
+            assert sum(key[0] == "conversation" for key in actual) == population + 1
+            assert sum(key[0] == "address" for key in actual) == 1
+            assert actual["totals", "workspace"]["distinct_conversation_count"] == 1
+            conn.commit()

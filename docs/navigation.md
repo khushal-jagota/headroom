@@ -22,6 +22,10 @@ Source triggers capture transaction-local affected keys. Insert capture follows 
 
 The finalizer expands old indexed dependencies and current canonical relations. It derives affected Ticket, conversation, owner, Project, and totals records. Conversation roots own their address records. Old roots survive as dependency references until finalization, so a move or deletion can remove their former addresses. Totals use SQL counts and indexed address lookups. They do not rewrite dependencies for every child.
 
+Each full rebuild reads Ticket ownership once from Tickets and once from historical conversation associations. It holds only Ticket identity, current parent and current conversation, plus association identities. Current and historical links to the same Ticket produce one address per conversation; different Tickets can share a conversation. Historical addresses use the Ticket's current parent assignment.
+
+Each rebuild creates a fresh lookup, including repeated rebuilds before the same transaction commits. It discards the lookup afterward. Conversation derivation reads only its five sequence, activity and historical identity columns. Incremental finalization keeps its existing per-conversation ownership query. Ownership source reads during rebuilds stay constant as the number of conversations increases. Other navigation work retains its existing costs.
+
 The original navigation migration creates six tables and four indexes plus source triggers. The version 2 migration adds two partial indexes. A migration transaction backfills synthetic or existing canonical rows and initializes continuity. Rebuild replaces derived records, dependencies, and history in one transaction. Source facts remain unchanged. `reset_epoch` clears journal continuity under a write transaction and returns the new continuity. The scope persists across rebuild and reset. A consistent database copy also copies its scope. Authentication and workspace routing remain downstream responsibilities.
 
 ## Current staging migration
