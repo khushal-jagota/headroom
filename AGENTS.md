@@ -94,16 +94,15 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   startup, select another and retry.
 - The worktree's database and other local state may remain for later use until
   Consequences.
-- At Consequences, complete integration: bring current `staging` into the Ticket branch,
-  repair and verify the resulting revision, advance `staging` when it is green, push
-  that exact revision to `origin/staging`, and verify the remote ref matches before
-  removing the Ticket's services, local runtime state, worktree, and branch.
-- Always keep a single rolling `staging` → `main` pull request open. After the
-  `origin/staging` push, check whether one already exists; if not, create one. It
-  updates on its own as later Consequences Stages advance `staging`, so there is nothing to do
-  when one is already open.
-- Deployment from `main` remains a later user action. It is not part of Ticket
-  integration.
+- At Consequences, push the Ticket branch and open an ordinary pull request into
+  `staging`. Write an ordinary note about the change. Enable auto-merge and verify
+  that the pull request merged. Then remove the Ticket's services, local runtime
+  state, worktree, and branch. If an old direct push to `origin/staging` is rejected,
+  use this pull request route. If GitHub refuses the merge because of conflicts,
+  bring current `staging` into the Ticket branch. Resolve the conflicts, verify the
+  resulting revision, push the branch, and enable auto-merge again.
+- Open a `staging` → `main` pull request only when the user explicitly requests a
+  release. Deployment from `main` remains a later user action.
 
 ## Conduct
 - Integrate only after the final checks pass; investigate failures rather than advancing over them. Do not use repeated broad verification as the implementation loop.
