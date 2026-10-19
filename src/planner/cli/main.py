@@ -122,7 +122,8 @@ _SPRINT_FIELDS = {
 
 _ITEM_FIELDS = {
     "title": "title",
-    "body": "body",
+    "goal": "goal",
+    "recap": "recap",
     "project": "project",
     "project-id": "project_id",
 }
@@ -336,7 +337,7 @@ def _sprint_item_record(
             "employee_launch_model": launch["employee_launch_model"],
             "employee_launch_reasoning_effort": launch["employee_launch_reasoning_effort"],
         }
-    return (header, {"body": part(data["body"])})
+    return (header, {"goal": part(data["goal"]), "recap": part(data["recap"])})
 
 
 def _day_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, RecordPart]]:
@@ -1995,18 +1996,18 @@ def sprint_item() -> None:
 @click.option("--title", required=True, help="Sprint item title.")
 @click.option("--project", default=None, help="Project name.")
 @click.option("--project-id", default=None, help="Project id.")
-@click.option("--body-file", default=None, help="Optional body file, or - for stdin.")
+@click.option("--goal-file", default=None, help="Optional goal file, or - for stdin.")
 @json_option
 def sprint_item_create(
     title: str,
     project: str | None,
     project_id: str | None,
-    body_file: str | None,
+    goal_file: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {
         "title": title,
-        "body": read_optional_body(body_file, as_json) or "",
+        "goal": read_optional_body(goal_file, as_json) or "",
     }
     add_project_selectors(
         body, project=project, project_id=project_id, required=True, as_json=as_json
@@ -2016,7 +2017,7 @@ def sprint_item_create(
     startup = data.get("startup")
     human_result = f"Created orchestrator {item_id}."
     if startup is None:
-        human_result += " Idle (no brief)."
+        human_result += " Idle (no goal)."
     else:
         fate = startup["fate"]
         human_result += f" Startup {fate}."
@@ -2036,7 +2037,7 @@ def sprint_item_create(
             else:
                 human_result += (
                     f"\nRetry on this orchestrator: panels send-message --sprint-item {item_id}"
-                    ' --message "<brief>"'
+                    ' --message "<goal>"'
                 )
     http.emit(data, as_json, human_result)
 

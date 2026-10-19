@@ -23,8 +23,12 @@ from planner.sprints import api, views
 def content_app(tmp_path: Path) -> tuple[FastAPI, Path, list[str]]:
     path = tmp_path / "content.db"
     with sqlite3.connect(path) as conn:
-        conn.execute("CREATE TABLE sprint_items(id TEXT PRIMARY KEY,body TEXT NOT NULL)")
-        conn.execute("INSERT INTO sprint_items VALUES(?,?)", ("item", "Original\n  body"))
+        conn.execute(
+            "CREATE TABLE sprint_items(id TEXT PRIMARY KEY,goal TEXT NOT NULL,recap TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO sprint_items VALUES(?,?,?)", ("item", "Original\n  goal", "Right now")
+        )
         conn.execute(
             "CREATE TABLE conversations(conversation_id TEXT PRIMARY KEY,"
             "identity_environment_variables TEXT,created_at INTEGER)"
@@ -82,7 +86,8 @@ def test_content_keeps_exact_document_history_and_artifacts_without_summary_work
     monkeypatch.setattr(views, "item_tickets", no_summary)
     monkeypatch.setattr(api, "add_work_attention", no_summary)
     expected = {
-        "body": "Original\n  body",
+        "goal": "Original\n  goal",
+        "recap": "Right now",
         "conversation_history": [
             {"conversation_id": "old", "created_at": 10},
             {"conversation_id": "new", "created_at": 20},
@@ -146,7 +151,7 @@ def test_content_checks_authority_before_read_and_preserves_missing_identity(
             assert foreign.status_code == 400  # Existing agent_forbidden HTTP mapping.
             assert foreign.json()["error"]["code"] == "agent_forbidden"
             assert not any(
-                "body" in query.lower() or "conversations" in query.lower() for query in reads
+                "goal" in query.lower() or "conversations" in query.lower() for query in reads
             )
             missing = await client.get("/api/items/missing/workspace-content")
         assert missing.status_code == 404

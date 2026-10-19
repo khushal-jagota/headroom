@@ -433,9 +433,15 @@ def _derive(
                 if version < PREPARED_SCHEMA_VERSION:
                     value["priority"] = t["priority"]
             if version >= 4:
+                # `transactional_navigation` rebuilds this projection with current code
+                # while the chain is mid-flight, so on a database that has not reached
+                # the goal-and-recap rename yet the only column here is still `body`.
+                # A fresh database never shows this, because it has no orchestrators
+                # to derive at that point.
+                recap = str(t["recap"]) if "recap" in t else str(t["body"])
                 if version >= PREPARED_SCHEMA_VERSION:
-                    value["recap"] = str(t["body"])
-                value["recap_preview"] = recap_preview(str(t["body"]))
+                    value["recap"] = recap
+                value["recap_preview"] = recap_preview(recap)
         else:
             key = "chief_of_staff"
             deps.add(("chief_settings", key))

@@ -158,14 +158,14 @@ def _create_items(
         sprints_data.create_item(
             conn,
             title="Prepare isolated runtime story",
-            body="Small representative plan for fictional staging work.",
+            goal="Small representative plan for fictional staging work.",
             project_id=project_ids[0],
             clock=clock,
         ),
         sprints_data.create_item(
             conn,
             title="Review fake environment behavior",
-            body="Fictional review item with child tickets in multiple states.",
+            goal="Fictional review item with child tickets in multiple states.",
             project_id=project_ids[1],
             clock=clock,
         ),

@@ -114,10 +114,10 @@ def run(browser, urls):
     # A canonical direct Item address mounts its real workspace while its settled
     # row remains hidden inside the closed Settled rail.
     page.evaluate("window.location.hash = '#/workspace/item/item_offboard'")
-    page.locator('[data-sprint-item-workspace="item_offboard"] [data-sprint-item-brief]').wait_for()
+    page.locator('[data-sprint-item-workspace="item_offboard"] [data-sprint-item-goal]').wait_for()
     assert (
-        page.locator("[data-sprint-item-brief]").inner_text()
-        == "The off-board brief remains readable."
+        page.locator("[data-sprint-item-goal]").inner_text()
+        == "The off-board goal remains readable."
     )
     page.wait_for_function(
         """() => window.__requests().some(request => request.path === "/api/navigation/snapshot")"""

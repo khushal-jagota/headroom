@@ -223,7 +223,7 @@ def deploy_app(
     service: ServiceController,
     health: HealthClient,
     now: Callable[[], float] = time.monotonic,
-    health_timeout_seconds: float = 30.0,
+    health_timeout_seconds: float = 120.0,
     lock_path: Path | None = None,
     lifecycle_transition: LifecycleTransition | None = None,
     gate_evidence: GateEvidence | None = None,
