@@ -248,7 +248,7 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
     if table == "tickets":
         roots.add(("ticket", identity))
         roots.update(("conversation", item) for item in _conversation_ids(conn, identity))
-        for row in rows(conn, "SELECT * FROM tickets WHERE id=?", (identity,)):
+        for row in rows(conn, "SELECT sprint_item_id FROM tickets WHERE id=?", (identity,)):
             p = _parent(row)
             roots.add(("totals", ":".join(p)))
         roots.update(
@@ -307,9 +307,15 @@ def _derive(
     records: list[NavigationRecord] = []
     if kind == "ticket":
         deps.add(("tickets", identity))
+        version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
+        priority_column = "t.priority," if version < PREPARED_SCHEMA_VERSION else ""
         found = rows(
             conn,
-            "SELECT t.*,COALESCE(i.project_id,t.project_id) effective_project "
+            "SELECT t.title,t.worker_type,t.stage,t.deadline,t.orchestrator_kind,"
+            "t.sprint_item_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,"
+            "t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,"
+            "t.updated_at,t.created_at,t.recap," + priority_column
+            + "COALESCE(i.project_id,t.project_id) effective_project "
             "FROM tickets t LEFT JOIN sprint_items i ON i.id=t.sprint_item_id WHERE t.id=?",
             (identity,),
         )
@@ -327,7 +333,6 @@ def _derive(
         )
         deps.add(("ticket_blocks", identity))
         deps.update(("tickets", b["id"]) for b in blockers)
-        version = conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0]
         # Preserve historical v1/v2 backfill before the accepted retirement rewrite.
         # Current source contains no cancelled Tickets after that migration succeeds.
         blocker_predicate = (
@@ -492,7 +497,8 @@ def _derive(
         addresses: dict[Key, dict[str, Any]] = {}
         for t in rows(
             conn,
-            "SELECT t.* FROM tickets t LEFT JOIN ticket_conversations tc ON tc.ticket_id=t.id "
+            "SELECT t.id,t.sprint_item_id,t.conversation_id FROM tickets t "
+            "LEFT JOIN ticket_conversations tc ON tc.ticket_id=t.id "
             "WHERE t.conversation_id=? OR tc.conversation_id=? GROUP BY t.id",
             (identity, identity),
         ):

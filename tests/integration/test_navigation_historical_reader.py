@@ -174,9 +174,8 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
         assert facts["aliases"] == before["source"]["aliases"]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
     # The original upgraded fixture retains the deliberately discarded later writes.
-    assert run_historical(source, candidate, "read", expected_tip=expected_tip)["ticket"]["title"] == (
-        "Later fixture Ticket"
-    )
+    retained = run_historical(source, candidate, "read", expected_tip=expected_tip)
+    assert retained["ticket"]["title"] == "Later fixture Ticket"
     print(
         json.dumps(
             {
