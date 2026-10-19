@@ -222,12 +222,28 @@ def scoped_navigation_response(response: FixtureObject, view: FixtureObject) -> 
         conn.execute("CREATE TABLE navigation_meta(scope,schema_version,epoch,revision)")
         conn.execute("CREATE TABLE navigation_records(kind,id,value,PRIMARY KEY(kind,id))")
         conn.execute("CREATE TABLE navigation_dirty(kind,id)")
-        conn.execute("INSERT INTO navigation_meta VALUES(?,?,?,?)", (source["scope"], source["schema_version"], source["epoch"], int(source["revision"])))
-        conn.executemany("INSERT INTO navigation_records VALUES(?,?,?)", [(row["kind"], row["id"], json.dumps(row["value"])) for row in source["records"]])
+        conn.execute(
+            "INSERT INTO navigation_meta VALUES(?,?,?,?)",
+            (source["scope"], source["schema_version"], source["epoch"], int(source["revision"])),
+        )
+        conn.executemany(
+            "INSERT INTO navigation_records VALUES(?,?,?)",
+            [(row["kind"], row["id"], json.dumps(row["value"])) for row in source["records"]],
+        )
         prepare(conn)
         rebuild(conn)
         coverage, content = read_content(conn, descriptor, current=response["mode"] == "current")
-    return {"event": "snapshot", "wire_version": 3, "projection_version": 1,
-            "view_id": identity(cast(ViewRequest, descriptor)), "scope_generation": descriptor["scope_generation"],
-            "ordering_generation": ORDERING_GENERATION, "coverage": coverage, "content_version": digest(content),
-            "mode": response["mode"], "authority": response["authority"], "content": content, "proof": response["proof"]}
+    return {
+        "event": "snapshot",
+        "wire_version": 3,
+        "projection_version": 1,
+        "view_id": identity(cast(ViewRequest, descriptor)),
+        "scope_generation": descriptor["scope_generation"],
+        "ordering_generation": ORDERING_GENERATION,
+        "coverage": coverage,
+        "content_version": digest(content),
+        "mode": response["mode"],
+        "authority": response["authority"],
+        "content": content,
+        "proof": response["proof"],
+    }
