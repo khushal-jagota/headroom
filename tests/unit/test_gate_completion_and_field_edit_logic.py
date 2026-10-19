@@ -85,3 +85,21 @@ def test_direct_user_cannot_complete_a_gate_while_the_worker_step_is_out() -> No
             worker_type_definition=PERSONAL_TASK_WORKER_TYPE_DEFINITION,
         )
     assert exc.value.code == ErrorCode.already_running
+
+
+def test_direct_completion_does_not_claim_approval() -> None:
+    """A user doing the work does not prove that anyone approved a proposal."""
+    ticket = replace(
+        _ticket(stage="needs_outcome"),
+        worker_type="personal",
+        field_values={"brief": "context"},
+    )
+    decision = resolution.decide_complete_user_owned_gate(
+        ticket,
+        "outcome",
+        "value",
+        OWNER_PRINCIPAL,
+        worker_type_definition=PERSONAL_TASK_WORKER_TYPE_DEFINITION,
+    )
+    assert decision.field_values["outcome"] == "value"
+    assert "outcome" not in decision.field_approvals

@@ -38,6 +38,13 @@ worker-self route. It includes the Worker type and specialist identity. A named 
 the ordinary Ticket record route. Neither form reads conversation history. Use `ticket
 history` when that record is necessary.
 
+Settled Ticket fields carry an inline approval label in text output, both in the manifest
+and beside an expanded value. Explicit approval names Khushal, Chief, or the approving
+orchestrator's title. `Auto-accepted` and `Approval unknown` remain distinct. Unsettled
+fields carry no approval label. JSON includes an `approval` object on each settled field
+with `method`, `principal` (kind and ID), and `display_label`. Principal IDs appear in
+JSON only. These reads do not add approval information to `ticket history`.
+
 List commands return bounded summaries. `ticket list`, `sprint list`, `sprint item list`,
 and `project list` use pages of 30 by default. Every result reports omissions and the
 next offset. Ticket list no longer filters live work by Day or Sprint.

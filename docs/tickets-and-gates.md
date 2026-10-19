@@ -110,6 +110,17 @@ Ticket reads and search show only declared fields. Later edits and approvals pre
 historical text, but new writes and proposals must use declared fields. Invalid stored
 values still fail validation, even when their fields are no longer declared.
 
+Each settled field shows who approved its current text. Explicit approval records the
+actual approver, separately from the proposal recipient and the next approval holder.
+The UI says “Approved by Khushal”, “Approved by Chief”, or “Approved by Orchestrator”.
+CLI text uses the orchestrator’s human-readable title. Ticket JSON includes the approval
+method, the principal kind and ID, and the readable label captured at approval.
+
+A field that settles below its ceiling says “Auto-accepted”. A settled Brief at creation
+uses the same label. Older records and direct user completion say “Approval unknown”.
+Unknown never means auto-accepted. An edit that changes the text clears its approval.
+An identical edit preserves it. Ticket history stays unchanged.
+
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
 honor the user's direction without mixing that direction into Success Condition,
