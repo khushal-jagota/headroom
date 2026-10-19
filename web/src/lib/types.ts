@@ -290,6 +290,13 @@ export type TicketConversationHistoryEntry = {
   created_at: number;
 };
 
+/** Backend TicketFieldApproval projection. display_label uses the readable actor title. */
+export type TicketFieldApproval = {
+  method: "explicit_accept" | "auto_accept" | "unknown";
+  principal: Principal | null;
+  display_label: string;
+};
+
 export type TicketDetail = {
   conversation_signal?: ConversationSignal;
   is_backlogged?: boolean;
@@ -321,6 +328,7 @@ export type TicketDetail = {
   blocker_summary?: BlockerSummary;
   recap?: string | null;
   field_values: TicketFieldValues;
+  field_approvals?: Record<string, TicketFieldApproval>;
   pending_proposal: PendingTicketProposal | null;
   awaiting_reply?: boolean;
   awaiting_answer?: boolean;

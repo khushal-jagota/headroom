@@ -9,23 +9,226 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 HISTORICAL_TIP = "595eb08ee85e60cb51b28332a850c59f3df26cb6"
 CURRENT_STAGING_TIP = "86da50467e292a863283695dbbbdcf6f0b9d49a7"
 F097_TIP = "f0977a512ba9a6bb1736e15ee9760aa39989a0fc"
 PUBLIC_FOUR_TIP = "82d50c14f4057196883843640dae2ff1aa1d7850"
-DEFAULT_SOURCE = Path(__file__).resolve().parents[3] / "t_3p0mtprp-baseline-595"
+HISTORICAL_TIPS = frozenset({HISTORICAL_TIP, CURRENT_STAGING_TIP, F097_TIP, PUBLIC_FOUR_TIP})
+HistoricalSourceFactory = Callable[[str], Path]
 
 
-def historical_source() -> Path:
-    return Path(
-        os.environ.get("PANELS_NAVIGATION_HISTORICAL_SOURCE", str(DEFAULT_SOURCE))
-    ).resolve()
+@pytest.fixture(scope="session")
+def historical_sources(
+    tmp_path_factory: pytest.TempPathFactory,
+    record_testsuite_property: Callable[[str, object], None],
+) -> Iterator[HistoricalSourceFactory]:
+    """Own exact historical source and interpreters without retained sibling state.
+
+    Keep these compatibility boundaries until their support floor is explicitly retired.
+    Each source gets its own environment. Only downloaded package cache is reused.
+    """
+    repository = Path(__file__).resolve().parents[2]
+    root = tmp_path_factory.mktemp("navigation-historical")
+    diagnostics = root / "diagnostics"
+    diagnostics.mkdir()
+    sources: dict[str, Path] = {}
+    attempted: dict[str, Path] = {}
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("PLAN_", "PANELS_REAL_"))
+        and key not in {"HERMES_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}
+    }
+    peak_bytes = 0
+    setup_seconds = 0.0
+    cache = Path(
+        subprocess.check_output(
+            [sys.executable, "-m", "pip", "cache", "dir"],
+            env=environment,
+            text=True,
+        ).strip()
+    )
+    record_testsuite_property("historical_sources.pip_cache_path", str(cache))
+    record_testsuite_property(
+        "historical_sources.pip_cache_initially_populated",
+        cache.is_dir() and any(cache.iterdir()),
+    )
+    record_testsuite_property("historical_sources.python_version", sys.version)
+
+    def run(tip: str, phase: str, arguments: list[str]) -> float:
+        started = time.monotonic()
+        log = diagnostics / f"{tip}-{phase}.log"
+        with log.open("w") as output:
+            output.write(json.dumps(arguments) + "\n")
+            output.flush()
+            result = subprocess.run(
+                arguments,
+                cwd=repository,
+                env=environment,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                timeout=300,
+                check=False,
+            )
+        elapsed = time.monotonic() - started
+        record_testsuite_property(f"historical.{tip}.{phase}_seconds", round(elapsed, 3))
+        if phase == "pins":
+            lines = log.read_text().splitlines()
+            for marker, name in (
+                ("Using cached", "using_cached_lines"),
+                ("Downloading", "downloading_lines"),
+            ):
+                record_testsuite_property(
+                    f"historical.{tip}.{name}",
+                    sum(marker in line for line in lines),
+                )
+        if result.returncode:
+            pytest.fail(
+                f"historical {tip} {phase} failed ({result.returncode}):\n{log.read_text()}"
+            )
+        return elapsed
+
+    def source_for(tip: str) -> Path:
+        nonlocal peak_bytes, setup_seconds
+        if tip not in HISTORICAL_TIPS:
+            raise ValueError(f"unsupported historical source: {tip}")
+        if tip in sources:
+            return sources[tip]
+        if tip in attempted:
+            raise RuntimeError(f"historical {tip} setup previously failed")
+        source = root / tip
+        attempted[tip] = source
+        # Missing history is a setup error. Track the owned path before checkout.
+        elapsed = run(tip, "checkout", ["git", "worktree", "add", "--detach", str(source), tip])
+        elapsed += run(tip, "venv", [sys.executable, "-m", "venv", str(source / ".venv")])
+        record_testsuite_property(
+            f"historical.{tip}.requirements_sha256",
+            hashlib.sha256((source / "requirements.txt").read_bytes()).hexdigest(),
+        )
+        interpreter = str(source / ".venv/bin/python")
+        elapsed += run(
+            tip,
+            "pins",
+            [
+                interpreter,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "-r",
+                str(source / "requirements.txt"),
+            ],
+        )
+        elapsed += run(
+            tip,
+            "editable",
+            [
+                interpreter,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--editable",
+                str(source),
+            ],
+        )
+        elapsed += run(
+            tip,
+            "identity",
+            [
+                interpreter,
+                "-c",
+                "import sys; from pathlib import Path; "
+                f"sys.path.insert(0, {str(repository / 'scripts')!r}); "
+                "import tree_environment; "
+                f"diagnosis = tree_environment.preflight(Path({str(source)!r}), ask_planner=True); "
+                "assert not diagnosis, diagnosis",
+            ],
+        )
+        size = subprocess.check_output(["du", "-sk", str(root)], text=True)
+        peak_bytes = max(peak_bytes, int(size.split()[0]) * 1024)
+        setup_seconds += elapsed
+        record_testsuite_property("historical_sources.setup_seconds", round(setup_seconds, 3))
+        record_testsuite_property("historical_sources.peak_disk_bytes", peak_bytes)
+        record_testsuite_property(
+            "historical_sources.peak_disk_mib", round(peak_bytes / 1024**2, 3)
+        )
+        print(
+            json.dumps(
+                {
+                    "historical_source": tip,
+                    "setup_seconds": round(elapsed, 3),
+                    "cumulative_setup_seconds": round(setup_seconds, 3),
+                    "peak_disk_bytes": peak_bytes,
+                }
+            )
+        )
+        sources[tip] = source
+        return source
+
+    try:
+        yield source_for
+    finally:
+        started = time.monotonic()
+        failures: list[str] = []
+        for tip, source in attempted.items():
+            try:
+                # Guards run per path so damage to one source cannot suppress the rest.
+                assert source.parent == root and source.name == tip and not source.is_symlink()
+                registered = subprocess.check_output(
+                    ["git", "worktree", "list", "--porcelain"],
+                    cwd=repository,
+                    text=True,
+                )
+                registration = next(
+                    (
+                        entry
+                        for entry in registered.split("\n\n")
+                        if entry.splitlines() and entry.splitlines()[0] == f"worktree {source}"
+                    ),
+                    None,
+                )
+                if registration is not None:
+                    assert f"HEAD {tip}" in registration.splitlines(), registration
+                    if source.exists():
+                        observed = subprocess.check_output(
+                            ["git", "-C", str(source), "rev-parse", "HEAD"],
+                            text=True,
+                        ).strip()
+                        assert observed == tip, f"historical source identity changed: {source}"
+                    run(tip, "cleanup", ["git", "worktree", "remove", "--force", str(source)])
+                elif source.exists():
+                    # A failed checkout can leave an unregistered partial directory.
+                    # This literal path was reserved only in our new temporary root.
+                    shutil.rmtree(source)
+            except (
+                AssertionError,
+                OSError,
+                subprocess.SubprocessError,
+                pytest.fail.Exception,
+            ) as error:
+                failures.append(str(error))
+        elapsed = time.monotonic() - started
+        record_testsuite_property("historical_sources.cleanup_seconds", round(elapsed, 3))
+        record_testsuite_property(
+            "historical_sources.cleaned_sources", len(attempted) - len(failures)
+        )
+        print(
+            json.dumps({"historical_cleanup_seconds": round(elapsed, 3), "sources": len(attempted)})
+        )
+        if failures:
+            pytest.fail("historical source cleanup failed:\n" + "\n".join(failures))
 
 
 def run_historical(

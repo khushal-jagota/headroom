@@ -349,8 +349,8 @@
   .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); }
   .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
-  .active-work-scroll { flex:1; min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; }
-  .settled-body { min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; }
+  .active-work-scroll { flex:1; min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
+  .settled-body { min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
   .rail-grip::after { content:""; position:absolute; inset:0 4px; background:transparent; transition:background var(--motion-fast) var(--motion-ease); }
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { background:var(--accent-bright); }

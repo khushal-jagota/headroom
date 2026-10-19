@@ -16,6 +16,8 @@ from planner.tickets.contracts import (
     PendingTicketProposal,
     StageOwnershipMode,
     Ticket,
+    TicketApprovalMethod,
+    TicketFieldApproval,
     WorkerStepClaim,
 )
 from planner.tickets.logic import admission, fields_codec, machine
@@ -31,6 +33,7 @@ def _accept_gating_proposal(
     next_holder: Principal | None = None,
     *,
     worker_type_definition: WorkerTypeDefinition,
+    approval: TicketFieldApproval | None = None,
 ) -> Decision:
     target = worker_type_definition.advance_target(ticket.stage)
     if target is None:
@@ -42,6 +45,10 @@ def _accept_gating_proposal(
     return replace(
         Decision.from_ticket(ticket),
         field_values={**ticket.field_values, field: stored_body},
+        field_approvals={
+            **{key: value for key, value in ticket.field_approvals.items() if key != field},
+            **({field: approval} if approval is not None else {}),
+        },
         pending_proposal=None,
         stage=target,
         ceiling=ticket.ceiling if next_ceiling is None else next_ceiling,
@@ -78,7 +85,12 @@ def decide_file_proposal(
     )
     if parked_destination is None:
         return _accept_gating_proposal(
-            ticket, field, body, None, worker_type_definition=worker_type_definition
+            ticket,
+            field,
+            body,
+            None,
+            worker_type_definition=worker_type_definition,
+            approval=TicketFieldApproval(TicketApprovalMethod.auto_accept, None, "Auto-accepted"),
         )
     return replace(
         Decision.from_ticket(ticket),
@@ -108,6 +120,7 @@ def decide_accept(
     next_holder: Principal | None,
     *,
     worker_type_definition: WorkerTypeDefinition,
+    approval: TicketFieldApproval,
 ) -> Decision:
     if edited_body is not None:
         admission.validate_body(edited_body, "edit-accept text")
@@ -131,6 +144,7 @@ def decide_accept(
         resolved_ceiling,
         next_holder,
         worker_type_definition=worker_type_definition,
+        approval=approval,
     )
 
 
@@ -229,6 +243,11 @@ def decide_edit_settled_field(
     return replace(
         Decision.from_ticket(ticket),
         field_values={**ticket.field_values, field: new_body},
+        field_approvals={
+            key: value
+            for key, value in ticket.field_approvals.items()
+            if key != field or ticket.field_values[field] == new_body
+        },
     )
 
 

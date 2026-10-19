@@ -7,8 +7,14 @@ from dataclasses import asdict
 from types import MappingProxyType
 from typing import Any
 
-from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import PendingTicketProposal, TicketFieldValues
+from planner.core.contracts import ErrorCode, PlannerError, Principal, PrincipalKind
+from planner.tickets.contracts import (
+    PendingTicketProposal,
+    TicketApprovalMethod,
+    TicketFieldApproval,
+    TicketFieldApprovals,
+    TicketFieldValues,
+)
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 
@@ -81,3 +87,44 @@ def field_value(
 ) -> str | None:
     worker_type_definition.field_definition(field)
     return values.get(field)
+
+
+def approvals_to_json(approvals: TicketFieldApprovals) -> str:
+    return json.dumps({key: asdict(value) for key, value in approvals.items()}, ensure_ascii=False)
+
+
+def approvals_from_json(raw: str, values: TicketFieldValues) -> TicketFieldApprovals:
+    """Read evidence for current values, with honest unknowns for older records."""
+    obj: Any = json.loads(raw)
+    _require(isinstance(obj, dict))
+    approvals = {}
+    for key, item in obj.items():
+        _require(isinstance(item, dict))
+        _require(set(item) == {"method", "principal", "display_label"})
+        try:
+            method = TicketApprovalMethod(item["method"])
+            principal_obj = item["principal"]
+            principal = None
+            if principal_obj is not None:
+                _require(isinstance(principal_obj, dict))
+                _require(set(principal_obj) == {"kind", "id"})
+                _require(isinstance(principal_obj["id"], str))
+                principal = Principal(PrincipalKind(principal_obj["kind"]), principal_obj["id"])
+            _require(isinstance(item["display_label"], str))
+            _require((method is TicketApprovalMethod.explicit_accept) == (principal is not None))
+        except (ValueError, TypeError) as exc:
+            raise PlannerError(ErrorCode.validation, "corrupt ticket field state") from exc
+        approvals[key] = TicketFieldApproval(method, principal, item["display_label"])
+    unknown = TicketFieldApproval(TicketApprovalMethod.unknown, None, "Approval unknown")
+    return MappingProxyType({key: approvals.get(key, unknown) for key in values})
+
+
+def replace_declared_approvals(
+    raw: str, approvals: TicketFieldApprovals, field_ids: tuple[str, ...]
+) -> str:
+    """Keep evidence for removed fields beside the historical text it approves."""
+    stored = json.loads(raw)
+    historical = {key: value for key, value in stored.items() if key not in field_ids}
+    return json.dumps(
+        {**historical, **json.loads(approvals_to_json(approvals))}, ensure_ascii=False
+    )

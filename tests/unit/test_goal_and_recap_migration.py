@@ -7,10 +7,12 @@ migration has to get right, and it is also where the chain reaches into current 
 rename, and it does so at the prepared shape once `priority` is gone.
 """
 
+import json
 from contextlib import closing
 from pathlib import Path
 
 import pytest
+from tests.support.navigation_current import current_navigation_database
 from tests.unit.test_db import _migration_tree_through
 
 from planner.core import db
@@ -48,3 +50,18 @@ def test_occupied_orchestrators_keep_their_text_as_goal_with_an_empty_recap(
         assert {row[0] for row in conn.execute("SELECT DISTINCT recap FROM sprint_items")} == {""}
         columns = [row[1] for row in conn.execute("PRAGMA table_info(sprint_items)")]
         assert "body" not in columns
+
+    # The navigation projection is written earlier in this chain, from the only column
+    # there was then, so every orchestrator record holds a goal under the name recap
+    # until installation rebuilds it. Installation is what serves a reader, so that is
+    # where an empty recap has to be true.
+    with current_navigation_database(database) as installed:
+        projected = {
+            str(row[0]): json.loads(str(row[1]))
+            for row in installed.execute(
+                "SELECT id, value FROM navigation_records WHERE kind = 'orchestrator'"
+            )
+        }
+    assert set(projected) == {item_id for item_id, _, _ in _ITEMS}
+    assert {record["recap"] for record in projected.values()} == {""}
+    assert {record["recap_preview"] for record in projected.values()} == {""}

@@ -591,6 +591,7 @@
                   {#each occurredFields as name (`${detail.id}:${name}`)}
                     {@const stageState = ticketSectionFieldState(section,currentView,name)}
                     <TicketStageSection {name} value={detail.field_values[name] ?? ""}
+                      approval={detail.field_approvals?.[name]}
                       {stageState} lifecycle={lc} ticketStage={detail.stage}
                       emptyText={emptyTicketFieldText} editableValue={true}
                       editableCurrentValue={false} readerLeftItOpen={readerStageFolds.get(name) ?? false}
