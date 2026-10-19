@@ -33,7 +33,9 @@ LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this
 
 
 
-def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject, JsonObject]:
+def _seed(
+    server: ServerHandle, api: ApiHelper,
+) -> tuple[JsonObject, JsonObject, JsonObject, JsonObject]:
     project = api.direct_post(server, "/api/projects", {"name": "Rail proof"})
     item = api.direct_post(
         server,
@@ -110,7 +112,7 @@ def _seed(server: ServerHandle, api: ApiHelper) -> tuple[JsonObject, JsonObject,
         _conversation(server, conversation)
     _bind(server, "agent", item["supervisor"]["agent_key"], "rail-supervisor")
     _bind(server, "agent", "chief_of_staff", "rail-chief")
-    return item, empty, ticket
+    return item, empty, ticket, question
 
 
 def test_settle_reopen_keeps_outstanding_work_and_worker_address(
@@ -120,7 +122,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     api: ApiHelper,
 ) -> None:
     server = rail_server
-    item, empty, ticket = _seed(server, api)
+    item, empty, ticket, question = _seed(server, api)
     context = context_factory()
     page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
     page.set_default_timeout(WAIT_MS)
@@ -139,11 +141,11 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(row.get_by_role("img", name="Unread message")).to_be_visible(timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
-    question_row = card.get_by_role(
-        "button", name="Answer only Worker with no direct message", exact=True
-    )
+    question_row = card.locator(f'[data-ticket-id="{question["id"]}"]')
     expect(question_row).to_be_visible(timeout=WAIT_MS)
-    expect(question_row.get_by_role("img")).to_have_count(0)
+    expect(question_row).to_contain_text("Answer only Worker with no direct message")
+    expect(question_row.get_by_role("img")).to_have_count(1)
+    expect(question_row.get_by_role("img")).to_have_attribute("aria-label", "Working")
     expect(card.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(LONG_TITLE)
     row.click()
     worker_hash = page.evaluate("location.hash")
