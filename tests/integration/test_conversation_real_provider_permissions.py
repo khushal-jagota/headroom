@@ -85,6 +85,7 @@ async def _exercise(
         "authentication_route": authentication_route,
         "decision": decision,
         "model": MODELS[str(backend)],
+        "requested_model": MODELS[str(backend)],
         "source_revision": _command(["git", "rev-parse", "HEAD"]),
         "source_status": _command(["git", "status", "--short"]),
         "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -126,7 +127,11 @@ async def _exercise(
                     "access": "full",
                 },
             )
+            receipts["start_response"] = {
+                "status_code": response.status_code, "body": response.json()
+            }
             assert response.status_code == 201, response.text
+            receipts["effective_model"] = response.json()["model"]
             await assert_navigation_attention(
                 client, conversation_id, receipts, "created", working=False, awaiting_answer=False
             )

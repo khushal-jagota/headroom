@@ -77,7 +77,7 @@ def test_real_provider_steer_reaches_model_system_api_stop_and_resume(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """One provider run proves model effect and the durable state a browser consumes."""
+    """One bounded run exercises admission and durable browser-visible state."""
 
     asyncio.run(asyncio.wait_for(_exercise(case, tmp_path, monkeypatch), 900.0))
 
@@ -105,7 +105,6 @@ async def _exercise(
 
     conversation_id = f"real-system-steer-{case.backend_key}-{uuid.uuid4().hex}"
     model_nonce = f"MODEL-STEER-{uuid.uuid4()}"
-    refused_nonce = f"REFUSED-STEER-{uuid.uuid4()}"
     forbidden_nonce = f"STOPPED-STEER-{uuid.uuid4()}"
     ordinary_nonce = f"AFTER-STOP-{uuid.uuid4()}"
     resume_nonce = f"AFTER-RESUME-{uuid.uuid4()}"
@@ -117,9 +116,9 @@ async def _exercise(
         "backend": str(case.backend_key),
         "authentication_route": authentication_route,
         "model": case.model,
-        # Observed, never asserted, and kept above the bulk of the file so a reader sees it
-        # without scrolling.  Every case reporting no model effect is what a real steering
-        # regression looks like now that no assertion depends on the model's answer.
+        "requested_model": case.model,
+        # Model output is an observation, never an admission criterion or proof that the
+        # model saw or obeyed the steer. Keep it prominent beside the exact provider receipt.
         "observations": {"model_echoed_steer_nonce": "not_reached"},
         "source_sha": source_sha,
         "source_status": source_status,
@@ -146,6 +145,7 @@ async def _exercise(
         )
         _keep_response(receipts, "start", started)
         assert started.status_code == 201, started.text
+        receipts["effective_model"] = started.json()["model"]
         await assert_navigation_attention(
             client, conversation_id, receipts, "created", working=False, awaiting_answer=False
         )
@@ -217,36 +217,11 @@ async def _exercise(
             f"model_echoed_steer_nonce={model_echoed_steer_nonce}"
         )
 
-        refused = await _send(
-            client,
-            conversation_id,
-            refused_nonce,
-            mode="steer",
-        )
-        _keep_response(receipts, "idle_steer_refused", refused)
-        assert refused.json() == {
-            "fate": "refused",
-            "refusal_reason": "no_running_turn_to_steer_into",
-        }
-        refused_events = await _events(client, conversation_id)
-        matching_refusals = [
-            event
-            for event in refused_events
-            if event["kind"] == "prompt_delivery_refused"
-            and event["payload"].get("text") == refused_nonce
-        ]
-        assert len(matching_refusals) == 1
-        assert matching_refusals[0]["payload"]["mode"] == "steer"
-        assert matching_refusals[0]["payload"]["refusal_reason"] == "no_running_turn_to_steer_into"
-        assert not any(
-            event["kind"] == "prompt" and event["payload"].get("text") == refused_nonce
-            for event in refused_events
-        )
         await _keep_and_assert_view(
             client,
             conversation_id,
             receipts,
-            "idle_after_refused_steer",
+            "idle_after_first_completed_turn",
             is_running=False,
         )
 
@@ -402,7 +377,7 @@ async def _exercise(
     receipts["assertions"] = {
         "active_steer_was_admitted_into_the_open_running_turn": True,
         "accepted_steers_are_durable": True,
-        "idle_steer_refusal_is_durable_and_not_held": True,
+        "first_completed_turn_is_idle": True,
         "one_panels_turn_ended_for_each_ordinary_prompt": True,
         "stop_interrupted_an_open_tool": True,
         "stopped_guidance_did_not_execute_later": True,

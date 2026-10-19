@@ -1234,10 +1234,12 @@ The following observations describe earlier runs, not current-tree execution or 
 current pass/fail count. Current integration results must identify their exact source,
 normal native profile routing and fresh Panels state.
 
-- **The steering exercise.** The current source explicitly refuses an idle steer with
-  `no_running_turn_to_steer_into`; the integration assertion preserves that contract.
-  Earlier claims that the source starts an idle turn are obsolete. Active steer admission
-  proves the provider accepted the exact running-turn request, not that the model obeyed it.
+- **The steering exercise.** Direct `steer` starts a new ordinary turn when idle in
+  current staging and the candidate. The no-running-turn refusal belongs to the separate
+  held-prompt promotion API. The paid integration host omits its obsolete idle-refusal
+  assertion; controlled conformance coverage owns idle normalization. Active steer
+  admission proves the provider accepted the exact running-turn request, not that the
+  model obeyed it. Requested and catalogue-resolved effective models remain distinct.
 - **Two claude cases, and they are not reliably red.** Both plant a codeword and ask for it
   back, and the model reads that as an attempt to smuggle instructions past it — sometimes.
   One run fails both, the next fails one. A case that turns on whether a model feels like
