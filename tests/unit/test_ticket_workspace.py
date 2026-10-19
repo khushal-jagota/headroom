@@ -72,8 +72,10 @@ def test_field_revision_changes_only_with_its_body_and_rolls_back(tmp_db: Connec
     )
     changed = provider.capture(tmp_db, request, key)
     assert changed is not None and changed.revision != original.revision
-    assert changed.read()["value"] == "changed"
+    changed_body = changed.read()
+    assert isinstance(changed_body, dict) and changed_body["value"] == "changed"
     tmp_db.rollback()
     restored = provider.capture(tmp_db, request, key)
     assert restored is not None and restored.revision == original.revision
-    assert restored.read()["value"] == ""
+    restored_body = restored.read()
+    assert isinstance(restored_body, dict) and restored_body["value"] == ""

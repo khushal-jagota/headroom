@@ -254,7 +254,7 @@ def test_byte_budget_shrinks_pages_fairly_and_overlap_keeps_cursor_neighbors(
         conn.commit()
         query = descriptor(limit=60)
         # Both profiles share rows; distinct windows still reserve complete memberships.
-        second = dict(query["windows"][0], group="empty")
+        second: ViewWindowRequest = {**query["windows"][0], "group": "empty"}
         query["windows"].append(second)
         _, content = read_content(
             conn, query, current=True, config=replace(DEFAULT_CONFIG, maximum_records=15)
@@ -313,7 +313,7 @@ def test_cursor_domain_rebase_empty_edge_and_all_count_scopes(tmp_path: Path) ->
         # Ordinary documents need up to 138 distinct count identities.
         query = descriptor(limit=0)
         query["windows"] = [
-            dict(query["windows"][0], owner={"kind": "orchestrator", "id": f"o{i}"})
+            {**query["windows"][0], "owner": {"kind": "orchestrator", "id": f"o{i}"}}
             for i in range(138)
         ]
         checked = request(query)

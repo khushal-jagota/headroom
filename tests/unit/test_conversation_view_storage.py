@@ -15,6 +15,7 @@ from planner.conversation.events import (
 from planner.conversation.storage import StoredConversationEvent
 from planner.conversation.views.api import _changes
 from planner.conversation.views.configuration import BODY_CHUNK_BYTES
+from planner.conversation.views.contracts import ViewHistoryScope
 from planner.conversation.views.live_output import ConversationViewLiveOutput
 from planner.conversation.views.status import read_status
 from planner.conversation.views.storage import (
@@ -170,8 +171,8 @@ def test_tail_names_scope_membership_and_removes_children_from_the_timeline() ->
         live = ConversationViewLiveOutput()
         try:
             status = read_status(conn, "fixture", "full", live, running=False)
-            timeline = {"kind": "timeline", "key": None}
-            turn = {"kind": "turn", "key": "turn:e1"}
+            timeline: ViewHistoryScope = {"kind": "timeline", "key": None}
+            turn: ViewHistoryScope = {"kind": "turn", "key": "turn:e1"}
             changes = _changes(
                 conn,
                 "fixture",

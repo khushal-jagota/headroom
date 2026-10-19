@@ -76,7 +76,7 @@ def test_open_body_keeps_its_version_during_output_and_progress_replacement(tmp_
     output = live.output("conversation")
     assert output is not None
     with live.open_content("conversation", output["reference"]) as captured:
-        live.publish_event("conversation", 2, AgentMessageEventPayload([]))
+        live.publish_event("conversation", 2, AgentMessageEventPayload(()))
         live.publish_frame("conversation", AgentMessageDeltaFrame("new text"))
         assert captured.read() == b"old text"
     live.publish_frame("conversation", ToolCallProgressFrame("tool", "old progress"))
