@@ -83,15 +83,23 @@ def observe_hermes_spawn(
             environment = options.get("env")
             assert isinstance(environment, dict)
             child_has_test_marker = "PYTEST_CURRENT_TEST" in environment
+            script = Path(str(arguments[0])).name if arguments else ""
+            is_acp = script == "hermes_acp_extension.py"
+            boundary = {
+                "hermes_model_catalog.py": "model catalogue before native subprocess spawn",
+                "hermes_acp_extension.py": "ACP child after transport environment merge",
+            }.get(script, "other configured Hermes interpreter subprocess")
             receipts.setdefault("native_spawn_observations", []).append(
                 {
-                    "boundary": "asyncio.create_subprocess_exec after ACP environment merge",
+                    "boundary": boundary,
+                    "native_guard_environment_preserved": True,
                     "parent_has_pytest_current_test": "PYTEST_CURRENT_TEST" in os.environ,
                     "child_has_pytest_current_test": child_has_test_marker,
                     "arguments_or_environment_modified": False,
                 }
             )
-            assert not child_has_test_marker, "native Hermes test seatbelt would be active"
+            if is_acp:
+                assert not child_has_test_marker, "native Hermes test seatbelt would be active"
         return await original(program, *arguments, **options)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", observed_spawn)

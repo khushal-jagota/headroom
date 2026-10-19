@@ -947,12 +947,17 @@ its normal HERMES_HOME and PLAN_HERMES_HOME together, preserving the one native 
 refresh-lock identity, with its installed interpreter explicitly configured. No new login,
 purchase or authentication workaround is authorized. Native provider caches/logs/temp
 follow the production launcher; parent Panels process XDG/temp paths are synthetic.
-Hermes requests a filtered environment, but the installed ACP transport merges its
-default inherited environment before the spawn. The commissioned observer checks that
-actual environment and refuses a child with `PYTEST_CURRENT_TEST`. Do not remove that
-marker or bypass the native guard. Canonical home selection alone does not close this
-execution prerequisite. Native provider temporary paths are not all synthetic. Missing supported native authentication or model
-access is an observed prerequisite failure, not permission to create a workaround.
+Hermes requests a filtered environment for the ACP child. The installed ACP transport
+merges a trimmed default environment that excludes `PYTEST_CURRENT_TEST`. The commissioned
+observer checks the actual ACP spawn and refuses that child if the marker is present.
+The model catalogue follows a separate production probe path that inherits the parent
+environment, including the marker. The observer records that catalogue environment and
+forwards it unchanged, so any native auth guard keeps its normal authority. A catalogue
+failure is not evidence that an ACP child failed. Do not remove the marker or bypass a
+native guard. Canonical home selection alone does not certify this execution prerequisite.
+Native provider temporary paths are not all synthetic. Missing supported native
+authentication or model access requires actual provider evidence, not an inference from a
+generic catalogue failure.
 
 Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
 `tests/unit/test_no_codex_credential_copies.py`,

@@ -84,6 +84,46 @@ def test_hermes_home_selection_uses_canonical_home_without_artifacts(
     assert set(home.rglob("*")) == before
 
 
+def test_hermes_observer_preserves_catalogue_marker_and_checks_actual_acp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The catalogue observer must not replace the native guard with an ACP assertion."""
+    interpreter = "/synthetic/hermes/python"
+    marker_env = {"PYTEST_CURRENT_TEST": "proof"}
+    receipts: dict[str, Any] = {}
+    calls: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+    result = object()
+
+    async def native_spawn(program: Any, *arguments: Any, **options: Any) -> object:
+        calls.append((program, arguments, options))
+        return result
+
+    monkeypatch.setenv("PLAN_HERMES_PYTHON", interpreter)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", native_spawn)
+    observe_hermes_spawn(monkeypatch, ConversationBackendKey.hermes, receipts)
+
+    async def exercise() -> None:
+        assert await asyncio.create_subprocess_exec(
+            interpreter, "/source/hermes_model_catalog.py", env=marker_env
+        ) is result
+        assert calls[-1][2]["env"] is marker_env
+        with pytest.raises(AssertionError, match="native Hermes test seatbelt"):
+            await asyncio.create_subprocess_exec(
+                interpreter, "/source/hermes_acp_extension.py", env=marker_env
+            )
+        assert len(calls) == 1
+        assert await asyncio.create_subprocess_exec(
+            interpreter, "/source/hermes_acp_extension.py", env={}
+        ) is result
+        assert len(calls) == 2
+
+    asyncio.run(exercise())
+    observations = receipts["native_spawn_observations"]
+    assert observations[0]["boundary"] == "model catalogue before native subprocess spawn"
+    assert observations[1]["boundary"] == "ACP child after transport environment merge"
+    assert all(row["arguments_or_environment_modified"] is False for row in observations)
+
+
 async def _exercise(
     backend: ConversationBackendKey, decision: str, root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
