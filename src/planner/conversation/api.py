@@ -20,7 +20,7 @@ import time
 from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
-from contextlib import suppress
+from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -1460,7 +1460,7 @@ async def preview_model_corrections(
     runtime = _runtime(request)
     if runtime.model_resolution is None:
         raise HTTPException(status_code=503, detail="model resolution is unavailable")
-    with connect(runtime.database_path) as conn:
+    with closing(connect(runtime.database_path)) as conn:
         results = await preview_corrections(
             conn, ctx.principal, body.targets, runtime.model_resolution
         )
@@ -1476,7 +1476,7 @@ async def apply_model_corrections(
     runtime = _runtime(request)
     if runtime.model_resolution is None:
         raise HTTPException(status_code=503, detail="model resolution is unavailable")
-    with connect(runtime.database_path) as conn:
+    with closing(connect(runtime.database_path)) as conn:
         results = await apply_corrections(
             conn, ctx.principal, body.corrections, runtime.model_resolution, now=int(time.time())
         )

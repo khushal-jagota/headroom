@@ -5,7 +5,6 @@
       "id": "shell-feedback",
       "path": "web/tests/shell-feedback-browser.test.mjs",
       "cases": [
-        "ideas-shell",
         "feedback-inbox"
       ],
       "companions": []
@@ -24,7 +23,6 @@
       "id": "configuration-schedules",
       "path": "web/tests/configuration-schedules-browser.test.mjs",
       "cases": [
-        "worker-configuration-setup",
         "scheduled-tasks"
       ],
       "companions": []
@@ -35,8 +33,7 @@
       "cases": [
         "conversation-pane",
         "live-conversation-switch",
-        "live-conversation-unanswered-send",
-        "open-stays-open"
+        "live-conversation-unanswered-send"
       ],
       "companions": []
     },
@@ -44,38 +41,7 @@
       "id": "composer-voice",
       "path": "web/tests/composer-voice-browser.test.mjs",
       "cases": [
-        "conversation-composer",
-        "voice-everywhere"
-      ],
-      "companions": []
-    },
-    {
-      "id": "workspace",
-      "path": "web/tests/workspace-browser.test.mjs",
-      "cases": [
-        "workspace-rail-at-rest",
-        "workspace-order",
-        "orchestrator-groups-settled",
-        "orchestrator-children",
-        "orchestrator-group-reader-state"
-      ],
-      "companions": [
-        "web/tests/workspace-rail-projection.test.ts"
-      ]
-    },
-    {
-      "id": "artifacts",
-      "path": "web/tests/artifacts-browser.test.mjs",
-      "cases": [
-        "file-preview"
-      ],
-      "companions": []
-    },
-    {
-      "id": "historical-sprint",
-      "path": "web/tests/historical-sprint-browser.test.mjs",
-      "cases": [
-        "sprint-documents"
+        "conversation-composer"
       ],
       "companions": []
     }

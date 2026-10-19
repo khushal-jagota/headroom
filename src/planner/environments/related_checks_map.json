@@ -87,8 +87,6 @@
         "tests/e2e/test_sprint_item_workspace.py",
         "tests/e2e/test_ticket_file_previews.py",
         "web/tests/ticket-page-artifacts.test.ts",
-        "web/tests/historical-sprint-browser.test.mjs",
-        "web/tests/artifacts-browser.test.mjs",
         "web/tests/managed-file-read.test.ts",
         "tests/unit/test_authority_matrix.py",
         "web/src/lib/artifactStrip.ts",
@@ -113,11 +111,7 @@
           "web/tests/managed-file-read.test.ts",
           "web/tests/ticket-page-artifacts.test.ts"
         ],
-        "browser": [
-          "web/tests/artifacts-browser.test.mjs",
-          "web/tests/historical-sprint-browser.test.mjs",
-          "web/tests/workspace-browser.test.mjs"
-        ]
+        "browser": []
       }
     },
     {

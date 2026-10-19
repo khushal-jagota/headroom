@@ -12,9 +12,9 @@ DOM, never on a sleep.
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 
+import httpx
 from playwright.sync_api import BrowserContext, Page
 from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
@@ -57,8 +57,8 @@ FOCUS_AT_END = """() => {
 
 
 def _set_recap(server: ServerHandle, ticket_id: str, recap: str) -> None:
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute("UPDATE tickets SET recap = ? WHERE id = ?", (recap, ticket_id))
+    response = httpx.patch(server.base + f"/api/tickets/{ticket_id}", json={"recap": recap})
+    assert response.is_success, response.text
 
 
 def _flushes(page: Page) -> int:

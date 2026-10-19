@@ -290,6 +290,13 @@ export type TicketConversationHistoryEntry = {
   created_at: number;
 };
 
+/** Backend TicketFieldApproval projection. display_label uses the readable actor title. */
+export type TicketFieldApproval = {
+  method: "explicit_accept" | "auto_accept" | "unknown";
+  principal: Principal | null;
+  display_label: string;
+};
+
 export type TicketDetail = {
   conversation_signal?: ConversationSignal;
   is_backlogged?: boolean;
@@ -321,6 +328,7 @@ export type TicketDetail = {
   blocker_summary?: BlockerSummary;
   recap?: string | null;
   field_values: TicketFieldValues;
+  field_approvals?: Record<string, TicketFieldApproval>;
   pending_proposal: PendingTicketProposal | null;
   awaiting_reply?: boolean;
   awaiting_answer?: boolean;
@@ -405,6 +413,7 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
   conversation_id?: string | null;
   id: string;
   title: string;
+  recap: string;
   recap_preview: string;
   stage: string;
   activity_at: number;
@@ -421,7 +430,8 @@ export type SprintItemWorkspaceTicket = WorkAttention & {
 
 export type SprintItemWorkspace = SprintItemSummary & {
   conversation_signal?: ConversationSignal;
-  body: string;
+  goal: string;
+  recap: string;
   supervisor: {
     agent_key: string;
     conversation_id: string | null;
@@ -482,6 +492,7 @@ export type BoardSprintItem = {
   project?: string;
   id: string;
   title: string;
+  recap: string;
   recap_preview: string;
   tickets: SprintItemWorkspaceTicket[];
   created_at: number;
@@ -501,6 +512,7 @@ export type BoardCard = WorkAttention & {
   orchestrator?: Principal;
   id: string;
   title: string;
+  recap: string;
   recap_preview: string;
   deadline: string | null;
   project_id: string | null;
@@ -587,4 +599,4 @@ export type WorkspaceMessageConversation = {
 };
 
 /** Exact detail-only reply, independent of shared navigation facts. */
-export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "body" | "artifacts" | "conversation_history">;
+export type SprintItemWorkspaceContent = Pick<SprintItemWorkspace, "goal" | "recap" | "artifacts" | "conversation_history">;

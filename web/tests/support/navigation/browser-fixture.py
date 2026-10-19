@@ -97,6 +97,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                 "value": {
                     "title": row["title"],
                     "recap_preview": row.get("recap_preview", ""),
+                    "recap": row.get("recap", row.get("recap_preview", "")),
                     "worker_type": row["worker_type"],
                     "stage": row["stage"],
                     "ticket_status": status,
@@ -137,6 +138,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                 "value": {
                     "title": row["title"],
                     "recap_preview": row.get("recap_preview", ""),
+                    "recap": row.get("recap", row.get("recap_preview", "")),
                     "created_at": row["created_at"],
                     "project_id": project_id,
                     "settled": row.get("settled", False),

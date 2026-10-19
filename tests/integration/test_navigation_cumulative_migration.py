@@ -286,6 +286,7 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
     assert values["project", "fixture-project"] == {"name": "Fixture project"}
     assert values["orchestrator", "parent"] == {
         "title": "Fixture parent",
+        "recap": "",
         "recap_preview": "",
         "created_at": 13,
         "project_id": "fixture-project",
@@ -295,6 +296,7 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
     held = values["ticket", "held"]
     assert held == {
         "title": "held",
+        "recap": "",
         "recap_preview": "",
         "worker_type": "coding",
         "stage": "needs_plan",
@@ -444,7 +446,7 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
             _assert_canonical(conn)
             records = _assert_projection(conn, activated=True)
             installed = snapshot(conn)
-            assert installed["semantics"] == "attention-knowledge-v6"
+            assert installed["semantics"] == "attention-knowledge-v6-recap"
             assert installed["epoch"] != physical["epoch"]
             assert installed["scope"] == physical["scope"]
             assert installed["revision"] == "0"

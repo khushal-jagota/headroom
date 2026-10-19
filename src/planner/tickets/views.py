@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 
 from planner.core import ticket_blocks
-from planner.core.contracts import BlockerSummary, JsonDict
+from planner.core.contracts import BlockerSummary, JsonDict, PrincipalKind
 from planner.files.lifecycle import database_path
 from planner.files.logic.listing import entries_as_json, fold_directory
 from planner.files.logic.paths import ticket_files_root
@@ -29,7 +29,8 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.derivation import TicketFacts
-from planner.tickets.logic import fields_codec, machine
+from planner.tickets.logic import fields_codec, machine, proposal_routing
+from planner.tickets.logic.creation_receipt import supervision_receipt
 from planner.tickets.logic.recap import recap_preview
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -83,6 +84,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "ticket_status": ticket.ticket_status.value,
         "conversation_id": ticket.conversation_id,
         "field_values": dict(ticket.field_values),
+        "field_approvals": {key: asdict(value) for key, value in ticket.field_approvals.items()},
         "pending_proposal": (
             {
                 **asdict(ticket.pending_proposal),
@@ -93,6 +95,28 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         ),
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
+    }
+
+
+def ticket_creation_json(conn: sqlite3.Connection, ticket: Ticket, now: int) -> JsonDict:
+    definition = configured_worker_type_registry().require(ticket.worker_type)
+    destination = proposal_routing.parked_destination(
+        proposal_routing.route_to_holder(ticket.ceiling_holder)
+    )
+    recipient = "the owner"
+    if destination is not None and destination.kind is PrincipalKind.chief:
+        recipient = "Chief"
+    elif destination is not None and destination.kind is PrincipalKind.sprint_item:
+        row = conn.execute(
+            "SELECT title FROM sprint_items WHERE id = ?", (destination.id,)
+        ).fetchone()
+        assert row is not None
+        recipient = f"the orchestrator {row['title']}"
+    return {
+        **ticket_json(ticket, now),
+        **supervision_receipt(
+            ticket, worker_type_definition=definition, review_recipient=recipient
+        ),
     }
 
 
@@ -487,6 +511,7 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
                 ),
             },
             "title": str(row["title"]),
+            "recap": str(row["recap"]),
             "recap_preview": recap_preview(str(row["recap"])),
             "deadline": deadline,
             "project_id": group_project_id,
@@ -562,7 +587,7 @@ def _board_sprint_items(
         return []
     placeholders = ",".join("?" * len(item_ids))
     rows = conn.execute(
-        f"SELECT i.id, i.title, i.body, i.project_id, p.name AS project, "
+        f"SELECT i.id, i.title, i.recap, i.project_id, p.name AS project, "
         f"i.created_at, i.settled FROM sprint_items i JOIN projects p ON p.id=i.project_id "
         f"WHERE i.id IN ({placeholders})",
         item_ids,
@@ -574,7 +599,8 @@ def _board_sprint_items(
         BoardSprintItemSource(
             id=str(row["id"]),
             title=str(row["title"]),
-            recap_preview=recap_preview(str(row["body"])),
+            recap=str(row["recap"]),
+            recap_preview=recap_preview(str(row["recap"])),
             settled=bool(row["settled"]),
             project_id=str(row["project_id"]),
             project=str(row["project"]),

@@ -5,6 +5,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { fetchJson } from "../lib/api";
   import { lifecycleFor, type WorkerTypesResponse } from "../lib/lifecycle";
+  import { RAIL_HOVER_RECAP_MAX_LINES } from "../lib/workspaceRailInteraction";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
   import RequestRecapAction from "./RequestRecapAction.svelte";
@@ -24,7 +25,40 @@
   const manifests = createQuery(() => ({ queryKey: ["worker-types"], queryFn: () => fetchJson<WorkerTypesResponse>("/api/worker-types") }));
   let currentWorker = $derived(worker);
   let stageSentence = $derived(currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
-  let recapText = $derived(worker ? (currentWorker?.recap_preview ?? "") : recap);
+  let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
+  let recapElement = $state<HTMLDivElement | null>(null);
+  let recapLines = $state(1);
+  // Measure the fixed content, never the clamped recap. This keeps the budget
+  // independent of the height that the budget itself produces.
+  $effect(() => {
+    recapText; stageSentence; title; kicker;
+    if (!visible || !element || !recapElement) return;
+    const panel = element;
+    const recapBox = recapElement;
+    const budget = () => {
+      const css = getComputedStyle(panel);
+      const recapCss = getComputedStyle(recapBox);
+      const px = (value: string) => Number.parseFloat(value) || 0;
+      const edges = (style: CSSStyleDeclaration) => px(style.paddingTop) + px(style.paddingBottom) + px(style.borderTopWidth) + px(style.borderBottomWidth);
+      const outerHeight = (child: Element) => {
+        const style = getComputedStyle(child);
+        return child.getBoundingClientRect().height + px(style.marginTop) + px(style.marginBottom);
+      };
+      // The ask shares the recessed block with the recap, so it is fixed content that
+      // happens to sit inside the box being measured.
+      const ask = recapBox.querySelector("[data-request-recap]");
+      const fixed = [...panel.children].filter(child => child !== recapBox);
+      if (ask) fixed.push(ask);
+      const fixedHeight = fixed.reduce((height, child) => height + outerHeight(child), 0);
+      const available = px(css.maxHeight) - edges(css) - fixedHeight - edges(recapCss) - px(recapCss.marginTop) - px(recapCss.marginBottom);
+      recapLines = Math.min(RAIL_HOVER_RECAP_MAX_LINES, Math.max(0, Math.floor(available / px(recapCss.lineHeight))));
+    };
+    const observer = new ResizeObserver(budget);
+    for (const child of panel.children) if (child !== recapBox) observer.observe(child);
+    void tick().then(budget);
+    window.addEventListener("resize", budget);
+    return () => { observer.disconnect(); window.removeEventListener("resize", budget); };
+  });
   let left = $state(0);
   let top = $state(0);
   /* The panel can only take the pointer where it is clear of the rail. A narrow window
@@ -62,10 +96,12 @@
   }}>
   <div class="kicker">{kicker}</div>
   <div class="title"><span>{currentWorker?.title ?? title}</span><ConversationSignalMark signal={currentWorker?.conversation_signal ?? signal} conversationId={currentWorker?.conversation_id ?? conversationId} /></div>
+  <!-- The box stays while there is an ask to hold, so pressing it leaves the recessed
+       block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
-    <div class="recap">
+    <div bind:this={recapElement} class="recap" class:no-space={recapLines === 0 && !recapTarget}>
       <RecapSlot>
-        {#snippet children()}{#if recapText}<span data-recap-text>{recapText}</span>{/if}{/snippet}
+        {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
       </RecapSlot>
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
     </div>
@@ -81,6 +117,9 @@
   .title { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
   .title { font-size:var(--type-md); font-weight:600; line-height:1.4; color:var(--text-strong); overflow-wrap:anywhere; }
   .recap { margin-top:var(--space-3); padding:var(--space-3); background:var(--surface-recessed); border-radius:var(--radius-md); font-size:12.5px; line-height:1.5; color:var(--text-default); }
+  .recap-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:var(--recap-lines); line-clamp:var(--recap-lines); overflow:hidden; overflow-wrap:anywhere; }
+  /* Nowhere to put a recap. The box goes with it unless it is also holding the ask. */
+  .recap.no-space, .recap-text.no-room { display:none; }
   /* The ask lives inside the recessed block, under the line it replaces. */
   .recap :global(.recap-ask) { display:flex; margin-top:var(--space-2); font-size:12px; }
   .doing { margin-top:var(--space-3); font-size:12.5px; color:var(--text-faint); }

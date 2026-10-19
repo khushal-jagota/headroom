@@ -18,8 +18,9 @@ import pytest
 from tests.support.navigation_current import current_navigation_database
 from tests.support.navigation_historical_source import (
     CURRENT_STAGING_TIP,
+    F097_TIP,
     HISTORICAL_TIP,
-    historical_source,
+    HistoricalSourceFactory,
     run_historical,
     source_facts,
 )
@@ -35,7 +36,10 @@ def _copy_closed_database(source: Path, target: Path) -> None:
 
 
 def _expected_reader_values(
-    result: dict[str, Any], *, expected_tip: str, later: bool = False,
+    result: dict[str, Any],
+    *,
+    expected_tip: str,
+    later: bool = False,
 ) -> None:
     assert result["tip"] == expected_tip
     assert result["foreign_keys"] == []
@@ -78,14 +82,9 @@ def _expected_reader_values(
 def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
     tmp_path: Path,
     expected_tip: str,
+    historical_sources: HistoricalSourceFactory,
 ) -> None:
-    source = historical_source()
-    if expected_tip == CURRENT_STAGING_TIP:
-        source = source.parent / "t_3p0mtprp-baseline-86"
-    if not (source / ".venv/bin/python").exists():
-        pytest.skip(
-            f"exact {expected_tip} tree/interpreter unavailable at {source}"
-        )
+    source = historical_sources(expected_tip)
     # The old source executes its migrations and seed, then exits before transfer.
     original = tmp_path / "staging-source.db"
     before = run_historical(source, original, "seed", expected_tip=expected_tip)
@@ -99,7 +98,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
         assert current["schema_version"] == 6
         initial_epoch = current["epoch"]
         facts = source_facts(connection)
-        assert facts["heads"] == [["navigation_current_workspace"]]
+        assert facts["heads"] == [["goal_and_recap_for_orchestrators"]]
         assert {key: value for key, value in facts.items() if key != "heads"} == {
             key: value for key, value in before["source"].items() if key != "heads"
         }
@@ -137,9 +136,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
 
     # f097 positively read the old candidate, but cannot read approved priority
     # removal. Exercise the actual old readers read-only; do not invent defaults.
-    from tests.support.navigation_historical_source import F097_TIP
-
-    f097 = source.parent / "t_jghnv9gu-baseline-f097"
+    f097 = historical_sources(F097_TIP)
     unsupported = run_historical(f097, candidate, "read_incompatible", expected_tip=F097_TIP)
     assert set(unsupported["failures"]) == {"projects", "ticket"}
     assert "priority" in unsupported["failures"]["projects"]

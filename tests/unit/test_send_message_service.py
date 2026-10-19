@@ -334,3 +334,42 @@ def test_a_recap_cannot_be_asked_of_the_owner(
         assert refusal.value.code is ErrorCode.validation
 
     asyncio.run(exercise())
+
+
+def test_a_recap_request_empties_an_orchestrator_recap_through_its_own_writer(
+    tmp_db: Connection,
+    fake_clock: PlannerTestClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each kind of agent keeps its recap in its own field, under its own writer.
+
+    A Ticket, an orchestrator, and the Chief store the line in three different places,
+    and only the orchestrator's writer validates the field name it is handed. Nothing
+    else here presses that writer, so a renamed field would refuse every orchestrator
+    press and no test would notice.
+    """
+    item = sprints_data.create_item(
+        tmp_db, title="Surfaces", project_id="project_vylo", clock=fake_clock
+    )
+    sprints_data.update_item(
+        tmp_db, item.id, edits={"recap": "Three surfaces reviewed."}, clock=fake_clock
+    )
+
+    async def exercise() -> None:
+        sent: list[str] = []
+
+        async def send(*_args: object, **_kwargs: object) -> None:
+            sent.append("sent")
+
+        monkeypatch.setattr(service, "send_message", send)
+        await recap_request.request_recap(
+            InMemoryConversationSystem(),
+            tmp_db,
+            fake_clock,
+            RequestContext(Principal(PrincipalKind.owner, "owner")),
+            Principal(PrincipalKind.sprint_item, item.id),
+        )
+        assert sprints_data.read_item(tmp_db, item.id).item.recap == ""
+        assert sent == ["sent"]
+
+    asyncio.run(exercise())

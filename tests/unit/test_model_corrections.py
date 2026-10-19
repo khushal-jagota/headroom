@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Literal
@@ -96,7 +97,9 @@ def apply(
 
 @pytest.mark.parametrize("principal", [OWNER_PRINCIPAL, CHIEF_PRINCIPAL])
 def test_idle_user_owned_correction_preserves_every_other_ticket_column(
-    tmp_db: Connection, ticket: Ticket, principal: Principal,
+    tmp_db: Connection,
+    ticket: Ticket,
+    principal: Principal,
 ) -> None:
     definition = json.loads(
         tmp_db.execute(
@@ -131,8 +134,10 @@ def test_idle_user_owned_correction_preserves_every_other_ticket_column(
     "kind,identifier", [("ticket", None), ("chief", "chief"), ("worker-default", "coding")]
 )
 def test_worker_cannot_correct_self_or_defaults(
-    tmp_db: Connection, ticket: Ticket,
-    kind: Literal["ticket", "chief", "worker-default"], identifier: str | None,
+    tmp_db: Connection,
+    ticket: Ticket,
+    kind: Literal["ticket", "chief", "worker-default"],
+    identifier: str | None,
 ) -> None:
     worker = Principal(PrincipalKind.ticket, ticket.id)
     result = preview(
@@ -184,7 +189,9 @@ def test_correction_blocks_old_active_turn_receipt(tmp_db: Connection, ticket: T
 
 @pytest.mark.parametrize("kind,identifier", [("chief", "chief"), ("worker-default", "coding")])
 def test_default_corrections_preserve_effort_and_backend(
-    tmp_db: Connection, kind: Literal["chief", "worker-default"], identifier: str,
+    tmp_db: Connection,
+    kind: Literal["chief", "worker-default"],
+    identifier: str,
 ) -> None:
     target = CorrectionTarget(kind=kind, id=identifier)
     correction = preview(tmp_db, target)
@@ -223,7 +230,7 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
     from planner.core.server import create_app
 
     db_path = str(tmp_path / "corrections.db")
-    with connect(db_path) as conn:
+    with closing(connect(db_path)) as conn:
         create_schema(conn)
         seed_resolution(conn)
         worker = create_ticket(
@@ -243,8 +250,29 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
         lambda: connect(db_path),
         conversation_system_for_test=InMemoryConversationSystem(),
     )
+    from planner.conversation.contracts import ConversationStartRequest
+    from planner.conversation.model_resolution.contracts import CachedModelResolution
+    from planner.conversation.model_resolution.data import ModelResolutionStore
+    from planner.tickets.data import write_ticket_conversation_start
+
+    class IndependentStoreResolver(Resolver):
+        async def resolve(
+            self,
+            backend_key: ConversationBackendKey,
+            model: str,
+            reasoning_effort: str | None = None,
+        ) -> ModelResolution:
+            # Resolution legitimately suspends and uses its own managed connection.
+            await asyncio.sleep(0)
+            ModelResolutionStore(db_path).keep(
+                ModelVariant(backend_key, "sol"),
+                CachedModelResolution(self.model, ("medium", "high"), 2),
+            )
+            return await super().resolve(backend_key, model, reasoning_effort)
+
     with TestClient(app) as client:
-        app.state.conversation = replace(app.state.conversation, model_resolution=Resolver())
+        resolver = IndependentStoreResolver()
+        app.state.conversation = replace(app.state.conversation, model_resolution=resolver)
         body = {"targets": [{"kind": "ticket", "id": worker.id}]}
         response = client.post("/api/conversation/model-corrections/preview", json=body)
         assert response.status_code == 200
@@ -263,6 +291,106 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
                     "SELECT conversation_id FROM tickets WHERE id=?", (worker.id,)
                 ).fetchone()[0]
                 is None
+            )
+
+        # A correction also preserves a real existing conversation association.
+        assert client.portal is not None
+        client.portal.call(
+            app.state.conversation.system.start_conversation,
+            ConversationStartRequest(conversation_id="correction-retained", model=resolver.model),
+        )
+        with closing(connect(db_path)) as conn:
+            write_ticket_conversation_start(
+                conn,
+                worker.id,
+                conversation_id="correction-retained",
+                backend="codex",
+                model=resolver.model,
+                reasoning_effort=worker.employee_launch_reasoning_effort,
+                now=2,
+            )
+
+        resolver.model = "gpt-6.3-sol"
+        preview_body = client.post(
+            "/api/conversation/model-corrections/preview",
+            json=body,
+        ).json()
+        applied_with_conversation = client.post(
+            "/api/conversation/model-corrections/apply",
+            json=preview_body,
+        )
+        assert applied_with_conversation.json()["corrections"][0]["applied"]
+        with closing(connect(db_path)) as conn:
+            assert tuple(
+                conn.execute(
+                    "SELECT conversation_id,employee_launch_model FROM tickets WHERE id=?",
+                    (worker.id,),
+                ).fetchone()
+            ) == ("correction-retained", "gpt-6.3-sol")
+
+        def replace_saved_model() -> None:
+            with closing(connect(db_path)) as conn:
+                conn.execute(
+                    "UPDATE tickets SET employee_launch_model='gpt-6.0-sol' WHERE id=?",
+                    (worker.id,),
+                )
+
+        preview_body = client.post(
+            "/api/conversation/model-corrections/preview",
+            json=body,
+        ).json()
+        resolver.before_resolve = replace_saved_model
+        stale = client.post("/api/conversation/model-corrections/apply", json=preview_body)
+        assert not stale.json()["corrections"][0]["applied"]
+        assert "saved model changed" in stale.json()["corrections"][0]["error"]
+        resolver.before_resolve = None
+
+        item = client.post(
+            "/api/items",
+            json={"title": "Temporary authority", "project_id": "project_other"},
+        ).json()
+        with closing(connect(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET orchestrator_kind='sprint_item',sprint_item_id=? WHERE id=?",
+                (item["id"], worker.id),
+            )
+        supervisor_headers = {
+            "X-Plan-Actor": "sprint_item_supervisor",
+            "X-Plan-Sprint-Item-ID": item["id"],
+        }
+        authorized_preview = client.post(
+            "/api/conversation/model-corrections/preview",
+            json=body,
+            headers=supervisor_headers,
+        )
+        assert authorized_preview.json()["corrections"][0]["error"] is None
+
+        def revoke_authority() -> None:
+            with closing(connect(db_path)) as conn:
+                conn.execute(
+                    "UPDATE tickets SET orchestrator_kind='chief',sprint_item_id=NULL WHERE id=?",
+                    (worker.id,),
+                )
+
+        resolver.before_resolve = revoke_authority
+        revoked = client.post(
+            "/api/conversation/model-corrections/apply",
+            json=authorized_preview.json(),
+            headers=supervisor_headers,
+        )
+        assert not revoked.json()["corrections"][0]["applied"]
+        assert revoked.json()["corrections"][0]["error"]
+        with closing(connect(db_path)) as conn:
+            unchanged = conn.execute(
+                "SELECT conversation_id, employee_backend, employee_launch_model, "
+                "employee_launch_reasoning_effort FROM tickets WHERE id=?",
+                (worker.id,),
+            ).fetchone()
+            assert tuple(unchanged) == (
+                "correction-retained",
+                worker.employee_backend,
+                "gpt-6.0-sol",
+                worker.employee_launch_reasoning_effort,
             )
 
 
@@ -312,7 +440,8 @@ def test_cli_preview_and_apply_preserve_explicit_targets(
 
 
 def test_orchestrator_correction_preserves_identity_and_blocks_stale_receipt(
-    tmp_db: Connection, fake_clock: Clock,
+    tmp_db: Connection,
+    fake_clock: Clock,
 ) -> None:
     from dataclasses import replace
 
@@ -351,7 +480,8 @@ def test_orchestrator_correction_preserves_identity_and_blocks_stale_receipt(
 
 
 def test_compare_and_swap_rejects_change_during_catalogue_await(
-    tmp_db: Connection, ticket: Ticket,
+    tmp_db: Connection,
+    ticket: Ticket,
 ) -> None:
     correction = preview(tmp_db, CorrectionTarget(kind="ticket", id=ticket.id))
 

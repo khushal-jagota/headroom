@@ -71,15 +71,25 @@ One screen per part of the system:
   A completed hold suppresses its click. One popup swaps targets without another delay.
 
   Worker popups show their orchestrator, full title, direct conversation mark, existing
-  concise recap, and one sentence from the served Worker manifest and current facts.
+  full recap, and one sentence from the served Worker manifest and current facts.
   “Currently doing” requires an actual working signal. Idle Workers say “At” their stage.
   Approval, answer, assignment, error, and blocked facts use their specific wording.
   The popup has no stage ladder or named blockers. Recaps arrive through the existing
   board and orchestrator projections, without detail requests or another transport.
-  Orchestrator popups show their existing concise body preview in a recessed recap.
+  Orchestrator popups show their full recap in a recessed recap.
   The Chief popup states the eligible Ticket count.
   Empty orchestrator recaps use that same factual fallback. The panel stays
-  inside the viewport and does not capture the pointer.
+  inside the viewport. It takes the pointer only where it sits clear of the rail, so the
+  owner can move onto it and press what is inside; over the rail rows it stays
+  transparent, because the row the pointer is travelling to wins. Moving onto the panel
+  or tabbing into it keeps it open. Recaps wrap to the available
+  space, up to five lines, and show an ellipsis only at actual visual overflow. The title and current
+  stage stay visible. Dense list rows retain their concise recap preview.
+
+  The recessed recap also holds the ask for a fresh one, under the line it replaces.
+  Pressing it empties that line, so the popup closes the space and the agent's working
+  mark is what says a new recap is coming. Where there is no room for a recap at all,
+  only the ask remains.
 
   Rows, headings, and cards move from measured old positions to new positions. Cross-group
   moves take 360–560 milliseconds according to distance. A new row opens space before
@@ -147,7 +157,9 @@ One screen per part of the system:
   ordering remain unchanged, including precedence for unread completed Workers.
 
   An open hover popup resolves its Worker, supervisor, or Chief from the latest query
-  records by identity, so its marks and child rows refresh while it stays open. Settling
+  records by identity, so its title, recap, stage, and marks refresh while it stays open.
+  This includes children absent from the top-level cards. Pointer presence freezes
+  row positions, while the popup continues to use fresh content. Settling
   an orchestrator changes its location without changing either conversation fact.
 
   The Chief of Staff keeps its own exact conversation marks. A browser with no saved lens
@@ -193,6 +205,9 @@ One screen per part of the system:
   board, because the Ticket resource answers for it rather than the board card.
 - **Worker** — one document with a clickable Project and human-readable Ticket type above its title and
   recap. The title is 28px, recap 17px, body 15px, labels 13px, and quiet text 11px.
+  The ask for a fresh recap sits with the lifecycle controls. Pressing it empties the
+  recap, which brings back the ordinary placeholder for a page with no recap yet, and the
+  space moves to its new size rather than jumping.
 
   One card holds the current step. A pending proposal names its reviewer and keeps
   one editable ceiling/reviewer picker that opens directly with one click. A ceiling choice followed by a reviewer choice completes the gesture. An explicit raise past the visible pending stage accepts that exact
@@ -211,7 +226,8 @@ One screen per part of the system:
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
   Backlog and Resume remain the deferral controls.
-- **Orchestrator** — project and parent navigation, title, recap, and a Settle control
+- **Orchestrator** — project and parent navigation, title, goal, labelled recap, the ask
+  for a fresh recap, and a Settle control
   above grouped Workers. Worker rows show title and an exact-conversation dot.
   Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
   and order, including exceptional states. The local page omits only the duplicate

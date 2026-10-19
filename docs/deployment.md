@@ -93,7 +93,10 @@ stop service → create verified database + managed-files snapshot
 replace current/app → restart + prove requested SHA
         │
         ▼
-app healthy → reconcile managed skills into Hermes, Codex, and Claude homes
+app healthy → require HTTP/2 from the published route
+        │
+        ▼
+reconcile managed skills into Hermes, Codex, and Claude homes
         │
         ▼
 publish workflow success
@@ -133,6 +136,33 @@ policy. The command reconciles Panels skills into each agent home, removes expli
 retired Panels skills, and leaves unrelated custom skills in place. This post-deploy step
 is idempotent. If it fails after app cutover, the app remains deployed and the workflow
 reports failure; rerunning the deployment safely retries skill reconciliation.
+
+## Published route protocol check
+
+Production deployment checks the published route after `Deploy exact app`.
+`Recover private route` checks it after `Restore private HTTPS route`.
+Both workflows use `scripts/check_published_http2.py` from their control checkout.
+Recovery checks out the repository with the same pinned checkout action as deployment.
+
+Chief must set the repository Actions variable `PANELS_PUBLISHED_ORIGIN` to
+`https://panels-vps.tail687c57.ts.net` before the production check can pass.
+The workflows pass `${{ vars.PANELS_PUBLISHED_ORIGIN }}` explicitly.
+The helper refuses an absent value, a non-HTTPS URL, credentials, or any path other than `/`.
+It has no default origin.
+
+The helper requests `/api/meta` with `curl --http2` and normal certificate validation.
+It ignores user curl configuration, permits no redirect, and sets connection and total
+timeouts of five and ten seconds. It reports the target, response status, and negotiated
+HTTP version. Only curl success with negotiated version exactly `2` passes.
+An HTTP/1.1 downgrade, TLS error, timeout, or unavailable curl HTTP/2 support fails the workflow.
+The status remains evidence. Existing health checks own application readiness.
+A failure after app cutover leaves the app in place and reports workflow failure through
+the deployment lifecycle finalizer.
+
+The disposable rehearsal omits this check because its VM cannot reach the published origin.
+A real published-origin HTTP/2 pass and a forced HTTP/1.1 rejection provide separate live proof.
+The rejection uses a temporary curl wrapper that replaces `--http2` with `--http1.1`.
+Chief configures the variable before that proof.
 
 ## Related checks before deployment
 
@@ -311,9 +341,9 @@ failure and a requested value that is not a lowercase full SHA therefore cannot 
 recorded; later Git proof, runtime, build, deployment, and provisioning failures can.
 The app-deploy transaction advances the same deployment ID
 through restart, exact-SHA verification, app health, and rollback. The workflow records
-success only after app deployment and production skill provisioning have both
-completed. Its finalizer turns interrupted work into a public-safe failure and does not
-overwrite a proved rollback.
+success only after app deployment, the published HTTP/2 check, and production skill
+provisioning complete. Its finalizer turns interrupted work into a public-safe failure
+and does not overwrite a proved rollback.
 
 Writes are serialized beside the record. Starting a run compares the deployment ID the
 runner read—including an explicit expectation that no readable ID existed—with the ID

@@ -40,10 +40,14 @@ from planner.tickets.contracts import (
     NextCeiling,
     PendingTicketProposal,
     ResolvedTicketCreationContext,
+    ReviewTransferNotice,
     StageOwnershipMode,
     Ticket,
+    TicketApprovalMethod,
     TicketDeletion,
     TicketEdit,
+    TicketFieldApproval,
+    TicketFieldApprovals,
     TicketFieldValues,
     TicketLocale,
     WorkerStepClaim,
@@ -56,6 +60,7 @@ from planner.tickets.logic import (
     machine,
     proposal_routing,
     resolution,
+    review_transfer,
 )
 from planner.tickets.logic.decisions import Decision
 from planner.tickets.logic.locale import require_ticket_locale, resolve_ticket_locale
@@ -200,6 +205,7 @@ def requested_ticket_launch_configuration(
     *,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
 ) -> EmployeeLaunchConfiguration:
     """Read the creator's selection before current-model resolution."""
@@ -215,6 +221,7 @@ def requested_ticket_launch_configuration(
             employee_backend if employee_backend is not None else launch_defaults.employee_backend
         ),
         employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
     )
     return launch_configuration
 
@@ -228,6 +235,7 @@ def resolve_ticket_creation_context(
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
     model_source_is_historical: bool = False,
     project_id: str | None = None,
     sprint_id: str | None = None,
@@ -246,6 +254,7 @@ def resolve_ticket_creation_context(
         worker_type,
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
         worker_runtime_definitions=runtime_definitions,
     )
     assert launch_configuration.employee_launch_model is not None
@@ -265,7 +274,12 @@ def resolve_ticket_creation_context(
             launch_configuration.employee_launch_model,
             launch_configuration.employee_launch_reasoning_effort,
         )
-    except ModelResolutionUnavailable:
+    except ModelResolutionUnavailable as error:
+        if employee_launch_reasoning_effort is not None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "cannot validate explicit reasoning effort without a model catalogue",
+            ) from error
         require_enabled_model(conn, backend_key, launch_configuration.employee_launch_model)
         logging.getLogger(__name__).warning(
             "Ticket creation model resolution unavailable for %s/%s; "
@@ -317,7 +331,9 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     worker_type_definition = configured_worker_type_registry().require(worker_type)
     stage = str(row["stage"])
     worker_type_definition.validate_ticket_position(stage, str(row["ceiling"]))
+    values = fields_codec.values_from_json(row["field_values"], worker_type_definition.field_ids())
     return Ticket(
+        field_approvals=fields_codec.approvals_from_json(row["field_approvals"], values),
         locale=TicketLocale(row["locale"]),
         is_backlogged=bool(row["is_backlogged"]),
         id=row["id"],
@@ -377,6 +393,7 @@ _TICKET_STORED_COLUMNS = (
     "ceiling",
     "conversation_id",
     "field_values",
+    "field_approvals",
     "created_at",
     "updated_at",
     "sprint_id",
@@ -518,6 +535,20 @@ def _field_values_for_storage(
     )
 
 
+def _field_approvals_for_storage(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    approvals: TicketFieldApprovals,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> str:
+    row = conn.execute("SELECT field_approvals FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+    assert row is not None
+    return fields_codec.replace_declared_approvals(
+        row["field_approvals"], approvals, worker_type_definition.field_ids()
+    )
+
+
 def _apply_decision(
     conn: sqlite3.Connection,
     ticket: Ticket,
@@ -559,7 +590,7 @@ def _apply_decision(
                     )
     proposal_changed = newly_filed_proposal and decision.pending_proposal is not None
     conn.execute(
-        "UPDATE tickets SET field_values = ?, pending_proposal = ?, "
+        "UPDATE tickets SET field_values = ?, field_approvals = ?, pending_proposal = ?, "
         "pending_proposal_revision = pending_proposal_revision + ?, "
         "stage = ?, ceiling = ?, ceiling_holder = ?, updated_at = ? WHERE id = ?",
         (
@@ -567,6 +598,12 @@ def _apply_decision(
                 conn,
                 ticket.id,
                 decision.field_values,
+                worker_type_definition=worker_type_definition,
+            ),
+            _field_approvals_for_storage(
+                conn,
+                ticket.id,
+                decision.field_approvals,
                 worker_type_definition=worker_type_definition,
             ),
             fields_codec.proposal_to_json(decision.pending_proposal),
@@ -925,6 +962,7 @@ def create_ticket(
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
     model_source_is_historical: bool = False,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
@@ -956,6 +994,7 @@ def create_ticket(
             worker_type=worker_type,
             employee_backend=employee_backend,
             employee_launch_model=employee_launch_model,
+            employee_launch_reasoning_effort=employee_launch_reasoning_effort,
             model_source_is_historical=model_source_is_historical,
             locale=locale,
             project_id=project_id,
@@ -1009,10 +1048,11 @@ def create_ticket(
             "employee_launch_reasoning_effort, stage, deadline, "
             "project_id, sprint_id, sprint_item_id, orchestrator_kind, "
             "recap, ceiling, ceiling_holder, "
-            "conversation_id, field_values, pending_proposal, pending_proposal_revision, "
+            "conversation_id, field_values, field_approvals, pending_proposal, "
+            "pending_proposal_revision, "
             "created_at, updated_at, locale) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
-            "?, ?, ?, ?, ?, ?)",
+            "?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -1029,6 +1069,14 @@ def create_ticket(
                 ceiling,
                 _principal_to_json(ceiling_holder),
                 values_json,
+                fields_codec.approvals_to_json(
+                    {
+                        key: TicketFieldApproval(
+                            TicketApprovalMethod.auto_accept, None, "Auto-accepted"
+                        )
+                        for key in initial_values
+                    }
+                ),
                 fields_codec.proposal_to_json(initial_proposal),
                 int(initial_proposal is not None),
                 now,
@@ -1310,6 +1358,23 @@ def file_current_proposal(
         return _load_ticket_for_write(conn, ticket_id)
 
 
+def _explicit_approval(conn: sqlite3.Connection, principal: Principal) -> TicketFieldApproval:
+    if principal == OWNER_PRINCIPAL:
+        name = "Khushal"
+    elif principal == CHIEF_PRINCIPAL:
+        name = "Chief"
+    else:
+        row = conn.execute(
+            "SELECT title FROM sprint_items WHERE id = ?", (principal.id,)
+        ).fetchone()
+        if row is None:
+            raise PlannerError(ErrorCode.not_found, "approving orchestrator not found")
+        name = str(row["title"])
+    return TicketFieldApproval(
+        TicketApprovalMethod.explicit_accept, principal, f"Approved by {name}"
+    )
+
+
 def accept_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1349,6 +1414,7 @@ def accept_proposal(
             next_ceiling,
             next_holder,
             worker_type_definition=worker_type_definition,
+            approval=_explicit_approval(conn, principal),
         )
         updated = _apply_decision(conn, ticket, decision, now)
         _give_back_worker_step_claim(conn, updated, now=now)
@@ -1494,7 +1560,15 @@ def delete_ticket_records(
     and, for recovery, verify a durable archive before calling. Offline recovery skips
     live attention derivation so legacy Worker metadata need not load. Artifacts are untouched.
     """
-    ticket = _ticket_row(conn, ticket_id)
+    # Offline recovery stops before current-schema migrations can run. Read only
+    # the deletion record, without the runtime Ticket projection and its new columns.
+    ticket = conn.execute(
+        "SELECT id, title, worker_step_claim, sprint_item_id, sprint_id "
+        "FROM tickets WHERE id = ?",
+        (ticket_id,),
+    ).fetchone()
+    if ticket is None:
+        raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
     held_elsewhere = conn.execute(
         "SELECT id FROM tickets WHERE id != ? "
         "AND json_extract(ceiling_holder, '$.kind') = 'ticket' "
@@ -1592,9 +1666,7 @@ def _release_a_holder_the_move_left_below(
     Asked on every move, not only while a proposal is parked. A wrong address is wrong
     before anything arrives at it.
     """
-    row = conn.execute(
-        "SELECT ceiling_holder FROM tickets WHERE id = ?", (ticket_id,)
-    ).fetchone()
+    row = conn.execute("SELECT ceiling_holder FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
     if row is None:
         return
     # Read back rather than trust the Ticket loaded before the move: one edit can set the
@@ -1610,6 +1682,34 @@ def _release_a_holder_the_move_left_below(
     capture_ticket_attention(conn, ticket_id, now)
 
 
+def _review_transfer_notice(
+    conn: sqlite3.Connection, before: Ticket, after: Ticket
+) -> ReviewTransferNotice | None:
+    if not review_transfer.review_transferred(before, after):
+        return None
+    holder = after.ceiling_holder
+    if holder.kind is PrincipalKind.owner:
+        name = "The user"
+    elif holder.kind is PrincipalKind.chief:
+        name = "The Chief"
+    else:
+        table = "sprint_items" if holder.kind is PrincipalKind.sprint_item else "tickets"
+        row = conn.execute(f"SELECT title FROM {table} WHERE id=?", (holder.id,)).fetchone()
+        assert row is not None
+        name = str(row["title"])
+    return ReviewTransferNotice(after.id, after.title, before.ceiling_holder, name)
+
+
+def _collect_review_transfer(
+    conn: sqlite3.Connection,
+    notice: ReviewTransferNotice | None,
+    notices: list[ReviewTransferNotice] | None,
+) -> None:
+    # A savepoint release is not a commit. Outer transaction owners cannot publish yet.
+    if notice is not None and notices is not None and not conn.in_transaction:
+        notices.append(notice)
+
+
 def edit_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -1618,6 +1718,7 @@ def edit_ticket(
     title_max_chars: int,
     principal: Principal,
     now: int,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
 ) -> Ticket:
     """Change Ticket fields, under the one rule, asked here where the write happens.
 
@@ -1710,15 +1811,17 @@ def edit_ticket(
 
         settled_values = edit.get("field_values")
         edited_values = dict(ticket.field_values)
+        edited_approvals = dict(ticket.field_approvals)
         if settled_values:
             for field, body in settled_values.items():
                 decision = resolution.decide_edit_settled_field(
-                    replace(ticket, field_values=edited_values),
+                    replace(ticket, field_values=edited_values, field_approvals=edited_approvals),
                     field,
                     body,
                     worker_type_definition=worker_type_definition,
                 )
                 edited_values = dict(decision.field_values)
+                edited_approvals = dict(decision.field_approvals)
             changes.append(
                 (
                     "field_values",
@@ -1728,6 +1831,20 @@ def edit_ticket(
                         conn,
                         ticket.id,
                         edited_values,
+                        worker_type_definition=worker_type_definition,
+                    ),
+                )
+            )
+
+            changes.append(
+                (
+                    "field_approvals",
+                    "field_approvals",
+                    fields_codec.approvals_to_json(ticket.field_approvals),
+                    _field_approvals_for_storage(
+                        conn,
+                        ticket.id,
+                        edited_approvals,
                         worker_type_definition=worker_type_definition,
                     ),
                 )
@@ -1820,7 +1937,9 @@ def edit_ticket(
                     proposal_field=updated.pending_proposal.field,
                     now=now,
                 )
-        return updated
+        notice = _review_transfer_notice(conn, ticket, updated)
+    _collect_review_transfer(conn, notice, review_transfer_notices)
+    return updated
 
 
 def classify_ticket(
@@ -1830,6 +1949,7 @@ def classify_ticket(
     sprint_item_id: str,
     principal: Principal,
     now: int,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
@@ -1857,7 +1977,10 @@ def classify_ticket(
             ticket_id,
             now=now,
         )
-        return _load_ticket_for_write(conn, ticket_id)
+        updated = _load_ticket_for_write(conn, ticket_id)
+        notice = _review_transfer_notice(conn, ticket, updated)
+    _collect_review_transfer(conn, notice, review_transfer_notices)
+    return updated
 
 
 def unclassify_ticket(
@@ -1867,6 +1990,7 @@ def unclassify_ticket(
     sprint_item_id: str,
     principal: Principal,
     now: int,
+    review_transfer_notices: list[ReviewTransferNotice] | None = None,
     admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
@@ -1900,7 +2024,10 @@ def unclassify_ticket(
             ticket_id,
             now=now,
         )
-        return _load_ticket_for_write(conn, ticket_id)
+        updated = _load_ticket_for_write(conn, ticket_id)
+        notice = _review_transfer_notice(conn, ticket, updated)
+    _collect_review_transfer(conn, notice, review_transfer_notices)
+    return updated
 
 
 def ticket_record_sha256(conn: sqlite3.Connection, ticket_id: str) -> str:

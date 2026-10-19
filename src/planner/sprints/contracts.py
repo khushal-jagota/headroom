@@ -45,7 +45,8 @@ class Sprint:  # §3.1
 class SprintItem:  # §3.2
     id: str
     title: str
-    body: str
+    goal: str
+    recap: str
     project_id: str
     project_name: str
     supervisor_launch_configuration: SprintItemSupervisorLaunchConfiguration
@@ -71,7 +72,8 @@ class SprintItemDeletion:
 class ItemWorkspaceDocument(TypedDict):
     """Content only; the canonical history reader owns its existing entry shape."""
 
-    body: str
+    goal: str
+    recap: str
     conversation_history: list[dict[str, str | int]]
 
 
@@ -93,7 +95,7 @@ class CreateItemBody(TypedDict, total=False):  # POST /items
     title: str  # default ""
     project: str | None  # legacy project name; route requires project or project_id
     project_id: str | None
-    body: str  # default ""
+    goal: str  # default ""
 
 
 class OrchestratorStartupResult(TypedDict):

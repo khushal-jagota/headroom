@@ -318,7 +318,7 @@ def test_record_reads_share_manifests_selection_and_identity(
         "Record reads",
         "--project-id",
         "project_other",
-        "--body-file",
+        "--goal-file",
         "-",
         stdin="Show one part. 🌱",
     )
@@ -351,7 +351,7 @@ def test_record_reads_share_manifests_selection_and_identity(
         actor="worker",
     )
     sprint_manifest = cli(server, "sprint", "show", "current")
-    item_part = cli(server, "sprint", "item", "show", item["id"], "body")
+    item_part = cli(server, "sprint", "item", "show", item["id"], "goal")
     day_manifest = cli(server, "day", "show", "2026-07-04")
     day_part = cli(
         server,
@@ -374,7 +374,7 @@ def test_record_reads_share_manifests_selection_and_identity(
         "checkpoint",
         "review",
     ]
-    assert item_part["parts"]["body"]["value"] == "Show one part. 🌱"
+    assert item_part["parts"]["goal"]["value"] == "Show one part. 🌱"
     assert "rollup" not in item_part["header"]
     assert "tickets" not in day_manifest
     assert "tickets" not in day_manifest["header"]
@@ -711,7 +711,6 @@ def test_the_ceiling_and_a_settled_value_are_set_like_every_other_field(
     "extra",
     [
         {"breif": "private misspelled Brief"},
-        {"employee_launch_reasoning_effort": "private effort"},
         {"kickoff_note": "private old key"},
         {"brief": "real Brief", "kickoff_note": "private old key"},
     ],
@@ -802,3 +801,32 @@ def test_locale_cli_default_read_and_noop_preserve_the_canonical_record(
     moved = cli(server, "ticket", "move", created["id"], "--locale", "vps")
     assert moved["locale"] == "vps"
     assert api.get(server, f"/api/tickets?detail=full&id={created['id']}") == before
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_ticket_create_prints_supervision_receipt_in_normal_output(
+    server: ServerHandle,
+    structured: bool,
+) -> None:
+    args = ["ticket", "create"]
+    stdin = None
+    if structured:
+        args += ["--input-json", "-"]
+        stdin = json.dumps(
+            {
+                "title": "Read the grant",
+                "worker_type": "coding",
+                "ceiling": "needs_plan",
+            }
+        )
+    else:
+        args += ["--title", "Read the grant", "--worker-type", "coding", "--ceiling", "needs_plan"]
+    result = CliRunner().invoke(
+        cli_main,
+        args,
+        input=stdin,
+        env={"PLAN_SERVER_URL": server.base},
+    )
+    assert result.exit_code == 0, result.output
+    assert "Runs unsupervised: Brief, Success Condition, What Changes." in result.output
+    assert "First parks for review at Plan, with the owner." in result.output

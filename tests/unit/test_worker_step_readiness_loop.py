@@ -89,7 +89,7 @@ class _World:
         on_today: bool = True,
         next_ceiling: str = "none",
     ) -> str:
-        with self.connect() as conn:
+        with closing(self.connect()) as conn:
             ticket = tickets_data.create_ticket(
                 conn,
                 worker_type=worker_type,

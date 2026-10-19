@@ -21,9 +21,11 @@ from tests.e2e.harness import (
     ServerHandle,
     capture_success,
 )
+from tests.support.connected_rows import _bind
 from tests.support.connected_rows import _conversation as _conversation
 from tests.support.connected_rows import _message as _message
 from tests.support.connected_rows import _post as _post
+from tests.support.server_fixtures import rail_server as rail_server
 
 from planner.core.contracts import CHIEF_PRINCIPAL, Principal, PrincipalKind
 
@@ -41,11 +43,12 @@ def _read_position(server: ServerHandle, conversation: str) -> int:
 
 
 def test_approval_membership_and_each_workers_durable_message_dot(
-    server: ServerHandle,
+    rail_server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     api: ApiHelper,
 ) -> None:
+    server = rail_server
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     project = _post(server, "/api/projects", {"name": "Message proof"})
     item = _post(
@@ -96,33 +99,15 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             "brief": "Review is ready.",
         },
     )
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET stage='needs_feedback',pending_proposal=NULL WHERE id=?",
-            (feedback["id"],),
-        )
+    _bind(server, "feedback", feedback["id"])
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0] == 0
     ticket = tickets[0]
     for name in ("dot-ticket", "dot-supervisor", "dot-chief"):
         _conversation(server, name)
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET conversation_id=? WHERE id=?", ("dot-ticket", ticket["id"])
-        )
-        conn.execute(
-            "INSERT INTO ticket_conversations (conversation_id,ticket_id) VALUES (?,?)",
-            ("dot-ticket", ticket["id"]),
-        )
-        conn.execute(
-            "UPDATE agents SET conversation_id=? WHERE agent_key=?",
-            ("dot-supervisor", item["supervisor"]["agent_key"]),
-        )
-        conn.execute(
-            "INSERT INTO agents(agent_key,conversation_id) VALUES ('chief_of_staff',?) "
-            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id=excluded.conversation_id",
-            ("dot-chief",),
-        )
+    _bind(server, "ticket", ticket["id"], "dot-ticket")
+    _bind(server, "agent", item["supervisor"]["agent_key"], "dot-supervisor")
+    _bind(server, "agent", "chief_of_staff", "dot-chief")
     _message(
         server, "dot-ticket", Principal(PrincipalKind.ticket, ticket["id"]), "Child direct message"
     )
@@ -168,7 +153,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             diagnostics.record("workspace-held", url=route.request.url, body=body)
             page.evaluate("() => { window.__proofWorkspaceHeld = true; }")
 
-        workspace_pattern = f"**/api/items/{item['id']}/workspace"
+        workspace_pattern = f"**/api/items/{item['id']}/workspace-content"
         diagnostics.record("workspace-route-install-start")
         context.route(workspace_pattern, delay_workspace)
         diagnostics.record("workspace-route-install-return")

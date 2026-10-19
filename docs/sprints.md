@@ -55,15 +55,13 @@ Each orchestrator owns one supervisor identity derived from its Item ID. Panels 
 its launch configuration with the item. Existing items received the same fixed
 configuration during migration. Former loose Workers now explicitly name Chief.
 
-Creation with a nonblank brief saves the orchestrator, then starts its supervisor with
-that brief. Creation without a brief leaves it idle. Later messages and manager wakes
+Creation with a nonblank goal saves the orchestrator, then starts its supervisor with
+that goal. Creation without a goal leaves it idle. Later messages and manager wakes
 also start the supervisor conversation. Startup failure does not delete the orchestrator.
 Use the saved orchestrator to recover. An uncertain delivery gets no automatic replay.
 A reset kills current work and clears the agent link.
-Conversation records and message files remain as history. The existing orchestrator body
-holds its short current recap. Original briefs and detailed context belong in its existing
-artifacts, after a separately authorized conversion that preserves the original text.
-Existing bodies remain intact until that conversion.
+Conversation records and message files remain as history. Detailed context belongs in the
+orchestrator's existing artifacts.
 
 The supervisor commissions, steers, and reviews its Workers with the user. It reads
 canonical state before it acts on a routed proposal or Worker error. The owner decides
@@ -134,18 +132,33 @@ files that the folded list does not name. Item deletion moves this directory to 
 before its database transaction. A failed transaction restores the directory. A successful
 deletion removes the item, its agent row, and its files.
 
-## Recap and durable context
+## Goal and recap
 
-The supervisor maintains the recap after material work or a decision. It gives a reader
-the intent, current state, and next decision or action. It uses the existing body field.
-The existing artifact `artifacts/working-notes.md` holds context that must survive a reset:
-direct user guidance, current state and next steps, decisions and reasons, unresolved
-questions, and links to evidence or deeper notes. There is no separate memory store or
-scheduled review.
+An orchestrator stores two separate things. The goal says what it is for. It outlives the
+work, and it is what a supervisor reads to know what the orchestrator was created to do.
+The recap says what is happening right now, in top level language, and each one replaces
+the last rather than adding to it.
+
+Creation takes the goal, and the goal is what starts the supervisor conversation. The
+recap starts empty, for the supervisor to fill.
+
+Khushal can edit either field whenever he likes. A supervisor can edit its own recap
+freely, and its own goal when the shape of the task changes. Both fields take the same
+authority question as every other orchestrator field, so nobody outside that pair can
+write them.
+
+The board and the workspace rail show the recap. While a recap is empty they show the
+orchestrator's Ticket count instead, and the goal never stands in for a recap anywhere.
+The orchestrator page shows both, each editable in place.
+
+The existing artifact `artifacts/working-notes.md` holds context that must survive a
+reset: direct user guidance, current state and next steps, decisions and reasons,
+unresolved questions, and links to evidence or deeper notes. There is no separate memory
+store or scheduled review.
 
 At recovery, the supervisor reads the workspace, the working notes, and relevant linked
-notes before it acts. If working notes do not exist, the body remains context. An absent
-note does not authorize replacement of the body or an invented account of earlier decisions.
+notes before it acts. If working notes do not exist, the goal remains context. An absent
+note does not authorize an invented account of earlier decisions.
 
 The existing orchestrator commands read and write this context:
 
@@ -153,23 +166,20 @@ The existing orchestrator commands read and write this context:
 panels orchestrator workspace <item-id> --json
 panels orchestrator artifact read <item-id> working-notes.md
 panels orchestrator artifact write <item-id> working-notes.md --body-file <notes-file>
-panels orchestrator set <item-id> body --body-file <recap-file>
+panels orchestrator set <item-id> recap --body-file <recap-file>
+panels orchestrator set <item-id> goal --body-file <goal-file>
 ```
+
+`--body-file` names the file a command reads its text from. It is not the name of a
+stored field: the field is the word before it.
 
 Artifact command paths start inside `artifacts/`. Text reads and writes preserve the text,
 including whitespace. Existing `panels sprint item` aliases address the same files.
 
-Conversion of an existing body needs separate authorization. Before replacement, the
-supervisor saves the original body verbatim to an unused artifact path and checks the exact
-text through a read. It preserves existing working notes and links the archive there.
-It then reads the body again and stops if the body changed or any operation failed.
-Only after these checks does it replace the body with the recap through the existing command.
-These are separate operations. They do not provide an atomic transaction or prevent a change
-between the final read and write. This capability does not convert existing bodies itself.
-
 The packaged supervisor skill supplies this guidance to fresh installations only. Existing
 managed skill text remains separate and needs an owner or Chief change through the supported
 skill surface. Editing the packaged file does not change a live supervisor's instructions.
+
 
 _Code paths:_ `src/planner/sprints/`, `src/planner/core/authority/`,
 `src/planner/tickets/`, and `src/planner/cli/main.py`.

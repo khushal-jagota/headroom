@@ -355,6 +355,14 @@ send to each addressed sender before the turn ends.
 Panels classifies that accepted send as the reply, so its recipient receives no counter-
 reply requirement and agent conversations cannot form an acknowledgement loop.
 
+The owner can also ask an agent for a fresh recap. That ask is one route taking a Ticket,
+orchestrator, or Chief principal. It empties the recap being replaced and steers the same
+fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
+keep it short and top level." Only the owner may ask, and the owner is the only principal
+it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
+the agent writes rather than words it sends back, so it is the one addressed send that
+carries no reply requirement and leaves no missing-reply marker.
+
 An actual native slash command uses its backend's exact control route, so its wire form
 does not carry the reply requirement. The adapter reports that fact with its delivery
 result, so Panels creates no reply debt or missing-reply marker for that command.
@@ -560,6 +568,10 @@ It works for idle Workers and user-owned Stages without a restart or a message.
 It preserves backend and reasoning choices. Active turns finish on their current model.
 The next turn resolves the corrected model within the same conversation.
 The action does not approve work, change a Stage, clear a claim, or start a turn.
+Both preview and apply resolve models outside a write transaction. Each accepted
+correction acquires a short writer transaction, checks current authority again, and
+compares the saved selection before its update. No resolver await crosses that
+transaction. Failed targets retain their individual errors in the batch.
 See [model correction commands](cli.md#correct-saved-models).
 
 Code: `src/planner/conversation/`, `src/planner/runtime/`.

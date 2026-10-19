@@ -83,7 +83,7 @@ def _clear_recap(
             now=clock.now_unix(),
         )
     elif recipient.kind is PrincipalKind.sprint_item:
-        sprints_data.update_item(conn, recipient.id, edits={"body": ""}, clock=clock)
+        sprints_data.update_item(conn, recipient.id, edits={"recap": ""}, clock=clock)
     else:
         worker_settings_service.update_chief_recap(conn, {"recap": ""})
 

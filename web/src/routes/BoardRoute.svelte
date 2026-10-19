@@ -96,14 +96,14 @@
   let hoverChief = $state(false);
   let hoverWorker = $derived.by(() => {
     const ticket = allCards.find((card) => card.id === hoverWorkerId)
-      ?? [...rail.items,...rail.settledItems].flatMap(item => item.tickets).find(ticket => ticket.id === hoverWorkerId);
+      ?? [...desiredRail.items,...desiredRail.settledItems].flatMap(item => item.tickets).find(ticket => ticket.id === hoverWorkerId);
     if (!ticket) return null;
     return hoverConversationIdOverride === null ? ticket : {...ticket,conversation_id:hoverConversationIdOverride,
       conversation_signal:workspace?.conversationSignals.get(hoverConversationIdOverride)};
   });
-  let hoveredItem = $derived([...rail.items, ...rail.settledItems].find((item) => item.id === hoverItemId));
-  let hoverRecap = $derived(hoverChief ? workspaceListRecap(rail.chiefGroups)
-    : workspaceListRecap(hoveredItem?.groups ?? [], hoveredItem?.recapPreview));
+  let hoveredItem = $derived([...desiredRail.items, ...desiredRail.settledItems].find((item) => item.id === hoverItemId));
+  let hoverRecap = $derived(hoverChief ? workspaceListRecap(desiredRail.chiefGroups)
+    : workspaceListRecap(hoveredItem?.groups ?? [], hoveredItem?.recap));
   let hoverSignal = $derived(hoverConversationIdOverride !== null ? workspace?.conversationSignals.get(hoverConversationIdOverride)
     : hoverChief ? workspace?.chief?.conversation_signal : hoveredItem?.conversationSignal);
   let hoverConversationId = $derived(hoverConversationIdOverride ?? (hoverChief ? workspace?.chief?.conversation_id : hoveredItem?.conversationId));
@@ -182,7 +182,7 @@
     if (message.kind === "chief") { hover.enter({target,title:message.title,kicker:"Chief of Staff",chief:true,conversationId:message.conversationId}, immediate); return; }
     if (message.kind === "sprint_item") { hover.enter({target,title:message.title,kicker:"Orchestrator",itemId:message.id,conversationId:message.conversationId}, immediate); return; }
     const worker = allCards.find((card) => card.id === message.id)
-      ?? rail.settledItems.flatMap((item) => item.tickets).find((ticket) => ticket.id === message.id);
+      ?? [...desiredRail.items, ...desiredRail.settledItems].flatMap((item) => item.tickets).find((ticket) => ticket.id === message.id);
     if (worker) {
         hover.enter({target,title:worker.title,kicker:"Worker",worker,conversationId:message.conversationId},immediate);
     }
@@ -214,7 +214,7 @@
       const id=hoverWorkerId ?? hoverItemId ?? 'chief';
       const view=navigation.state.effective;
       return workspaceHoverImpact(impact,kind,id,hoverWorker?.conversation_id ?? hoverConversationId,view ? navigation.presentationFor(view) : undefined,
-        kind==='chief' || kind==='orchestrator' && !hoveredItem?.recapPreview.trim());
+        kind==='chief' || kind==='orchestrator' && !hoveredItem?.recap.trim());
     });
     hoverObserver = observer;
     return () => { navigation.disposeRenderBoundary(observer); hoverObserver = null; };
@@ -232,7 +232,7 @@
     const worker = hoverWorker;
     const title = currentHoverTitle;
     const kicker = currentHoverKicker;
-    const recap = worker ? worker.recap_preview ?? '' : hoverRecap;
+    const recap = worker ? worker.recap ?? '' : hoverRecap;
     const stage = worker ? workspaceWorkerStageSentence(worker,lifecycleFor(manifests.data,worker.worker_type)) : '';
     const signal = worker?.conversation_signal ?? hoverSignal;
     const conversation = worker?.conversation_id ?? hoverConversationId;
@@ -354,8 +354,8 @@
   .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); }
   .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }
-  .active-work-scroll { flex:1; min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; }
-  .settled-body { min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; }
+  .active-work-scroll { flex:1; min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
+  .settled-body { min-height:0; overflow:auto; scrollbar-gutter:stable; scrollbar-width:thin; margin-right:calc(0px - var(--space-3)); padding-right:var(--space-3); }
   .rail-grip { position:absolute; top:0; bottom:0; width:9px; z-index:20; transform:translateX(-4px); cursor:col-resize; background:transparent; border:0; padding:0; touch-action:none; }
   .rail-grip::after { content:""; position:absolute; inset:0 4px; background:transparent; transition:background var(--motion-fast) var(--motion-ease); }
   .rail-grip:hover::after,.rail-grip:focus-visible::after,.resizing .rail-grip::after { background:var(--accent-bright); }

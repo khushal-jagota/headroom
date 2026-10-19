@@ -6,6 +6,8 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Mapping
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,7 +17,12 @@ from fastapi.testclient import TestClient
 from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 
-from planner.conversation.contracts import ConversationStartRequest, ConversationSystem
+from planner.conversation.backends.contracts import BackendChildFactory
+from planner.conversation.contracts import (
+    ConversationBackendKey,
+    ConversationStartRequest,
+    ConversationSystem,
+)
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
@@ -51,7 +58,12 @@ class _AdvanceClockOnOccupancyCheck:
         return getattr(self._system, name)
 
 
-def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]:
+def _app(
+    tmp_path: Path,
+    *,
+    fake_now: str | None = None,
+    backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory] | None = None,
+) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(str(db_path))
@@ -72,7 +84,10 @@ def _app(tmp_path: Path, *, fake_now: str | None = None) -> tuple[FastAPI, Path]
             config,
             build_clock(config),
             lambda: connect(str(db_path)),
-            conversation_system_for_test=InMemoryConversationSystem(),
+            conversation_system_for_test=(
+                InMemoryConversationSystem() if backend_child_factories is None else None
+            ),
+            backend_child_factories_for_test=backend_child_factories,
         ),
         db_path,
     )
@@ -378,7 +393,7 @@ def test_supervisor_rejection_stores_attributed_feedback_without_backend_io(
             headers=_supervisor_headers(str(item["id"])),
         )
 
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
         feedback = revision_feedback.snapshot(conn, str(ticket["id"]))
     assert rejected.status_code == 200, rejected.text
@@ -459,7 +474,7 @@ def test_rejection_after_the_day_boundary_rearms_one_worker_step(tmp_path: Path)
     assert writes[0].sender_label == "loop"
     assert writes[0].text.count("Keep the rollover evidence exact.") == 1
     assert asyncio.run(system.is_running(conversation_id)) is True
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         after = tickets_data.read_ticket(conn, str(ticket["id"]))
         day_ids = {
             str(row["day_id"])
@@ -549,7 +564,7 @@ def test_restart_rearms_only_the_legacy_idle_revision_shape(tmp_path: Path) -> N
     assert len(writes) == 1
     assert writes[0].text.count("Recover this stranded revision.") == 1
     assert system.backend_prompt_writes(unrelated_conversation_id) == ()
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         recovered_days = {
             str(row["day_id"])
             for row in conn.execute(
@@ -638,7 +653,7 @@ def test_legacy_recovery_does_not_trust_stale_running_bookkeeping(tmp_path: Path
     ]
     assert len(interrupted_turns) == 1
     assert asyncio.run(system.is_running(conversation_id)) is True
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         current = tickets_data.read_ticket(conn, ready.id)
         day_ids = {
             str(row["day_id"])
@@ -724,7 +739,7 @@ def test_legacy_recovery_refuses_a_launch_override_before_mutation(tmp_path: Pat
         assert len(writes) == 1
         assert writes[0].text.endswith("Do not interrupt this turn.")
 
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         unchanged = tickets_data.read_ticket(conn, ready.id)
         day_ids = {
             str(row["day_id"])
@@ -788,7 +803,7 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
     assert workspace.json()["conversation_history"] == [
         {"conversation_id": conversation_id, "created_at": 1}
     ]
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         assert (
             conn.execute(
                 "SELECT 1 FROM conversations WHERE conversation_id=?",
@@ -908,7 +923,7 @@ def test_supervisor_ticket_blocks_stay_inside_its_child_tickets(tmp_path: Path) 
     assert cross_item.status_code == 400
     assert cross_item.json()["error"]["code"] == "agent_forbidden"
     assert removed.status_code == 200, removed.text
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         assert conn.execute("SELECT count(*) FROM ticket_blocks").fetchone()[0] == 0
 
 
@@ -1289,7 +1304,7 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             ),
             client.patch(
                 f"/api/items/{other['id']}",
-                json={"body": "Unauthorized change"},
+                json={"recap": "Unauthorized change"},
                 headers=own_headers,
             ),
         ]
@@ -1297,7 +1312,7 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             assert response.status_code == 400, response.text
             assert response.json()["error"]["code"] == "agent_forbidden", response.text
         assert client.get(f"/api/tickets?detail=full&id={theirs['id']}").json() == before
-        assert client.get(f"/api/items?detail=full&id={other['id']}").json()["body"] == ""
+        assert client.get(f"/api/items?detail=full&id={other['id']}").json()["recap"] == ""
 
 
 def test_recap_public_patch_readback_preserves_archived_files(tmp_path: Path) -> None:
@@ -1306,16 +1321,16 @@ def test_recap_public_patch_readback_preserves_archived_files(tmp_path: Path) ->
     with TestClient(app) as client:
         item = _create_item(client, "Synthetic recap")
         item_id = item["id"]
-        original = "Original synthetic brief: preserve the agreed scope."
+        original = "Original synthetic goal: preserve the agreed scope."
         replacement = "The recap keeps this review easy to recover."
-        notes = "Decision: retain the existing body."
+        notes = "Decision: retain the existing goal."
         files = db_path.parent / "files" / "sprint-items" / item_id / "artifacts"
         files.mkdir(parents=True)
         (files / "original-brief.md").write_text(original, encoding="utf-8")
         (files / "working-notes.md").write_text(notes, encoding="utf-8")
-        saved = client.patch(f"/api/items/{item_id}", json={"body": replacement})
+        saved = client.patch(f"/api/items/{item_id}", json={"recap": replacement})
         assert saved.status_code == 200, saved.text
-        assert client.get(f"/api/items/{item_id}/workspace").json()["body"] == replacement
+        assert client.get(f"/api/items/{item_id}/workspace").json()["recap"] == replacement
         for name, content in (("original-brief.md", original), ("working-notes.md", notes)):
             archived = client.get(f"/files/sprint-items/{item_id}/artifacts/{name}")
             assert archived.status_code == 200, archived.text

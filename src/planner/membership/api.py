@@ -13,7 +13,8 @@ from fastapi import APIRouter
 from planner.core.errors import ErrorCode, PlannerError
 from planner.membership.collections import ENTRIES, CollectionEntry, MembershipWrite
 from planner.membership.contracts import Collection, MembershipAnswer
-from planner.tickets.api import Cfg, Clk, Ctx, DbConn, parse_enum
+from planner.tickets.api import Cfg, Clk, Conversations, Ctx, DbConn, parse_enum
+from planner.tickets.review_transfer import notify_review_transfers
 
 router = APIRouter()
 
@@ -65,9 +66,11 @@ async def add_member(
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
+    conversations: Conversations,
 ) -> MembershipAnswer:
     entry, write = _prepare(collection, container_id, member_id, conn, ctx, cfg, clk)
     entry.add(write)
+    await notify_review_transfers(conversations, conn, write.review_transfer_notices, now=write.now)
     return _answer(collection, write)
 
 
@@ -80,7 +83,9 @@ async def remove_member(
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
+    conversations: Conversations,
 ) -> MembershipAnswer:
     entry, write = _prepare(collection, container_id, member_id, conn, ctx, cfg, clk)
     entry.remove(write)
+    await notify_review_transfers(conversations, conn, write.review_transfer_notices, now=write.now)
     return _answer(collection, write)

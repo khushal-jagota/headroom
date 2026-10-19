@@ -13,6 +13,7 @@ from sqlite3 import Connection
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL
+from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.core.authority import contracts as targets
 from planner.core.authority.contracts import ANY_ID
@@ -105,6 +106,7 @@ def test_a_claimed_ticket_with_no_row_stands_above_nothing(db: Connection) -> No
 def test_a_historical_planning_day_ticket_has_no_shared_plan_authority(db: Connection) -> None:
     with pytest.raises(PlannerError, match="retired"):
         _ticket(db, item_id=None, worker_type="planning-day")
+    seed_historical_worker_type(db, "planning-day")
     ticket_id = _ticket(db, item_id=None)
     # Historical rows remain readable, but their old shared-plan authority is retired.
     db.execute(
