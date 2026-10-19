@@ -20,6 +20,7 @@ def launch_configuration_for_a_new_ticket(
     default_reasoning_effort: str | None,
     employee_backend: str,
     employee_launch_model: str | None,
+    employee_launch_reasoning_effort: str | None = None,
 ) -> EmployeeLaunchConfiguration:
     """What a Ticket is created running on, from its Worker type and what its creator named.
 
@@ -29,11 +30,19 @@ def launch_configuration_for_a_new_ticket(
     a model id belongs to the backend that gave it, so there would be nothing left for the
     Ticket to run on, and that is refused rather than written half-answered.
 
-    The reasoning effort only comes along when the backend and model are the Worker type's
-    own, because it was chosen for that model and says nothing about any other.
+    Inherited reasoning effort only comes along when the backend and model are the
+    Worker type's own. An explicit effort overrides that inherited choice and needs
+    catalogue validation at the creation boundary.
 
     Raises ``PlannerError`` when a different backend is named with no model for it.
     """
+    if employee_launch_reasoning_effort is not None and (
+        not isinstance(employee_launch_reasoning_effort, str)
+        or not employee_launch_reasoning_effort.strip()
+    ):
+        raise PlannerError(
+            ErrorCode.validation, "employee_launch_reasoning_effort must be a nonblank string"
+        )
     if employee_launch_model is None or not employee_launch_model.strip():
         if employee_backend != default_backend:
             raise PlannerError(
@@ -48,7 +57,13 @@ def launch_configuration_for_a_new_ticket(
     return EmployeeLaunchConfiguration(
         employee_backend=employee_backend,
         employee_launch_model=model,
-        employee_launch_reasoning_effort=default_reasoning_effort if the_types_own else None,
+        employee_launch_reasoning_effort=(
+            employee_launch_reasoning_effort
+            if employee_launch_reasoning_effort is not None
+            else default_reasoning_effort
+            if the_types_own
+            else None
+        ),
     )
 
 

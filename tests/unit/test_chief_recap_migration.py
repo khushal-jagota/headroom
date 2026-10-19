@@ -1,6 +1,7 @@
 """The real upgrade must preserve existing Chief settings and skill content."""
 
 import shutil
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ def test_chief_recap_upgrade_preserves_existing_settings_and_skill(
 ) -> None:
     shipped = db.MIGRATIONS_DIRECTORY
     tree = _migration_tree_through(tmp_path, monkeypatch, "remove_ticket_retirement")
-    with db.connect(str(tmp_path / "before-recap.db")) as conn:
+    with closing(db.connect(str(tmp_path / "before-recap.db"))) as conn:
         db.create_schema(conn)
         conn.execute(
             "UPDATE chief_settings SET employee_launch_model = ?, "

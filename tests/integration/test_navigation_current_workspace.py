@@ -21,6 +21,7 @@ from tests.support.navigation_current import (
 )
 from tests.support.navigation_historical_source import (
     PUBLIC_FOUR_TIP,
+    HistoricalSourceFactory,
     run_historical,
     source_facts,
 )
@@ -63,10 +64,9 @@ def assert_prepared_rejected(path: Path) -> None:
 def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    historical_sources: HistoricalSourceFactory,
 ) -> None:
-    source = Path(__file__).resolve().parents[3] / "t_jghnv9gu-consumers"
-    if not (source / ".venv/bin/python").exists():
-        pytest.skip("exact public4 source/interpreter is unavailable")
+    source = historical_sources(PUBLIC_FOUR_TIP)
     path = tmp_path / "public-four.db"
     original = run_historical(source, path, "seed_public4", expected_tip=PUBLIC_FOUR_TIP)
     old = original["public_snapshot"]
@@ -122,7 +122,7 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
     with current_navigation_database(path) as conn:
         current = snapshot(conn)
         assert current["schema_version"] == 6
-        assert current["semantics"] == "attention-knowledge-v6"
+        assert current["semantics"] == "attention-knowledge-v6-recap"
         assert current["scope"] == old["scope"]
         assert current["epoch"] != old["epoch"]
         assert source_facts(conn)["events"] == original["source"]["events"]

@@ -355,25 +355,24 @@ def test_the_tag_always_describes_the_bytes_that_were_sent(
     with TestClient(app) as client:
         answer = client.get("/files/tickets/t_reuse01/notes.md")
 
-    served = f'"{hashlib.sha256(answer.content).hexdigest()}"'
-    assert answer.headers["etag"] == served, "the tag must describe the bytes that travelled"
-    assert answer.content == b"A" * 64
+        served = f'"{hashlib.sha256(answer.content).hexdigest()}"'
+        assert answer.headers["etag"] == served, "the tag must describe the bytes that travelled"
+        assert answer.content == b"A" * 64
 
-    # Without this the test passes whether or not the patch ever took: serving A and
-    # tagging A is also what happens when nothing mutates, so the mutation needs a
-    # witness of its own.
-    assert target.read_bytes() == b"B" * 64, "the rewrite must actually have landed"
+        # Without this the test passes whether or not the patch ever took: serving A and
+        # tagging A is also what happens when nothing mutates, so the mutation needs a
+        # witness of its own.
+        assert target.read_bytes() == b"B" * 64, "the rewrite must actually have landed"
 
-    # The artifact goes back to what it was when the reader took its copy. The reader's
-    # copy really is current now, so confirming it is correct.
-    monkeypatch.undo()
-    target.write_bytes(b"A" * 64)
-    with TestClient(app) as client:
+        # The artifact goes back to what it was when the reader took its copy. The reader's
+        # copy really is current now, so confirming it is correct.
+        monkeypatch.undo()
+        target.write_bytes(b"A" * 64)
         revalidated = client.get(
             "/files/tickets/t_reuse01/notes.md",
             headers={"If-None-Match": answer.headers["etag"]},
         )
-    assert revalidated.status_code == 304
+        assert revalidated.status_code == 304
 
 
 def test_an_artifact_larger_than_the_bound_keeps_the_streaming_answer(

@@ -7,6 +7,7 @@ export const RAIL_SETTLED_MAX_HEIGHT_SHARE = 0.5;
 export const RAIL_WIDTH_STORAGE_KEY = "panels.workspace.rail-width";
 export const RAIL_HOVER_ENTER_MS = 200;
 export const RAIL_HOVER_EXIT_MS = 90;
+export const RAIL_HOVER_RECAP_MAX_LINES = 5;
 export const RAIL_KEYBOARD_STEP = 8;
 export const RAIL_KEYBOARD_LARGE_STEP = 24;
 

@@ -6,7 +6,11 @@ from sqlite3 import Connection
 from typing import Any, Unpack
 
 import pytest
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import (
+    install_probe_registry,
+    seed_probe_worker_type,
+    uninstall_probe_registry,
+)
 
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -134,6 +138,7 @@ def test_stale_or_wrong_visible_proposal_acceptance_has_no_effects(
 def test_historical_pending_user_owned_answer_still_requires_explicit_accept(
     tmp_db: Connection,
 ) -> None:
+    seed_probe_worker_type(tmp_db)
     install_probe_registry()
     try:
         ticket = data.create_ticket(
@@ -203,6 +208,7 @@ def test_new_user_owned_answer_follows_ceiling_and_releases_step(
     from planner.runtime.worker_step_readiness import is_ready_for_worker_step
     from planner.worker_types.configuration import configured_worker_type_registry
 
+    seed_probe_worker_type(tmp_db)
     install_probe_registry()
     try:
         ticket = data.create_ticket(

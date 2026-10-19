@@ -75,7 +75,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       awaiting_approval:parked && owner,awaiting_agent_approval:parked && !owner,assigned:row.stage_ownership==='user',
       agent_state:agentState(row.ticket_status,row.stage,knowledge),
       waiting_to_closeout:row.gating_field==='consequences' && row.ticket_status==='empty',
-      gating_field:row.gating_field,recap_preview:row.recap_preview,
+      gating_field:row.gating_field,recap:row.recap,recap_preview:row.recap_preview,
       orchestrator:parent === null ? {kind:'chief',id:'chief'} : {kind:'sprint_item',id:parent},
       sprint_item_id:parent,sprint_item_title:parent === null ? null : orchestratorsById.get(parent)?.title ?? null}];
   });
@@ -99,7 +99,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
     return {id:record.id,title:row.title,created_at:row.created_at,
       settled:row.settled,project_id:row.project_id,project:projects.get(row.project_id)?.name,
-      recap_preview:row.recap_preview,conversation_id:row.conversation_id,
+      recap:row.recap,recap_preview:row.recap_preview,conversation_id:row.conversation_id,
       conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`orchestrator:${record.id}`) ?? [],
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
       awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge)};

@@ -791,6 +791,7 @@ class SqliteProcessConversationSystem:
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        credit_explicit_reply: bool = True,
     ) -> None:
         """Append an owner-bound message under the conversation's ordering lock."""
         state = await self._conversation_state(conversation_id)
@@ -806,6 +807,7 @@ class SqliteProcessConversationSystem:
                 recipient=recipient,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                credit_explicit_reply=credit_explicit_reply,
             ),
         )
 
@@ -819,6 +821,7 @@ class SqliteProcessConversationSystem:
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        credit_explicit_reply: bool = True,
     ) -> None:
         """Append an owner-bound message under the conversation's ordering lock."""
         require_message_content(content)
@@ -851,7 +854,8 @@ class SqliteProcessConversationSystem:
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 ),
             )
-            self._credit_explicit_reply(state, recipient)
+            if credit_explicit_reply:
+                self._credit_explicit_reply(state, recipient)
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:
         """Capture the active turn under the same lock that ends it."""

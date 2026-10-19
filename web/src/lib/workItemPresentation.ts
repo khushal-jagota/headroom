@@ -11,6 +11,7 @@ export type WorkItemTicketFacts = WorkItemAttentionFacts & {
   conversation_signal?: Partial<import("./conversationSignal").ConversationSignal>;
   id: string;
   title: string;
+  recap?: string;
   recap_preview?: string;
   blocked?: boolean;
   stage: string;

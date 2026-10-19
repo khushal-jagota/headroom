@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Callable
-from contextlib import closing
 from pathlib import Path
 
 from playwright.sync_api import (
@@ -12,10 +11,7 @@ from playwright.sync_api import (
     Page,
 )
 from tests.e2e.harness import JsonObject, ServerHandle
-from tests.support.principals import OWNER_PRINCIPAL, ticket_principal
-
-from planner.core.db import connect
-from planner.tickets import data as tickets_data
+from tests.support.connected_rows import _post, _propose
 
 WAIT_MS = 10_000
 
@@ -58,27 +54,13 @@ def _write_ticket_files(server: ServerHandle, ticket_id: str) -> None:
 
 def _settle_success(server: ServerHandle, ticket_id: str, body: str) -> None:
     """Seed saved Markdown through the same proposal/accept writers as ordinary work."""
-    with closing(connect(str(server.db_path))) as conn:
-        ticket = tickets_data.file_current_proposal(
-            conn,
-            ticket_id,
-            body=body,
-            principal=ticket_principal(ticket_id),
-            now=2,
-        )
-        if ticket.pending_proposal is not None:
-            ticket = tickets_data.accept_proposal(
-                conn,
-                ticket_id,
-                field="success_condition",
-                principal=OWNER_PRINCIPAL,
-                now=2,
-                next_ceiling="none",
-                next_holder=OWNER_PRINCIPAL,
-            )
-        assert ticket.stage == "needs_what_changes"
-        assert ticket.field_values["success_condition"] == body
-        assert ticket.pending_proposal is None
+    _propose(server, ticket_id, body)
+    ticket = _post(server, f"/api/tickets/{ticket_id}/accept/success_condition", {
+        "next_ceiling": "none", "next_holder": {"kind": "owner", "id": "owner"},
+    })
+    assert ticket["stage"] == "needs_what_changes"
+    assert ticket["field_values"]["success_condition"] == body
+    assert ticket["pending_proposal"] is None
 
 
 def _open_ticket_field(page: Page, field: str) -> None:

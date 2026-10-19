@@ -10,7 +10,7 @@ from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, tic
 
 from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Ticket, TicketEdit
+from planner.tickets.contracts import Ticket, TicketApprovalMethod, TicketEdit, TicketFieldApproval
 from planner.tickets.logic import admission, resolution
 from planner.tickets.logic.decisions import Decision
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -66,6 +66,9 @@ def _cases(
             "none",
             OWNER_PRINCIPAL,
             worker_type_definition=definition,
+            approval=TicketFieldApproval(
+                TicketApprovalMethod.explicit_accept, OWNER_PRINCIPAL, "Approved by Khushal"
+            ),
         ),
         Decision,
     )

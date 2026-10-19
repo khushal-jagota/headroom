@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from tests.support.principals import OWNER_PRINCIPAL, TEST_TICKET_PRINCIPAL, ticket_principal
-from tests.support.probe import install_probe_registry, uninstall_probe_registry
+from tests.support.probe import (
+    install_probe_registry,
+    seed_probe_worker_type,
+    uninstall_probe_registry,
+)
 from tests.support.ticket_progress import advance_ticket
 
 from planner.conversation.backend_state import write_model_enablement
@@ -41,7 +45,8 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def probe_runtime() -> Iterator[None]:
+def probe_runtime(tmp_db: Connection) -> Iterator[None]:
+    seed_probe_worker_type(tmp_db)
     install_probe_registry()
     try:
         yield
@@ -1097,3 +1102,108 @@ def test_a_create_that_names_no_brief_parks_nothing(
     whitespace = _create(tmp_db, cfg, fake_clock, brief="  \n\t ", settle_kickoff=False)
     assert whitespace.pending_proposal is None
     assert whitespace.ticket_status is TicketStatus.empty
+
+
+@pytest.mark.parametrize("approver_kind", ["owner", "chief", "sprint_item"])
+def test_field_approval_records_actual_caller_and_snapshot(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock, approver_kind: str
+) -> None:
+    """The recipient and next holder cannot impersonate the approving principal."""
+    from planner.core.contracts import CHIEF_PRINCIPAL
+
+    project = projects_data.create_project(
+        tmp_db, name="Approval project", now=fake_clock.now_unix()
+    )
+    item = sprints_data.create_item(
+        tmp_db, title="Release review", project_id=project.id, clock=fake_clock
+    )
+    principal = {
+        "owner": OWNER_PRINCIPAL,
+        "chief": CHIEF_PRINCIPAL,
+        "sprint_item": Principal(PrincipalKind.sprint_item, item.id),
+    }[approver_kind]
+    ticket = _create(
+        tmp_db,
+        cfg,
+        fake_clock,
+        sprint_item_id=item.id,
+        settle_kickoff=False,
+        stated_holder=CHIEF_PRINCIPAL,
+    )
+    ticket = data.accept_proposal(
+        tmp_db,
+        ticket.id,
+        field="brief",
+        principal=principal,
+        now=fake_clock.now_unix(),
+        next_ceiling=NO_FURTHER,
+        next_holder=OWNER_PRINCIPAL,
+    )
+    expected_name = {"owner": "Khushal", "chief": "Chief", "sprint_item": "Release review"}[
+        approver_kind
+    ]
+    payload = ticket_views.ticket_json(data.read_ticket(tmp_db, ticket.id), fake_clock.now_unix())
+    assert payload["field_approvals"]["brief"] == {
+        "method": "explicit_accept",
+        "principal": {"kind": approver_kind, "id": principal.id},
+        "display_label": f"Approved by {expected_name}",
+    }
+    tmp_db.execute("UPDATE sprint_items SET title='Renamed' WHERE id=?", (item.id,))
+    assert (
+        data.read_ticket(tmp_db, ticket.id).field_approvals["brief"].display_label
+        == f"Approved by {expected_name}"
+    )
+
+
+def test_auto_approval_old_data_and_multi_field_edit(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    """Creation and worker auto acceptance differ from old data and edited approvals."""
+    now = fake_clock.now_unix()
+    ticket = _create(
+        tmp_db, cfg, fake_clock, stated_ceiling="needs_what_changes", settle_kickoff=False
+    )
+    assert ticket.field_approvals["brief"].method == "auto_accept"
+    ticket = data.file_current_proposal(
+        tmp_db, ticket.id, body="Success", principal=ticket_principal(ticket.id), now=now
+    )
+    assert ticket.field_approvals["success_condition"].principal is None
+    assert ticket.field_approvals["success_condition"].display_label == "Auto-accepted"
+    before = _ticket_row(tmp_db, ticket.id)
+    with pytest.raises(PlannerError):
+        data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(field_values={"brief": "Changed", "plan": "Not settled"}),
+            title_max_chars=200,
+            principal=OWNER_PRINCIPAL,
+            now=now,
+        )
+    assert _ticket_row(tmp_db, ticket.id) == before
+    ticket = data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(field_values={"brief": "Changed", "success_condition": "Success"}),
+        title_max_chars=200,
+        principal=OWNER_PRINCIPAL,
+        now=now,
+    )
+    assert ticket.field_approvals["brief"].method == "unknown"
+    assert ticket.field_approvals["success_condition"].method == "auto_accept"
+    # The reverse order catches an accumulator that restores a cleared approval.
+    ticket = data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(field_values={"success_condition": "Changed", "brief": "Changed"}),
+        title_max_chars=200,
+        principal=OWNER_PRINCIPAL,
+        now=now,
+    )
+    assert all(approval.method == "unknown" for approval in ticket.field_approvals.values())
+    tmp_db.execute("UPDATE tickets SET field_approvals='{}' WHERE id=?", (ticket.id,))
+    old = data.read_ticket(tmp_db, ticket.id)
+    assert set(old.field_approvals) == set(old.field_values)
+    assert all(
+        approval.display_label == "Approval unknown" and approval.principal is None
+        for approval in old.field_approvals.values()
+    )

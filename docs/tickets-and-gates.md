@@ -57,11 +57,11 @@ _Code paths:_ `src/planner/tickets/`, `src/planner/runtime/`,
 Every Worker type starts with a **Brief** and ends at **done**; the
 Stages between are the Worker type's own. What follows is the `coding` lifecycle.
 
-A ticket starts with its **Brief**. The Brief is the first ordinary Ticket field: the
-human-approved intake context. The title is separate editable Ticket metadata, not
-part of the Brief proposal. A new ordinary ticket parks a Brief field proposal
-for review before any worker turn can start. Approving the Brief settles the Brief
-field, then the ticket enters the worker stages.
+A ticket starts with its **Brief**, the first ordinary Ticket field for intake
+context. The title is separate editable Ticket metadata, not part of the Brief
+proposal. The [ceiling rule](#how-far-a-worker-may-go-the-ceiling) determines whether
+supplied Brief text waits for approval or settles at creation, and what happens
+when no text is supplied.
 
 The Ticket also stores the Worker, Model, and Reasoning its conversation runs on.
 Creation copies the Worker type's three starting values, and they are kept up to date
@@ -109,6 +109,17 @@ Historical text for a field that the Worker type no longer declares stays in sto
 Ticket reads and search show only declared fields. Later edits and approvals preserve
 historical text, but new writes and proposals must use declared fields. Invalid stored
 values still fail validation, even when their fields are no longer declared.
+
+Each settled field shows who approved its current text. Explicit approval records the
+actual approver, separately from the proposal recipient and the next approval holder.
+The UI says “Approved by Khushal”, “Approved by Chief”, or “Approved by Orchestrator”.
+CLI text uses the orchestrator’s human-readable title. Ticket JSON includes the approval
+method, the principal kind and ID, and the readable label captured at approval.
+
+A field that settles below its ceiling says “Auto-accepted”. A settled Brief at creation
+uses the same label. Older records and direct user completion say “Approval unknown”.
+Unknown never means auto-accepted. An edit that changes the text clears its approval.
+An identical edit preserves it. Ticket history stays unchanged.
 
 The **Brief field** preserves intake context: the user's original wording, source
 context, boundaries, and advice. It stays readable beside the work so agents can
@@ -309,28 +320,40 @@ ceiling says nothing about who owns a Stage: user-owned Stages still do not
 dispatch automatically after their opening turn. They rest at `empty` with their opener fact
 until the user and worker continue the discussion. Stage ownership does not add an
 approval stop.
-New tickets start leashed right at
-the **Brief**: the ceiling is `needs_brief` for every Worker type, so nothing advances past
-the human-approved intake until the human raises the ceiling — review before agents
-start.
 
-A Ticket created **without** a Brief parks nothing. A blank intake body means nothing was
-written, not a Brief whose text is empty, so the Ticket rests at its Brief stage with the
-worker-owned Kickoff ready to start. This is one rule at one door, so every way of creating
-a Ticket gets it: the API defaults an absent intake body to blank, and so does a form field
-nobody typed in.
+Every Worker type defaults to a ceiling of `needs_brief`. A creator can supply the
+Brief text, or the Ticket's own Worker can write it after creation.
+There are two possible authors, but one approval rule.
+Automatically approving creator-supplied text also approves agent-authored work without the default review.
+
+Supplied Brief text parks for approval at the default ceiling. An explicit ceiling
+past Brief accepts that text at creation and advances the Ticket to its next Stage.
+The creator's identity does not change this rule.
+
+Omitted, empty, or whitespace-only Brief text leaves no proposal. The Ticket stays
+at Brief, where its own Worker can write the text when ordinary readiness permits.
+That answer follows the same ceiling rule: it parks at the default ceiling and
+settles below an explicitly higher ceiling.
 
 A creator can state the ceiling instead, at creation, with `ticket create --ceiling`.
 The same breath names who holds it, with `ticket create --holder`. A creator can name any
 holder, including the user, without holding anything itself — that is how a Ticket is
 opened for somebody else to review. Name nobody and the creator holds it, which is the
 ordinary case: a Sprint Item that opens a Ticket holds it.
-Whoever was given the authority to set the ceiling says so in the same breath as
-the Ticket, so work the user has already authorized does not sit waiting for a second
-approval. The Brief is then judged by the stated ceiling exactly as a later proposal is:
-it settles and the Ticket starts at the next Stage when the stated ceiling is past
-the Brief, and it parks for approval otherwise. State nothing and the default leash holds,
-which is the ordinary case for intake the human wants to sense-check.
+Whoever has authority to set the ceiling states it with the Ticket. This avoids a
+second approval for work the user already authorized.
+
+The creation receipt explains this grant in plain words. It lists only the Stages that
+remain unsupervised and the first review gate with its recipient.
+If no review gate remains, the receipt opens with:
+"Nothing in this grant ever parks for review." Stage ownership still
+controls user participation. A Ticket holder routes a parked proposal to the owner, and the
+receipt names that actual destination. The receipt changes no ceiling or holder rule.
+See `cli.md` for the JSON input and effort choice at creation.
+
+_Code paths:_ `src/planner/tickets/data.py` (creation and supplied Brief text),
+`src/planner/tickets/logic/proposal_routing.py` (the ceiling rule), and
+`src/planner/tickets/logic/resolution.py` (the Worker's answer).
 
 ### Changing a ceiling on a running Ticket
 
@@ -345,6 +368,20 @@ Both halves can change later, and they change separately.
   parked. Re-addressing a parked proposal does not change what was proposed, so it is the
   way a proposal sitting in the wrong queue reaches the right one. Anyone standing above
   the Ticket can do it.
+
+When a parked review moves to another holder, Panels attempts one courtesy notice to
+the previous holder. The notice names the Ticket and the new holder. Automatic returns
+to the user after reassignment follow the same rule. No parked proposal or no final
+holder change means no notice. A combined edit names only the final holder.
+
+The Chief, an orchestrator, or a holder Ticket receives the notice in its conversation.
+The user receives a Panels message in the affected Ticket conversation. This message
+starts no worker turn and does not answer an unrelated request for a worker reply.
+
+The transfer commits before the notice attempt. A failed notice logs the failure and leaves
+the transfer successful. Panels does not retry the notice. A process failure before send,
+a refused send, or a restart before a queued message reaches the agent can lose the line.
+Once the conversation records the message, its ordinary history preserves it.
 
 Everywhere tooling takes a holder — creation, either change, and approval — it takes one
 `--holder`, and reads the kind from what it is given: `me`, `chief`, a Sprint Item id, or
@@ -490,4 +527,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-10-18._
+_Last verified: 2026-10-18. Brief creation and ceiling explanation checked against code: 2026-10-19._
