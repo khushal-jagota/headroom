@@ -373,6 +373,10 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         body["employee_backend"] = body_str(raw, "employee_backend")
     if "employee_launch_model" in raw:
         body["employee_launch_model"] = body_str(raw, "employee_launch_model")
+    if "employee_launch_reasoning_effort" in raw:
+        body["employee_launch_reasoning_effort"] = body_opt_str(
+            raw, "employee_launch_reasoning_effort"
+        )
     return body
 
 
@@ -482,6 +486,7 @@ async def warm_ticket_creation_model(
     worker_type: str,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
     model_source_is_historical: bool = False,
 ) -> None:
     """Resolve outside the creation transaction so cold catalogues can be awaited."""
@@ -489,6 +494,7 @@ async def warm_ticket_creation_model(
         worker_type,
         employee_backend=employee_backend,
         employee_launch_model=employee_launch_model,
+        employee_launch_reasoning_effort=employee_launch_reasoning_effort,
     )
     assert launch_configuration.employee_launch_model is not None
     backend_key = require_conversation_backend_key(launch_configuration.employee_backend)
@@ -502,7 +508,7 @@ async def warm_ticket_creation_model(
             launch_configuration.employee_launch_reasoning_effort,
         )
     except ModelResolutionUnavailable as error:
-        if error.variant is None:
+        if error.variant is None and employee_launch_reasoning_effort is None:
             # There is no known family to probe. Creation retains the opaque value.
             return
     try:
@@ -511,7 +517,12 @@ async def warm_ticket_creation_model(
             launch_configuration.employee_launch_model,
             launch_configuration.employee_launch_reasoning_effort,
         )
-    except ModelResolutionUnavailable:
+    except ModelResolutionUnavailable as error:
+        if employee_launch_reasoning_effort is not None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "cannot validate explicit reasoning effort without a model catalogue",
+            ) from error
         # The synchronous creation boundary reports and retains the unresolved choice.
         pass
 
@@ -532,6 +543,7 @@ async def create_ticket(
         worker_type=body["worker_type"],
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
+        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
     )
     now = clk.now_unix()
     orchestrator = (
@@ -561,6 +573,7 @@ async def create_ticket(
         locale=body.get("locale"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
+        employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
         planning_now=clk.now(),
         sprint_item_id_explicit=orchestrator.kind is PrincipalKind.sprint_item,
@@ -568,7 +581,7 @@ async def create_ticket(
         stated_ceiling=body["ceiling"],
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
-    return tickets_views.ticket_json(ticket, now)
+    return tickets_views.ticket_creation_json(conn, ticket, now)
 
 
 @router.get("/tickets")

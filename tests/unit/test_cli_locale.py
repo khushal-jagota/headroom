@@ -70,6 +70,7 @@ def test_locale_cli_inputs(
         return {
             "id": "created",
             "stage": "needs_brief",
+            "supervision_receipt": "The Ticket first parks for review at Brief.",
             "local_time": "14:30",
             "cadence": "daily",
             "worker_type": "coding",
