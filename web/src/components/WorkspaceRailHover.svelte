@@ -3,8 +3,8 @@
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
-  import { fetchJson } from "../lib/api";
-  import { lifecycleFor, type WorkerTypesResponse } from "../lib/lifecycle";
+  import { queries } from "../lib/queryCatalogue";
+  import { lifecycleFor } from "../lib/lifecycle";
   import { RAIL_HOVER_RECAP_MAX_LINES } from "../lib/workspaceRailInteraction";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
@@ -22,7 +22,7 @@
     onKeepOpen?: () => void; onLeave?: () => void;
     element?: HTMLDivElement | null;
   } = $props();
-  const manifests = createQuery(() => ({ queryKey: ["worker-types"], queryFn: () => fetchJson<WorkerTypesResponse>("/api/worker-types") }));
+  const manifests = createQuery(() => queries.workerTypeManifests());
   let currentWorker = $derived(worker);
   let stageSentence = $derived(currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);

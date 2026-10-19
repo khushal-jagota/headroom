@@ -211,18 +211,16 @@ def item_workspace(conn: sqlite3.Connection, item_id: str) -> JsonDict:
 
 
 def item_workspace_document(conn: sqlite3.Connection, item_id: str) -> ItemWorkspaceDocument:
-    """Read goal, recap, and canonical transcript history without child or attention reads."""
+    """Read only the selected document, without child, catalog, or attention reads."""
     with _read_snapshot(conn):
         row = conn.execute(
             "SELECT goal, recap FROM sprint_items WHERE id=?", (item_id,)
         ).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "sprint item not found", {"id": item_id})
-        history = conversation_start.read_sprint_item_supervisor_conversation_history(conn, item_id)
         return {
             "goal": str(row[0]),
             "recap": str(row[1]),
-            "conversation_history": history,
         }
 
 

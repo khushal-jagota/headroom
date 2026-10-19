@@ -1,0 +1,4769 @@
+[
+  {
+    "name": "owner-visible-turn-work-and-final-answer",
+    "stopped": false,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Please work"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "agent_message",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "Commentary"
+            }
+          ]
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "tool_call_started",
+        "payload": {
+          "tool_call_id": "tool-a",
+          "title": "Read file",
+          "tool_kind": "read",
+          "detail": "a.txt"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 4,
+        "created_at": 103,
+        "kind": "tool_call_finished",
+        "payload": {
+          "tool_call_id": "tool-a",
+          "tool_call_status": "completed",
+          "detail": "File contents"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 5,
+        "created_at": 104,
+        "kind": "message_to_owner",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "First message"
+            }
+          ],
+          "recipient": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          },
+          "sender_label": "worker"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 6,
+        "created_at": 105,
+        "kind": "message_to_owner",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "Final answer"
+            }
+          ],
+          "recipient": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          },
+          "sender_label": "worker"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 7,
+        "created_at": 106,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "completed",
+          "error_summary": null
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Please work"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e5",
+            "kind": "agent_message",
+            "sequence": 5,
+            "createdAt": 104,
+            "content": [
+              {
+                "piece": "text",
+                "text": "First message"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e6",
+            "kind": "agent_message",
+            "sequence": 6,
+            "createdAt": 105,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Final answer"
+              }
+            ],
+            "toOwner": true
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Please work"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 6,
+            "toolCallCount": 0,
+            "foldedMessageCount": 1
+          },
+          {
+            "kind": "row",
+            "key": "e5",
+            "row": {
+              "key": "e5",
+              "kind": "agent_message",
+              "sequence": 5,
+              "createdAt": 104,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "First message"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": "turn:e1"
+          },
+          {
+            "kind": "row",
+            "key": "e6",
+            "row": {
+              "key": "e6",
+              "kind": "agent_message",
+              "sequence": 6,
+              "createdAt": 105,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Final answer"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Final answer",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Please work"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "agent_message",
+            "sequence": 2,
+            "createdAt": 101,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Commentary"
+              }
+            ],
+            "toOwner": false
+          },
+          {
+            "key": "e3",
+            "kind": "tool_call",
+            "sequence": 3,
+            "createdAt": 102,
+            "toolCallId": "tool-a",
+            "title": "Read file",
+            "toolKind": "read",
+            "detail": "File contents",
+            "startedDetail": "a.txt",
+            "cappedDetailSequence": null,
+            "status": "completed",
+            "progress": null
+          },
+          {
+            "key": "e5",
+            "kind": "agent_message",
+            "sequence": 5,
+            "createdAt": 104,
+            "content": [
+              {
+                "piece": "text",
+                "text": "First message"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e6",
+            "kind": "agent_message",
+            "sequence": 6,
+            "createdAt": 105,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Final answer"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e7",
+            "kind": "turn_ended",
+            "sequence": 7,
+            "createdAt": 106,
+            "ending": "completed",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Please work"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 6,
+            "toolCallCount": 1,
+            "foldedMessageCount": 2
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "agent_message",
+              "sequence": 2,
+              "createdAt": 101,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Commentary"
+                }
+              ],
+              "toOwner": false
+            },
+            "behindTheFoldOf": "turn:e1"
+          },
+          {
+            "kind": "work_group",
+            "key": "work:e3",
+            "turnKey": "turn:e1",
+            "entries": [
+              {
+                "key": "e3",
+                "kind": "tool_call",
+                "sequence": 3,
+                "createdAt": 102,
+                "toolCallId": "tool-a",
+                "title": "Read file",
+                "toolKind": "read",
+                "detail": "File contents",
+                "startedDetail": "a.txt",
+                "cappedDetailSequence": null,
+                "status": "completed",
+                "progress": null
+              }
+            ],
+            "settled": true
+          },
+          {
+            "kind": "row",
+            "key": "e5",
+            "row": {
+              "key": "e5",
+              "kind": "agent_message",
+              "sequence": 5,
+              "createdAt": 104,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "First message"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": "turn:e1"
+          },
+          {
+            "kind": "row",
+            "key": "e6",
+            "row": {
+              "key": "e6",
+              "kind": "agent_message",
+              "sequence": 6,
+              "createdAt": 105,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Final answer"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e7",
+            "row": {
+              "key": "e7",
+              "kind": "turn_ended",
+              "sequence": 7,
+              "createdAt": 106,
+              "ending": "completed",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Final answer",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "hidden-prompt-turn-and-owner-steer",
+    "stopped": false,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "worker",
+          "content": [
+            {
+              "piece": "text",
+              "text": "worker instruction"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "message_to_owner",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "An owner message from a hidden turn"
+            }
+          ],
+          "recipient": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          },
+          "sender_label": "worker"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "owner steer"
+            }
+          ],
+          "mode": "steer",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 4,
+        "created_at": 103,
+        "kind": "message_to_owner",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "The final answer"
+            }
+          ],
+          "recipient": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          },
+          "sender_label": "worker"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 5,
+        "created_at": 104,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "completed",
+          "error_summary": null
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 6,
+        "created_at": 105,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Next owner turn"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 7,
+        "created_at": 106,
+        "kind": "message_to_owner",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "Next reply"
+            }
+          ],
+          "recipient": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          },
+          "sender_label": "worker"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 8,
+        "created_at": 107,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "completed",
+          "error_summary": null
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e2",
+            "kind": "agent_message",
+            "sequence": 2,
+            "createdAt": 101,
+            "content": [
+              {
+                "piece": "text",
+                "text": "An owner message from a hidden turn"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e3",
+            "kind": "prompt",
+            "sequence": 3,
+            "createdAt": 102,
+            "content": [
+              {
+                "piece": "text",
+                "text": "owner steer"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "steer",
+            "sentAtUnixMilliseconds": 102000
+          },
+          {
+            "key": "e4",
+            "kind": "agent_message",
+            "sequence": 4,
+            "createdAt": 103,
+            "content": [
+              {
+                "piece": "text",
+                "text": "The final answer"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e6",
+            "kind": "prompt",
+            "sequence": 6,
+            "createdAt": 105,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Next owner turn"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 105000
+          },
+          {
+            "key": "e7",
+            "kind": "agent_message",
+            "sequence": 7,
+            "createdAt": 106,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Next reply"
+              }
+            ],
+            "toOwner": true
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "agent_message",
+              "sequence": 2,
+              "createdAt": 101,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "An owner message from a hidden turn"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "prompt",
+              "sequence": 3,
+              "createdAt": 102,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "owner steer"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "steer",
+              "sentAtUnixMilliseconds": 102000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "agent_message",
+              "sequence": 4,
+              "createdAt": 103,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "The final answer"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e6",
+            "row": {
+              "key": "e6",
+              "kind": "prompt",
+              "sequence": 6,
+              "createdAt": 105,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Next owner turn"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 105000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e6",
+            "turnKey": "turn:e6",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 105000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 2,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e7",
+            "row": {
+              "key": "e7",
+              "kind": "agent_message",
+              "sequence": 7,
+              "createdAt": 106,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Next reply"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Next reply",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "worker instruction"
+              }
+            ],
+            "senderLabel": "worker",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "agent_message",
+            "sequence": 2,
+            "createdAt": 101,
+            "content": [
+              {
+                "piece": "text",
+                "text": "An owner message from a hidden turn"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e3",
+            "kind": "prompt",
+            "sequence": 3,
+            "createdAt": 102,
+            "content": [
+              {
+                "piece": "text",
+                "text": "owner steer"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "steer",
+            "sentAtUnixMilliseconds": 102000
+          },
+          {
+            "key": "e4",
+            "kind": "agent_message",
+            "sequence": 4,
+            "createdAt": 103,
+            "content": [
+              {
+                "piece": "text",
+                "text": "The final answer"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e5",
+            "kind": "turn_ended",
+            "sequence": 5,
+            "createdAt": 104,
+            "ending": "completed",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          },
+          {
+            "key": "e6",
+            "kind": "prompt",
+            "sequence": 6,
+            "createdAt": 105,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Next owner turn"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 105000
+          },
+          {
+            "key": "e7",
+            "kind": "agent_message",
+            "sequence": 7,
+            "createdAt": 106,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Next reply"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e8",
+            "kind": "turn_ended",
+            "sequence": 8,
+            "createdAt": 107,
+            "ending": "completed",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "worker instruction"
+                }
+              ],
+              "senderLabel": "worker",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "completed",
+            "isLatest": false,
+            "durationSeconds": 4,
+            "toolCallCount": 0,
+            "foldedMessageCount": 1
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "agent_message",
+              "sequence": 2,
+              "createdAt": 101,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "An owner message from a hidden turn"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": "turn:e1"
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "prompt",
+              "sequence": 3,
+              "createdAt": 102,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "owner steer"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "steer",
+              "sentAtUnixMilliseconds": 102000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "agent_message",
+              "sequence": 4,
+              "createdAt": 103,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "The final answer"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e5",
+            "row": {
+              "key": "e5",
+              "kind": "turn_ended",
+              "sequence": 5,
+              "createdAt": 104,
+              "ending": "completed",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e6",
+            "row": {
+              "key": "e6",
+              "kind": "prompt",
+              "sequence": 6,
+              "createdAt": 105,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Next owner turn"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 105000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e6",
+            "turnKey": "turn:e6",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 105000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 2,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e7",
+            "row": {
+              "key": "e7",
+              "kind": "agent_message",
+              "sequence": 7,
+              "createdAt": 106,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Next reply"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e8",
+            "row": {
+              "key": "e8",
+              "kind": "turn_ended",
+              "sequence": 8,
+              "createdAt": 107,
+              "ending": "completed",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Next reply",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "legacy-owner-and-forged-label",
+    "stopped": false,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "prompt",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "Legacy owner"
+            }
+          ],
+          "sender_label": "owner",
+          "mode": "queue"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "completed",
+          "error_summary": null
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Not owner"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 4,
+        "created_at": 103,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "failed",
+          "error_summary": null
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 5,
+        "created_at": 104,
+        "kind": "prompt",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "Explicit recipient is not legacy"
+            }
+          ],
+          "sender_label": "owner",
+          "mode": "queue",
+          "recipient": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 6,
+        "created_at": 105,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "completed",
+          "error_summary": null
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Legacy owner"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e4",
+            "kind": "turn_ended",
+            "sequence": 4,
+            "createdAt": 103,
+            "ending": "failed",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Legacy owner"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 1,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "turn_ended",
+              "sequence": 4,
+              "createdAt": 103,
+              "ending": "failed",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "turn failed",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": false,
+            "failed": false
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Legacy owner"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "turn_ended",
+            "sequence": 2,
+            "createdAt": 101,
+            "ending": "completed",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          },
+          {
+            "key": "e3",
+            "kind": "prompt",
+            "sequence": 3,
+            "createdAt": 102,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Not owner"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 102000
+          },
+          {
+            "key": "e4",
+            "kind": "turn_ended",
+            "sequence": 4,
+            "createdAt": 103,
+            "ending": "failed",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          },
+          {
+            "key": "e5",
+            "kind": "prompt",
+            "sequence": 5,
+            "createdAt": 104,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Explicit recipient is not legacy"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 104000
+          },
+          {
+            "key": "e6",
+            "kind": "turn_ended",
+            "sequence": 6,
+            "createdAt": 105,
+            "ending": "completed",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Legacy owner"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "completed",
+            "isLatest": false,
+            "durationSeconds": 1,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "turn_ended",
+              "sequence": 2,
+              "createdAt": 101,
+              "ending": "completed",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "prompt",
+              "sequence": 3,
+              "createdAt": 102,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Not owner"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 102000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e3",
+            "turnKey": "turn:e3",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 102000,
+            "ending": "failed",
+            "isLatest": false,
+            "durationSeconds": 1,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "turn_ended",
+              "sequence": 4,
+              "createdAt": 103,
+              "ending": "failed",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e5",
+            "row": {
+              "key": "e5",
+              "kind": "prompt",
+              "sequence": 5,
+              "createdAt": 104,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Explicit recipient is not legacy"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 104000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e5",
+            "turnKey": "turn:e5",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 104000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 1,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e6",
+            "row": {
+              "key": "e6",
+              "kind": "turn_ended",
+              "sequence": 6,
+              "createdAt": 105,
+              "ending": "completed",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": "you",
+          "text": "Explicit recipient is not legacy",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": false,
+            "failed": false
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "settlement-and-reconciliation",
+    "stopped": false,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "prompt_delivery_uncertain",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Uncertain"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender_message_id": "same"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "prompt_delivery_uncertain",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Another uncertainty"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Delivered"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender_message_id": "same",
+          "reconciles_sequence": 1
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 4,
+        "created_at": 103,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Reconciled unminted"
+            }
+          ],
+          "mode": "steer",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "reconciles_sequence": 2
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 5,
+        "created_at": 104,
+        "kind": "prompt_delivery_refused",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Refused"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender_message_id": "refused",
+          "refusal_reason": "model_resolution_failed",
+          "refusal_detail": "The selected model is disabled"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 6,
+        "created_at": 105,
+        "kind": "prompt_discarded",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Discarded"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender_message_id": "refused"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 7,
+        "created_at": 106,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "completed",
+          "error_summary": null
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e3",
+            "kind": "prompt",
+            "sequence": 3,
+            "createdAt": 102,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Delivered"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 102000
+          },
+          {
+            "key": "e4",
+            "kind": "prompt",
+            "sequence": 4,
+            "createdAt": 103,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Reconciled unminted"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "steer",
+            "sentAtUnixMilliseconds": 103000
+          },
+          {
+            "key": "e6",
+            "kind": "prompt_discarded",
+            "sequence": 6,
+            "createdAt": 105,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Discarded"
+              }
+            ],
+            "senderLabel": "owner"
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "prompt",
+              "sequence": 3,
+              "createdAt": 102,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Delivered"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 102000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e3",
+            "turnKey": "turn:e3",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 102000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 4,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "prompt",
+              "sequence": 4,
+              "createdAt": 103,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Reconciled unminted"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "steer",
+              "sentAtUnixMilliseconds": 103000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e6",
+            "row": {
+              "key": "e6",
+              "kind": "prompt_discarded",
+              "sequence": 6,
+              "createdAt": 105,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Discarded"
+                }
+              ],
+              "senderLabel": "owner"
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": "you",
+          "text": "discarded without being delivered",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": false,
+            "failed": false
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e3",
+            "kind": "prompt",
+            "sequence": 3,
+            "createdAt": 102,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Delivered"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 102000
+          },
+          {
+            "key": "e4",
+            "kind": "prompt",
+            "sequence": 4,
+            "createdAt": 103,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Reconciled unminted"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "steer",
+            "sentAtUnixMilliseconds": 103000
+          },
+          {
+            "key": "e6",
+            "kind": "prompt_discarded",
+            "sequence": 6,
+            "createdAt": 105,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Discarded"
+              }
+            ],
+            "senderLabel": "owner"
+          },
+          {
+            "key": "e7",
+            "kind": "turn_ended",
+            "sequence": 7,
+            "createdAt": 106,
+            "ending": "completed",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "prompt",
+              "sequence": 3,
+              "createdAt": 102,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Delivered"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 102000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e3",
+            "turnKey": "turn:e3",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 102000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 4,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "prompt",
+              "sequence": 4,
+              "createdAt": 103,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Reconciled unminted"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "steer",
+              "sentAtUnixMilliseconds": 103000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e6",
+            "row": {
+              "key": "e6",
+              "kind": "prompt_discarded",
+              "sequence": 6,
+              "createdAt": 105,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Discarded"
+                }
+              ],
+              "senderLabel": "owner"
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e7",
+            "row": {
+              "key": "e7",
+              "kind": "turn_ended",
+              "sequence": 7,
+              "createdAt": 106,
+              "ending": "completed",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": "you",
+          "text": "discarded without being delivered",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": false,
+            "failed": false
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "asks-answer-and-turn-expiry",
+    "stopped": false,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Work"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "permission_asked",
+        "payload": {
+          "ask_id": "ask-a",
+          "title": "Continue?",
+          "detail": null,
+          "options": [
+            {
+              "option_id": "yes",
+              "label": "Yes",
+              "option_kind": "allow_once"
+            }
+          ]
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "permission_answered",
+        "payload": {
+          "ask_id": "ask-a",
+          "option_id": "yes"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 4,
+        "created_at": 103,
+        "kind": "user_input_requested",
+        "payload": {
+          "request_id": "input-a",
+          "questions": [
+            {
+              "question_id": "q",
+              "header": "Pick",
+              "question": "Which?",
+              "options": [
+                {
+                  "label": "A",
+                  "description": "A option"
+                }
+              ],
+              "multi_select": false,
+              "allow_other": true
+            }
+          ]
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 5,
+        "created_at": 104,
+        "kind": "user_input_answered",
+        "payload": {
+          "request_id": "input-a",
+          "answers": {
+            "q": {
+              "answers": [
+                "A"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 6,
+        "created_at": 105,
+        "kind": "permission_asked",
+        "payload": {
+          "ask_id": "ask-b",
+          "title": "Other?",
+          "detail": "Detail",
+          "options": []
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 7,
+        "created_at": 106,
+        "kind": "user_input_requested",
+        "payload": {
+          "request_id": "input-b",
+          "questions": []
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 8,
+        "created_at": 107,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "interrupted",
+          "error_summary": null
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Work"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "permission_ask",
+            "sequence": 2,
+            "createdAt": 101,
+            "askId": "ask-a",
+            "title": "Continue?",
+            "detail": null,
+            "options": [
+              {
+                "option_id": "yes",
+                "label": "Yes",
+                "option_kind": "allow_once"
+              }
+            ],
+            "state": "answered",
+            "deadReason": null,
+            "answeredOptionLabel": "Yes"
+          },
+          {
+            "key": "e4",
+            "kind": "user_input",
+            "sequence": 4,
+            "createdAt": 103,
+            "requestId": "input-a",
+            "questions": [
+              {
+                "question_id": "q",
+                "header": "Pick",
+                "question": "Which?",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "A option"
+                  }
+                ],
+                "multi_select": false,
+                "allow_other": true
+              }
+            ],
+            "state": "answered",
+            "deadReason": null,
+            "answers": {
+              "q": {
+                "answers": [
+                  "A"
+                ]
+              }
+            },
+            "failureDetail": null
+          },
+          {
+            "key": "e6",
+            "kind": "permission_ask",
+            "sequence": 6,
+            "createdAt": 105,
+            "askId": "ask-b",
+            "title": "Other?",
+            "detail": "Detail",
+            "options": [],
+            "state": "dead",
+            "deadReason": "turn_ended",
+            "answeredOptionLabel": null
+          },
+          {
+            "key": "e7",
+            "kind": "user_input",
+            "sequence": 7,
+            "createdAt": 106,
+            "requestId": "input-b",
+            "questions": [],
+            "state": "dead",
+            "deadReason": "turn_ended",
+            "answers": null,
+            "failureDetail": null
+          },
+          {
+            "key": "e8",
+            "kind": "turn_ended",
+            "sequence": 8,
+            "createdAt": 107,
+            "ending": "interrupted",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Work"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "interrupted",
+            "isLatest": true,
+            "durationSeconds": 7,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "permission_ask",
+              "sequence": 2,
+              "createdAt": 101,
+              "askId": "ask-a",
+              "title": "Continue?",
+              "detail": null,
+              "options": [
+                {
+                  "option_id": "yes",
+                  "label": "Yes",
+                  "option_kind": "allow_once"
+                }
+              ],
+              "state": "answered",
+              "deadReason": null,
+              "answeredOptionLabel": "Yes"
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "user_input",
+              "sequence": 4,
+              "createdAt": 103,
+              "requestId": "input-a",
+              "questions": [
+                {
+                  "question_id": "q",
+                  "header": "Pick",
+                  "question": "Which?",
+                  "options": [
+                    {
+                      "label": "A",
+                      "description": "A option"
+                    }
+                  ],
+                  "multi_select": false,
+                  "allow_other": true
+                }
+              ],
+              "state": "answered",
+              "deadReason": null,
+              "answers": {
+                "q": {
+                  "answers": [
+                    "A"
+                  ]
+                }
+              },
+              "failureDetail": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e6",
+            "row": {
+              "key": "e6",
+              "kind": "permission_ask",
+              "sequence": 6,
+              "createdAt": 105,
+              "askId": "ask-b",
+              "title": "Other?",
+              "detail": "Detail",
+              "options": [],
+              "state": "dead",
+              "deadReason": "turn_ended",
+              "answeredOptionLabel": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e7",
+            "row": {
+              "key": "e7",
+              "kind": "user_input",
+              "sequence": 7,
+              "createdAt": 106,
+              "requestId": "input-b",
+              "questions": [],
+              "state": "dead",
+              "deadReason": "turn_ended",
+              "answers": null,
+              "failureDetail": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e8",
+            "row": {
+              "key": "e8",
+              "kind": "turn_ended",
+              "sequence": 8,
+              "createdAt": 107,
+              "ending": "interrupted",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "turn interrupted",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": false,
+            "failed": false
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Work"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "permission_ask",
+            "sequence": 2,
+            "createdAt": 101,
+            "askId": "ask-a",
+            "title": "Continue?",
+            "detail": null,
+            "options": [
+              {
+                "option_id": "yes",
+                "label": "Yes",
+                "option_kind": "allow_once"
+              }
+            ],
+            "state": "answered",
+            "deadReason": null,
+            "answeredOptionLabel": "Yes"
+          },
+          {
+            "key": "e4",
+            "kind": "user_input",
+            "sequence": 4,
+            "createdAt": 103,
+            "requestId": "input-a",
+            "questions": [
+              {
+                "question_id": "q",
+                "header": "Pick",
+                "question": "Which?",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "A option"
+                  }
+                ],
+                "multi_select": false,
+                "allow_other": true
+              }
+            ],
+            "state": "answered",
+            "deadReason": null,
+            "answers": {
+              "q": {
+                "answers": [
+                  "A"
+                ]
+              }
+            },
+            "failureDetail": null
+          },
+          {
+            "key": "e6",
+            "kind": "permission_ask",
+            "sequence": 6,
+            "createdAt": 105,
+            "askId": "ask-b",
+            "title": "Other?",
+            "detail": "Detail",
+            "options": [],
+            "state": "dead",
+            "deadReason": "turn_ended",
+            "answeredOptionLabel": null
+          },
+          {
+            "key": "e7",
+            "kind": "user_input",
+            "sequence": 7,
+            "createdAt": 106,
+            "requestId": "input-b",
+            "questions": [],
+            "state": "dead",
+            "deadReason": "turn_ended",
+            "answers": null,
+            "failureDetail": null
+          },
+          {
+            "key": "e8",
+            "kind": "turn_ended",
+            "sequence": 8,
+            "createdAt": 107,
+            "ending": "interrupted",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Work"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "interrupted",
+            "isLatest": true,
+            "durationSeconds": 7,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "permission_ask",
+              "sequence": 2,
+              "createdAt": 101,
+              "askId": "ask-a",
+              "title": "Continue?",
+              "detail": null,
+              "options": [
+                {
+                  "option_id": "yes",
+                  "label": "Yes",
+                  "option_kind": "allow_once"
+                }
+              ],
+              "state": "answered",
+              "deadReason": null,
+              "answeredOptionLabel": "Yes"
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "user_input",
+              "sequence": 4,
+              "createdAt": 103,
+              "requestId": "input-a",
+              "questions": [
+                {
+                  "question_id": "q",
+                  "header": "Pick",
+                  "question": "Which?",
+                  "options": [
+                    {
+                      "label": "A",
+                      "description": "A option"
+                    }
+                  ],
+                  "multi_select": false,
+                  "allow_other": true
+                }
+              ],
+              "state": "answered",
+              "deadReason": null,
+              "answers": {
+                "q": {
+                  "answers": [
+                    "A"
+                  ]
+                }
+              },
+              "failureDetail": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e6",
+            "row": {
+              "key": "e6",
+              "kind": "permission_ask",
+              "sequence": 6,
+              "createdAt": 105,
+              "askId": "ask-b",
+              "title": "Other?",
+              "detail": "Detail",
+              "options": [],
+              "state": "dead",
+              "deadReason": "turn_ended",
+              "answeredOptionLabel": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e7",
+            "row": {
+              "key": "e7",
+              "kind": "user_input",
+              "sequence": 7,
+              "createdAt": 106,
+              "requestId": "input-b",
+              "questions": [],
+              "state": "dead",
+              "deadReason": "turn_ended",
+              "answers": null,
+              "failureDetail": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e8",
+            "row": {
+              "key": "e8",
+              "kind": "turn_ended",
+              "sequence": 8,
+              "createdAt": 107,
+              "ending": "interrupted",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "turn interrupted",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": false,
+            "failed": false
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "failed-input-without-request-and-missing-reply",
+    "stopped": false,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Start"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "user_input_failed",
+        "payload": {
+          "request_id": "malformed",
+          "detail": "Invalid input request"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "explicit_reply_missing",
+        "payload": {
+          "prompt_sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 4,
+        "created_at": 103,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "failed",
+          "error_summary": "Failed work"
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Start"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "user_input",
+            "sequence": 2,
+            "createdAt": 101,
+            "requestId": "malformed",
+            "questions": [],
+            "state": "failed",
+            "deadReason": null,
+            "answers": null,
+            "failureDetail": "Invalid input request"
+          },
+          {
+            "key": "e3",
+            "kind": "explicit_reply_missing",
+            "sequence": 3,
+            "createdAt": 102,
+            "promptSender": {
+              "kind": "owner",
+              "id": "owner"
+            }
+          },
+          {
+            "key": "e4",
+            "kind": "turn_ended",
+            "sequence": 4,
+            "createdAt": 103,
+            "ending": "failed",
+            "errorSummary": "Failed work",
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Start"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "failed",
+            "isLatest": true,
+            "durationSeconds": 3,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "user_input",
+              "sequence": 2,
+              "createdAt": 101,
+              "requestId": "malformed",
+              "questions": [],
+              "state": "failed",
+              "deadReason": null,
+              "answers": null,
+              "failureDetail": "Invalid input request"
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "explicit_reply_missing",
+              "sequence": 3,
+              "createdAt": 102,
+              "promptSender": {
+                "kind": "owner",
+                "id": "owner"
+              }
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "turn_ended",
+              "sequence": 4,
+              "createdAt": 103,
+              "ending": "failed",
+              "errorSummary": "Failed work",
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Failed work",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": false,
+            "failed": true
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Start"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "user_input",
+            "sequence": 2,
+            "createdAt": 101,
+            "requestId": "malformed",
+            "questions": [],
+            "state": "failed",
+            "deadReason": null,
+            "answers": null,
+            "failureDetail": "Invalid input request"
+          },
+          {
+            "key": "e3",
+            "kind": "explicit_reply_missing",
+            "sequence": 3,
+            "createdAt": 102,
+            "promptSender": {
+              "kind": "owner",
+              "id": "owner"
+            }
+          },
+          {
+            "key": "e4",
+            "kind": "turn_ended",
+            "sequence": 4,
+            "createdAt": 103,
+            "ending": "failed",
+            "errorSummary": "Failed work",
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Start"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": "failed",
+            "isLatest": true,
+            "durationSeconds": 3,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "user_input",
+              "sequence": 2,
+              "createdAt": 101,
+              "requestId": "malformed",
+              "questions": [],
+              "state": "failed",
+              "deadReason": null,
+              "answers": null,
+              "failureDetail": "Invalid input request"
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "explicit_reply_missing",
+              "sequence": 3,
+              "createdAt": 102,
+              "promptSender": {
+                "kind": "owner",
+                "id": "owner"
+              }
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "turn_ended",
+              "sequence": 4,
+              "createdAt": 103,
+              "ending": "failed",
+              "errorSummary": "Failed work",
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Failed work",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": false,
+            "failed": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "stopped-without-ending",
+    "stopped": true,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Start"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "permission_asked",
+        "payload": {
+          "ask_id": "pending",
+          "title": "Permission",
+          "detail": null,
+          "options": []
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "user_input_requested",
+        "payload": {
+          "request_id": "pending-input",
+          "questions": []
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 4,
+        "created_at": 103,
+        "kind": "message_to_owner",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "Before stop"
+            }
+          ],
+          "recipient": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          },
+          "sender_label": "worker"
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Start"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "permission_ask",
+            "sequence": 2,
+            "createdAt": 101,
+            "askId": "pending",
+            "title": "Permission",
+            "detail": null,
+            "options": [],
+            "state": "dead",
+            "deadReason": "no_ending_recorded",
+            "answeredOptionLabel": null
+          },
+          {
+            "key": "e3",
+            "kind": "user_input",
+            "sequence": 3,
+            "createdAt": 102,
+            "requestId": "pending-input",
+            "questions": [],
+            "state": "dead",
+            "deadReason": "no_ending_recorded",
+            "answers": null,
+            "failureDetail": null
+          },
+          {
+            "key": "e4",
+            "kind": "agent_message",
+            "sequence": 4,
+            "createdAt": 103,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Before stop"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "turn-stopped",
+            "kind": "turn_stopped",
+            "sequence": 5,
+            "createdAt": 103
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Start"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": true,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": null,
+            "isLatest": true,
+            "durationSeconds": null,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "permission_ask",
+              "sequence": 2,
+              "createdAt": 101,
+              "askId": "pending",
+              "title": "Permission",
+              "detail": null,
+              "options": [],
+              "state": "dead",
+              "deadReason": "no_ending_recorded",
+              "answeredOptionLabel": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "user_input",
+              "sequence": 3,
+              "createdAt": 102,
+              "requestId": "pending-input",
+              "questions": [],
+              "state": "dead",
+              "deadReason": "no_ending_recorded",
+              "answers": null,
+              "failureDetail": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "agent_message",
+              "sequence": 4,
+              "createdAt": 103,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Before stop"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "turn-stopped",
+            "row": {
+              "key": "turn-stopped",
+              "kind": "turn_stopped",
+              "sequence": 5,
+              "createdAt": 103
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "turn stopped without an ending",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Start"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "permission_ask",
+            "sequence": 2,
+            "createdAt": 101,
+            "askId": "pending",
+            "title": "Permission",
+            "detail": null,
+            "options": [],
+            "state": "dead",
+            "deadReason": "no_ending_recorded",
+            "answeredOptionLabel": null
+          },
+          {
+            "key": "e3",
+            "kind": "user_input",
+            "sequence": 3,
+            "createdAt": 102,
+            "requestId": "pending-input",
+            "questions": [],
+            "state": "dead",
+            "deadReason": "no_ending_recorded",
+            "answers": null,
+            "failureDetail": null
+          },
+          {
+            "key": "e4",
+            "kind": "agent_message",
+            "sequence": 4,
+            "createdAt": 103,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Before stop"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "turn-stopped",
+            "kind": "turn_stopped",
+            "sequence": 5,
+            "createdAt": 103
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Start"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": true,
+            "stopped": true,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": null,
+            "isLatest": true,
+            "durationSeconds": null,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "permission_ask",
+              "sequence": 2,
+              "createdAt": 101,
+              "askId": "pending",
+              "title": "Permission",
+              "detail": null,
+              "options": [],
+              "state": "dead",
+              "deadReason": "no_ending_recorded",
+              "answeredOptionLabel": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "user_input",
+              "sequence": 3,
+              "createdAt": 102,
+              "requestId": "pending-input",
+              "questions": [],
+              "state": "dead",
+              "deadReason": "no_ending_recorded",
+              "answers": null,
+              "failureDetail": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "agent_message",
+              "sequence": 4,
+              "createdAt": 103,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Before stop"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "turn-stopped",
+            "row": {
+              "key": "turn-stopped",
+              "kind": "turn_stopped",
+              "sequence": 5,
+              "createdAt": 103
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "turn stopped without an ending",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "tool-orphans-plan-and-work-run-boundaries",
+    "stopped": false,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "tool_call_finished",
+        "payload": {
+          "tool_call_id": "orphan",
+          "tool_call_status": "failed",
+          "detail": "No start"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Start"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "tool_call_started",
+        "payload": {
+          "tool_call_id": "one",
+          "title": "One",
+          "tool_kind": "other",
+          "detail": "start"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 4,
+        "created_at": 103,
+        "kind": "plan_updated",
+        "payload": {
+          "entries": [
+            {
+              "text": "A",
+              "status": "completed"
+            },
+            {
+              "text": "B",
+              "status": "in_progress"
+            }
+          ]
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 5,
+        "created_at": 104,
+        "kind": "token_usage",
+        "payload": {
+          "input_tokens": 10,
+          "output_tokens": 5,
+          "cached_input_tokens": 2,
+          "cost_usd": 0.01
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 6,
+        "created_at": 105,
+        "kind": "tool_call_started",
+        "payload": {
+          "tool_call_id": "two",
+          "title": "Two",
+          "tool_kind": "other",
+          "detail": null
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 7,
+        "created_at": 106,
+        "kind": "agent_message",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "Commentary between calls"
+            }
+          ]
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 8,
+        "created_at": 107,
+        "kind": "tool_call_started",
+        "payload": {
+          "tool_call_id": "three",
+          "title": "Three",
+          "tool_kind": "other",
+          "detail": null
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 9,
+        "created_at": 108,
+        "kind": "tool_call_finished",
+        "payload": {
+          "tool_call_id": "one",
+          "tool_call_status": "completed",
+          "detail": "capped"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 10,
+        "created_at": 109,
+        "kind": "context_compacted",
+        "payload": {}
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 11,
+        "created_at": 110,
+        "kind": "model_changed",
+        "payload": {
+          "model": "model",
+          "reasoning_effort": "high"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 12,
+        "created_at": 111,
+        "kind": "message_to_owner",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "Answer"
+            }
+          ],
+          "recipient": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          },
+          "sender_label": "worker"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 13,
+        "created_at": 112,
+        "kind": "turn_ended",
+        "payload": {
+          "ending": "completed",
+          "error_summary": null
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e2",
+            "kind": "prompt",
+            "sequence": 2,
+            "createdAt": 101,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Start"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 101000
+          },
+          {
+            "key": "e12",
+            "kind": "agent_message",
+            "sequence": 12,
+            "createdAt": 111,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Answer"
+              }
+            ],
+            "toOwner": true
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "prompt",
+              "sequence": 2,
+              "createdAt": 101,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Start"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 101000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e2",
+            "turnKey": "turn:e2",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 101000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 11,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e12",
+            "row": {
+              "key": "e12",
+              "kind": "agent_message",
+              "sequence": 12,
+              "createdAt": 111,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Answer"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Answer",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "tool_call",
+            "sequence": 1,
+            "createdAt": 100,
+            "toolCallId": "orphan",
+            "title": "orphan",
+            "toolKind": "other",
+            "detail": "No start",
+            "startedDetail": null,
+            "cappedDetailSequence": null,
+            "status": "failed",
+            "progress": null
+          },
+          {
+            "key": "e2",
+            "kind": "prompt",
+            "sequence": 2,
+            "createdAt": 101,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Start"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 101000
+          },
+          {
+            "key": "e3",
+            "kind": "tool_call",
+            "sequence": 3,
+            "createdAt": 102,
+            "toolCallId": "one",
+            "title": "One",
+            "toolKind": "other",
+            "detail": "capped",
+            "startedDetail": "start",
+            "cappedDetailSequence": null,
+            "status": "completed",
+            "progress": null
+          },
+          {
+            "key": "e4",
+            "kind": "plan_updated",
+            "sequence": 4,
+            "createdAt": 103,
+            "entries": [
+              {
+                "text": "A",
+                "status": "completed"
+              },
+              {
+                "text": "B",
+                "status": "in_progress"
+              }
+            ]
+          },
+          {
+            "key": "e5",
+            "kind": "token_usage",
+            "sequence": 5,
+            "createdAt": 104,
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "cachedInputTokens": 2,
+            "costUsd": 0.01
+          },
+          {
+            "key": "e6",
+            "kind": "tool_call",
+            "sequence": 6,
+            "createdAt": 105,
+            "toolCallId": "two",
+            "title": "Two",
+            "toolKind": "other",
+            "detail": null,
+            "startedDetail": null,
+            "cappedDetailSequence": null,
+            "status": "running",
+            "progress": null
+          },
+          {
+            "key": "e7",
+            "kind": "agent_message",
+            "sequence": 7,
+            "createdAt": 106,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Commentary between calls"
+              }
+            ],
+            "toOwner": false
+          },
+          {
+            "key": "e8",
+            "kind": "tool_call",
+            "sequence": 8,
+            "createdAt": 107,
+            "toolCallId": "three",
+            "title": "Three",
+            "toolKind": "other",
+            "detail": null,
+            "startedDetail": null,
+            "cappedDetailSequence": null,
+            "status": "running",
+            "progress": null
+          },
+          {
+            "key": "e10",
+            "kind": "context_compacted",
+            "sequence": 10,
+            "createdAt": 109
+          },
+          {
+            "key": "e11",
+            "kind": "model_changed",
+            "sequence": 11,
+            "createdAt": 110,
+            "model": "model",
+            "reasoningEffort": "high"
+          },
+          {
+            "key": "e12",
+            "kind": "agent_message",
+            "sequence": 12,
+            "createdAt": 111,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Answer"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e13",
+            "kind": "turn_ended",
+            "sequence": 13,
+            "createdAt": 112,
+            "ending": "completed",
+            "errorSummary": null,
+            "automaticCompactionResult": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "work_group",
+            "key": "work:e1",
+            "turnKey": "turn:none",
+            "entries": [
+              {
+                "key": "e1",
+                "kind": "tool_call",
+                "sequence": 1,
+                "createdAt": 100,
+                "toolCallId": "orphan",
+                "title": "orphan",
+                "toolKind": "other",
+                "detail": "No start",
+                "startedDetail": null,
+                "cappedDetailSequence": null,
+                "status": "failed",
+                "progress": null
+              }
+            ],
+            "settled": false
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "prompt",
+              "sequence": 2,
+              "createdAt": 101,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Start"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 101000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e2",
+            "turnKey": "turn:e2",
+            "settled": true,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 101000,
+            "ending": "completed",
+            "isLatest": true,
+            "durationSeconds": 11,
+            "toolCallCount": 3,
+            "foldedMessageCount": 1
+          },
+          {
+            "kind": "work_group",
+            "key": "work:e3",
+            "turnKey": "turn:e2",
+            "entries": [
+              {
+                "key": "e3",
+                "kind": "tool_call",
+                "sequence": 3,
+                "createdAt": 102,
+                "toolCallId": "one",
+                "title": "One",
+                "toolKind": "other",
+                "detail": "capped",
+                "startedDetail": "start",
+                "cappedDetailSequence": null,
+                "status": "completed",
+                "progress": null
+              },
+              {
+                "key": "e6",
+                "kind": "tool_call",
+                "sequence": 6,
+                "createdAt": 105,
+                "toolCallId": "two",
+                "title": "Two",
+                "toolKind": "other",
+                "detail": null,
+                "startedDetail": null,
+                "cappedDetailSequence": null,
+                "status": "running",
+                "progress": null
+              }
+            ],
+            "settled": true
+          },
+          {
+            "kind": "row",
+            "key": "e5",
+            "row": {
+              "key": "e5",
+              "kind": "token_usage",
+              "sequence": 5,
+              "createdAt": 104,
+              "inputTokens": 10,
+              "outputTokens": 5,
+              "cachedInputTokens": 2,
+              "costUsd": 0.01
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e7",
+            "row": {
+              "key": "e7",
+              "kind": "agent_message",
+              "sequence": 7,
+              "createdAt": 106,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Commentary between calls"
+                }
+              ],
+              "toOwner": false
+            },
+            "behindTheFoldOf": "turn:e2"
+          },
+          {
+            "kind": "work_group",
+            "key": "work:e8",
+            "turnKey": "turn:e2",
+            "entries": [
+              {
+                "key": "e8",
+                "kind": "tool_call",
+                "sequence": 8,
+                "createdAt": 107,
+                "toolCallId": "three",
+                "title": "Three",
+                "toolKind": "other",
+                "detail": null,
+                "startedDetail": null,
+                "cappedDetailSequence": null,
+                "status": "running",
+                "progress": null
+              }
+            ],
+            "settled": true
+          },
+          {
+            "kind": "row",
+            "key": "e10",
+            "row": {
+              "key": "e10",
+              "kind": "context_compacted",
+              "sequence": 10,
+              "createdAt": 109
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e11",
+            "row": {
+              "key": "e11",
+              "kind": "model_changed",
+              "sequence": 11,
+              "createdAt": 110,
+              "model": "model",
+              "reasoningEffort": "high"
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e12",
+            "row": {
+              "key": "e12",
+              "kind": "agent_message",
+              "sequence": 12,
+              "createdAt": 111,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Answer"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e13",
+            "row": {
+              "key": "e13",
+              "kind": "turn_ended",
+              "sequence": 13,
+              "createdAt": 112,
+              "ending": "completed",
+              "errorSummary": null,
+              "automaticCompactionResult": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Answer",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": false,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "simultaneous-pending-permission-and-input",
+    "stopped": false,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Work"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          }
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "permission_asked",
+        "payload": {
+          "ask_id": "permission",
+          "title": "Continue?",
+          "detail": null,
+          "options": []
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "user_input_requested",
+        "payload": {
+          "request_id": "question",
+          "questions": []
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Work"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "permission_ask",
+            "sequence": 2,
+            "createdAt": 101,
+            "askId": "permission",
+            "title": "Continue?",
+            "detail": null,
+            "options": [],
+            "state": "live",
+            "deadReason": null,
+            "answeredOptionLabel": null
+          },
+          {
+            "key": "e3",
+            "kind": "user_input",
+            "sequence": 3,
+            "createdAt": 102,
+            "requestId": "question",
+            "questions": [],
+            "state": "live",
+            "deadReason": null,
+            "answers": null,
+            "failureDetail": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Work"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": false,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": null,
+            "isLatest": true,
+            "durationSeconds": null,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "permission_ask",
+              "sequence": 2,
+              "createdAt": 101,
+              "askId": "permission",
+              "title": "Continue?",
+              "detail": null,
+              "options": [],
+              "state": "live",
+              "deadReason": null,
+              "answeredOptionLabel": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "user_input",
+              "sequence": 3,
+              "createdAt": 102,
+              "requestId": "question",
+              "questions": [],
+              "state": "live",
+              "deadReason": null,
+              "answers": null,
+              "failureDetail": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Continue?",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": true,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": true,
+            "unreadReply": false,
+            "failed": false
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Work"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "permission_ask",
+            "sequence": 2,
+            "createdAt": 101,
+            "askId": "permission",
+            "title": "Continue?",
+            "detail": null,
+            "options": [],
+            "state": "live",
+            "deadReason": null,
+            "answeredOptionLabel": null
+          },
+          {
+            "key": "e3",
+            "kind": "user_input",
+            "sequence": 3,
+            "createdAt": 102,
+            "requestId": "question",
+            "questions": [],
+            "state": "live",
+            "deadReason": null,
+            "answers": null,
+            "failureDetail": null
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Work"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": false,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": null,
+            "isLatest": true,
+            "durationSeconds": null,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "permission_ask",
+              "sequence": 2,
+              "createdAt": 101,
+              "askId": "permission",
+              "title": "Continue?",
+              "detail": null,
+              "options": [],
+              "state": "live",
+              "deadReason": null,
+              "answeredOptionLabel": null
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "user_input",
+              "sequence": 3,
+              "createdAt": 102,
+              "requestId": "question",
+              "questions": [],
+              "state": "live",
+              "deadReason": null,
+              "answers": null,
+              "failureDetail": null
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": null,
+          "text": "Continue?",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": true,
+          "workingSinceUnixMilliseconds": null,
+          "marks": {
+            "running": true,
+            "unreadReply": false,
+            "failed": false
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "running-multiple-owner-messages-and-time-skew",
+    "stopped": false,
+    "owner_sender_label": "owner",
+    "events": [
+      {
+        "conversation_id": "fixture",
+        "sequence": 1,
+        "created_at": 100,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Start"
+            }
+          ],
+          "mode": "queue",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sent_at_unix_milliseconds": 9999999999999
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 2,
+        "created_at": 101,
+        "kind": "message_to_owner",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "First"
+            }
+          ],
+          "recipient": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          },
+          "sender_label": "worker"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 3,
+        "created_at": 102,
+        "kind": "message_to_owner",
+        "payload": {
+          "content": [
+            {
+              "piece": "text",
+              "text": "Second"
+            }
+          ],
+          "recipient": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sender": {
+            "kind": "ticket",
+            "id": "fixture-worker"
+          },
+          "sender_label": "worker"
+        }
+      },
+      {
+        "conversation_id": "fixture",
+        "sequence": 4,
+        "created_at": 103,
+        "kind": "prompt",
+        "payload": {
+          "sender_label": "owner",
+          "content": [
+            {
+              "piece": "text",
+              "text": "Steer"
+            }
+          ],
+          "mode": "steer",
+          "sender": {
+            "kind": "owner",
+            "id": "owner"
+          },
+          "sent_at_unix_milliseconds": 0
+        }
+      }
+    ],
+    "expected": {
+      "focus": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Start"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "agent_message",
+            "sequence": 2,
+            "createdAt": 101,
+            "content": [
+              {
+                "piece": "text",
+                "text": "First"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e3",
+            "kind": "agent_message",
+            "sequence": 3,
+            "createdAt": 102,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Second"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e4",
+            "kind": "prompt",
+            "sequence": 4,
+            "createdAt": 103,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Steer"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "steer",
+            "sentAtUnixMilliseconds": 0
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Start"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": false,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": null,
+            "isLatest": true,
+            "durationSeconds": null,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "agent_message",
+              "sequence": 2,
+              "createdAt": 101,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "First"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "agent_message",
+              "sequence": 3,
+              "createdAt": 102,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Second"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "prompt",
+              "sequence": 4,
+              "createdAt": 103,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Steer"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "steer",
+              "sentAtUnixMilliseconds": 0
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": "you",
+          "text": "Steer",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": 100000,
+          "marks": {
+            "running": true,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      },
+      "full": {
+        "rows": [
+          {
+            "key": "e1",
+            "kind": "prompt",
+            "sequence": 1,
+            "createdAt": 100,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Start"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "queue",
+            "sentAtUnixMilliseconds": 100000
+          },
+          {
+            "key": "e2",
+            "kind": "agent_message",
+            "sequence": 2,
+            "createdAt": 101,
+            "content": [
+              {
+                "piece": "text",
+                "text": "First"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e3",
+            "kind": "agent_message",
+            "sequence": 3,
+            "createdAt": 102,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Second"
+              }
+            ],
+            "toOwner": true
+          },
+          {
+            "key": "e4",
+            "kind": "prompt",
+            "sequence": 4,
+            "createdAt": 103,
+            "content": [
+              {
+                "piece": "text",
+                "text": "Steer"
+              }
+            ],
+            "senderLabel": "owner",
+            "mode": "steer",
+            "sentAtUnixMilliseconds": 0
+          }
+        ],
+        "items": [
+          {
+            "kind": "row",
+            "key": "e1",
+            "row": {
+              "key": "e1",
+              "kind": "prompt",
+              "sequence": 1,
+              "createdAt": 100,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Start"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "queue",
+              "sentAtUnixMilliseconds": 100000
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "turn",
+            "key": "turn:e1",
+            "turnKey": "turn:e1",
+            "settled": false,
+            "stopped": false,
+            "startedAtUnixMilliseconds": 100000,
+            "ending": null,
+            "isLatest": true,
+            "durationSeconds": null,
+            "toolCallCount": 0,
+            "foldedMessageCount": 0
+          },
+          {
+            "kind": "row",
+            "key": "e2",
+            "row": {
+              "key": "e2",
+              "kind": "agent_message",
+              "sequence": 2,
+              "createdAt": 101,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "First"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e3",
+            "row": {
+              "key": "e3",
+              "kind": "agent_message",
+              "sequence": 3,
+              "createdAt": 102,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Second"
+                }
+              ],
+              "toOwner": true
+            },
+            "behindTheFoldOf": null
+          },
+          {
+            "kind": "row",
+            "key": "e4",
+            "row": {
+              "key": "e4",
+              "kind": "prompt",
+              "sequence": 4,
+              "createdAt": 103,
+              "content": [
+                {
+                  "piece": "text",
+                  "text": "Steer"
+                }
+              ],
+              "senderLabel": "owner",
+              "mode": "steer",
+              "sentAtUnixMilliseconds": 0
+            },
+            "behindTheFoldOf": null
+          }
+        ],
+        "rest": {
+          "who": "you",
+          "text": "Steer",
+          "aside": null,
+          "taskProgress": null,
+          "waiting": false,
+          "workingSinceUnixMilliseconds": 100000,
+          "marks": {
+            "running": true,
+            "unreadReply": true,
+            "failed": false
+          }
+        }
+      }
+    }
+  }
+]

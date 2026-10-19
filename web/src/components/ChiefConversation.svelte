@@ -45,6 +45,8 @@
   let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let chief = $derived(displayed ? navigation.presentationFor(displayed).chief : null);
+  $effect(()=>navigation.owner.setDemand('chief',{selected:{kind:'chief',id:'chief'},windows:[]}));
+  onDestroy(()=>navigation.owner.setDemand('chief',undefined));
   let conversationState = $state<ConversationState>("rest");
   let conversationId = $state<string | null>(null);
   let observedPointer: string | undefined = $state();

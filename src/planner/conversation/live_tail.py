@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import Final
 
 from planner.conversation.events import ConversationLiveTailFrame
 from planner.conversation.storage import StoredConversationEvent
+from planner.conversation.views.live_output import ConversationViewLiveOutput
 
 # The two things a watcher is handed. A stored event is a row that has been committed and
 # can be asked for again; a frame is shown once and forgotten.
@@ -113,7 +115,8 @@ class ConversationTailSubscription:
 class ConversationLiveTail:
     """Every open watcher, by conversation. In this process only, and only for now."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, view_output_directory: Path | None = None) -> None:
+        self.views = ConversationViewLiveOutput(view_output_directory)
         self._subscriptions: dict[str, set[ConversationTailSubscription]] = {}
 
     def subscribe(self, conversation_id: str) -> ConversationTailSubscription:
@@ -132,11 +135,13 @@ class ConversationLiveTail:
 
     def publish_event(self, event: StoredConversationEvent) -> None:
         """Show a row that has just been committed to everyone watching it."""
+        self.views.publish_event(event.conversation_id, event.sequence, event.payload)
         for subscription in self._watchers(event.conversation_id):
             subscription.deliver(event)
 
     def publish_frame(self, conversation_id: str, frame: ConversationLiveTailFrame) -> None:
         """Show a piece of something that has not finished arriving."""
+        self.views.publish_frame(conversation_id, frame)
         for subscription in self._watchers(conversation_id):
             subscription.deliver(frame)
 
@@ -149,6 +154,7 @@ class ConversationLiveTail:
         """
         for subscription in tuple(self._all_subscriptions()):
             subscription.close()
+        self.views.close()
 
     def open_subscription_count(self) -> int:
         return sum(1 for _ in self._all_subscriptions())

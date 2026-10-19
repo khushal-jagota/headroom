@@ -7,6 +7,8 @@
    * and Latest is the one explicit move allowed to go backwards.
    */
   import { onMount, tick, untrack, type Snippet } from "svelte";
+  import ProjectedTranscript from '../view/ProjectedTranscript.svelte';
+  import type {ConversationViewReader,ViewReaderAnchor} from '../../../lib/conversation/view/reader.svelte';
   import ConversationTranscript from "../ConversationTranscript.svelte";
   import MessagePieces from "../MessagePieces.svelte";
   import type { ConversationState } from "../../../lib/conversation/conversationState";
@@ -33,8 +35,12 @@
     ownSenderLabel,
     livenessPulse,
     conversationState,
-    emptyState
+    emptyState,
+    reader = null,
+    viewAnchor = $bindable(null)
   }: {
+    reader?: ConversationViewReader | null;
+    viewAnchor?: ViewReaderAnchor | null;
     conversationId: string;
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
@@ -83,7 +89,7 @@
 
   /** Rest and hidden tabs keep dirty work, but never measure an invisible thread. */
   function canMeasure(): boolean {
-    return !disposed && !nobodyIsLookingAtTheTab() && conversationState !== "rest";
+    return !disposed && !reader?.restoring && !nobodyIsLookingAtTheTab() && conversationState !== "rest";
   }
 
   function modeChip(mode: PromptDeliveryMode): string | null {
@@ -115,11 +121,20 @@
     jumpVisible = !reading.newestLineIsInSight;
   }
 
+  function saveLogicalAnchor(thread:HTMLDivElement):void{
+    if(reader===null||reader.restoring)return;
+    const top=thread.getBoundingClientRect().top;
+    const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.getBoundingClientRect().bottom>top);
+    const key=element?.dataset.conversationViewKey;
+    const item=reader.pages.flatMap(page=>page.items).find(item=>item.key===key);
+    if(item&&element)viewAnchor={key:item.key,order:item.order,offset:element.getBoundingClientRect().top-top,following};
+  }
   function saveTheSettledView(thread: HTMLDivElement): void {
     const geometry = threadGeometry(thread, reservedSpaceElement);
     takeTheReading(geometry.read(reservedSpacePixels));
     savedView = geometry.holdView();
     savedShape = currentShape(thread);
+    saveLogicalAnchor(thread);
   }
 
   /** A new action during pending layout supersedes the older placement decision. */
@@ -178,9 +193,11 @@
     following = inSight;
     savedView = geometry.holdView();
     savedShape = currentShape(thread);
+    saveLogicalAnchor(thread);
   }
 
-  function jumpToTheNewestLine(): void {
+  async function jumpToTheNewestLine(): Promise<void> {
+    if(reader!==null)await reader.load({kind:"timeline",key:null},null,"older",true);
     pendingLatest = true;
     nativePositionWins = false;
     requestReconciliation();
@@ -194,6 +211,10 @@
   }
 
   function landTheOpen(thread: HTMLDivElement): void {
+    if(viewAnchor!==null&&!viewAnchor.following){
+      const element=[...thread.querySelectorAll<HTMLElement>('[data-conversation-view-key]')].find(node=>node.dataset.conversationViewKey===viewAnchor?.key);
+      if(element){moveTheThread(thread,thread.scrollTop+element.getBoundingClientRect().top-thread.getBoundingClientRect().top-viewAnchor.offset);following=false;return;}
+    }
     const geometry = threadGeometry(thread, reservedSpaceElement);
     const end = Math.max(0, geometry.newestLineScrollTop(newestLineBottomPixels));
     const request = requestWaitingOnThePerson(thread);
@@ -317,6 +338,8 @@
 
   $effect.pre(() => {
     rows;
+    reader?.revision;
+    reader?.restoring;
     visibleRows;
     lens;
     outgoingMessages;
@@ -402,6 +425,9 @@
     {#if emptyState && rows.length === 0 && outgoingMessages.length === 0}
       {@render emptyState()}
     {/if}
+    {#if reader!==null}
+      <ProjectedTranscript {reader} {models} {ownSenderLabel} {livenessPulse}/>
+    {:else}
     <ConversationTranscript
       {rows}
       {visibleRows}
@@ -411,6 +437,7 @@
       {livenessPulse}
       {conversationId}
     />
+    {/if}
     {#each outgoingMessages as message (message.messageId)}
       {@const chip = modeChip(message.mode)}
       {@const note = outgoingMessageNote(message)}

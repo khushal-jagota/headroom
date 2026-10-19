@@ -49,9 +49,11 @@ class FakeHealth:
     def __init__(self, events: list[str], healthy: set[str]) -> None:
         self.events = events
         self.healthy = healthy
+        self.deadlines: list[float] = []
 
     def wait_for_sha(self, sha: str, *, deadline: float) -> bool:
         self.events.append(f"health:{sha}")
+        self.deadlines.append(deadline)
         return sha in self.healthy
 
 
@@ -81,6 +83,12 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     lifecycle: list[tuple[str, dict[str, object]]] = []
     snapshot = tmp_path / "snapshot"
 
+    health = FakeHealth(events, {SHA_B})
+
+    def after_restart() -> float:
+        assert events[-1] == "restart"
+        return 10.0
+
     result = deploy_app(
         candidate_app=candidate,
         current_root=current,
@@ -88,12 +96,13 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
         backup=_recording_backup(events, snapshot),
         restore=lambda _: events.append("restore"),
         service=FakeService(events),
-        health=FakeHealth(events, {SHA_B}),
-        now=lambda: 10.0,
+        health=health,
+        now=after_restart,
         lifecycle_transition=lambda phase, **values: lifecycle.append((phase, values)),
     )
 
     assert result == DeploymentResult("succeeded", SHA_B, SHA_A, None)
+    assert health.deadlines == [310.0]
     assert events == ["stop", f"backup:{SHA_A}", "restart", f"health:{SHA_B}"]
     assert lifecycle == [
         ("restarting", {"serving_sha": None, "detail": None, "code": None}),
@@ -120,6 +129,7 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
     events: list[str] = []
     snapshot = tmp_path / "snapshot"
     lifecycle: list[tuple[str, dict[str, object]]] = []
+    health = FakeHealth(events, {SHA_A})
     result = deploy_app(
         candidate_app=candidate,
         current_root=current,
@@ -127,10 +137,13 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
         backup=_recording_backup(events, snapshot),
         restore=lambda path: events.append(f"restore:{path.name}"),
         service=FakeService(events),
-        health=FakeHealth(events, {SHA_A}),
+        health=health,
+        now=lambda: 10.0,
+        health_timeout_seconds=17.0,
         lifecycle_transition=lambda phase, **values: lifecycle.append((phase, values)),
     )
     assert result.status == "rolled_back"
+    assert health.deadlines == [27.0, 27.0]
     assert (current / "app" / "old").is_file()
     assert digest_app_artifact(current / "app") == prior_artifact_digest
     assert (

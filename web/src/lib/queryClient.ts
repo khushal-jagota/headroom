@@ -1,4 +1,5 @@
 import { QueryClient } from "@tanstack/svelte-query";
+import { boundInactiveQueries } from "./resourceVersions/cache";
 
 // The single query client for the whole browser app. Every screen's query and
 // the change stream's invalidation go through this one instance, so a change
@@ -20,3 +21,6 @@ export const queryClient = new QueryClient({
     }
   }
 });
+
+// A long-lived tab retains only a bounded volume of inactive decoded responses.
+boundInactiveQueries(queryClient);

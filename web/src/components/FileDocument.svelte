@@ -10,6 +10,7 @@
    * shared preview at full size, which already knows how to draw an image, a player, or
    * a download line.
    */
+  import { observeVisibleContent } from "../lib/visibleContent";
   import FilePreview from "./FilePreview.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import type { FilePreviewTarget } from "../lib/filePreview";
@@ -24,6 +25,10 @@
     reloadSignal = 0
   }: { target: FilePreviewTarget; reloadSignal?: number } = $props();
 
+  let visible = $state(false);
+  function visibility(element: HTMLElement) {
+    return { destroy: observeVisibleContent(element, next => { visible = next; }) };
+  }
   let resolved = $derived(resolvePreview(target));
   let htmlFrameHref = $state<string | null>(null);
   let markdownSource = $state<string | null>(null);
@@ -36,7 +41,7 @@
     htmlFrameHref = null;
     markdownSource = null;
     error = "";
-    if (current.kind !== "html" && current.kind !== "markdown") return;
+    if (!visible || (current.kind !== "html" && current.kind !== "markdown")) return;
 
     const controller = new AbortController();
     let objectUrl: string | null = null;
@@ -69,7 +74,10 @@
   });
 </script>
 
-{#if resolved.kind === "html"}
+<div class="visible-file-document" use:visibility>
+{#if !visible}
+  <div aria-hidden="true"></div>
+{:else if resolved.kind === "html"}
   {#if error}
     <div class="quiet-line">{error}</div>
   {:else if htmlFrameHref}
@@ -96,3 +104,8 @@
 {:else}
   <FilePreview {target} mode="full" />
 {/if}
+
+</div>
+<style>
+  .visible-file-document { width: 100%; height: 100%; min-height: 0; }
+</style>

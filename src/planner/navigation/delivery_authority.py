@@ -155,7 +155,7 @@ class DeliveryAdmission:
             self._validate_locked(read)
 
     async def send(self, read: DeliveryAccess, send: Send, message: Message) -> None:
-        self.validate(read)
+        await asyncio.to_thread(self.validate, read)
         loop = asyncio.get_running_loop()
 
         async def deliver() -> None:

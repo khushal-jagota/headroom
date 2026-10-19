@@ -60,10 +60,10 @@ describe("bounded orchestrator ticket discovery", () => {
       const backlog = queries.orchestratorTicketSummaries(principal, "backlogged", 0);
       const next = queries.orchestratorTicketSummaries(principal, "active", 30);
       for (const query of [chief, item, backlog, next]) await client.fetchQuery(query);
-      expect(client.getQueryData(chief.queryKey)).toMatchObject({ tickets: [{ id: "chief-active-0" }] });
-      expect(client.getQueryData(item.queryKey)).toMatchObject({ tickets: [{ id: "item one-active-0" }] });
-      expect(client.getQueryData(backlog.queryKey)).toMatchObject({ tickets: [{ id: "item one-backlogged-0" }] });
-      expect(client.getQueryData(next.queryKey)).toMatchObject({ tickets: [{ id: "item one-active-30" }] });
+      expect(client.getQueryData(chief.queryKey)).toMatchObject({ body: { tickets: [{ id: "chief-active-0" }] } });
+      expect(client.getQueryData(item.queryKey)).toMatchObject({ body: { tickets: [{ id: "item one-active-0" }] } });
+      expect(client.getQueryData(backlog.queryKey)).toMatchObject({ body: { tickets: [{ id: "item one-backlogged-0" }] } });
+      expect(client.getQueryData(next.queryKey)).toMatchObject({ body: { tickets: [{ id: "item one-active-30" }] } });
     } finally {
       client.clear();
       vi.unstubAllGlobals();

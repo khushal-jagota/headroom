@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ErrorLine from "./components/ErrorLine.svelte";
   import { onMount, onDestroy, tick } from "svelte";
   import { provideNavigationApplication } from "./lib/navigation/application.svelte";
   import { reviewBadgeImpact } from "./lib/reviewNavigationImpact";
@@ -13,17 +14,9 @@
     type WorkspaceAddress,
     type WorkspaceSelection
   } from "./lib/workspaceAddress";
-  import SettingsRoute from "./routes/SettingsRoute.svelte";
   import { canonicalShellHash, parseConfigSelection } from "./lib/shellRouting";
   import { parseUsageSelection, type UsageTab } from "./lib/usageAddress";
-  import BackendsRoute from "./routes/BackendsRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
-  import DayRoute from "./routes/DayRoute.svelte";
-  import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
-  import IdeasRoute from "./routes/IdeasRoute.svelte";
-  import FeedbackRoute from "./routes/FeedbackRoute.svelte";
-  import ReviewRoute from "./routes/ReviewRoute.svelte";
-  import SprintRoute from "./routes/SprintRoute.svelte";
   import ReleaseUpdate from "./components/ReleaseUpdate.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
   import FeedbackCapture from "./components/FeedbackCapture.svelte";
@@ -43,7 +36,7 @@
   const navigation = provideNavigationApplication();
   let displayed = $state.raw<import("./lib/navigation/knowledge").EffectiveNavigationView | null>(null);
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
-  let reviewItems = $derived(displayed ? navigation.presentationFor(displayed).review.items : []);
+  let reviewCount = $derived(displayed ? navigation.presentationFor(displayed).globalCounts?.review ?? navigation.presentationFor(displayed).review.items.length : 0);
   const reviewBadgeObserver = navigation.registerRenderBoundary(`review-badge:${crypto.randomUUID()}`,reviewBadgeImpact);
   onDestroy(() => navigation.disposeRenderBoundary(reviewBadgeObserver));
   let reviewLink = $state<HTMLElement | null>(null);
@@ -51,7 +44,7 @@
     const effective = displayed;
     const generation = navigation.state.generation;
     const element = reviewLink;
-    const count = reviewItems.length;
+    const count = reviewCount;
     if (!effective?.runtimeCurrent || !element) return;
     const publication = effective.publication;
     const observation = reviewBadgeObserver.observeSelectors(publication,generation);
@@ -305,8 +298,8 @@
     <nav class="shell-links">
       <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" bind:this={reviewLink} href="#/review">
         Review
-        {#if reviewItems.length > 0}
-          <span class="nav-badge">{reviewItems.length}</span>
+        {#if reviewCount > 0}
+          <span class="nav-badge">{reviewCount}</span>
         {:else}
           <span class="nav-badge hidden"></span>
         {/if}
@@ -372,23 +365,55 @@
       {#key route.key}
         <div class="screen screen-enter">
           {#if route.name === "day"}
-            <DayRoute />
+            {#await import("./routes/DayRoute.svelte") then view}
+<view.default />
+{:catch error}
+<ErrorLine {error} />
+{/await}
           {:else if route.name === "review"}
-            <ReviewRoute />
+            {#await import("./routes/ReviewRoute.svelte") then view}
+<view.default />
+{:catch error}
+<ErrorLine {error} />
+{/await}
           {:else if route.name === "workspace" && route.workspace}
             <BoardRoute address={route.workspace} onDismissed={showDismissedToast} />
           {:else if route.name === "sprint"}
-            <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} sprintId={route.params.sprint || null} />
+            {#await import("./routes/SprintRoute.svelte") then view}
+<view.default sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} sprintId={route.params.sprint || null} />
+{:catch error}
+<ErrorLine {error} />
+{/await}
           {:else if route.name === "ideas"}
-            <IdeasRoute />
+            {#await import("./routes/IdeasRoute.svelte") then view}
+<view.default />
+{:catch error}
+<ErrorLine {error} />
+{/await}
           {:else if route.name === "feedback"}
-            <FeedbackRoute onDismissed={showDismissedToast} />
+            {#await import("./routes/FeedbackRoute.svelte") then view}
+<view.default onDismissed={showDismissedToast} />
+{:catch error}
+<ErrorLine {error} />
+{/await}
           {:else if route.name === "settings"}
-            <SettingsRoute section={route.params.section} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />
+            {#await import("./routes/SettingsRoute.svelte") then view}
+<view.default section={route.params.section} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />
+{:catch error}
+<ErrorLine {error} />
+{/await}
           {:else if route.name === "backends"}
-            <BackendsRoute tab={route.params.tab as UsageTab} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />
+            {#await import("./routes/BackendsRoute.svelte") then view}
+<view.default tab={route.params.tab as UsageTab} roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"} roleId={route.params.id} />
+{:catch error}
+<ErrorLine {error} />
+{/await}
           {:else if route.name === "preview"}
-            <FilePreviewRoute />
+            {#await import("./routes/FilePreviewRoute.svelte") then view}
+<view.default />
+{:catch error}
+<ErrorLine {error} />
+{/await}
           {/if}
         </div>
       {/key}
