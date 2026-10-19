@@ -150,11 +150,12 @@ _Code paths:_ `src/planner/scheduled_tickets/` and `src/planner/core/loops.py`.
 
 ### 5. Worker orchestration
 
-The readiness loop examines today's Tickets and applies one complete, read-only
-decision. A Ticket must be on today, non-terminal, reading as `empty`, ready for its
-declared ownership, and clear for its Consequences lane. The
-conversation system supplies the one fact the record cannot: whether that Ticket's
-worker is already busy.
+The readiness loop examines ordinary Tickets and applies one complete, read-only
+decision. A Ticket must be in this machine's locale, not backlogged, non-terminal,
+reading as `empty`, and ready for its declared ownership. Each ready Ticket can
+start independently, including at Consequences. Git changes land through pull
+requests into `staging`. The conversation system supplies the one fact the record
+cannot: whether that Ticket's worker is already busy.
 
 One guarded write takes the claim, and the Ticket then reads as `agent`. There is no claim stamp or run row.
 User-owned claims also record one opener fact for the current Stage entry. An accepted

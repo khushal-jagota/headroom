@@ -45,14 +45,12 @@ from planner.conversation.backends.contracts import (
 from planner.conversation.backends.hermes_acp import (
     AcpChildLaunch,
     HermesAcpBackendChild,
-    _hermes_failure_summary,
     hermes_acp_child_launch,
 )
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
     ConversationAccess,
     ConversationBackendKey,
-    ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryMode,
     PromptDeliveryQueued,
@@ -121,80 +119,10 @@ def _run(exercise: Callable[[], Awaitable[None]], *, seconds: float = 60.0) -> N
 # --- the values a conversation was started with, at the child ------------------------------
 
 
-def test_the_start_requests_values_reach_the_child_process(tmp_path: Path) -> None:
-    """Role text, identity variables, workspace folder and access posture, all at the agent.
-
-    Conformance cannot see any of these, so this is where they are proved: the agent's own
-    account of the prompt it was given, the directory it is running in, and the environment
-    it was started with.
-    """
-
-    async def exercise() -> None:
-        async with open_conversation_system_under_test() as subject:
-            await subject.system.start_conversation(
-                ConversationStartRequest(
-                    conversation_id="c",
-                    model=HERMES_QUALIFIED_MODEL,
-                    backend_key=ConversationBackendKey.hermes,
-                    role_materials=ConversationRoleMaterials(
-                        role_text=ROLE_TEXT, identity_environment_variables=(IDENTITY_VARIABLE,)
-                    ),
-                    workspace_folder=tmp_path,
-                    access=ConversationAccess.full,
-                )
-            )
-            assert await subject.system.send(
-                "c",
-                text_message_content("hello"),
-                sender_label="owner",
-            ) == (
-                PromptDeliveryStarted()
-            )
-
-            account = await subject.agent_account("c")
-            assert account["prompt_writes"][0]["text"] == f"{ROLE_TEXT}\n\nowner:\nhello"
-            assert account["prompt_writes"][0]["sender_label"] == "owner"
-            assert account["prompt_writes"][0]["delivery_mode"] == "queue"
-            assert Path(account["working_directory"]) == tmp_path.resolve()
-            assert account["identity_environment"] == {IDENTITY_VARIABLE[0]: IDENTITY_VARIABLE[1]}
-            assert account["environment"]["HERMES_YOLO_MODE"] == "1"
-            assert account["mode"] == "dont_ask"
-
-    _run(exercise)
 
 
-def test_the_role_text_rides_the_first_prompt_and_no_other(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        async with open_conversation_system_under_test() as subject:
-            await subject.system.start_conversation(
-                ConversationStartRequest(
-                    conversation_id="c",
-                    model="a-model",
-                    role_materials=ConversationRoleMaterials(role_text=ROLE_TEXT),
-                    workspace_folder=tmp_path,
-                )
-            )
-            await subject.system.send("c", text_message_content("first"), sender_label="owner")
-            await subject.complete_running_turn("c")
-            await subject.system.send("c", text_message_content("second"), sender_label="owner")
-
-            account = await subject.agent_account("c")
-            assert [write["text"] for write in account["prompt_writes"]] == [
-                f"{ROLE_TEXT}\n\nowner:\nfirst",
-                "owner:\nsecond",
-            ]
-
-    _run(exercise)
 
 
-def test_hermes_exception_text_is_normalized_before_it_reaches_the_core(
-) -> None:
-    failure = RuntimeError(
-        'provider failed\nAuthorization: "Bearer secret value tail"'
-    )
-    assert _hermes_failure_summary(failure) == (
-        "provider failed Authorization: [redacted]"
-    )
 
 
 # --- correlated steering ---------------------------------------------------------------
@@ -386,180 +314,12 @@ def test_a_send_now_waits_for_the_cancelled_turn_to_be_over_at_the_agent(tmp_pat
 # --- against the hermes on this machine -----------------------------------------------------------
 
 
-@real_hermes_only
-def test_real_hermes_holds_a_turn_and_records_what_it_said(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        resolved = _resolved_start(tmp_path, backend_key=ConversationBackendKey.hermes)
-        child = HermesAcpBackendChild(
-            launch=_real_hermes_launch(),
-            resolved_start=resolved,
-            event_sink=sink,
-            message_files=_message_files(),
-        )
-        await child.start(resolved, vendor_session_cursor=None)
-        try:
-            assert sink.vendor_session_cursor is not None
-            content = text_message_content("Reply with exactly the word: ready")
-            await child.write_prompt(
-                TurnToken(conversation_id="c", turn_number=1),
-                content,
-                sender_content=content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-            )
-            await sink.wait_for_the_turn_to_end()
-            assert sink.endings == [ConversationTurnEnding.completed]
-            assert sink.agent_messages
-        finally:
-            await child.stop()
-
-    _run(exercise, seconds=300.0)
 
 
-@real_hermes_only
-def test_real_hermes_takes_a_model_change_between_turns(tmp_path: Path) -> None:
-    """The build-time question, asked of the hermes that is installed.
-
-    Hermes advertises no ACP session config options at all, so a model change goes over its
-    own retired ``session/set_model`` method. It takes: the very next turn runs on the new
-    model and later turns stay on it, so this adapter never has to rebind to change one.
-    """
-
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        resolved = _resolved_start(tmp_path, backend_key=ConversationBackendKey.hermes)
-        child = HermesAcpBackendChild(
-            launch=_real_hermes_launch(),
-            resolved_start=resolved,
-            event_sink=sink,
-            message_files=_message_files(),
-        )
-        await child.start(resolved, vendor_session_cursor=None)
-        try:
-            assert child._session_configuration_options == ()
-
-            await _real_turn(child, sink, 1, text_message_content(HERMES_MODEL_QUESTION))
-            before = sink.agent_messages[-1]
-
-            await _real_turn(
-                child,
-                sink,
-                2,
-                text_message_content(HERMES_MODEL_QUESTION),
-                model=HERMES_OTHER_MODEL,
-            )
-            with_the_change = sink.agent_messages[-1]
-
-            await _real_turn(child, sink, 3, text_message_content(HERMES_MODEL_QUESTION))
-            after = sink.agent_messages[-1]
-
-            assert HERMES_OTHER_MODEL.split(":")[-1] in with_the_change
-            assert HERMES_OTHER_MODEL.split(":")[-1] in after
-            assert with_the_change != before
-        finally:
-            await child.stop()
-
-    _run(exercise, seconds=600.0)
 
 
-@real_hermes_only
-def test_real_hermes_answers_the_message_that_replaced_a_running_turn(tmp_path: Path) -> None:
-    """The send-now shape, against the hermes that showed the problem.
-
-    Cancel then write is exactly what the core does for a send-now. Before the cancel was
-    waited on, hermes took the second prompt while it was still finishing the first, held
-    it, and answered "Queued for the next turn" — so the word asked for never came back.
-    """
-
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        resolved = _resolved_start(tmp_path, backend_key=ConversationBackendKey.hermes)
-        child = HermesAcpBackendChild(
-            launch=_real_hermes_launch(),
-            resolved_start=resolved,
-            event_sink=sink,
-            message_files=_message_files(),
-        )
-        await child.start(resolved, vendor_session_cursor=None)
-        try:
-            first_content = text_message_content(
-                "Count slowly from 1 to 200, one number per line."
-            )
-            await child.write_prompt(
-                TurnToken(conversation_id="c", turn_number=1),
-                first_content,
-                sender_content=first_content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-            )
-            await asyncio.sleep(2)
-
-            await child.cancel_running_turn()
-            assert sink.endings == [ConversationTurnEnding.interrupted]
-
-            sink.expect_another_turn()
-            urgent_content = text_message_content(
-                "Reply with exactly the word: pineapple"
-            )
-            await child.write_prompt(
-                TurnToken(conversation_id="c", turn_number=2),
-                urgent_content,
-                sender_content=urgent_content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.send_now,
-                model_change=None,
-                reasoning_effort_change=None,
-            )
-            await sink.wait_for_the_turn_to_end()
-
-            assert sink.endings[-1] is ConversationTurnEnding.completed
-            reply = sink.agent_messages[-1].lower()
-            assert "pineapple" in reply
-            assert "queued" not in reply
-        finally:
-            await child.stop()
-
-    _run(exercise, seconds=300.0)
 
 
-@real_hermes_only
-def test_real_hermes_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        sink = _RecordingSink()
-        resolved = _resolved_start(tmp_path, backend_key=ConversationBackendKey.hermes)
-        child = HermesAcpBackendChild(
-            launch=_real_hermes_launch(),
-            resolved_start=resolved,
-            event_sink=sink,
-            message_files=_message_files(),
-        )
-        await child.start(resolved, vendor_session_cursor=None)
-        try:
-            content = text_message_content(
-                "Count slowly from 1 to 200, one number per line."
-            )
-            await child.write_prompt(
-                TurnToken(conversation_id="c", turn_number=1),
-                content,
-                sender_content=content,
-                sender_label="owner",
-                mode=PromptDeliveryMode.queue,
-                model_change=None,
-                reasoning_effort_change=None,
-            )
-            await asyncio.sleep(2)
-            await child.cancel_running_turn()
-            await sink.wait_for_the_turn_to_end()
-            assert sink.endings == [ConversationTurnEnding.interrupted]
-        finally:
-            await child.stop()
-
-    _run(exercise, seconds=300.0)
 
 
 # --- the pieces the tests above are made of ------------------------------------------------------

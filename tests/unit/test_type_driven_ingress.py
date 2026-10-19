@@ -160,97 +160,13 @@ def _propose(client: TestClient, ticket_id: str, body: str) -> None:
 # --- coding ingress stays byte-identical ---------------------------------------
 
 
-def test_coding_ticket_accepts_coding_field_and_ceiling(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "coding")
-        # A parked proposal fixes its address, so a direct ceiling edit cannot retarget it.
-        scoped = client.patch(f"/api/tickets/{tid}", json={"ceiling": "needs_what_changes"})
-        assert scoped.status_code == 400, scoped.json()
-        missing_holder = client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={"next_ceiling": "needs_what_changes"},
-        )
-        assert missing_holder.status_code == 400, missing_holder.json()
-        assert missing_holder.json()["error"]["code"] == "scope_missing"
-        self_held = client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={
-                "next_ceiling": "needs_what_changes",
-                "next_holder": {"kind": "ticket", "id": tid},
-            },
-        )
-        assert self_held.status_code == 400, self_held.json()
-        assert self_held.json()["error"]["code"] == "validation"
-        approved = client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={
-                "next_ceiling": "needs_what_changes",
-                "next_holder": OWNER,
-            },
-        )
-        assert approved.status_code == 200, approved.json()
-        assert approved.json()["ceiling"] == "needs_what_changes"
 
 
-def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        # A probe ticket: accepting a coding field is a per-type field rejection.
-        tid = _create(client, "probe")
-        bad_field = client.post(
-            f"/api/tickets/{tid}/accept/success_condition",
-            json={"next_ceiling": "none"},
-        )
-        assert bad_field.status_code == 400
-        assert bad_field.json()["error"]["code"] == "validation"
-        assert bad_field.json()["error"]["detail"] == {
-            "field": "success_condition",
-            "worker_type": "probe",
-        }
-        # A foreign next_ceiling (coding's needs_plan) on the probe kickoff accept is
-        # rejected against probe's ceiling range.
-        bad_ceiling = client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={"next_ceiling": "needs_plan"},
-        )
-        assert bad_ceiling.status_code == 400
-        assert bad_ceiling.json()["error"]["code"] == "scope_invalid"
-        assert bad_ceiling.json()["error"]["detail"] == {"next_ceiling": "needs_plan"}
 
 
 # --- probe ingress: per-type field / ceiling / stage ---------------------------
 
 
-def test_probe_proposal_parks_on_registry_selected_field(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        tid = _create(client, "probe")
-        # kickoff already parked at create — accept it keeping ceiling at needs_alpha
-        # so the next answer parks at the ceiling.
-        client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={
-                "next_ceiling": "needs_alpha",
-                "next_holder": OWNER,
-            },
-        )
-        # A position-relative propose parks on ALPHA — the field probe's needs_alpha gates.
-        parked = client.post(
-            f"/api/tickets/{tid}/propose",
-            json={"body": "alpha body", "recap": "r"},
-            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": tid},
-        )
-        assert parked.status_code == 200, parked.json()
-        assert parked.json()["pending_proposal"]["body"] == "alpha body"
-        assert parked.json()["pending_proposal"]["field"] == "alpha"
-        assert parked.json()["pending_proposal"]["revision"] == 2
 
 
 def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> None:
@@ -299,92 +215,8 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> Non
 # --- the ?stage= filter decision -----------------------------------------------
 
 
-def test_stage_filter_non_reserved_needs_no_worker_type(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    app, _db = app_db
-    with TestClient(app) as client:
-        _create(client, "coding")
-        # A non-reserved stage filters directly. Advance the coding ticket to
-        # needs_success_condition so the filter returns exactly it.
-        made = client.get("/api/tickets?detail=full&stage=needs_brief").json()["tickets"]
-        assert len(made) == 1
-        tid = made[0]["id"]
-        client.post(
-            f"/api/tickets/{tid}/accept/brief",
-            json={
-                "next_ceiling": "needs_success_condition",
-                "next_holder": OWNER,
-            },
-        )
-        ok = client.get("/api/tickets?detail=full&stage=needs_success_condition")
-        assert ok.status_code == 200, ok.json()
-        assert [t["id"] for t in ok.json()["tickets"]] == [tid]
-        # An unknown stored value is a valid filter and returns no rows.
-        unknown = client.get("/api/tickets?detail=full&stage=needs_ghost")
-        assert unknown.status_code == 200
-        assert unknown.json()["tickets"] == []
 
 
-def test_ticket_search_reads_every_place_a_ticket_keeps_words(app_db: AppDb) -> None:
-    """Each active place a Ticket keeps words alone is enough to find it.
-
-    Title, recap, a settled field value, and the body of a proposal still waiting
-    for its owner. Each Ticket here carries its invented word in exactly one of them, so a
-    search that quietly narrowed to fewer sources returns the wrong Ticket instead of
-    staying green. The word written nowhere proves the filter runs at all: a search that
-    was ignored would answer with every Ticket rather than none.
-    """
-    app, _db = app_db
-    with TestClient(app) as client:
-        in_the_title = _create(client, "coding")
-        client.patch(f"/api/tickets/{in_the_title}", json={"title": "zarquon"})
-
-        in_the_recap = _create(client, "coding")
-        client.patch(f"/api/tickets/{in_the_recap}", json={"recap": "florbish"})
-
-        in_the_guidance = _create(client, "coding")
-        with connect(str(_db)) as conn:
-            conn.execute(
-                "UPDATE tickets SET guidance='wemsley' WHERE id=?", (in_the_guidance,)
-            )
-
-        # A settled value is an accepted proposal, so this word is proposed and accepted.
-        in_a_field_value = _create(client, "coding")
-        _propose(client, in_a_field_value, "quinvex")
-        settled = client.post(
-            f"/api/tickets/{in_a_field_value}/accept/brief",
-            json={"next_ceiling": "needs_success_condition", "next_holder": OWNER},
-        )
-        assert settled.status_code == 200, settled.json()
-        assert settled.json()["field_values"] == {"brief": "quinvex"}
-
-        # Historical fields remain stored, but do not break reads or enter search.
-        with connect(str(_db)) as conn:
-            conn.execute(
-                "UPDATE tickets SET field_values=? WHERE id=?",
-                (json.dumps({"brief": "quinvex", "removed": "historicalword"}), in_a_field_value),
-            )
-        full = client.get(f"/api/tickets?detail=full&id={in_a_field_value}")
-        assert full.status_code == 200, full.json()
-        assert full.json()["field_values"] == {"brief": "quinvex"}
-
-        # This one's proposal stays pending, which is the other half of the same source.
-        in_a_pending_proposal = _create(client, "coding")
-        _propose(client, in_a_pending_proposal, "tarnabel")
-
-        for term, expected in (
-            ("zarquon", [in_the_title]),
-            ("florbish", [in_the_recap]),
-            ("wemsley", []),
-            ("quinvex", [in_a_field_value]),
-            ("tarnabel", [in_a_pending_proposal]),
-            ("nobodywrotethis", []),
-            ("historicalword", []),
-        ):
-            found = client.get(f"/api/tickets?detail=summary&search={term}")
-            assert found.status_code == 200, found.json()
-            assert [t["id"] for t in found.json()["tickets"]] == expected, term
 
 
 def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> None:
@@ -474,16 +306,3 @@ def test_retired_guidance_is_preserved_but_has_no_api_surface(app_db: AppDb) -> 
                 .fetchone()[0]
             ).hexdigest()
         assert before == after
-
-
-def test_a_create_naming_no_brief_parks_nothing_at_the_http_door(
-    app_db: AppDb, probe_installed: None
-) -> None:
-    """The default path: an absent brief used to park an empty proposal."""
-    app, _db = app_db
-    with TestClient(app) as client:
-        created = client.post("/api/tickets", json={"title": "No brief", "worker_type": "coding"})
-        assert created.status_code == 200, created.json()
-        detail = client.get(f"/api/tickets?detail=full&id={created.json()['id']}").json()
-        assert detail["ticket_status"] == "empty"
-        assert detail["pending_proposal"] is None

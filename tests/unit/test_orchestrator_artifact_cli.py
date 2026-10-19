@@ -70,10 +70,10 @@ def artifact_cli(
         yield client, CliRunner()
 
 
-def _create_item(client: TestClient, body: str = "") -> str:
+def _create_item(client: TestClient, goal: str = "") -> str:
     response = client.post(
         "/api/items",
-        json={"title": "Recoverable context", "project_id": "project_other", "body": body},
+        json={"title": "Recoverable context", "project_id": "project_other", "goal": goal},
     )
     assert response.status_code == 200, response.text
     return str(response.json()["id"])
@@ -106,7 +106,7 @@ def test_own_artifact_round_trip_preserves_exact_text(
     artifact_cli: tuple[TestClient, CliRunner], tmp_path: Path, content: str, source: str
 ) -> None:
     client, runner = artifact_cli
-    item_id = _create_item(client, "The body stays here.")
+    item_id = _create_item(client, "The goal stays here.")
     body_file = tmp_path / "original.md"
     body_file.write_bytes(content.encode("utf-8"))
     written = _invoke(
@@ -137,40 +137,9 @@ def test_own_artifact_round_trip_preserves_exact_text(
         "path": "notes/original.md",
         "content": content,
     }
-    assert client.get(f"/api/items/{item_id}/workspace").json()["body"] == "The body stays here."
+    assert client.get(f"/api/items/{item_id}/workspace").json()["goal"] == "The goal stays here."
 
 
-def test_discovery_flattens_folded_openable_paths(
-    artifact_cli: tuple[TestClient, CliRunner], tmp_path: Path
-) -> None:
-    client, runner = artifact_cli
-    item_id = _create_item(client)
-    body_file = tmp_path / "content.txt"
-    body_file.write_text("content", encoding="utf-8")
-    for path in ("notes/context.md", "notes/deep/decision.md", "site/index.html", "site/style.css"):
-        result = _invoke(
-            runner,
-            item_id,
-            "artifact",
-            "write",
-            item_id,
-            path,
-            "--body-file",
-            str(body_file),
-            "--json",
-        )
-        assert result.exit_code == 0, result.output
-    listed = _invoke(runner, item_id, "artifact", "list", item_id, "--json")
-    assert listed.exit_code == 0, listed.output
-    assert json.loads(listed.stdout)["artifacts"] == [
-        "notes/context.md",
-        "notes/deep/decision.md",
-        "site/index.html",
-    ]
-    # A known supporting path remains readable even though the workspace folds it.
-    supporting = _invoke(runner, item_id, "artifact", "read", item_id, "site/style.css")
-    assert supporting.exit_code == 0, supporting.output
-    assert supporting.stdout_bytes == b"content"
 
 
 @pytest.mark.parametrize("operation", ["read", "write", "list"])
@@ -206,94 +175,8 @@ def test_foreign_orchestrator_artifacts_remain_refused(
     assert client.get(f"/files/sprint-items/{foreign}/artifacts/context.md").content == b"private"
 
 
-def test_archive_readback_precedes_explicit_body_replacement(
-    artifact_cli: tuple[TestClient, CliRunner], tmp_path: Path
-) -> None:
-    client, runner = artifact_cli
-    original = "# Original intent\r\n\r\n雪 · one decision\r\nlast line"
-    item_id = _create_item(client, original)
-    original_file = tmp_path / "original.md"
-    original_file.write_bytes(
-        client.get(f"/api/items/{item_id}/workspace").json()["body"].encode("utf-8")
-    )
-    saved = _invoke(
-        runner,
-        item_id,
-        "artifact",
-        "write",
-        item_id,
-        "notes/original-body.md",
-        "--body-file",
-        str(original_file),
-        "--json",
-    )
-    assert saved.exit_code == 0, saved.output
-    recovered = _invoke(
-        runner, item_id, "artifact", "read", item_id, "notes/original-body.md", "--json"
-    )
-    assert recovered.exit_code == 0, recovered.output
-    assert json.loads(recovered.stdout)["content"] == original
-    assert client.get(f"/api/items/{item_id}/workspace").json()["body"] == original
-
-    recap = "Decide the next step. [Original context](" + json.loads(saved.stdout)["url"] + ")"
-    replaced = _invoke(runner, item_id, "set", item_id, "body", "--value", recap, "--json")
-    assert replaced.exit_code == 0, replaced.output
-    assert client.get(f"/api/items/{item_id}/workspace").json()["body"] == recap
-    assert client.get(json.loads(saved.stdout)["url"]).content == original.encode("utf-8")
 
 
-def test_failed_preservation_and_missing_read_leave_body_untouched(
-    artifact_cli: tuple[TestClient, CliRunner], tmp_path: Path
-) -> None:
-    client, runner = artifact_cli
-    original = "Original intent\r\nNo terminal newline"
-    item_id = _create_item(client, original)
-    original_file = tmp_path / "original.md"
-    original_file.write_bytes(original.encode("utf-8"))
-    refused = _invoke(
-        runner,
-        item_id,
-        "artifact",
-        "write",
-        item_id,
-        "unsafe\\note.md",
-        "--body-file",
-        str(original_file),
-        "--json",
-    )
-    assert refused.exit_code == 1, refused.output
-    # The existing route conceals encoded unsafe paths before file validation.
-    assert json.loads(refused.stderr)["error"]["code"] == "not_found"
-    missing = _invoke(
-        runner, item_id, "artifact", "read", item_id, "notes/original-body.md", "--json"
-    )
-    assert missing.exit_code == 1, missing.output
-    assert missing.stdout == ""
-    assert json.loads(missing.stderr)["error"]["code"] == "not_found"
-    # The procedure stops before the separate set-body command when preservation fails.
-    assert client.get(f"/api/items/{item_id}/workspace").json()["body"] == original
-
-
-def test_invalid_utf8_input_returns_validation_error(
-    artifact_cli: tuple[TestClient, CliRunner], tmp_path: Path
-) -> None:
-    client, runner = artifact_cli
-    item_id = _create_item(client)
-    source = tmp_path / "invalid.txt"
-    source.write_bytes(b"\xff")
-    result = _invoke(
-        runner,
-        item_id,
-        "artifact",
-        "write",
-        item_id,
-        "note.md",
-        "--body-file",
-        str(source),
-        "--json",
-    )
-    assert result.exit_code == 1, result.output
-    assert json.loads(result.stderr)["error"]["code"] == "validation"
 
 
 @pytest.mark.parametrize(

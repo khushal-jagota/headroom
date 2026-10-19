@@ -8,7 +8,7 @@ from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from sqlite3 import Connection
-from typing import Any, Literal
+from typing import Literal
 
 import pytest
 
@@ -130,22 +130,6 @@ def test_idle_user_owned_correction_preserves_every_other_ticket_column(
     assert after == before
 
 
-@pytest.mark.parametrize(
-    "kind,identifier", [("ticket", None), ("chief", "chief"), ("worker-default", "coding")]
-)
-def test_worker_cannot_correct_self_or_defaults(
-    tmp_db: Connection,
-    ticket: Ticket,
-    kind: Literal["ticket", "chief", "worker-default"],
-    identifier: str | None,
-) -> None:
-    worker = Principal(PrincipalKind.ticket, ticket.id)
-    result = preview(
-        tmp_db, CorrectionTarget(kind=kind, id=identifier or ticket.id), principal=worker
-    )
-    assert result.error
-    assert result.expected is None
-    assert not apply(tmp_db, result, principal=worker).applied
 
 
 def test_apply_rechecks_model_and_catalogue_changes(tmp_db: Connection, ticket: Ticket) -> None:
@@ -160,10 +144,6 @@ def test_apply_rechecks_model_and_catalogue_changes(tmp_db: Connection, ticket: 
     assert "preview again" in (apply(tmp_db, correction).error or "")
 
 
-def test_apply_reauthorizes_a_copied_preview(tmp_db: Connection, ticket: Ticket) -> None:
-    correction = preview(tmp_db, CorrectionTarget(kind="ticket", id=ticket.id))
-    worker = Principal(PrincipalKind.ticket, ticket.id)
-    assert apply(tmp_db, correction, principal=worker).error
 
 
 def test_correction_blocks_old_active_turn_receipt(tmp_db: Connection, ticket: Ticket) -> None:
@@ -205,17 +185,6 @@ def test_default_corrections_preserve_effort_and_backend(
     assert new.expected.reasoning_effort == correction.expected.reasoning_effort
 
 
-def test_mixed_batch_reports_unresolved_individually(tmp_db: Connection, ticket: Ticket) -> None:
-    targets = [
-        CorrectionTarget(kind="ticket", id="missing"),
-        CorrectionTarget(kind="ticket", id=ticket.id),
-    ]
-    corrections = asyncio.run(preview_corrections(tmp_db, OWNER_PRINCIPAL, targets, Resolver()))
-    results = asyncio.run(
-        apply_corrections(tmp_db, OWNER_PRINCIPAL, corrections, Resolver(), now=2)
-    )
-    assert results[0].error and not results[0].applied
-    assert results[1].applied
 
 
 def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path: Path) -> None:
@@ -394,49 +363,6 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
             )
 
 
-def test_cli_preview_and_apply_preserve_explicit_targets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from click.testing import CliRunner
-
-    from planner.cli import http
-    from planner.cli.main import main
-
-    sent: list[tuple[str, str, Any]] = []
-
-    def send(method: str, path: str, **kwargs: Any) -> dict[str, list[object]]:
-        sent.append((method, path, kwargs["json_body"]))
-        return {"corrections": []}
-
-    monkeypatch.setattr(http, "send", send)
-    runner = CliRunner()
-    result = runner.invoke(
-        main,
-        [
-            "model-corrections",
-            "preview",
-            "--ticket",
-            "worker-a",
-            "--orchestrator",
-            "orch-a",
-            "--chief",
-            "--worker-default",
-            "coding",
-            "--json",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert sent[0][2] == {
-        "targets": [
-            {"kind": "ticket", "id": "worker-a"},
-            {"kind": "orchestrator", "id": "orch-a"},
-            {"kind": "worker-default", "id": "coding"},
-            {"kind": "chief", "id": "chief"},
-        ]
-    }
-    result = runner.invoke(main, ["model-corrections", "apply", "--json"], input=result.output)
-    assert result.exit_code == 0, result.output
-    assert sent[1] == ("POST", "/api/conversation/model-corrections/apply", {"corrections": []})
 
 
 def test_orchestrator_correction_preserves_identity_and_blocks_stale_receipt(

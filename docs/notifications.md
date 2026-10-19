@@ -60,6 +60,23 @@ malformed payload or an unsupported link opens the safe Workspace fallback. All
 notifications for one subject use one stable replacement tag, so overlapping
 notifications coalesce at the operating system.
 
+## Review transfer notices
+
+When a parked review changes holder, Panels attempts a courtesy message to the previous
+holder. The message identifies the Ticket and names the new holder. A holder change
+without a parked proposal sends no message. An unchanged final holder sends no message.
+
+The Chief and orchestrators receive the message through their existing conversation
+routes. The user receives it in the Ticket conversation as a Panels message. The notice
+requests no reply and grants no credit for a worker reply. Existing approval attention
+and proposal delivery to the new holder keep their current behavior.
+
+This notice uses one best-effort send after the transfer commits. A failed send does not
+fail or repeat the transfer. A process failure before send or before a queued notice
+reaches the agent can lose it. A recorded conversation event persists through ordinary
+conversation storage. The notice adds no push notification type. An owner-directed
+message uses the existing unread-message attention and notification choice.
+
 ## Durable delivery
 
 Several messages before one read cause one reply notification. A later message causes

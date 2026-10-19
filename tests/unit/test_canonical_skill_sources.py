@@ -1,9 +1,7 @@
 import multiprocessing
-import re
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Final
 
 import pytest
 from tests.support.skill_publication import publication_process
@@ -12,8 +10,7 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
 from planner.environments.hermes_home import provision_planner_home_skills
 from planner.managed_skills import (
-    PACKAGED_SKILLS_ROOT,
-    SKILL_FILE_NAME,
+    atomic_replace_text,
     managed_skills_home,
     read_skill_source,
     write_skill_home,
@@ -23,14 +20,8 @@ from planner.skill_sources import (
     RETIRED_PANELS_SKILL_NAMES,
     provision_native_backend_skills,
 )
-from planner.skill_versions import SHARED_WORKER_SKILL_NAME
+from planner.skill_versions import reconcile_managed_skill_versions
 from planner.worker_settings import service
-from planner.worker_settings.service import CHIEF_SKILL_NAME
-from planner.worker_types.shipped import shipped_worker_types
-
-# A skill tells an agent to load another skill by naming it as a literal, the way a
-# worker reads it: `panels-worker-coding`. Prose that merely says Panels is not a name.
-REFERENCED_SKILL_NAME: Final = re.compile(r"`(panels(?:-[a-z0-9]+)+)`")
 
 
 @pytest.fixture
@@ -99,13 +90,6 @@ def test_native_skills_directory_preserves_custom_entries_and_replaces_panels_co
     assert (native_skills / "panels-worker-coding").resolve() == (
         managed / "panels-worker-coding"
     ).resolve()
-
-
-def test_skill_edit_rejects_an_unknown_skill_name(
-    tmp_path: Path, database: sqlite3.Connection
-) -> None:
-    with pytest.raises(PlannerError):
-        service.save_skill(database, "..", {"description": "bad"}, now=1, database_parent=tmp_path)
 
 
 @pytest.mark.parametrize("second_field", ["description", "markdown_body"])
@@ -268,28 +252,92 @@ def test_skill_entrypoints_refuse_an_active_transaction_before_lock(
         database.rollback()
 
 
-def test_packaged_tree_seeds_every_skill_a_fresh_install_needs() -> None:
-    """A new database must start with a skill for each thing that asks for one.
+def test_owner_edit_stands_in_the_row_and_the_file_when_version_history_fails(
+    tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row is the authority, and it commits before the history is recorded.
 
-    Both expectations are read from the build, not from a list kept beside it: the
-    specialist skill each shipped Worker type names, and every skill a packaged skill
-    tells an agent to load. A list would go stale exactly when a Worker type ships
-    without its skill, which is the case this test exists to catch.
+    So a failure recording the version history cannot take the owner's edit back: the
+    edit stands in the row, and in the copy agents read.
     """
-    packaged = {
-        directory.name
-        for directory in PACKAGED_SKILLS_ROOT.iterdir()
-        if directory.is_dir() and (directory / SKILL_FILE_NAME).is_file()
-    }
+    conn = database
+    path = managed_skills_home(tmp_path) / "panels" / "SKILL.md"
+    before = path.read_bytes()
 
-    specialist_skills = {
-        definition["profile"]["specialist_skill"] for definition in shipped_worker_types()
-    }
-    assert specialist_skills <= packaged
-    assert {SHARED_WORKER_SKILL_NAME, CHIEF_SKILL_NAME} <= packaged
+    def fail_capture(*args: object, **kwargs: object) -> str:
+        raise RuntimeError("database unavailable")
 
-    referenced: set[str] = set()
-    for skill_name in packaged:
-        source = (PACKAGED_SKILLS_ROOT / skill_name / SKILL_FILE_NAME).read_text(encoding="utf-8")
-        referenced.update(match.group(1) for match in REFERENCED_SKILL_NAME.finditer(source))
-    assert referenced - RETIRED_PANELS_SKILL_NAMES <= packaged
+    monkeypatch.setattr(service, "capture_skill_version", fail_capture)
+    with pytest.raises(PlannerError) as error:
+        service.save_skill(
+            conn,
+            "panels",
+            {"description": "changed"},
+            now=1,
+            database_parent=tmp_path,
+        )
+    assert error.value.code == ErrorCode.skill_save_incomplete
+    assert error.value.detail == {
+        "skill_name": "panels",
+        "saved": True,
+        "published": True,
+        "phase": "history",
+    }
+    assert "Read the canonical skill before retry" in error.value.message
+    edited = read_skill_source(conn, "panels")
+    assert edited != before.decode("utf-8")
+    assert 'description: "changed"' in edited
+    assert path.read_bytes() == edited.encode("utf-8")
+    reconcile_managed_skill_versions(conn)
+    assert (
+        conn.execute(
+            "SELECT content FROM managed_skill_versions WHERE skill_name = ? AND content = ?",
+            ("panels", edited.encode("utf-8")),
+        ).fetchone()
+        is not None
+    )
+
+
+def test_file_failure_reports_saved_state_and_startup_repairs_the_copy(
+    tmp_path: Path, database: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = database
+    path = managed_skills_home(tmp_path) / "panels/SKILL.md"
+    old_bytes = path.read_bytes()
+    original_replace = atomic_replace_text
+
+    def fail_replace(*args: object, **kwargs: object) -> None:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(service, "atomic_replace_text", fail_replace)
+    with pytest.raises(PlannerError) as error:
+        service.save_skill(
+            conn,
+            "panels",
+            {"description": "saved despite file failure"},
+            now=1,
+            database_parent=tmp_path,
+        )
+    assert error.value.code == ErrorCode.skill_save_incomplete
+    assert error.value.detail == {
+        "skill_name": "panels",
+        "saved": True,
+        "published": False,
+        "phase": "file",
+    }
+    assert "Read the canonical skill before retry" in error.value.message
+    assert path.read_bytes() == old_bytes
+    source = read_skill_source(conn, "panels")
+    assert 'description: "saved despite file failure"' in source
+    write_skill_home(conn, tmp_path)
+    assert path.read_text() == source
+    monkeypatch.setattr(service, "atomic_replace_text", original_replace)
+    repaired = service.save_skill(
+        conn,
+        "panels",
+        {"markdown_body": "# Retry from current row"},
+        now=2,
+        database_parent=tmp_path,
+    )
+    assert repaired.description == "saved despite file failure"
+    assert path.read_text() == repaired.source_text

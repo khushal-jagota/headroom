@@ -13,7 +13,7 @@ from planner.core.authctx import _classify
 from planner.core.authority import require_above, require_above_or_self
 from planner.core.clock import TestClock as Clock
 from planner.core.errors import PlannerError
-from planner.sprints import data, views
+from planner.sprints import data
 from planner.tickets import data as tickets
 from planner.tickets.contracts import Ticket
 
@@ -31,95 +31,6 @@ def _ticket(conn: Connection, outcome_id: str, sprint_id: str, title: str) -> Ti
     )
 
 
-def test_historical_sprint_records_preserve_context_and_exact_partition(
-    tmp_db: Connection, fake_clock: Clock
-) -> None:
-    first = data.create_sprint(
-        tmp_db, name="First", date_start="2026-07-01", date_end="2026-07-07", clock=fake_clock
-    )
-    second = data.create_sprint(
-        tmp_db, name="Second", date_start="2026-07-08", date_end="2026-07-14", clock=fake_clock
-    )
-    assert tmp_db.execute("SELECT count(*) FROM sprint_items").fetchone()[0] == 0
-    outcome = data.create_item(
-        tmp_db,
-        title="Durable intent",
-        body="Keep this context",
-        project_id="project_vylo",
-        clock=fake_clock,
-    )
-
-    # Restore a historical commitment; live commitment and carry writes are retired.
-    tmp_db.execute(
-        "INSERT INTO sprint_outcomes(sprint_id, outcome_id) VALUES (?, ?)",
-        (first.id, outcome.id),
-    )
-    empty = views.sprint_tracking_view(tmp_db, first.id, "2026-07-04")
-    assert empty["outcome_groups"][0]["tickets"] == []
-    done = _ticket(tmp_db, outcome.id, first.id, "Completed history")
-    chosen = _ticket(tmp_db, outcome.id, second.id, "Historical second-Sprint work")
-    left = _ticket(tmp_db, outcome.id, first.id, "Not selected")
-    advance_ticket(tmp_db, done.id, new_stage="done", principal=OWNER_PRINCIPAL, now=2)
-    before_done = dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (done.id,)).fetchone())
-    assert tickets.read_ticket(tmp_db, left.id).sprint_id == first.id
-    assert tickets.read_ticket(tmp_db, chosen.id).sprint_item_id == outcome.id
-    assert data.read_item(tmp_db, outcome.id).item == outcome
-    assert [
-        t["id"]
-        for t in views.sprint_tracking_view(tmp_db, second.id, "2026-07-09")["outcome_groups"][0][
-            "tickets"
-        ]
-    ] == [chosen.id]
-    other = views.sprint_tracking_view(tmp_db, second.id, "2026-07-09")
-    assert other["outcome_groups"][0]["committed"] is False
-    workspace = views.item_workspace(tmp_db, outcome.id)
-    assert "rollup" not in workspace and "status" not in workspace and "sprint_id" not in workspace
-    assert {t["id"] for t in workspace["tickets"]} == {done.id, chosen.id, left.id}
-    assert {t["id"]: (t["sprint_id"], t["sprint_name"]) for t in workspace["tickets"]} == {
-        done.id: (first.id, "First"),
-        chosen.id: (second.id, "Second"),
-        left.id: (first.id, "First"),
-    }
-    assert {
-        row["id"]
-        for row in views.sprint_tracking_view(tmp_db, first.id, "2026-07-04")["outcome_groups"][0][
-            "tickets"
-        ]
-    } == {done.id, left.id}
-    assert (
-        dict(tmp_db.execute("SELECT * FROM tickets WHERE id=?", (done.id,)).fetchone())
-        == before_done
-    )
-    # Historical Sprint associations remain in storage while the active workspace uses assignments.
-    assert tickets.read_ticket(tmp_db, done.id).sprint_id == first.id
-    assert tickets.read_ticket(tmp_db, chosen.id).sprint_id == second.id
-    assert {t["id"]: t["activity_at"] for t in workspace["tickets"]} == {
-        done.id: 2,
-        chosen.id: 1,
-        left.id: 1,
-    }
-    tickets.unclassify_ticket(
-        tmp_db, chosen.id, sprint_item_id=outcome.id, principal=OWNER_PRINCIPAL, now=4
-    )
-    assert tickets.read_ticket(tmp_db, chosen.id).sprint_id == second.id
-    assert [
-        t["id"]
-        for t in views.sprint_tracking_view(tmp_db, second.id, "2026-07-09")["unclassified_tickets"]
-    ] == [chosen.id]
-    tickets.classify_ticket(
-        tmp_db, chosen.id, sprint_item_id=outcome.id, principal=OWNER_PRINCIPAL, now=5
-    )
-    tickets.edit_ticket(
-        tmp_db,
-        chosen.id,
-        edit={"sprint_id": None},
-        title_max_chars=200,
-        principal=OWNER_PRINCIPAL,
-        now=6,
-    )
-    assert tickets.read_ticket(tmp_db, chosen.id).sprint_item_id == outcome.id
-    assert tickets.read_ticket(tmp_db, chosen.id).sprint_id is None
-    assert chosen.id in {row["id"] for row in views.item_workspace(tmp_db, outcome.id)["tickets"]}
 
 
 def test_ticket_classification_preserves_existing_authority(

@@ -783,8 +783,12 @@ class ConversationSystem(Protocol):
         recipient: Principal,
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
+        credit_explicit_reply: bool = True,
     ) -> None:
-        """Record one addressed message that no backend receives."""
+        """Record one addressed message that no backend receives.
+
+        System notices disable reply credit because they do not answer a prompt.
+        """
         ...
 
     async def active_turn_reference(self, conversation_id: str) -> ConversationTurnReference | None:

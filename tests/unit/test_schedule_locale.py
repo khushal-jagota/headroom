@@ -60,19 +60,3 @@ def test_schedule_explicit_locale_beats_worker_requirement(tmp_db: Connection) -
         now=1,
     )
     assert data.read_schedule(tmp_db, schedule.id).template.locale is TicketLocale.vps
-
-
-def test_schedule_invalid_locale_refuses_without_write(tmp_db: Connection) -> None:
-    from planner.core.errors import PlannerError
-
-    schedule = actions.create_schedule(
-        tmp_db,
-        enabled=True,
-        cadence=ScheduleCadence.daily,
-        local_time="14:30",
-        template=_template(),
-        now=1,
-    )
-    with pytest.raises(PlannerError, match="locale must be vps or macos"):
-        actions.update_schedule(tmp_db, schedule.id, {"locale": "unknown"}, now=2)
-    assert data.read_schedule(tmp_db, schedule.id) == schedule

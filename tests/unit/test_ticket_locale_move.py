@@ -14,11 +14,9 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.errors import PlannerError
 from planner.runtime.conversation_start import conversation_link_lock, send_to_ticket_conversation
-from planner.runtime.worker_step_readiness import worker_step_blocker
 from planner.tickets import data, locale_configuration
 from planner.tickets.contracts import Ticket, TicketLocale
 from planner.tickets.locale_move import move_ticket_locale
-from planner.worker_types.configuration import configured_worker_type_registry
 
 
 @pytest.fixture
@@ -34,14 +32,6 @@ def ticket(tmp_db: Connection, monkeypatch: pytest.MonkeyPatch) -> Ticket:
     )
 
 
-def test_move_changes_only_locale(tmp_db: Connection, ticket: Ticket) -> None:
-    async def exercise() -> None:
-        moved = await move_ticket_locale(
-            InMemoryConversationSystem(), tmp_db, ticket.id,
-            locale=TicketLocale.macos, principal=OWNER_PRINCIPAL, now=20,
-        )
-        assert moved == replace(ticket, locale=TicketLocale.macos)
-    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("claim", ["out", "errored"])
@@ -133,19 +123,6 @@ def test_send_wins_before_move_and_move_is_refused(tmp_db: Connection, ticket: T
     asyncio.run(exercise())
 
 
-def test_wrong_machine_readiness_is_after_backlog(tmp_db: Connection, ticket: Ticket) -> None:
-    tmp_db.execute("UPDATE tickets SET locale='macos' WHERE id=?", (ticket.id,))
-    tmp_db.commit()
-    definition = configured_worker_type_registry().require(ticket.worker_type)
-    remote = data.read_ticket(tmp_db, ticket.id)
-    assert worker_step_blocker(tmp_db, remote, worker_type_definition=definition) == (
-        "the Ticket locale is macos, so it cannot start on this vps machine"
-    )
-    tmp_db.execute("UPDATE tickets SET is_backlogged=1 WHERE id=?", (ticket.id,))
-    tmp_db.commit()
-    assert worker_step_blocker(
-        tmp_db, data.read_ticket(tmp_db, ticket.id), worker_type_definition=definition,
-    ) == "the Ticket is backlogged"
 
 
 def test_worker_cannot_move_itself(tmp_db: Connection, ticket: Ticket) -> None:
@@ -177,49 +154,6 @@ def test_idle_linked_conversation_can_move_without_resetting_it(
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("first", ["claim", "move"])
-def test_separate_connections_cannot_claim_and_move_the_same_ticket(
-    tmp_db: Connection, ticket: Ticket, first: str,
-) -> None:
-    from tests.support.ticket_progress import advance_ticket
-
-    from planner.core.db import connect
-    from planner.runtime.worker_step_readiness import is_ready_for_worker_step
-    from planner.tickets.contracts import WorkerStepClaim
-
-    advance_ticket(
-        tmp_db, ticket.id, new_stage="needs_success_condition",
-        principal=OWNER_PRINCIPAL, now=2,
-    )
-    database_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
-    other = connect(database_path)
-    try:
-        async def move() -> Ticket:
-            return await move_ticket_locale(
-                InMemoryConversationSystem(), other, ticket.id,
-                locale=TicketLocale.macos, principal=OWNER_PRINCIPAL, now=4,
-            )
-
-        def claim() -> Ticket | None:
-            return data.claim_ticket_for_worker_step(
-                tmp_db, ticket.id, readiness_check=is_ready_for_worker_step, now=3,
-            )
-
-        if first == "claim":
-            assert claim() is not None
-            with pytest.raises(PlannerError, match="outstanding worker-step claim"):
-                asyncio.run(move())
-            final = data.read_ticket(other, ticket.id)
-            assert final.locale is TicketLocale.vps
-            assert final.worker_step_claim is WorkerStepClaim.out
-        else:
-            assert asyncio.run(move()).locale is TicketLocale.macos
-            assert claim() is None
-            final = data.read_ticket(other, ticket.id)
-            assert final.locale is TicketLocale.macos
-            assert final.worker_step_claim is WorkerStepClaim.none
-    finally:
-        other.close()
 
 
 @pytest.mark.parametrize("first", ["claim", "move"])

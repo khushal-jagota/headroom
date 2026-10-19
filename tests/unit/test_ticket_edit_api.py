@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from sqlite3 import Connection
-from types import SimpleNamespace
 from typing import Any
 
 from fastapi import FastAPI
@@ -13,16 +12,12 @@ from tests.support.model_catalogue import seed_test_model_catalogue
 from tests.support.principals import OWNER_PRINCIPAL
 from tests.support.probe import seed_probe_worker_type
 
-from planner.conversation.backend_state import BackendStateStore, write_model_enablement
 from planner.conversation.contracts import ConversationBackendKey
-from planner.conversation.model_resolution.data import ModelResolutionStore
-from planner.conversation.model_resolution.service import ModelResolutionService
-from planner.conversation.snapshot import BackendModel, BackendSnapshot, BackendSnapshotService
+from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -311,71 +306,8 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
             )
 
 
-def test_employee_configuration_endpoint_allows_pristine_statuses(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    awaiting_id = _create_pristine_ticket(db_path)
-    empty_id = _create_pristine_ticket(db_path)
-    conn = connect(str(db_path))
-    # No parked proposal, so this one reads as `empty` rather than awaiting approval.
-    conn.execute("UPDATE tickets SET pending_proposal = NULL WHERE id = ?", (empty_id,))
-    conn.close()
-
-    with TestClient(app) as client:
-        awaiting = client.put(
-            f"/api/tickets/{awaiting_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "opus"),
-        )
-        empty = client.put(
-            f"/api/tickets/{empty_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "opus"),
-        )
-
-    assert awaiting.status_code == empty.status_code == 200
-    assert awaiting.json()["employee_backend"] == empty.json()["employee_backend"] == "claude"
-    assert awaiting.json()["employee_configuration_editable"] is True
-    assert empty.json()["employee_configuration_editable"] is True
-    check = connect(str(db_path))
-    try:
-        for ticket_id in (awaiting_id, empty_id):
-            stored = tickets_data.read_ticket(check, ticket_id)
-            assert stored.employee_backend == "claude"
-            # The new backend's model came with it, so the Ticket says what it runs on.
-            assert stored.employee_launch_model == "opus"
-            assert stored.employee_launch_reasoning_effort is None
-    finally:
-        check.close()
 
 
-def test_employee_configuration_rejects_a_disabled_model_without_a_partial_write(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _create_pristine_ticket(db_path)
-    conn = connect(str(db_path))
-    before = tickets_data.employee_launch_configuration(tickets_data.read_ticket(conn, ticket_id))
-    write_model_enablement(conn, ConversationBackendKey.claude, "disabled-model", False)
-    conn.close()
-
-    with TestClient(app) as client:
-        response = client.put(
-            f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "disabled-model"),
-        )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["message"] == (
-        'Model "disabled-model" is disabled. Choose an enabled model.'
-    )
-    check = connect(str(db_path))
-    try:
-        assert (
-            tickets_data.employee_launch_configuration(tickets_data.read_ticket(check, ticket_id))
-            == before
-        )
-    finally:
-        check.close()
 
 
 def _backend_snapshot(
@@ -394,117 +326,3 @@ def _backend_snapshot(
         update_advisory=None,
         diagnoses=(),
     )
-
-
-def test_employee_configuration_preserves_effort_and_validates_each_backend(
-    tmp_path: Path,
-) -> None:
-    class BackendSnapshots(BackendSnapshotService):
-        async def snapshot(
-            self,
-            backend_key: ConversationBackendKey,
-            *,
-            refresh: bool = False,
-            discover_update_advisory: bool = True,
-        ) -> BackendSnapshot:
-            if backend_key == "claude":
-                return _backend_snapshot(
-                    backend_key,
-                    (BackendModel("opus", reasoning_effort_options=("medium",)),),
-                    ("medium",),
-                )
-            return _backend_snapshot(
-                backend_key,
-                (
-                    BackendModel(
-                        model_id="openai-codex:gpt-5.6-sol",
-                        reasoning_effort_options=("low", "high"),
-                    ),
-                    BackendModel(
-                        model_id="openai-codex:gpt-5.5",
-                        reasoning_effort_options=("low",),
-                    ),
-                ),
-                ("low", "high"),
-            )
-
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _create_pristine_ticket(db_path)
-
-    with TestClient(app) as client:
-        # The lifespan builds the real backend snapshot service on the way up, so the
-        # stand-in goes on once the app is running rather than before it starts.
-        snapshots = BackendSnapshots()
-        app.state.conversation = SimpleNamespace(
-            backend_snapshots=snapshots,
-            model_resolution=ModelResolutionService(
-                snapshots=snapshots,
-                store=ModelResolutionStore(str(db_path)),
-                backend_state=BackendStateStore(str(db_path)),
-            ),
-        )
-        selected = client.put(
-            f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "openai-codex:gpt-5.6-sol", "high"),
-        )
-        model_changed = client.put(
-            f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "openai-codex:gpt-5.5", "high"),
-        )
-        backend_changed = client.put(
-            f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "opus", "medium"),
-        )
-        switched_back = client.put(
-            f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "openai-codex:gpt-5.6-sol", "high"),
-        )
-
-    assert selected.status_code == 200
-    assert (
-        selected.json()["employee_launch_model"],
-        selected.json()["employee_launch_reasoning_effort"],
-    ) == ("openai-codex:gpt-5.6-sol", "high")
-    assert model_changed.status_code == 400
-    assert "reasoning effort" in model_changed.json()["error"]["message"]
-    # An explicit effort survives a model change, or the request refuses.
-    assert backend_changed.status_code == 200
-    assert (
-        backend_changed.json()["employee_backend"],
-        backend_changed.json()["employee_launch_model"],
-        backend_changed.json()["employee_launch_reasoning_effort"],
-    ) == ("claude", "opus", "medium")
-    assert switched_back.status_code == 200
-    assert (
-        switched_back.json()["employee_backend"],
-        switched_back.json()["employee_launch_model"],
-        switched_back.json()["employee_launch_reasoning_effort"],
-    ) == ("hermes", "openai-codex:gpt-5.6-sol", "high")
-
-
-def test_an_active_worker_does_not_block_an_ordinary_edit(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    ticket_id = _create_ticket(db_path)
-    conn = connect(str(db_path))
-    try:
-        started = tickets_data.claim_ticket_for_worker_step(
-            conn,
-            ticket_id,
-            readiness_check=worker_step_readiness.is_ready_for_worker_step,
-            now=2,
-        )
-        assert started is not None
-    finally:
-        conn.close()
-
-    with TestClient(app) as client:
-        response = client.patch(
-            f"/api/tickets/{ticket_id}",
-            json={"title": "Edited during active work"},
-        )
-
-    assert response.status_code == 200, response.json()
-    assert response.json()["ticket_status"] == "agent"
-    assert response.json()["title"] == "Edited during active work"

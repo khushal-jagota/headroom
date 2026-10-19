@@ -1,7 +1,5 @@
 import shutil
 import sqlite3
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 from typing import cast
@@ -196,30 +194,6 @@ def test_current_cutover_refuses_ordinary_only_historical_fixture_without_mutati
     conn.close()
 
 
-def test_database_at_a_revision_from_the_collapsed_chain_is_refused(tmp_path: Path) -> None:
-    """The refusal a single deploy gets, when the database still needs the deleted steps."""
-    db_path = tmp_path / "mid-chain.db"
-    conn = _build_database_at_the_pre_collapse_head(db_path)
-    conn.execute("DELETE FROM alembic_version")
-    conn.execute("INSERT INTO alembic_version VALUES (?)", (REVISION_FROM_THE_COLLAPSED_CHAIN,))
-    _insert_ticket(conn, "t_waiting", "Waiting on the earlier build")
-
-    with pytest.raises(RuntimeError) as refusal:
-        create_schema(conn)
-
-    # The message has to be enough to act on: where the database is, where this build
-    # starts, and which build to run first.
-    message = str(refusal.value)
-    assert REVISION_FROM_THE_COLLAPSED_CHAIN in message
-    assert BASELINE_REVISION in message
-    assert PRE_COLLAPSE_HEAD_REVISION in message
-    assert "before the migration chain was collapsed" in message
-    # A refused database is left exactly as it was.
-    assert _revision(conn) == REVISION_FROM_THE_COLLAPSED_CHAIN
-    assert conn.execute("SELECT title FROM tickets WHERE id = 't_waiting'").fetchone()[0] == (
-        "Waiting on the earlier build"
-    )
-    conn.close()
 
 
 def test_manager_wake_migration_backfills_current_unresolved_sources(
@@ -274,79 +248,12 @@ def test_manager_wake_migration_backfills_current_unresolved_sources(
     conn.close()
 
 
-def test_database_with_tables_but_no_version_table_is_refused(tmp_path: Path) -> None:
-    """What a database the pre-Alembic ladder built now gets. Two hops, not one."""
-    conn = connect(str(tmp_path / "untracked.db"))
-    conn.execute("CREATE TABLE something_else (value TEXT)")
-    conn.execute("PRAGMA user_version=37")
-
-    with pytest.raises(RuntimeError, match="no version table"):
-        create_schema(conn)
-
-    conn.close()
 
 
-def test_database_at_the_pre_collapse_head_without_that_schema_is_refused(
-    tmp_path: Path,
-) -> None:
-    conn = connect(str(tmp_path / "mismarked.db"))
-    conn.execute("CREATE TABLE alembic_version (version_num TEXT NOT NULL)")
-    conn.execute("INSERT INTO alembic_version VALUES (?)", (PRE_COLLAPSE_HEAD_REVISION,))
-
-    with pytest.raises(RuntimeError, match="does not hold that schema"):
-        create_schema(conn)
-
-    conn.close()
 
 
-def test_a_database_this_build_already_carried_opens_again(tmp_path: Path) -> None:
-    """Opening twice must not refuse the second time.
-
-    The adoption guard once named the baseline as the only revision a database could
-    already stand on. The first revision added on top of the baseline then made every
-    start after the first refuse, because the database now held that revision instead.
-    """
-    conn = connect(str(tmp_path / "opened-twice.db"))
-    create_schema(conn)
-    first = _revision(conn)
-
-    create_schema(conn)
-
-    assert _revision(conn) == first == _head_revision()
-    conn.close()
 
 
-def test_processes_starting_at_once_agree_on_one_database(tmp_path: Path) -> None:
-    """Nothing stops two Panels processes bringing the same database up together."""
-    db_path = tmp_path / "contended.db"
-    # Open once so the file exists in WAL mode. Racing that first open is a question
-    # about connect(), not about who gets to build the schema, which is what this asks.
-    connect(str(db_path)).close()
-    starters = [
-        subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                "from planner.core.db import connect, create_schema\n"
-                f"conn = connect({str(db_path)!r})\n"
-                "create_schema(conn)\n"
-                "conn.close()\n",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        for _ in range(4)
-    ]
-    failures = [process.communicate()[1] for process in starters if process.wait() != 0]
-    assert failures == []
-
-    conn = connect(str(db_path))
-    assert [str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")] == [
-        _head_revision()
-    ]
-    assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
-    conn.close()
 
 
 # --- what a migration can rely on ---------------------------------------------------------

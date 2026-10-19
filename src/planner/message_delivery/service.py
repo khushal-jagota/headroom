@@ -155,8 +155,14 @@ async def send_message(
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
     retain_created_conversation: bool = False,
+    expects_reply: bool = True,
 ) -> MessageDeliveryResult:
-    """Send one text message to one resolved Panels conversation owner."""
+    """Send one text message to one resolved Panels conversation owner.
+
+    ``expects_reply`` is False for a message whose answer is a thing the recipient does
+    rather than words it sends back. Such a message adds no reply requirement to the wire
+    prompt and leaves no missing-reply marker when the turn ends.
+    """
     label = sender_label(ctx)
     content: ConversationMessageContent = (
         text_message_content(message) if isinstance(message, str) else message
@@ -224,7 +230,7 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
-                reply_requested=not is_reply,
+                reply_requested=expects_reply and not is_reply,
                 now=clock.now_unix(),
             )
     elif recipient.kind is PrincipalKind.chief:
@@ -253,7 +259,7 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
-                reply_requested=not is_reply,
+                reply_requested=expects_reply and not is_reply,
             )
     elif recipient.kind is PrincipalKind.sprint_item:
         item_id = recipient.id
@@ -290,7 +296,7 @@ async def send_message(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=not is_reply,
+                    reply_requested=expects_reply and not is_reply,
                     required_sprint_item_id=item_id,
                     retain_created_conversation=retain_created_conversation,
                 )

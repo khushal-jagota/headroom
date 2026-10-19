@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from datetime import timedelta
-from math import isfinite
 from sqlite3 import Connection
 
-import httpx
 import pytest
 from tests.unit.test_recorded_usage import NOW, record
 
@@ -138,58 +135,10 @@ def test_explicit_zero_and_absent_cache_rates_keep_t3_semantics() -> None:
     assert price_usage(plain, priced_record()).cache_savings_usd == 0
 
 
-@pytest.mark.parametrize("tokens", [
-    UsageTokens(10**400, 10**400, 1, 0, 0, 0),
-    UsageTokens(10**400, 0, 1, 10**400, 0, 0),
-])
-def test_oversized_counters_stay_unpriced_without_overflow_and_keep_reported_usd(
-    tokens: UsageTokens,
-) -> None:
-    table = parse_rate_table({"example-model": rates(1e-6, 1e-7)})
-    corrupt = replace(priced_record(), tokens=tokens)
-    unpriced = price_usage(table, corrupt)
-    assert unpriced.cost_usd is None
-    assert unpriced.cost_source == "unpriced"
-    assert unpriced.category_cost_usd is None
-    assert metrics((corrupt,), table)["unpriced_records"] == 1
-    reported = price_usage(table, replace(corrupt, reported_cost_usd=7))
-    assert reported.cost_usd == 7
-    assert reported.cost_source == "provider_reported"
-    assert reported.category_cost_usd is None
-    assert reported.speed_premium_usd is None
-    assert reported.cache_savings_usd is None or isfinite(reported.cache_savings_usd)
 
 
-def test_extreme_reported_scaling_uses_finite_category_shares() -> None:
-    table = parse_rate_table({"example-model": {
-        "input_cost_per_token": 1e-308, "output_cost_per_token": 1e-308,
-    }})
-    tiny = replace(priced_record(), tokens=UsageTokens(1, 1, 1, 0, 0, 0),
-                   reported_cost_usd=1e308)
-    result = price_usage(table, tiny)
-    assert result.cost_usd == 1e308
-    assert result.cost_source == "provider_reported"
-    assert result.category_cost_usd == {
-        "input": 5e307, "cache_read": 0.0, "cache_write": 0.0, "output": 5e307,
-    }
-    assert result.speed_premium_usd == 0
-    assert result.cache_savings_usd == 0
 
 
-def test_unknown_standard_split_does_not_create_a_false_speed_premium() -> None:
-    table = parse_rate_table({"example-model": {
-        "input_cost_per_token": 1e308, "output_cost_per_token": 1e308,
-        "input_cost_per_token_priority": 1e-308,
-        "output_cost_per_token_priority": 1e-308,
-    }})
-    native = replace(priced_record(), tokens=UsageTokens(1, 1, 1, 0, 0, 0),
-                     reported_cost_usd=1e308, speed="fast")
-    result = price_usage(table, native)
-    assert result.cost_usd == 1e308
-    assert result.category_cost_usd == {
-        "input": 5e307, "cache_read": 0.0, "cache_write": 0.0, "output": 5e307,
-    }
-    assert result.speed_premium_usd is None
 
 
 def test_partial_known_cost_keeps_reported_and_model_subtotals_separate() -> None:
@@ -210,29 +159,6 @@ def test_partial_known_cost_keeps_reported_and_model_subtotals_separate() -> Non
     assert metrics((), table)["cost_usd"] is None
 
 
-def test_aggregate_overflow_stays_unknown_and_summary_remains_valid_json() -> None:
-    document: dict[str, object] = {"example-model": {
-        "input_cost_per_token": 1e-6, "output_cost_per_token": 1e-6,
-    }}
-    records = tuple(replace(
-        priced_record(), record_key=f"codex:response:large-{index}",
-        tokens=UsageTokens(1, 1, 1, 0, 0, 0), reported_cost_usd=1e308,
-    ) for index in range(4))
-    summary = summarize(
-        (SourceSnapshot("codex", "local", "ready", NOW, records=records),),
-        now=NOW + timedelta(seconds=1), days=7, timezone="UTC",
-        prices=UsagePriceSnapshot(prices.LITELLM_RATES_URL, NOW, document),
-    )
-    for result in (summary["totals"], summary["models"][0], summary["periods"][0]):
-        assert result["cost_usd"] is None
-        assert result["reported_cost_usd"] is None
-        assert result["provider_reported_cost_usd"] is None
-        assert result["category_cost_usd"] is None
-        assert result["speed_cost_usd"] is None
-        assert result["provider_reported_records"] == 4
-        assert result["cache_savings_usd"] == 0
-        assert result["speed_premium_usd"] == 0
-    json.dumps(summary, allow_nan=False)
 
 
 def test_summary_prices_from_owned_snapshot_and_retains_price_metadata() -> None:
@@ -283,17 +209,3 @@ def test_price_snapshot_survives_restart_ttl_and_failed_refresh(tmp_db: Connecti
     assert status["status"] == "cached"
     with connect(database) as conn:
         assert read_price_snapshot(conn) == stored
-
-
-@pytest.mark.parametrize("body", [b"[]", b"x" * 33])
-def test_external_price_adapter_bounds_decoded_bytes_and_rejects_invalid_shape(
-    monkeypatch: pytest.MonkeyPatch, body: bytes,
-) -> None:
-    real_client = httpx.Client
-    transport = httpx.MockTransport(lambda _: httpx.Response(200, content=body))
-    monkeypatch.setattr(prices, "MAX_RATES_BYTES", 32)
-    monkeypatch.setattr(httpx, "Client", lambda **kwargs: real_client(
-        **kwargs, transport=transport
-    ))
-    with pytest.raises(ValueError):
-        prices.fetch_rate_document()

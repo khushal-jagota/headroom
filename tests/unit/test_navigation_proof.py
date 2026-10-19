@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -10,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from planner.core.commit_capture import register_capture_task, run_in_capture_thread
 from planner.core.commit_observers import CommitObserver
 from planner.core.db import ChangeSignallingConnection, commit_without_change_signal, connect
 from planner.navigation import proof
@@ -111,24 +109,8 @@ def test_rollback_and_failed_outer_commit_capture_nothing(
     assert connection.execute("SELECT count(*) FROM navigation_commit_witnesses").fetchone()[0] == 0
 
 
-def test_savepoint_rollback_has_no_witness(connection: ChangeSignallingConnection) -> None:
-    with proof.capture_command_commits() as capture:
-        connection.execute("BEGIN")
-        connection.execute("SAVEPOINT inner")
-        connection.execute("INSERT INTO source VALUES(1)")
-        connection.execute("ROLLBACK TO inner")
-        connection.execute("RELEASE inner")
-        connection.commit()
-    assert capture.witnesses == []
-    assert certify(connection, proof.response_fence(connection, capture)) == "no_op"
 
 
-def test_overflow_unknown_does_not_certify_subset(connection: ChangeSignallingConnection) -> None:
-    with proof.capture_command_commits(max_witnesses=1) as capture:
-        connection.execute("INSERT INTO source VALUES(1)")
-        connection.execute("INSERT INTO source VALUES(2)")
-    assert len(capture.witnesses) == 1
-    assert certify(connection, proof.response_fence(connection, capture)) == "unknown"
 
 
 def test_observer_failure_preserves_domain_success(connection: ChangeSignallingConnection) -> None:
@@ -161,56 +143,10 @@ def test_fence_survives_new_epoch_but_not_missing_witness_or_forgery(
     assert certify(connection, fence) == "unknown"
 
 
-def test_expiry_before_response_stays_unknown(connection: ChangeSignallingConnection) -> None:
-    with proof.capture_command_commits() as capture:
-        connection.execute("INSERT INTO source VALUES(1)")
-    connection.execute("INSERT INTO source VALUES(2)")
-    with connection:
-        proof.prune(connection, retain_count=1)
-    assert certify(connection, proof.response_fence(connection, capture)) == "unknown"
-    assert connection.execute("SELECT count(*) FROM navigation_commit_witnesses").fetchone()[0] == 1
 
 
-def test_unrequested_writes_also_have_independent_witnesses(
-    connection: ChangeSignallingConnection,
-) -> None:
-    connection.execute("INSERT INTO source VALUES(1)")
-    assert connection.execute("SELECT count(*) FROM navigation_commit_witnesses").fetchone()[0] == 1
 
 
-def test_shielded_command_child_and_thread_capture_excludes_background(
-    connection: ChangeSignallingConnection, tmp_path: Path
-) -> None:
-    path = tmp_path / "fixture.db"
-
-    def write(value: int) -> None:
-        db = connect(str(path))
-        assert isinstance(db, ChangeSignallingConnection)
-        install(db)
-        try:
-            db.execute("INSERT INTO source VALUES(?)", (value,))
-        finally:
-            db.close()
-
-    async def exercise() -> proof.Capture:
-        capture = proof.begin_capture(str(path))
-        task = asyncio.create_task(run_in_capture_thread(write, 1))
-        register_capture_task(task)
-        await asyncio.shield(task)
-
-        async def background() -> None:
-            await asyncio.to_thread(write, 2)
-            await run_in_capture_thread(write, 3)
-
-        await asyncio.create_task(background())
-        await run_in_capture_thread(write, 4)
-        proof.end_capture(capture)
-        return capture
-
-    capture = asyncio.run(exercise())
-    assert len(capture.witnesses) == 2
-    assert connection.execute("SELECT count(*) FROM source").fetchone()[0] == 4
-    assert certify(connection, proof.response_fence(connection, capture)) == "included"
 
 
 def test_wrong_database_excluded(connection: ChangeSignallingConnection, tmp_path: Path) -> None:

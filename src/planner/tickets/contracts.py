@@ -353,3 +353,13 @@ class TicketDeletion:
     sprint_item_ids: tuple[str, ...]
     sprint_ids: tuple[str, ...]
     linked_ticket_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewTransferNotice:
+    """An in-memory courtesy notice, exposed only after its write commits."""
+
+    ticket_id: str
+    ticket_title: str
+    previous_holder: Principal
+    new_holder_name: str

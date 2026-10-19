@@ -1,11 +1,12 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { TicketDetail } from "../lib/types";
   import type { ResponseMetadata } from "../lib/navigation/commandEvidence";
   import { mutateJson } from "../lib/mutate";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
-  let { ticket, terminal, assertCurrent, runCommand }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown> } = $props();
+  let { ticket, terminal, assertCurrent, runCommand, leading }: { ticket: TicketDetail; terminal: boolean; assertCurrent?: () => void; runCommand?: (request:(metadata:ResponseMetadata)=>Promise<unknown>)=>Promise<unknown>; leading?: Snippet } = $props();
   let busy = $state(false);
   let error = $state<unknown>(null);
 
@@ -33,6 +34,8 @@
 <div class="ticket-lifecycle" data-ticket-lifecycle>
   {#if !terminal}
     <div class="actions">
+      {@render leading?.()}
+      {#if leading}<span class="separator" aria-hidden="true">·</span>{/if}
       {#if ticket.is_backlogged}<span class="state" data-ticket-backlogged>Backlogged</span>{/if}
       {#if ticket.is_backlogged}
         <Button disabled={busy} data-ticket-backlog-action onclick={() => void change("resume")}>Resume ticket</Button>
@@ -51,6 +54,7 @@
   .text-action { border:0; background:none; padding:var(--space-1) 0; color:var(--text-faint); font:inherit; cursor:pointer; }
   .text-action:hover { color:var(--text-strong); }
   .text-action:disabled { cursor:default; opacity:.5; }
+  .separator { color:var(--text-faintest); }
   .state { color:var(--text-strong); font-weight:600; }
   .hint { margin:var(--space-2) 0; line-height:1.6; }
 </style>
