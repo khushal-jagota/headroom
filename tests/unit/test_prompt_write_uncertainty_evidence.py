@@ -39,7 +39,7 @@ def test_an_admitted_scripted_prompt_can_still_return_public_refusal(tmp_path: P
     script.write_text(
         "import asyncio, sys\n"
         f"sys.path.insert(0, {str(root)!r})\n"
-        "from tests.unit.test_conversation_codex_scripted_app_server "
+        "from tests.support.conversation_codex_scripted_app_server "
         "import ScriptedAppServer\n"
         "class AdmittedBadResponse(ScriptedAppServer):\n"
         "    async def _run_turn(self, request_id, parameters, **kwargs):\n"

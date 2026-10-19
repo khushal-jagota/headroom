@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from tests.unit.test_conversation_api import _Harness
+from tests.unit.test_conversation_api import _FakeBackend, _FakeBackendChild
 from tests.unit.test_sprint_item_supervisors import _app
 
+from planner.conversation.backends.contracts import BackendEventSink, BackendSpawnFailed
 from planner.conversation.contracts import (
     AddressedPromptDeliveryReceipt,
+    ConversationBackendKey,
     PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
     PromptDeliveryUncertain,
+    ResolvedConversationStart,
 )
 from planner.conversation.events import PromptDeliveryRefusedEventPayload, PromptEventPayload
 from planner.conversation.message_content import message_content_text
+from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.core.db import connect
 from planner.runtime import conversation_start
@@ -25,16 +30,42 @@ from planner.sprints import data as sprints_data
 from planner.sprints.contracts import SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
 
 
+class _StartupHarness:
+    """Scripted children under the application's sole conversation owner."""
+
+    def __init__(self) -> None:
+        self.backends: dict[str, _FakeBackend] = {}
+
+    def backend(self, conversation_id: str) -> _FakeBackend:
+        return self.backends.setdefault(conversation_id, _FakeBackend(conversation_id))
+
+    def make_child(
+        self,
+        *,
+        resolved_start: ResolvedConversationStart,
+        event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
+    ) -> _FakeBackendChild:
+
+        backend = self.backend(resolved_start.conversation_id)
+        if backend.spawn_fails:
+            raise BackendSpawnFailed(resolved_start.conversation_id)
+        return _FakeBackendChild(backend, event_sink)
+
+
 @pytest.mark.parametrize("actor", ["owner", "chief"])
 def test_creation_delivers_exact_brief_as_creator_with_supervisor_defaults(
     tmp_path: Path, actor: str
 ) -> None:
-    app, db_path = _app(tmp_path)
-    harness = _Harness(db_path)
+    harness = _StartupHarness()
+    app, db_path = _app(
+        tmp_path,
+        backend_child_factories={key: harness.make_child for key in ConversationBackendKey},
+    )
     brief = "  Take the next step.\n\nKeep these spaces.  \n"
     with TestClient(app) as client:
-        app.state.conversation_system = harness.system
-        app.state.conversation = harness.runtime
+        runtime = app.state.conversation
+        store = runtime.store
         response = client.post(
             "/api/items",
             json={"title": "Kickoff", "project_id": "project_vylo", "body": brief},
@@ -46,7 +77,7 @@ def test_creation_delivers_exact_brief_as_creator_with_supervisor_defaults(
         assert startup["fate"] == "started"
         conversation_id = startup["conversation_id"]
         assert client.portal is not None
-        events = client.portal.call(harness.store.read_events_after, conversation_id, 0)
+        events = client.portal.call(store.read_events_after, conversation_id, 0)
         prompts = [
             event.payload for event in events if isinstance(event.payload, PromptEventPayload)
         ]
@@ -58,12 +89,16 @@ def test_creation_delivers_exact_brief_as_creator_with_supervisor_defaults(
         assert prompt.recipient == Principal(PrincipalKind.sprint_item, item["id"])
         assert prompt.mode is PromptDeliveryMode.queue
         assert prompt.sender_message_id
-        record = client.portal.call(harness.store.read_conversation, conversation_id)
+        record = client.portal.call(store.read_conversation, conversation_id)
         assert record is not None
         defaults = SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
+        with closing(connect(str(db_path))) as conn:
+            saved = sprints_data.read_item(conn, item["id"]).item.supervisor_launch_configuration
+        assert saved == defaults
+        # The configured alias and its concrete catalogue resolution are distinct.
         assert (record.backend_key, record.model, record.reasoning_effort) == (
             defaults.employee_backend,
-            defaults.employee_launch_model,
+            "gpt-5.6-sol",
             defaults.employee_launch_reasoning_effort,
         )
         identity = dict(record.identity_environment_variables)
@@ -74,7 +109,6 @@ def test_creation_delivers_exact_brief_as_creator_with_supervisor_defaults(
         assert wire[0].endswith(brief)
         assert wire[0].startswith("[Authenticated Panels reply requirement]")
         assert item["body"] == brief
-        client.portal.call(harness.system.shutdown)
 
 
 @pytest.mark.parametrize("brief", ["", " \n\t "])
@@ -97,8 +131,11 @@ def test_blank_brief_saves_without_conversation(tmp_path: Path, brief: str) -> N
 def test_refused_initial_brief_stays_linked_and_recorded_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, db_path = _app(tmp_path)
-    harness = _Harness(db_path)
+    harness = _StartupHarness()
+    app, db_path = _app(
+        tmp_path,
+        backend_child_factories={key: harness.make_child for key in ConversationBackendKey},
+    )
     backend_for = harness.backend
 
     def refusing_backend(conversation_id: str):  # type: ignore[no-untyped-def]
@@ -109,8 +146,9 @@ def test_refused_initial_brief_stays_linked_and_recorded_once(
     monkeypatch.setattr(harness, "backend", refusing_backend)
     brief = "  A saved brief even when the backend cannot start.\n"
     with TestClient(app) as client:
-        app.state.conversation_system = harness.system
-        app.state.conversation = harness.runtime
+        runtime = app.state.conversation
+        system = runtime.system
+        store = runtime.store
         response = client.post(
             "/api/items", json={"title": "Refused", "project_id": "project_vylo", "body": brief}
         )
@@ -126,7 +164,7 @@ def test_refused_initial_brief_stays_linked_and_recorded_once(
                 == conversation_id
             )
         assert client.portal is not None
-        events = client.portal.call(harness.store.read_events_after, conversation_id, 0)
+        events = client.portal.call(store.read_events_after, conversation_id, 0)
         refused = [
             event.payload
             for event in events
@@ -139,7 +177,7 @@ def test_refused_initial_brief_stays_linked_and_recorded_once(
 
         async def replay_refused_brief() -> None:
             refused_prompt = refused[0]
-            receipt = await harness.system.send_with_receipt(
+            receipt = await system.send_with_receipt(
                 conversation_id,
                 refused_prompt.content,
                 sender_label=refused_prompt.sender_label,
@@ -151,9 +189,8 @@ def test_refused_initial_brief_stays_linked_and_recorded_once(
             assert not receipt.newly_accepted
 
         client.portal.call(replay_refused_brief)
-        replayed_events = client.portal.call(harness.store.read_events_after, conversation_id, 0)
+        replayed_events = client.portal.call(store.read_events_after, conversation_id, 0)
         assert replayed_events == events
-        client.portal.call(harness.system.shutdown)
 
 
 @pytest.mark.parametrize(

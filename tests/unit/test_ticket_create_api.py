@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock
@@ -26,7 +27,7 @@ from planner.tickets.contracts import CreateTicketBody
 @pytest.fixture
 def create_api(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     db_path = tmp_path / "ticket-create.db"
-    with connect(str(db_path)) as conn:
+    with closing(connect(str(db_path))) as conn:
         create_schema(conn)
     config = load_config(
         path=None,
