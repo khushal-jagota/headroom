@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlite3 import Connection
 
 import pytest
+from tests.support.retired_workers import seed_historical_worker_type
 
 from planner.core import authority
 from planner.core.authctx import _classify
@@ -80,6 +81,7 @@ def test_historical_planning_worker_cannot_write_a_sprint(
     sprint = create_sprint(
         tmp_db, name="Historical", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
     )
+    seed_historical_worker_type(tmp_db, "planning-sprint")
     _insert_ticket(tmp_db, "t_planning_sprint", "needs_brief")
     tmp_db.execute(
         "UPDATE tickets SET worker_type='planning-sprint',ceiling='needs_brief' "
