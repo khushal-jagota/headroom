@@ -284,7 +284,8 @@ def run(browser, urls):
     workspace = dict(
         id="si_needs_him",
         title="Needs him",
-        body="The orchestrator brief",
+        goal="The orchestrator goal",
+        recap="",
         project_id=None,
         project=None,
         created_at=0,
@@ -342,7 +343,10 @@ def run(browser, urls):
         elif path == "backends":
             result = {"backends": []}
         elif path.endswith("/workspace-content"):
-            result = {key: workspace[key] for key in ["body", "artifacts", "conversation_history"]}
+            result = {
+                key: workspace[key]
+                for key in ["goal", "recap", "artifacts", "conversation_history"]
+            }
         elif path.endswith("/start-values"):
             result = {"backend_key": "codex", "model": None, "reasoning_effort": None}
         elif path.startswith("tickets/") or path == "tickets":

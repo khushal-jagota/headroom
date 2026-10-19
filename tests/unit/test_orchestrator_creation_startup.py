@@ -1,4 +1,4 @@
-"""Creation hands the exact brief to the supervisor and retains recovery evidence."""
+"""Creation hands the exact goal to the supervisor and retains recovery evidence."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ class _StartupHarness:
 
 
 @pytest.mark.parametrize("actor", ["owner", "chief"])
-def test_creation_delivers_exact_brief_as_creator_with_supervisor_defaults(
+def test_creation_delivers_exact_goal_as_creator_with_supervisor_defaults(
     tmp_path: Path, actor: str
 ) -> None:
     harness = _StartupHarness()
@@ -62,13 +62,13 @@ def test_creation_delivers_exact_brief_as_creator_with_supervisor_defaults(
         tmp_path,
         backend_child_factories={key: harness.make_child for key in ConversationBackendKey},
     )
-    brief = "  Take the next step.\n\nKeep these spaces.  \n"
+    goal = "  Take the next step.\n\nKeep these spaces.  \n"
     with TestClient(app) as client:
         runtime = app.state.conversation
         store = runtime.store
         response = client.post(
             "/api/items",
-            json={"title": "Kickoff", "project_id": "project_vylo", "body": brief},
+            json={"title": "Kickoff", "project_id": "project_vylo", "goal": goal},
             headers={"X-Plan-Actor": "chief"} if actor == "chief" else {},
         )
         assert response.status_code == 200, response.text
@@ -83,7 +83,7 @@ def test_creation_delivers_exact_brief_as_creator_with_supervisor_defaults(
         ]
         assert len(prompts) == 1
         prompt = prompts[0]
-        assert message_content_text(prompt.content) == brief
+        assert message_content_text(prompt.content) == goal
         assert prompt.sender == (OWNER_PRINCIPAL if actor == "owner" else CHIEF_PRINCIPAL)
         assert prompt.sender_label == actor.replace("chief", "Chief")
         assert prompt.recipient == Principal(PrincipalKind.sprint_item, item["id"])
@@ -106,21 +106,21 @@ def test_creation_delivers_exact_brief_as_creator_with_supervisor_defaults(
         assert identity["PLAN_SPRINT_ITEM_ID"] == item["id"]
         wire = harness.backend(conversation_id).written_texts
         assert len(wire) == 1
-        assert wire[0].endswith(brief)
+        assert wire[0].endswith(goal)
         assert wire[0].startswith("[Authenticated Panels reply requirement]")
-        assert item["body"] == brief
+        assert item["goal"] == goal
 
 
-@pytest.mark.parametrize("brief", ["", " \n\t "])
-def test_blank_brief_saves_without_conversation(tmp_path: Path, brief: str) -> None:
+@pytest.mark.parametrize("goal", ["", " \n\t "])
+def test_blank_goal_saves_without_conversation(tmp_path: Path, goal: str) -> None:
     app, db_path = _app(tmp_path)
     with TestClient(app) as client:
         result = client.post(
-            "/api/items", json={"title": "Quiet", "project_id": "project_vylo", "body": brief}
+            "/api/items", json={"title": "Quiet", "project_id": "project_vylo", "goal": goal}
         )
         assert result.status_code == 200, result.text
         assert result.json()["startup"] is None
-        assert result.json()["body"] == brief
+        assert result.json()["goal"] == goal
         with connect(str(db_path)) as conn:
             item = sprints_data.read_item(conn, result.json()["id"]).item
             assert (
@@ -128,7 +128,7 @@ def test_blank_brief_saves_without_conversation(tmp_path: Path, brief: str) -> N
             )
 
 
-def test_refused_initial_brief_stays_linked_and_recorded_once(
+def test_refused_initial_goal_stays_linked_and_recorded_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     harness = _StartupHarness()
@@ -144,13 +144,13 @@ def test_refused_initial_brief_stays_linked_and_recorded_once(
         return backend
 
     monkeypatch.setattr(harness, "backend", refusing_backend)
-    brief = "  A saved brief even when the backend cannot start.\n"
+    goal = "  A saved goal even when the backend cannot start.\n"
     with TestClient(app) as client:
         runtime = app.state.conversation
         system = runtime.system
         store = runtime.store
         response = client.post(
-            "/api/items", json={"title": "Refused", "project_id": "project_vylo", "body": brief}
+            "/api/items", json={"title": "Refused", "project_id": "project_vylo", "goal": goal}
         )
         assert response.status_code == 200, response.text
         result = response.json()
@@ -171,11 +171,11 @@ def test_refused_initial_brief_stays_linked_and_recorded_once(
             if isinstance(event.payload, PromptDeliveryRefusedEventPayload)
         ]
         assert len(refused) == 1
-        assert message_content_text(refused[0].content) == brief
+        assert message_content_text(refused[0].content) == goal
         assert refused[0].sender == OWNER_PRINCIPAL
         assert str(refused[0].refusal_reason) == result["startup"]["refusal_reason"]
 
-        async def replay_refused_brief() -> None:
+        async def replay_refused_goal() -> None:
             refused_prompt = refused[0]
             receipt = await system.send_with_receipt(
                 conversation_id,
@@ -188,7 +188,7 @@ def test_refused_initial_brief_stays_linked_and_recorded_once(
             )
             assert not receipt.newly_accepted
 
-        client.portal.call(replay_refused_brief)
+        client.portal.call(replay_refused_goal)
         replayed_events = client.portal.call(store.read_events_after, conversation_id, 0)
         assert replayed_events == events
 
@@ -214,7 +214,7 @@ def test_creation_reports_delivery_fate_without_claiming_start(
 
         monkeypatch.setattr(app.state.conversation_system, "send_with_receipt", send_with_receipt)
         response = client.post(
-            "/api/items", json={"title": "Receipt", "project_id": "project_vylo", "body": "Go."}
+            "/api/items", json={"title": "Receipt", "project_id": "project_vylo", "goal": "Go."}
         )
         assert response.status_code == 200, response.text
         startup = response.json()["startup"]
@@ -236,7 +236,7 @@ def test_unexpected_start_error_reports_saved_item_and_recovery(
 
         monkeypatch.setattr(app.state.conversation_system, failure_at, fail)
         response = client.post(
-            "/api/items", json={"title": "Saved", "project_id": "project_vylo", "body": "Keep me."}
+            "/api/items", json={"title": "Saved", "project_id": "project_vylo", "goal": "Keep me."}
         )
         assert response.status_code == 200, response.text
         result = response.json()
@@ -245,7 +245,7 @@ def test_unexpected_start_error_reports_saved_item_and_recovery(
         assert "secret detail" not in response.text
         assert bool(result["startup"]["conversation_id"]) == (failure_at == "send_with_receipt")
         with connect(str(db_path)) as conn:
-            assert sprints_data.read_item(conn, result["id"]).item.body == "Keep me."
+            assert sprints_data.read_item(conn, result["id"]).item.goal == "Keep me."
             assert (
                 conn.execute("SELECT COUNT(*) FROM sprint_items WHERE title='Saved'").fetchone()[0]
                 == 1

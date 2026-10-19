@@ -29,7 +29,7 @@ header and a part manifest. Add one comma-separated part list to expand selected
 panels ticket show t_example success_condition,what_changes --json
 panels ticket show brief --json
 panels sprint show current primary_bet,kickoff --json
-panels sprint item show si_example body --json
+panels sprint item show si_example goal,recap --json
 panels day show 2026-08-10 focus,watchout --json
 ```
 
@@ -210,10 +210,12 @@ again.
 ## Orchestrator assignment and settlement
 
 `orchestrator create/list/show/set/workspace` keeps the existing Item identity and
-conversation. `sprint item` remains an alias. Artifact operations keep their existing
+conversation. `sprint item` remains an alias. `set` takes `goal`, `recap`, `title`,
+`project` and `project-id`. There is no `body` field: a stale `set <item> body` fails
+rather than writing the wrong one. Artifact operations keep their existing
 managed roots. `send-message --sprint-item` keeps its stable recipient address.
-`orchestrator create --body-file <brief-file>` starts the supervisor with the brief.
-A blank or absent brief leaves it idle. The result reports the saved orchestrator and
+`orchestrator create --goal-file <goal-file>` starts the supervisor with the goal.
+A blank or absent goal leaves it idle. The result reports the saved orchestrator and
 startup outcome. Refused, failed, or uncertain startup still leaves the orchestrator saved.
 Inspect it and recover on that same orchestrator instead of creating another one.
 Uncertain startup gets no automatic replay. For failed or uncertain startup, check the

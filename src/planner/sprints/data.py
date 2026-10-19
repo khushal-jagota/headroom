@@ -35,7 +35,7 @@ class ItemRead(NamedTuple):
     item: SprintItem
 
 
-_ITEM_PLAIN_FIELDS: frozenset[str] = frozenset({"title", "body", "project_id"})
+_ITEM_PLAIN_FIELDS: frozenset[str] = frozenset({"title", "goal", "recap", "project_id"})
 _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(SPRINT_DOCUMENT_FIELDS + ("primary_bet", "name"))
 PERSONAL_PROJECT_ID = "project_personal"
 
@@ -92,7 +92,8 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
     return SprintItem(
         id=row["id"],
         title=row["title"],
-        body=row["body"],
+        goal=row["goal"],
+        recap=row["recap"],
         project_id=row["project_id"],
         project_name=row["project_name"],
         settled=bool(row["settled"]),
@@ -222,7 +223,7 @@ def create_item(
     *,
     title: str,
     project_id: str,
-    body: str = "",
+    goal: str = "",
     clock: Clock,
 ) -> SprintItem:
     if not title:
@@ -238,14 +239,14 @@ def create_item(
         defaults = SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
         conn.execute(
             "INSERT INTO sprint_items ("
-            "id, title, body, project_id, "
+            "id, title, goal, project_id, "
             "supervisor_backend, supervisor_model, "
             "supervisor_reasoning_effort, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item_id,
                 title,
-                body,
+                goal,
                 project_id,
                 defaults.employee_backend.value,
                 defaults.employee_launch_model,

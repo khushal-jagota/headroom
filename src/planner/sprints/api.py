@@ -56,7 +56,7 @@ from planner.work_attention import add_work_attention
 router = APIRouter()
 
 _SPRINT_TEXT_FIELDS = ("name", "primary_bet") + SPRINT_DOCUMENT_FIELDS
-_ITEM_PLAIN_FIELDS = ("title", "body", "project_id")
+_ITEM_PLAIN_FIELDS = ("title", "goal", "recap", "project_id")
 
 
 # --- request-body marshallers (contract shapes in sprints/contracts.py) ---------
@@ -69,7 +69,7 @@ def _marshal_create_item(raw: JsonDict) -> CreateItemBody:
         title=body_str(raw, "title"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
-        body=body_str(raw, "body"),
+        goal=body_str(raw, "goal"),
     )
 
 
@@ -98,7 +98,7 @@ async def create_item(
         conn,
         title=body["title"],
         project_id=project.id,
-        body=body["body"],
+        goal=body["goal"],
         clock=clk,
     )
     startup = await sprints_startup.start_created_orchestrator(conversations, conn, clk, ctx, item)
@@ -338,7 +338,7 @@ async def patch_item(
         if field in body:
             if field == "project_id":
                 continue
-            if field in ("title", "body"):
+            if field in ("title", "goal", "recap"):
                 value = body_str(body, field)
             else:
                 value = body[field]
