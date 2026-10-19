@@ -77,10 +77,10 @@ try {
  assert(output.some(line=>line.includes('PARTIAL FAIL')));
  assert.equal(process.exitCode,exitCode,'footer must preserve native exit semantics');
  output=[];
- await assert.rejects(run(['artifacts'],{revision:'incorrect'}),
+ await assert.rejects(run(['conversation'],{revision:'incorrect'}),
    /Requested browser revision differs from checkout/);
  assert(output.some(line=>line.includes('PARTIAL FAIL')));
- assert(output.some(line=>line.includes('NOT RUN selected cases: file-preview')));
+ assert(output.some(line=>line.includes('NOT RUN selected cases: conversation-pane')));
  assert(!output.some(line=>line.includes('PARTIAL PASS')));
  // A different owner's PID can have our PID as a numeric prefix.
  assert(ownedByProcess('host-123.html',123));
