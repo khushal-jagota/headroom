@@ -83,6 +83,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "ticket_status": ticket.ticket_status.value,
         "conversation_id": ticket.conversation_id,
         "field_values": dict(ticket.field_values),
+        "field_approvals": {key: asdict(value) for key, value in ticket.field_approvals.items()},
         "pending_proposal": (
             {
                 **asdict(ticket.pending_proposal),

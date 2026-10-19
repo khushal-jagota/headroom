@@ -347,6 +347,11 @@ jobs:
             --service-name "$PANELS_SERVICE_NAME" \
             --lifecycle-path "$PANELS_LIFECYCLE_PATH" \
             --deployment-id "$PANELS_DEPLOYMENT_ID"
+      - name: Check published HTTP/2
+        if: ${{ !inputs.rehearsal }}
+        env:
+          PANELS_PUBLISHED_ORIGIN: ${{ vars.PANELS_PUBLISHED_ORIGIN }}
+        run: python3 "$GITHUB_WORKSPACE/scripts/check_published_http2.py"
       - name: Provision agent skills
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" -m planner environment provision-skills \
