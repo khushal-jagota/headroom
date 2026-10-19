@@ -119,6 +119,10 @@ its recipient. For example:
 
 > Runs unsupervised: Success Condition, What Changes, Plan, Implementation. First parks for review at Consequences, with Chief.
 
+The default receipt reads:
+
+> Nothing runs unsupervised. First parks for review at Brief, with the owner.
+
 Stages that require user participation still require it. A grant with no unsupervised
 Stage states that explicitly. If no review gate remains, the first sentence states:
 "Nothing in this grant ever parks for review." Ordinary Ticket reads keep their existing shape.

@@ -454,9 +454,7 @@ def test_creation_receipt_matches_grant_and_excludes_settled_brief_from_remainin
     receipt = response.json()["supervision_receipt"]
     if ceiling is None:
         assert receipt == (
-            "Granted scope: no Stage proposals auto-accept without review. "
-            "No remaining Worker Stage runs unsupervised. "
-            "The Ticket first parks for proposal review at Brief, with the owner."
+            "Nothing runs unsupervised. First parks for review at Brief, with the owner."
         )
     elif ceiling == "needs_consequences":
         assert receipt == (

@@ -39,12 +39,10 @@ def supervision_receipt(
     parts: list[str] = []
     if review is None:
         parts.append("Nothing in this grant ever parks for review.")
-    if not auto_accept:
-        parts.append("Granted scope: no Stage proposals auto-accept without review.")
     parts.append(
         "Runs unsupervised: " + ", ".join(stage.label for stage in autonomous) + "."
         if autonomous
-        else "No remaining Worker Stage runs unsupervised."
+        else "Nothing runs unsupervised."
     )
     user_stages = tuple(
         stage
@@ -58,13 +56,7 @@ def supervision_receipt(
             + ", even though its proposals auto-accept."
         )
     if review is not None:
-        if auto_accept:
-            parts.append(f"First parks for review at {review.label}, with {review_recipient}.")
-        else:
-            parts.append(
-                f"The Ticket first parks for proposal review at {review.label}, "
-                f"with {review_recipient}."
-            )
+        parts.append(f"First parks for review at {review.label}, with {review_recipient}.")
         if review.ownership_mode is StageOwnershipMode.user:
             parts.append(f"{review.label} requires user involvement before its proposal review.")
     return TicketCreationReceipt(supervision_receipt=" ".join(parts))
