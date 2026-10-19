@@ -1560,7 +1560,15 @@ def delete_ticket_records(
     and, for recovery, verify a durable archive before calling. Offline recovery skips
     live attention derivation so legacy Worker metadata need not load. Artifacts are untouched.
     """
-    ticket = _ticket_row(conn, ticket_id)
+    # Offline recovery stops before current-schema migrations can run. Read only
+    # the deletion record, without the runtime Ticket projection and its new columns.
+    ticket = conn.execute(
+        "SELECT id, title, worker_step_claim, sprint_item_id, sprint_id "
+        "FROM tickets WHERE id = ?",
+        (ticket_id,),
+    ).fetchone()
+    if ticket is None:
+        raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
     held_elsewhere = conn.execute(
         "SELECT id FROM tickets WHERE id != ? "
         "AND json_extract(ceiling_holder, '$.kind') = 'ticket' "
