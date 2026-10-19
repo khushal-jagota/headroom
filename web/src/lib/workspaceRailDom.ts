@@ -48,7 +48,7 @@ function messagesMatch(root:Element,expected:readonly WorkspaceMessageConversati
 export function hoverDomMatches(root:HTMLElement,title:string,recap:string,stage:string,signal:Partial<ConversationSignal> | undefined,
   conversationId:string | null | undefined,kicker:string):boolean {
   return root.querySelector('.kicker')?.textContent===kicker && root.getAttribute('aria-hidden')==='false' && root.querySelector('.title > span')?.textContent===title
-    && (root.querySelector('.recap')?.textContent ?? '')===recap && (root.querySelector('.doing')?.textContent ?? '')===stage
+    && (root.querySelector('[data-recap-text]')?.textContent ?? '')===recap && (root.querySelector('.doing')?.textContent ?? '')===stage
     && JSON.stringify(actualMark(root))===JSON.stringify(expectedMark(signal,conversationId));
 }
 

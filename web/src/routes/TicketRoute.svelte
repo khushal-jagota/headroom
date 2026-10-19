@@ -35,6 +35,8 @@
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import RequestRecapAction from "../components/RequestRecapAction.svelte";
+  import RecapSlot from "../components/RecapSlot.svelte";
   import TicketLifecycleControls from "../components/TicketLifecycleControls.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
@@ -499,6 +501,8 @@
               />
               <ConversationSignalMark signal={masthead.conversation_signal} conversationId={masthead.conversation_id} />
             </div>
+            <RecapSlot>
+            {#snippet children()}
             <ClampedText
               contentKey={detail.recap}
               moreControlAttributes={{ "data-recap-toggle": "" }}
@@ -515,8 +519,12 @@
                   }))}
               />
             </ClampedText>
+            {/snippet}
+            </RecapSlot>
           </div>
-          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)} />{/if}
+          {#if section}<TicketLifecycleControls ticket={section.detail} terminal={section.record.value.terminal} assertCurrent={assertCurrentSection} runCommand={(request)=>navigation.runCommand(ticketCommandImpact(navigation.state.effective,stableId,'backlog'),request)}>
+            {#snippet leading()}<RequestRecapAction kind="ticket" id={stableId} />{/snippet}
+          </TicketLifecycleControls>{/if}
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
               <span class="ticket-blocker-heading">Blocked by</span>
@@ -652,7 +660,10 @@
   .ticket-title-row { display:block; margin-top:var(--space-3); }
   .ticket-title { display:flex; align-items:center; gap:var(--space-3); font-family:var(--font-ui); font-size:28px; font-weight:600; line-height:1.24; letter-spacing:-.014em; }
   .ticket-title :global(.ed) { font:inherit; color:var(--text-strong); }
-  .ticket-head :global([data-recap]) { margin-top:var(--space-3); max-width:66ch; font-family:var(--font-ui); font-size:17px; line-height:1.6; color:var(--text-faint); }
+  /* The gap belongs to the slot, not to the words in it: the words go while a recap is
+     written, and a gap that went with them would move the page. */
+  .ticket-head :global([data-recap-slot]) { margin-top:var(--space-3); }
+  .ticket-head :global([data-recap]) { max-width:66ch; font-family:var(--font-ui); font-size:17px; line-height:1.6; color:var(--text-faint); }
   .ticket-head :global([data-recap] .ed) { font:inherit; }
   .worker-current { margin-top:var(--space-6); }
   .worker-live-card { padding:var(--space-5); background:var(--surface-2); border-radius:var(--radius-lg); }

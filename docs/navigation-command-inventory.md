@@ -7,7 +7,9 @@ about its navigation effect; the HTTP verb alone does not make that decision.
 
 The covered families are Ticket creation, metadata, proposals, approvals and
 lifecycle; collection membership; Projects and orchestrators; Chief, Ticket and
-orchestrator conversation sends and resets; addressed messages; conversation
+orchestrator conversation sends and resets; addressed messages, including the
+owner's request for a fresh recap, which empties the published recap it replaces;
+conversation
 creation, owner read acknowledgment, interruption, termination, held prompt
 removal and promotion, permission and input answers; Worker definitions,
 requirements and launch defaults. The current application has no separate HTTP
