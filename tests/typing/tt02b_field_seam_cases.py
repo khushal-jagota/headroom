@@ -39,21 +39,13 @@ def _cases(
         conn, "t_1", field=foreign_field, new_body="b", principal=OWNER_PRINCIPAL, now=0
     )
     _t4: Ticket = tickets_data.edit_ticket(
-            conn,
-            "t_1",
-            edit=TicketEdit(guidance="n"),
-            title_max_chars=200,
-            principal=OWNER_PRINCIPAL,
-            now=0,
-        )
-    _t5: Ticket = tickets_data.edit_ticket(
-            conn,
-            "t_1",
-            edit=TicketEdit(guidance_append="n"),
-            title_max_chars=200,
-            principal=OWNER_PRINCIPAL,
-            now=0,
-        )
+        conn,
+        "t_1",
+        edit=TicketEdit(recap="n"),
+        title_max_chars=200,
+        principal=OWNER_PRINCIPAL,
+        now=0,
+    )
 
     assert_type(
         resolution.decide_file_proposal(

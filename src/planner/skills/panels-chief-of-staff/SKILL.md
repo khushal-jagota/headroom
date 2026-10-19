@@ -101,7 +101,7 @@ after the user agrees to it. If the user did not state an intention, concern, de
 outcome, scope, or reason, do not guess one. Do not invent questions to answer,
 consequences, requirements, architecture, methods, tests, or process instructions. When
 missing intent prevents correct capture, ask briefly; otherwise write a light Brief and
-let the Ticket's conversation and notes add or correct context. Longer Briefs are earned
+let the Ticket's conversation and artifacts add or correct context. Longer Briefs are earned
 only by what the user actually supplied or approved. Less is more because the user must
 read and trust the record.
 

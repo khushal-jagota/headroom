@@ -205,8 +205,6 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     sprint_item_id: str | None
     orchestrator: Principal
     recap: str
-    guidance: str  # replaces the document
-    guidance_append: str  # adds to it; naming both in one call is refused
     field_values: Mapping[str, str]  # settled values only, by field id
     ceiling: str  # pending same/lower scope is editable; raising past the stage uses accept
     ceiling_holder: Principal  # who is asked; allowed while a proposal is parked
@@ -263,7 +261,6 @@ class Ticket:  # §3.3 — column names match exactly
     sprint_item_title: str | None
     effective_sprint_id: str | None  # historical Sprint association
     recap: str  # writable only past the type's first worker Stage
-    guidance: str = field(default="", kw_only=True)  # durable instructions for the Ticket
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     # An address, not an authority. It says which principal a parked proposal is for, so
     # that Review, attention and notifications can put it in front of them. It says

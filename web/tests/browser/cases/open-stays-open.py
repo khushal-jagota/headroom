@@ -60,7 +60,6 @@ def run(browser, urls):
         blocked=False,
         blocker_summary={"blocked_by": []},
         recap="Orientation",
-        guidance="",
         pending_proposal=None,
         field_values={
             "brief": "The request",

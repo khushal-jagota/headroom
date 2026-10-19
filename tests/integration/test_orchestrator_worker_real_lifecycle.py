@@ -58,7 +58,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (workspace / "AGENTS.md").write_text(
         "This workspace belongs only to an isolated Panels lifecycle proof. "
         "Read Panels skills from this workspace's .agents/skills directory. "
-        "Use panels worker my-ticket brief,guidance to inspect the current Ticket. "
+        "Use panels worker my-ticket brief to inspect the current Ticket. "
         "Submit the current field by piping its text into panels worker propose. "
         "The explicit reply requirement uses panels send-message. "
         "Do not inspect or edit other workspaces.\n"

@@ -75,7 +75,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "effective_sprint_id": ticket.effective_sprint_id,
         "sprint_item_title": ticket.sprint_item_title,
         "recap": ticket.recap,
-        "guidance": ticket.guidance,
         "ceiling": str(ticket.ceiling),
         "ceiling_holder": {
             "kind": ticket.ceiling_holder.kind.value,
@@ -153,7 +152,6 @@ def _ticket_search_text(row: sqlite3.Row) -> str:
         (
             str(row["title"]),
             str(row["recap"]),
-            str(row["guidance"]),
             *values.values(),
             proposal.body if proposal is not None else "",
         )
@@ -236,14 +234,11 @@ def list_ticket_summaries(
     )
     searchable_fields = "tickets.field_values" if filters.search else "NULL"
     searchable_proposal = "tickets.pending_proposal" if filters.search else "NULL"
-    searchable_guidance = "tickets.guidance" if filters.search else "NULL"
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
         "tickets.is_backlogged, "
         "tickets.worker_step_claim, tickets.recap, "
         "tickets.pending_proposal, "
-        + searchable_guidance
-        + " AS guidance, "
         + searchable_fields
         + " AS field_values, "
         + searchable_proposal
@@ -417,7 +412,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"pending proposal:\n"
         f"{show(ticket.pending_proposal.body if ticket.pending_proposal else None)}\n"
         f"recap:\n{show(ticket.recap)}\n"
-        f"\nguidance:\n{show(ticket.guidance)}\n"
         f"\n"
         f"blocked_by:\n{blocked_by_block}\n"
     )

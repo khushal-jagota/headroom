@@ -60,7 +60,6 @@ COMMAND_RECOVERY_SHAPES: dict[str, str] = {
     "panels worker propose": "panels worker propose TICKET_ID < PROPOSAL_FILE",
     "panels worker request-help": "panels worker request-help TICKET_ID < MESSAGE_FILE",
     "panels worker recap": "panels worker recap TICKET_ID < RECAP_FILE",
-    "panels worker note": "panels worker note TICKET_ID < GUIDANCE_FILE",
 }
 
 _PANELS_CALL = re.compile(r"(?:^|[`'\" ])panels(?:[ `]|$)")

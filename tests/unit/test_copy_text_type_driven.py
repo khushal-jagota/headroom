@@ -86,7 +86,7 @@ def test_copy_text_preserves_authored_state_and_own_type_field_order(
     edit_ticket(
         tmp_db,
         ticket.id,
-        edit=TicketEdit(guidance="success note", recap="Current work"),
+        edit=TicketEdit(recap="Current work"),
         title_max_chars=TITLE_MAX_CHARS,
         principal=OWNER_PRINCIPAL,
         now=4,
@@ -98,10 +98,12 @@ def test_copy_text_preserves_authored_state_and_own_type_field_order(
         principal=ticket_principal(ticket.id),
         now=5,
     )
+    tmp_db.execute("UPDATE tickets SET guidance=? WHERE id=?", ("retired document", ticket.id))
     copied = copy_text(tmp_db, ticket.id)
+    assert "guidance:" not in copied and "retired document" not in copied
     assert "Coding ticket" in copied
     assert f"stage: {next_stage}" in copied
-    for authored in ("kickoff body", "success note", "Current work", "Authored next proposal"):
+    for authored in ("kickoff body", "Current work", "Authored next proposal"):
         assert authored in copied
     headings = [re.search(rf"^\s*{re.escape(field)}\s*:", copied, re.MULTILINE) for field in fields]
     assert all(heading is not None for heading in headings)

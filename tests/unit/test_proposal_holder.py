@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import sqlite3
 from pathlib import Path
 from sqlite3 import Connection
@@ -198,12 +199,12 @@ def test_review_lists_only_owner_addressed_proposals(tmp_db: Connection) -> None
     assert [item["ticket_id"] for item in review["items"]] == [owner_ticket.id]
 
 
-def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and_rests(
+def test_revision_stores_exact_attributed_feedback_and_rests(
     tmp_db: Connection, fake_clock: Clock
 ) -> None:
     ticket = _park(tmp_db, OWNER_PRINCIPAL)
     tmp_db.execute(
-        "UPDATE tickets SET conversation_id='c_worker', guidance='Keep this.' WHERE id=?",
+        "UPDATE tickets SET conversation_id='c_worker' WHERE id=?",
         (ticket.id,),
     )
 
@@ -219,7 +220,6 @@ def test_revision_stores_exact_attributed_feedback_without_mutating_guidance_and
     )
 
     assert revised.pending_proposal is None
-    assert revised.guidance == "Keep this."
     assert revised.ticket_status.value == "empty"
     feedback = revision_feedback.snapshot(tmp_db, ticket.id)
     assert feedback is not None
@@ -548,6 +548,23 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
     days_data.add_day_ticket(tmp_db, day_id, ticket.id, 20)
     assert views.review_view(tmp_db)["items"] == []
 
+    tmp_db.execute(
+        "UPDATE tickets SET guidance=? WHERE id=?", ("Historical move text λ", ticket.id)
+    )
+    before = hashlib.sha256(tmp_db.execute(
+        "SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket.id,)
+    ).fetchone()[0]).hexdigest()
+
+    def deny_guidance(
+        action: int, table: str | None, column: str | None, _db: str | None, _trigger: str | None,
+    ) -> int:
+        if action in (sqlite3.SQLITE_READ, sqlite3.SQLITE_UPDATE) and (
+            table, column
+        ) == ("tickets", "guidance"):
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    tmp_db.set_authorizer(deny_guidance)
     data.edit_ticket(
         tmp_db,
         ticket.id,
@@ -560,9 +577,14 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
     moved = data.read_ticket(tmp_db, ticket.id)
     assert moved.ceiling_holder == OWNER_PRINCIPAL
     assert moved.pending_proposal == ticket.pending_proposal
-    assert "Inbox triage" in moved.guidance and "Sprint hygiene" in moved.guidance
+    assert moved.updated_at == 30
     review = views.review_view(tmp_db)
     assert [item["ticket_id"] for item in review["items"]] == [ticket.id]
+    tmp_db.set_authorizer(None)
+    after = hashlib.sha256(tmp_db.execute(
+        "SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket.id,)
+    ).fetchone()[0]).hexdigest()
+    assert before == after
 
 
 def test_the_outcome_collection_doors_return_a_stranded_ceiling_too(
@@ -583,7 +605,7 @@ def test_the_outcome_collection_doors_return_a_stranded_ceiling_too(
     )
     emptied = data.read_ticket(tmp_db, unclassified.id)
     assert emptied.ceiling_holder == OWNER_PRINCIPAL
-    assert "moved out of **Inbox triage**" in emptied.guidance
+    assert emptied.updated_at == 50
 
 
 def test_a_move_leaves_a_holder_that_still_stands_above_alone(
@@ -615,7 +637,6 @@ def test_a_move_leaves_a_holder_that_still_stands_above_alone(
 
     moved = data.read_ticket(tmp_db, ticket.id)
     assert moved.ceiling_holder == OWNER_PRINCIPAL
-    assert moved.guidance == ""
 
 
 def test_only_a_move_returns_the_ceiling_not_any_other_edit(
@@ -640,4 +661,3 @@ def test_only_a_move_returns_the_ceiling_not_any_other_edit(
 
     unchanged = data.read_ticket(tmp_db, ticket.id)
     assert unchanged.ceiling_holder == Principal(PrincipalKind.sprint_item, left)
-    assert unchanged.guidance == ""

@@ -160,7 +160,6 @@ function ticketDetail(facts: TicketFacts): TicketDetail {
     ticket_status: facts.ticket_status,
     conversation_id: "c_reading",
     conversation_history: [],
-    guidance: "",
     field_values: {},
     pending_proposal: null,
     awaiting_reply: facts.awaiting_reply,

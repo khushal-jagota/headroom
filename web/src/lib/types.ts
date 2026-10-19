@@ -320,7 +320,6 @@ export type TicketDetail = {
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
   recap?: string | null;
-  guidance: string;
   field_values: TicketFieldValues;
   pending_proposal: PendingTicketProposal | null;
   awaiting_reply?: boolean;
