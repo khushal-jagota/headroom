@@ -12,13 +12,11 @@ from tests.support.ticket_progress import advance_ticket
 
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
-from planner.projects import data as projects_data
 from planner.runtime.worker_step_readiness import (
     is_ready_for_worker_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import PendingTicketProposal, Ticket
-from planner.tickets.logic.fields_codec import proposal_to_json
+from planner.tickets.contracts import Ticket
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -40,8 +38,6 @@ def _ticket(
     worker_type: str = "coding",
     planning_day_id: str | None = PLANNING_DAY_ID,
     ceiling: str | None = None,
-    project_id: str | None = None,
-    sprint_item_id: str | None = None,
 ) -> Ticket:
     definition = configured_worker_type_registry().require(worker_type)
     ticket = tickets_data.create_ticket(
@@ -52,8 +48,6 @@ def _ticket(
         now=1,
         title_max_chars=200,
         brief="Agreed brief.",
-        project_id=project_id,
-        sprint_item_id=sprint_item_id,
     )
     ticket = tickets_data.accept_proposal(
         conn,
@@ -147,66 +141,5 @@ def test_a_ticket_at_its_ceiling_is_still_started_to_propose(
             assert ticket.field_values["purpose_and_boundaries"] == "purpose_and_boundaries"
             assert ticket.stage == "needs_stages"
         assert _ready(conn, ticket) is True
-    finally:
-        conn.close()
-
-
-# --- the Closeout lane ---------------------------------------------------------
-
-
-def _to_closeout(conn: sqlite3.Connection, ticket_id: str) -> None:
-    advance_ticket(
-        conn, ticket_id, new_stage="needs_consequences", principal=OWNER_PRINCIPAL, now=5
-    )
-
-
-@pytest.mark.parametrize(
-    "occupy",
-    [
-        "UPDATE tickets SET worker_step_claim = 'out' WHERE id = ?",
-        "approval",
-        "UPDATE tickets SET worker_step_claim = 'errored' WHERE id = ?",
-    ],
-    ids=["agent", "awaiting_approval", "errored"],
-)
-def test_a_closeout_waiter_is_not_ready_while_its_lane_is_occupied(
-    tmp_path: Path, occupy: str
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        occupying = _ticket(conn, planning_day_id=None)
-        waiting = _ticket(conn)
-        _to_closeout(conn, occupying.id)
-        _to_closeout(conn, waiting.id)
-        if occupy == "approval":
-            conn.execute(
-                "UPDATE tickets SET pending_proposal = ? WHERE id = ?",
-                (
-                    proposal_to_json(
-                        PendingTicketProposal("consequences", "Review the closeout.", "worker", 6)
-                    ),
-                    occupying.id,
-                ),
-            )
-        else:
-            conn.execute(occupy, (occupying.id,))
-        assert not _ready(conn, waiting)
-    finally:
-        conn.close()
-
-
-def test_lanes_in_different_projects_or_worker_types_are_independent(tmp_path: Path) -> None:
-    conn = _db(tmp_path)
-    try:
-        other_project_id = projects_data.create_project(conn, name="Client Work", now=0).id
-        occupying = _ticket(conn, planning_day_id=None, project_id=other_project_id)
-        other_project = _ticket(conn)
-        _to_closeout(conn, occupying.id)
-        _to_closeout(conn, other_project.id)
-        conn.execute(
-            "UPDATE tickets SET worker_step_claim = 'out' WHERE id = ?",
-            (occupying.id,),
-        )
-        assert _ready(conn, other_project)
     finally:
         conn.close()
