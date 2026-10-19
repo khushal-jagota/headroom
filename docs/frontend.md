@@ -76,7 +76,7 @@ One screen per part of the system:
   Approval, answer, assignment, error, and blocked facts use their specific wording.
   The popup has no stage ladder or named blockers. Recaps arrive through the existing
   board and orchestrator projections, without detail requests or another transport.
-  Orchestrator popups show their full body in a recessed recap.
+  Orchestrator popups show their full recap in a recessed recap.
   The Chief popup states the eligible Ticket count.
   Empty orchestrator recaps use that same factual fallback. The panel stays
   inside the viewport and does not capture the pointer. Recaps wrap to the available
@@ -215,7 +215,7 @@ One screen per part of the system:
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
   Backlog and Resume remain the deferral controls.
-- **Orchestrator** — project and parent navigation, title, recap, and a Settle control
+- **Orchestrator** — project and parent navigation, title, goal, labelled recap, and a Settle control
   above grouped Workers. Worker rows show title and an exact-conversation dot.
   Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
   and order, including exceptional states. The local page omits only the duplicate

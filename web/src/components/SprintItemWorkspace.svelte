@@ -127,9 +127,16 @@
       .catch(() => undefined);
   });
 
-  function saveItem(field: "title" | "body", value: string): Promise<unknown> {
+  function saveItem(field: "title" | "recap", value: string): Promise<unknown> {
     return navigation.runCommand(orchestratorEditImpact(itemId,field),responseMetadata =>
       mutateJson(`/api/items/${encodeURIComponent(itemId)}`, {method:"PATCH",body:{[field]:value},responseMetadata}),`edit orchestrator ${field}`);
+  }
+
+  // No navigation record carries the goal: the rail and the board show the recap. So this
+  // takes the plain mutation route, like the Chief's recap, and the ordinary invalidation
+  // refreshes the page.
+  function saveGoal(value: string): Promise<unknown> {
+    return mutateJson(`/api/items/${encodeURIComponent(itemId)}`, {method:"PATCH",body:{goal:value}});
   }
 
   let settleBusy = $state(false);
@@ -264,7 +271,8 @@
         {@const item = workspace.data}
           <div bind:this={headerElement}>
           <OrchestratorHeader signal={item.conversation_signal} conversationId={item.conversation_id}
-            recap={item.body} onSaveRecap={(value) => saveItem("body", value)}>
+            goal={item.goal} onSaveGoal={saveGoal}
+            recap={item.recap} onSaveRecap={(value) => saveItem("recap", value)}>
             {#snippet eyebrow()}
             <div class="page-eyebrow">
               <span>{item.project}</span>

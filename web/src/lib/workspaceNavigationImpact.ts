@@ -83,8 +83,8 @@ export function orchestratorChildrenImpact(impact:RecordImpact,principal:Orchest
 }
 
 /** Body updates project the full recap and its concise preview. */
-export const orchestratorEditImpact=(id:string,field:'title'|'body'):CommandImpact=>({complete:true,records:[{
-  kind:'orchestrator',id,fields:field==='body' ? ['recap','recap_preview'] : [field],
+export const orchestratorEditImpact=(id:string,field:'title'|'recap'):CommandImpact=>({complete:true,records:[{
+  kind:'orchestrator',id,fields:field==='recap' ? ['recap','recap_preview'] : [field],
 }]});
 export const orchestratorSettleImpact=(id:string):CommandImpact=>({complete:true,records:[{kind:'orchestrator',id,fields:['settled']}]});
 

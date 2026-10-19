@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from planner.core.contracts import Principal
-from planner.tickets.contracts import PendingTicketProposal, Ticket, TicketFieldApprovals, TicketFieldValues
+from planner.tickets.contracts import (
+    PendingTicketProposal,
+    Ticket,
+    TicketFieldApprovals,
+    TicketFieldValues,
+)
 
 
 @dataclass(frozen=True)

@@ -1304,7 +1304,7 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             ),
             client.patch(
                 f"/api/items/{other['id']}",
-                json={"body": "Unauthorized change"},
+                json={"recap": "Unauthorized change"},
                 headers=own_headers,
             ),
         ]
@@ -1312,7 +1312,7 @@ def test_supervisor_peer_messages_do_not_expand_worker_or_mutation_reach(tmp_pat
             assert response.status_code == 400, response.text
             assert response.json()["error"]["code"] == "agent_forbidden", response.text
         assert client.get(f"/api/tickets?detail=full&id={theirs['id']}").json() == before
-        assert client.get(f"/api/items?detail=full&id={other['id']}").json()["body"] == ""
+        assert client.get(f"/api/items?detail=full&id={other['id']}").json()["recap"] == ""
 
 
 def test_recap_public_patch_readback_preserves_archived_files(tmp_path: Path) -> None:
@@ -1321,16 +1321,16 @@ def test_recap_public_patch_readback_preserves_archived_files(tmp_path: Path) ->
     with TestClient(app) as client:
         item = _create_item(client, "Synthetic recap")
         item_id = item["id"]
-        original = "Original synthetic brief: preserve the agreed scope."
+        original = "Original synthetic goal: preserve the agreed scope."
         replacement = "The recap keeps this review easy to recover."
-        notes = "Decision: retain the existing body."
+        notes = "Decision: retain the existing goal."
         files = db_path.parent / "files" / "sprint-items" / item_id / "artifacts"
         files.mkdir(parents=True)
         (files / "original-brief.md").write_text(original, encoding="utf-8")
         (files / "working-notes.md").write_text(notes, encoding="utf-8")
-        saved = client.patch(f"/api/items/{item_id}", json={"body": replacement})
+        saved = client.patch(f"/api/items/{item_id}", json={"recap": replacement})
         assert saved.status_code == 200, saved.text
-        assert client.get(f"/api/items/{item_id}/workspace").json()["body"] == replacement
+        assert client.get(f"/api/items/{item_id}/workspace").json()["recap"] == replacement
         for name, content in (("original-brief.md", original), ("working-notes.md", notes)):
             archived = client.get(f"/files/sprint-items/{item_id}/artifacts/{name}")
             assert archived.status_code == 200, archived.text
