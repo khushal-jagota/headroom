@@ -21,7 +21,7 @@ const detail:TicketDetail={id:'ticket',title:'Ticket',worker_type:'coding',stage
   ceiling_holder:{kind:'chief',id:'chief'},ticket_status:'awaiting_approval',is_backlogged:false,blocked:false,sprint_item_id:null,
   conversation_id:'conversation',conversation_history:[],employee_backend:'codex',employee_launch_model:null,
   employee_launch_reasoning_effort:null,employee_configuration_editable:false,sprint_item_title:null,
-  guidance:'',field_values:{},pending_proposal:{field:'plan',body:'Exact body',proposed_by:'agent',created_at:1,revision:2}};
+  field_values:{},pending_proposal:{field:'plan',body:'Exact body',proposed_by:'agent',created_at:1,revision:2}};
 
 describe('Ticket section admission',()=>{
   it('keeps structural/proposal/configuration identity together, including explicit proposal absence',()=>{
