@@ -5,9 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from planner.conversation.api import delivery_fate_json
+from planner.core.authctx import require_owner
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.message_delivery import service
+from planner.message_delivery import recap_request, service
 from planner.message_delivery.contracts import (
     MessageDeliveryMode,
     MessageDeliveryResult,
@@ -101,4 +102,23 @@ async def send_message(
     message = _message_text(body.get("message"))
     mode = _message_delivery_mode(body.get("mode", _MISSING))
     result = await service.send_message(conversations, conn, clock, ctx, recipient, message, mode)
+    return _result_json(result)
+
+
+@router.post("/recap-requests")
+async def request_recap(
+    body: JsonDict,
+    conn: DbConn,
+    ctx: Ctx,
+    clock: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    """Ask one Ticket or orchestrator for a fresh recap.
+
+    Only the owner asks. An agent that wants another agent's recap is sending an ordinary
+    message, and Send Message is already that door.
+    """
+    require_owner(ctx)
+    recipient = _principal(body.get("target"))
+    result = await recap_request.request_recap(conversations, conn, clock, ctx, recipient)
     return _result_json(result)

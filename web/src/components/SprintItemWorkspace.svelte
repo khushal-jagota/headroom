@@ -272,7 +272,8 @@
           <div bind:this={headerElement}>
           <OrchestratorHeader signal={item.conversation_signal} conversationId={item.conversation_id}
             goal={item.goal} onSaveGoal={saveGoal}
-            recap={item.recap} onSaveRecap={(value) => saveItem("recap", value)}>
+            recap={item.recap} onSaveRecap={(value) => saveItem("recap", value)}
+            recapTarget={{ kind: "sprint_item", id: item.id }}>
             {#snippet eyebrow()}
             <div class="page-eyebrow">
               <span>{item.project}</span>
@@ -333,7 +334,7 @@
   {/snippet}
 </OrchestratorWorkspace>
 
-<WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Orchestrator"} worker={hoverWorker} cards={[]} rail={hoverTarget} />
+<WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Orchestrator"} worker={hoverWorker} cards={[]} rail={hoverTarget} recapTarget={hoverWorker ? { kind: "ticket", id: hoverWorker.id } : null} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
   .page-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .page-eyebrow a { color:inherit; text-decoration:none; }

@@ -80,6 +80,11 @@ COMMAND_ROUTES = (
         "Accepted prompt lifecycle activity",
         "/conversation/conversations/{conversation_id}/held-prompts/{held_prompt_id}",
     ),
+    *_routes(
+        "POST",
+        "A recap request empties a published recap and addresses its agent",
+        "/recap-requests",
+    ),
     *_routes("POST", "Worker definition registry", "/worker-types"),
     *_routes(
         "POST", "Corrections of existing navigation-affecting launch bindings",

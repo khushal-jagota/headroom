@@ -45,3 +45,4 @@ PUT    /workers/{w}/launch-defaults          allow   allow   refuse          ref
 PATCH  /skills/{n}                           allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 POST   /feedback                             allow   allow   refuse          refuse            refuse       refuse           refuse               refuse
 POST   /messages/send                        allow   allow   allow           refuse            refuse       refuse           refuse               refuse
+POST   /recap-requests                       allow   refuse  refuse          refuse            refuse       refuse           refuse               refuse
