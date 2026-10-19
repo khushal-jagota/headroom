@@ -364,7 +364,7 @@ def test_pre_cutover_snapshot_recovers_materialized_cancelled_records_without_ol
         assert conn.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
         assert {
             row[0] for row in conn.execute("SELECT version_num FROM alembic_version")
-        } == {"navigation_current_workspace"}
+        } == {"ticket_field_approvals"}
     finally:
         conn.close()
 
