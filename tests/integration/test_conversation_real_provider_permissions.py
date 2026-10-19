@@ -51,6 +51,23 @@ def test_real_permission_waits_for_explicit_panels_answer(
     asyncio.run(asyncio.wait_for(_exercise(backend, decision, tmp_path, monkeypatch), 360))
 
 
+def test_hermes_home_selection_uses_canonical_home_without_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canonical = tmp_path / "canonical-home"
+    canonical.mkdir()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    monkeypatch.setenv("PANELS_REAL_HERMES_HOME_TEMPLATE", f"{canonical}/../{canonical.name}")
+    monkeypatch.setenv("PLAN_HERMES_HOME", str(tmp_path / "inherited-home"))
+
+    _prepare_home(ConversationBackendKey.hermes, runtime, monkeypatch)
+
+    assert os.environ["PLAN_HERMES_HOME"] == str(canonical.resolve())
+    assert list(runtime.iterdir()) == []
+    assert list(canonical.iterdir()) == []
+
+
 async def _exercise(
     backend: ConversationBackendKey, decision: str, root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -289,22 +306,17 @@ def _prepare_home(
     )
     source = Path(os.environ[name]).expanduser().resolve()
     assert source.is_dir()
+    if backend is ConversationBackendKey.hermes:
+        # Hermes derives its auth lock from the home, so share the canonical home too.
+        monkeypatch.setenv("PLAN_HERMES_HOME", str(source))
+        return
     destination = root / f"{backend}-home"
     destination.mkdir()
-    if backend is ConversationBackendKey.hermes:
-        # Config is isolated, but rotating auth remains one shared canonical file.
-        for filename in ("config.yaml", ".env"):
-            if (source / filename).exists():
-                shutil.copy2(source / filename, destination / filename)
-        if (source / "auth.json").exists():
-            (destination / "auth.json").symlink_to(source / "auth.json")
-        monkeypatch.setenv("PLAN_HERMES_HOME", str(destination))
-    else:
-        for filename in (".credentials.json",):
-            if (source / filename).exists():
-                (destination / filename).symlink_to(source / filename)
-        # Do not inherit permission grants/settings: default mode must actually ask.
-        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(destination))
+    for filename in (".credentials.json",):
+        if (source / filename).exists():
+            (destination / filename).symlink_to(source / filename)
+    # Do not inherit permission grants/settings: default mode must actually ask.
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(destination))
 
 
 def _versions(backend: ConversationBackendKey) -> dict[str, str]:

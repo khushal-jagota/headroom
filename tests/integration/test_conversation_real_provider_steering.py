@@ -81,6 +81,23 @@ def test_real_provider_steer_reaches_model_system_api_stop_and_resume(
     asyncio.run(asyncio.wait_for(_exercise(case, tmp_path, monkeypatch), 900.0))
 
 
+def test_hermes_home_selection_uses_canonical_home_without_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canonical = tmp_path / "canonical-home"
+    canonical.mkdir()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    monkeypatch.setenv(HERMES_HOME_TEMPLATE_ENVIRONMENT_NAME, f"{canonical}/../{canonical.name}")
+    monkeypatch.setenv("PLAN_HERMES_HOME", str(tmp_path / "inherited-home"))
+
+    _prepare_isolated_provider_home(ConversationBackendKey.hermes, runtime, monkeypatch)
+
+    assert os.environ["PLAN_HERMES_HOME"] == str(canonical.resolve())
+    assert list(runtime.iterdir()) == []
+    assert list(canonical.iterdir()) == []
+
+
 async def _exercise(
     case: _BackendCase,
     runtime_root: Path,
@@ -565,15 +582,8 @@ def _prepare_isolated_provider_home(
 ) -> None:
     if backend_key is ConversationBackendKey.hermes:
         source = _required_template(HERMES_HOME_TEMPLATE_ENVIRONMENT_NAME)
-        destination = runtime_root / "hermes-home"
-        destination.mkdir()
-        # Isolate configuration, but keep rotating auth in the canonical source home.
-        for name in ("config.yaml", ".env"):
-            if (source / name).exists():
-                shutil.copy2(source / name, destination / name)
-        if (source / "auth.json").exists():
-            (destination / "auth.json").symlink_to(source / "auth.json")
-        monkeypatch.setenv("PLAN_HERMES_HOME", str(destination))
+        # Hermes derives its auth lock from the home, so share the canonical home too.
+        monkeypatch.setenv("PLAN_HERMES_HOME", str(source))
         return
     if backend_key is ConversationBackendKey.codex:
         # Codex keeps one account in one file, and refreshes it in whichever home it is

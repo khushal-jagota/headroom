@@ -855,10 +855,12 @@ A rotating refresh token must have one owner: refreshing a copied login in a sec
 home can leave the original holding a spent token. Hardlinks are unsafe too: they
 share a file only until a refresh replaces the canonical path by rename.
 
-Synthetic homes with invented credentials are fine. Tests can also copy configuration
-files while symlinking the credential path to the canonical file. That link follows
-the current credential rather than keeping a second copy. Copying a whole real home
-or a credential first is still unsafe.
+Synthetic homes with invented credentials are fine. Claude tests can copy settings
+while linking the credential path to the canonical file. That link follows the current
+credential rather than keeping a second copy. Copying a whole real home or a credential
+first is still unsafe. For Hermes, linking only the credential is insufficient: its
+auth lock is derived from the home path, so a second home separates lock identity even
+when both credential paths reach the same file.
 
 **The existing checks cover only part of this rule.** Before launching a Codex child,
 Panels compares its home with the home selected by the server's own environment.
@@ -884,12 +886,20 @@ General coverage would require tracing helpers, branches, filesystem operations 
 launch paths. The bounded checks do not provide that general guarantee; review
 must enforce the invariant.
 
-The steering harness now follows the permission harness's canonical-credential pattern.
-Hermes copies only `config.yaml` and `.env`, and symlinks `auth.json` to the source home.
-Claude copies optional `settings.json`, and symlinks optional `.credentials.json` to its
-source home. Codex continues to use its real home because a copied login loses refresh
-rotation. The former whole-home Hermes copy and Claude credential copy are resolved.
-The current helper explains why credentials stay canonical.
+Both real-provider harnesses select the resolved canonical Hermes home directly,
+keeping the credential and its home-derived auth lock together. They create no temporary
+Hermes home, configuration copies, or auth link. The current child environment excludes
+the pytest marker, so Hermes' guard against pytest reaching the real login does not
+refuse this route. If that inheritance changes, stop at the guard's refusal and review
+the route; do not bypass the protection.
+
+This decision accepts test writes into the live mutable Hermes home: tests share its
+configuration and may leave sessions, logs, or other runtime state behind.
+
+For Claude, steering copies optional `settings.json` and links optional
+`.credentials.json` to its canonical source; permissions links only the credentials,
+so inherited settings cannot suppress its approval exercise. Codex continues to use its
+real home because a copied login loses refresh rotation.
 
 Code paths: `src/planner/conversation/backends/codex_app_server/{client,login}.py`,
 `tests/unit/test_no_codex_credential_copies.py`,
@@ -918,10 +928,10 @@ conditional alias merges, byte transfers, or runtime paths. Synthetic credential
 and skill symlinks are not copies. Reviewers must inspect those omitted routes themselves.
 A clean result does not certify safety.
 
-This standalone command is invoked explicitly rather than enforced in CI. Against the
-current source, it reports zero accusations and two Hermes configuration dismissals,
-exiting with status 0. That result verifies the checked source pattern; it does not
-certify credential safety, external configuration contents, or the omitted copy routes.
+This standalone command is invoked explicitly rather than enforced in CI. The two
+real-provider harnesses now contain no Hermes copy sites to dismiss. A clean scan
+verifies only the supported source patterns; it does not certify credential safety,
+external configuration contents, or the omitted copy routes.
 
 Hermes is found from its configured Python environment, the same installation a
 conversation launches, even when its executable is not on `PATH`. A packaged
@@ -1157,14 +1167,12 @@ where a steer is proved to cross into a live turn.
 
 That fourth exercise asks for more before it will start. It refuses a dirty tree, so
 `git status --short` must come back empty. It needs a directory to write its receipts
-into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs these source directories
-for the isolated test homes:
+into, named by `PANELS_STEERING_EVIDENCE_ROOT`. It also needs these canonical homes:
 
 - `PANELS_REAL_HERMES_HOME_TEMPLATE` — the canonical Hermes home itself, normally
-  `~/.hermes`. Do not make a copy. The harness copies `config.yaml` and `.env`
-  into an isolated home and symlinks `auth.json` back to this source. This requires
-  the canonical home: a symlink into a copied home still separates rotating auth
-  from the real login.
+  `~/.hermes`. Do not make a copy. Both steering and permission harnesses validate
+  and resolve this directory, then select it directly. The shared live-home writes
+  and leftovers described above are an accepted consequence of sharing its auth lock.
 - `PANELS_REAL_CLAUDE_CONFIG_TEMPLATE` — the canonical Claude home itself, normally
   `~/.claude`. Do not make a copy. The harness copies optional `settings.json`
   into an isolated home and symlinks optional `.credentials.json` back to this source.
