@@ -1,25 +1,30 @@
 <script lang="ts">
   import { parseDeferredViewBody } from '../../../lib/markdown/workerClient';
-  import type { ConversationViewRow, ViewRowBody } from '../../../lib/conversation/view/contracts';
+  import type { ConversationViewRow, ViewRowBody, ViewBodyReference } from '../../../lib/conversation/view/contracts';
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
   import { rowForBody } from '../../../lib/conversation/view/presentation';
   import ConversationTranscript from '../ConversationTranscript.svelte';
   import ToolCallRow from '../ToolCallRow.svelte';
   import type { BackendModel } from '../../../lib/conversation/wire';
   import type { SvelteMap, SvelteSet } from 'svelte/reactivity';
-  let { item, reader, models, ownSenderLabel, openRows, wholeDetails }: {
+  let { item, reader, models, ownSenderLabel, openRows, wholeDetails, onEmptyEnding }: {
       item: ConversationViewRow;
       reader: ConversationViewReader;
       models: readonly BackendModel[];
       ownSenderLabel: string | null;
       openRows: SvelteSet<string>;
       wholeDetails: SvelteMap<string, string>;
+      onEmptyEnding: (reference: ViewBodyReference) => void;
   } = $props();
-  let deferred = $state.raw<ViewRowBody | null>(null);
+  let deferred = $state.raw<{ body: ViewRowBody; reference: ViewBodyReference } | null>(null);
   let error = $state<string | null>(null);
   let progress = $state<string | null>(null);
-  const body = $derived(item.body.kind === 'inline' ? item.body.value : deferred);
+  const body = $derived(item.body.kind === 'inline' ? item.body.value : deferred?.reference.body_id === item.body.reference.body_id && deferred.reference.version === item.body.reference.version ? deferred.body : null);
   const row = $derived(body === null ? null : rowForBody(item, body));
+  $effect(() => {
+      if (item.body.kind === 'deferred' && body?.kind === 'turn_ended' && body.ending === 'completed' && body.automatic_compaction_result !== 'not_compacted')
+          onEmptyEnding(item.body.reference);
+  });
   $effect(() => {
       if (item.body.kind !== 'deferred')
           return;
@@ -28,7 +33,7 @@
       deferred = null;
       error = null;
       void reader.body(reference, abort.signal).then(text => parseDeferredViewBody(text, abort.signal)).then(body => { if (!abort.signal.aborted)
-          deferred = body; }).catch(reason => { if (!abort.signal.aborted)
+          deferred = { body, reference }; }).catch(reason => { if (!abort.signal.aborted)
           error = String(reason); });
       return () => { abort.abort(); deferred = null; };
   });
@@ -45,7 +50,7 @@
   });
 </script>
 {#if row?.kind==='tool_call'}
-  <div class="c2-run" data-conversation-work-entries><ToolCallRow row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
+  <div data-conversation-work-entries><ToolCallRow row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
 {:else if row!==null}
   <ConversationTranscript rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
 {:else}
