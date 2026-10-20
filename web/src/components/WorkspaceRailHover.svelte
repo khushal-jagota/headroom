@@ -100,9 +100,11 @@
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
     <div bind:this={recapElement} class="recap" class:no-space={recapLines === 0 && !recapTarget}>
-      <RecapSlot>
-        {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
-      </RecapSlot>
+      {#key recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null}
+        <RecapSlot>
+          {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
+        </RecapSlot>
+      {/key}
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
     </div>
   {/if}
