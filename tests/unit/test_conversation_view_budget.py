@@ -106,6 +106,18 @@ def test_a_full_page_costs_what_it_costs_today() -> None:
         assert len(page["items"]) > 0
         # Today: 100 items, 202 statements, 13,000 steps, 50,994 bytes. It was 276 before
         # the conversation's backend stopped being re-read once per row.
+        #
+        # Two hundred statements for a hundred items is two per item, and that is bodies
+        # being rebuilt from source events on every read. Storing the rendered bodies in a
+        # side table would take it to about two statements for the page, and was planned
+        # and then deliberately not built: measured, it removes about 2 ms from a page read
+        # that now takes 9.6 to 11 ms on the largest real conversation, in exchange for
+        # roughly 213 MB of stored bodies, a projection version bump that hard-fails every
+        # client that has not reloaded, two minutes of a boot not serving, and re-render
+        # logic whose failure mode is stale words on screen. That trade was worth making
+        # when a page read was 26 to 53 ms and growing with the conversation; it is not
+        # worth making now that the growth is gone. If this count ever has to come down,
+        # that is the change, and the reason it was declined is the arithmetic above.
         assert len(work.statements) <= 210, (
             f"a Full page now runs {len(work.statements)} statements"
         )

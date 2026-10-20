@@ -142,9 +142,16 @@ export const queries = {
   workerTypeManifests: () => versionedJsonQuery<WorkerTypesResponse>(["worker-types"], "/api/worker-types"),
   /** The manifest of one Worker type, in the shape the whole list arrives in.
    *
-   * A screen drawing one Ticket's stages needs one type. The whole list is 20,165 bytes
-   * for fourteen of them, sent on both screens and again on every reconnect. The answer
-   * is the same shape so that nothing downstream has to know which it was handed. */
+   * A screen drawing one Ticket's stages needs one type, and the whole list is 21,544
+   * bytes for fourteen of them against 1,865 for one. The answer is the same shape so
+   * that nothing downstream has to know which it was handed.
+   *
+   * Worth knowing before moving another screen onto this: it only pays where the whole
+   * list is not already being read. The Ticket page was moved onto it and then moved
+   * back, because dogfooding showed the workspace shell around it already reads the list
+   * to write a stage sentence on every rail row - so the single-type read added a second
+   * request rather than removing the first. The review screen has no rail, reads no list,
+   * and saves 91%. Check which it is before switching a screen over. */
   workerTypeManifest: (workerType: string) =>
     versionedJsonQuery<WorkerTypesResponse>(
       ["worker-types", "one", workerType],
