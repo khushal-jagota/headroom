@@ -11,7 +11,7 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryUncertain,
 )
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
@@ -45,13 +45,40 @@ async def _notify_review_transfer(
     *,
     now: int,
 ) -> None:
-    target = notice.previous_holder
-    content = text_message_content(
-        f"{notice.new_holder_name} took over the review of {notice.ticket_title}."
+    await _deliver(
+        system,
+        conn,
+        notice.ticket_id,
+        notice.new_holder,
+        text_message_content(f"You now hold the review of {notice.ticket_title}."),
+        now=now,
     )
+    if notice.notify_previous_holder:
+        await _deliver(
+            system,
+            conn,
+            notice.ticket_id,
+            notice.previous_holder,
+            text_message_content(
+                f"{notice.mover_name} moved the review of {notice.ticket_title} "
+                f"to {notice.new_holder_name}."
+            ),
+            now=now,
+        )
+
+
+async def _deliver(
+    system: ConversationSystem,
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    target: Principal,
+    content: MessageContent,
+    *,
+    now: int,
+) -> None:
     if target.kind is PrincipalKind.owner:
-        async with conversation_start.conversation_link_lock(f"ticket:{notice.ticket_id}"):
-            ticket = tickets_data.read_ticket(conn, notice.ticket_id)
+        async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+            ticket = tickets_data.read_ticket(conn, ticket_id)
             current = ticket.conversation_id
             if current is None:
                 linked = await conversation_start.start_ticket_conversation(
@@ -67,7 +94,7 @@ async def _notify_review_transfer(
                 current,
                 content,
                 sender_label="Panels",
-                sender=Principal(PrincipalKind.ticket, notice.ticket_id),
+                sender=Principal(PrincipalKind.ticket, ticket_id),
                 recipient=OWNER_PRINCIPAL,
                 credit_explicit_reply=False,
             )
@@ -124,6 +151,6 @@ async def _notify_review_transfer(
     if isinstance(delivered.fate, (PromptDeliveryRefused, PromptDeliveryUncertain)):
         _LOG.warning(
             "review transfer notice did not reach its holder (ticket=%s, fate=%s)",
-            notice.ticket_id,
+            ticket_id,
             delivered.fate,
         )
