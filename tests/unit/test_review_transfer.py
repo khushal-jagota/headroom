@@ -89,7 +89,9 @@ def test_previous_holder_moving_it_themselves_is_not_notified(
     assert notice.new_holder == CHIEF_PRINCIPAL
     assert notice.new_holder_name == "The Chief"
     assert notice.notify_previous_holder is False
-    assert notice.mover_name is None
+    # The previous holder is not owed a message, but the new holder still is, and
+    # that message needs to say who moved it.
+    assert notice.mover_name == "The user"
 
 
 def test_new_holder_moving_it_themselves_is_not_notified(
@@ -195,7 +197,7 @@ def test_delivery_addresses_both_targets_on_a_third_party_move(
     assert len(new_holder_observations) == 1
     assert new_holder_observations[0].kind is InMemoryConversationObservationKind.prompt_delivered
     assert new_holder_observations[0].content == text_message_content(
-        f"You now hold the review of {notice.ticket_title}."
+        f"Reassigning supervisor moved the review of {notice.ticket_title} to your review."
     )
 
     owner_conversation = tickets_data.read_ticket(tmp_db, ticket_id).conversation_id
@@ -238,4 +240,37 @@ def test_delivery_addresses_only_the_new_holder_on_a_self_move(
     assert len(message_to_owner) == 1
     assert message_to_owner[0].content == text_message_content(
         f"You now hold the review of {notice.ticket_title}."
+    )
+
+
+def test_delivery_names_the_mover_in_the_new_holder_message(
+    tmp_db: Connection, fake_clock: FakeClock
+) -> None:
+    """The new holder is told who moved it to them, not just that it is theirs now.
+
+    Here the previous holder is the mover, so the previous holder stays unnotified, but
+    the new holder's own message still has to name them.
+    """
+    ticket_id = _parked_ticket(
+        tmp_db, fake_clock, title="Delivered with a name", holder=CHIEF_PRINCIPAL
+    )
+    notice = _transfer(
+        tmp_db, fake_clock, ticket_id, new_holder=OWNER_PRINCIPAL, actor=CHIEF_PRINCIPAL
+    )
+    assert notice.notify_previous_holder is False
+    assert notice.mover_name == "The Chief"
+
+    system = InMemoryConversationSystem()
+    asyncio.run(notify_review_transfers(system, tmp_db, [notice], now=fake_clock.now_unix()))
+
+    owner_conversation = tickets_data.read_ticket(tmp_db, ticket_id).conversation_id
+    assert owner_conversation is not None
+    message_to_owner = [
+        observation
+        for observation in system.observations(owner_conversation)
+        if observation.kind is InMemoryConversationObservationKind.message_to_owner
+    ]
+    assert len(message_to_owner) == 1
+    assert message_to_owner[0].content == text_message_content(
+        f"The Chief moved the review of {notice.ticket_title} to your review."
     )

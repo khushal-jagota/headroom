@@ -1699,7 +1699,8 @@ def _review_transfer_notice(
     if not review_transfer.review_transferred(before, after):
         return None
     new_holder = after.ceiling_holder
-    notify_previous_holder = actor != before.ceiling_holder and actor != new_holder
+    moved_by_someone_else = actor != new_holder
+    notify_previous_holder = moved_by_someone_else and actor != before.ceiling_holder
     return ReviewTransferNotice(
         after.id,
         after.title,
@@ -1707,7 +1708,7 @@ def _review_transfer_notice(
         new_holder,
         _resolve_holder_name(conn, new_holder),
         notify_previous_holder,
-        _resolve_holder_name(conn, actor) if notify_previous_holder else None,
+        _resolve_holder_name(conn, actor) if moved_by_someone_else else None,
     )
 
 
