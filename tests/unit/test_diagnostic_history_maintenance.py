@@ -13,14 +13,18 @@ from pathlib import Path
 import pytest
 from alembic.script import ScriptDirectory
 
-from planner.conversation.lifecycle_storage import ConversationRuntimeAlreadyOwned
+from planner.conversation.lifecycle_storage import (
+    ConversationRuntimeAlreadyOwned,
+    acquire_runtime_ownership,
+)
 from planner.conversation.retention.data import read_report
 from planner.conversation.retention.policy import RETENTION_SECONDS
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.conversation.views.storage import read_page
 from planner.core import db
-from planner.core.db import connect, create_schema
+from planner.core.db import bind_transaction_admission, connect, create_schema
 from planner.maintenance import diagnostic_history as maintenance
+from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
 
 AS_OF = RETENTION_SECONDS + 1000
 
@@ -159,7 +163,7 @@ def test_stale_protection_fact_and_actor_refuse_before_delete(
         maintenance.apply_report(archive, report, confirmed=True)
     monkeypatch.delenv("PLAN_ACTOR")
     with maintenance._exclusive_database(archive) as (conn, bootstrap):
-        with maintenance.bind_transaction_admission(conn, bootstrap):
+        with bind_transaction_admission(conn, bootstrap):
             conn.execute("BEGIN")
             conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id='ticket'")
             conn.commit()
@@ -170,7 +174,7 @@ def test_stale_protection_fact_and_actor_refuse_before_delete(
 
 def test_database_runtime_owner_and_sqlite_reader_block_apply(archive: Path) -> None:
     report = read_report(archive, as_of_unix=AS_OF)
-    with closing(maintenance.acquire_runtime_ownership(str(archive))):
+    with closing(acquire_runtime_ownership(str(archive))):
         with pytest.raises(ConversationRuntimeAlreadyOwned):
             maintenance.apply_report(archive, report, confirmed=True)
     with closing(sqlite3.connect(archive, isolation_level=None)) as competitor:
@@ -257,7 +261,7 @@ def test_actual_migration_and_explicit_install_converge_preserving_ranges(
 @pytest.mark.parametrize("drift", ["table", "trigger"])
 def test_metadata_schema_drift_refuses_before_deletion(archive: Path, drift: str) -> None:
     with maintenance._exclusive_database(archive) as (conn, bootstrap):
-        with maintenance.bind_transaction_admission(conn, bootstrap):
+        with bind_transaction_admission(conn, bootstrap):
             conn.execute("BEGIN")
             if drift == "table":
                 conn.execute("DROP TABLE conversation_expired_ranges")
@@ -290,7 +294,7 @@ def test_cli_configuration_and_port_lease_refuse_before_writer(
     def refuse(_self: object) -> None:
         raise RuntimeError("port lifecycle lease is held")
 
-    monkeypatch.setattr(cli.PortScopedServerLifecycleLease, "acquire", refuse)
+    monkeypatch.setattr(PortScopedServerLifecycleLease, "acquire", refuse)
     called = False
 
     def writer() -> None:
@@ -335,13 +339,13 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
 ) -> None:
     """Actual deletion/rebuild must preserve non-Ticket history and classify real tool refs."""
     from tests.unit.test_conversation_api import (
-        COMMITTED_EVENT_STREAM_NAME,
         CONVERSATION_PREFIX,
         _EventStreamDrive,
         _Harness,
         _run,
     )
 
+    from planner.conversation.api import COMMITTED_EVENT_STREAM_NAME
     from planner.conversation.views.api import router
     from planner.conversation.views.storage import _body, _body_reference, _row_record, encode_wire
     from planner.core.errors import PlannerError
@@ -349,7 +353,7 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
 
     # Reuse the private archive and guarded offline writer; no provider is running.
     with maintenance._exclusive_database(archive) as (conn, bootstrap):
-        with maintenance.bind_transaction_admission(conn, bootstrap):
+        with bind_transaction_admission(conn, bootstrap):
             conn.execute("BEGIN")
             conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id='ticket'")
             conn.execute(
@@ -422,22 +426,22 @@ def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_id
     eligible = next(item for item in report.decisions if item.conversation_id == "supervisor")
     assert not eligible.hold_reasons and len(eligible.candidates) == 120
     assert maintenance.apply_report(archive, report, confirmed=True).removed_event_count == 120
-    with sqlite3.connect(archive) as conn:
+    with sqlite3.connect(archive) as raw_conn:
         assert [
             row[0]
-            for row in conn.execute(
+            for row in raw_conn.execute(
                 "SELECT sequence FROM conversation_events WHERE conversation_id='supervisor' "
                 "ORDER BY sequence"
             )
         ] == controls
         assert (
-            conn.execute(
+            raw_conn.execute(
                 "SELECT latest_sequence FROM conversations WHERE conversation_id='supervisor'"
             ).fetchone()[0]
             == 200
         )
         assert (
-            conn.execute(
+            raw_conn.execute(
                 "SELECT count(*) FROM conversation_events WHERE conversation_id='history'"
             ).fetchone()[0]
             == 4

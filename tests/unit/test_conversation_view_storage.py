@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from collections.abc import Callable
+from typing import Any, Literal
 
 import pytest
 from tests.unit.test_conversation_view_projection import FIXTURES, database
@@ -18,6 +19,8 @@ from planner.conversation.views.api import _changes
 from planner.conversation.views.configuration import BODY_CHUNK_BYTES
 from planner.conversation.views.contracts import (
     VIEW_PROJECTION_VERSION,
+    ConversationViewLens,
+    ViewBodyReference,
     ViewHistoryScope,
     ViewPageCursor,
 )
@@ -260,7 +263,7 @@ def test_reconciliation_restores_a_pruned_summary_when_latest_pointer_moves_back
 @pytest.mark.parametrize("lens", ["focus", "full"])
 @pytest.mark.parametrize("ordinary_last", [False, True])
 def test_owner_messages_stay_on_timeline_and_out_of_live_fold_scope(
-    lens: str, ordinary_last: bool
+    lens: ConversationViewLens, ordinary_last: bool
 ) -> None:
     """Protect SQL and live admission, including metadata on a deferred owner body."""
     owner = {
@@ -301,6 +304,8 @@ def test_owner_messages_stay_on_timeline_and_out_of_live_fold_scope(
         page = read_page(conn, "fixture", lens)
         messages = {item["key"]: item for item in page["items"]}
         assert {"turn:e1", "e4", "e5"} <= messages.keys()
+        # This also narrows both projection unions for the body and fold_rule checks below.
+        assert messages["e4"]["kind"] == messages["e5"]["kind"] == "row"
         assert messages["e4"]["body"]["kind"] == "deferred"
         assert messages["e4"]["fold_rule"] == messages["e5"]["fold_rule"] == "never"
         assert "e3" not in messages
@@ -407,7 +412,7 @@ def test_sparse_pages_reverse_edges_and_empty_cursors_use_retained_tuple_order(
                 "scope": scope,
                 "order": {"sequence": 200, "slot": 0},
             }
-            backward = []
+            backward: list[str] = []
             while True:
                 page = read_page(conn, "fixture", lens, cursor=cursor)
                 backward[:0] = [item["key"] for item in page["items"]]
@@ -430,7 +435,7 @@ def test_sparse_pages_reverse_edges_and_empty_cursors_use_retained_tuple_order(
                     break
                 cursor = page["newer"]
             assert forward == backward
-            gap = {**cursor, "order": {"sequence": 55, "slot": 0}}
+            gap: ViewPageCursor = {**cursor, "order": {"sequence": 55, "slot": 0}}
             older_gap = read_page(conn, "fixture", lens, cursor=gap)
             newer_gap = read_page(conn, "fixture", lens, cursor=gap, direction="newer")
             if lens == "full":
@@ -442,15 +447,20 @@ def test_sparse_pages_reverse_edges_and_empty_cursors_use_retained_tuple_order(
                 assert older_gap["newer"] is None
                 assert newer_gap["items"] == []
                 assert newer_gap["older"] == gap
-            for sequence, direction, existing_side in (
-                (0, "older", "newer"),
-                (200, "newer", "older"),
-            ):
+            edge_cases: tuple[tuple[int, Literal["older", "newer"]], ...] = (
+                (0, "older"),
+                (200, "newer"),
+            )
+            for sequence, direction in edge_cases:
                 cursor = {**cursor, "order": {"sequence": sequence, "slot": 0}}
                 empty = read_page(conn, "fixture", lens, cursor=cursor, direction=direction)
                 assert empty["items"] == []
-                assert empty[existing_side] == cursor
-                assert empty[direction] is None
+                if direction == "older":
+                    assert empty["newer"] == cursor
+                    assert empty["older"] is None
+                else:
+                    assert empty["older"] == cursor
+                    assert empty["newer"] is None
 
 
 def test_expanded_sparse_scopes_have_their_own_reverse_edges(
@@ -469,17 +479,18 @@ def test_expanded_sparse_scopes_have_their_own_reverse_edges(
     events += [event(120, "turn_ended", {"ending": "completed", "error_summary": None})]
     monkeypatch.setattr("planner.conversation.views.storage.HISTORY_PAGE_ITEMS", 2)
     with database(events) as conn:
-        for scope, expected in (
+        cases: tuple[tuple[ViewHistoryScope, list[str]], ...] = (
             ({"kind": "work_group", "key": "work:e20"}, ["e20", "e30", "e50", "e60"]),
             ({"kind": "turn", "key": "turn:e10"}, ["work:e20", "e70", "e90", "e100"]),
-        ):
-            cursor = {
+        )
+        for scope, expected in cases:
+            cursor: ViewPageCursor = {
                 "projection_version": VIEW_PROJECTION_VERSION,
                 "lens": "full",
                 "scope": scope,
                 "order": {"sequence": 200, "slot": 0},
             }
-            keys = []
+            keys: list[str] = []
             while True:
                 page = read_page(conn, "fixture", "full", scope=scope, cursor=cursor)
                 keys[:0] = [item["key"] for item in page["items"]]
@@ -509,16 +520,17 @@ def test_missing_body_requires_recorded_expiry_and_syntax_stays_first(
             # A still-present row whose canonical source was omitted must classify
             # expiry just like the rebuilt projection's missing row.
             conn.execute("UPDATE conversation_view_rows SET sequence=10 WHERE sequence=2")
-        reference = {
+        reference: ViewBodyReference = {
             "body_id": f"{kind}:10",
             "version": "2:0" if kind != "plan" else "10",
             "byte_count": 0,
             "media_type": "application/json",
         }
-        for read in (
+        readers: tuple[Callable[[ViewBodyReference], object], ...] = (
             lambda ref: read_body_chunk(conn, "fixture", ref, 0),
             lambda ref: body_content(conn, "fixture", ref),
-        ):
+        )
+        for read in readers:
             with pytest.raises(PlannerError) as caught:
                 read(reference)
             assert caught.value.code == ErrorCode.diagnostic_expired
