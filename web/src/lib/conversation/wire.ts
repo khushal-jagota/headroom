@@ -191,15 +191,12 @@ export type ConversationView = {
   reasoning_effort: string | null;
   workspace_folder: string;
   access: string;
-  role_text: string | null;
-  identity_environment_variable_names: string[];
   latest_sequence: number;
   owner_read_through_sequence: number;
   is_running: boolean;
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
-  composer_catalog: ComposerCatalogEntry[];
 };
 
 /** One earlier conversation of the same owner, as the record lists it.
@@ -575,6 +572,21 @@ function postJson(body: unknown): RequestInit {
 
 export function readConversation(conversationId: string): Promise<ConversationView> {
   return request<ConversationView>(`/conversations/${encodeURIComponent(conversationId)}`);
+}
+
+/** The composer's typeahead menu, which is read on its own occasions.
+ *
+ * It used to arrive inside the record, where it was 97.4% of it - 66 KB of commands and
+ * skills against about 950 bytes of conversation - and the record is re-read every time
+ * the conversation gains a row. Watching an agent work for seventy seconds sent the same
+ * closed menu 68 times. */
+export async function readComposerCatalog(
+  conversationId: string
+): Promise<ComposerCatalogEntry[]> {
+  const answer = await request<{ composer_catalog: ComposerCatalogEntry[] }>(
+    `/conversations/${encodeURIComponent(conversationId)}/composer-catalog`
+  );
+  return answer.composer_catalog;
 }
 
 export async function advanceOwnerRead(

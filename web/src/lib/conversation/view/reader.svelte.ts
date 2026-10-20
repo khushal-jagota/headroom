@@ -45,6 +45,22 @@ export class ConversationViewReader {
     private reconnecting: Promise<void> | null = null;
     private requests = new Map<string, { operation: Promise<void>; abort: AbortController }>();
     private pageQueue: Promise<void> = Promise.resolve();
+    /** Close the live stream so a history read is not racing a writer.
+     *
+     * Every page read calls this and then schedules a reconnect in its `finally`, so the
+     * stream is deliberately torn down and re-opened once per page of scroll-back. That
+     * churn is by design and is not a fault: it is what stops a live writer starving
+     * history reads. It was measured and found not to be what makes scrolling back feel
+     * stuck, so if you are chasing that, this is not it - the reader's retention slides
+     * its window correctly at the ceiling, with or without a writer.
+     *
+     * One thing to know before believing a scroll-back measurement. A gesture that fires
+     * faster than a page completes can call this again while the previous re-open is
+     * still in flight, tearing the stream down mid-re-open. Repeated demand for one scope
+     * otherwise coalesces, because `load` returns the in-flight promise for that scope. A
+     * hand cannot scroll fast enough to reach that state; a test driving `scrollTop`
+     * directly can, and will then be measuring the probe rather than the product.
+     */
     private pauseTail(): void {
         if (this.rangeTimer !== null) clearTimeout(this.rangeTimer);
         this.rangeTimer = null;

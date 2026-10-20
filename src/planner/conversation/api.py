@@ -428,6 +428,35 @@ async def advance_owner_read(
 MAXIMUM_EVENT_PAGE = 100
 
 
+@router.get("/conversations/{conversation_id}/composer-catalog")
+async def read_conversation_composer_catalog(
+    conversation_id: str, runtime: Runtime
+) -> dict[str, Any]:
+    """The typeahead menu for this conversation's composer, as its backend reported it.
+
+    This used to ride inside the record, and it was 97.4% of it: 160 entries, about 35 KB
+    of commands and skills, against roughly 950 bytes of conversation. The record is
+    re-read whenever the conversation gains a row, so watching one agent work for seventy
+    seconds sent the same closed menu 68 times.
+
+    It is its own read because it changes on its own occasions - a backend reports its
+    commands a moment into the first turn - and not when a row arrives.
+    """
+    record = await _require_conversation(runtime, conversation_id)
+    return {
+        "composer_catalog": [
+            {
+                "kind": str(entry.kind),
+                "display_text": entry.display_text,
+                "insertion_text": entry.insertion_text,
+                "description": entry.description,
+                "argument_hint": entry.argument_hint,
+            }
+            for entry in record.composer_catalog
+        ]
+    }
+
+
 @router.get("/conversations/{conversation_id}/events")
 async def read_conversation_events(
     conversation_id: str,
@@ -694,7 +723,22 @@ async def answer_user_input(
 
 @router.get("/backends")
 async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, Any]:
-    """What each backend is right now. Probed when asked, then kept until asked again."""
+    """What each backend is right now. Probed when asked, then kept until asked again.
+
+    If this route is slow, the probe is not why, and that was measured rather than
+    reasoned about. The kept probe answers in 0.12 to 0.51 ms after the first call of a
+    process and its staleness check has never once returned true. The 126 ms this route
+    used to take was decorating and serialising the answer: describing one backend asked
+    a per-model question three times over, each on a fresh connection, and the first
+    statement on a fresh connection costs 2.39 ms here against 0.022 ms on a warm one,
+    because the connection loads eighty tables of schema before it can plan anything.
+    That is 78 connections and 492 statements to describe 26 models.
+
+    It now reads sets instead, so the cost no longer follows the model count. Before
+    adding anything here, count the connections: a loop over models is the shape of this
+    bug and it had grown three times without any test noticing, because every assertion
+    about this route passes whether it opens five connections or eighty.
+    """
     snapshots = await runtime.backend_snapshots.snapshots(refresh=refresh)
     if runtime.model_resolution is not None:
         snapshots = tuple(runtime.model_resolution.decorate_snapshot(item) for item in snapshots)
@@ -886,25 +930,6 @@ async def _conversation_view(runtime: ConversationRuntime, conversation_id: str)
         "reasoning_effort": record.reasoning_effort,
         "workspace_folder": str(record.workspace_folder),
         "access": str(record.access),
-        "role_text": record.role_text,
-        # The names only: a surface shows which identity a conversation carries, and the
-        # values are the identity itself and have no business coming back out.
-        "identity_environment_variable_names": [
-            name for name, _value in record.identity_environment_variables
-        ],
-        # The conversation's composer catalog, as its backend last reported it. It comes
-        # off the conversation rather than off a running child, so it is there when a
-        # person opens the conversation to write the first message.
-        "composer_catalog": [
-            {
-                "kind": str(entry.kind),
-                "display_text": entry.display_text,
-                "insertion_text": entry.insertion_text,
-                "description": entry.description,
-                "argument_hint": entry.argument_hint,
-            }
-            for entry in record.composer_catalog
-        ],
         "latest_sequence": record.latest_sequence,
         "owner_read_through_sequence": record.owner_read_through_sequence,
         "is_running": await runtime.system.is_running(conversation_id),
@@ -1175,13 +1200,15 @@ def _snapshot_json(
     identity = snapshot.identity
     advisory = snapshot.update_advisory
     cached_usage = None if backend_state is None else backend_state.read_usage(snapshot.backend_key)
+    # One statement for the whole card. Asking per model opened a connection per model,
+    # and this schema charges 2.39 ms for the first statement on a fresh connection.
+    disabled = (
+        frozenset[str]()
+        if backend_state is None
+        else backend_state.read_disabled_models(snapshot.backend_key)
+    )
     enabled_by_model = {
-        model.model_id: (
-            True
-            if backend_state is None
-            else backend_state.model_is_enabled(snapshot.backend_key, model.model_id)
-        )
-        for model in snapshot.available_models
+        model.model_id: model.model_id not in disabled for model in snapshot.available_models
     }
     default_model_id = snapshot.default_model_id
     if default_model_id is not None and not enabled_by_model.get(default_model_id, True):

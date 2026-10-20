@@ -122,6 +122,21 @@ class ModelResolutionStore:
         with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
             return read_catalogue_models(conn, variant)
 
+    def read_backend_evidence(
+        self, backend_key: ConversationBackendKey
+    ) -> tuple[
+        dict[ModelVariant, CachedModelResolution],
+        dict[ModelVariant, tuple[CachedModelResolution, ...]],
+    ]:
+        """Everything stored about one backend: its chosen models and its catalogue.
+
+        Two statements on one connection. Read a variant at a time it was one connection
+        per variant for the resolutions and one per model for the catalogue, which is what
+        made describing a backend cost what its model count costs.
+        """
+        with closing(connect(self._db_path, self._busy_timeout_ms)) as conn:
+            return read_backend_evidence(conn, backend_key)
+
     def read_backend(
         self, backend_key: ConversationBackendKey
     ) -> dict[ModelVariant, CachedModelResolution]:
@@ -137,6 +152,40 @@ class ModelResolutionStore:
                 if cached is not None:
                     result[variant] = cached
             return result
+
+
+def read_backend_evidence(
+    conn: sqlite3.Connection, backend_key: ConversationBackendKey
+) -> tuple[
+    dict[ModelVariant, CachedModelResolution],
+    dict[ModelVariant, tuple[CachedModelResolution, ...]],
+]:
+    resolutions: dict[ModelVariant, CachedModelResolution] = {}
+    for row in conn.execute(
+        "SELECT variant,model,supported_reasoning_efforts,observed_at "
+        "FROM model_variant_resolutions WHERE backend_key=?",
+        (backend_key.value,),
+    ):
+        resolutions[ModelVariant(backend_key, str(row[0]))] = CachedModelResolution(
+            str(row[1]), tuple(json.loads(row[2])), int(row[3])
+        )
+    catalogue: dict[ModelVariant, tuple[CachedModelResolution, ...]] = {}
+    for row in conn.execute(
+        "SELECT variant,model,supported_reasoning_efforts,observed_at,resolved_model_id "
+        "FROM model_catalogue_models WHERE backend_key=?",
+        (backend_key.value,),
+    ):
+        variant = ModelVariant(backend_key, str(row[0]))
+        catalogue[variant] = (
+            *catalogue.get(variant, ()),
+            CachedModelResolution(
+                str(row[1]),
+                tuple(json.loads(row[2])),
+                int(row[3]),
+                None if row[4] is None else str(row[4]),
+            ),
+        )
+    return resolutions, catalogue
 
 
 def read_cached_resolution(

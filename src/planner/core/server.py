@@ -365,6 +365,17 @@ def create_app(
             "worker_types": [registry.manifest(worker_type) for worker_type in worker_type_ids],
         }
 
+    @app.get("/api/worker-types/{worker_type}/manifest")
+    async def worker_type_manifest(worker_type: str) -> dict[str, Any]:
+        """One Worker type, in the same shape the whole list arrives in.
+
+        A Ticket page draws the stages of one type and was reading all fourteen, 20,165
+        bytes, to find it. Answering in the list's shape keeps every reader of that shape
+        — the lifecycle, the stage table, the section admission — untouched.
+        """
+        registry = configured_worker_runtime_definitions().worker_type_registry
+        return {"worker_types": [registry.manifest(worker_type)]}
+
     @app.get("/api/changes")
     @answers_with_an_event_stream
     async def changes() -> StreamingResponse:

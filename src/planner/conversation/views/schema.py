@@ -58,6 +58,11 @@ SCHEMA_STATEMENTS = (
     "conversation_view_groups(conversation_id, turn_key, source_sequence)",
     "CREATE INDEX conversation_view_groups_order ON "
     "conversation_view_groups(conversation_id, source_sequence)",
+    # A conversation has thousands of groups and one or two still open. A page under the
+    # Full lens asks for exactly those, so it gets an index of exactly those.
+    "CREATE INDEX conversation_view_groups_open ON "
+    "conversation_view_groups(conversation_id, latest_entry_sequence, group_key, turn_key) "
+    "WHERE ending_sequence IS NULL",
     """CREATE TABLE conversation_view_lookups (
         conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
         lookup_kind TEXT NOT NULL, lookup_id TEXT NOT NULL,

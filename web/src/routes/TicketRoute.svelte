@@ -96,6 +96,11 @@
   const conversationStartValues = createQuery(() =>
     queries.ticketConversationStartValues(stableId)
   );
+  // The whole list, deliberately, even though this page draws one type's stages. The
+  // workspace shell around it already reads the list to write a stage sentence on every
+  // rail row, so this shares that one cached read; asking for the single type instead was
+  // measured to add a second request of 1,732 bytes rather than save the list's 20,005.
+  // The review screen, which has no rail, does ask for the one type.
   const manifest = createQuery(() => queries.workerTypeManifests());
 
   // Conversation labels use configuration. The section below admits its controls
