@@ -19,7 +19,7 @@ export function viewSnapshot(id:string,lens:ConversationViewLens,rows:FixtureEve
   const latest=rows.at(-1);
   const coverage={through_sequence:Math.max(0,...rows.map(row=>row.sequence))};
   return {page:{conversation_id:id,protocol_version:1,projection_version:1,lens,scope:{kind:'timeline',key:null},items:transcript?items:[],older:null,newer:null,body_bytes:JSON.stringify(items).length},coverage,
-    status:{runtime_epoch:'fixture',revision:coverage.through_sequence,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,
+    status:{diagnostics_expired:false,runtime_epoch:'fixture',revision:coverage.through_sequence,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,
       rest:{latest_happened:latest?{kind:latest.kind==='prompt'?'prompt':'agent_message',sender_label:null,excerpt:String(latest.payload.text??latest.payload.title??'')}:null,latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:Math.max(0,...rows.filter(row=>row.kind==='message_to_owner').map(row=>row.sequence)),last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}}};
 }
 export function viewChanges(snapshot:ConversationViewSnapshot,from:number):ViewTailChanges {

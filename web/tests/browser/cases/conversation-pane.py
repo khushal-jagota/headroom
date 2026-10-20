@@ -1639,6 +1639,29 @@ def _bounded_reader(browser, url):
         assert "Chief" in other.inner_text()
     page.set_viewport_size({"width": 1000, "height": 900})
 
+    # Canonical replacement destroys component caches even at unchanged coverage.
+    import time
+    from pathlib import Path
+    started = time.perf_counter()
+    page.goto(url + "?reader=1&expiry=1")
+    page.locator('[data-conversation-tool="expiry-tool"]').click()
+    page.get_by_text("Cached whole diagnostic", exact=True).wait_for()
+    page.evaluate("() => window.__expireDiagnostics()")
+    page.get_by_text("Some diagnostic history expired.", exact=True).wait_for()
+    page.get_by_text("This diagnostic detail expired.", exact=True).wait_for()
+    assert page.get_by_text("Cached whole diagnostic", exact=True).count() == 0
+    page.evaluate("() => window.__completeDiagnosticBody()")
+    page.wait_for_timeout(100)
+    assert page.locator('[data-conversation-view-key="e3"]').count() == 0
+    assert page.get_by_text("Late diagnostic body must disappear.", exact=True).count() == 0
+    assert page.get_by_text("Cached whole diagnostic", exact=True).count() == 0
+    page.evaluate("() => window.__expireDeferred()")
+    page.locator('[data-conversation-view-key="e3"]').get_by_text("This diagnostic detail expired.", exact=True).wait_for()
+    evidence = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_uraaehvn/artifacts/diagnostic-expiry.png")
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(evidence))
+    print(f"Diagnostic expiry browser scenario: {time.perf_counter() - started:.3f}s")
+
     page.close()
 
 

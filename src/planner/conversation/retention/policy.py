@@ -7,6 +7,7 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "workspace_content_projections",
         "worker_server_ownership",
         "open_work_group_index",
+        "diagnostic_expiry_metadata",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

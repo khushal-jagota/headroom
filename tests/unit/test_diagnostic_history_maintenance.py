@@ -11,12 +11,14 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from alembic.script import ScriptDirectory
 
 from planner.conversation.lifecycle_storage import ConversationRuntimeAlreadyOwned
 from planner.conversation.retention.data import read_report
 from planner.conversation.retention.policy import RETENTION_SECONDS
 from planner.conversation.runtime_composition import SignalRuntimeComposition
 from planner.conversation.views.storage import read_page
+from planner.core import db
 from planner.core.db import connect, create_schema
 from planner.maintenance import diagnostic_history as maintenance
 
@@ -139,13 +141,7 @@ def test_atomic_rollback_includes_delete_projection_and_new_metadata(
         maintenance.apply_report(archive, report, confirmed=True)
     assert rows(archive, "conversation_events") == original[0]
     assert rows(archive, "conversation_view_rows") == original[1]
-    with closing(sqlite3.connect(archive)) as conn:
-        assert (
-            conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE name='conversation_expired_ranges'"
-            ).fetchone()
-            is None
-        )
+    assert rows(archive, "conversation_expired_ranges") == []
 
 
 def test_stale_protection_fact_and_actor_refuse_before_delete(
@@ -197,33 +193,65 @@ def test_exclusive_sqlite_lock_survives_commit_and_compaction(archive: Path) -> 
     assert rows(archive, "conversation_events") == before
 
 
-def test_installer_is_idempotent_and_matches_future_migration_callback(archive: Path) -> None:
-    with maintenance._exclusive_database(archive) as (conn, bootstrap):
-        with maintenance.bind_transaction_admission(conn, bootstrap):
-            conn.execute("BEGIN")
+@pytest.mark.parametrize("explicit_first", [True, False])
+def test_actual_migration_and_explicit_install_converge_preserving_ranges(
+    archive: Path, explicit_first: bool, tmp_path: Path
+) -> None:
+    copied = tmp_path / "migration.db"
+    with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
+        source.backup(target)
+    archive = copied
+    # Recreate the exact previous additive schema. Both orders then use the real
+    # packaged migration through create_schema, rather than a future callback.
+    with sqlite3.connect(archive) as conn:
+        conn.execute("DROP TABLE conversation_expired_ranges")
+        conn.execute("DROP INDEX conversation_view_rows_ordinary_turn")
+        conn.execute("UPDATE alembic_version SET version_num='open_work_group_index'")
+        if explicit_first:
             maintenance.install_expiry_metadata(conn)
-            definition = conn.execute(
-                "SELECT sql FROM sqlite_master WHERE name='conversation_expired_ranges'"
-            ).fetchone()[0]
-            maintenance.install_expiry_metadata(conn)
-            assert (
-                conn.execute(
-                    "SELECT sql FROM sqlite_master WHERE name='conversation_expired_ranges'"
-                ).fetchone()[0]
-                == definition
-            )
-            assert conn.execute("SELECT count(*) FROM conversation_events").fetchone()[0] == 4
-            conn.commit()
-    # A future migration receives the raw SQLite driver, not the core adapter.
-    with closing(sqlite3.connect(":memory:")) as migration_connection:
-        migration_connection.execute("CREATE TABLE conversations(conversation_id TEXT PRIMARY KEY)")
-        maintenance.install_expiry_metadata(migration_connection)
+            conn.execute("INSERT INTO conversation_expired_ranges VALUES ('history',2,3,1,2,2)")
+    with closing(connect(str(archive))) as conn:
+        create_schema(conn)
+    with sqlite3.connect(archive) as conn:
+        definition = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name='conversation_expired_ranges'"
+        ).fetchone()[0]
+        index_definition = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name='conversation_view_rows_ordinary_turn'"
+        ).fetchone()[0]
+        assert [
+            row[2]
+            for row in conn.execute("PRAGMA index_info(conversation_view_rows_ordinary_turn)")
+        ] == ["conversation_id", "turn_key", "sequence"]
         assert (
-            migration_connection.execute(
+            "WHERE row_kind='agent_message' AND focus_visible=0 AND removed=0" in index_definition
+        )
+        if not explicit_first:
+            conn.execute("INSERT INTO conversation_expired_ranges VALUES ('history',2,3,1,2,2)")
+        maintenance.install_expiry_metadata(conn)
+        maintenance.install_expiry_metadata(conn)
+        assert (
+            conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name='conversation_view_rows_ordinary_turn'"
+            ).fetchone()[0]
+            == index_definition
+        )
+        assert conn.execute("SELECT * FROM conversation_expired_ranges").fetchall() == [
+            ("history", 2, 3, 1, 2, 2)
+        ]
+        assert conn.execute("SELECT version_num FROM alembic_version").fetchone()[0] == (
+            "diagnostic_expiry_metadata"
+        )
+        assert conn.execute("SELECT count(*) FROM conversation_events").fetchone()[0] == 4
+        assert (
+            conn.execute(
                 "SELECT sql FROM sqlite_master WHERE name='conversation_expired_ranges'"
             ).fetchone()[0]
             == definition
         )
+    assert ScriptDirectory(str(db.MIGRATIONS_DIRECTORY)).get_heads() == [
+        "diagnostic_expiry_metadata"
+    ]
 
 
 @pytest.mark.parametrize("drift", ["table", "trigger"])
@@ -232,6 +260,7 @@ def test_metadata_schema_drift_refuses_before_deletion(archive: Path, drift: str
         with maintenance.bind_transaction_admission(conn, bootstrap):
             conn.execute("BEGIN")
             if drift == "table":
+                conn.execute("DROP TABLE conversation_expired_ranges")
                 conn.execute("CREATE TABLE conversation_expired_ranges (wrong TEXT)")
             else:
                 maintenance.install_expiry_metadata(conn)
@@ -299,3 +328,169 @@ def test_orphan_backend_without_database_identity_blocks_all_principals(
     (process / "environ").write_bytes(b"PLAN_DB_PATH=" + str(database).encode())
     with pytest.raises(RuntimeError, match="still owns this database"):
         maintenance._require_no_backend_activity(database, proc=proc, private_copy=True)
+
+
+def test_real_expiry_rebuild_preserves_deep_full_supervisor_controls_and_tool_identity(
+    archive: Path, tmp_path: Path
+) -> None:
+    """Actual deletion/rebuild must preserve non-Ticket history and classify real tool refs."""
+    from tests.unit.test_conversation_api import (
+        COMMITTED_EVENT_STREAM_NAME,
+        CONVERSATION_PREFIX,
+        _EventStreamDrive,
+        _Harness,
+        _run,
+    )
+
+    from planner.conversation.views.api import router
+    from planner.conversation.views.storage import _body, _body_reference, _row_record, encode_wire
+    from planner.core.errors import PlannerError
+    from planner.core.server import handle_planner_error
+
+    # Reuse the private archive and guarded offline writer; no provider is running.
+    with maintenance._exclusive_database(archive) as (conn, bootstrap):
+        with maintenance.bind_transaction_admission(conn, bootstrap):
+            conn.execute("BEGIN")
+            conn.execute("UPDATE tickets SET stage='needs_implementation' WHERE id='ticket'")
+            conn.execute(
+                "INSERT INTO projects(id,name,created_at,updated_at) VALUES ('p','Archive',1,1)"
+            )
+            conn.execute(
+                "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,supervisor_model,"
+                "created_at,updated_at,settled) VALUES ('item','Settled','p','codex','test',1,1,1)"
+            )
+            conn.execute(
+                "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,"
+                "identity_environment_variables,latest_sequence,created_at) "
+                "VALUES ('supervisor','codex','/tmp','full',?,200,1)",
+                (
+                    json.dumps(
+                        [["PLAN_ACTOR", "sprint_item_supervisor"], ["PLAN_SPRINT_ITEM_ID", "item"]]
+                    ),
+                ),
+            )
+            controls = []
+            for turn in range(40):
+                base = turn * 5
+                controls += [base + 1, base + 5]
+                events = (
+                    (
+                        "prompt",
+                        {
+                            "text": f"Owner turn {turn}",
+                            "sender_label": "owner",
+                            "mode": "queue",
+                            "sender_message_id": f"message-{turn}",
+                        },
+                    ),
+                    (
+                        "tool_call_started",
+                        {
+                            "tool_call_id": f"tool-{turn}",
+                            "title": "Inspect",
+                            "tool_kind": "exec",
+                            "detail": "inspect",
+                        },
+                    ),
+                    (
+                        "tool_call_finished",
+                        {
+                            "tool_call_id": f"tool-{turn}",
+                            "tool_call_status": "completed",
+                            "detail": "output",
+                        },
+                    ),
+                    ("agent_message", {"text": f"Diagnostic {turn}"}),
+                    ("turn_ended", {"ending": "completed", "error_summary": None}),
+                )
+                for offset, (kind, payload) in enumerate(events, 1):
+                    conn.execute(
+                        "INSERT INTO conversation_events VALUES ('supervisor',?,?,?,?)",
+                        (base + offset, kind, json.dumps(payload), base + offset),
+                    )
+            maintenance.rebuild_projection(conn, "supervisor")
+            source_row = _row_record(conn, "supervisor", 97)
+            tool_reference = _body_reference(
+                source_row,
+                encode_wire(_body(conn, "supervisor", source_row, full_tool_detail=True)).encode(),
+                detail=True,
+            )
+            conn.commit()
+    report = read_report(archive, as_of_unix=AS_OF)
+    held = next(item for item in report.decisions if item.conversation_id == "history")
+    assert held.hold_reasons == ("unfinished_ticket",) and held.candidates == ()
+    eligible = next(item for item in report.decisions if item.conversation_id == "supervisor")
+    assert not eligible.hold_reasons and len(eligible.candidates) == 120
+    assert maintenance.apply_report(archive, report, confirmed=True).removed_event_count == 120
+    with sqlite3.connect(archive) as conn:
+        assert [
+            row[0]
+            for row in conn.execute(
+                "SELECT sequence FROM conversation_events WHERE conversation_id='supervisor' "
+                "ORDER BY sequence"
+            )
+        ] == controls
+        assert (
+            conn.execute(
+                "SELECT latest_sequence FROM conversations WHERE conversation_id='supervisor'"
+            ).fetchone()[0]
+            == 200
+        )
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM conversation_events WHERE conversation_id='history'"
+            ).fetchone()[0]
+            == 4
+        )
+    # The offline writer leaves its closed identity unavailable. Reopen a private copy
+    # through the existing HTTP harness to exercise actual route envelopes and replay.
+    copied = tmp_path / "post-expiry.db"
+    with sqlite3.connect(archive) as source, sqlite3.connect(copied) as target:
+        source.backup(target)
+    harness = _Harness(copied)
+    harness.app.include_router(router, prefix=CONVERSATION_PREFIX)
+    harness.app.add_exception_handler(PlannerError, handle_planner_error)
+
+    async def exercise() -> None:
+        try:
+            async with harness.client() as client:
+                path = f"{CONVERSATION_PREFIX}/conversations/supervisor"
+                snapshot = (await client.get(path + "/view", params={"lens": "full"})).json()
+                assert snapshot["coverage"]["through_sequence"] == 200
+                assert snapshot["status"]["diagnostics_expired"] is True
+                page = snapshot["page"]
+                seen = list(page["items"])
+                while page["older"] is not None:
+                    page = (
+                        await client.get(
+                            path + "/view/pages",
+                            params={
+                                "lens": "full",
+                                "cursor": json.dumps(page["older"]),
+                            },
+                        )
+                    ).json()
+                    seen = page["items"] + seen
+                assert [
+                    item["source_sequence"] for item in seen if item["kind"] == "row"
+                ] == controls
+                assert not any(item.get("row_kind") == "tool_call" for item in seen)
+                assert (await client.get(path + "/events/98/detail")).status_code == 410
+                for suffix in ("/body", "/body/content"):
+                    expired = await client.get(
+                        path + "/view" + suffix,
+                        params={
+                            "reference": json.dumps(tool_reference),
+                        },
+                    )
+                    assert expired.status_code == 410
+                    assert expired.json()["error"]["code"] == "diagnostic_expired"
+                async with _EventStreamDrive(harness.app, path + "/tail", "after=95") as stream:
+                    for sequence in [value for value in controls if value > 95]:
+                        name, event = await stream.next_named_frame()
+                        assert name == COMMITTED_EVENT_STREAM_NAME
+                        assert event["sequence"] == sequence
+        finally:
+            await harness.runtime.shutdown()
+
+    _run(exercise)

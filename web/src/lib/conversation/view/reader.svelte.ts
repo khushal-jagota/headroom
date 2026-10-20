@@ -1,3 +1,4 @@
+import { DiagnosticExpiredError, isDiagnosticExpiry } from '../diagnosticExpiry';
 /** One selected view: bounded pages, one stream, and cancellable demand reads. */
 import { SvelteSet } from 'svelte/reactivity';
 import type { ConversationViewItem, ConversationViewPage, ConversationViewSnapshot, ConversationViewStatus, ConversationViewLens, ViewPageCursor, ViewHistoryScope, ViewTailChanges, ViewBodyReference, ViewMessageReceipts } from './contracts';
@@ -40,6 +41,17 @@ export class ConversationViewReader {
     private releaseSource: () => void = () => { };
     private abort = new AbortController();
     private generation = 0;
+    /** Invalidates rendered bodies, independently of ordinary stream reconnects. */
+    contentGeneration = $state(0);
+    private replaceHistory(): void {
+        this.cancelPages();
+        this.pageQueue = Promise.resolve();
+        this.status = null;
+        this.pages = [];
+        this.coverage = 0;
+        this.contentGeneration++;
+        this.revision++;
+    }
     private retry: ReturnType<typeof setTimeout> | null = null;
     private disposed = false;
     private reconnecting: Promise<void> | null = null;
@@ -183,6 +195,8 @@ export class ConversationViewReader {
                     return;
                 try {
                     const value = JSON.parse((event as MessageEvent<string>).data) as ConversationViewSnapshot;
+                    this.checkPage(value.page);
+                    this.replaceHistory();
                     this.accept(value.page, true);
                     this.status = value.status;
                     this.coverage = value.coverage.through_sequence;
@@ -206,9 +220,7 @@ export class ConversationViewReader {
                         throw new Error('Conversation view gap');
                     const epochChanged = this.status !== null && this.status.runtime_epoch !== value.status.runtime_epoch;
                     if (epochChanged) {
-                        this.cancelPages();
-                        this.coverage = 0;
-                        this.pages = [];
+                        this.replaceHistory();
                         source.close();
                         this.source = null;
                         this.retry = setTimeout(() => { this.retry = null; void this.connect().catch(() => undefined); }, 0);
@@ -258,13 +270,11 @@ export class ConversationViewReader {
                     ready();
                 }
                 catch (error) {
-                    this.cancelPages();
-                    this.coverage = 0;
-                    this.pages = [];
+                    this.replaceHistory();
                     fail(error);
                 }
             });
-            source.addEventListener('reset', () => { if (!active()) return; this.cancelPages(); this.coverage = 0; this.pages = []; fail(new Error('Conversation view reset')); });
+            source.addEventListener('reset', () => { if (!active()) return; this.replaceHistory(); fail(new Error('Conversation view reset')); });
             source.onerror = () => fail(new Error('Conversation disconnected'));
             const abort = () => { source.close(); if (!settled) {
                 settled = true;
@@ -331,8 +341,11 @@ export class ConversationViewReader {
     isExpanded(scope: ViewHistoryScope): boolean { void this.revision; return this.expanded.has(scopeKey(scope)); }
     async body(reference: ViewBodyReference, signal: AbortSignal): Promise<string> {
         const response = await fetch(this.url('/body/content', { reference: JSON.stringify(reference) }), { signal });
-        if (!response.ok || !response.body)
+        if (!response.ok) {
+            if (isDiagnosticExpiry(await response.text())) throw new DiagnosticExpiredError();
             throw new Error(`Conversation body: ${response.status}`);
+        }
+        if (!response.body) throw new Error(`Conversation body: ${response.status}`);
         const stream = response.body.getReader();
         const decoder = new TextDecoder('utf-8', { fatal: true });
         const chunks: string[] = [];

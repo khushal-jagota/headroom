@@ -10,6 +10,7 @@ from typing import Literal, cast
 
 from planner.conversation import events as event
 from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.retention.read import sequence_expired
 from planner.conversation.views.configuration import (
     BODY_CHUNK_BYTES,
     HISTORY_PAGE_BODY_BYTES,
@@ -33,6 +34,7 @@ from planner.conversation.views.contracts import (
     ViewRowKind,
 )
 from planner.conversation.views.logic.bodies import row_body
+from planner.core.errors import ErrorCode, PlannerError
 
 
 class ViewBodyChanged(ValueError):
@@ -49,6 +51,15 @@ def encode_wire(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=_json_default)
 
 
+def _raise_if_expired(conn: sqlite3.Connection, conversation_id: str, sequence: int) -> None:
+    if sequence_expired(conn, conversation_id, sequence):
+        raise PlannerError(
+            ErrorCode.diagnostic_expired,
+            "This diagnostic detail expired.",
+            {"conversation_id": conversation_id, "sequence": sequence},
+        )
+
+
 def _payload(
     conn: sqlite3.Connection, conversation_id: str, sequence: int
 ) -> event.ConversationEventPayload:
@@ -57,6 +68,7 @@ def _payload(
         (conversation_id, sequence),
     ).fetchone()
     if source is None:
+        _raise_if_expired(conn, conversation_id, sequence)
         raise ValueError("View source is absent")
     return event.conversation_event_payload_from_canonical_json(
         event.ConversationEventKind(source[0]), source[1]
@@ -75,6 +87,7 @@ def _row_record(conn: sqlite3.Connection, conversation_id: str, sequence: int) -
     cursor.row_factory = sqlite3.Row
     row = cursor.fetchone()
     if row is None:
+        _raise_if_expired(conn, conversation_id, sequence)
         raise ValueError("View row is absent")
     return cast(sqlite3.Row, row)
 
@@ -254,7 +267,11 @@ def read_group(
 
 
 def _candidate_members(
-    lens: ConversationViewLens, scope: ViewHistoryScope, stopped: bool
+    lens: ConversationViewLens,
+    scope: ViewHistoryScope,
+    stopped: bool,
+    *,
+    reverse_probe: bool = False,
 ) -> list[tuple[str, list[object]]]:
     """The union members a page is chosen from, each selecting kind, key, sequence, slot.
 
@@ -290,10 +307,20 @@ def _candidate_members(
             )
         ]
     if scope["kind"] == "turn":
+        # Reverse absence must not walk tool rows in the general turn index or
+        # addressed messages and other turns in the general kind index.
+        ordinary_index = (
+            "INDEXED BY conversation_view_rows_ordinary_turn "
+            if reverse_probe and not focus
+            else ""
+        )
         members = [
             (
                 "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,0 AS slot "
-                "FROM conversation_view_rows r " + join + "WHERE r.conversation_id=? "
+                "FROM conversation_view_rows r "
+                + ordinary_index
+                + join
+                + "WHERE r.conversation_id=? "
                 f"AND r.removed=0 AND {visible}r.turn_key=? AND r.row_kind='agent_message' "
                 f"AND r.focus_visible=0 AND r.sequence<>{latest}",
                 [scope["key"]],
@@ -442,6 +469,40 @@ def read_page(
         }
 
     more = len(candidates) > len(items)
+    reverse_exists = False
+    if cursor is not None:
+        # Reverse availability is a fact about the same retained candidate set,
+        # not evidence supplied by an arbitrary (possibly expired) input cursor.
+        edge = items[-1 if descending else 0]["order"] if items else cursor["order"]
+        probes: list[str] = []
+        probe_params: list[object] = []
+        # Try aggregate and direct latest-entry witnesses before the broad row
+        # member. Within each member seek the far edge: existence needs any
+        # retained item, so it need not walk a hidden run beside the input edge.
+        for member, scope_params in reversed(
+            _candidate_members(lens, scope, stopped, reverse_probe=True)
+        ):
+            probes.append(
+                f"SELECT 1 FROM (SELECT * FROM ({member}) WHERE (sequence,slot) "
+                + (">" if descending else "<")
+                + " (?,?) ORDER BY sequence "
+                + ("DESC" if descending else "ASC")
+                + " LIMIT 1)"
+            )
+            probe_params += [conversation_id, *scope_params, edge["sequence"], edge["slot"]]
+        reverse_exists = (
+            conn.execute(
+                "SELECT 1 FROM (" + " UNION ALL ".join(probes) + ") LIMIT 1", probe_params
+            ).fetchone()
+            is not None
+        )
+    older = position(items[0]) if items and (more if descending else reverse_exists) else None
+    newer = position(items[-1]) if items and (reverse_exists if descending else more) else None
+    if not items and cursor is not None and reverse_exists:
+        if descending:
+            newer = cursor
+        else:
+            older = cursor
     return {
         "conversation_id": conversation_id,
         "protocol_version": VIEW_PROTOCOL_VERSION,
@@ -450,12 +511,8 @@ def read_page(
         "scope": scope,
         "items": items,
         "body_bytes": body_bytes,
-        "older": position(items[0])
-        if items and (more if descending else cursor is not None)
-        else None,
-        "newer": position(items[-1])
-        if items and (cursor is not None if descending else more)
-        else None,
+        "older": older,
+        "newer": newer,
     }
 
 
@@ -527,6 +584,14 @@ def body_content(
         row = _row_record(conn, conversation_id, sequence)
         version = f"{row['changed_sequence']}:{row['turn_ending_sequence'] or 0}"
         if version != reference["version"]:
+            # A stale projection cannot turn an omitted canonical source into a
+            # changed body. Keep this extra lookup off successful body reads.
+            source_exists = conn.execute(
+                "SELECT 1 FROM conversation_events WHERE conversation_id=? AND sequence=?",
+                (conversation_id, sequence),
+            ).fetchone()
+            if source_exists is None:
+                _raise_if_expired(conn, conversation_id, sequence)
             raise ViewBodyChanged("Body source version changed")
         body = _body(conn, conversation_id, row, stopped=stopped, full_tool_detail=kind == "detail")
     if (

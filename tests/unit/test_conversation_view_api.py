@@ -80,6 +80,10 @@ def test_focus_tail_and_rest_deliver_no_hidden_prose_and_receipts_survive_old_pa
 
 
 def test_selected_body_stream_is_exact_and_obsolete_reference_is_409(harness: _Harness) -> None:
+    from planner.core.errors import PlannerError
+    from planner.core.server import handle_planner_error
+
+    harness.app.add_exception_handler(PlannerError, handle_planner_error)
     harness.app.include_router(router, prefix=CONVERSATION_PREFIX)
 
     async def exercise() -> None:
@@ -98,11 +102,42 @@ def test_selected_body_stream_is_exact_and_obsolete_reference_is_409(harness: _H
             )
             assert response.status_code == 200
             assert response.json()["content"][0]["text"] == text
+            original_version = reference["version"]
             reference["version"] = "obsolete"
             stale = await client.get(
                 path + "/body/content", params={"reference": json.dumps(reference)}
             )
             assert stale.status_code == 409
+            reference["version"] = original_version
+            with db.connect(harness.runtime.database_path) as conn:
+                conn.execute(
+                    "DELETE FROM conversation_events WHERE conversation_id='c' AND sequence=?",
+                    (row["order"]["sequence"],),
+                )
+                conn.execute(
+                    "INSERT INTO conversation_expired_ranges VALUES ('c',?,?,1,2,1)",
+                    (row["order"]["sequence"], row["order"]["sequence"]),
+                )
+            reference["version"] = "obsolete"
+            for suffix in ("/body", "/body/content"):
+                expired = await client.get(
+                    path + suffix, params={"reference": json.dumps(reference)}
+                )
+                assert expired.status_code == 410
+                assert expired.json()["error"]["code"] == "diagnostic_expired"
+                malformed = dict(reference, body_id="invalid")
+                assert (
+                    await client.get(path + suffix, params={"reference": json.dumps(malformed)})
+                ).status_code == 422
+            with db.connect(harness.runtime.database_path) as conn:
+                conn.execute("DELETE FROM conversation_view_rows WHERE conversation_id='c'")
+            for suffix in ("/body", "/body/content"):
+                assert (
+                    await client.get(path + suffix, params={"reference": json.dumps(reference)})
+                ).status_code == 410
+            snapshot = (await client.get(path, params={"transcript": "false"})).json()
+            assert snapshot["status"]["diagnostics_expired"] is True
+            assert snapshot["page"]["projection_version"] == 1
 
     _run(exercise)
 

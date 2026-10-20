@@ -12,10 +12,15 @@ from planner.conversation.events import (
     ConversationEventKind,
     conversation_event_payload_from_canonical_json,
 )
+from planner.conversation.retention.read import diagnostics_expired, sequence_expired
 from planner.conversation.storage import StoredConversationEvent
 from planner.conversation.views.api import _changes
 from planner.conversation.views.configuration import BODY_CHUNK_BYTES
-from planner.conversation.views.contracts import ViewHistoryScope
+from planner.conversation.views.contracts import (
+    VIEW_PROJECTION_VERSION,
+    ViewHistoryScope,
+    ViewPageCursor,
+)
 from planner.conversation.views.live_output import ConversationViewLiveOutput
 from planner.conversation.views.status import read_status
 from planner.conversation.views.storage import (
@@ -27,6 +32,7 @@ from planner.conversation.views.storage import (
     read_turn,
 )
 from planner.conversation.views.writer import append_projection, backfill_projection
+from planner.core.errors import ErrorCode, PlannerError
 
 
 def event(sequence: int, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -379,3 +385,149 @@ def test_paging_back_through_a_long_timeline_loses_no_item_and_repeats_none() ->
         assert missing_prompts == [], f"paging lost {len(missing_prompts)} prompts"
         missing_heads = [f"turn:e{at}" for at in prompts if f"turn:e{at}" not in set(seen)]
         assert missing_heads == [], f"paging lost {len(missing_heads)} turn heads"
+
+
+def test_sparse_pages_reverse_edges_and_empty_cursors_use_retained_tuple_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Prompt and turn share sequence 10 but occupy different slots. Arbitrary
+    # cursors inside omissions and outside history must not invent reverse edges.
+    events = [
+        prompt(10),
+        event(40, "agent_message", {"text": "Answer"}),
+        event(90, "turn_ended", {"ending": "completed", "error_summary": None}),
+    ]
+    monkeypatch.setattr("planner.conversation.views.storage.HISTORY_PAGE_ITEMS", 1)
+    with database(events) as conn:
+        for lens in ("focus", "full"):
+            scope: ViewHistoryScope = {"kind": "timeline", "key": None}
+            cursor: ViewPageCursor = {
+                "projection_version": VIEW_PROJECTION_VERSION,
+                "lens": lens,
+                "scope": scope,
+                "order": {"sequence": 200, "slot": 0},
+            }
+            backward = []
+            while True:
+                page = read_page(conn, "fixture", lens, cursor=cursor)
+                backward[:0] = [item["key"] for item in page["items"]]
+                if cursor["order"]["sequence"] == 200:
+                    assert page["newer"] is None
+                if page["older"] is None:
+                    break
+                cursor = page["older"]
+            assert backward == (
+                ["e10", "turn:e10"] if lens == "focus" else ["e10", "turn:e10", "e40", "e90"]
+            )
+            cursor = {**cursor, "order": {"sequence": 0, "slot": 0}}
+            forward = []
+            while True:
+                page = read_page(conn, "fixture", lens, cursor=cursor, direction="newer")
+                forward += [item["key"] for item in page["items"]]
+                if cursor["order"]["sequence"] == 0:
+                    assert page["older"] is None
+                if page["newer"] is None:
+                    break
+                cursor = page["newer"]
+            assert forward == backward
+            gap = {**cursor, "order": {"sequence": 55, "slot": 0}}
+            older_gap = read_page(conn, "fixture", lens, cursor=gap)
+            newer_gap = read_page(conn, "fixture", lens, cursor=gap, direction="newer")
+            if lens == "full":
+                assert [item["key"] for item in older_gap["items"]] == ["e40"]
+                assert older_gap["newer"] is not None
+                assert [item["key"] for item in newer_gap["items"]] == ["e90"]
+                assert newer_gap["older"] is not None
+            else:
+                assert older_gap["newer"] is None
+                assert newer_gap["items"] == []
+                assert newer_gap["older"] == gap
+            for sequence, direction, existing_side in (
+                (0, "older", "newer"),
+                (200, "newer", "older"),
+            ):
+                cursor = {**cursor, "order": {"sequence": sequence, "slot": 0}}
+                empty = read_page(conn, "fixture", lens, cursor=cursor, direction=direction)
+                assert empty["items"] == []
+                assert empty[existing_side] == cursor
+                assert empty[direction] is None
+
+
+def test_expanded_sparse_scopes_have_their_own_reverse_edges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = [prompt(10)]
+    events += [
+        event(
+            n,
+            "tool_call_started",
+            {"tool_call_id": f"t{n}", "title": "Read", "tool_kind": "other", "detail": "x"},
+        )
+        for n in (20, 30, 50, 60)
+    ]
+    events += [event(n, "agent_message", {"text": f"message {n}"}) for n in (70, 90, 100, 110)]
+    events += [event(120, "turn_ended", {"ending": "completed", "error_summary": None})]
+    monkeypatch.setattr("planner.conversation.views.storage.HISTORY_PAGE_ITEMS", 2)
+    with database(events) as conn:
+        for scope, expected in (
+            ({"kind": "work_group", "key": "work:e20"}, ["e20", "e30", "e50", "e60"]),
+            ({"kind": "turn", "key": "turn:e10"}, ["work:e20", "e70", "e90", "e100"]),
+        ):
+            cursor = {
+                "projection_version": VIEW_PROJECTION_VERSION,
+                "lens": "full",
+                "scope": scope,
+                "order": {"sequence": 200, "slot": 0},
+            }
+            keys = []
+            while True:
+                page = read_page(conn, "fixture", "full", scope=scope, cursor=cursor)
+                keys[:0] = [item["key"] for item in page["items"]]
+                if cursor["order"]["sequence"] == 200:
+                    assert page["newer"] is None
+                if page["older"] is None:
+                    break
+                cursor = page["older"]
+            assert keys == expected
+            assert read_page(conn, "fixture", "focus", scope=scope)["items"] == []
+
+
+@pytest.mark.parametrize("kind", ["row", "detail", "plan"])
+@pytest.mark.parametrize("missing_projection", [False, True])
+def test_missing_body_requires_recorded_expiry_and_syntax_stays_first(
+    kind: str,
+    missing_projection: bool,
+) -> None:
+    with database([prompt(), event(2, "agent_message", {"text": "Retained"})]) as conn:
+        conn.execute("INSERT INTO conversation_expired_ranges VALUES ('fixture',10,20,0,0,11)")
+        assert diagnostics_expired(conn, "fixture")
+        assert not diagnostics_expired(conn, "other")
+        assert sequence_expired(conn, "fixture", 10)
+        assert sequence_expired(conn, "fixture", 20)
+        assert not sequence_expired(conn, "fixture", 21)
+        if not missing_projection and kind != "plan":
+            # A still-present row whose canonical source was omitted must classify
+            # expiry just like the rebuilt projection's missing row.
+            conn.execute("UPDATE conversation_view_rows SET sequence=10 WHERE sequence=2")
+        reference = {
+            "body_id": f"{kind}:10",
+            "version": "2:0" if kind != "plan" else "10",
+            "byte_count": 0,
+            "media_type": "application/json",
+        }
+        for read in (
+            lambda ref: read_body_chunk(conn, "fixture", ref, 0),
+            lambda ref: body_content(conn, "fixture", ref),
+        ):
+            with pytest.raises(PlannerError) as caught:
+                read(reference)
+            assert caught.value.code == ErrorCode.diagnostic_expired
+            assert caught.value.message == "This diagnostic detail expired."
+            if kind != "plan":
+                with pytest.raises(PlannerError) as stale:
+                    read({**reference, "version": "stale"})
+                assert stale.value.code == ErrorCode.diagnostic_expired
+            with pytest.raises(ValueError, match="Unsupported body reference"):
+                read({**reference, "body_id": f"{kind}:10junk"})
+            with pytest.raises(ValueError, match="absent"):
+                read({**reference, "body_id": f"{kind}:21"})

@@ -33,7 +33,8 @@ import json
 import sqlite3
 from typing import Any
 
-from tests.unit.test_conversation_view_projection import database
+from tests.unit.test_conversation_view_projection import FIXTURES, database
+from tests.unit.test_conversation_view_storage import event, prompt
 
 from planner.conversation.views.api import _changes
 from planner.conversation.views.contracts import ViewRetainedRange
@@ -206,3 +207,167 @@ def test_a_bounded_page_does_not_cost_more_because_the_conversation_is_longer() 
         f"doubling the conversation multiplied a bounded page read by {growth:.2f}: "
         f"{shorter.steps} VM steps at {len(short)} events, {longer.steps} at {len(long)}"
     )
+
+
+def test_sparse_cursor_and_expanded_reads_remain_bounded_as_history_grows() -> None:
+    """Expiry leaves sparse sequence positions; reverse probes must stay indexed.
+
+    The existing growth gate covers only the first timeline page of dense history.
+    Reuse its source generator and Work counters for cursor and expanded scope reads.
+    """
+    measurements: dict[str, list[Work]] = {"sparse": [], "expanded": []}
+    for turns in (TURNS, TURNS * 2):
+        events = conversation(turns)
+        sparse = [row for row in events if row["kind"] != "tool_call_started"]
+        with database(sparse) as conn:
+            first = read_page(conn, "fixture", "full")
+            assert first["older"] is not None
+            with Work(conn) as work:
+                page = read_page(
+                    conn,
+                    "fixture",
+                    "full",
+                    cursor={**first["older"], "order": first["items"][-1]["order"]},
+                )
+            assert page["newer"] is not None
+            assert len(work.statements) <= 210
+            assert work.steps <= 16_000
+            measurements["sparse"].append(work)
+        with database(events) as conn:
+            scope = {"kind": "work_group", "key": "work:e2"}
+            first = read_page(conn, "fixture", "full", scope=scope)
+            cursor = {
+                "projection_version": first["projection_version"],
+                "lens": "full",
+                "scope": scope,
+                "order": first["items"][0]["order"],
+            }
+            with Work(conn) as work:
+                page = read_page(
+                    conn, "fixture", "full", scope=scope, cursor=cursor, direction="newer"
+                )
+            assert len(page["items"]) == TOOLS_PER_TURN - 1
+            assert page["older"] is not None
+            assert len(work.statements) <= 210
+            assert work.steps <= 16_000
+            measurements["expanded"].append(work)
+    for name, (shorter, longer) in measurements.items():
+        assert len(longer.statements) == len(shorter.statements), name
+        assert longer.steps / max(shorter.steps, 1) <= 1.25, name
+
+
+def test_reverse_availability_does_not_walk_hidden_tool_or_message_runs() -> None:
+    """An arbitrary old cursor must not charge for the hidden run beside it.
+
+    First-page and sparse-history gates never exercised this reverse existence
+    boundary. Reuse the projection fixture and counters, without a browser host.
+    """
+    for kind in ("tool_call_started", "agent_message"):
+        costs: dict[tuple[str, bool, int], list[int]] = {}
+        for count in (128, 1024):
+            payload = (
+                {"text": "Hidden message"}
+                if kind == "agent_message"
+                else {
+                    "tool_call_id": "tool",
+                    "title": "Read",
+                    "tool_kind": "other",
+                    "detail": "x",
+                }
+            )
+            events = [prompt()]
+            events += [
+                event(sequence, kind, {**payload, "tool_call_id": str(sequence)})
+                for sequence in range(2, count + 2)
+            ]
+            for closed in (False, True):
+                rows = events + (
+                    [event(count + 2, "turn_ended", {"ending": "completed", "error_summary": None})]
+                    if closed
+                    else []
+                )
+                with database(rows) as conn:
+                    for lens in ("focus", "full"):
+                        for edge in (0, 2):
+                            cursor = {
+                                "projection_version": 1,
+                                "lens": lens,
+                                "scope": {"kind": "timeline", "key": None},
+                                "order": {"sequence": edge, "slot": 0},
+                            }
+                            with Work(conn) as work:
+                                page = read_page(conn, "fixture", lens, cursor=cursor)
+                            assert len(page["items"]) == (0 if edge == 0 else 2)
+                            assert len(work.statements) <= 210
+                            assert work.steps <= 16_000
+                            costs.setdefault((lens, closed, edge), []).append(work.steps)
+        for shorter, longer in costs.values():
+            assert longer / max(shorter, 1) <= 1.25
+
+
+def test_expanded_reverse_reads_seek_past_tools_and_addressed_messages() -> None:
+    """Turn expansion cannot infer absence by walking excluded source kinds.
+
+    The timeline growth case has aggregate witnesses that expansions lack. Reuse
+    its setup and counters at both sides of an arbitrary cursor, including empty
+    pages; no additional backend or browser host is needed.
+    """
+    owner_payload = next(
+        row["payload"]
+        for fixture in FIXTURES
+        for row in fixture["events"]
+        if row["kind"] == "message_to_owner"
+    )
+    scope = {"kind": "turn", "key": "turn:e1"}
+    for kind in ("tool_call_started", "message_to_owner", "agent_message"):
+        costs: dict[tuple[str, int], list[int]] = {}
+        for count in (128, 1024):
+            events = [prompt(), event(2, "agent_message", {"text": "Earlier"})]
+            for sequence in range(3, count + 3):
+                payload = (
+                    owner_payload
+                    if kind == "message_to_owner"
+                    else {"text": "Ordinary"}
+                    if kind == "agent_message"
+                    else {
+                        "tool_call_id": str(sequence),
+                        "title": "Read",
+                        "tool_kind": "other",
+                        "detail": "x",
+                    }
+                )
+                events.append(event(sequence, kind, payload))
+            events += [
+                event(count + 3, "agent_message", {"text": "Latest"}),
+                event(count + 4, "turn_ended", {"ending": "completed", "error_summary": None}),
+            ]
+            with database(events) as conn:
+                for direction, sequence in (("older", 4), ("older", 0), ("newer", count + 5)):
+                    cursor = {
+                        "projection_version": 1,
+                        "lens": "full",
+                        "scope": scope,
+                        "order": {"sequence": sequence, "slot": 0},
+                    }
+                    with Work(conn) as work:
+                        page = read_page(
+                            conn, "fixture", "full", scope=scope, cursor=cursor, direction=direction
+                        )
+                    if sequence == 4:
+                        expected = (
+                            ["e2", "work:e3"]
+                            if kind == "tool_call_started"
+                            else ["e2"]
+                            if kind == "message_to_owner"
+                            else ["e2", "e3"]
+                        )
+                        assert [item["key"] for item in page["items"]] == expected
+                    else:
+                        assert page["items"] == []
+                    assert len(work.statements) <= 210
+                    assert work.steps <= 16_000
+                    costs.setdefault((direction, sequence if sequence < 5 else -1), []).append(
+                        work.steps
+                    )
+        for shorter, longer in costs.values():
+            assert longer / max(shorter, 1) <= 1.25
