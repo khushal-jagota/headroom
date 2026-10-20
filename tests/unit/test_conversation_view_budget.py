@@ -10,6 +10,21 @@ code changes.
 The ceilings below are today's cost, not a target. Each one comes down as the change that
 earns it lands, and the number in the failure message is the point: a read that starts
 costing more than it did has to be looked at, not waved through.
+
+When one of these fails, that is a question and not a number to adjust. The ceilings are
+today's measured cost, so a failure means a read got more expensive than it was, and the
+useful first move is to find out why rather than to make room.
+
+Sometimes the answer is that the new cost is fine, and that is a decision - write it beside
+the number, with the arithmetic, the way the declined changes in this file are written. And
+when a ceiling does rise, lower the others to whatever they now measure in the same change.
+A gate that only ever ratchets upward one Ticket at a time stops being a gate, and nobody
+notices the moment it stopped.
+
+The growth assertion is not like the others. A statement or byte ceiling creeping up is a
+cost somebody chose; that ratio moving is the original defect coming back, possibly through
+a query nobody has looked at yet. It is the only check here that would notice that, so it
+is the one to be slowest about relaxing.
 """
 
 from __future__ import annotations
