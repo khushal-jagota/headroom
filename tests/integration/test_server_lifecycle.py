@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import socket
 import subprocess
 import time
@@ -10,6 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+import pytest
 from tests.support.server import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
 
 
@@ -171,3 +173,43 @@ def test_restart_from_ticket_worktree_uses_captured_launch_root(
     assert "data-svelte-app" in replacement_shell
     assert replacement_shell == original_shell
     assert not (ticket_worktree / "web" / "dist").exists()
+
+
+@pytest.mark.skipif(not Path("/proc/self/status").exists(), reason="requires Linux /proc masks")
+def test_incomplete_control_request_cannot_block_shutdown_or_child_signal_mask(
+    server: ServerHandle,
+) -> None:
+    application_pid = _wait_for_one_child(server.proc.pid)
+    status = Path(f"/proc/{application_pid}/status").read_text()
+    mask_text = next(line.split()[1] for line in status.splitlines() if line.startswith("SigBlk:"))
+    watched = sum(1 << (value - 1) for value in (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD))
+    assert int(mask_text, 16) & watched == 0
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(str(server.control_socket_path))
+        client.sendall(b'{"version":')
+        server.proc.terminate()
+        server.proc.wait(timeout=5)
+        assert server.proc.returncode == 0
+    assert not server.control_socket_path.exists()
+    assert not _process_exists(application_pid)
+    assert _nothing_listens(server.port)
+
+
+def test_unexpected_child_exit_wins_over_accepted_restart_with_open_client(
+    server: ServerHandle,
+) -> None:
+    application_pid = _wait_for_one_child(server.proc.pid)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(5)
+        client.connect(str(server.control_socket_path))
+        client.sendall(b'{"version":1,"operation":"restart"}\n')
+        assert b'"accepted"' in client.recv(4096)
+        # The acceptance response proves that this open client holds the restart.
+        # Verify direct fixture parentage immediately before the exact-child signal.
+        assert _direct_children(server.proc.pid) == [application_pid]
+        os.kill(application_pid, signal.SIGKILL)
+        server.proc.wait(timeout=5)
+        assert server.proc.returncode == 1
+    assert not server.control_socket_path.exists()
+    assert not _process_exists(application_pid)
+    assert _nothing_listens(server.port)

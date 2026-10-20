@@ -65,7 +65,8 @@ One screen per part of the system:
   right pane. The workspace address preserves these selections across reload and Back.
   Standalone utility routes remain available. The open utility uses the same accent-bright
   border as a selected orchestrator card.
-  Fine pointers with hover capability reveal a popup after 200 milliseconds. Visible
+  Settled orchestrator titles have no popup. They remain selectable and retain Reopen and conversation marks.
+  Fine pointers with hover capability reveal other rail popups after 200 milliseconds. Visible
   keyboard focus reveals it immediately. Touch reveals it after a 400 millisecond hold.
   Movement, release, or cancellation stops an unfinished hold. Taps and clicks select.
   A completed hold suppresses its click. One popup swaps targets without another delay.
@@ -112,17 +113,18 @@ One screen per part of the system:
   upward within half the space above those controls. Its header stays visible while
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
+  Manual fold toggles respond immediately, independently of queued rail updates. Height,
+  chevron, and body fade share one 340 millisecond beat. Late rows mount directly without
+  another arrival animation. Closing returns focus to the header when necessary.
+  Reduced motion skips that beat. Settle/Reopen retains its separate row choreography.
 
   Settling fades the active card and its rows out over 160 milliseconds before
   the Settled row arrives with the usual 140 millisecond delay and 320 millisecond
   fade. Reopening uses the same sequence in reverse: the card and headings arrive
   first, then its Workers. Layout changes share the existing 340 millisecond
   space adjustment. A closed Settled section stays closed and its count crossfades.
-  Opening and closing change section height and rotate the chevron together;
-  contents fade within that movement. Child-message arrivals and departures use
-  the same queue, so the rows below slide when their height changes. The latest
-  requested state waits through a transition. Reduced motion applies the final
-  state immediately, and closing returns focus to the header if it hid focus.
+  Manual fold requests bypass that structural queue. Coherent settled page updates
+  do not restart the fold animation. The latest manual choice wins during rapid reversal.
 
   Orchestrator pages show active groups first, then Backlogged and Done headers.
   Backlogged contains unfinished deferred Tickets. Done contains every completed Ticket,
@@ -451,6 +453,9 @@ or locale produces identical arbitrary-text ordering.
   groups. Tables and lists retain their complete logical container, intrinsic layout, and
   numbering. An unusually large selected container can therefore exceed the ordinary DOM
   window. Editable serialization keeps its synchronous exact-source behavior.
+  The worker parse wait uses the shared document skeleton. Its completed document or
+  error line replaces the skeleton through the same cross-fade. Replacement and removal
+  cancel the parse and release the mounted transition region.
   Images, HTML frames, PDF frames, and media players mount automatically near the viewport.
   Distant or hidden previews release native resources and text reads. Measured placeholders
   preserve their place. A custom visibility gate owns image admission, so native lazy
@@ -583,8 +588,17 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given
-  over to the error line or the loading line. Data-empty states ("No ideas yet.") stay
-  in the screens.
+  over to the error line or a skeleton. Each screen selects a named shape: rows,
+  document, block, conversation, or inline. `loadingText` remains an accessible
+  status announcement. Data-empty states ("No ideas yet.") stay in the screens.
+  `SkeletonRegion` owns the shared shapes and cross-fade. Layouts size full panes.
+  Intrinsic content uses a temporary reservation derived from the skeleton shape,
+  then returns to natural height. The reservation does not predict the content.
+  The three skeleton tokens control the whisper fills and fade duration. Reduced
+  motion removes the fade. Worker activity marks remain separate.
+  Action buttons keep their own busy labels. The model picker's Refresh button
+  says “Reading…” and exposes `aria-busy` during its explicit refresh. This label
+  describes the action, not a region without content, so it is outside skeleton scope.
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
@@ -616,8 +630,8 @@ hand-rolling the same shapes per screen. Each does one job:
   Its delivery control defaults to Steer and also offers Queue and Send now. A held row
   names why Panels queued a steer fallback.
 
-  The textarea grows with its content. Its height stops at the smaller of 44% of the
-  conversation pane or 12 lines, rounded down to whole lines, then scrolls internally.
+  The textarea grows with its content up to six whole lines, then scrolls internally.
+  The same cap applies at rest, peeked, and opened. Pane height and focus do not change it.
   A hidden textarea measures each draft with the same text layout and scrollbar width.
   Only the final height and overflow reach the visible input. A same-line edit therefore
   keeps the transcript in place without a temporary collapse of the composer.
@@ -658,7 +672,9 @@ hand-rolling the same shapes per screen. Each does one job:
   Every state keeps whatever the person had half-typed.
 
   The Chief and ordinary orchestrators share one layout with this layer and the same
-  outside-click dismissal. Both start at rest. The person controls rest, peeked, and
+  outside-click dismissal. Dismissal uses the start of a primary pointer gesture.
+  A text selection that starts inside the conversation can end outside without dismissal.
+  Ticket views use the same rule. Both start at rest. The person controls rest, peeked, and
   opened states, and a refresh keeps that choice.
 - **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
   `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and

@@ -23,7 +23,7 @@
   let emptyEndings = new SvelteMap<string, string>();
   const items = $derived.by(() => { const map = new Map<string, ConversationViewItem>(); for (const page of reader.pages)
       for (const item of page.items)
-          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'full' || item.kind !== 'row' || item.row_kind !== 'agent_message' || item.turn_key === null)
+          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
       return true; const turn = map.get(item.turn_key); return turn?.kind !== 'turn' || !turn.settled || turn.latest_message_key === item.key || reader.isExpanded({ kind: 'turn', key: turn.key }); }).sort(compareItems); });
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
@@ -116,6 +116,7 @@
   }
 </script>
 <div class="c2-transcript" data-conversation-transcript>
+  {#if reader.status?.diagnostics_expired}<p class="diagnostic-expiry-notice" data-conversation-diagnostics-expired>Some diagnostic history expired.</p>{/if}
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
     {#if page.scope.kind==='timeline'&&page.older}<div use:edge={{scope:page.scope,cursor:page.older,direction:'older'}} data-conversation-history-edge="older" aria-hidden="true"></div>{/if}
   {/each}
@@ -150,4 +151,4 @@
     {#if page.scope.kind==='timeline'&&page.newer}<div use:edge={{scope:page.scope,cursor:page.newer,direction:'newer'}} data-conversation-history-edge="newer" aria-hidden="true"></div>{/if}
   {/each}
 </div>
-<style>.c2-transcript{display:contents}[data-conversation-history-edge]{height:1px;flex:none;margin-block-start:calc(-1px - var(--space-5))}</style>
+<style>.diagnostic-expiry-notice{color:var(--text-muted);font-size:var(--type-xs);margin:0}.c2-transcript{display:contents}[data-conversation-history-edge]{height:1px;flex:none;margin-block-start:calc(-1px - var(--space-5))}</style>

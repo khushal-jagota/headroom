@@ -19,9 +19,9 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { mutateJson } from "../lib/mutate";
-  import { buildWorkspaceRail, workspaceListRecap, workspaceRailChildMessageConversations, type WorkspaceRailItem } from "../lib/workspaceRail";
-  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, railPreview, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
-  import { whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
+  import { buildWorkspaceRail, workspaceListRecap, type WorkspaceRailItem } from "../lib/workspaceRail";
+  import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
+  import { correctedWorkspaceAddress, whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import type { WorkspaceMessageConversation } from "../lib/types";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
@@ -29,6 +29,8 @@
   import WorkspaceMessages from "../components/WorkspaceMessages.svelte";
   import ChiefConversation from "../components/ChiefConversation.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import LazyRegion from "../components/LazyRegion.svelte";
+  import { cachedImport } from "../lib/lazyViews";
   import WorkspaceRailCard from "../components/WorkspaceRailCard.svelte";
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
 
@@ -39,6 +41,9 @@
     return context;
   })();
   const manifests = createQuery(() => queries.workerTypeManifests());
+  // Chief recap is dedicated content outside navigation records, so the popover
+  // reads it from the same settings query the Chief conversation pane already uses.
+  const chiefSettings = createQuery(() => queries.chiefSettings());
   let workspace = $state.raw<NavigationPresentation | null>(null);
   let displayedPublication = $state.raw<NavigationPublication | null>(null);
   $effect(() => {
@@ -54,6 +59,33 @@
   onDestroy(() => navigation.disposeRenderBoundary(railObserver));
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let opening = $derived(whatTheAddressOpens(address));
+  const selectedPaneModule = $derived.by(() => {
+    if (opening.markedTicketId) return cachedImport("./TicketRoute.svelte", () => import("./TicketRoute.svelte"));
+    if (opening.openItemId) return cachedImport("../components/SprintItemWorkspace.svelte", () => import("../components/SprintItemWorkspace.svelte"));
+    switch (opening.markedUtility) {
+      case "usage": return cachedImport("./BackendsRoute.svelte", () => import("./BackendsRoute.svelte"));
+      case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./SettingsRoute.svelte"));
+      case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./IdeasRoute.svelte"));
+      case "feedback": return cachedImport("./FeedbackRoute.svelte", () => import("./FeedbackRoute.svelte"));
+      default: return null;
+    }
+  });
+  let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" || opening.markedUtility === "feedback" ? "rows" as const : "document" as const);
+  // A link of the shape #/workspace/<id> is read as a Ticket, and an orchestrator id of
+  // that shape used to open the Ticket page saying "ticket not found". The publication
+  // knows which ids are orchestrators, so the address is corrected here, where that is
+  // known. replace() rather than assignment: the broken address was never a place the
+  // reader chose to be, so it does not earn an entry in their history.
+  let orchestratorIds = $derived(
+    new Set([
+      ...(workspace?.orchestrators ?? []).map((item) => item.id),
+      ...(workspace?.settledOrchestrators ?? []).map((item) => item.id)
+    ])
+  );
+  $effect(() => {
+    const corrected = correctedWorkspaceAddress(address, (id) => orchestratorIds.has(id));
+    if (corrected !== null) window.location.replace(corrected);
+  });
   const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspaceContent(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
   let allCards = $derived(workspace?.tickets ?? []);
   let visibleItems=$state<string[]>([]);
@@ -64,11 +96,11 @@
   let settledWindow=$derived(navigationWindow(workspace,'settled'));
   let chiefWindow=$derived(navigationWindow(workspace,'rail_tickets',{kind:'chief',id:'chief'}));
   let desiredRail = $derived.by(()=>{
-    if(!workspace?.globalCounts)return buildWorkspaceRail(allCards,workspace?.orchestrators ?? []);
+    if(!workspace?.globalCounts)return buildWorkspaceRail(allCards,[...(workspace?.orchestrators ?? []),...(workspace?.settledOrchestrators ?? [])]);
     const parents=new Set([...(parentWindow?.members ?? []),...(settledWindow?.members ?? [])].map(key=>key.id));
     const childIds=new Set(workspace.viewWindows.filter(window=>window.request.section==='rail_tickets').flatMap(window=>window.members.map(key=>key.id)));
     const cards=allCards.filter(card=>childIds.has(card.id));
-    return buildWorkspaceRail(cards,workspace.orchestrators.filter(item=>parents.has(item.id)).map(item=>({...item,tickets:item.tickets.filter(ticket=>childIds.has(ticket.id))})));
+    return buildWorkspaceRail(cards,[...workspace.orchestrators,...workspace.settledOrchestrators].filter(item=>parents.has(item.id)).map(item=>({...item,tickets:item.tickets.filter(ticket=>childIds.has(ticket.id))})));
   });
   let presentation = $state<WorkspaceRailPresentation>({rail:buildWorkspaceRail([]), settledOpen:false, settledMessages:{}});
   let rail = $derived(presentation.rail);
@@ -88,11 +120,7 @@
   $effect(() => {
     const next = {rail:desiredRail, settledOpen:requestedSettledOpen,
       settledMessages:Object.fromEntries((requestedSettledOpen ? desiredRail.settledItems : []).map((item) =>
-        [item.id, workspaceRailChildMessageConversations(messages, item, allCards).filter(row=>{
-          const page=navigationWindow(workspace,'unread',{kind:'orchestrator',id:item.id});
-          if(!page)return false;
-          return page.members.some(key=>navigation.state.publication?.records.some(record=>record.kind==='address' && record.id===key.id && record.value.conversation_id===row.conversationId));
-        })]))};
+        [item.id, [...(workspace?.scopedRailMessagesByParent.get(item.id) ?? [])]]))};
     untrack(() => motion.update(next));
   });
   function freezeRows(event: PointerEvent, leaving: boolean): void {
@@ -126,9 +154,15 @@
   });
   const hoverBody=selectedRecap(()=>rawHoverWorker?.recap_reference ?? hoveredItem?.recap_reference,()=>hoverVisible);
   let hoverWorker=$derived(rawHoverWorker && hoverBody.body!==undefined?{...rawHoverWorker,recap:hoverBody.body}:rawHoverWorker);
-  let hoveredItem = $derived([...desiredRail.items, ...desiredRail.settledItems].find((item) => item.id === hoverItemId));
-  let hoverRecap = $derived(hoverChief ? workspaceListRecap(desiredRail.chiefGroups,"",chiefWindow?.total)
-    : workspaceListRecap(hoveredItem?.groups ?? [], hoverBody.body ?? hoveredItem?.recap,hoveredItem?navigationWindow(workspace,'rail_tickets',{kind:'orchestrator',id:hoveredItem.id})?.total:undefined));
+  let hoveredItem = $derived.by(()=>{
+    // Only a full consumer can supply an orchestrator popover, including unread owners.
+    const full=hoverItemId ? workspace?.orchestratorsById.get(hoverItemId) : undefined;
+    if(!full)return undefined;
+    const projected=buildWorkspaceRail([], [full]);
+    return [...projected.items,...projected.settledItems][0];
+  });
+  let hoverRecap = $derived(hoverChief ? workspaceListRecap(chiefSettings.data?.recap)
+    : workspaceListRecap(hoverBody.body ?? hoveredItem?.recap));
   let hoverSignal = $derived(hoverConversationIdOverride !== null ? workspace?.conversationSignals.get(hoverConversationIdOverride)
     : hoverChief ? workspace?.chief?.conversation_signal : hoveredItem?.conversationSignal);
   let hoverConversationId = $derived(hoverConversationIdOverride ?? (hoverChief ? workspace?.chief?.conversation_id : hoveredItem?.conversationId));
@@ -198,6 +232,7 @@
   }
   function selectItem(id: string): void { window.location.hash = workspaceAddress({ kind: "item", id }); }
   function hoverItem(target: HTMLElement, item: WorkspaceRailItem, immediate = false): void {
+    if(item.settled)return;
     hover.enter({ target, title:item.title, kicker:item.project ?? "Orchestrator", itemId:item.id }, immediate);
   }
   function hoverWorkerRow(target: HTMLElement, worker: WorkItemTicketFacts, immediate = false): void {
@@ -205,7 +240,7 @@
   }
   function hoverMessageRow(target: HTMLElement, message: WorkspaceMessageConversation, immediate = false): void {
     if (message.kind === "chief") { hover.enter({target,title:message.title,kicker:"Chief of Staff",chief:true,conversationId:message.conversationId}, immediate); return; }
-    if (message.kind === "sprint_item") { hover.enter({target,title:message.title,kicker:"Orchestrator",itemId:message.id,conversationId:message.conversationId}, immediate); return; }
+    if (message.kind === "sprint_item" && workspace?.orchestratorsById.has(message.id)) { hover.enter({target,title:message.title,kicker:"Orchestrator",itemId:message.id,conversationId:message.conversationId}, immediate); return; }
     const worker = allCards.find((card) => card.id === message.id)
       ?? [...desiredRail.items, ...desiredRail.settledItems].flatMap((item) => item.tickets).find((ticket) => ticket.id === message.id);
     if (worker) {
@@ -228,7 +263,7 @@
     void tick().then(() => {
       if (obsolete || !root.isConnected || displayedPublication !== publication
         || navigation.state.generation !== generation || navigation.selectors.effective !== effective) return;
-      if (railDomMatches(root,target,chief,open,messages,allCards,workspace?.globalCounts?.settled)) railObserver.acknowledgeRender(publication,observation);
+      if (railDomMatches(root,target,chief,open,messages,allCards,workspace?.globalCounts?.settled,workspace?.globalCounts ? workspace.scopedRailMessagesByParent : undefined)) railObserver.acknowledgeRender(publication,observation);
     });
     return () => { obsolete = true; };
   });
@@ -239,7 +274,7 @@
       const id=hoverWorkerId ?? hoverItemId ?? 'chief';
       const view=navigation.state.effective;
       return workspaceHoverImpact(impact,kind,id,hoverWorker?.conversation_id ?? hoverConversationId,view ? navigation.presentationFor(view) : undefined,
-        kind==='chief' || kind==='orchestrator' && !hoveredItem?.recap.trim());
+        kind==='chief' || kind==='orchestrator' && !hoveredItem?.recap?.trim());
     });
     hoverObserver = observer;
     return () => { navigation.disposeRenderBoundary(observer); hoverObserver = null; };
@@ -283,10 +318,11 @@
 </script>
 
 <section class="board-screen" data-screen="workspace">
-  <ResourceState error={navigation.state.error} loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
     <div class="board-workspace-wrap">
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
+          <div class="rail-work">
+          <ResourceState shape="block" layout="fill" error={navigation.state.error} loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
             <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:parentWindow,activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.orchestrator-card:not(.chief)',key:node=>node.dataset.sprintItem ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={() => hover.leave()}>
             <WorkspaceRailCard navigationWindow={chiefWindow} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => hover.enter({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
@@ -296,13 +332,13 @@
             {#if settleError}<p role="alert">{settleError}</p>{/if}
             </div>
             <div class="settled" data-rail-motion="settled-section" class:settled--open={settledOpen}>
-              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => requestedSettledOpen = !requestedSettledOpen}><span>Settled <span class="settled-count"><span class="count" data-settled-count>({workspace?.globalCounts?.settled ?? rail.settledItems.length})</span></span></span><span class="rule"></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
-              {#if settledOpen}
+              <button type="button" class="settled-head" aria-expanded={settledOpen} onclick={() => { requestedSettledOpen = !requestedSettledOpen; motion.setSettledOpen(requestedSettledOpen); }}><span>Settled <span class="settled-count"><span class="count" data-settled-count>({workspace?.globalCounts?.settled ?? rail.settledItems.length})</span></span></span><span class="rule"></span><svg class="settled-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m5 10 3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+              {#if presentation.settledBodyOpen ?? settledOpen}
                 <div class="settled-body" data-settled-scroll use:navigationScrollWindow={{window:settledWindow,activate:()=>navigation?.owner.prioritizeWindow(settledWindow?.request),selector:'[data-settled-item]',key:node=>node.dataset.settledItem ?? '',move:(anchor,direction)=>railPage('settled',anchor,direction)}} onscroll={() => hover.leave()}>
                 {#each rail.settledItems as item (item.id)}
                   <div class="settled-item" data-settled-item={item.id} data-rail-motion={`settled:${item.id}`}>
                   <div class="settled-row">
-                    <button class="settled-title" type="button" onclick={() => selectItem(item.id)} use:railPreview={{show:(target, immediate) => hoverItem(target,item,immediate), leave:() => hover.leave()}}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
+                    <button class="settled-title" type="button" onclick={() => selectItem(item.id)}><span>{item.title}</span><ConversationSignalMark signal={item.conversationSignal} conversationId={item.conversationId} /></button>
                     <button class="reopen" type="button" disabled={busyItem === item.id} aria-label={`Reopen ${item.title}`} onclick={() => void settle(item,false)}>Reopen</button>
                   </div>
                   <WorkspaceMessages parentId={item.id} conversations={presentation.settledMessages[item.id] ?? []} motionPrefix={item.id} onHover={hoverMessageRow} onLeave={() => hover.leave()} />
@@ -311,6 +347,8 @@
                 </div>
               {/if}
             </div>
+          </div>
+          </ResourceState>
           </div>
           <nav class="rail-utilities" aria-label="Workspace utilities">
             <a href={workspaceAddress({kind:"utility",utility:"usage"}, opening.view)} aria-current={opening.markedUtility === "usage" ? "page" : undefined} aria-label="Usage and Backends" title="Usage and Backends"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></a>
@@ -332,7 +370,9 @@
         >
           {#if opening.chiefMarked}
             <ChiefConversation showRequestErrorLine={false} />
-          {:else if opening.markedTicketId}
+          {:else if selectedPaneModule}
+          <LazyRegion promise={selectedPaneModule} shape={paneShape} layout="fill">
+          {#if opening.markedTicketId}
             {#key opening.markedTicketId}
               {#await import("./TicketRoute.svelte") then view}
 <view.default
@@ -387,6 +427,8 @@
 {:catch error}
 <ErrorLine {error} />
 {/await}
+          {/if}
+          </LazyRegion>
           {:else}
             <div class="board-workspace-empty-inspector">
               <span>Select an orchestrator or Worker to inspect it.</span>
@@ -395,7 +437,6 @@
         </section>
       </div>
     </div>
-  </ResourceState>
 </section>
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={currentHoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} recap={hoverRecap} rail={railElement} recapTarget={hoverRecapTarget} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />

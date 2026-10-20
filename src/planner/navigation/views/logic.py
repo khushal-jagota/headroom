@@ -34,9 +34,26 @@ def digest(value: object) -> str:
     return hashlib.sha256(compact(value).encode()).hexdigest()
 
 
-def project(record: NavigationRecord, config: ViewConfig = DEFAULT_CONFIG) -> ViewRecord:
+def project(
+    record: NavigationRecord,
+    config: ViewConfig = DEFAULT_CONFIG,
+    *,
+    settled_only: bool = False,
+) -> ViewRecord:
     value: dict[str, Any] = dict(record["value"])
     kind = record["kind"]
+    if settled_only and kind == "orchestrator" and value["settled"]:
+        return cast(
+            ViewRecord,
+            {
+                "kind": kind,
+                "id": record["id"],
+                "value": {
+                    name: value[name]
+                    for name in ("title", "created_at", "settled", "conversation_id")
+                },
+            },
+        )
     if kind == "conversation":
         value = {
             name: value[name]

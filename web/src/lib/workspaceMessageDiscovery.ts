@@ -28,22 +28,46 @@ export function workspaceSettledUnreadCount(
     .map((row) => row.conversationId)).size;
 }
 
+export type WorkspaceMessageIndex = {
+  readonly unreadConversationIds:ReadonlySet<string>;
+  readonly ticketsById:ReadonlyMap<string,WorkspaceTicket>;
+  readonly firstMessageByTicket:ReadonlyMap<string,WorkspaceMessageConversation>;
+  readonly messagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
+};
+
+/** Build once for an effective publication, then reuse for every visible parent. */
+export function workspaceMessageIndex(rows:readonly WorkspaceMessageConversation[],cards:readonly WorkspaceTicket[],
+  ticketsById:ReadonlyMap<string,WorkspaceTicket>=new Map(cards.map(card=>[card.id,card]))):WorkspaceMessageIndex {
+  const unreadConversationIds=new Set<string>();
+  const firstMessageByTicket=new Map<string,WorkspaceMessageConversation>();
+  const messagesByParent=new Map<string,WorkspaceMessageConversation[]>();
+  for(const row of rows) {
+    unreadConversationIds.add(row.conversationId);
+    if(row.kind!=='ticket')continue;
+    if(!firstMessageByTicket.has(row.id))firstMessageByTicket.set(row.id,row);
+    if(row.parentId!==null && row.parentId!==undefined) {
+      const siblings=messagesByParent.get(row.parentId) ?? [];
+      siblings.push(row);messagesByParent.set(row.parentId,siblings);
+    }
+  }
+  return {unreadConversationIds,ticketsById,firstMessageByTicket,messagesByParent};
+}
+
 /** Retain each parent's real child access before deduplicating within that parent. */
 export function workspaceChildMessageConversations(
   rows: readonly WorkspaceMessageConversation[],
   parent: Pick<WorkspaceOrchestrator, "id" | "title" | "settled"> & {tickets: readonly WorkItemTicketFacts[]},
-  cards: readonly WorkspaceTicket[] = []
+  cards: readonly WorkspaceTicket[] = [],
+  index:WorkspaceMessageIndex=workspaceMessageIndex(rows,cards)
 ): WorkspaceMessageConversation[] {
-  const unread = new Set(rows.map((row) => row.conversationId));
-  const byTicket = new Map(cards.map((card) => [card.id,card]));
   const children = new Map<string,WorkspaceMessageConversation>();
   for (const ticket of parent.tickets) {
-    const canonical = byTicket.get(ticket.id);
+    const canonical = index.ticketsById.get(ticket.id);
     // The canonical same-Ticket address and read fact win over a stale child copy.
     if (canonical && (!canonical.awaiting_reply || ticketParentId(canonical) !== parent.id)) continue;
     const conversationId = canonical ? canonical.conversation_id : ticket.conversation_id;
-    if (!conversationId || !unread.has(conversationId)) continue;
-    const sameTicket = rows.find((row) => row.kind === "ticket" && row.id === ticket.id);
+    if (!conversationId || !index.unreadConversationIds.has(conversationId)) continue;
+    const sameTicket = index.firstMessageByTicket.get(ticket.id);
     if (sameTicket && sameTicket.parentId !== parent.id) continue;
     if (!children.has(conversationId)) children.set(conversationId, {
       conversationSignal: canonical ? canonical.conversation_signal : ticket.conversation_signal,
@@ -51,10 +75,8 @@ export function workspaceChildMessageConversations(
       parentId:parent.id, parentTitle:parent.title, settled:parent.settled === true
     });
   }
-  for (const row of rows) {
-    if (row.kind === "ticket" && row.parentId === parent.id && !children.has(row.conversationId)) {
-      children.set(row.conversationId,row);
-    }
+  for (const row of index.messagesByParent.get(parent.id) ?? []) {
+    if (!children.has(row.conversationId)) children.set(row.conversationId,row);
   }
   return [...children.values()];
 }

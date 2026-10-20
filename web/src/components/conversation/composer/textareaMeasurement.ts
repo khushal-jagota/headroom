@@ -32,7 +32,7 @@ export function createComposerTextareaMeasurement(input: HTMLTextAreaElement) {
 
   return {
     input,
-    measure(style: CSSStyleDeclaration, paneHeight: number) {
+    measure(style: CSSStyleDeclaration) {
       mirror.className = input.className;
       mirror.wrap = input.wrap;
       for (const property of measurementProperties) {
@@ -48,7 +48,7 @@ export function createComposerTextareaMeasurement(input: HTMLTextAreaElement) {
       const chrome = verticalPadding + verticalBorder;
       const contentBox = style.boxSizing !== "border-box";
       const calculate = () => calculateComposerTextareaHeight({
-        lineHeight: Number.parseFloat(style.lineHeight), paneHeight,
+        lineHeight: Number.parseFloat(style.lineHeight),
         scrollHeight: mirror.scrollHeight, verticalPadding, verticalBorder
       });
       let size = calculate();

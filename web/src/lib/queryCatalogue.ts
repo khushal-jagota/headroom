@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/svelte-query";
-import { fetchJson } from "./api";
+import { fetchJson, PlannerFetchError } from "./api";
 import { resourceQuery } from "./resourceVersions/query";
 import type { FeedbackCountResponse, FeedbackResponse } from "./feedback";
 import type { ConversationStartValues } from "./conversation/wire";
@@ -44,6 +44,16 @@ export function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
 
 export function versionedJsonQuery<T>(queryKey: readonly unknown[], path: string) {
   return resourceQuery<T>(queryKey, path, true);
+}
+
+/** Whether a single-type manifest read failed because the type is not installed.
+ *
+ * The whole-list read answered this by absence from the list. The single-type read
+ * answers it with the canonical not-found, and a screen that treats that as an ordinary
+ * failure would replace a precise sentence about an unknown Worker type with a generic
+ * one. */
+export function manifestWorkerTypeIsUnknown(error: unknown): boolean {
+  return error instanceof PlannerFetchError && (error.status === 404 || error.code === "not_found");
 }
 
 export const queries = {
@@ -130,6 +140,23 @@ export const queries = {
     }),
   supportedWorkerTypeManifests: () => versionedJsonQuery<WorkerTypesResponse>(["worker-types", "supported"], "/api/worker-types?supported=true"),
   workerTypeManifests: () => versionedJsonQuery<WorkerTypesResponse>(["worker-types"], "/api/worker-types"),
+  /** The manifest of one Worker type, in the shape the whole list arrives in.
+   *
+   * A screen drawing one Ticket's stages needs one type, and the whole list is 21,544
+   * bytes for fourteen of them against 1,865 for one. The answer is the same shape so
+   * that nothing downstream has to know which it was handed.
+   *
+   * Worth knowing before moving another screen onto this: it only pays where the whole
+   * list is not already being read. The Ticket page was moved onto it and then moved
+   * back, because dogfooding showed the workspace shell around it already reads the list
+   * to write a stage sentence on every rail row - so the single-type read added a second
+   * request rather than removing the first. The review screen has no rail, reads no list,
+   * and saves 91%. Check which it is before switching a screen over. */
+  workerTypeManifest: (workerType: string) =>
+    versionedJsonQuery<WorkerTypesResponse>(
+      ["worker-types", "one", workerType],
+      `/api/worker-types/${encodeURIComponent(workerType)}/manifest`
+    ),
   workers: () => jsonQuery<WorkersResponse>(["workers"], "/api/workers"),
   worker: (workerType: string) =>
     jsonQuery<WorkerManagementDetail>(

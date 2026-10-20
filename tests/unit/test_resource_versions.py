@@ -17,6 +17,7 @@ from planner.resource_versions.contracts import ResourceSnapshot
 from planner.resource_versions.data import install_source_triggers, source_revision
 from planner.resource_versions.registry import SOURCE_TRIGGERS
 from planner.worker_settings.resource_versions import ChiefResources
+from planner.worker_types.resource_versions import WorkerTypeResources
 
 
 @pytest.fixture
@@ -143,3 +144,29 @@ def test_chief_recap_does_not_invalidate_launch_but_skill_and_selected_model_do(
     )
     changed = provider.capture(conn, req, launch_key)
     assert changed and changed.revision != launch.revision
+
+
+def test_one_worker_type_is_versioned_in_the_shape_of_the_whole_list(
+    resource_db: sqlite3.Connection,
+) -> None:
+    """A page drawing one Ticket's stages read all fourteen types to find one.
+
+    The single-type key has to be a real versioned resource, not an unregistered one: an
+    unregistered key answers with revision ``None``, which the browser reads as "changed"
+    and refetches on every change signal.
+    """
+    provider = WorkerTypeResources()
+    whole = provider.capture(resource_db, request(), "/api/worker-types")
+    one = provider.capture(resource_db, request(), "/api/worker-types/coding/manifest")
+    assert whole is not None and one is not None
+
+    coding = next(
+        entry for entry in whole.read()["worker_types"] if entry["worker_type"] == "coding"
+    )
+    assert one.read() == {"worker_types": [coding]}
+    assert one.revision != whole.revision
+    assert len(json.dumps(one.read())) < len(json.dumps(whole.read()))
+
+    # An unknown type stays unversioned, so the endpoint answers it with the canonical
+    # not-found rather than this provider inventing a revision for nothing.
+    assert provider.capture(resource_db, request(), "/api/worker-types/nope/manifest") is None

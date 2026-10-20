@@ -1,5 +1,5 @@
 import type { Lifecycle } from "./lifecycle";
-import { workspaceChildMessageConversations } from "./workspaceMessageDiscovery";
+import { workspaceChildMessageConversations, workspaceMessageIndex, type WorkspaceMessageIndex } from "./workspaceMessageDiscovery";
 import type {
   BoardCard,
   BoardSprintItem,
@@ -18,6 +18,11 @@ export type WorkspaceTicket = WorkItemTicketFacts & Pick<BoardCard, 'orchestrato
 export type WorkspaceOrchestrator = Pick<BoardSprintItem,
   'id' | 'title' | 'created_at' | 'settled' | 'project_id' | 'project' | 'recap' | 'recap_preview' | 'conversation_id'>
   & WorkItemAttentionFacts & {recap_reference?:import("./navigation/contracts").ViewContentReference|null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>; tickets: readonly WorkItemTicketFacts[]};
+/** Settled-only membership never fabricates full recap or Project facts. */
+export type WorkspaceSettledOrchestrator = Pick<WorkspaceOrchestrator,
+  'id' | 'title' | 'created_at' | 'conversation_id' | 'conversation_signal' | 'tickets'>
+  & WorkItemAttentionFacts & {settled:true};
+export type WorkspaceRailOrchestrator = WorkspaceOrchestrator | WorkspaceSettledOrchestrator;
 export type WorkspaceChief = Pick<import('./types').ChiefManagementSettings,'label' | 'conversation_id'>
   & {awaiting_reply:boolean | null;conversation_signal?: Partial<import('./conversationSignal').ConversationSignal>};
 
@@ -37,10 +42,10 @@ export type WorkspaceRailItem = {
   groups: WorkspaceTicketGroup[];
   rested: boolean;
   settled: boolean;
-  project: string | null;
-  projectId: string | null;
+  project?: string | null;
+  projectId?: string | null;
   tickets: WorkItemTicketFacts[];
-  recap: string;
+  recap?: string;
   recap_reference?:import("./navigation/contracts").ViewContentReference|null;
 };
 
@@ -137,32 +142,30 @@ export function workspaceAttentionGroups(
   return railGroups(cards.filter(railTicketEligible), true);
 }
 
-/** Preserve the full recap; empty text gets only a factual list count. */
-export function workspaceListRecap(groups: readonly WorkspaceTicketGroup[], recap = "", exactCount?:number): string {
-  if (recap.trim()) return recap;
-  const count = exactCount ?? groups.reduce((total, group) => total + group.cards.length, 0);
-  return count ? `${count} Ticket${count === 1 ? "" : "s"} in this list.` : "Nothing in this list right now.";
+/** A popover recap operates like any other recap: the real text, or nothing. */
+export function workspaceListRecap(recap = ""): string {
+  return recap.trim() ? recap : "";
 }
 
 /** Sidebar visibility stays separate from the durable unread conversation index. */
 export function workspaceRailChildMessageConversations(
   rows: readonly WorkspaceMessageConversation[],
   parent: Pick<WorkspaceOrchestrator, "id" | "title" | "settled"> & { tickets: readonly WorkItemTicketFacts[] },
-  cards: readonly WorkspaceTicket[] = []
+  cards: readonly WorkspaceTicket[] = [],
+  index:WorkspaceMessageIndex=workspaceMessageIndex(rows,cards)
 ): WorkspaceMessageConversation[] {
   const byTicket = new Map(parent.tickets.map((ticket) => [ticket.id, ticket]));
-  for (const card of cards) byTicket.set(card.id, card);
-  const visible = (id: string) => !byTicket.get(id)?.is_backlogged;
+  const visible = (id: string) => !(index.ticketsById.get(id) ?? byTicket.get(id))?.is_backlogged;
   return workspaceChildMessageConversations(
     rows,
     {...parent, tickets: parent.tickets.filter((ticket) => visible(ticket.id))},
-    cards
+    cards,index
   ).filter((row) => visible(row.id));
 }
 
 export function buildWorkspaceRail(
   cards: readonly WorkspaceTicket[],
-  sprintItems: readonly WorkspaceOrchestrator[] = []
+  sprintItems: readonly WorkspaceRailOrchestrator[] = []
 ): WorkspaceRail {
   // Complete children come from each orchestrator, never the currently open pane.
   const items = sprintItems.map((item) => ({
@@ -172,13 +175,11 @@ export function buildWorkspaceRail(
     conversationSignal: item.conversation_signal,
     conversationId: item.conversation_id,
     groups: workspaceAttentionGroups(item.tickets),
-    recap: item.recap,
-    recap_reference:item.recap_reference,
+    ...("recap" in item ? {recap:item.recap,recap_reference:item.recap_reference,
+      project:item.project ?? null,projectId:item.project_id ?? null} : {}),
     tickets: [...item.tickets],
     settled: item.settled === true,
-    rested: item.settled === true,
-    project: item.project ?? null,
-    projectId: item.project_id ?? null
+    rested: item.settled === true
   } satisfies WorkspaceRailItem));
 
   items.sort(

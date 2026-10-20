@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "./SkeletonRegion.svelte";
   import { createEmployeeConfigurationEditor } from "../lib/conversation/employeeConfigurationEditor.svelte";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
@@ -48,9 +49,9 @@
     onChooseModel={editor.chooseModel}
   />
 
-  {#if editor.loading}
-    <span class="employee-configuration-state" data-employee-configuration-loading>loading models…</span>
-  {/if}
+  <span data-employee-configuration-loading={editor.loading || undefined}>
+    <SkeletonRegion shape="inline" loading={editor.loading} loadingText="Loading models…" />
+  </span>
 
   {#if editor.backendsError}
     <div class="employee-configuration-problem" data-employee-configuration-error>
@@ -73,7 +74,7 @@
 
 <style>
   .employee-configuration-setup { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .employee-configuration-key, .employee-configuration-state {
+  .employee-configuration-key {
     color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs);
   }
   .employee-configuration-problem { flex-basis: 100%; display: flex; align-items: center; gap: var(--space-2); }

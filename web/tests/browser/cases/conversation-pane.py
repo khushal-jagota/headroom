@@ -9,6 +9,8 @@ def _catalogs(browser, url):
 
     page = browser.new_page(viewport={"width": 1100, "height": 800})
     requests = []
+    pending_artifacts = []
+    hold_artifacts = False
     def history(route):
         args = parse_qs(urlsplit(route.request.url).query)
         offset = int(args.get("offset", [0])[0])
@@ -35,7 +37,11 @@ def _catalogs(browser, url):
             rows.append({"key":path,"path":path,"label":path,"kind":"3" if folder else "md",
                 "href":None if folder else f"/files/tickets/t_catalog/{path}","directory":"folder" if folder else None,"child_count":3 if folder else 0})
         requests.append(("artifacts", offset))
-        route.fulfill(json={"revision":"one","directory":directory,"offset":offset,"total":count,"entries":rows})
+        response = {"revision":"one","directory":directory,"offset":offset,"total":count,"entries":rows}
+        if hold_artifacts and not directory:
+            pending_artifacts.append((route, response))
+        else:
+            route.fulfill(json=response)
     try:
         page.route("**/api/conversation-history/**", history)
         page.route("**/api/artifact-catalog/**", artifacts)
@@ -57,17 +63,87 @@ def _catalogs(browser, url):
         expect(page.locator("[data-listbox-picker-active]")).to_have_attribute("data-listbox-picker-value","c123")
         box.press("Escape")
         expect(trigger).to_be_focused()
+        hold_artifacts = True
         page.locator("[data-artifacts-band] > summary").click()
         window = page.locator(".artifact-catalog-window").first
-        expect(window.locator(":scope > [data-artifact-folder]")).to_have_count(1)
+        expect(window.locator(':scope > .skeleton-region[aria-busy="true"]')).to_have_count(1)
+        page.wait_for_timeout(50)
+        request, response = pending_artifacts.pop(0)
+        request.fulfill(json=response)
+        expect(window.locator(":scope > .skeleton-region > .skeleton-content > [data-artifact-page] > [data-artifact-folder]")).to_have_count(1)
+        # The cold skeleton and arriving chips share one region, rather than adding
+        # a second outgoing block after the chips and changing the scroll geometry.
+        assert window.locator(":scope > .skeleton-region").count() == 1
+        expect(window.locator(':scope > .skeleton-region .skeleton[data-leaving]')).to_have_count(1)
+        assert window.locator(':scope > .skeleton-region .skeleton').evaluate("element => getComputedStyle(element).position") == "absolute"
+        expect(window.locator(':scope > .skeleton-region .skeleton')).to_have_count(0)
+        hold_artifacts = False
         window.locator("[data-artifact-folder]").click()
         expect(page.locator('.artifact-catalog-children [data-artifact-chip]')).to_have_count(3)
         window.locator("[data-artifact-folder]").click()
-        window.evaluate("element => { element.scrollTop=130*36; element.dispatchEvent(new Event('scroll')); }")
+        # The requested page does not own the geometry until its response arrives.
+        # Hold the browser read to prove that entries and both spacers stay together.
+        before_spacer = window.locator(":scope > [data-artifact-before]")
+        after_spacer = window.locator(":scope > [data-artifact-after]")
+        before_height = before_spacer.evaluate("element => element.offsetHeight")
+        after_height = after_spacer.evaluate("element => element.offsetHeight")
+        hold_artifacts = True
+        window.evaluate("element => { element.scrollTop=100*36; element.dispatchEvent(new Event('scroll')); }")
+        expect(page.locator('.artifact-pending-page [aria-busy="true"]')).to_have_count(1)
+        expect(window.locator('[data-artifact-chip="file059.md"]')).to_have_count(1)
+        assert before_spacer.evaluate("element => element.offsetHeight") == before_height
+        assert after_spacer.evaluate("element => element.offsetHeight") == after_height
+        assert pending_artifacts
+        pending_artifacts.pop(0)[0].fulfill(status=503, json={"error":{"code":"offline","message":"offline"}})
+        expect(window.get_by_role("button", name="Retry", exact=True)).to_be_visible()
+        expect(window.locator('[data-artifact-chip="file059.md"]')).to_have_count(1)
+        assert before_spacer.evaluate("element => element.offsetHeight") == before_height
+        assert after_spacer.evaluate("element => element.offsetHeight") == after_height
+        window.get_by_role("button", name="Retry", exact=True).evaluate("element => element.click()")
+        expect(page.locator('.artifact-pending-page [aria-busy="true"]')).to_have_count(1)
+        page.wait_for_timeout(50)
+        request, response = pending_artifacts.pop(0)
+        overlay_box = page.locator('.artifact-pending-page').first.bounding_box()
+        request.fulfill(json=response)
         expect(window.locator('[data-artifact-chip="file134.md"]')).to_have_count(1)
+        expect(page.locator('.artifact-pending-page .skeleton[data-leaving]')).to_have_count(1)
+        assert window.locator('[data-artifact-page]').evaluate("element => getComputedStyle(element).animationName") == "skeleton-in"
+        assert page.locator('.artifact-pending-page').first.bounding_box() == overlay_box, (overlay_box, page.locator('.artifact-pending-page').first.bounding_box())
+        expect(page.locator('.artifact-pending-page .skeleton')).to_have_count(0)
         assert window.locator('[data-artifact-chip]').count() <= 60
-        assert ("history",120) in requests and ("artifacts",120) in requests
-        print("PASS catalog browser boundary: bounded history End/Home/typeahead and artifact folder/scroll windows", flush=True)
+        assert ("history",120) in requests and ("artifacts",80) in requests
+        # Upward paging draws only above the retained page, never over its chips.
+        prior_before = before_spacer.evaluate("element => element.offsetHeight")
+        prior_after = after_spacer.evaluate("element => element.offsetHeight")
+        window.evaluate("element => { element.scrollTop=element.querySelector('[data-artifact-before]').offsetHeight-150; element.dispatchEvent(new Event('scroll')); }")
+        expect(page.locator('.artifact-pending-page [aria-busy="true"]')).to_have_count(1)
+        expect(window.locator('[data-artifact-chip="file134.md"]')).to_have_count(1)
+        assert before_spacer.evaluate("element => element.offsetHeight") == prior_before
+        assert after_spacer.evaluate("element => element.offsetHeight") == prior_after
+        overlay_box = page.locator('.artifact-pending-page').first.bounding_box()
+        chip_box = window.locator('[data-artifact-chip="file080.md"]').bounding_box()
+        assert overlay_box and chip_box and overlay_box["height"] > 0
+        assert overlay_box["y"] + overlay_box["height"] <= chip_box["y"] + 1
+        page.wait_for_timeout(50)
+        request, response = pending_artifacts.pop(0)
+        assert response["offset"] == 40
+        request.fulfill(json=response)
+        expect(window.locator('[data-artifact-chip="file040.md"]')).to_have_count(1)
+        expect(page.locator('.artifact-pending-page .skeleton[data-leaving]')).to_have_count(1)
+        assert page.locator('.artifact-pending-page').first.bounding_box() == overlay_box
+        expect(page.locator('.artifact-pending-page .skeleton')).to_have_count(0)
+        # A different owner must never inherit the held page, even if its read fails.
+        page.evaluate("window.__catalogOwner('t_other')")
+        expect(window.locator('[data-artifact-chip]')).to_have_count(0)
+        expect(window.locator('[aria-busy="true"]')).to_have_count(1)
+        page.wait_for_timeout(50)
+        assert pending_artifacts
+        pending_artifacts.pop(0)[0].fulfill(status=503, json={"error":{"code":"offline","message":"offline"}})
+        expect(window.get_by_role("button", name="Retry", exact=True)).to_be_visible()
+        expect(window.locator('[data-artifact-chip]')).to_have_count(0)
+        assert before_spacer.evaluate("element => element.offsetHeight") == 0
+        assert after_spacer.evaluate("element => element.offsetHeight") == 0
+        print("PASS catalog browser boundary: bounded history, artifact windows, retained pending/error geometry and owner isolation", flush=True)
     finally:
         page.close()
 
@@ -183,6 +259,7 @@ def _run(browser, urls):
     _catalogs(browser, urls[0])
     _preview_lifecycle(browser, urls[0])
 
+    import json
     import os
     import traceback
 
@@ -485,6 +562,10 @@ def _run(browser, urls):
 
     def short_message_growth_case(page, url):
         prepare_scroll_case(page, url, "plain", "scrollback")
+        # Production workspace insets leave less transcript room than the old copied
+        # host. Keep this case's actual premise: the first message fits in the viewport.
+        page.evaluate("window.__shortenFirstConversationLine()")
+        settled(page)
         page.locator(THREAD).focus()
         page.keyboard.press("Home")
         page.wait_for_function(
@@ -617,6 +698,7 @@ def _run(browser, urls):
             "row => window.__delayedRow = row"
         )
         before = newest_reading(page)
+        before_row_height = page.evaluate("window.__delayedRow.getBoundingClientRect().height")
         if mode == "scrollback":
             assert page.evaluate("performance.now() - window.__lastRegressionWheel") < 400
         # This is response release, with no row assignment, replaced message, or app event.
@@ -661,13 +743,13 @@ def _run(browser, urls):
         if held:
             assert held["text"].startswith("Tall paragraph"), held
             actual = assert_paragraph(page, held)
-            assert newest_reading(page)["scrollTop"] > before["scrollTop"] + 100, (
-                before,
-                newest_reading(page),
-            )
+            actual_scroll = newest_reading(page)["scrollTop"]
         else:
             actual = assert_newest(page)
-            assert actual["scrollTop"] > before["scrollTop"] + 100, (before, actual)
+            actual_scroll = actual["scrollTop"]
+        growth = page.evaluate("window.__delayedRow.getBoundingClientRect().height") - before_row_height
+        assert growth > 0, growth
+        assert abs((actual_scroll - before["scrollTop"]) - growth) <= 2, (growth, before, actual_scroll)
         print(
             "DELAYED_GEOMETRY",
             kind,
@@ -1003,7 +1085,7 @@ def _run(browser, urls):
     expected_draft = draft(page)
     page.locator("[data-conversation-expand]").click()
     state(page, "opened")
-    layer = page.locator("[data-conversation-layer-host]").bounding_box()
+    layer = page.locator(".conversation-layer").bounding_box()
     pane = page.locator(PANE).bounding_box()
     assert layer is not None and pane is not None
     page.mouse.click(layer["x"] + 2, layer["y"] + layer["height"] / 2)
@@ -1271,10 +1353,16 @@ def _run(browser, urls):
     assert page.locator("[data-conversation-rest-line]").inner_text() == "settled reply"
     assert page.locator("[data-conversation-rest-bar] .c2-rest-working").count() == 0
 
-    # Focus keeps settled work folded. Full reveals all commentary and every tool call.
+    # Settled Focus retains every owner answer and its head, without an empty disclosure.
     page.evaluate("window.__showSettledTurn()")
+    state(page, "opened")
     assert page.get_by_text("hidden commentary", exact=True).count() == 0
     assert page.locator('[data-conversation-row="tool_call"]').count() == 0
+    for text in ("Owner answer one.", "Owner answer two.", "final answer"):
+        page.get_by_text(text, exact=True).wait_for()
+        assert page.get_by_text(text, exact=True).is_visible()
+    assert page.locator("[data-conversation-turn-settled-head]").count() == 1
+    assert page.locator("[data-conversation-turn-fold], .c2-turn-chevron, [data-conversation-work-fold]").count() == 0
     page.locator('[data-conversation-lens-choice="full"]').click()
     assert page.get_by_text("hidden commentary", exact=True).count() == 1
     assert page.locator('[data-conversation-row="tool_call"]').count() == 4
@@ -1282,6 +1370,16 @@ def _run(browser, urls):
     assert page.locator("[data-conversation-turn-fold]").count() == 0
     assert page.locator("[data-conversation-turn-count]").count() == 0
     assert page.locator("[data-conversation-turn-settled-head]").count() == 1
+    for text in ("Owner answer one.", "Owner answer two.", "final answer", "middle commentary"):
+        page.get_by_text(text, exact=True).wait_for()
+        assert page.get_by_text(text, exact=True).count() == 1
+    legacy_evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    if legacy_evidence:
+        from pathlib import Path
+        Path(legacy_evidence, "legacy-owner-fold-proof.json").write_text(json.dumps({
+            "focusOwnerMessages":3,"focusSettledHeads":1,"focusFoldControls":0,
+            "fullOwnerMessages":3,"fullTools":4,"fullFoldControls":0}, indent=2))
+        page.screenshot(path=str(Path(legacy_evidence, "legacy-owner-full.png")))
 
     # The two endings a reader has to act on are the two the pane spells out: a turn the
     # backend killed, named with the reason it gave, and a turn whose ending the record
@@ -1382,7 +1480,8 @@ def _run(browser, urls):
     def measure_writing_area():
         return page.locator(INPUT).evaluate("""e => ({
           height:e.getBoundingClientRect().height,line:parseFloat(getComputedStyle(e).lineHeight),
-          overflow:getComputedStyle(e).overflowY})""")
+          overflow:getComputedStyle(e).overflowY,
+          inset:["paddingTop","paddingBottom","borderTopWidth","borderBottomWidth"].reduce((sum,key)=>sum+parseFloat(getComputedStyle(e)[key]),0)})""")
 
     def settle_frames():
         page.evaluate(
@@ -1392,7 +1491,7 @@ def _run(browser, urls):
     settle_frames()
     resting = measure_writing_area()
     assert resting["height"] >= resting["line"] * 3, resting
-    assert resting["height"] <= resting["line"] * 12 + 1, resting
+    assert abs(resting["height"] - resting["inset"] - resting["line"] * 6) <= 1, resting
     assert resting["overflow"] == "auto", resting
     for _ in range(3):
         settle_frames()
@@ -1401,7 +1500,7 @@ def _run(browser, urls):
     state(page, "peeked")
     settle_frames()
     peeked = measure_writing_area()
-    assert peeked["height"] >= peeked["line"] * 2, peeked
+    assert peeked == resting, peeked
     page.keyboard.press("Escape")
     state(page, "rest")
     settle_frames()
@@ -1617,6 +1716,29 @@ def _bounded_reader(browser, url):
         assert "Chief" in other.inner_text()
     page.set_viewport_size({"width": 1000, "height": 900})
 
+    # Canonical replacement destroys component caches even at unchanged coverage.
+    import time
+    from pathlib import Path
+    started = time.perf_counter()
+    page.goto(url + "?reader=1&expiry=1")
+    page.locator('[data-conversation-tool="expiry-tool"]').click()
+    page.get_by_text("Cached whole diagnostic", exact=True).wait_for()
+    page.evaluate("() => window.__expireDiagnostics()")
+    page.get_by_text("Some diagnostic history expired.", exact=True).wait_for()
+    page.get_by_text("This diagnostic detail expired.", exact=True).wait_for()
+    assert page.get_by_text("Cached whole diagnostic", exact=True).count() == 0
+    page.evaluate("() => window.__completeDiagnosticBody()")
+    page.wait_for_timeout(100)
+    assert page.locator('[data-conversation-view-key="e3"]').count() == 0
+    assert page.get_by_text("Late diagnostic body must disappear.", exact=True).count() == 0
+    assert page.get_by_text("Cached whole diagnostic", exact=True).count() == 0
+    page.evaluate("() => window.__expireDeferred()")
+    page.locator('[data-conversation-view-key="e3"]').get_by_text("This diagnostic detail expired.", exact=True).wait_for()
+    evidence = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_uraaehvn/artifacts/diagnostic-expiry.png")
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(evidence))
+    print(f"Diagnostic expiry browser scenario: {time.perf_counter() - started:.3f}s")
+
     page.close()
 
 
@@ -1713,10 +1835,150 @@ def _projected_visual_relationships(browser, url):
     assert not failures, {"failures": failures, "proof": proof}
 
 
+def _conversation_repairs(browser, url):
+    """Native pointer origins and textarea caret layout need a real browser, not a backend."""
+    import json
+    import os
+    from pathlib import Path
+    from urllib.parse import unquote
+
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    output = Path(evidence) if evidence else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    proof = {"gestures": [], "caret": [], "cap": [], "projected": {}}
+    pane_selector = "[data-conversation-pane]"
+    input_selector = "[data-conversation-input]"
+    def frames(page):
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))))")
+    def state(page, value):
+        page.wait_for_selector(f'{pane_selector}[data-conversation-state="{value}"]')
+        frames(page)
+    for route in ("orchestrator", "ticket"):
+        page = browser.new_page(viewport={"width": 1280, "height": 1000})
+        errors = []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        page.goto(url + ("?ticket=1" if route == "ticket" else ""), wait_until="domcontentloaded")
+        state(page, "rest")
+        page.locator(input_selector).fill("selection survives dismissal")
+        for initial in ("peeked", "opened"):
+            for outside in ("document", "layer"):
+                page.evaluate("value => window.__setConversationState(value)", initial)
+                state(page, initial)
+                thread = page.locator("[data-conversation-thread]")
+                paragraph = thread.locator('[data-conversation-row="agent_message"] p').last
+                paragraph.scroll_into_view_if_needed()
+                box = paragraph.bounding_box()
+                layer = page.locator(".conversation-layer").bounding_box()
+                outside_box = page.locator("[data-ticket-behind]").bounding_box()
+                assert box and layer and outside_box
+                end = {"x": outside_box["x"] + 10, "y": outside_box["y"] + 10} if outside == "document" else {"x": layer["x"] + 2, "y": box["y"] + 8}
+                page.mouse.move(box["x"] + 40, box["y"] + 8)
+                page.mouse.down()
+                page.mouse.move(end["x"], end["y"], steps=12)
+                page.mouse.up()
+                state(page, initial)
+                selection = page.evaluate("() => getSelection()?.toString() ?? ''")
+                assert len(selection) > 0, (route, initial, outside, "gesture did not select text")
+                assert page.locator(input_selector).input_value() == "selection survives dismissal"
+                # The secondary button cannot acquire primary dismissal behavior.
+                page.mouse.click(end["x"], end["y"], button="right")
+                state(page, initial)
+                page.mouse.click(end["x"], end["y"])
+                state(page, "rest")
+                proof["gestures"].append({"route": route, "state": initial, "outside": outside, "selectionLength": len(selection), "secondaryPreserved": True, "primaryDismissed": True})
+        page.close()
+        assert not errors, errors
+
+    page = browser.new_page(viewport={"width": 1280, "height": 1000})
+    page.goto(url, wait_until="domcontentloaded")
+    box = page.locator(input_selector)
+    six_lines = "\n".join("abcdefghij line " + str(index) for index in range(6))
+    box.fill(six_lines)
+    for initial in ("rest", "peeked", "opened"):
+        for line in (0, 2, 5):
+            box.evaluate("e => {e.blur(); e.setSelectionRange(e.value.length,e.value.length); e.scrollTop=0;}")
+            page.evaluate("value => window.__setConversationState(value)", initial)
+            state(page, initial)
+            before = box.evaluate("""(e, line) => {
+              const r=e.getBoundingClientRect(), s=getComputedStyle(e);
+              const canvas=document.createElement('canvas'), c=canvas.getContext('2d'); c.font=s.font;
+              const x=r.left+parseFloat(s.borderLeftWidth)+parseFloat(s.paddingLeft)+c.measureText('abcd').width;
+              const y=r.top+parseFloat(s.borderTopWidth)+parseFloat(s.paddingTop)+(line+.5)*parseFloat(s.lineHeight)-e.scrollTop;
+              return {x,y,top:r.top,height:r.height,lineHeight:parseFloat(s.lineHeight)};
+            }""", line)
+            page.mouse.click(before["x"], before["y"])
+            frames(page)
+            after = box.evaluate("""e => {
+              const r=e.getBoundingClientRect(),s=getComputedStyle(e),prefix=e.value.slice(0,e.selectionStart);
+              const lines=prefix.split('\\n'), line=lines.length-1;
+              return {start:e.selectionStart,end:e.selectionEnd,top:r.top,height:r.height,
+                caretY:r.top+parseFloat(s.borderTopWidth)+parseFloat(s.paddingTop)+(line+.5)*parseFloat(s.lineHeight)-e.scrollTop,
+                scroll:e.scrollTop,state:e.closest('[data-conversation-pane]').dataset.conversationState};
+            }""")
+            expected = sum(len(part)+1 for part in six_lines.split("\n")[:line]) + 4
+            assert after["start"] == after["end"] == expected, (initial, line, before, after, expected)
+            assert abs(after["top"]-before["top"]) <= 1 and abs(after["height"]-before["height"]) <= 1, (before, after)
+            assert abs(after["caretY"]-before["y"]) <= 1, (before, after)
+            assert after["top"] <= after["caretY"] <= after["top"]+after["height"], after
+            proof["caret"].append({"initialState":initial,"clickedLine":line+1,"expectedOffset":expected,"before":before,"after":after})
+    long_draft = "\n".join("Long draft line " + str(index) for index in range(30))
+    box.fill(long_draft)
+    for initial in ("rest", "peeked", "opened"):
+        box.evaluate("e => e.blur()")
+        page.evaluate("value => window.__setConversationState(value)", initial)
+        state(page, initial)
+        before = box.evaluate("""e => { const r=e.getBoundingClientRect(),s=getComputedStyle(e);return {height:r.height,lineHeight:parseFloat(s.lineHeight),inset:["paddingTop","paddingBottom","borderTopWidth","borderBottomWidth"].reduce((sum,key)=>sum+parseFloat(s[key]),0),overflow:s.overflowY,scrollHeight:e.scrollHeight,clientHeight:e.clientHeight}; }""")
+        assert abs(before["height"]-before["inset"]-6*before["lineHeight"]) <= 1, before
+        assert before["overflow"] == "auto" and before["scrollHeight"] > before["clientHeight"], before
+        box.click(position={"x":10,"y":10})
+        frames(page)
+        after_height = box.evaluate("e => e.getBoundingClientRect().height")
+        assert abs(after_height-before["height"]) <= 1, (initial, before, after_height)
+        assert box.input_value() == long_draft
+        proof["cap"].append({"initialState":initial,**before,"afterFocusHeight":after_height})
+    if output:
+        page.screenshot(path=str(output / "six-line-composer.png"))
+    page.close()
+
+    page = browser.new_page(viewport={"width": 1280, "height": 1000})
+    page.goto(url+"?reader=1&folds=1", wait_until="domcontentloaded")
+    for text in ("Owner answer one.", "Owner answer two.", "Owner answer three.", "Owner answer before failure."):
+        answer = page.get_by_text(text, exact=True)
+        answer.wait_for()
+        answer.scroll_into_view_if_needed()
+        assert answer.is_visible()
+    assert page.locator("[data-conversation-turn-settled-head]").count() == 2
+    assert page.locator("[data-conversation-turn-fold], .c2-turn-chevron, [data-conversation-work-fold]").count() == 0
+    assert page.locator('[data-conversation-row="tool_call"]').count() == 0
+    page.get_by_text("Visible fold failure", exact=True).wait_for()
+    page.get_by_text("turn stopped without an ending", exact=True).wait_for()
+    proof["projected"]["focus"]={"ownerMessages":4,"settledHeads":2,"foldControls":0,"failureAndStop":True}
+    if output:
+        page.screenshot(path=str(output / "owner-messages-focus.png"))
+    page.locator('[data-conversation-lens-choice="full"]').click()
+    for text in ("Ordinary commentary one.", "Ordinary commentary two.", "Ordinary commentary three."):
+        page.get_by_text(text, exact=True).wait_for()
+    for text in ("Owner answer one.", "Owner answer two.", "Owner answer three.", "Owner answer before failure."):
+        assert page.get_by_text(text, exact=True).count() == 1
+    for key in ("fold-tool-6", "fold-tool-7"):
+        page.locator(f'[data-conversation-tool="{key}"]').wait_for()
+    assert page.locator("[data-conversation-turn-fold], [data-conversation-work-fold]").count() == 0
+    calls=page.evaluate("window.__viewCalls")
+    assert any('owner:3' in unquote(call) for call in calls), calls
+    proof["projected"]["full"]={"ordinaryMessages":3,"tools":2,"foldControls":0,"deferredOwnerRead":True}
+    if output:
+        page.screenshot(path=str(output / "owner-messages-full.png"))
+        (output / "conversation-repair-proof.json").write_text(json.dumps(proof,indent=2))
+    print("CONVERSATION_REPAIR_PROOF " + json.dumps(proof), flush=True)
+    page.close()
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        _conversation_repairs(browser, urls[0])
         _projected_visual_relationships(browser, urls[0])
         _bounded_reader(browser, urls[0])
         _run(browser, urls)

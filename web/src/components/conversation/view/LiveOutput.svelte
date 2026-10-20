@@ -1,10 +1,12 @@
 <script lang="ts">
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
+  import { DiagnosticExpiredError, DIAGNOSTIC_EXPIRED_MESSAGE } from "../../../lib/conversation/diagnosticExpiry";
   import MarkdownBlock from '../../MarkdownBlock.svelte';
   let { reader }: {
       reader: ConversationViewReader;
   } = $props();
   let text = $state('');
+  let expired = $state(false);
   let loading = false;
   let dirty = false;
   let generation = 0;
@@ -31,11 +33,17 @@
       try {
           const value = await reader.body(reference, abort.signal);
           if (generation === current) {
+              expired = false;
               text = value;
               lastReference = key;
           }
       }
-      catch { /* A replaced/settled spool is obsolete; the durable row owns the words. */ }
+      catch (reason) {
+          if (generation === current && reason instanceof DiagnosticExpiredError) {
+              text = "";
+              expired = true;
+          }
+      }
       finally {
           if (generation === current) {
               loading = false;
@@ -52,6 +60,7 @@
           loading = false;
           dirty = false;
           text = '';
+          expired = false;
           lastReference = '';
           return;
       }
@@ -63,5 +72,6 @@
   $effect(() => () => { generation++; abort?.abort(); if (timer !== null)
       clearTimeout(timer); text = ''; });
 </script>
+{#if expired}<p role="status">{DIAGNOSTIC_EXPIRED_MESSAGE}</p>{/if}
 {#if text}<article class="chat-a c2-streaming" data-conversation-row="streaming"><MarkdownBlock {text}/></article>{/if}
 <style>.c2-streaming { color: var(--text-muted); }</style>

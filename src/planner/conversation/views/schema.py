@@ -1,5 +1,13 @@
 """Rebuildable projection schema. The ordinary migration owns installation."""
 
+# Reverse reads of expanded turns must seek ordinary messages without walking
+# hidden tool or addressed-message runs. This changes indexes, not projections.
+EARLIER_MESSAGES_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS conversation_view_rows_ordinary_turn ON "
+    "conversation_view_rows(conversation_id,turn_key,sequence) "
+    "WHERE row_kind='agent_message' AND focus_visible=0 AND removed=0"
+)
+
 SCHEMA_STATEMENTS = (
     """CREATE TABLE conversation_view_state (
         conversation_id TEXT PRIMARY KEY
@@ -19,6 +27,7 @@ SCHEMA_STATEMENTS = (
         removed INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (conversation_id, sequence)
     )""",
+    EARLIER_MESSAGES_INDEX_SQL,
     "CREATE INDEX conversation_view_rows_kind ON "
     "conversation_view_rows(conversation_id, row_kind, sequence)",
     "CREATE INDEX conversation_view_rows_changed ON "
@@ -58,6 +67,11 @@ SCHEMA_STATEMENTS = (
     "conversation_view_groups(conversation_id, turn_key, source_sequence)",
     "CREATE INDEX conversation_view_groups_order ON "
     "conversation_view_groups(conversation_id, source_sequence)",
+    # A conversation has thousands of groups and one or two still open. A page under the
+    # Full lens asks for exactly those, so it gets an index of exactly those.
+    "CREATE INDEX conversation_view_groups_open ON "
+    "conversation_view_groups(conversation_id, latest_entry_sequence, group_key, turn_key) "
+    "WHERE ending_sequence IS NULL",
     """CREATE TABLE conversation_view_lookups (
         conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
         lookup_kind TEXT NOT NULL, lookup_id TEXT NOT NULL,

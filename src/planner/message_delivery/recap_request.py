@@ -1,12 +1,12 @@
-"""The owner's standing ask for a fresh recap, as one ordinary message.
+"""The owner's standing ask for a fresh recap, as a Panels system message.
 
 A recap is the one line the owner reads to know what a piece of work is doing. Before
 this, the only way to get a fresh one was to wait for the agent or to go and talk to it.
 
 Asking is a message and nothing else, so this sends the same words through the same door
-every other message uses. It owns no transport, no queue, and no record of its own. What
-it owns is the sentence, which belongs beside the system that delivers it rather than in
-the browser that presses the button.
+every other message uses, with Panels as its source. It owns no transport, no queue, and
+no record of its own. What it owns is the sentence, which belongs beside the system that
+delivers it rather than in the browser that presses the button.
 
 The answer to this message is the recap the agent writes, not words it sends back. So the
 send carries no reply requirement: a press leaves the owner's attention alone and the
@@ -66,6 +66,7 @@ async def request_recap(
         RECAP_REQUEST_MESSAGE,
         MessageDeliveryMode.steer,
         expects_reply=False,
+        system_message=True,
     )
 
 

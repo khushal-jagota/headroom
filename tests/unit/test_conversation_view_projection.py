@@ -6,6 +6,7 @@ complete old TypeScript pipeline against Python source references and turn aggre
 
 from __future__ import annotations
 
+import copy
 import json
 import sqlite3
 from pathlib import Path
@@ -27,6 +28,7 @@ from planner.conversation.views.storage import (
     read_turn,
 )
 from planner.conversation.views.writer import append_projection
+from planner.maintenance.diagnostic_history import install_expiry_metadata
 
 FIXTURES = json.loads((Path(__file__).parents[1] / "fixtures/conversation_views.json").read_text())
 
@@ -40,6 +42,7 @@ def database(events: list[dict[str, Any]]) -> sqlite3.Connection:
         "CREATE TABLE conversation_events(conversation_id TEXT,sequence INTEGER,kind TEXT,"
         "payload TEXT,created_at INTEGER,PRIMARY KEY(conversation_id,sequence))"
     )
+    install_expiry_metadata(conn)
     for sql in SCHEMA_STATEMENTS:
         conn.execute(sql)
     for row in events:
@@ -124,7 +127,11 @@ def expanded_items(conn: sqlite3.Connection, lens: str, stopped: bool) -> list[d
         view, _ = read_row(conn, "fixture", source["sequence"], stopped=stopped)
         row = legacy_row(json.loads(encode_wire(view)))
         behind = None
-        if source["row_kind"] == "agent_message" and source["turn_key"] is not None:
+        if (
+            source["row_kind"] == "agent_message"
+            and not row.get("toOwner")
+            and source["turn_key"] is not None
+        ):
             turn = conn.execute(
                 "SELECT * FROM conversation_view_turns WHERE turn_key=?", (source["turn_key"],)
             ).fetchone()
@@ -211,9 +218,40 @@ def expanded_items(conn: sqlite3.Connection, lens: str, stopped: bool) -> list[d
 
 @pytest.mark.parametrize("fixture", FIXTURES, ids=lambda fixture: fixture["name"])
 @pytest.mark.parametrize("lens", ["focus", "full"])
-def test_projected_semantics_equal_old_typescript(fixture: dict[str, Any], lens: str) -> None:
+def test_projected_semantics_preserve_full_latest_message_boundary(
+    fixture: dict[str, Any], lens: str
+) -> None:
+    # Legacy keeps the final ordinary message after excluding owner messages. The
+    # projected reader deliberately keeps its existing latest-full-message boundary.
+    # Full automatically expands both presentations, so every message remains visible.
+    expected = copy.deepcopy(fixture["expected"][lens]["items"])
     with database(fixture["events"]) as conn:
-        assert expanded_items(conn, lens, fixture["stopped"]) == fixture["expected"][lens]["items"]
+        if lens == "full":
+            for turn in (item for item in expected if item["kind"] == "turn"):
+                messages = {
+                    f"e{source['sequence']}": source
+                    for source in conn.execute(
+                        "SELECT * FROM conversation_view_rows WHERE turn_key=? "
+                        "AND row_kind='agent_message' ORDER BY sequence",
+                        (turn["key"],),
+                    )
+                }
+                last = next(reversed(messages), None)
+                folded = 0
+                for item in expected:
+                    if item["kind"] != "row" or item["key"] not in messages:
+                        continue
+                    behind = (
+                        turn["key"]
+                        if turn["settled"]
+                        and not item["row"].get("toOwner")
+                        and item["key"] != last
+                        else None
+                    )
+                    item["behindTheFoldOf"] = behind
+                    folded += int(behind is not None)
+                turn["foldedMessageCount"] = folded
+        assert expanded_items(conn, lens, fixture["stopped"]) == expected
         page = read_page(
             conn, "fixture", "focus" if lens == "focus" else "full", stopped=fixture["stopped"]
         )

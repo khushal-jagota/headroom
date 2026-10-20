@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "../components/SkeletonRegion.svelte";
   import { untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import "../lib/config/config.css";
@@ -192,7 +193,7 @@
       <header class="agents-page-head">
         <h1>Config</h1>
       </header>
-      <ResourceState
+      <ResourceState shape="document"
         {...resourceStateForQueries(workers, skillsHome)}
         loadingText="Loading configuration..."
       >
@@ -255,11 +256,13 @@
                   <span class="agents-destination-copy">
                     <span class="agents-destination-name" data-destination-name>{item.label}</span>
                     <span class="agents-destination-description" data-destination-description>
+                      <SkeletonRegion shape="inline" loading={!manifest && supportedWorkerTypes.isFetching} loadingText="Loading Stages…">
                       {#if manifest}
                         {manifest.stages.length} {manifest.stages.length === 1 ? "Stage" : "Stages"}
                       {:else}
-                        {supportedWorkerTypes.isFetching ? "Loading Stages…" : "Stages unavailable"}
+                        {#if !supportedWorkerTypes.isFetching}Stages unavailable{/if}
                       {/if}
+                      </SkeletonRegion>
                     </span>
                   </span>
                   <span class="agents-destination-arrow" aria-hidden="true">→</span>
@@ -273,7 +276,7 @@
   {:else if stableRoleKind === "agent"}
     <div class="agents-page agents-page--detail">
       <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
-      <ResourceState
+      <ResourceState shape="document"
         error={workers.error}
         loading={workers.isFetching}
         hasData={Boolean(workers.data)}
@@ -315,7 +318,7 @@
   {:else if stableRoleKind === "skill"}
     <div class="agents-page agents-page--detail">
       <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
-      <ResourceState
+      <ResourceState shape="document"
         error={skillsHome.error}
         loading={skillsHome.isFetching}
         hasData={Boolean(roleSkill && roleSkillProfile)}
@@ -352,7 +355,7 @@
   {:else}
     <div class="agents-page agents-page--detail">
       <a class="agents-back" href={baseHref} data-agents-back>← Back to Config</a>
-      <ResourceState
+      <ResourceState shape="document"
         error={worker.error}
         loading={worker.isFetching}
         hasData={Boolean(worker.data)}

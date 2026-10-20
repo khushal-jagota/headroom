@@ -14,7 +14,11 @@ from planner.conversation.contracts import ConversationSystem, require_conversat
 from planner.conversation.logic.signals import conversation_signal
 from planner.conversation.signals import read_conversation_signals
 from planner.conversation.storage import ConversationStore
-from planner.core.authctx import RequestContext, request_context, require_owner
+from planner.core.authctx import (
+    RequestContext,
+    request_context,
+    require_owner_or_chief,
+)
 from planner.core.authority import owner_only, require_above
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
@@ -248,7 +252,7 @@ async def get_chief_settings(conn: DbConn) -> JsonDict:
 
 @router.put("/workers/chief-of-staff/recap")
 async def put_chief_recap(raw: dict[str, Any], conn: DbConn, ctx: Ctx) -> JsonDict:
-    require_owner(ctx)
+    require_owner_or_chief(ctx)
     return _chief_json(service.update_chief_recap(conn, raw))
 
 

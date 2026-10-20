@@ -19,6 +19,31 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Diagnostic history expiry
+
+Diagnostic expiry remains an explicit offline operator action. Normal startup
+installs the empty omission table and a read index; it does not expire history.
+The index lets expanded history find earlier messages without scanning hidden tool
+calls or addressed messages. Omission records keep
+the original event positions. Retained events and live replay keep those same positions.
+
+When omissions exist, conversation status and legacy event pages report
+`diagnostics_expired`. The shared transcript says “Some diagnostic history expired.”
+That notice comes from omission records, never from a gap in event numbers. Page
+edges describe retained history, so a gap alone does not offer another empty page.
+
+An opened diagnostic detail whose source expired returns the named
+`diagnostic_expired` error with HTTP 410. The reader says “This diagnostic detail
+expired.” Unknown details still return 404; changed body references still return
+409; invalid references still return 422. Chunked and downloaded bodies use the
+same distinction. A retained source of the wrong kind is not classified as expired.
+
+The omission table is additive metadata. The selected-view projection version stays
+at 1, and saved event positions and cursors remain valid. Replacement snapshots,
+resets, and runtime changes discard previously held pages and detail output before
+fresh canonical reads. They advance a content generation counter to invalidate cached output;
+they do not change how transcript content is generated.
+
 ## Durable lifecycle facts
 
 The notebook keeps completed receipts. A separate conversation-owned source keeps
@@ -351,6 +376,13 @@ from the authenticated request. Panels records that address on every durable out
 including held, refused, uncertain, and discarded prompts. Browser-supplied display
 labels are not authority.
 
+Automatic recap requests and saved-goal startup messages name Panels as their source.
+They carry no sender principal and no explicit reply requirement. Full shows these
+messages under the Panels label. Focus excludes them. The authenticated caller still
+controls authorization and launch choices. These automatic actions cannot settle a
+separate reply that the caller owes. HTTP and CLI callers cannot select system
+attribution. Earlier conversation rows keep their recorded source and visibility.
+
 Panels also derives an exact Send Message target from each authenticated sender. It adds
 that trusted reply requirement only to the backend wire prompt. When a genuine
 requirement exists, it starts the entire prompt with nothing before it. Every
@@ -368,8 +400,14 @@ orchestrator, or Chief principal. It empties the recap being replaced and steers
 fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
 keep it short and top level." Only the owner may ask, and the owner is the only principal
 it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
-the agent writes rather than words it sends back, so it is the one addressed send that
-carries no reply requirement and leaves no missing-reply marker.
+the agent writes rather than words it sends back. This system message carries no reply
+requirement and leaves no missing-reply marker.
+
+Automatic orchestrator startup sends the exact saved goal as a queued Panels message.
+Its answer is the work the orchestrator does. It requires no explicit reply to its
+creator, so startup produces no `explicit_reply_missing` signal in Focus when the
+orchestrator sends no reply. No replacement signal detects a clean delivery followed by
+silent inaction. Work indicators, failure rows, and delivery outcomes do not cover that gap.
 
 An actual native slash command uses its backend's exact control route, so its wire form
 does not carry the reply requirement. The adapter reports that fact with its delivery
@@ -677,19 +715,23 @@ elapsed time and newest tool call. In peeked and opened states, the same checkli
 in a centered 34-pixel strip between the thread and composer while unfinished work runs.
 The plan never appears under the turn that first stated it.
 
-When the turn is over that head becomes a fold, and everything the turn produced
-goes behind it: its tool calls, and everything the agent said on the way to its
-answer. What stays out is the person's own message, the last thing the agent
-said, and — when a turn failed or was stopped — the line saying so. A turn that
-thought out loud for five paragraphs is exactly as long to scroll past as one
-that made five tool calls, so both collapse the same way and a finished turn
-reads as one paragraph with a "Worked for 14s" you can open. Opening it puts
-everything back where it happened, the commentary between the runs of tool calls
-it sat between rather than gathered up at the end. A turn that never said
-anything keeps nothing back, because there is no answer to hold; a turn still
-running folds nothing at all.
+Full shows every message and tool call. Its turn and work groups expand
+automatically. Focus shows the person's prompts, messages addressed to the owner,
+requests and answers, and failure or stop rows. Messages addressed to the owner
+never go behind a turn fold, including in the older transcript renderer.
 
-Each tool call inside that fold is one line: what happened, and the single fact
+A normally settled Focus turn keeps its head and its own line, such as
+"Worked for 14s". It has no chevron or toggle because nothing remains behind it.
+Focus reports zero folded messages and zero tool calls, even when the stored turn
+contains tools. A turn that stops without an ending and has nothing behind it
+keeps its stop row but has no head, as before.
+
+The fold rules assume that every `message_to_owner` event names the owner as its
+recipient. The body flag follows the event kind. SQL membership uses the
+recipient-sensitive Focus classification. If another recipient becomes valid for
+that event, both classifications must change together.
+
+Each tool call is one line: what happened, and the single fact
 that says which call it was — the command that ran, the path that was read, the
 pattern that was searched for. The three agents do not agree on how they say
 this, so the pane reads what each of them actually gives and says the same kind
@@ -718,6 +760,39 @@ do, which is whole.
 
 All of this is read from what the notebook already holds, so conversations
 recorded before any of it existed read the same way as new ones.
+
+### Scrolling back, and what is known about it
+
+Scrolling back asks for one page at a time. Before each page the browser closes its live
+stream and re-opens it once the page has arrived. That looks wasteful and is not: a
+conversation being written to while somebody reads backwards would otherwise keep
+interrupting the read, and closing the stream for the length of one page is what stops
+that. Expect the stream to be torn down and re-opened once per page of scroll-back.
+
+Scrolling back a long way has been reported as feeling stuck, and the cause is not known.
+Two things have been ruled out by measurement, so that nobody spends time on them again.
+The reader keeps three hundred items and drops the other end as it goes; driven past that
+limit it slides its window correctly, one page at a time, and it still does so while an
+agent is writing into the conversation. The stream churn above is also not it.
+
+Two facts for anybody measuring this next.
+
+A test that drives scrolling directly can produce a state a person cannot. Asking for
+another page while one is still arriving is harmless on its own, because a second request
+for the same thing waits for the first, but it does close the stream again, and it can do
+that while the previous re-open is still in flight. No hand moves that fast. A measurement
+that scrolls by script and finds the stream thrashing may be measuring its own gesture.
+
+And most conversations cannot reach the three hundred item limit in Focus at all, because
+Focus leaves out ordinary agent output. Counted across every conversation on the live
+machine, no Ticket conversation holds three hundred items in Focus: the largest holds 197
+of its 1,108 rows, and one conversation of 6,847 rows holds ten. The limit is reachable in
+Full on any long conversation, and in Focus only in the few very long conversations that
+are not a Ticket's.
+
+One known hole in testing this from outside: a Ticket page opens its conversation at rest,
+and the Focus and Full controls are not reachable until it is opened, so a script cannot
+simply land on a Ticket page and put a long conversation on screen in Full.
 
 ## Permissions
 
@@ -770,6 +845,31 @@ adds Codex and Claude update advice and a one-click update when Panels can run o
 The update command comes from how the CLI was installed. Panels checks the card again
 afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
 in the terminal, and the card names the command.
+
+### What a card costs, and the assumption that was wrong about it
+
+Reading the cards was slow for a long time, 118 to 149 milliseconds every time, and
+everyone who looked at it assumed the cards were being probed live. They were not. The
+probe runs once per process and is then kept; after the first call it answers in well
+under a millisecond, and the check for whether the kept answer had gone stale has never
+once said yes.
+
+The time went on describing the models. Each card lists the models its backend offers,
+and building that list asked a question for every single model: is this model switched
+off, what does the catalogue say about it, and is this catalogue the one we already had.
+Each of those questions opened its own connection to the database. Opening a connection
+here is not cheap, because the database has eighty tables and a new connection reads all
+of their definitions before it can answer anything: the first question on a fresh
+connection takes 2.39 milliseconds where the second takes 0.022. Describing 26 models
+that way meant 78 connections and 492 questions, for one screen asking what backends
+exist.
+
+It now asks once for the whole set and sorts the models out in memory, so the cost is the
+same whether a backend offers eight models or fifty. The lesson is worth more than the
+fix: three separate per-model loops had accumulated here over time and nothing failed,
+because every test of this route checks what the card says and no test checked what the
+card cost. There is one now, and it fails if the cost starts following the model count
+again.
 
 ### What a card can say about the codex login
 
@@ -1154,6 +1254,25 @@ argument hint. A slash at the absolute start of the message offers commands. A d
 offers skills. An at sign offers apps and plugins. Leading whitespace, an empty first
 line, or a trigger on a later line does not open the menu. The composer narrows that
 eligible list as text is typed.
+
+### When the menu arrives
+
+The catalog is read when the conversation opens and again each time a turn ends. It does
+not arrive with the record. It used to, and it dominated it: the largest real catalog is
+66,211 bytes for 155 entries, where everything else the record stores about a conversation
+comes to about 620. The record is re-read every time the conversation gains a row, so
+watching one agent work for seventy seconds sent the same closed menu 68 times, about
+2.3 MB of it.
+
+Turn end is the occasion because a backend only reports its commands a moment into its
+first turn. Reading the menu lazily, when somebody first types a trigger, would show an
+empty menu on a conversation that has a full one today.
+
+The cost of reading it then and not more often: for the length of one turn the menu can be
+out of date. A skill or command that appears while a turn is streaming is not offered until
+that turn ends or the conversation is reopened. A turn is seconds to minutes, the menu is
+only consulted when somebody opens it to type, and the alternative is re-sending all 66 KB
+of it every time an agent writes a line.
 
 The keyboard owns the highlight. It starts at the top of the list and moves with the
 arrow keys. A row takes the highlight when the pointer really moves onto it. A menu that

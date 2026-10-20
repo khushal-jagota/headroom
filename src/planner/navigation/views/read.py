@@ -11,6 +11,7 @@ from planner.navigation.contracts import Continuity, NavigationRecord
 from planner.navigation.delivery_authority import DeliveryUnavailable
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.contracts import (
+    VIEW_PROJECTION_VERSION,
     ViewContent,
     ViewGroup,
     ViewRequest,
@@ -34,7 +35,7 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
         raise ValueError("invalid view request fields")
     if (
         type(value["projection_version"]) is not int
-        or value["projection_version"] != 1
+        or value["projection_version"] != VIEW_PROJECTION_VERSION
         or type(value["scope_generation"]) is not int
         or not 0 <= value["scope_generation"] <= 2**53 - 1
     ):
@@ -206,18 +207,23 @@ def read_content(
     # admitting record closures instead of discovering metadata overflow afterward.
     record_bytes = config.maximum_bytes - min(128 * 1024, config.maximum_bytes // 4)
 
-    def closure(key: Key) -> dict[Key, Any]:
-        pending = [key]
+    def closure(key: Key, *, settled_only: bool) -> dict[Key, Any]:
+        pending = [(key, not settled_only)]
         found: dict[Key, Any] = {}
         while pending:
-            item = pending.pop()
-            if item in records or item in found:
+            item, full = pending.pop()
+            existing = found.get(item, records.get(item))
+            if existing is not None and (
+                item[0] != "orchestrator" or not full or "recap_reference" in existing["value"]
+            ):
                 continue
             raw = record(conn, item)
             if raw is None:
                 raise DeliveryUnavailable("navigation view dependency is absent")
             row = project(
-                cast(NavigationRecord, {"kind": item[0], "id": item[1], "value": raw}), config
+                cast(NavigationRecord, {"kind": item[0], "id": item[1], "value": raw}),
+                config,
+                settled_only=not full,
             )
             if row["kind"] == "conversation" and not current:
                 row["value"]["attention"] = {
@@ -227,28 +233,41 @@ def read_content(
             found[item] = row
             if item[0] in ("ticket", "orchestrator", "chief"):
                 if raw["conversation_id"]:
-                    pending.append(("conversation", raw["conversation_id"]))
-                if raw.get("project_id"):
-                    pending.append(("project", raw["project_id"]))
+                    pending.append((("conversation", raw["conversation_id"]), True))
+                if raw.get("project_id") and (item[0] != "orchestrator" or full):
+                    pending.append((("project", raw["project_id"]), True))
                 if item[0] == "ticket":
                     pending.append(
-                        ("chief", "chief")
-                        if raw["orchestrator_kind"] == "chief"
-                        else ("orchestrator", raw["sprint_item_id"])
+                        (
+                            ("chief", "chief")
+                            if raw["orchestrator_kind"] == "chief"
+                            else ("orchestrator", raw["sprint_item_id"]),
+                            True,
+                        )
                     )
             elif item[0] == "address":
+                # The admitted owner supplies its current dependencies. An address's
+                # parent_id alone is never a reason to demand a full orchestrator.
                 pending.extend(
-                    ((raw["owner_kind"], raw["owner_id"]), ("conversation", raw["conversation_id"]))
+                    (
+                        ((raw["owner_kind"], raw["owner_id"]), True),
+                        (("conversation", raw["conversation_id"]), True),
+                    )
                 )
-                if raw["parent_kind"]:
-                    pending.append((raw["parent_kind"], raw["parent_id"]))
         return found
 
-    def admit(key: Key, *, required: bool = False) -> bool:
+    def admit(key: Key, *, required: bool = False, settled_only: bool = False) -> bool:
         nonlocal used
-        additional = closure(key)
-        size = sum(len(compact(row).encode()) for row in additional.values())
-        if len(records) + len(additional) > config.maximum_records or used + size > record_bytes:
+        additional = closure(key, settled_only=settled_only)
+        # A promotion replaces one key. Charge its byte delta and new dependencies
+        # together, and publish none of them when the complete closure does not fit.
+        size = sum(
+            len(compact(row).encode())
+            - (len(compact(records[item]).encode()) if item in records else 0)
+            for item, row in additional.items()
+        )
+        new_keys = additional.keys() - records.keys()
+        if len(records) + len(new_keys) > config.maximum_records or used + size > record_bytes:
             if required:
                 raise DeliveryUnavailable("selected navigation content exceeds its budget")
             return False
@@ -342,14 +361,14 @@ def read_content(
     for item in pending_windows:
         rows, accepted = item[6], item[7]
         for row in rows[:1]:
-            if admit((row[3], row[4])):
+            if admit((row[3], row[4]), settled_only=item[0]["section"] == "settled"):
                 accepted.append(row)
     for position in range(1, config.maximum_window_rows):
         for item in pending_windows:
             rows, accepted = item[6], item[7]
             if position < len(rows) and len(accepted) == position:
                 row = rows[position]
-                if admit((row[3], row[4])):
+                if admit((row[3], row[4]), settled_only=item[0]["section"] == "settled"):
                     accepted.append(row)
     for window, key, binding, base, total, backward, _rows, accepted in pending_windows:
         if backward:

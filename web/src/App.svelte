@@ -1,4 +1,6 @@
 <script lang="ts">
+  import LazyRegion from "./components/LazyRegion.svelte";
+  import { cachedImport } from "./lib/lazyViews";
   import ErrorLine from "./components/ErrorLine.svelte";
   import { onMount, onDestroy, tick } from "svelte";
   import { provideNavigationApplication } from "./lib/navigation/application.svelte";
@@ -58,6 +60,22 @@
 
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let route = $state<Route>(parseRoute());
+  const routeModule = $derived.by(() => {
+    switch (route.name) {
+      case "day": return cachedImport("./DayRoute.svelte", () => import("./routes/DayRoute.svelte"));
+      case "review": return cachedImport("./ReviewRoute.svelte", () => import("./routes/ReviewRoute.svelte"));
+      case "sprint": return cachedImport("./SprintRoute.svelte", () => import("./routes/SprintRoute.svelte"));
+      case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./routes/IdeasRoute.svelte"));
+      case "feedback": return cachedImport("./FeedbackRoute.svelte", () => import("./routes/FeedbackRoute.svelte"));
+      case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./routes/SettingsRoute.svelte"));
+      case "backends": return cachedImport("./BackendsRoute.svelte", () => import("./routes/BackendsRoute.svelte"));
+      case "preview": return cachedImport("./FilePreviewRoute.svelte", () => import("./routes/FilePreviewRoute.svelte"));
+      default: return null;
+    }
+  });
+  let routeShape = $derived(route.name === "review" ? "block" as const
+    : ["ideas", "feedback", "backends"].includes(route.name) ? "rows" as const : "document" as const);
+
   let moreOpen = $state(false);
   let moreMenuElement = $state<HTMLDivElement | null>(null);
   let moreButtonElement = $state<HTMLButtonElement | null>(null);
@@ -364,6 +382,7 @@
     {#if isKnownRoute()}
       {#key route.key}
         <div class="screen screen-enter">
+          {#snippet selectedRoute()}
           {#if route.name === "day"}
             {#await import("./routes/DayRoute.svelte") then view}
 <view.default />
@@ -414,6 +433,12 @@
 {:catch error}
 <ErrorLine {error} />
 {/await}
+          {/if}
+          {/snippet}
+          {#if routeModule}
+            <LazyRegion promise={routeModule} shape={routeShape}>{@render selectedRoute()}</LazyRegion>
+          {:else}
+            {@render selectedRoute()}
           {/if}
         </div>
       {/key}

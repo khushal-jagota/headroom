@@ -8,6 +8,7 @@
    * thread give up their height and the rest bar says what happened last, and peeking and
    * opening give it back. The same viewport, composer, and draft survive every move.
    */
+  import SkeletonRegion from "../SkeletonRegion.svelte";
   import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
   import {progressFor,restFor} from '../../lib/conversation/view/presentation';
   import type { Snippet } from "svelte";
@@ -80,6 +81,7 @@
     reader = null,
     viewAnchor = $bindable(null),
     transcriptVisible = true,
+    transcriptLoading = false,
     onSend,
     onStop,
     onAnswer,
@@ -96,6 +98,7 @@
     reader?: ConversationViewReader | null;
     viewAnchor?: ViewReaderAnchor | null;
     transcriptVisible?: boolean;
+    transcriptLoading?: boolean;
     conversationId: string;
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
@@ -460,6 +463,8 @@
   </div>
 
   {#if conversationState !== "rest" && transcriptVisible}
+  <div class="conversation-transcript-region">
+  <SkeletonRegion shape="conversation" layout="fill" loading={transcriptLoading} loadingText="Loading conversation...">
   <ConversationViewport
     bind:viewAnchor
     {reader}
@@ -474,6 +479,8 @@
     {conversationState}
     {emptyState}
   />
+  </SkeletonRegion>
+  </div>
 
   {/if}
 
@@ -533,6 +540,7 @@
 </div>
 
 <style>
+  .conversation-transcript-region { display:flex; flex:1; min-height:0; min-width:0; }
   /* The component measures itself, not the window. The same pane is narrow in a side
      panel on a wide screen, and a host that names no container of its own — the Chief
      conversation is one — still gets the adaptation. */

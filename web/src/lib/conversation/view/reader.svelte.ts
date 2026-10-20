@@ -1,3 +1,4 @@
+import { DiagnosticExpiredError, isDiagnosticExpiry } from '../diagnosticExpiry';
 /** One selected view: bounded pages, one stream, and cancellable demand reads. */
 import { SvelteSet } from 'svelte/reactivity';
 import type { ConversationViewItem, ConversationViewPage, ConversationViewSnapshot, ConversationViewStatus, ConversationViewLens, ViewPageCursor, ViewHistoryScope, ViewTailChanges, ViewBodyReference, ViewMessageReceipts } from './contracts';
@@ -40,11 +41,38 @@ export class ConversationViewReader {
     private releaseSource: () => void = () => { };
     private abort = new AbortController();
     private generation = 0;
+    /** Invalidates rendered bodies, independently of ordinary stream reconnects. */
+    contentGeneration = $state(0);
+    private replaceHistory(): void {
+        this.cancelPages();
+        this.pageQueue = Promise.resolve();
+        this.status = null;
+        this.pages = [];
+        this.coverage = 0;
+        this.contentGeneration++;
+        this.revision++;
+    }
     private retry: ReturnType<typeof setTimeout> | null = null;
     private disposed = false;
     private reconnecting: Promise<void> | null = null;
     private requests = new Map<string, { operation: Promise<void>; abort: AbortController }>();
     private pageQueue: Promise<void> = Promise.resolve();
+    /** Close the live stream so a history read is not racing a writer.
+     *
+     * Every page read calls this and then schedules a reconnect in its `finally`, so the
+     * stream is deliberately torn down and re-opened once per page of scroll-back. That
+     * churn is by design and is not a fault: it is what stops a live writer starving
+     * history reads. It was measured and found not to be what makes scrolling back feel
+     * stuck, so if you are chasing that, this is not it - the reader's retention slides
+     * its window correctly at the ceiling, with or without a writer.
+     *
+     * One thing to know before believing a scroll-back measurement. A gesture that fires
+     * faster than a page completes can call this again while the previous re-open is
+     * still in flight, tearing the stream down mid-re-open. Repeated demand for one scope
+     * otherwise coalesces, because `load` returns the in-flight promise for that scope. A
+     * hand cannot scroll fast enough to reach that state; a test driving `scrollTop`
+     * directly can, and will then be measuring the probe rather than the product.
+     */
     private pauseTail(): void {
         if (this.rangeTimer !== null) clearTimeout(this.rangeTimer);
         this.rangeTimer = null;
@@ -167,6 +195,8 @@ export class ConversationViewReader {
                     return;
                 try {
                     const value = JSON.parse((event as MessageEvent<string>).data) as ConversationViewSnapshot;
+                    this.checkPage(value.page);
+                    this.replaceHistory();
                     this.accept(value.page, true);
                     this.status = value.status;
                     this.coverage = value.coverage.through_sequence;
@@ -190,9 +220,7 @@ export class ConversationViewReader {
                         throw new Error('Conversation view gap');
                     const epochChanged = this.status !== null && this.status.runtime_epoch !== value.status.runtime_epoch;
                     if (epochChanged) {
-                        this.cancelPages();
-                        this.coverage = 0;
-                        this.pages = [];
+                        this.replaceHistory();
                         source.close();
                         this.source = null;
                         this.retry = setTimeout(() => { this.retry = null; void this.connect().catch(() => undefined); }, 0);
@@ -242,13 +270,11 @@ export class ConversationViewReader {
                     ready();
                 }
                 catch (error) {
-                    this.cancelPages();
-                    this.coverage = 0;
-                    this.pages = [];
+                    this.replaceHistory();
                     fail(error);
                 }
             });
-            source.addEventListener('reset', () => { if (!active()) return; this.cancelPages(); this.coverage = 0; this.pages = []; fail(new Error('Conversation view reset')); });
+            source.addEventListener('reset', () => { if (!active()) return; this.replaceHistory(); fail(new Error('Conversation view reset')); });
             source.onerror = () => fail(new Error('Conversation disconnected'));
             const abort = () => { source.close(); if (!settled) {
                 settled = true;
@@ -315,8 +341,11 @@ export class ConversationViewReader {
     isExpanded(scope: ViewHistoryScope): boolean { void this.revision; return this.expanded.has(scopeKey(scope)); }
     async body(reference: ViewBodyReference, signal: AbortSignal): Promise<string> {
         const response = await fetch(this.url('/body/content', { reference: JSON.stringify(reference) }), { signal });
-        if (!response.ok || !response.body)
+        if (!response.ok) {
+            if (isDiagnosticExpiry(await response.text())) throw new DiagnosticExpiredError();
             throw new Error(`Conversation body: ${response.status}`);
+        }
+        if (!response.body) throw new Error(`Conversation body: ${response.status}`);
         const stream = response.body.getReader();
         const decoder = new TextDecoder('utf-8', { fatal: true });
         const chunks: string[] = [];

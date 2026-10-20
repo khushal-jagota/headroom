@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "./SkeletonRegion.svelte";
   /** One waiting proposal, as a card.
    *
    * This is the ask itself — the Ticket's title, its recap,
@@ -14,7 +15,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { workspaceAddress } from "../lib/workspaceAddress";
-  import { queries } from "../lib/queryCatalogue";
+  import { manifestWorkerTypeIsUnknown, queries } from "../lib/queryCatalogue";
   import { lifecycleFor } from "../lib/lifecycle";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { reviewProposalIdentity, reviewProposalDetailMatches } from "../lib/navigation/presentation";
@@ -78,8 +79,6 @@
   let voiceState = $state<VoiceCaptureState>({ phase: "idle" });
   let voice: VoiceCapture | null = null;
 
-  const manifest = createQuery(() => queries.workerTypeManifests());
-
   // The Ticket behind the proposal on screen. The key follows the Ticket, so
   // moving to the next ask switches the query rather than re-opening a handle.
   const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Review proposal requires the application navigation owner"); return value; })();
@@ -97,6 +96,13 @@
   let detailWorkerType = $derived(
     typeof detail.data?.worker_type === "string" ? (detail.data.worker_type as string) : null
   );
+  // This card draws the stages of the one Worker type its proposal belongs to, so it
+  // asks for that one rather than the whole list of fourteen. Declared here because the
+  // type it needs comes from the detail above it.
+  const manifest = createQuery(() => ({
+    ...queries.workerTypeManifest(detailWorkerType ?? ""),
+    enabled: detailWorkerType !== null
+  }));
   let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
   // Approving here sets the next ceiling, so the reviewer gets the same choice of holder
   // the Ticket page offers, including handing the Ticket back to its own Sprint Item.
@@ -110,11 +116,14 @@
   );
   let voiceAvailable = $derived(voiceCaptureAvailable(voiceSupported, true));
 
+  // An unknown Worker type now arrives as the canonical not-found from the single-type
+  // manifest instead of as an absence from a list, and must keep reading the same way.
   let manifestMissingWorkerType = $derived(
     Boolean(
       detailWorkerType &&
-        manifest.data &&
-        !manifest.data.worker_types.some((item) => item.worker_type === detailWorkerType)
+        (manifestWorkerTypeIsUnknown(manifest.error) ||
+          (manifest.data &&
+            !manifest.data.worker_types.some((item) => item.worker_type === detailWorkerType)))
     )
   );
 
@@ -242,6 +251,7 @@
   }
 </script>
 
+<SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !detail.data) || Boolean(detail.data && !manifest.error && !manifestMissingWorkerType && isStale(detail.data)))} loadingText="Loading approval...">
 {#if detail.error}
   <div>
     <ErrorLine error={detail.error} />
@@ -253,8 +263,6 @@
       <a data-open-ticket href={ticketHref}>open ticket</a>
     </div>
   </div>
-{:else if detail.isFetching && !detail.data}
-  <div class="quiet-line">Loading approval...</div>
 {:else if detail.data && (manifest.error || manifestMissingWorkerType)}
   {@const ticketDetail = detail.data}
   <div data-review-manifest-error>
@@ -270,9 +278,7 @@
   </div>
 {:else if detail.data}
   {@const ticketDetail = detail.data}
-  {#if isStale(ticketDetail)}
-    <div class="quiet-line">Loading approval...</div>
-  {:else}
+  {#if !isStale(ticketDetail)}
     <div
       bind:this={cardElement}
       data-proposal-identity={currentKey}
@@ -422,3 +428,5 @@
     {@render footer?.()}
   {/if}
 {/if}
+
+</SkeletonRegion>

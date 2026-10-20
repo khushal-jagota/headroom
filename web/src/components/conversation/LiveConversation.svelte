@@ -65,10 +65,12 @@
     interruptConversation,
     promoteHeldPrompt,
     readConversation,
+    readComposerCatalog,
     ConversationWireError,
     type BackendSnapshot,
     type ConversationBackendKey,
     type ConversationStartValues,
+    type ComposerCatalogEntry,
     type ConversationView,
     type DeliveredMessage,
     type OwnerSendBody,
@@ -80,6 +82,7 @@
 
   let {
     conversationId = null,
+    ownerLoading = false,
     persistenceKey,
     label,
     backends = $bindable([]),
@@ -98,6 +101,8 @@
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     conversationId?: string | null;
+    /** The owner is still reading which conversation belongs here. */
+    ownerLoading?: boolean;
     /** Stable owner identity used before the server assigns a Conversation id. */
     persistenceKey: string;
     label: string;
@@ -308,9 +313,35 @@
   let wasRunning = false;
   $effect(() => {
     const nowRunning = running;
-    if (wasRunning && !nowRunning) void refreshView();
+    if (wasRunning && !nowRunning) {
+      void refreshView();
+      void refreshComposerCatalog();
+    }
     wasRunning = nowRunning;
   });
+
+  /** The composer's typeahead menu, read on open and when a turn ends.
+   *
+   * Not on every appended row, which is when the record is re-read: a menu of commands
+   * and skills does not change because an agent wrote a line. And not lazily on the first
+   * keystroke either, because a backend only reports its commands a moment into its first
+   * turn, so a strictly lazy read would show an empty menu where a full one is today.
+   *
+   * The cost of that choice, stated plainly: for the length of one turn the menu can be
+   * out of date. A skill or command added while a turn is streaming is not offered until
+   * the turn ends or the conversation is reopened.
+   */
+  let composerCatalog = $state<readonly ComposerCatalogEntry[]>([]);
+  async function refreshComposerCatalog(requestedId: string | null = openedId): Promise<void> {
+    if (requestedId === null) return;
+    try {
+      const entries = await readComposerCatalog(requestedId);
+      if (openedId === requestedId) composerCatalog = entries;
+    } catch {
+      // An unavailable menu is an empty menu. Everything else on the screen still works,
+      // and the next turn ending asks again.
+    }
+  }
 
   // The caller changed which conversation this is. That happens when a Ticket's link is
   // written, when New clears it, and on the first render.
@@ -413,6 +444,7 @@
       const snapshot=await readConversation(id);
       if(openedId!==id)return;
       view=snapshot;
+      void refreshComposerCatalog(id);
       const local=attachReader(id);
       await local.connect();
       if(reader!==local)return;
@@ -846,6 +878,7 @@
   bind:backends
   workspaceFolder={view?.workspace_folder ?? null}
   {reader}
+  transcriptLoading={ownerLoading || opening || (reader?.loading === true && reader.status === null)}
   bind:viewAnchor
   transcriptVisible={documentIsVisible}
   {rows}
@@ -862,7 +895,7 @@
   {current}
   models={backendSnapshot?.available_models ?? []}
   effortOptions={backendSnapshot?.reasoning_effort_options ?? []}
-  composerCatalog={view?.composer_catalog ?? []}
+  composerCatalog={composerCatalog}
   startsOnModel={startValues?.model ?? null}
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   bind:conversationState

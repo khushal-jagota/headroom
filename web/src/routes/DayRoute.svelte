@@ -36,7 +36,7 @@
 </script>
 
 <section class="day-screen" data-screen="day">
-  <ResourceState
+  <ResourceState shape="document"
     error={day.error}
     loading={day.isFetching}
     hasData={Boolean(day.data)}

@@ -124,6 +124,22 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     server = rail_server
     item, empty, ticket, question = _seed(server, api)
     context = context_factory()
+    context.add_init_script("""
+      window.__railOrchestratorFields = {};
+      const Source = window.EventSource;
+      window.EventSource = class extends Source {
+        constructor(...args) {
+          super(...args);
+          for (const type of ['snapshot', 'patch']) this.addEventListener(type, event => {
+            const frame = JSON.parse(event.data);
+            for (const record of frame.content?.records ?? frame.upserts ?? []) {
+              if (record.kind === 'orchestrator')
+                window.__railOrchestratorFields[record.id] = Object.keys(record.value).sort();
+            }
+          });
+        }
+      };
+    """)
     page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
     page.set_default_timeout(WAIT_MS)
     page.set_viewport_size({"width": 1440, "height": 1000})
@@ -138,6 +154,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     ).to_have_count(0)
     expect(card.locator(".orchestrator-eyebrow")).to_contain_text("Rail proof")
     expect(left.locator(f'[data-sprint-item="{empty["id"]}"]')).to_be_visible()
+    api.direct_patch(server, f"/api/items/{empty['id']}/settled", {"settled": True})
     expect(row.get_by_role("img", name="Unread message")).to_be_visible(timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
@@ -172,6 +189,20 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     page.wait_for_function("location.hash === '#/workspace'", timeout=WAIT_MS)
     expect(page.locator("[data-backlog-tickets]")).to_have_count(0)
     left.get_by_role("button", name="Settled", exact=False).click()
+    lean_title = left.locator(f'[data-settled-item="{empty["id"]}"] .settled-title')
+    expect(lean_title).to_be_visible(timeout=WAIT_MS)
+    page.wait_for_function(
+        "id => JSON.stringify(window.__railOrchestratorFields[id]) === "
+        "JSON.stringify(['conversation_id','created_at','settled','title'])",
+        arg=empty["id"], timeout=WAIT_MS,
+    )
+    lean_title.hover()
+    lean_title.focus()
+    page.evaluate(
+        "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
+    )
+    expect(page.locator("[data-rail-hover-panel]")).to_have_attribute("aria-hidden", "true")
+    capture_success(page, str(EVIDENCE / "settled-lean-no-popover.png"))
     scoped_parent = left.locator(f'[data-settled-item="{item["id"]}"]')
     scoped_parent.locator(".settled-title").click()
     scoped_pane = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')

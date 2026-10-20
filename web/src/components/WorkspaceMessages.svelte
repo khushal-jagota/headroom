@@ -10,7 +10,7 @@
   import SprintTicketRow from "./SprintTicketRow.svelte";
   let { parentId=undefined, conversations, motionPrefix = undefined, onHover = () => undefined, onLeave = () => undefined }: {
     parentId?:string;
-    conversations: WorkspaceMessageConversation[];
+    conversations: readonly WorkspaceMessageConversation[];
     motionPrefix?: string;
     onHover?: (target: HTMLElement, conversation: WorkspaceMessageConversation, immediate?: boolean) => void;
     onLeave?: () => void;
@@ -20,8 +20,10 @@
   let visible=$state(false);
   let anchor=$state<string|null>(null);
   let direction=$state<'before'|'after'>('after');
-  let scopedWindow=$derived(parentId?navigationWindow(navigation?.state.effective && navigation ? navigation.presentationFor(navigation.state.effective):undefined,'unread',{kind:'orchestrator',id:parentId}):undefined);
-  let scopedConversations=$derived(scopedWindow?conversations.filter(row=>scopedWindow.members.some(key=>navigation?.state.publication?.records.some(record=>record.kind==='address' && record.id===key.id && record.value.conversation_id===row.conversationId))):conversations);
+  let presentation=$derived(navigation?.state.effective ? navigation.presentationFor(navigation.state.effective) : undefined);
+  let scopedWindow=$derived(parentId?navigationWindow(presentation,'unread',{kind:'orchestrator',id:parentId}):undefined);
+  let scopedConversationIds=$derived(scopedWindow ? presentation?.unreadConversationIdsByWindow.get(scopedWindow.window_id) : undefined);
+  let scopedConversations=$derived(scopedWindow?conversations.filter(row=>scopedConversationIds?.has(row.conversationId)):conversations);
   $effect(()=>{if(parentId&&visible)navigation?.owner.setDemand(demand,{windows:[viewWindow('unread',{kind:'orchestrator',id:parentId},{limit:60,anchor,direction})]});else navigation?.owner.setDemand(demand,undefined);});
   onDestroy(()=>navigation?.owner.setDemand(demand,undefined));
   function visibility(node:HTMLElement){const observer=new IntersectionObserver(entries=>visible=entries[0].isIntersecting,{root:node.closest('[data-settled-scroll]'),rootMargin:'200px'});observer.observe(node);return{destroy(){observer.disconnect();}};}

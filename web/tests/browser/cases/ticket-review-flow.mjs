@@ -50,7 +50,7 @@ navigation.owner.waitForVisibility=(fence,options)=>{
  const before=navigation.owner.getState().publication!;
  if(response.coverage.revision===before.continuity.revision)return;
  const keys=new Set(response.content.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
- const frame:any={event:'patch',wire_version:3,projection_version:1,view_id:response.view_id,
+ const frame:any={event:'patch',wire_version:3,projection_version:2,view_id:response.view_id,
  scope_generation:response.scope_generation,ordering_generation:response.ordering_generation,
  coverage:response.coverage,previous_coverage:before.continuity,authority:response.authority,
  content_version:response.content_version,previous_content_version:before.view!.contentVersion,
@@ -88,7 +88,8 @@ $effect(() => navigation.owner.setDemand('historical-review-fixture', review && 
 {:else if review}{#if reviewTicketId === "t_personal_pending"}{#if historicalIdentity}<ReviewProposalCard identity={historicalIdentity} ticketId={reviewTicketId} field={reviewField} />{/if}{:else}<ShellStatus connectionState="connected" /><ReviewRoute />{/if}
 
 {:else}{#key ticketId}<TicketRoute id={ticketId} />{/key}{/if}
-</QueryClientProvider>`);
+</QueryClientProvider>
+<style>:global(html),:global(body),:global(#app){height:100%;margin:0;}</style>`);
   await writeFile(main, `import {viewSnapshot,viewChanges} from '../tests/support/conversation/view-fixture'; globalThis.__openStreams=new Set();globalThis.EventSource=class extends EventTarget{onerror=null;constructor(url){super();this.url=String(url);globalThis.__openStreams.add(this.url);if(this.url.includes('/view/tail?')){const request=new URL(this.url,location.origin);const base=request.pathname.split('/view/')[0];Promise.all([fetch(base).then(r=>r.json()),fetch(base+'/events?after=0').then(r=>r.json())]).then(([metadata,record])=>{if(this.closed)return;const id=base.split('/').at(-1);const snapshot=viewSnapshot(id,request.searchParams.get('lens')==='full'?'full':'focus',record.events??[],request.searchParams.get('transcript')!=='false');snapshot.coverage.through_sequence=metadata.latest_sequence??0;const after=request.searchParams.get('after');this.dispatchEvent(new MessageEvent(after===null?'snapshot':'changes',{data:JSON.stringify(after===null?snapshot:viewChanges(snapshot,Number(after)))}));}).catch(()=>this.onerror?.());}if(this.url.startsWith('/api/navigation/view/events?')){globalThis.__navigationSource=this;fetch(this.url.replace('/events?','/snapshot?')).then(response=>{if(!response.ok)throw new Error('Navigation unavailable');return response.json();}).then(value=>{if(!this.closed)this.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify(value)}));}).catch(()=>{if(!this.closed)this.onerror?.();});}}close(){this.closed=true;globalThis.__openStreams.delete(this.url);}}; import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
   await writeFile(index, `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
 

@@ -340,7 +340,7 @@ export interface ViewWindowRequest {
 }
 
 export interface ViewRequest {
-  projection_version: 1;
+  projection_version: 2;
   scope_generation: number;
   locale: string;
   selected: ViewOwner | null;
@@ -394,6 +394,13 @@ export interface ViewOrchestratorValue {
   recap_reference: ViewContentReference | null;
 }
 
+export interface ViewSettledOrchestratorValue {
+  title: string;
+  created_at: number;
+  settled: true;
+  conversation_id: string | null;
+}
+
 export interface ViewConversationValue {
   owner_read_through_sequence: number;
   error_acknowledged_through_sequence: number;
@@ -412,13 +419,19 @@ export interface ViewOrchestratorRecord {
   value: ViewOrchestratorValue;
 }
 
+export interface ViewSettledOrchestratorRecord {
+  kind: "orchestrator";
+  id: string;
+  value: ViewSettledOrchestratorValue;
+}
+
 export interface ViewConversationRecord {
   kind: "conversation";
   id: string;
   value: ViewConversationValue;
 }
 
-export type ViewRecord = ViewTicketRecord | ViewOrchestratorRecord | ViewConversationRecord | ChiefRecord | AddressRecord | ProjectRecord;
+export type ViewRecord = ViewTicketRecord | ViewOrchestratorRecord | ViewSettledOrchestratorRecord | ViewConversationRecord | ChiefRecord | AddressRecord | ProjectRecord;
 
 export interface ViewWindow {
   window_id: string;
@@ -447,7 +460,7 @@ export interface ViewContent {
 
 export interface ViewIdentity {
   wire_version: 3;
-  projection_version: 1;
+  projection_version: 2;
   view_id: string;
   scope_generation: number;
   ordering_generation: string;
@@ -457,7 +470,7 @@ export interface ViewIdentity {
 
 export interface CurrentViewSnapshot {
   wire_version: 3;
-  projection_version: 1;
+  projection_version: 2;
   view_id: string;
   scope_generation: number;
   ordering_generation: string;
@@ -472,7 +485,7 @@ export interface CurrentViewSnapshot {
 
 export interface DegradedViewSnapshot {
   wire_version: 3;
-  projection_version: 1;
+  projection_version: 2;
   view_id: string;
   scope_generation: number;
   ordering_generation: string;
@@ -489,7 +502,7 @@ export type ViewSnapshot = CurrentViewSnapshot | DegradedViewSnapshot;
 
 export interface ViewPatch {
   wire_version: 3;
-  projection_version: 1;
+  projection_version: 2;
   view_id: string;
   scope_generation: number;
   ordering_generation: string;
@@ -507,7 +520,7 @@ export interface ViewPatch {
 
 export interface ViewCheckpoint {
   wire_version: 3;
-  projection_version: 1;
+  projection_version: 2;
   view_id: string;
   scope_generation: number;
   ordering_generation: string;
@@ -1619,7 +1632,7 @@ export const wireDescriptors: Record<string, unknown> = {
     "object": {
       "projection_version": {
         "literal": [
-          1
+          2
         ]
       },
       "scope_generation": {
@@ -1855,6 +1868,31 @@ export const wireDescriptors: Record<string, unknown> = {
       }
     }
   },
+  "ViewSettledOrchestratorValue": {
+    "object": {
+      "title": {
+        "primitive": "string"
+      },
+      "created_at": {
+        "primitive": "integer"
+      },
+      "settled": {
+        "literal": [
+          true
+        ]
+      },
+      "conversation_id": {
+        "union": [
+          {
+            "primitive": "string"
+          },
+          {
+            "primitive": "null"
+          }
+        ]
+      }
+    }
+  },
   "ViewConversationValue": {
     "object": {
       "owner_read_through_sequence": {
@@ -1898,6 +1936,21 @@ export const wireDescriptors: Record<string, unknown> = {
       }
     }
   },
+  "ViewSettledOrchestratorRecord": {
+    "object": {
+      "kind": {
+        "literal": [
+          "orchestrator"
+        ]
+      },
+      "id": {
+        "primitive": "string"
+      },
+      "value": {
+        "ref": "ViewSettledOrchestratorValue"
+      }
+    }
+  },
   "ViewConversationRecord": {
     "object": {
       "kind": {
@@ -1920,6 +1973,9 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       {
         "ref": "ViewOrchestratorRecord"
+      },
+      {
+        "ref": "ViewSettledOrchestratorRecord"
       },
       {
         "ref": "ViewConversationRecord"
@@ -2045,7 +2101,7 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "projection_version": {
         "literal": [
-          1
+          2
         ]
       },
       "view_id": {
@@ -2074,7 +2130,7 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "projection_version": {
         "literal": [
-          1
+          2
         ]
       },
       "view_id": {
@@ -2129,7 +2185,7 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "projection_version": {
         "literal": [
-          1
+          2
         ]
       },
       "view_id": {
@@ -2187,7 +2243,7 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "projection_version": {
         "literal": [
-          1
+          2
         ]
       },
       "view_id": {
@@ -2248,7 +2304,7 @@ export const wireDescriptors: Record<string, unknown> = {
       },
       "projection_version": {
         "literal": [
-          1
+          2
         ]
       },
       "view_id": {

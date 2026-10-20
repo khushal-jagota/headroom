@@ -14,6 +14,7 @@
   import { presentToolCall } from "../../lib/conversation/toolCallPresentation";
   import type { ToolCallRow } from "../../lib/conversation/transcript";
   import type { SvelteMap, SvelteSet } from "svelte/reactivity";
+  import { DiagnosticExpiredError, DIAGNOSTIC_EXPIRED_MESSAGE } from "../../lib/conversation/diagnosticExpiry";
   import { readToolCallDetail } from "../../lib/conversation/wire";
 
   let {
@@ -32,6 +33,7 @@
   } = $props();
 
   let detailFailed = $state(false);
+  let detailExpired = $state(false);
   /** One request at a time, however often the effect below is woken. */
   let selectedDetail = $state<string|null>(null);
 
@@ -46,6 +48,7 @@
       return;
     }
     detailFailed = false;
+    detailExpired = false;
     openRows.add(row.toolCallId);
   }
 
@@ -61,7 +64,7 @@
       if(controller.signal.aborted||whole===null)return;
       selectedDetail=whole;
       if(whole.length*2<=512*1024)wholeDetails.set(id,whole);
-    }).catch(()=>{if(!controller.signal.aborted)detailFailed=true;});
+    }).catch(reason=>{if(!controller.signal.aborted){detailFailed=true;detailExpired=reason instanceof DiagnosticExpiredError;}});
     return()=>{controller.abort();selectedDetail=null;};
   });
 </script>
@@ -105,7 +108,7 @@
         <pre class="c2-tool-output" data-conversation-tool-output>{shownDetail ?? ""}</pre>
         {#if detailFailed}
           <p class="c2-tool-detail-failed" data-conversation-tool-detail-failed>
-            The rest of this output did not load.
+            {detailExpired ? DIAGNOSTIC_EXPIRED_MESSAGE : "The rest of this output did not load."}
           </p>
         {/if}
       </div>

@@ -96,7 +96,7 @@
       {/snippet}
     </ScreenHeader>
     <div class="col">
-      <ResourceState error={feedback.error} loading={feedback.isFetching} hasData={Boolean(feedback.data)} loadingText="Loading feedback...">
+      <ResourceState shape="rows" error={feedback.error} loading={feedback.isFetching} hasData={Boolean(feedback.data)} loadingText="Loading feedback...">
         {#if actionError}<ErrorLine error={actionError} />{/if}
         {#if tab === "open"}
           {#if feedback.data?.open.length}
