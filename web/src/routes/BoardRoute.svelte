@@ -21,7 +21,7 @@
   import { mutateJson } from "../lib/mutate";
   import { buildWorkspaceRail, workspaceListRecap, type WorkspaceRailItem } from "../lib/workspaceRail";
   import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
-  import { whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
+  import { correctedWorkspaceAddress, whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import type { WorkspaceMessageConversation } from "../lib/types";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
@@ -57,6 +57,21 @@
   onDestroy(() => navigation.disposeRenderBoundary(railObserver));
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let opening = $derived(whatTheAddressOpens(address));
+  // A link of the shape #/workspace/<id> is read as a Ticket, and an orchestrator id of
+  // that shape used to open the Ticket page saying "ticket not found". The publication
+  // knows which ids are orchestrators, so the address is corrected here, where that is
+  // known. replace() rather than assignment: the broken address was never a place the
+  // reader chose to be, so it does not earn an entry in their history.
+  let orchestratorIds = $derived(
+    new Set([
+      ...(workspace?.orchestrators ?? []).map((item) => item.id),
+      ...(workspace?.settledOrchestrators ?? []).map((item) => item.id)
+    ])
+  );
+  $effect(() => {
+    const corrected = correctedWorkspaceAddress(address, (id) => orchestratorIds.has(id));
+    if (corrected !== null) window.location.replace(corrected);
+  });
   const selectedItemWorkspace = createQuery(() => ({ ...queries.sprintItemWorkspaceContent(opening.openItemId ?? ""), enabled: opening.openItemId !== null }));
   let allCards = $derived(workspace?.tickets ?? []);
   let visibleItems=$state<string[]>([]);

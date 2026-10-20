@@ -121,6 +121,34 @@ function selectionPath(selection: WorkspaceSelection): string {
   return `#/workspace/${encodeURIComponent(selection.id)}`;
 }
 
+/** The address this one should have been, when its bare id names an orchestrator.
+ *
+ * The grammar cannot tell one bare id from another, so `#/workspace/<id>` is read as a
+ * Ticket. A link of that shape pointing at an orchestrator therefore opened the Ticket
+ * page and said "ticket not found", while four of the six requests behind it asked Ticket
+ * questions about an orchestrator id. Each answered 404 in 96 bytes and was retried a
+ * second later, and then again on every later reconciliation, because a 404 carries no
+ * revision and so always looks like it changed.
+ *
+ * The browser can tell, because the navigation publication holds that orchestrator. So
+ * this is answered where the answer is known rather than guessed at in the grammar.
+ *
+ * The corrected address does not carry the original's view. That view was implied by the
+ * misreading - a bare Ticket implies the Tickets list - so keeping it would pin the
+ * orchestrator's own address to the wrong list. Returns null when there is nothing to
+ * correct, which is every ordinary address.
+ */
+export function correctedWorkspaceAddress(
+  address: WorkspaceAddress,
+  namesAnOrchestrator: (id: string) => boolean
+): string | null {
+  const selection = address.selection;
+  // An id that arrived as item/<item>/<ticket> is already unambiguous.
+  if (selection.kind !== "ticket" || selection.openedFromItemId) return null;
+  if (!namesAnOrchestrator(selection.id)) return null;
+  return workspaceAddress({ kind: "item", id: selection.id });
+}
+
 export function whatTheAddressOpens(address: WorkspaceAddress): WorkspaceOpening {
   const selection = address.selection;
   const openedFromItemId =
