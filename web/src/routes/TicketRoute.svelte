@@ -3,7 +3,7 @@
   import { SvelteMap } from "svelte/reactivity";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
-  import { manifestWorkerTypeIsUnknown, queries } from "../lib/queryCatalogue";
+  import { queries } from "../lib/queryCatalogue";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { navigationConversationSignal, type NavigationTicketMasthead } from "../lib/navigation/presentation";
   import { admitTicketSection, ticketSectionDetailMatches, ticketSectionFacts, ticketSectionHeading, ticketSectionRunLabel, ticketSectionFieldState, type TicketSection } from "../lib/ticketSection";
@@ -96,28 +96,21 @@
   const conversationStartValues = createQuery(() =>
     queries.ticketConversationStartValues(stableId)
   );
-  // One Ticket draws one Worker type's stages, so it asks for that one. The whole list
-  // was 20,165 bytes for fourteen types, on this screen and again on every reconnect.
-  // The answer arrives in the list's shape, so everything below reads the same way.
-  const manifest = createQuery(() => ({
-    ...queries.workerTypeManifest(ticket.data?.worker_type ?? ""),
-    enabled: Boolean(ticket.data?.worker_type)
-  }));
+  // The whole list, deliberately, even though this page draws one type's stages. The
+  // workspace shell around it already reads the list to write a stage sentence on every
+  // rail row, so this shares that one cached read; asking for the single type instead was
+  // measured to add a second request of 1,732 bytes rather than save the list's 20,005.
+  // The review screen, which has no rail, does ask for the one type.
+  const manifest = createQuery(() => queries.workerTypeManifests());
 
   // Conversation labels use configuration. The section below admits its controls
   // against the stored canonical Stage, gate, and ownership before display.
   let conversationLifecycle = $derived(lifecycleFor(manifest.data, ticket.data?.worker_type));
-  // An unknown Worker type is a 404 from the single-type manifest rather than an absence
-  // from a list, and it has to keep reading as the same unknown-type state so the page
-  // says the same sentence instead of a generic failure.
   let manifestMissingWorkerType = $derived(
     Boolean(
       ticket.data &&
-        (manifestWorkerTypeIsUnknown(manifest.error) ||
-          (manifest.data &&
-            !manifest.data.worker_types.some(
-              (item) => item.worker_type === ticket.data?.worker_type
-            )))
+        manifest.data &&
+        !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
     )
   );
   let canonicalTicket=$derived(currentView ? navigation.presentationFor(currentView).rawTicketsById.get(stableId) : undefined);
