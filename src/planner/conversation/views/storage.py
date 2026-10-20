@@ -228,9 +228,20 @@ def read_group(
     }
 
 
-def _candidates_sql(
+def _candidate_members(
     lens: ConversationViewLens, scope: ViewHistoryScope, stopped: bool
-) -> tuple[str, list[object]]:
+) -> list[tuple[str, list[object]]]:
+    """The union members a page is chosen from, each selecting kind, key, sequence, slot.
+
+    Returned as separate members rather than one joined string so that the page bound can
+    be applied to each of them. One sort over every candidate in the conversation is how a
+    bounded page came to cost what the whole conversation costs: the outer ORDER BY cannot
+    start discarding until every member has produced everything it can.
+
+    Each member's first parameter is the conversation, so the caller supplies that; any
+    further parameters belong to the scope and are returned with the member that needs
+    them.
+    """
     focus = lens == "focus"
     visible = "r.focus_visible=1 AND " if focus else ""
     latest = "t.latest_focus_message_sequence" if focus else "t.latest_full_message_sequence"
@@ -240,52 +251,82 @@ def _candidates_sql(
         "LEFT JOIN conversation_view_turns t ON r.conversation_id=t.conversation_id "
         "AND r.turn_key=t.turn_key "
     )
+    members: list[tuple[str, list[object]]]
     if scope["kind"] == "work_group":
-        return (
-            "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,1 AS slot "
-            "FROM conversation_view_rows r WHERE r.conversation_id=? AND r.removed=0 "
-            f"AND {visible}r.work_group_key=?",
-            [scope["key"]],
-        )
+        return [
+            (
+                "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,1 AS slot "
+                "FROM conversation_view_rows r WHERE r.conversation_id=? AND r.removed=0 "
+                f"AND {visible}r.work_group_key=?",
+                [scope["key"]],
+            )
+        ]
     if scope["kind"] == "turn":
-        rows = (
+        members = [
+            (
+                "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,0 AS slot "
+                "FROM conversation_view_rows r " + join + "WHERE r.conversation_id=? "
+                f"AND r.removed=0 AND {visible}r.turn_key=? AND r.row_kind='agent_message' "
+                f"AND r.sequence<>{latest}",
+                [scope["key"]],
+            )
+        ]
+        if not focus:
+            members.append(
+                (
+                    "SELECT 'work_group' AS kind,group_key AS key,source_sequence AS sequence,"
+                    "0 AS slot FROM conversation_view_groups "
+                    "WHERE conversation_id=? AND turn_key=?",
+                    [scope["key"]],
+                )
+            )
+        return members
+    members = [
+        (
             "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,0 AS slot "
             "FROM conversation_view_rows r " + join + "WHERE r.conversation_id=? AND r.removed=0 "
-            f"AND {visible}r.turn_key=? AND r.row_kind='agent_message' AND r.sequence<>{latest}"
-        )
-        if focus:
-            return rows, [scope["key"]]
-        return (
-            rows + " UNION ALL SELECT 'work_group',group_key,source_sequence,0 "
-            "FROM conversation_view_groups WHERE conversation_id=? AND turn_key=?",
-            [scope["key"], scope["key"]],
-        )
-    rows = (
-        "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,0 AS slot "
-        "FROM conversation_view_rows r " + join + "WHERE r.conversation_id=? AND r.removed=0 "
-        f"AND {visible}r.row_kind<>'tool_call' "
-        f"AND NOT(r.row_kind='agent_message' AND {has_head} AND ({settled}) "
-        f"AND r.sequence<>{latest})"
-    )
-    heads = (
-        "SELECT 'turn',turn_key,source_sequence,1 FROM conversation_view_turns "
-        "WHERE conversation_id=?"
-    )
+            f"AND {visible}r.row_kind<>'tool_call' "
+            f"AND NOT(r.row_kind='agent_message' AND {has_head} AND ({settled}) "
+            f"AND r.sequence<>{latest})",
+            [],
+        ),
+        (
+            "SELECT 'turn' AS kind,turn_key AS key,source_sequence AS sequence,1 AS slot "
+            "FROM conversation_view_turns WHERE conversation_id=?"
+            + (" AND focus_head=1" if focus else ""),
+            [],
+        ),
+    ]
     if focus:
-        return rows + " UNION ALL " + heads + " AND focus_head=1", []
-    groups = (
-        "SELECT 'work_group',group_key,source_sequence,0 FROM conversation_view_groups "
-        "WHERE conversation_id=? AND ending_sequence IS NULL"
-        + (" AND turn_key IS NULL" if stopped else "")
+        return members
+    unturned = " AND turn_key IS NULL" if stopped else ""
+    members.append(
+        (
+            "SELECT 'work_group' AS kind,group_key AS key,source_sequence AS sequence,0 AS slot "
+            "FROM conversation_view_groups WHERE conversation_id=? AND ending_sequence IS NULL"
+            + unturned,
+            [],
+        )
     )
-    newest = (
-        "SELECT 'row','e'||r.sequence,r.sequence,1 FROM conversation_view_rows r "
-        "JOIN conversation_view_groups g ON r.conversation_id=g.conversation_id "
-        "AND r.work_group_key=g.group_key WHERE r.conversation_id=? AND r.removed=0 "
-        "AND r.sequence=g.latest_entry_sequence AND g.ending_sequence IS NULL"
-        + (" AND g.turn_key IS NULL" if stopped else "")
+    # The newest entry of each still-open work group. Driven from the groups table, which
+    # holds the few open groups a conversation has, and into the rows table by primary
+    # key. Written the other way round it asked the planner to choose, and without
+    # sqlite_stat1 - this database has never been ANALYZEd - it chose the rows table and
+    # scanned every row of the conversation to find the one or two that qualify. CROSS
+    # JOIN is how that order is stated rather than hoped for; the partial index alone was
+    # measured to be not enough.
+    members.append(
+        (
+            "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,1 AS slot "
+            "FROM conversation_view_groups g CROSS JOIN conversation_view_rows r "
+            "ON r.conversation_id=g.conversation_id AND r.sequence=g.latest_entry_sequence "
+            "WHERE g.conversation_id=? AND g.ending_sequence IS NULL"
+            + unturned.replace(" turn_key", " g.turn_key")
+            + " AND r.removed=0 AND r.work_group_key=g.group_key",
+            [],
+        )
     )
-    return " UNION ALL ".join((rows, heads, groups, newest)), []
+    return members
 
 
 def read_page(
@@ -307,30 +348,33 @@ def read_page(
         or cursor["scope"] != scope
     ):
         raise ValueError("History cursor does not match the requested view")
-    sql, extra = _candidates_sql(lens, scope, stopped)
-    # Every union member starts with conversation identity. Extra parameters belong
-    # to its scope immediately after that identity.
-    params: list[object] = []
-    for member in sql.split(" UNION ALL "):
-        params.append(conversation_id)
-        if member.count("?") == 2:
-            params.append(extra.pop(0))
     descending = direction == "older"
-    condition = ""
-    if cursor:
-        condition = " WHERE (sequence,slot) " + ("<" if descending else ">") + " (?,?)"
-        params += [cursor["order"]["sequence"], cursor["order"]["slot"]]
+    way = "DESC" if descending else "ASC"
+    params: list[object] = []
+    bounded: list[str] = []
+    for member, scope_params in _candidate_members(lens, scope, stopped):
+        params.append(conversation_id)
+        params += scope_params
+        clause = ""
+        if cursor:
+            clause = " WHERE (sequence,slot) " + ("<" if descending else ">") + " (?,?)"
+            params += [cursor["order"]["sequence"], cursor["order"]["slot"]]
+        params.append(HISTORY_PAGE_ITEMS + 1)
+        # Each member is bounded and ordered before the union, so no member can produce
+        # more than one page of candidates however long the conversation is. Two details
+        # carry their weight here. The extra nesting is what makes the bound legal, as
+        # SQLite will not take LIMIT before UNION ALL. And a member orders by sequence
+        # alone, because its slot is a constant: asking for it as a second ordering term
+        # sorts nothing and costs a temporary B-tree per member, which measured worse
+        # than the single sort this change set out to remove.
+        bounded.append(
+            f"SELECT * FROM (SELECT * FROM ({member}){clause} ORDER BY sequence {way} LIMIT ?)"
+        )
     params.append(HISTORY_PAGE_ITEMS + 1)
     candidates = conn.execute(
         "SELECT * FROM ("
-        + sql
-        + ")"
-        + condition
-        + " ORDER BY sequence "
-        + ("DESC" if descending else "ASC")
-        + ",slot "
-        + ("DESC" if descending else "ASC")
-        + " LIMIT ?",
+        + " UNION ALL ".join(bounded)
+        + f") ORDER BY sequence {way},slot {way} LIMIT ?",
         params,
     ).fetchall()
     items: list[ConversationViewItem] = []

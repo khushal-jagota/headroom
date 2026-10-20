@@ -89,12 +89,12 @@ def test_a_focus_page_costs_what_it_costs_today() -> None:
             page = read_page(conn, "fixture", "focus")
         bytes_out = len(json.dumps(page))
         assert len(page["items"]) > 0
-        # Today: 80 items, 201 statements, 7,000 steps, 31,229 bytes. The statement count
+        # Today: 80 items, 201 statements, 8,000 steps, 31,229 bytes. The statement count
         # is this high because every body is rebuilt from source events a row at a time.
         assert len(work.statements) <= 210, (
             f"a Focus page now runs {len(work.statements)} statements"
         )
-        assert work.steps <= 12_000, f"a Focus page now visits {work.steps} VM steps"
+        assert work.steps <= 10_000, f"a Focus page now visits {work.steps} VM steps"
         assert bytes_out <= 35_000, f"a Focus page now produces {bytes_out} bytes"
 
 
@@ -104,14 +104,14 @@ def test_a_full_page_costs_what_it_costs_today() -> None:
             page = read_page(conn, "fixture", "full")
         bytes_out = len(json.dumps(page))
         assert len(page["items"]) > 0
-        # Today: 100 items, 276 statements, 17,000 steps, 50,994 bytes.
+        # Today: 100 items, 276 statements, 14,000 steps, 50,994 bytes.
         assert len(work.statements) <= 290, (
             f"a Full page now runs {len(work.statements)} statements"
         )
-        # The candidate query under this lens is the one that grows with the conversation
-        # rather than with the page, so the step ceiling is the one that matters here. The
-        # headroom is for planner differences between SQLite versions, not for new work.
-        assert work.steps <= 25_000, f"a Full page now visits {work.steps} VM steps"
+        # This was 17,000 before the candidate query was driven off the open-group index
+        # instead of the rows table. The headroom is for planner differences between
+        # SQLite versions, not for new work.
+        assert work.steps <= 17_000, f"a Full page now visits {work.steps} VM steps"
         assert bytes_out <= 60_000, f"a Full page now produces {bytes_out} bytes"
 
 
@@ -146,18 +146,19 @@ def test_one_tail_wake_costs_what_it_costs_today() -> None:
 
 
 def test_a_bounded_page_does_not_cost_more_because_the_conversation_is_longer() -> None:
-    """The defect this ticket found, at fixture scale.
+    """The defect this Ticket found, and the gate that keeps it fixed.
 
     A page is bounded at a hundred items, so reading one should cost what a hundred items
-    cost and nothing more. Under the Full lens it does not: the candidate query visits the
-    conversation rather than the page, so the same hundred items cost more in a longer
-    conversation. Measured here: 17,000 VM steps at 360 events, 29,000 at 720, 51,000 at
-    1,440, with statements and bytes flat throughout. On the largest real conversation the
-    same query measures 202,587 steps.
+    cost and nothing more. Under the Full lens it did not: the candidate query visited the
+    conversation rather than the page. Measured here before the fix, 13,000 VM steps at 360
+    events rising to 63,000 at 2,880; after it, 14,000 rising to 18,000. On the largest real
+    conversation, 7,108 projected rows with 1,175 work groups of which 2 were still open,
+    the Full candidate query went from 176,000 VM steps to 15,000 and the Focus one from
+    34,000 to 8,000.
 
-    The ceiling is what today's code does, which is roughly linear. It is here so that
-    worse than linear cannot land unnoticed, and it comes down to near 1.0 when the
-    candidate query is driven off the group table instead of the rows.
+    The fix costs about a thousand steps on a short conversation, which is the per-member
+    bound being set up, and it stops mattering immediately: the old query is already more
+    expensive by 720 events.
     """
     short = conversation()
     long = conversation(turns=TURNS * 2)
@@ -173,7 +174,7 @@ def test_a_bounded_page_does_not_cost_more_because_the_conversation_is_longer() 
         "the statement count is per item, so it must not move when only the conversation does"
     )
     growth = longer.steps / max(shorter.steps, 1)
-    assert growth <= 2.0, (
+    assert growth <= 1.25, (
         f"doubling the conversation multiplied a bounded page read by {growth:.2f}: "
         f"{shorter.steps} VM steps at {len(short)} events, {longer.steps} at {len(long)}"
     )
