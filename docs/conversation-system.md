@@ -719,6 +719,39 @@ do, which is whole.
 All of this is read from what the notebook already holds, so conversations
 recorded before any of it existed read the same way as new ones.
 
+### Scrolling back, and what is known about it
+
+Scrolling back asks for one page at a time. Before each page the browser closes its live
+stream and re-opens it once the page has arrived. That looks wasteful and is not: a
+conversation being written to while somebody reads backwards would otherwise keep
+interrupting the read, and closing the stream for the length of one page is what stops
+that. Expect the stream to be torn down and re-opened once per page of scroll-back.
+
+Scrolling back a long way has been reported as feeling stuck, and the cause is not known.
+Two things have been ruled out by measurement, so that nobody spends time on them again.
+The reader keeps three hundred items and drops the other end as it goes; driven past that
+limit it slides its window correctly, one page at a time, and it still does so while an
+agent is writing into the conversation. The stream churn above is also not it.
+
+Two facts for anybody measuring this next.
+
+A test that drives scrolling directly can produce a state a person cannot. Asking for
+another page while one is still arriving is harmless on its own, because a second request
+for the same thing waits for the first, but it does close the stream again, and it can do
+that while the previous re-open is still in flight. No hand moves that fast. A measurement
+that scrolls by script and finds the stream thrashing may be measuring its own gesture.
+
+And most conversations cannot reach the three hundred item limit in Focus at all, because
+Focus leaves out ordinary agent output. Counted across every conversation on the live
+machine, no Ticket conversation holds three hundred items in Focus: the largest holds 197
+of its 1,108 rows, and one conversation of 6,847 rows holds ten. The limit is reachable in
+Full on any long conversation, and in Focus only in the few very long conversations that
+are not a Ticket's.
+
+One known hole in testing this from outside: a Ticket page opens its conversation at rest,
+and the Focus and Full controls are not reachable until it is opened, so a script cannot
+simply land on a Ticket page and put a long conversation on screen in Full.
+
 ## Permissions
 
 When an agent asks permission, the ask always shows and always waits — nothing
