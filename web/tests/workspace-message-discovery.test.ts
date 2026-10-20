@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { workspaceChildMessageConversations, workspaceMessageConversations, workspaceSettledUnreadCount, workspaceUnreadConversationCount } from "../src/lib/workspaceMessageDiscovery";
+import { workspaceChildMessageConversations, workspaceMessageConversations, workspaceSettledUnreadCount, workspaceUnreadConversationCount, workspaceMessageIndex } from "../src/lib/workspaceMessageDiscovery";
 import { buildWorkspaceRail, workspaceRailChildMessageConversations } from "../src/lib/workspaceRail";
 import type { BoardCard, BoardSprintItem, ChiefManagementSettings, SprintItemWorkspaceTicket } from "../src/lib/types";
 
@@ -80,7 +80,8 @@ describe("exact unread conversation discovery", () => {
     const parent = item("parent", {settled:true,tickets:[saved,ordinary]});
     const rows = workspaceMessageConversations([saved,ordinary],[parent]);
     expect(rows.map((row) => row.id)).toEqual(["saved"]);
-    expect(workspaceRailChildMessageConversations(rows,parent,[saved,ordinary]).map((row) => row.id))
+    const index=workspaceMessageIndex(rows,[saved,ordinary]);
+    expect(workspaceRailChildMessageConversations(rows,parent,[saved,ordinary],index).map((row) => row.id))
       .toEqual(["ordinary"]);
     expect(rows.map((row) => row.id)).toEqual(["saved"]);
   });

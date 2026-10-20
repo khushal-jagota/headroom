@@ -23,7 +23,12 @@ from planner.navigation.delivery_authority import DeliveryAccess, DeliveryUnavai
 from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuthority
 from planner.navigation.proof import certify
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
-from planner.navigation.views.contracts import ViewContent, ViewRequest, ViewSnapshot
+from planner.navigation.views.contracts import (
+    VIEW_PROJECTION_VERSION,
+    ViewContent,
+    ViewRequest,
+    ViewSnapshot,
+)
 from planner.navigation.views.logic import compact, digest
 from planner.navigation.views.ordering import ORDERING_GENERATION
 from planner.navigation.views.read import continuity, identity, read_content, window_key
@@ -267,7 +272,7 @@ class ScopedDeliveryRuntime:
         result = {
             "event": "snapshot",
             "wire_version": 3,
-            "projection_version": 1,
+            "projection_version": VIEW_PROJECTION_VERSION,
             "view_id": identity(value),
             "scope_generation": value["scope_generation"],
             "ordering_generation": ORDERING_GENERATION,

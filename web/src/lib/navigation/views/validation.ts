@@ -5,6 +5,7 @@ export function parseFrame(input:unknown):ViewFrame {
   validate(input,{ref:'ViewFrame'},'ViewFrame');
   const frame=input as ViewFrame;
   if(frame.event==='reset') return frame;
+  if(frame.projection_version!==2) throw new NavigationProtocolError('Unsupported view projection version');
   continuity(frame.coverage); authority(frame.authority);
   if(!frame.view_id || !frame.content_version || !frame.ordering_generation || frame.scope_generation<0) throw new NavigationProtocolError('Invalid view identity');
   if(frame.event==='snapshot') validateContent(frame.content,frame.mode);
@@ -35,6 +36,7 @@ export function validateContent(content:ViewContent,mode:'current'|'degraded') {
 }
 export function applyFrame(previous:ViewSnapshot | undefined,frame:ViewFrame):ViewSnapshot {
   if(frame.event==='reset') throw new NavigationProtocolError('View reset required');
+  if(frame.projection_version!==2) throw new NavigationProtocolError('Unsupported view projection version');
   if(frame.event==='snapshot') return frame;
   if(!previous || previous.mode!=='current' || !sameAuthority(previous.authority,frame.authority)
     || previous.view_id!==frame.view_id || previous.scope_generation!==frame.scope_generation
