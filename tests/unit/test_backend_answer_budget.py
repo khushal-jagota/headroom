@@ -103,34 +103,45 @@ def answer(tmp_path: Path, models: int) -> Connections:
 
 def test_one_warm_backend_card_costs_what_it_costs_today(tmp_path: Path) -> None:
     cost = answer(tmp_path, 26)
-    # Today: 26 models cost 81 connections and 87 statements. Production measures 78
-    # connections for its 26, the difference being models whose family is unrecognised.
+    # Today: 26 models cost 5 connections and 10 statements. Before the three per-model
+    # loops became set reads it was 81 connections and 87 statements for the same 26, and
+    # production measured 78 connections and 492 statements.
     #
     # The statement count is the one to read carefully: it counts statements traced on a
     # connection, and a connection cannot be traced until it exists, so the three PRAGMAs
-    # every one of them runs while opening are not in it. At this connection count those
-    # are another 243 statements, which is most of the 492 production measures.
-    assert cost.opened <= 85, f"a warm backend card now opens {cost.opened} connections"
-    assert cost.statements <= 100, f"a warm backend card now runs {cost.statements} statements"
+    # every one of them runs while opening are not in it. That is 15 more here, and was
+    # 243 before, which is most of the difference from production's 492.
+    #
+    # The five are five different doors, not five rounds of the same question: the stored
+    # evidence, the enablement set, the write that adopts a changed catalogue, the usage
+    # snapshot, and the enablement set again while serialising. Collapsing the last one
+    # would mean handing a connection through a service interface that other callers use
+    # for other reasons, which is a larger change than the remaining 2 ms is worth.
+    assert cost.opened <= 8, f"a warm backend card now opens {cost.opened} connections"
+    assert cost.statements <= 15, f"a warm backend card now runs {cost.statements} statements"
 
 
-def test_answering_about_one_backend_opens_a_connection_per_model(tmp_path: Path) -> None:
-    """The defect the measurement found, stated as the property that is wrong.
+def test_describing_a_backend_costs_the_same_whatever_its_model_count(tmp_path: Path) -> None:
+    """The defect this found, now stated as the property that must hold.
 
-    One backend is one row of state and one catalogue. Answering about it should cost
-    what one backend costs, so adding a model to the backend should not add a connection
-    to the answer. Today it adds three: one to adopt the catalogue, one to read the
-    model's own catalogue row, and one to ask whether it is enabled.
+    One backend is one row of state and one catalogue, so answering about it should cost
+    what one backend costs. It used to add three connections per model: one to adopt the
+    catalogue, one to read that model's catalogue row, and one to ask whether it was
+    enabled. Measured then: 27 connections for 8 models and 75 for 24, a slope of exactly
+    three. Measured now: 5 and 5, a slope of zero.
 
-    The ceiling is a slope, because that is what is wrong here. It goes to zero when the
-    three loops read sets.
+    A per-model loop is easy to reintroduce and invisible to every other test, which is
+    how three of them accumulated, so the gate is the slope rather than a total.
     """
     few = answer(tmp_path / "few", 8)
     many = answer(tmp_path / "many", 24)
-    # Today: 27 connections for 8 models, 75 for 24. Three per model exactly, which is
-    # the three loops named above and nothing else.
     per_model = (many.opened - few.opened) / (24 - 8)
-    assert per_model <= 3.5, (
+    assert per_model == 0, (
         f"each extra model now adds {per_model:.2f} connections to a backend card: "
         f"{few.opened} connections for 8 models, {many.opened} for 24"
+    )
+    statements = (many.statements - few.statements) / (24 - 8)
+    assert statements == 0, (
+        f"each extra model now adds {statements:.2f} statements to a backend card: "
+        f"{few.statements} for 8 models, {many.statements} for 24"
     )

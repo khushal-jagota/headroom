@@ -74,11 +74,10 @@ class ModelResolutionService:
         cached = self._store.read(variant)
         evidence = self._store.read_catalogue(variant)
         if evidence:
-            enabled = tuple(
-                entry
-                for entry in evidence
-                if self._backend_state.model_is_enabled(backend_key, entry.model)
-            )
+            # The same per-model loop the backend card had, on the path a conversation
+            # start takes. One statement for the backend instead of one per candidate.
+            disabled = self._backend_state.read_disabled_models(backend_key)
+            enabled = tuple(entry for entry in evidence if entry.model not in disabled)
             selected = select_catalogue_model(variant, enabled)
             if selected is not None and (cached is None or selected.model != cached.model):
                 self._store.keep(variant, selected)
@@ -136,9 +135,10 @@ class ModelResolutionService:
 
     def decorate_snapshot(self, snapshot: BackendSnapshot) -> BackendSnapshot:
         """Expose the same successful family choices and truthful degraded state to pickers."""
+        disabled = self._backend_state.read_disabled_models(snapshot.backend_key)
         if snapshot.available_models:
-            self._accept_snapshot(snapshot)
-        cached = self._store.read_backend(snapshot.backend_key)
+            self._accept_snapshot(snapshot, disabled=disabled)
+        cached, catalogue = self._store.read_backend_evidence(snapshot.backend_key)
         entries = list(snapshot.available_models)
         failure = self._failures.get(snapshot.backend_key)
         refresh = self._refreshes.get(snapshot.backend_key)
@@ -157,7 +157,7 @@ class ModelResolutionService:
                     resolved_model_id=next(
                         (
                             model.resolved_model_id or model.model
-                            for model in self._store.read_catalogue(variant)
+                            for model in catalogue.get(variant, ())
                             if model.model == value.model
                         ),
                         value.model,
@@ -165,7 +165,7 @@ class ModelResolutionService:
                     catalogue_warning=warning,
                 )
                 for variant, value in cached.items()
-                if self._backend_state.model_is_enabled(snapshot.backend_key, value.model)
+                if value.model not in disabled
             ]
         else:
             mapped: list[BackendModel] = []
@@ -179,7 +179,7 @@ class ModelResolutionService:
                 if selected is None:
                     mapped.append(entry)
                     continue
-                evidence = self._store.read_catalogue(variant)
+                evidence = catalogue.get(variant, ())
                 target = next(
                     (value for value in evidence if value.model == selected.model), selected
                 )
@@ -230,7 +230,13 @@ class ModelResolutionService:
             )
             logger.warning("Model catalogue refresh failed for %s: %s", backend_key, error)
 
-    def _accept_snapshot(self, snapshot: BackendSnapshot, *, refreshed: bool = False) -> None:
+    def _accept_snapshot(
+        self,
+        snapshot: BackendSnapshot,
+        *,
+        refreshed: bool = False,
+        disabled: frozenset[str] | None = None,
+    ) -> None:
         """Adopt already-probed picker evidence; rereading a card does not extend freshness."""
         backend_key = snapshot.backend_key
         if not snapshot.available_models:
@@ -257,12 +263,10 @@ class ModelResolutionService:
                 ),
             )
         resolutions: dict[ModelVariant, CachedModelResolution] = {}
+        if disabled is None:
+            disabled = self._backend_state.read_disabled_models(backend_key)
         for variant, models in catalogue.items():
-            enabled = tuple(
-                model
-                for model in models
-                if self._backend_state.model_is_enabled(backend_key, model.model)
-            )
+            enabled = tuple(model for model in models if model.model not in disabled)
             selected = select_catalogue_model(variant, enabled)
             if selected is not None:
                 resolutions[variant] = selected
