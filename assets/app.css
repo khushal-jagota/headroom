@@ -6663,4 +6663,3 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
 .workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .workspace-ticket-bucket .worker-row .conversation-signal-marks { justify-self:end; }
-.workspace-ticket-bucket .worker-row .stage-mark { justify-self:end; margin-left:0; margin-right:0; }
