@@ -17,9 +17,8 @@ from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryMode,
 )
-from planner.conversation.events import PromptEventPayload
+from planner.conversation.events import ExplicitReplyMissingEventPayload, PromptEventPayload
 from planner.conversation.in_memory_conversation_system import (
-    InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import (
@@ -118,6 +117,24 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
             worker_write.text.index("Chief:\nPlease report")
         )
 
+        # An automatic action on the worker's behalf cannot discharge its Chief debt.
+        worker_turn = await conversations.active_turn_reference("c_worker")
+        assert worker_turn is not None
+        await service.send_message(
+            conversations,
+            tmp_db,
+            fake_clock,
+            RequestContext(worker),
+            chief,
+            "Automatic action",
+            system_message=True,
+        )
+        assert await conversations.turn_expects_reply(worker_turn, chief)
+        assert conversations.backend_prompt_writes("c_chief")[-1].text == (
+            "Panels:\nAutomatic action"
+        )
+        conversations.complete_running_turn("c_chief")
+
         await service.send_message(
             conversations,
             tmp_db,
@@ -144,7 +161,7 @@ def test_chief_to_worker_and_worker_reply_cross_two_real_conversations_without_a
             "Report delivered",
             sender_message_id="worker-reply-1",
         )
-        assert len(conversations.backend_prompt_writes("c_chief")) == 1
+        assert len(conversations.backend_prompt_writes("c_chief")) == 2
 
     asyncio.run(exercise())
 
@@ -245,72 +262,87 @@ def test_a_recap_request_clears_the_line_it_replaces_and_asks_for_no_reply_messa
     Nothing else covers the one send in Panels whose answer is not words.
     """
 
+    owner = Principal(PrincipalKind.owner, "owner")
+    worker = Principal(PrincipalKind.ticket, "t_worker")
+    monkeypatch.setattr(
+        tickets_data,
+        "read_ticket",
+        lambda _conn, _ticket_id: SimpleNamespace(conversation_id="c_worker"),
+    )
+    cleared: list[object] = []
+    modes: list[PromptDeliveryMode] = []
+    monkeypatch.setattr(
+        tickets_data,
+        "edit_ticket",
+        lambda _conn, ticket_id, **kwargs: cleared.append((ticket_id, kwargs["edit"])),
+    )
+
+    async def send_to_ticket(
+        system: ConversationSystem,
+        _conn: Connection,
+        _ticket_id: str,
+        content: object,
+        **kwargs: object,
+    ) -> DeliveredMessage:
+        modes.append(cast(PromptDeliveryMode, kwargs["mode"]))
+        if kwargs["mode"] is PromptDeliveryMode.steer:
+            assert cleared == [("t_worker", {"recap": ""})]
+        receipt = await system.send_with_receipt(
+            "c_worker",
+            cast(MessageContent, content),
+            mode=cast(PromptDeliveryMode, kwargs["mode"]),
+            sender_label=cast(str, kwargs["sender_label"]),
+            sender=cast(Principal | None, kwargs["sender"]),
+            recipient=cast(Principal, kwargs["recipient"]),
+            reply_requested=cast(bool, kwargs["reply_requested"]),
+        )
+        return DeliveredMessage("c_worker", receipt.fate, receipt.newly_accepted)
+
+    monkeypatch.setattr(conversation_start, "send_to_ticket_conversation", send_to_ticket)
+
     async def exercise() -> None:
-        conversations = InMemoryConversationSystem()
-        await conversations.start_conversation(
-            ConversationStartRequest(
-                conversation_id="c_worker",
-                backend_key=ConversationBackendKey.hermes,
-                model="test-model",
+        async with open_conversation_system_under_test() as subject:
+            # A backend refusal holds steering until the active turn ends, exercising
+            # the real deferred attribution boundary rather than a direct-send fake.
+            await subject.system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="c_worker",
+                    backend_key=ConversationBackendKey.codex,
+                    model="test-model",
+                )
             )
-        )
-        owner = Principal(PrincipalKind.owner, "owner")
-        worker = Principal(PrincipalKind.ticket, "t_worker")
-        monkeypatch.setattr(
-            tickets_data,
-            "read_ticket",
-            lambda _conn, _ticket_id: SimpleNamespace(conversation_id="c_worker"),
-        )
-        cleared: list[object] = []
-        monkeypatch.setattr(
-            tickets_data,
-            "edit_ticket",
-            lambda _conn, ticket_id, **kwargs: cleared.append((ticket_id, kwargs["edit"])),
-        )
-        modes: list[object] = []
-
-        async def send_to_ticket(
-            system: ConversationSystem,
-            _conn: Connection,
-            _ticket_id: str,
-            content: object,
-            **kwargs: object,
-        ) -> DeliveredMessage:
-            modes.append(kwargs["mode"])
-            receipt = await system.send_with_receipt(
-                "c_worker",
-                cast(MessageContent, content),
-                sender_label=cast(str, kwargs["sender_label"]),
-                sender=cast(Principal, kwargs["sender"]),
-                recipient=cast(Principal, kwargs["recipient"]),
-                reply_requested=cast(bool, kwargs["reply_requested"]),
+            await service.send_message(
+                subject.system, tmp_db, fake_clock, RequestContext(owner), worker, "Work"
             )
-            return DeliveredMessage("c_worker", receipt.fate, receipt.newly_accepted)
-
-        monkeypatch.setattr(conversation_start, "send_to_ticket_conversation", send_to_ticket)
-
-        await recap_request.request_recap(
-            conversations,
-            tmp_db,
-            fake_clock,
-            RequestContext(owner),
-            worker,
-        )
-
-        # The line being replaced goes before the ask leaves, so no surface shows a spent
-        # recap beside a working agent.
-        assert cleared == [("t_worker", {"recap": ""})]
-        write = conversations.backend_prompt_writes("c_worker")[-1]
-        assert recap_request.RECAP_REQUEST_MESSAGE in write.text
-        assert "Authenticated Panels reply requirement" not in write.text
-        assert modes == [PromptDeliveryMode.steer]
-
-        conversations.complete_running_turn("c_worker")
-        assert not [
-            observation
-            for observation in conversations.observations("c_worker")
-            if observation.kind is InMemoryConversationObservationKind.explicit_reply_missing
-        ]
+            owner_turn = await subject.system.active_turn_reference("c_worker")
+            assert owner_turn is not None
+            assert await subject.system.turn_expects_reply(owner_turn, owner)
+            await subject.tell_agent("c_worker", {"command": "reject_steer"})
+            await recap_request.request_recap(
+                subject.system, tmp_db, fake_clock, RequestContext(owner), worker
+            )
+            assert modes == [PromptDeliveryMode.queue, PromptDeliveryMode.steer]
+            assert len(await subject.backend_writes("c_worker")) == 1
+            await subject.complete_running_turn("c_worker")
+            writes = await subject.backend_writes("c_worker")
+            assert len(writes) == 2
+            assert writes[1].text == f"Panels:\n{recap_request.RECAP_REQUEST_MESSAGE}"
+            assert writes[1].mode is PromptDeliveryMode.queue
+            assert "Authenticated Panels reply requirement" not in writes[1].text
+            await subject.complete_running_turn("c_worker")
+            events = await subject.recorded_events("c_worker")
+            prompts = [e.payload for e in events if isinstance(e.payload, PromptEventPayload)]
+            assert prompts[0].sender == owner
+            assert prompts[0].sender_label == "owner"
+            assert prompts[1].sender is None
+            assert prompts[1].sender_label == "Panels"
+            assert prompts[1].recipient == worker
+            assert message_content_text(prompts[1].content) == recap_request.RECAP_REQUEST_MESSAGE
+            missing = [
+                e.payload for e in events if isinstance(e.payload, ExplicitReplyMissingEventPayload)
+            ]
+            assert len(missing) == 1  # The ordinary owner turn still owes its answer.
+            assert missing[0].prompt_sender == owner
 
     asyncio.run(exercise())
 

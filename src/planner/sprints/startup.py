@@ -1,4 +1,4 @@
-"""Deliver a saved orchestrator's goal through the ordinary supervisor message door."""
+"""Deliver a saved orchestrator's goal as a Panels system message."""
 
 from __future__ import annotations
 
@@ -39,6 +39,8 @@ async def start_created_orchestrator(
             item.goal,
             sender_message_id=str(uuid4()),
             retain_created_conversation=True,
+            expects_reply=False,
+            system_message=True,
         )
         return cast(
             OrchestratorStartupResult,
