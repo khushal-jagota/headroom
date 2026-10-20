@@ -78,7 +78,9 @@ type OpenTurn = {
   groupIndexes: number[];
   openGroupIndex: number | null;
   /** Where this turn's ordinary messages landed. Addressed owner messages never fold.
-   *  The last ordinary message stays; earlier commentary folds. */
+   *  The last ordinary message stays; earlier commentary folds.
+   *  toOwner classifies message_to_owner events. Their recipients are assumed owners.
+   *  If recipients broaden, harmonize this with the recipient-sensitive projection. */
   messageIndexes: number[];
 };
 

@@ -294,3 +294,27 @@ def test_skill_file_failure_reaches_http_as_an_incomplete_save(
         "phase": "file",
     }
     assert "Read the canonical skill before retry" in error["message"]
+
+
+def test_one_type_reads_back_exactly_what_the_whole_list_said(
+    client: tuple[TestClient, Path],
+) -> None:
+    """The list is 20,165 bytes for fourteen types; a Ticket page draws one.
+
+    The single-type read has to be the same entry in the same shape, because the
+    lifecycle, the stage table and the Ticket section admission all read that shape.
+    """
+    test_client, _db_path = client
+
+    whole = test_client.get("/api/worker-types").json()["worker_types"]
+    one = test_client.get("/api/worker-types/coding/manifest")
+
+    assert one.status_code == 200, one.text
+    assert one.json()["worker_types"] == [
+        entry for entry in whole if entry["worker_type"] == "coding"
+    ]
+
+    unknown = test_client.get("/api/worker-types/not-a-worker/manifest")
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["error"]["code"] == "not_found"
+    assert unknown.json()["error"]["detail"] == {"worker_type": "not-a-worker"}

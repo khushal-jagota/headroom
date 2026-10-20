@@ -79,7 +79,7 @@ def _revision(conn: sqlite3.Connection) -> str:
     return str(conn.execute("SELECT version_num FROM alembic_version").fetchone()[0])
 
 
-def _head_revision() -> str:
+def head_revision() -> str:
     """The revision this build finishes at, which moves as revisions are added."""
     config = Config()
     config.set_main_option("script_location", str(db_module.MIGRATIONS_DIRECTORY))
@@ -147,7 +147,7 @@ def test_database_at_the_pre_collapse_head_is_adopted_with_its_rows_intact(
 
     create_schema(conn)
 
-    assert _revision(conn) == _head_revision()
+    assert _revision(conn) == head_revision()
     removed_objects = {
         "idx_sprint_items_supervisor_agent_key",
         "sprint_items_supervisor_create",
@@ -236,7 +236,7 @@ def test_manager_wake_migration_backfills_current_unresolved_sources(
     # Exercise this revision's backfill against its own historical schema only.
     _migration_tree_through(tmp_path, monkeypatch, "wake_sprint_item_managers")
     create_schema(conn)
-    assert _revision(conn) == _head_revision() == "wake_sprint_item_managers"
+    assert _revision(conn) == head_revision() == "wake_sprint_item_managers"
 
     rows = conn.execute(
         "SELECT ticket_id,source_kind,source_revision FROM manager_wakes ORDER BY ticket_id"
@@ -400,7 +400,7 @@ def _migration_tree_through(
     tree = _migration_tree(tmp_path, monkeypatch)
     for revision in ScriptDirectory(str(shipped)).walk_revisions(base="base", head=head):
         shutil.copy(revision.path, tree / "versions" / Path(revision.path).name)
-    assert _head_revision() == head
+    assert head_revision() == head
     return tree
 
 
@@ -791,7 +791,7 @@ def test_widening_the_notification_type_keeps_every_row_index_and_foreign_key(
         shutil.copy(revision, tree / "versions" / revision.name)
     create_schema(conn)
 
-    assert _revision(conn) == _head_revision()
+    assert _revision(conn) == head_revision()
     for table in _NOTIFICATION_TABLES:
         sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)

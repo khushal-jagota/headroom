@@ -327,3 +327,55 @@ def test_owner_messages_stay_on_timeline_and_out_of_live_fold_scope(
             assert {"e4", "e5"} <= set(folded["removed_keys"])
         finally:
             live.close()
+
+
+def test_paging_back_through_a_long_timeline_loses_no_item_and_repeats_none() -> None:
+    """A page is chosen per union member now, so a member could silently drop items.
+
+    Candidates come from several queries unioned together, and each is bounded to a page
+    before the union so that no member has to produce the whole conversation. That bound
+    is only sound because a page cannot contain more than a page from any one member. If
+    it were ever lowered below the page size, or a member gained a second row per
+    sequence, pages would start losing items with nothing else failing - the pages would
+    still be the right size and still be in order.
+
+    Existing coverage pages twice inside one scope, which cannot see this: it needs more
+    than a page's worth from a single member. So this builds 150 turns, which puts both
+    the row member and the turn-head member well past the bound, and walks the whole
+    timeline.
+    """
+    events: list[dict[str, Any]] = []
+    prompts: list[int] = []
+    sequence = 0
+    for turn in range(150):
+        sequence += 1
+        prompts.append(sequence)
+        events.append(prompt(sequence))
+        sequence += 1
+        events.append(event(sequence, "agent_message", {"text": f"Answer {turn}"}))
+        sequence += 1
+        events.append(event(sequence, "turn_ended", {"ending": "completed", "error_summary": None}))
+
+    with database(events) as conn:
+        seen: list[str] = []
+        order: list[tuple[int, int]] = []
+        cursor = None
+        for _ in range(100):
+            page = read_page(conn, "fixture", "full", cursor=cursor)
+            # Pages arrive oldest-first within the page, and we walk backwards.
+            seen = [item["key"] for item in page["items"]] + seen
+            order = [
+                (item["order"]["sequence"], item["order"]["slot"]) for item in page["items"]
+            ] + order
+            cursor = page["older"]
+            if cursor is None:
+                break
+        else:
+            raise AssertionError("paging back through 150 turns never reached the beginning")
+
+        assert len(seen) == len(set(seen)), "a page repeated an item the previous page had"
+        assert order == sorted(order), "the walk did not come back in one ascending order"
+        missing_prompts = [f"e{at}" for at in prompts if f"e{at}" not in set(seen)]
+        assert missing_prompts == [], f"paging lost {len(missing_prompts)} prompts"
+        missing_heads = [f"turn:e{at}" for at in prompts if f"turn:e{at}" not in set(seen)]
+        assert missing_heads == [], f"paging lost {len(missing_heads)} turn heads"

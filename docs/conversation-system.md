@@ -688,6 +688,11 @@ Focus reports zero folded messages and zero tool calls, even when the stored tur
 contains tools. A turn that stops without an ending and has nothing behind it
 keeps its stop row but has no head, as before.
 
+The fold rules assume that every `message_to_owner` event names the owner as its
+recipient. The body flag follows the event kind. SQL membership uses the
+recipient-sensitive Focus classification. If another recipient becomes valid for
+that event, both classifications must change together.
+
 Each tool call is one line: what happened, and the single fact
 that says which call it was — the command that ran, the path that was read, the
 pattern that was searched for. The three agents do not agree on how they say
@@ -717,6 +722,39 @@ do, which is whole.
 
 All of this is read from what the notebook already holds, so conversations
 recorded before any of it existed read the same way as new ones.
+
+### Scrolling back, and what is known about it
+
+Scrolling back asks for one page at a time. Before each page the browser closes its live
+stream and re-opens it once the page has arrived. That looks wasteful and is not: a
+conversation being written to while somebody reads backwards would otherwise keep
+interrupting the read, and closing the stream for the length of one page is what stops
+that. Expect the stream to be torn down and re-opened once per page of scroll-back.
+
+Scrolling back a long way has been reported as feeling stuck, and the cause is not known.
+Two things have been ruled out by measurement, so that nobody spends time on them again.
+The reader keeps three hundred items and drops the other end as it goes; driven past that
+limit it slides its window correctly, one page at a time, and it still does so while an
+agent is writing into the conversation. The stream churn above is also not it.
+
+Two facts for anybody measuring this next.
+
+A test that drives scrolling directly can produce a state a person cannot. Asking for
+another page while one is still arriving is harmless on its own, because a second request
+for the same thing waits for the first, but it does close the stream again, and it can do
+that while the previous re-open is still in flight. No hand moves that fast. A measurement
+that scrolls by script and finds the stream thrashing may be measuring its own gesture.
+
+And most conversations cannot reach the three hundred item limit in Focus at all, because
+Focus leaves out ordinary agent output. Counted across every conversation on the live
+machine, no Ticket conversation holds three hundred items in Focus: the largest holds 197
+of its 1,108 rows, and one conversation of 6,847 rows holds ten. The limit is reachable in
+Full on any long conversation, and in Focus only in the few very long conversations that
+are not a Ticket's.
+
+One known hole in testing this from outside: a Ticket page opens its conversation at rest,
+and the Focus and Full controls are not reachable until it is opened, so a script cannot
+simply land on a Ticket page and put a long conversation on screen in Full.
 
 ## Permissions
 
@@ -769,6 +807,31 @@ adds Codex and Claude update advice and a one-click update when Panels can run o
 The update command comes from how the CLI was installed. Panels checks the card again
 afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
 in the terminal, and the card names the command.
+
+### What a card costs, and the assumption that was wrong about it
+
+Reading the cards was slow for a long time, 118 to 149 milliseconds every time, and
+everyone who looked at it assumed the cards were being probed live. They were not. The
+probe runs once per process and is then kept; after the first call it answers in well
+under a millisecond, and the check for whether the kept answer had gone stale has never
+once said yes.
+
+The time went on describing the models. Each card lists the models its backend offers,
+and building that list asked a question for every single model: is this model switched
+off, what does the catalogue say about it, and is this catalogue the one we already had.
+Each of those questions opened its own connection to the database. Opening a connection
+here is not cheap, because the database has eighty tables and a new connection reads all
+of their definitions before it can answer anything: the first question on a fresh
+connection takes 2.39 milliseconds where the second takes 0.022. Describing 26 models
+that way meant 78 connections and 492 questions, for one screen asking what backends
+exist.
+
+It now asks once for the whole set and sorts the models out in memory, so the cost is the
+same whether a backend offers eight models or fifty. The lesson is worth more than the
+fix: three separate per-model loops had accumulated here over time and nothing failed,
+because every test of this route checks what the card says and no test checked what the
+card cost. There is one now, and it fails if the cost starts following the model count
+again.
 
 ### What a card can say about the codex login
 
@@ -1153,6 +1216,25 @@ argument hint. A slash at the absolute start of the message offers commands. A d
 offers skills. An at sign offers apps and plugins. Leading whitespace, an empty first
 line, or a trigger on a later line does not open the menu. The composer narrows that
 eligible list as text is typed.
+
+### When the menu arrives
+
+The catalog is read when the conversation opens and again each time a turn ends. It does
+not arrive with the record. It used to, and it dominated it: the largest real catalog is
+66,211 bytes for 155 entries, where everything else the record stores about a conversation
+comes to about 620. The record is re-read every time the conversation gains a row, so
+watching one agent work for seventy seconds sent the same closed menu 68 times, about
+2.3 MB of it.
+
+Turn end is the occasion because a backend only reports its commands a moment into its
+first turn. Reading the menu lazily, when somebody first types a trigger, would show an
+empty menu on a conversation that has a full one today.
+
+The cost of reading it then and not more often: for the length of one turn the menu can be
+out of date. A skill or command that appears while a turn is streaming is not offered until
+that turn ends or the conversation is reopened. A turn is seconds to minutes, the menu is
+only consulted when somebody opens it to type, and the alternative is re-sending all 66 KB
+of it every time an agent writes a line.
 
 The keyboard owns the highlight. It starts at the top of the list and moves with the
 arrow keys. A row takes the highlight when the pointer really moves onto it. A menu that
