@@ -10,7 +10,8 @@ import { recordImpactTouches as touches } from './navigation/commandEvidence';
 export function workspaceRailImpact(impact:RecordImpact,presentation:NavigationPresentation | undefined,rail:WorkspaceRail,settledOpen:boolean):boolean {
   const items=[...rail.items,...(settledOpen ? rail.settledItems : [])];
   const settledMessages=settledOpen ? rail.settledItems.flatMap(item=>
-    workspaceRailChildMessageConversations(presentation?.messagesByParent.get(item.id) ?? [],item,presentation?.tickets ?? [])) : [];
+    presentation?.globalCounts ? presentation.scopedRailMessagesByParent.get(item.id) ?? []
+      : workspaceRailChildMessageConversations(presentation?.messagesByParent.get(item.id) ?? [],item,presentation?.tickets ?? [])) : [];
   const groupedTickets=new Set([
     ...rail.chiefGroups.flatMap(group=>group.cards).map(ticket=>ticket.id),
     ...items.flatMap(item=>item.groups.flatMap(group=>group.cards)).map(ticket=>ticket.id),
@@ -36,10 +37,7 @@ export function workspaceRailImpact(impact:RecordImpact,presentation:NavigationP
       if(address.value.owner_kind!=='ticket') return false;
       const ticket=presentation.ticketsById.get(address.value.owner_id);
       if(!ticket) return false;
-      return rail.settledItems.some(item=>workspaceRailChildMessageConversations([{
-        kind:'ticket',id:ticket.id,title:ticket.title,conversationId:impact.id,
-        parentId:address.value.parent_id,parentTitle:item.title,settled:true,
-      }],item,presentation.tickets).some(message=>message.conversationId===impact.id));
+      return !ticket.is_backlogged && rail.settledItems.some(item=>item.id===address.value.parent_id);
     }));
   }
   return settledOpen && impact.kind==='address';

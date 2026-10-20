@@ -16,7 +16,7 @@ export function windowIdentity(window:ViewWindowRequest):string {
   return JSON.stringify([window.section,window.owner,window.group,window.child_filter]);
 }
 export function defaultViewRequest(locale='en-US'):ViewRequest {
-  return {projection_version:1,scope_generation:0,locale,selected:null,selected_conversation_id:null,windows:[
+  return {projection_version:2,scope_generation:0,locale,selected:null,selected_conversation_id:null,windows:[
     viewWindow('rail_parents',null,{limit:60}),
     viewWindow('rail_tickets',{kind:'chief',id:'chief'}),
     viewWindow('unread',null,{limit:20}),

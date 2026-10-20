@@ -22,7 +22,7 @@ from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuth
 from planner.navigation.proof_contracts import ProofResult
 
 VIEW_WIRE_VERSION = 3
-VIEW_PROJECTION_VERSION = 1
+VIEW_PROJECTION_VERSION = 2
 
 ViewSection = Literal["rail_parents", "rail_tickets", "children", "settled", "unread", "review"]
 ViewGroup = Literal[
@@ -66,7 +66,7 @@ class ViewWindowRequest(TypedDict):
 
 
 class ViewRequest(TypedDict):
-    projection_version: Literal[1]
+    projection_version: Literal[2]
     scope_generation: int
     locale: str
     selected: ViewOwner | None
@@ -92,6 +92,15 @@ class ViewOrchestratorValue(OrchestratorValue):
     recap_reference: ViewContentReference | None
 
 
+class ViewSettledOrchestratorValue(TypedDict):
+    """Settled rail membership without full-surface content dependencies."""
+
+    title: str
+    created_at: int
+    settled: Literal[True]
+    conversation_id: str | None
+
+
 class ViewConversationValue(TypedDict):
     owner_read_through_sequence: int
     error_acknowledged_through_sequence: int
@@ -110,6 +119,12 @@ class ViewOrchestratorRecord(TypedDict):
     value: ViewOrchestratorValue
 
 
+class ViewSettledOrchestratorRecord(TypedDict):
+    kind: Literal["orchestrator"]
+    id: str
+    value: ViewSettledOrchestratorValue
+
+
 class ViewConversationRecord(TypedDict):
     kind: Literal["conversation"]
     id: str
@@ -119,6 +134,7 @@ class ViewConversationRecord(TypedDict):
 type ViewRecord = (
     ViewTicketRecord
     | ViewOrchestratorRecord
+    | ViewSettledOrchestratorRecord
     | ViewConversationRecord
     | ChiefRecord
     | AddressRecord
@@ -155,7 +171,7 @@ class ViewContent(TypedDict):
 
 class ViewIdentity(TypedDict):
     wire_version: Literal[3]
-    projection_version: Literal[1]
+    projection_version: Literal[2]
     view_id: str
     scope_generation: int
     ordering_generation: str

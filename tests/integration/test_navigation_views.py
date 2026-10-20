@@ -16,12 +16,18 @@ from tests.integration.test_navigation_signal_publication import (
 from tests.integration.test_navigation_signal_publication import (
     actual_binding as actual_binding,
 )
-from tests.integration.test_navigation_transactions import add_conversation, add_ticket
+from tests.integration.test_navigation_transactions import add_conversation, add_parent, add_ticket
 from tests.support.navigation_current import current_navigation_database
 
-from planner.navigation.views.contracts import ViewRequest, ViewSnapshot, ViewWindowRequest
+from planner.navigation.views.configuration import DEFAULT_CONFIG
+from planner.navigation.views.contracts import (
+    ViewContent,
+    ViewRequest,
+    ViewSnapshot,
+    ViewWindowRequest,
+)
 from planner.navigation.views.delivery import difference
-from planner.navigation.views.logic import digest
+from planner.navigation.views.logic import compact, digest
 from planner.navigation.views.projection import rebuild
 from planner.navigation.views.read import read_content, request
 from planner.navigation.views.schema import prepare
@@ -39,7 +45,7 @@ def descriptor(*, limit: int = 30, selected: str | None = None) -> ViewRequest:
     }
     return request(
         {
-            "projection_version": 1,
+            "projection_version": 2,
             "scope_generation": 1,
             "locale": "en-US",
             "selected": None if selected is None else {"kind": "ticket", "id": selected},
@@ -130,7 +136,7 @@ def test_sequence_bookkeeping_changes_coverage_without_public_content(tmp_path: 
         assert footprint == {"globals": False, "keys": [], "sections": []}
         common = {
             "wire_version": 3,
-            "projection_version": 1,
+            "projection_version": 2,
             "view_id": "view",
             "scope_generation": 1,
             "ordering_generation": "order",
@@ -224,6 +230,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
         runtime = ScopedDeliveryRuntime(host.delivery)
         query = descriptor(selected="t")
         current, access = asyncio.run(runtime.snapshot(query))
+        assert current["projection_version"] == 2
         assert current["mode"] == "current"
         assert current["content"]["counts"]["unread"] == 1
         captured = asyncio.run(runtime.capture())
@@ -234,11 +241,206 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
             asyncio.run(runtime.snapshot(query, captured=captured))
         degraded, _ = asyncio.run(runtime.snapshot(query))
         assert degraded["mode"] == "degraded"
+        assert degraded["projection_version"] == 2
         assert degraded["authority"]["permit"] is None
         assert degraded["content"]["counts"]["running_conversations"] is None
         assert degraded["content"]["counts"]["unread"] == 1
     finally:
         conn.close()
+
+
+def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them(
+    tmp_path: Path,
+) -> None:
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        for conversation in ("own", "current", "historical"):
+            add_conversation(conn, conversation)
+        conn.execute("BEGIN")
+        for index in range(94):
+            add_parent(conn, f"o{index:03}")
+        conn.execute("UPDATE sprint_items SET settled=1,recap=?", ("A nonempty recap. " * 300,))
+        add_parent(conn, "active")
+        conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_o000','own')")
+        add_ticket(conn, "t", "o001")
+        conn.execute("UPDATE tickets SET conversation_id='current' WHERE id='t'")
+        conn.execute("INSERT INTO ticket_conversations VALUES('historical','t')")
+        for conversation in ("own", "current", "historical"):
+            conn.execute(
+                "INSERT INTO conversation_events VALUES(?,1,'message_to_owner','{}',0)",
+                (conversation,),
+            )
+        conn.commit()
+        query = descriptor(limit=60)
+        settled: ViewWindowRequest = {
+            **query["windows"][0],
+            "section": "settled",
+            "owner": None,
+            "child_filter": "all",
+        }
+        query["windows"] = [settled]
+        # Exact unread counts are visible even for owners with no admitted addresses.
+        query["windows"].extend(
+            {
+                **settled,
+                "section": "unread",
+                "owner": {"kind": "orchestrator", "id": owner},
+                "limit": 0,
+            }
+            for owner in ("o000", "o001", "o002")
+        )
+        _, lean = read_content(conn, query, current=True)
+        expected_fields = {"title", "created_at", "settled", "conversation_id"}
+        orchestrators = [row for row in lean["records"] if row["kind"] == "orchestrator"]
+        assert len(orchestrators) == 60
+        assert all(set(row["value"]) == expected_fields for row in orchestrators)
+        assert not any(row["kind"] in ("ticket", "project", "address") for row in lean["records"])
+        assert any(row["kind"] == "conversation" and row["id"] == "own" for row in lean["records"])
+        assert lean["counts"]["settled"] == 94
+        assert [window["total"] for window in lean["windows"]] == [94, 0, 2, 0]
+        assert lean["counts"]["unread"] == 3
+        page: ViewRequest = {
+            **query,
+            "windows": [{**settled, "anchor": lean["windows"][0]["next"]}],
+        }
+        _, tail = read_content(conn, page, current=True)
+        assert len(tail["windows"][0]["members"]) == 34
+        assert tail["windows"][0]["next"] is None
+        assert tail["windows"][0]["total"] == 94
+        assert {row["id"] for row in lean["windows"][0]["members"]}.isdisjoint(
+            row["id"] for row in tail["windows"][0]["members"]
+        )
+
+        def full_ids(content: ViewContent) -> set[str]:
+            # Dynamic inspection is intentional: the assertion distinguishes exact
+            # full and lean variants without inventing absent full fields.
+            return {
+                row["id"]
+                for row in content["records"]
+                if row["kind"] == "orchestrator" and "recap_reference" in row["value"]
+            }
+
+        selected = {**query, "selected": {"kind": "orchestrator", "id": "o003"}}
+        assert full_ids(read_content(conn, cast(ViewRequest, selected), current=True)[1]) == {
+            "o003"
+        }
+        selected_ticket = {
+            **query,
+            "selected": {"kind": "ticket", "id": "t"},
+            "selected_conversation_id": "historical",
+        }
+        _, selected_content = read_content(conn, cast(ViewRequest, selected_ticket), current=True)
+        assert full_ids(selected_content) == {"o001"}
+        assert any(row["id"] == "historical" for row in selected_content["records"])
+
+        ticket_unread = cast(
+            ViewRequest,
+            {
+                **query,
+                "windows": [
+                    settled,
+                    {
+                        **settled,
+                        "section": "unread",
+                        "owner": {"kind": "ticket", "id": "t"},
+                        "limit": 1,
+                    },
+                ],
+            },
+        )
+        _, unread_current = read_content(conn, ticket_unread, current=True)
+        assert full_ids(unread_current) == {"o001"}
+        assert unread_current["windows"][1]["total"] == 2
+        ticket_unread["windows"][1]["anchor"] = unread_current["windows"][1]["next"]
+        _, unread_historical = read_content(conn, ticket_unread, current=True)
+        assert full_ids(unread_historical) == {"o001"}
+        assert any(
+            row["kind"] == "address" and row["value"]["conversation_id"] == "historical"
+            for row in unread_historical["records"]
+        )
+
+        mixed: ViewRequest = {
+            **query,
+            "windows": [
+                *query["windows"],
+                {
+                    **settled,
+                    "section": "children",
+                    "owner": {"kind": "orchestrator", "id": "o001"},
+                    "limit": 1,
+                },
+                {**settled, "section": "unread", "limit": 1},
+                {**settled, "section": "rail_parents", "limit": 1},
+            ],
+        }
+        _, promoted = read_content(conn, mixed, current=True)
+        assert full_ids(promoted) == {"o000", "o001", "active"}
+        assert len({(row["kind"], row["id"]) for row in promoted["records"]}) == len(
+            promoted["records"]
+        )
+        assert any(row["kind"] == "project" for row in promoted["records"])
+        _, reversed_content = read_content(
+            conn,
+            cast(ViewRequest, {**mixed, "windows": list(reversed(mixed["windows"]))}),
+            current=True,
+        )
+        assert reversed_content["records"] == promoted["records"]
+        assert {window["window_id"]: window for window in reversed_content["windows"]} == {
+            window["window_id"]: window for window in promoted["windows"]
+        }
+
+
+def test_settled_promotion_charges_replacement_bytes_and_refuses_incomplete_dependencies(
+    tmp_path: Path,
+) -> None:
+    with current_navigation_database(tmp_path / "db") as conn:
+        activate(conn)
+        add_conversation(conn, "own")
+        conn.execute("BEGIN")
+        add_parent(conn, "o")
+        conn.execute("UPDATE sprint_items SET settled=1,recap=?", ("R" * 1500,))
+        conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_o','own')")
+        conn.execute("INSERT INTO conversation_events VALUES('own',1,'message_to_owner','{}',0)")
+        conn.commit()
+        query = descriptor(limit=1)
+        settled: ViewWindowRequest = {
+            **query["windows"][0],
+            "section": "settled",
+            "owner": None,
+            "child_filter": "all",
+        }
+        query["windows"] = [settled, {**settled, "section": "unread"}]
+        _, complete = read_content(conn, query, current=True)
+        record_bytes = sum(len(compact(row).encode()) for row in complete["records"])
+        # The budget has room for replacement deltas, but not a second full row.
+        maximum_bytes = max(len(compact(complete).encode()), (record_bytes * 4 + 2) // 3)
+        _, exact = read_content(
+            conn,
+            query,
+            current=True,
+            config=replace(DEFAULT_CONFIG, maximum_records=5, maximum_bytes=maximum_bytes),
+        )
+        assert exact == complete
+        for budget in (
+            replace(DEFAULT_CONFIG, maximum_records=4),
+            replace(DEFAULT_CONFIG, maximum_bytes=maximum_bytes - 200),
+        ):
+            _, refused = read_content(conn, query, current=True, config=budget)
+            assert len(refused["windows"][0]["members"]) == 1
+            assert refused["windows"][1]["members"] == []
+            assert refused["windows"][1]["total"] == 1
+            assert not any(row["kind"] in ("project", "address") for row in refused["records"])
+            assert all(
+                set(row["value"]) == {"title", "created_at", "settled", "conversation_id"}
+                for row in refused["records"]
+                if row["kind"] == "orchestrator"
+            )
+
+
+def test_scoped_request_refuses_the_retired_projection() -> None:
+    query = descriptor(limit=0)
+    with pytest.raises(ValueError, match="invalid view generation"):
+        request({**query, "projection_version": 1})
 
 
 def test_byte_budget_shrinks_pages_fairly_and_overlap_keeps_cursor_neighbors(

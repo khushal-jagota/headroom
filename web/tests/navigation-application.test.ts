@@ -5,7 +5,7 @@ import { createNavigationPresentationCache } from '../src/lib/navigation/present
 import { createNavigationCollection } from '../src/lib/navigation/collection';
 import { createNavigationKnowledge } from '../src/lib/navigation/knowledge';
 import { currentSnapshot,continuity,conversation } from './support/navigation/fixtures';
-import type { TicketRecord,NavigationRecord } from '../src/lib/navigation/contracts';
+import type { TicketRecord,NavigationRecord,ViewRecord } from '../src/lib/navigation/contracts';
 import { workspaceHoverImpact,orchestratorChildrenImpact,workspaceRailImpact } from '../src/lib/workspaceNavigationImpact';
 import { buildWorkspaceRail } from '../src/lib/workspaceRail';
 import { runtimeCountImpact,reviewBadgeImpact } from '../src/lib/reviewNavigationImpact';
@@ -105,6 +105,39 @@ describe('application presentation and command evidence',()=>{
       expect(workspaceRailImpact(historyImpact,unreadBacklogged,backloggedRail,true)).toBe(false);
       expect(runtimeCountImpact(titleImpact,first)).toBe(false);
       expect(reviewBadgeImpact(titleImpact)).toBe(false);
+    } finally {collection.destroy();}
+  });
+
+  it('shares parent unread windows independently of the bounded global page and clears their read facts',()=>{
+    const collection=createNavigationCollection(),knowledge=createNavigationKnowledge(),presentationFor=createNavigationPresentationCache();
+    try {
+      collection.publishSnapshot(currentSnapshot({...continuity,records}),'base');
+      const base=collection.getPublication()!;
+      const history=conversation('history');
+      const window={window_id:'parent-unread',request:{section:'unread' as const,owner:{kind:'orchestrator' as const,id:'parent'},group:'all' as const,child_filter:'all' as const,anchor:null,direction:'after' as const,limit:60},
+        members:[{kind:'address' as const,id:'history-address'}],total:7,previous:null,next:'more',forward_overlap:null,backward_overlap:null};
+      const scopedRecords:ViewRecord[]=[...records.filter(row=>row.kind!=='totals').map(row=>row.kind==='ticket' ? {...row,value:{...row.value,recap_reference:null,stage:'done',conversation_id:null}}
+        : row.kind==='orchestrator' ? {...row,value:{...row.value,recap:'Parent recap',recap_reference:null,settled:true}} : row),
+        history,{kind:'address',id:'history-address',value:{owner_kind:'ticket',owner_id:'a',conversation_id:'history',current:false,parent_kind:'orchestrator',parent_id:'parent'}},
+        {kind:'orchestrator',id:'lean',value:{title:'Lean row',created_at:2,settled:true,conversation_id:null}}];
+      const publication={...base,records:scopedRecords,view:{id:'scoped',scopeGeneration:1,contentVersion:'one',orderingGeneration:'fixture',
+        windows:[window,{...window,window_id:'global-unread',request:{...window.request,owner:null,limit:0},members:[],total:7}],counts:{running_conversations:1,out_claims:0,review:0,unread:7,settled:2}}};
+      const effective=knowledge.accept(publication),first=presentationFor(effective);
+      expect(presentationFor(effective)).toBe(first);
+      expect(first.unreadConversationIdsByWindow.get('parent-unread')).toEqual(new Set(['history']));
+      expect(first.unreadConversationIdsByWindow.get('global-unread')).toEqual(new Set());
+      expect(first.scopedRailMessagesByParent.get('parent')?.map(row=>row.conversationId)).toEqual(['history']);
+      expect(first.viewWindows[0].total).toBe(7);
+      expect(first.viewWindows[0].next).toBe('more');
+      expect(first.ticketMastheadsById.get('a')?.project).toBe('Project');
+      expect(first.rawOrchestratorsById.get('parent')?.value.recap).toBe('Parent recap');
+      const rail=buildWorkspaceRail(first.tickets,[...first.orchestrators,...first.settledOrchestrators]);
+      expect(rail.settledItems.find(item=>item.id==='lean')).not.toHaveProperty('recap');
+      expect(rail.settledItems.find(item=>item.id==='lean')).not.toHaveProperty('projectId');
+      const read=knowledge.invalidateDurableFact('history','message_for_owner',20)!;
+      const next=presentationFor(read);
+      expect(next).not.toBe(first);
+      expect(next.scopedRailMessagesByParent.get('parent')).toEqual([]);
     } finally {collection.destroy();}
   });
 
