@@ -142,11 +142,9 @@ export function workspaceAttentionGroups(
   return railGroups(cards.filter(railTicketEligible), true);
 }
 
-/** Preserve the full recap; empty text gets only a factual list count. */
-export function workspaceListRecap(groups: readonly WorkspaceTicketGroup[], recap = "", exactCount?:number): string {
-  if (recap.trim()) return recap;
-  const count = exactCount ?? groups.reduce((total, group) => total + group.cards.length, 0);
-  return count ? `${count} Ticket${count === 1 ? "" : "s"} in this list.` : "Nothing in this list right now.";
+/** A popover recap operates like any other recap: the real text, or nothing. */
+export function workspaceListRecap(recap = ""): string {
+  return recap.trim() ? recap : "";
 }
 
 /** Sidebar visibility stays separate from the durable unread conversation index. */

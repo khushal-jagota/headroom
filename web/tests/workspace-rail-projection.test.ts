@@ -111,14 +111,13 @@ describe("orchestrator rail projection", () => {
     expect(after.chiefGroups.find((group) => group.key === "agent")?.cards[0].conversation_signal?.working).toBe(true);
   });
 
-  it("passes the authoritative orchestrator recap and uses only factual counts when absent", () => {
+  it("passes the authoritative recap through and returns nothing when it is absent", () => {
     const source = item("recap", {recap:"Full body.\n" + "The rest of the recap is available. ".repeat(12),recap_preview:"Full body.…", tickets:[card("live"), card("done", {stage:"done"})]});
     const rail = buildWorkspaceRail([], [source]);
     expect(rail.items[0].recap).toBe(source.recap);
-    expect(workspaceListRecap(rail.items[0].groups, rail.items[0].recap)).toBe(source.recap);
-    expect(workspaceListRecap(rail.items[0].groups, " ")).toBe("1 Ticket in this list.");
-    expect(workspaceListRecap(buildWorkspaceRail([card("one"), card("two")]).chiefGroups)).toBe("2 Tickets in this list.");
-    expect(workspaceListRecap([])).toBe("Nothing in this list right now.");
+    expect(workspaceListRecap(rail.items[0].recap)).toBe(source.recap);
+    expect(workspaceListRecap(" ")).toBe("");
+    expect(workspaceListRecap()).toBe("");
   });
 
   it("retains survivors through refetch and appends entries and re-entries per category", async () => {
