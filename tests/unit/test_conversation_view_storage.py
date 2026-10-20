@@ -304,6 +304,7 @@ def test_owner_messages_stay_on_timeline_and_out_of_live_fold_scope(
         page = read_page(conn, "fixture", lens)
         messages = {item["key"]: item for item in page["items"]}
         assert {"turn:e1", "e4", "e5"} <= messages.keys()
+        # This also narrows both projection unions for the body and fold_rule checks below.
         assert messages["e4"]["kind"] == messages["e5"]["kind"] == "row"
         assert messages["e4"]["body"]["kind"] == "deferred"
         assert messages["e4"]["fold_rule"] == messages["e5"]["fold_rule"] == "never"
