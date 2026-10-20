@@ -135,7 +135,7 @@ off the server event loop because the CPU sample waits briefly.
 
 `panels environment cleanup` is a dry run. `--apply` collects a fresh inventory and
 re-proves every target before changing it. It can rotate configured oversized logs,
-remove expired backup temporaries, and prune verified backups beyond seven. It never
+remove expired backup temporaries, and prune verified backups beyond three. It never
 kills a process or removes a worktree, cache, environment, deployed app, or ambiguous
 path.
 
