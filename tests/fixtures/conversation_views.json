@@ -195,7 +195,7 @@
             "isLatest": true,
             "durationSeconds": 6,
             "toolCallCount": 0,
-            "foldedMessageCount": 1
+            "foldedMessageCount": 0
           },
           {
             "kind": "row",
@@ -213,7 +213,7 @@
               ],
               "toOwner": true
             },
-            "behindTheFoldOf": "turn:e1"
+            "behindTheFoldOf": null
           },
           {
             "kind": "row",
@@ -360,7 +360,7 @@
             "isLatest": true,
             "durationSeconds": 6,
             "toolCallCount": 1,
-            "foldedMessageCount": 2
+            "foldedMessageCount": 0
           },
           {
             "kind": "row",
@@ -378,7 +378,7 @@
               ],
               "toOwner": false
             },
-            "behindTheFoldOf": "turn:e1"
+            "behindTheFoldOf": null
           },
           {
             "kind": "work_group",
@@ -418,7 +418,7 @@
               ],
               "toOwner": true
             },
-            "behindTheFoldOf": "turn:e1"
+            "behindTheFoldOf": null
           },
           {
             "kind": "row",
@@ -957,7 +957,7 @@
             "isLatest": false,
             "durationSeconds": 4,
             "toolCallCount": 0,
-            "foldedMessageCount": 1
+            "foldedMessageCount": 0
           },
           {
             "kind": "row",
@@ -975,7 +975,7 @@
               ],
               "toOwner": true
             },
-            "behindTheFoldOf": "turn:e1"
+            "behindTheFoldOf": null
           },
           {
             "kind": "row",
@@ -3870,7 +3870,7 @@
             "isLatest": true,
             "durationSeconds": 11,
             "toolCallCount": 3,
-            "foldedMessageCount": 1
+            "foldedMessageCount": 0
           },
           {
             "kind": "work_group",
@@ -3939,7 +3939,7 @@
               ],
               "toOwner": false
             },
-            "behindTheFoldOf": "turn:e2"
+            "behindTheFoldOf": null
           },
           {
             "kind": "work_group",

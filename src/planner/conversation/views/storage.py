@@ -152,9 +152,11 @@ def read_row(
     encoded = encode_wire(body).encode("utf-8")
     kind = cast(ViewRowKind, row["row_kind"])
     fold_rule: Literal["never", "earlier_message", "work"] = "never"
+    # MessageToOwner payloads assume an owner recipient. SQL membership and counts
+    # use recipient-sensitive focus_visible. Harmonize both if recipients broaden.
     if kind == "tool_call":
         fold_rule = "work"
-    elif kind == "agent_message" and row["turn_key"] is not None:
+    elif body["kind"] == "agent_message" and not body["to_owner"] and row["turn_key"] is not None:
         fold_rule = "earlier_message"
     result: ConversationViewRow = {
         "kind": "row",
@@ -199,7 +201,15 @@ def read_turn(
     ).fetchone()
     is_stopped = stopped and row["ending_sequence"] is None
     ended = row["ending_sequence"] is not None
-    count = row["focus_message_count"] if focus else row["full_message_count"]
+    # Focus contains addressed messages only. Full retains its existing latest-message
+    # boundary, but addressed messages never contribute to the expansion count.
+    # This assumes message_to_owner recipients are owners, as does SQL membership.
+    # If recipients broaden, harmonize this classifier with the body to_owner flag.
+    ordinary_count = row["full_message_count"] - row["focus_message_count"]
+    retained_ordinary = (
+        row["latest_full_message_sequence"] is not None
+        and row["latest_full_message_sequence"] != row["latest_focus_message_sequence"]
+    )
     last = row["latest_focus_message_sequence"] if focus else row["latest_full_message_sequence"]
     return {
         "kind": "turn",
@@ -212,7 +222,11 @@ def read_turn(
         "ending": event.ConversationTurnEnding(row["ending"]) if row["ending"] else None,
         "duration_seconds": max(0, row["ended_at"] - row["created_at"]) if ended else None,
         "tool_call_count": 0 if focus else row["tool_call_count"],
-        "folded_message_count": max(0, count - 1) if ended or is_stopped else 0,
+        "folded_message_count": (
+            max(0, ordinary_count - int(retained_ordinary))
+            if not focus and (ended or is_stopped)
+            else 0
+        ),
         "latest_message_key": f"e{last}" if last is not None else None,
         "is_latest": latest is not None and latest[0] == key,
     }
@@ -253,6 +267,9 @@ def _candidate_members(
     further parameters belong to the scope and are returned with the member that needs
     them.
     """
+    # For agent messages, focus_visible identifies message_to_owner with an owner
+    # recipient. This assumes that event recipients stay owners. If they broaden,
+    # harmonize this classifier with read_row and read_turn before changing admission.
     focus = lens == "focus"
     visible = "r.focus_visible=1 AND " if focus else ""
     latest = "t.latest_focus_message_sequence" if focus else "t.latest_full_message_sequence"
@@ -278,7 +295,7 @@ def _candidate_members(
                 "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,0 AS slot "
                 "FROM conversation_view_rows r " + join + "WHERE r.conversation_id=? "
                 f"AND r.removed=0 AND {visible}r.turn_key=? AND r.row_kind='agent_message' "
-                f"AND r.sequence<>{latest}",
+                f"AND r.focus_visible=0 AND r.sequence<>{latest}",
                 [scope["key"]],
             )
         ]
@@ -297,7 +314,8 @@ def _candidate_members(
             "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,0 AS slot "
             "FROM conversation_view_rows r " + join + "WHERE r.conversation_id=? AND r.removed=0 "
             f"AND {visible}r.row_kind<>'tool_call' "
-            f"AND NOT(r.row_kind='agent_message' AND {has_head} AND ({settled}) "
+            "AND NOT(r.row_kind='agent_message' AND r.focus_visible=0 "
+            f"AND {has_head} AND ({settled}) "
             f"AND r.sequence<>{latest})",
             [],
         ),
@@ -556,6 +574,8 @@ def scope_contains_item(
             scope["kind"] == "timeline" and row[1] is None and (not stopped or row[0] is None)
         )
     row = _row_record(conn, conversation_id, sequence)
+    # Match page admission: message_to_owner recipients are assumed to be owners.
+    # If recipients broaden, harmonize focus_visible with the body to_owner flag.
     if scope["kind"] == "work_group":
         return bool(row["work_group_key"] == scope["key"])
     latest = row[
@@ -565,6 +585,7 @@ def scope_contains_item(
         return bool(
             row["turn_key"] == scope["key"]
             and row["row_kind"] == "agent_message"
+            and not row["focus_visible"]
             and sequence != latest
         )
     if row["row_kind"] == "tool_call":
@@ -582,6 +603,7 @@ def scope_contains_item(
     headed = row["focus_head"] if lens == "focus" else row["turn_key"] is not None
     return not (
         row["row_kind"] == "agent_message"
+        and not row["focus_visible"]
         and headed
         and (stopped or row["turn_ending_sequence"] is not None)
         and sequence != latest

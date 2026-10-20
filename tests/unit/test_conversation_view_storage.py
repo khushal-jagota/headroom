@@ -24,6 +24,7 @@ from planner.conversation.views.storage import (
     iter_body_content,
     read_body_chunk,
     read_page,
+    read_turn,
 )
 from planner.conversation.views.writer import append_projection, backfill_projection
 
@@ -248,6 +249,84 @@ def test_reconciliation_restores_a_pruned_summary_when_latest_pointer_moves_back
             "SELECT rest_summary FROM conversation_view_rows WHERE sequence=1"
         ).fetchone()[0]
         assert json.loads(summary)["excerpt"] == "Work"
+
+
+@pytest.mark.parametrize("lens", ["focus", "full"])
+@pytest.mark.parametrize("ordinary_last", [False, True])
+def test_owner_messages_stay_on_timeline_and_out_of_live_fold_scope(
+    lens: str, ordinary_last: bool
+) -> None:
+    """Protect SQL and live admission, including metadata on a deferred owner body."""
+    owner = {
+        "sender": {"kind": "ticket", "id": "worker"},
+        "recipient": {"kind": "owner", "id": "owner"},
+        "sender_label": "worker",
+    }
+    rows = [
+        prompt(),
+        event(
+            2,
+            "tool_call_started",
+            {
+                "tool_call_id": "tool",
+                "title": "Read",
+                "tool_kind": "read",
+                "detail": None,
+            },
+        ),
+        event(3, "agent_message", {"text": "Earlier ordinary message"}),
+        event(4, "message_to_owner", {**owner, "text": "界" * 50_000}),
+        event(5, "message_to_owner", {**owner, "text": "Second owner message"}),
+    ]
+    if ordinary_last:
+        rows.append(event(6, "agent_message", {"text": "Final ordinary message"}))
+    end = 7 if ordinary_last else 6
+    rows.append(event(end, "turn_ended", {"ending": "completed", "error_summary": None}))
+    timeline: ViewHistoryScope = {"kind": "timeline", "key": None}
+    turn_scope: ViewHistoryScope = {"kind": "turn", "key": "turn:e1"}
+    with database(rows) as conn:
+        conn.execute(f"ALTER TABLE conversations ADD COLUMN latest_sequence INTEGER DEFAULT {end}")
+        stored = conn.execute("SELECT * FROM conversation_view_turns").fetchone()
+        assert stored["tool_call_count"] == 1
+        head = read_turn(conn, "fixture", "turn:e1", lens)
+        assert head["tool_call_count"] == (0 if lens == "focus" else 1)
+        assert head["folded_message_count"] == (0 if lens == "focus" else 1)
+        assert head["settled"] and not head["stopped"]
+        page = read_page(conn, "fixture", lens)
+        messages = {item["key"]: item for item in page["items"]}
+        assert {"turn:e1", "e4", "e5"} <= messages.keys()
+        assert messages["e4"]["body"]["kind"] == "deferred"
+        assert messages["e4"]["fold_rule"] == messages["e5"]["fold_rule"] == "never"
+        assert "e3" not in messages
+        expanded = read_page(conn, "fixture", lens, scope=turn_scope)
+        assert [item["key"] for item in expanded["items"]] == (
+            [] if lens == "focus" else ["work:e2", "e3"]
+        )
+        live = ConversationViewLiveOutput()
+        try:
+            changes = _changes(
+                conn,
+                "fixture",
+                lens,
+                0,
+                [
+                    {
+                        "scope": scope,
+                        "first": {"sequence": 1, "slot": 0},
+                        "last": {"sequence": end, "slot": 0},
+                    }
+                    for scope in (timeline, turn_scope)
+                ],
+                read_status(conn, "fixture", lens, live, running=False),
+            )
+            assert changes is not None
+            main, folded = changes["scope_changes"]
+            assert {"e4", "e5"} <= set(main["item_keys"])
+            assert {"e4", "e5"}.isdisjoint(main["removed_keys"])
+            assert {"e4", "e5"}.isdisjoint(folded["item_keys"])
+            assert {"e4", "e5"} <= set(folded["removed_keys"])
+        finally:
+            live.close()
 
 
 def test_paging_back_through_a_long_timeline_loses_no_item_and_repeats_none() -> None:

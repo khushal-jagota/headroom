@@ -183,6 +183,7 @@ def _run(browser, urls):
     _catalogs(browser, urls[0])
     _preview_lifecycle(browser, urls[0])
 
+    import json
     import os
     import traceback
 
@@ -485,6 +486,10 @@ def _run(browser, urls):
 
     def short_message_growth_case(page, url):
         prepare_scroll_case(page, url, "plain", "scrollback")
+        # Production workspace insets leave less transcript room than the old copied
+        # host. Keep this case's actual premise: the first message fits in the viewport.
+        page.evaluate("window.__shortenFirstConversationLine()")
+        settled(page)
         page.locator(THREAD).focus()
         page.keyboard.press("Home")
         page.wait_for_function(
@@ -1003,7 +1008,7 @@ def _run(browser, urls):
     expected_draft = draft(page)
     page.locator("[data-conversation-expand]").click()
     state(page, "opened")
-    layer = page.locator("[data-conversation-layer-host]").bounding_box()
+    layer = page.locator(".conversation-layer").bounding_box()
     pane = page.locator(PANE).bounding_box()
     assert layer is not None and pane is not None
     page.mouse.click(layer["x"] + 2, layer["y"] + layer["height"] / 2)
@@ -1271,10 +1276,16 @@ def _run(browser, urls):
     assert page.locator("[data-conversation-rest-line]").inner_text() == "settled reply"
     assert page.locator("[data-conversation-rest-bar] .c2-rest-working").count() == 0
 
-    # Focus keeps settled work folded. Full reveals all commentary and every tool call.
+    # Settled Focus retains every owner answer and its head, without an empty disclosure.
     page.evaluate("window.__showSettledTurn()")
+    state(page, "opened")
     assert page.get_by_text("hidden commentary", exact=True).count() == 0
     assert page.locator('[data-conversation-row="tool_call"]').count() == 0
+    for text in ("Owner answer one.", "Owner answer two.", "final answer"):
+        page.get_by_text(text, exact=True).wait_for()
+        assert page.get_by_text(text, exact=True).is_visible()
+    assert page.locator("[data-conversation-turn-settled-head]").count() == 1
+    assert page.locator("[data-conversation-turn-fold], .c2-turn-chevron, [data-conversation-work-fold]").count() == 0
     page.locator('[data-conversation-lens-choice="full"]').click()
     assert page.get_by_text("hidden commentary", exact=True).count() == 1
     assert page.locator('[data-conversation-row="tool_call"]').count() == 4
@@ -1282,6 +1293,16 @@ def _run(browser, urls):
     assert page.locator("[data-conversation-turn-fold]").count() == 0
     assert page.locator("[data-conversation-turn-count]").count() == 0
     assert page.locator("[data-conversation-turn-settled-head]").count() == 1
+    for text in ("Owner answer one.", "Owner answer two.", "final answer", "middle commentary"):
+        page.get_by_text(text, exact=True).wait_for()
+        assert page.get_by_text(text, exact=True).count() == 1
+    legacy_evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    if legacy_evidence:
+        from pathlib import Path
+        Path(legacy_evidence, "legacy-owner-fold-proof.json").write_text(json.dumps({
+            "focusOwnerMessages":3,"focusSettledHeads":1,"focusFoldControls":0,
+            "fullOwnerMessages":3,"fullTools":4,"fullFoldControls":0}, indent=2))
+        page.screenshot(path=str(Path(legacy_evidence, "legacy-owner-full.png")))
 
     # The two endings a reader has to act on are the two the pane spells out: a turn the
     # backend killed, named with the reason it gave, and a turn whose ending the record
@@ -1382,7 +1403,8 @@ def _run(browser, urls):
     def measure_writing_area():
         return page.locator(INPUT).evaluate("""e => ({
           height:e.getBoundingClientRect().height,line:parseFloat(getComputedStyle(e).lineHeight),
-          overflow:getComputedStyle(e).overflowY})""")
+          overflow:getComputedStyle(e).overflowY,
+          inset:["paddingTop","paddingBottom","borderTopWidth","borderBottomWidth"].reduce((sum,key)=>sum+parseFloat(getComputedStyle(e)[key]),0)})""")
 
     def settle_frames():
         page.evaluate(
@@ -1392,7 +1414,7 @@ def _run(browser, urls):
     settle_frames()
     resting = measure_writing_area()
     assert resting["height"] >= resting["line"] * 3, resting
-    assert resting["height"] <= resting["line"] * 12 + 1, resting
+    assert abs(resting["height"] - resting["inset"] - resting["line"] * 6) <= 1, resting
     assert resting["overflow"] == "auto", resting
     for _ in range(3):
         settle_frames()
@@ -1401,7 +1423,7 @@ def _run(browser, urls):
     state(page, "peeked")
     settle_frames()
     peeked = measure_writing_area()
-    assert peeked["height"] >= peeked["line"] * 2, peeked
+    assert peeked == resting, peeked
     page.keyboard.press("Escape")
     state(page, "rest")
     settle_frames()
@@ -1713,10 +1735,150 @@ def _projected_visual_relationships(browser, url):
     assert not failures, {"failures": failures, "proof": proof}
 
 
+def _conversation_repairs(browser, url):
+    """Native pointer origins and textarea caret layout need a real browser, not a backend."""
+    import json
+    import os
+    from pathlib import Path
+    from urllib.parse import unquote
+
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    output = Path(evidence) if evidence else None
+    if output:
+        output.mkdir(parents=True, exist_ok=True)
+    proof = {"gestures": [], "caret": [], "cap": [], "projected": {}}
+    pane_selector = "[data-conversation-pane]"
+    input_selector = "[data-conversation-input]"
+    def frames(page):
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))))")
+    def state(page, value):
+        page.wait_for_selector(f'{pane_selector}[data-conversation-state="{value}"]')
+        frames(page)
+    for route in ("orchestrator", "ticket"):
+        page = browser.new_page(viewport={"width": 1280, "height": 1000})
+        errors = []
+        page.on("pageerror", lambda error, errors=errors: errors.append(str(error)))
+        page.goto(url + ("?ticket=1" if route == "ticket" else ""), wait_until="domcontentloaded")
+        state(page, "rest")
+        page.locator(input_selector).fill("selection survives dismissal")
+        for initial in ("peeked", "opened"):
+            for outside in ("document", "layer"):
+                page.evaluate("value => window.__setConversationState(value)", initial)
+                state(page, initial)
+                thread = page.locator("[data-conversation-thread]")
+                paragraph = thread.locator('[data-conversation-row="agent_message"] p').last
+                paragraph.scroll_into_view_if_needed()
+                box = paragraph.bounding_box()
+                layer = page.locator(".conversation-layer").bounding_box()
+                outside_box = page.locator("[data-ticket-behind]").bounding_box()
+                assert box and layer and outside_box
+                end = {"x": outside_box["x"] + 10, "y": outside_box["y"] + 10} if outside == "document" else {"x": layer["x"] + 2, "y": box["y"] + 8}
+                page.mouse.move(box["x"] + 40, box["y"] + 8)
+                page.mouse.down()
+                page.mouse.move(end["x"], end["y"], steps=12)
+                page.mouse.up()
+                state(page, initial)
+                selection = page.evaluate("() => getSelection()?.toString() ?? ''")
+                assert len(selection) > 0, (route, initial, outside, "gesture did not select text")
+                assert page.locator(input_selector).input_value() == "selection survives dismissal"
+                # The secondary button cannot acquire primary dismissal behavior.
+                page.mouse.click(end["x"], end["y"], button="right")
+                state(page, initial)
+                page.mouse.click(end["x"], end["y"])
+                state(page, "rest")
+                proof["gestures"].append({"route": route, "state": initial, "outside": outside, "selectionLength": len(selection), "secondaryPreserved": True, "primaryDismissed": True})
+        page.close()
+        assert not errors, errors
+
+    page = browser.new_page(viewport={"width": 1280, "height": 1000})
+    page.goto(url, wait_until="domcontentloaded")
+    box = page.locator(input_selector)
+    six_lines = "\n".join("abcdefghij line " + str(index) for index in range(6))
+    box.fill(six_lines)
+    for initial in ("rest", "peeked", "opened"):
+        for line in (0, 2, 5):
+            box.evaluate("e => {e.blur(); e.setSelectionRange(e.value.length,e.value.length); e.scrollTop=0;}")
+            page.evaluate("value => window.__setConversationState(value)", initial)
+            state(page, initial)
+            before = box.evaluate("""(e, line) => {
+              const r=e.getBoundingClientRect(), s=getComputedStyle(e);
+              const canvas=document.createElement('canvas'), c=canvas.getContext('2d'); c.font=s.font;
+              const x=r.left+parseFloat(s.borderLeftWidth)+parseFloat(s.paddingLeft)+c.measureText('abcd').width;
+              const y=r.top+parseFloat(s.borderTopWidth)+parseFloat(s.paddingTop)+(line+.5)*parseFloat(s.lineHeight)-e.scrollTop;
+              return {x,y,top:r.top,height:r.height,lineHeight:parseFloat(s.lineHeight)};
+            }""", line)
+            page.mouse.click(before["x"], before["y"])
+            frames(page)
+            after = box.evaluate("""e => {
+              const r=e.getBoundingClientRect(),s=getComputedStyle(e),prefix=e.value.slice(0,e.selectionStart);
+              const lines=prefix.split('\\n'), line=lines.length-1;
+              return {start:e.selectionStart,end:e.selectionEnd,top:r.top,height:r.height,
+                caretY:r.top+parseFloat(s.borderTopWidth)+parseFloat(s.paddingTop)+(line+.5)*parseFloat(s.lineHeight)-e.scrollTop,
+                scroll:e.scrollTop,state:e.closest('[data-conversation-pane]').dataset.conversationState};
+            }""")
+            expected = sum(len(part)+1 for part in six_lines.split("\n")[:line]) + 4
+            assert after["start"] == after["end"] == expected, (initial, line, before, after, expected)
+            assert abs(after["top"]-before["top"]) <= 1 and abs(after["height"]-before["height"]) <= 1, (before, after)
+            assert abs(after["caretY"]-before["y"]) <= 1, (before, after)
+            assert after["top"] <= after["caretY"] <= after["top"]+after["height"], after
+            proof["caret"].append({"initialState":initial,"clickedLine":line+1,"expectedOffset":expected,"before":before,"after":after})
+    long_draft = "\n".join("Long draft line " + str(index) for index in range(30))
+    box.fill(long_draft)
+    for initial in ("rest", "peeked", "opened"):
+        box.evaluate("e => e.blur()")
+        page.evaluate("value => window.__setConversationState(value)", initial)
+        state(page, initial)
+        before = box.evaluate("""e => { const r=e.getBoundingClientRect(),s=getComputedStyle(e);return {height:r.height,lineHeight:parseFloat(s.lineHeight),inset:["paddingTop","paddingBottom","borderTopWidth","borderBottomWidth"].reduce((sum,key)=>sum+parseFloat(s[key]),0),overflow:s.overflowY,scrollHeight:e.scrollHeight,clientHeight:e.clientHeight}; }""")
+        assert abs(before["height"]-before["inset"]-6*before["lineHeight"]) <= 1, before
+        assert before["overflow"] == "auto" and before["scrollHeight"] > before["clientHeight"], before
+        box.click(position={"x":10,"y":10})
+        frames(page)
+        after_height = box.evaluate("e => e.getBoundingClientRect().height")
+        assert abs(after_height-before["height"]) <= 1, (initial, before, after_height)
+        assert box.input_value() == long_draft
+        proof["cap"].append({"initialState":initial,**before,"afterFocusHeight":after_height})
+    if output:
+        page.screenshot(path=str(output / "six-line-composer.png"))
+    page.close()
+
+    page = browser.new_page(viewport={"width": 1280, "height": 1000})
+    page.goto(url+"?reader=1&folds=1", wait_until="domcontentloaded")
+    for text in ("Owner answer one.", "Owner answer two.", "Owner answer three.", "Owner answer before failure."):
+        answer = page.get_by_text(text, exact=True)
+        answer.wait_for()
+        answer.scroll_into_view_if_needed()
+        assert answer.is_visible()
+    assert page.locator("[data-conversation-turn-settled-head]").count() == 2
+    assert page.locator("[data-conversation-turn-fold], .c2-turn-chevron, [data-conversation-work-fold]").count() == 0
+    assert page.locator('[data-conversation-row="tool_call"]').count() == 0
+    page.get_by_text("Visible fold failure", exact=True).wait_for()
+    page.get_by_text("turn stopped without an ending", exact=True).wait_for()
+    proof["projected"]["focus"]={"ownerMessages":4,"settledHeads":2,"foldControls":0,"failureAndStop":True}
+    if output:
+        page.screenshot(path=str(output / "owner-messages-focus.png"))
+    page.locator('[data-conversation-lens-choice="full"]').click()
+    for text in ("Ordinary commentary one.", "Ordinary commentary two.", "Ordinary commentary three."):
+        page.get_by_text(text, exact=True).wait_for()
+    for text in ("Owner answer one.", "Owner answer two.", "Owner answer three.", "Owner answer before failure."):
+        assert page.get_by_text(text, exact=True).count() == 1
+    for key in ("fold-tool-6", "fold-tool-7"):
+        page.locator(f'[data-conversation-tool="{key}"]').wait_for()
+    assert page.locator("[data-conversation-turn-fold], [data-conversation-work-fold]").count() == 0
+    calls=page.evaluate("window.__viewCalls")
+    assert any('owner:3' in unquote(call) for call in calls), calls
+    proof["projected"]["full"]={"ordinaryMessages":3,"tools":2,"foldControls":0,"deferredOwnerRead":True}
+    if output:
+        page.screenshot(path=str(output / "owner-messages-full.png"))
+        (output / "conversation-repair-proof.json").write_text(json.dumps(proof,indent=2))
+    print("CONVERSATION_REPAIR_PROOF " + json.dumps(proof), flush=True)
+    page.close()
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        _conversation_repairs(browser, urls[0])
         _projected_visual_relationships(browser, urls[0])
         _bounded_reader(browser, urls[0])
         _run(browser, urls)

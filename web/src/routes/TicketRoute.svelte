@@ -21,6 +21,7 @@
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import ConversationSignalMark from "../components/ConversationSignalMark.svelte";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
+  import { isPrimaryPressOutsideConversation } from "../lib/conversation/dismissal";
   import type { ConversationState } from "../lib/conversation/conversationState";
   import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
@@ -195,17 +196,9 @@
     conversationState = initialTicketConversationState(ownership);
   });
 
-  /** A click outside the conversation dismisses it to rest. */
-  function dismissConversationToRest(): void {
-    if (conversationState !== "rest") conversationState = "rest";
-  }
-
-  /** A press beside the centered conversation card dismisses it to rest. */
-  function dismissConversationOnAPressBesideTheCard(event: MouseEvent): void {
-    const pressed = event.target;
-    if (!(pressed instanceof Element)) return;
-    if (pressed.closest("[data-conversation-pane]") !== null) return;
-    dismissConversationToRest();
+  /** A primary press outside the card dismisses it without interrupting selection. */
+  function dismissConversationOnPointerDown(event: PointerEvent): void {
+    if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
   }
 
   /** The artifact this screen is showing, when the host does not keep it in an address. */
@@ -514,7 +507,7 @@
       {@const detail = ticket.data}
       <div class="ticket-page">
       <div class="ticket-reading">
-      <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
+      <main class="ticket-doc" onpointerdowncapture={dismissConversationOnPointerDown}>
         <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id}>
           <div class="worker-eyebrow" data-ticket-identity>
             <span data-project-fact>{masthead.project || "No project"}</span>
@@ -660,7 +653,7 @@
       <div
         class="conversation-layer"
         data-conversation-layer-host
-        onclickcapture={dismissConversationOnAPressBesideTheCard}
+        onpointerdowncapture={dismissConversationOnPointerDown}
       >
         <div class="conversation-column">
           <LiveConversation

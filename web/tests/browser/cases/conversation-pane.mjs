@@ -38,6 +38,9 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   const catalogsOnly=new URLSearchParams(window.location.search).has("catalogs");
   const catalogClient=new QueryClient({defaultOptions:{queries:{retry:false}}});
   let catalogSelected=$state<string|null>(null);
+  import OrchestratorWorkspace from "../src/components/OrchestratorWorkspace.svelte";
+  import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
+  const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import { discardHeldPrompt, promoteHeldPrompt } from "../src/lib/conversation/wire";
   import type { ConversationState } from "../src/lib/conversation/conversationState";
@@ -121,16 +124,12 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     return true;
   }
 
-  function dismissConversation(): void {
-    conversationState = "rest";
+  // The Ticket layout uses the same production predicate as TicketRoute. The
+  // orchestrator below mounts its actual production workspace and handlers.
+  function dismissTicketOnPointerDown(event: PointerEvent): void {
+    if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
   }
-
-  function dismissBesidePane(event: MouseEvent): void {
-    const pressed = event.target;
-    if (!(pressed instanceof Element)) return;
-    if (pressed.closest("[data-conversation-pane]") !== null) return;
-    dismissConversation();
-  }
+  (window as any).__setConversationState = (state: ConversationState) => conversationState = state;
 
   (window as any).__appendConversationLine = () => {
     const index = nextRowIndex++;
@@ -197,6 +196,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__dropFirstConversationLines = (count: number) => {
     rows = rows.slice(count);
+  };
+  (window as any).__shortenFirstConversationLine = () => {
+    rows = rows.map((row, index) => index === 0
+      ? {...row, content: [{piece:"text", text:"A short message."}]} : row);
   };
   (window as any).__growFirstConversationLine = () => {
     rows = rows.map((row, index) =>
@@ -416,13 +419,20 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         createdAt: 4_001,
         content: [{ piece: "text", text: "hidden commentary" }]
       },
+      {key:"owner-first",kind:"agent_message",sequence:3_002,createdAt:4_002,
+        content:[{piece:"text",text:"Owner answer one."}],toOwner:true},
+      {key:"middle-commentary",kind:"agent_message",sequence:3_003,createdAt:4_003,
+        content:[{piece:"text",text:"middle commentary"}],toOwner:false},
+      {key:"owner-second",kind:"agent_message",sequence:3_004,createdAt:4_004,
+        content:[{piece:"text",text:"Owner answer two."}],toOwner:true},
       ...[1, 2, 3, 4].map(tool),
       {
         key: "full-answer",
         kind: "agent_message",
         sequence: 3_200,
         createdAt: 4_200,
-        content: [{ piece: "text", text: "final answer" }]
+        content: [{ piece: "text", text: "final answer" }],
+        toOwner: true
       },
       {
         key: "full-end",
@@ -434,7 +444,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         automaticCompactionResult: null
       }
     ];
-    visibleRows = null;
+    visibleRows = rows.filter(row => row.kind === "prompt" || (row.kind === "agent_message" && row.toOwner === true));
     lens = "focus";
     conversationState = "opened";
   };
@@ -524,16 +534,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   </section>
 </QueryClientProvider>
 {:else}
-<main class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
-  <section class="fixture-document">
-    <button type="button" data-ticket-behind onclick={dismissConversation}>Ticket content</button>
-  </section>
-  <section
-    class="conversation-layer"
-    data-conversation-layer-host
-    onclickcapture={dismissBesidePane}
-  >
-    <div class="conversation-column">
+{#snippet conversationPane()}
       <ConversationPane
         bind:conversationState
         bind:lens
@@ -572,9 +573,23 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
           (window as any).__sentAgain = senderMessageId;
         }}
       />
-    </div>
-  </section>
-</main>
+{/snippet}
+<div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
+  {#if ticketGestures}
+    <main class="ticket-doc fixture-document" onpointerdowncapture={dismissTicketOnPointerDown}>
+      <button type="button" data-ticket-behind>Ticket content</button>
+    </main>
+    <section class="conversation-layer" onpointerdowncapture={dismissTicketOnPointerDown}>
+      <div class="conversation-column">{@render conversationPane()}</div>
+    </section>
+  {:else}
+    <OrchestratorWorkspace bind:conversationState>
+      <button type="button" data-ticket-behind>Ticket content</button>
+      {#snippet conversation()}{@render conversationPane()}{/snippet}
+    </OrchestratorWorkspace>
+  {/if}
+</div>
+
 {/if}
 
 <style>
@@ -593,15 +608,15 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     flex: 1;
     min-height: 0;
   }
-  .fixture-document button {
+  :global([data-ticket-behind]) {
     position: fixed;
     inset: 4px auto auto 4px;
     z-index: 3;
   }
-  .conversation-layer {
+  .fixture-ticket :global(.conversation-layer) {
     align-items: center;
   }
-  .fixture-ticket:not(.ticket-screen) .conversation-column {
+  .fixture-ticket:not(.ticket-screen) :global(.conversation-column) {
     box-sizing: border-box;
     width: min(680px, calc(100% - 96px));
   }

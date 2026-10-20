@@ -618,8 +618,8 @@ hand-rolling the same shapes per screen. Each does one job:
   Its delivery control defaults to Steer and also offers Queue and Send now. A held row
   names why Panels queued a steer fallback.
 
-  The textarea grows with its content. Its height stops at the smaller of 44% of the
-  conversation pane or 12 lines, rounded down to whole lines, then scrolls internally.
+  The textarea grows with its content up to six whole lines, then scrolls internally.
+  The same cap applies at rest, peeked, and opened. Pane height and focus do not change it.
   A hidden textarea measures each draft with the same text layout and scrollbar width.
   Only the final height and overflow reach the visible input. A same-line edit therefore
   keeps the transcript in place without a temporary collapse of the composer.
@@ -660,7 +660,9 @@ hand-rolling the same shapes per screen. Each does one job:
   Every state keeps whatever the person had half-typed.
 
   The Chief and ordinary orchestrators share one layout with this layer and the same
-  outside-click dismissal. Both start at rest. The person controls rest, peeked, and
+  outside-click dismissal. Dismissal uses the start of a primary pointer gesture.
+  A text selection that starts inside the conversation can end outside without dismissal.
+  Ticket views use the same rule. Both start at rest. The person controls rest, peeked, and
   opened states, and a refresh keeps that choice.
 - **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
   `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and

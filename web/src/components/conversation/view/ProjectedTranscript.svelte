@@ -23,7 +23,7 @@
   let emptyEndings = new SvelteMap<string, string>();
   const items = $derived.by(() => { const map = new Map<string, ConversationViewItem>(); for (const page of reader.pages)
       for (const item of page.items)
-          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'full' || item.kind !== 'row' || item.row_kind !== 'agent_message' || item.turn_key === null)
+          map.set(item.key, item); return [...map.values()].filter(item => { if (reader.lens === 'full' || item.kind !== 'row' || item.fold_rule !== 'earlier_message' || item.turn_key === null)
       return true; const turn = map.get(item.turn_key); return turn?.kind !== 'turn' || !turn.settled || turn.latest_message_key === item.key || reader.isExpanded({ kind: 'turn', key: turn.key }); }).sort(compareItems); });
   function hasPresentation(item: ConversationViewItem): boolean {
       if (item.kind === 'turn')
