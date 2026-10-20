@@ -6657,9 +6657,9 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 /* Workspace ticket buckets share row geometry across buttons and message links. */
 .workspace-ticket-bucket { margin-top:var(--space-4); }
 .workspace-ticket-bucket .bucket-label { font-size:10.5px; line-height:normal; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); padding-bottom:6px; margin-bottom:var(--space-1); border-bottom:var(--border-hairline) solid var(--border-color); }
-.workspace-ticket-bucket .worker-row { width:100%; display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
 .workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
 .workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.workspace-ticket-bucket .worker-row .stage-mark { justify-self:end; margin-left:0; margin-right:0; }
+.workspace-ticket-bucket .worker-row .conversation-signal-marks { justify-self:end; }
