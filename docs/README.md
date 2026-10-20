@@ -76,6 +76,7 @@ path. The supervisor reads canonical Item and Ticket state before it acts on a n
   shows a conversation — a Ticket's and the Chief of Staff's.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
+- **Diagnostic history** (`diagnostic-history.md`) — explicit offline reports, history protection, and separate expiry and compaction decisions.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.
 - **Notifications** (`notifications.md`) — installable Panels, notification choices,
   and the durable Web Push path from a system fact to a phone.
