@@ -36,6 +36,7 @@ from planner.conversation.views.status import read_status
 from planner.conversation.views.storage import (
     ViewBodyChanged,
     body_content,
+    conversation_backend,
     encode_wire,
     iter_body_content,
     read_body_chunk,
@@ -257,6 +258,8 @@ def _changes(
     changes = conn.execute("SELECT * FROM (" + sql + ") LIMIT ?", params).fetchall()
     if len(changes) > SUBSCRIBER_CHANGE_LIMIT:
         return None
+    # One read for the whole wake, as with a page: every changed row is this conversation's.
+    backend_key = conversation_backend(conn, conversation_id)
     upserts: list[ConversationViewItem] = []
     removed: list[str] = []
     invalidated: list[ViewHistoryScope] = []
@@ -307,7 +310,11 @@ def _changes(
         item: ConversationViewItem
         if changed["kind"] == "row":
             item, _ = read_row(
-                conn, conversation_id, changed["sequence"], stopped=status["stopped_without_ending"]
+                conn,
+                conversation_id,
+                changed["sequence"],
+                stopped=status["stopped_without_ending"],
+                backend_key=backend_key,
             )
         elif changed["kind"] == "turn":
             item = read_turn(

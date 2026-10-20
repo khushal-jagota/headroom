@@ -89,12 +89,12 @@ def test_a_focus_page_costs_what_it_costs_today() -> None:
             page = read_page(conn, "fixture", "focus")
         bytes_out = len(json.dumps(page))
         assert len(page["items"]) > 0
-        # Today: 80 items, 201 statements, 8,000 steps, 31,229 bytes. The statement count
+        # Today: 80 items, 162 statements, 7,000 steps, 31,229 bytes. The statement count
         # is this high because every body is rebuilt from source events a row at a time.
-        assert len(work.statements) <= 210, (
+        assert len(work.statements) <= 170, (
             f"a Focus page now runs {len(work.statements)} statements"
         )
-        assert work.steps <= 10_000, f"a Focus page now visits {work.steps} VM steps"
+        assert work.steps <= 9_000, f"a Focus page now visits {work.steps} VM steps"
         assert bytes_out <= 35_000, f"a Focus page now produces {bytes_out} bytes"
 
 
@@ -104,14 +104,15 @@ def test_a_full_page_costs_what_it_costs_today() -> None:
             page = read_page(conn, "fixture", "full")
         bytes_out = len(json.dumps(page))
         assert len(page["items"]) > 0
-        # Today: 100 items, 276 statements, 14,000 steps, 50,994 bytes.
-        assert len(work.statements) <= 290, (
+        # Today: 100 items, 202 statements, 13,000 steps, 50,994 bytes. It was 276 before
+        # the conversation's backend stopped being re-read once per row.
+        assert len(work.statements) <= 210, (
             f"a Full page now runs {len(work.statements)} statements"
         )
         # This was 17,000 before the candidate query was driven off the open-group index
         # instead of the rows table. The headroom is for planner differences between
         # SQLite versions, not for new work.
-        assert work.steps <= 17_000, f"a Full page now visits {work.steps} VM steps"
+        assert work.steps <= 16_000, f"a Full page now visits {work.steps} VM steps"
         assert bytes_out <= 60_000, f"a Full page now produces {bytes_out} bytes"
 
 

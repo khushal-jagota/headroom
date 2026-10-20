@@ -79,6 +79,20 @@ def _row_record(conn: sqlite3.Connection, conversation_id: str, sequence: int) -
     return cast(sqlite3.Row, row)
 
 
+def conversation_backend(
+    conn: sqlite3.Connection, conversation_id: str
+) -> ConversationBackendKey:
+    """Which backend this conversation runs on, decided when it was created.
+
+    Worth reading once and carrying. Read per row it was 83 identical statements on a
+    hundred-item page, asking for a value that nothing ever updates.
+    """
+    row = conn.execute(
+        "SELECT backend_key FROM conversations WHERE conversation_id=?", (conversation_id,)
+    ).fetchone()
+    return ConversationBackendKey(row[0]) if row else ConversationBackendKey.hermes
+
+
 def _body(
     conn: sqlite3.Connection,
     conversation_id: str,
@@ -86,6 +100,7 @@ def _body(
     *,
     stopped: bool = False,
     full_tool_detail: bool = False,
+    backend_key: ConversationBackendKey | None = None,
 ) -> ViewRowBody:
     settlement_sequence = row["settlement_sequence"]
     settlement = (
@@ -100,9 +115,8 @@ def _body(
         ).fetchone()
         dead = "turn_ended" if ending else ("no_ending_recorded" if stopped else None)
     source = _payload(conn, conversation_id, row["sequence"])
-    backend = conn.execute(
-        "SELECT backend_key FROM conversations WHERE conversation_id=?", (conversation_id,)
-    ).fetchone()
+    if backend_key is None:
+        backend_key = conversation_backend(conn, conversation_id)
     body = row_body(
         source,
         created_at=row["created_at"],
@@ -111,9 +125,7 @@ def _body(
         or (row["sequence"] if isinstance(source, event.ToolCallFinishedEventPayload) else None),
         dead_reason=dead,
         full_tool_detail=full_tool_detail,
-        backend_key=ConversationBackendKey(backend[0])
-        if backend
-        else ConversationBackendKey.hermes,
+        backend_key=backend_key,
     )
     if body is None:
         raise ValueError("Source does not produce a view row")
@@ -135,9 +147,10 @@ def read_row(
     sequence: int,
     *,
     stopped: bool = False,
+    backend_key: ConversationBackendKey | None = None,
 ) -> tuple[ConversationViewRow, int]:
     row = _row_record(conn, conversation_id, sequence)
-    body = _body(conn, conversation_id, row, stopped=stopped)
+    body = _body(conn, conversation_id, row, stopped=stopped, backend_key=backend_key)
     encoded = encode_wire(body).encode("utf-8")
     kind = cast(ViewRowKind, row["row_kind"])
     fold_rule: Literal["never", "earlier_message", "work"] = "never"
@@ -380,9 +393,17 @@ def read_page(
     items: list[ConversationViewItem] = []
     body_bytes = 0
     item: ConversationViewItem
+    # One read for the whole page, because every row on it belongs to one conversation.
+    backend_key = conversation_backend(conn, conversation_id)
     for candidate in candidates[:HISTORY_PAGE_ITEMS]:
         if candidate["kind"] == "row":
-            item, count = read_row(conn, conversation_id, candidate["sequence"], stopped=stopped)
+            item, count = read_row(
+                conn,
+                conversation_id,
+                candidate["sequence"],
+                stopped=stopped,
+                backend_key=backend_key,
+            )
         elif candidate["kind"] == "turn":
             item = read_turn(conn, conversation_id, candidate["key"], lens, stopped=stopped)
             count = 0
