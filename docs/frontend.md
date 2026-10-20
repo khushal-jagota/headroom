@@ -453,6 +453,9 @@ or locale produces identical arbitrary-text ordering.
   groups. Tables and lists retain their complete logical container, intrinsic layout, and
   numbering. An unusually large selected container can therefore exceed the ordinary DOM
   window. Editable serialization keeps its synchronous exact-source behavior.
+  The worker parse wait uses the shared document skeleton. Its completed document or
+  error line replaces the skeleton through the same cross-fade. Replacement and removal
+  cancel the parse and release the mounted transition region.
   Images, HTML frames, PDF frames, and media players mount automatically near the viewport.
   Distant or hidden previews release native resources and text reads. Measured placeholders
   preserve their place. A custom visibility gate owns image admission, so native lazy
@@ -593,6 +596,9 @@ hand-rolling the same shapes per screen. Each does one job:
   then returns to natural height. The reservation does not predict the content.
   The three skeleton tokens control the whisper fills and fade duration. Reduced
   motion removes the fade. Worker activity marks remain separate.
+  Action buttons keep their own busy labels. The model picker's Refresh button
+  says “Reading…” and exposes `aria-busy` during its explicit refresh. This label
+  describes the action, not a region without content, so it is outside skeleton scope.
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).

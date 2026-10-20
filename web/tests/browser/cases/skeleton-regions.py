@@ -95,5 +95,54 @@ def run(browser, urls):
         page.evaluate("window.__load(true)")
         page.wait_for_timeout(200)
         page.screenshot(path=str(directory / "skeleton-narrow.png"), full_page=True)
+    # This existing host also exercises the imperative Markdown/Svelte boundary.
+    # A controlled Worker exposes waits that a real parser can finish between frames.
+    page.evaluate("window.__show(false);window.__mockMarkdownWorker();window.__markdown('large')")
+    fixture = page.locator('[data-markdown-fixture]')
+    fixture.scroll_into_view_if_needed()
+    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    assert fixture.locator('[data-shape=document][aria-busy=true]').count() == 1
+    assert fixture.locator('[role=status]').inner_text() == "Loading text..."
+    assert fixture.locator('.quiet-line').count() == 0
+    assert fixture.locator('[role=status]').evaluate("node=>!node.closest('[aria-busy=true]')")
+    if output:
+        page.wait_for_function(
+            "parseFloat(getComputedStyle("
+            "document.querySelector('[data-markdown-fixture] .skeleton')).opacity) > .99"
+        )
+        fixture.screenshot(path=str(Path(output) / "markdown-worker-skeleton.png"))
+    page.evaluate("window.__workers.at(-1).reply()")
+    page.wait_for_function("document.querySelector('[data-markdown-fixture] .resource-arriving')")
+    assert fixture.locator('.skeleton[data-leaving]').count() == 1
+    page.wait_for_function("document.querySelector('[data-markdown-window] h2')")
+    assert fixture.locator('h2').inner_text() == 'Worker document'
+    page.wait_for_function("!document.querySelector('[data-markdown-fixture] .skeleton')")
+    assert fixture.locator('[role=status]').inner_text() == ''
+
+    page.evaluate("window.__markdown('failure')")
+    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    page.evaluate("window.__workers.at(-1).reply(true)")
+    page.wait_for_function("document.querySelector('[data-markdown-fixture] .quiet-line')")
+    assert fixture.locator('.quiet-line').inner_text() == 'Parse failed'
+    page.wait_for_function("!document.querySelector('[data-markdown-fixture] .skeleton')")
+    assert fixture.locator('[aria-busy=true]').count() == 0
+
+    page.evaluate("window.__markdown('obsolete')")
+    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    page.evaluate("window.__oldWorker=window.__workers.at(-1);window.__markdown('small');window.__oldWorker.reply()")
+    page.wait_for_function("document.querySelector('[data-markdown-fixture] h1')")
+    assert fixture.locator('h1').inner_text() == 'Replacement document'
+    assert page.evaluate('window.__oldWorker.terminated')
+    assert fixture.locator('.skeleton-region, [data-markdown-window]').count() == 0
+
+    page.evaluate("window.__markdown('destroyed')")
+    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    page.evaluate("window.__markdownAnimations=document.querySelector('[data-markdown-fixture]').getAnimations({subtree:true});window.__markdown('destroy');window.__workers.at(-1).reply()")
+    page.wait_for_function("!document.querySelector('[data-markdown-fixture] .skeleton-region')")
+    assert page.evaluate(
+        "window.__markdownAnimations.every(animation=>animation.playState==='idle')"
+    )
+    assert page.evaluate('window.__workers.at(-1).terminated')
+    assert fixture.locator('[data-markdown-window]').count() == 0
     assert not errors, errors
     page.close()
