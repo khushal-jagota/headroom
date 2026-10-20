@@ -138,10 +138,10 @@ def test_a_worker_may_not_declare_a_worker_type(client: tuple[TestClient, Path])
     ]
 
 
-def test_chief_recap_is_owner_editable_durable_and_exact(
+def test_chief_recap_is_writable_by_the_owner_and_the_chief(
     client: tuple[TestClient, Path],
 ) -> None:
-    """The new write must persist alone and refuse agent writes or malformed payloads."""
+    """The Chief writes its own recap; other agents and malformed payloads are refused."""
     test_client, db_path = client
     settings_path = "/api/workers/chief-of-staff/settings"
     write_path = "/api/workers/chief-of-staff/recap"
@@ -157,8 +157,16 @@ def test_chief_recap_is_owner_editable_durable_and_exact(
     with connect(str(db_path)) as conn:
         assert conn.execute("SELECT recap FROM chief_settings").fetchone()[0] == recap
 
+    chief_recap = "Chief wrote this."
+    response = test_client.put(
+        write_path, json={"recap": chief_recap}, headers={"X-Plan-Actor": "chief"}
+    )
+    assert response.status_code == 200, response.text
+    assert test_client.get(settings_path).json()["recap"] == chief_recap
+    response = test_client.put(write_path, json={"recap": recap})
+    assert response.status_code == 200, response.text
+
     for headers in (
-        {"X-Plan-Actor": "chief"},
         {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_recap"},
         {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_recap"},
     ):
