@@ -16,10 +16,15 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     ResolvedConversationStart,
 )
-from planner.conversation.events import PromptEventPayload
+from planner.conversation.events import (
+    ConversationTurnEnding,
+    ExplicitReplyMissingEventPayload,
+    PromptEventPayload,
+)
 from planner.conversation.message_content import message_content_text
 from planner.conversation.message_files import ConversationMessageFiles
-from planner.core.contracts import CHIEF_PRINCIPAL, OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.conversation.views.storage import read_page
+from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect
 from planner.sprints import data as sprints_data
 from planner.sprints.contracts import SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
@@ -49,7 +54,7 @@ class _StartupHarness:
 
 
 @pytest.mark.parametrize("actor", ["owner", "chief"])
-def test_creation_delivers_exact_goal_as_creator_with_supervisor_defaults(
+def test_creation_delivers_exact_goal_as_panels_with_supervisor_defaults(
     tmp_path: Path, actor: str
 ) -> None:
     harness = _StartupHarness()
@@ -79,8 +84,8 @@ def test_creation_delivers_exact_goal_as_creator_with_supervisor_defaults(
         assert len(prompts) == 1
         prompt = prompts[0]
         assert message_content_text(prompt.content) == goal
-        assert prompt.sender == (OWNER_PRINCIPAL if actor == "owner" else CHIEF_PRINCIPAL)
-        assert prompt.sender_label == actor.replace("chief", "Chief")
+        assert prompt.sender is None
+        assert prompt.sender_label == "Panels"
         assert prompt.recipient == Principal(PrincipalKind.sprint_item, item["id"])
         assert prompt.mode is PromptDeliveryMode.queue
         assert prompt.sender_message_id
@@ -102,5 +107,34 @@ def test_creation_delivers_exact_goal_as_creator_with_supervisor_defaults(
         wire = harness.backend(conversation_id).written_texts
         assert len(wire) == 1
         assert wire[0].endswith(goal)
-        assert wire[0].startswith("[Authenticated Panels reply requirement]")
+        assert not wire[0].startswith("[Authenticated Panels reply requirement]")
         assert item["goal"] == goal
+        backend = harness.backend(conversation_id)
+        assert backend.sink is not None and backend.live_turn_token is not None
+
+        async def complete_turn() -> None:
+            assert backend.sink is not None and backend.live_turn_token is not None
+            await backend.sink.turn_ended(
+                backend.live_turn_token,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+
+        client.portal.call(complete_turn)
+        client.portal.call(runtime.system.wait_until_quiescent)
+        events = client.portal.call(store.read_events_after, conversation_id, 0)
+        assert not any(isinstance(e.payload, ExplicitReplyMissingEventPayload) for e in events)
+        with closing(connect(str(db_path))) as conn:
+            full = read_page(conn, conversation_id, "full")
+            focus = read_page(conn, conversation_id, "focus")
+        rows = [
+            row for row in full["items"] if row["kind"] == "row" and row["row_kind"] == "prompt"
+        ]
+        assert len(rows) == 1
+        assert rows[0]["body"]["kind"] == "inline"
+        body = rows[0]["body"]["value"]
+        assert body["kind"] == "prompt"
+        assert body["sender_label"] == "Panels"
+        assert body["content"] == [{"piece": "text", "text": goal}]
+        assert focus["items"] == []

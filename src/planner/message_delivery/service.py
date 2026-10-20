@@ -156,22 +156,34 @@ async def send_message(
     sent_at_unix_milliseconds: int | None = None,
     retain_created_conversation: bool = False,
     expects_reply: bool = True,
+    system_message: bool = False,
 ) -> MessageDeliveryResult:
     """Send one text message to one resolved Panels conversation owner.
+
+    ``system_message`` records an automatic action as Panels without changing the caller's
+    authority or launch choices. Only trusted internal callers select it. A system action
+    creates no reply requirement and cannot settle the caller's existing reply obligation.
 
     ``expects_reply`` is False for a message whose answer is a thing the recipient does
     rather than words it sends back. Such a message adds no reply requirement to the wire
     prompt and leaves no missing-reply marker when the turn ends.
     """
-    label = sender_label(ctx)
+    caller = ctx.principal
+    if system_message and recipient.kind is PrincipalKind.owner:
+        raise PlannerError(
+            ErrorCode.validation,
+            "a system message cannot be addressed to the owner",
+            {},
+        )
+    label = "Panels" if system_message else sender_label(ctx)
     content: ConversationMessageContent = (
         text_message_content(message) if isinstance(message, str) else message
     )
     prompt_mode = _prompt_mode(mode)
-    sender = ctx.principal
+    sender = None if system_message else caller
     source_turn = None
-    if sender.kind is not PrincipalKind.owner:
-        source_conversation_id = _sender_conversation_id(conn, sender)
+    if not system_message and caller.kind is not PrincipalKind.owner:
+        source_conversation_id = _sender_conversation_id(conn, caller)
         if source_conversation_id is not None:
             source_turn = await conversations.active_turn_reference(source_conversation_id)
     is_reply = bool(
@@ -179,28 +191,28 @@ async def send_message(
     )
 
     if recipient.kind is PrincipalKind.owner:
-        if sender.kind is PrincipalKind.owner:
+        if caller.kind is PrincipalKind.owner:
             raise PlannerError(
                 ErrorCode.validation,
                 "the owner cannot send a message to the owner",
                 {},
             )
         async with conversation_start.conversation_link_lock(
-            _sender_conversation_link_key(conn, sender)
+            _sender_conversation_link_key(conn, caller)
         ):
-            sending_into = _sender_conversation_id(conn, sender)
+            sending_into = _sender_conversation_id(conn, caller)
             if sending_into is None:
                 raise PlannerError(
                     ErrorCode.not_found,
                     "the sender has no current conversation",
-                    {"kind": sender.kind.value, "id": sender.id},
+                    {"kind": caller.kind.value, "id": caller.id},
                 )
             resolved_content = await content(sending_into) if callable(content) else content
             await conversations.record_message_to_owner(
                 sending_into,
                 resolved_content,
                 sender_label=label,
-                sender=sender,
+                sender=caller,
                 recipient=recipient,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
@@ -218,7 +230,7 @@ async def send_message(
                 content,
                 conversation_id=(
                     conversation_id
-                    if conversation_id is not None and sender.kind is PrincipalKind.owner
+                    if conversation_id is not None and caller.kind is PrincipalKind.owner
                     else ticket.conversation_id
                 ),
                 created_conversation_id=created_conversation_id
@@ -230,7 +242,7 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
-                reply_requested=expects_reply and not is_reply,
+                reply_requested=not system_message and expects_reply and not is_reply,
                 now=clock.now_unix(),
             )
     elif recipient.kind is PrincipalKind.chief:
@@ -247,7 +259,7 @@ async def send_message(
                 ),
                 conversation_id=(
                     conversation_id
-                    if conversation_id is not None and sender.kind is PrincipalKind.owner
+                    if conversation_id is not None and caller.kind is PrincipalKind.owner
                     else conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
                 ),
                 created_conversation_id=created_conversation_id
@@ -259,7 +271,7 @@ async def send_message(
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 sender=sender,
                 recipient=recipient,
-                reply_requested=expects_reply and not is_reply,
+                reply_requested=not system_message and expects_reply and not is_reply,
             )
     elif recipient.kind is PrincipalKind.sprint_item:
         item_id = recipient.id
@@ -284,7 +296,7 @@ async def send_message(
                     resolved,
                     conversation_id=(
                         conversation_id
-                        if conversation_id is not None and sender.kind is PrincipalKind.owner
+                        if conversation_id is not None and caller.kind is PrincipalKind.owner
                         else current
                     ),
                     created_conversation_id=created_conversation_id
@@ -296,11 +308,11 @@ async def send_message(
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     sender=sender,
                     recipient=recipient,
-                    reply_requested=expects_reply and not is_reply,
+                    reply_requested=not system_message and expects_reply and not is_reply,
                     required_sprint_item_id=item_id,
                     retain_created_conversation=retain_created_conversation,
                 )
-                if sender.kind is PrincipalKind.owner and (
+                if caller.kind is PrincipalKind.owner and (
                     (current is None and delivered.conversation_id is not None)
                     or (
                         isinstance(delivered.fate, PromptDeliveryStarted)
@@ -319,7 +331,7 @@ async def send_message(
                             employee_launch_model=resolved.model,
                             employee_launch_reasoning_effort=resolved.reasoning_effort,
                         ),
-                        principal=sender,
+                        principal=caller,
                         clock=clock,
                         expected_configuration=item.supervisor_launch_configuration,
                     )
