@@ -92,6 +92,7 @@ class ErrorCode(StrEnum):
     agent_forbidden = "agent_forbidden"  # attributed agent hits a direct-only action
     gateway_offline = "gateway_offline"  # §11
     already_running = "already_running"  # Hermes 4009 session busy
+    diagnostic_expired = "diagnostic_expired"
     not_found = "not_found"
     validation = "validation"  # generic input validation
     skill_save_incomplete = "skill_save_incomplete"

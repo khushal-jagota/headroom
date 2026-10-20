@@ -426,7 +426,9 @@
       {@render emptyState()}
     {/if}
     {#if reader!==null}
-      <ProjectedTranscript {reader} {models} {ownSenderLabel} {livenessPulse}/>
+      {#key reader.contentGeneration}
+        <ProjectedTranscript {reader} {models} {ownSenderLabel} {livenessPulse}/>
+      {/key}
     {:else}
     <ConversationTranscript
       {rows}

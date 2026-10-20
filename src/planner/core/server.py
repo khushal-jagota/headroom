@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic as _monotonic
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, Request
@@ -78,6 +78,7 @@ from planner.worker_types.configuration import (
 
 _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.not_found: 404,
+    ErrorCode.diagnostic_expired: 410,
     ErrorCode.stale_claim: 409,
     ErrorCode.already_running: 409,
     ErrorCode.gateway_offline: 503,
@@ -128,6 +129,11 @@ def svelte_index_html(app_sha: str | None = None) -> str:
 
 def http_status_for(code: ErrorCode) -> int:
     return _STATUS_BY_CODE.get(code, 400)
+
+
+async def handle_planner_error(request: Request, exc: Exception) -> JSONResponse:
+    error = cast(PlannerError, exc)
+    return JSONResponse(status_code=http_status_for(error.code), content=error.to_payload())
 
 
 async def _stop_runtime_with_deadline(runtime: Any, deadline: float) -> None:
@@ -276,9 +282,7 @@ def create_app(
     app.state.deployment_lifecycle_store = deployment_lifecycle_store
     app.state.resource_version_epoch = str(uuid4())
 
-    @app.exception_handler(PlannerError)
-    async def handle_planner_error(request: Request, exc: PlannerError) -> JSONResponse:
-        return JSONResponse(status_code=http_status_for(exc.code), content=exc.to_payload())
+    app.add_exception_handler(PlannerError, handle_planner_error)
 
     # Every router the application serves is included through here, so this is where the
     # live streams among them are collected. The compression below has to know them.

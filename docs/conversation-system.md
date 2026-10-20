@@ -19,6 +19,31 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Diagnostic history expiry
+
+Diagnostic expiry remains an explicit offline operator action. Normal startup
+installs the empty omission table and a read index; it does not expire history.
+The index lets expanded history find earlier messages without scanning hidden tool
+calls or addressed messages. Omission records keep
+the original event positions. Retained events and live replay keep those same positions.
+
+When omissions exist, conversation status and legacy event pages report
+`diagnostics_expired`. The shared transcript says “Some diagnostic history expired.”
+That notice comes from omission records, never from a gap in event numbers. Page
+edges describe retained history, so a gap alone does not offer another empty page.
+
+An opened diagnostic detail whose source expired returns the named
+`diagnostic_expired` error with HTTP 410. The reader says “This diagnostic detail
+expired.” Unknown details still return 404; changed body references still return
+409; invalid references still return 422. Chunked and downloaded bodies use the
+same distinction. A retained source of the wrong kind is not classified as expired.
+
+The omission table is additive metadata. The selected-view projection version stays
+at 1, and saved event positions and cursors remain valid. Replacement snapshots,
+resets, and runtime changes discard previously held pages and detail output before
+fresh canonical reads. They advance a content generation counter to invalidate cached output;
+they do not change how transcript content is generated.
+
 ## Durable lifecycle facts
 
 The notebook keeps completed receipts. A separate conversation-owned source keeps

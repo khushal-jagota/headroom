@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { DiagnosticExpiredError, DIAGNOSTIC_EXPIRED_MESSAGE } from "../../../lib/conversation/diagnosticExpiry";
   import { parseDeferredViewBody } from '../../../lib/markdown/workerClient';
   import type { ConversationViewRow, ViewRowBody, ViewBodyReference } from '../../../lib/conversation/view/contracts';
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
@@ -34,7 +35,7 @@
       error = null;
       void reader.body(reference, abort.signal).then(text => parseDeferredViewBody(text, abort.signal)).then(body => { if (!abort.signal.aborted)
           deferred = { body, reference }; }).catch(reason => { if (!abort.signal.aborted)
-          error = String(reason); });
+          error = reason instanceof DiagnosticExpiredError ? DIAGNOSTIC_EXPIRED_MESSAGE : "This detail did not load."; });
       return () => { abort.abort(); deferred = null; };
   });
   $effect(() => {
@@ -45,12 +46,13 @@
       }
       const abort = new AbortController();
       void reader.body(reference, abort.signal).then(text => { if (!abort.signal.aborted)
-          progress = text; }).catch(() => undefined);
+          progress = text; }).catch(reason => { if (!abort.signal.aborted && reason instanceof DiagnosticExpiredError)
+          error = DIAGNOSTIC_EXPIRED_MESSAGE; });
       return () => { abort.abort(); progress = null; };
   });
 </script>
 {#if row?.kind==='tool_call'}
-  <div data-conversation-work-entries><ToolCallRow row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
+  <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
 {:else if row!==null}
   <ConversationTranscript rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
 {:else}

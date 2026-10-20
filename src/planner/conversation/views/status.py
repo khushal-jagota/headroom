@@ -136,7 +136,10 @@ def read_status(
     input_ids: tuple[str, ...] = (),
 ) -> ConversationViewStatus:
     state = conn.execute(
-        "SELECT * FROM conversation_view_state WHERE conversation_id=?", (conversation_id,)
+        "SELECT s.*,EXISTS(SELECT 1 FROM conversation_expired_ranges e "
+        "WHERE e.conversation_id=s.conversation_id) AS diagnostics_expired "
+        "FROM conversation_view_state s WHERE s.conversation_id=?",
+        (conversation_id,),
     ).fetchone()
     turn_key = state["current_turn_key"] if state else None
     stopped = running is False and turn_key is not None
@@ -242,6 +245,7 @@ def read_status(
         "activity_at_unix_milliseconds": activity_at,
         "rest": rest,
         "authority": "unknown" if running is None else "current",
+        "diagnostics_expired": bool(state["diagnostics_expired"]) if state else False,
         "turn_key": turn_key,
         "turn_running": running,
         "stopped_without_ending": stopped,

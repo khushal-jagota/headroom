@@ -350,6 +350,7 @@ class ViewRestFacts(TypedDict):
 
 
 class ConversationViewStatus(TypedDict):
+    diagnostics_expired: bool
     runtime_epoch: str
     revision: int
     activity_at_unix_milliseconds: int | None

@@ -1,3 +1,4 @@
+import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
  * Every shape here is exactly what `/api/conversation` serializes, and every call is a
@@ -546,6 +547,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ConversationWireError("The server sent something that is not JSON.", response.status);
     }
   }
+  if (isDiagnosticExpiry(raw)) throw new DiagnosticExpiredError();
   throw new ConversationWireError(detailSentence(raw, response.status), response.status);
 }
 

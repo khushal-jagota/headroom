@@ -315,6 +315,7 @@ export interface ViewRestFacts {
 }
 
 export interface ConversationViewStatus {
+  diagnostics_expired: boolean;
   runtime_epoch: string;
   revision: number;
   activity_at_unix_milliseconds: number | null;

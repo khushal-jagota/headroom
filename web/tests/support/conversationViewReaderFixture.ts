@@ -2,12 +2,18 @@
 import type {ConversationViewItem,ConversationViewPage,ConversationViewRow,ConversationViewStatus,ViewPageCursor,ViewRowBody} from '../../src/lib/conversation/view/contracts';
 export function installConversationViewReaderFixture():void {
   const id='bounded-reader';
+  const expiry=new URLSearchParams(location.search).has('expiry');
+  let expired=false;
+  let deferredExpired=false;
+  const delayedBody=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:'Late diagnostic body must disappear.'}]});
+  let completeBody: (()=>void)|null=null;
+  const sources:EventTarget[]=[];
   const folds=new URLSearchParams(location.search).has('folds');
   const visual=new URLSearchParams(location.search).has('visual');
   let sequence=2000;
   const calls:string[]=[];
   (window as any).__viewCalls=calls;
-  const status:ConversationViewStatus={runtime_epoch:'fixture',revision:0,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,rest:{latest_happened:{kind:'agent_message',sender_label:null,excerpt:'Latest owner answer'},latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:2000,last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}};
+  const status:ConversationViewStatus={diagnostics_expired:false,runtime_epoch:'fixture',revision:0,activity_at_unix_milliseconds:null,authority:'current',turn_key:null,turn_running:false,stopped_without_ending:false,pending_permission:null,pending_user_input:null,plan:null,live_output:null,live_tool_key:null,live_tool_progress:null,rest:{latest_happened:{kind:'agent_message',sender_label:null,excerpt:'Latest owner answer'},latest_turn:null,latest_tool:null,permission_title_excerpt:null,latest_owner_message_sequence:2000,last_boundary_failed:false,plan_progress:{total_count:0,completed_count:0,current_position:null,current_text_excerpt:null,has_unfinished_entry:false}}};
   const liveText='Temporary streaming prose.';
   const deferredEndingText=JSON.stringify({kind:'turn_ended',ending:'completed',error_summary:null,automatic_compaction_result:null});
   if(visual)status.live_output={runtime_epoch:'fixture',turn_key:'turn:1',version:1,byte_count:liveText.length,reference:{body_id:'live:fixture',version:'1',byte_count:liveText.length,media_type:'text/markdown'}};
@@ -51,6 +57,11 @@ export function installConversationViewReaderFixture():void {
   }
   if(folds){status.turn_key='turn:14';status.stopped_without_ending=true;}
   function page(url:URL):ConversationViewPage{
+    if(expiry){
+      const tool:ConversationViewRow={...item(1),row_kind:'tool_call',body:{kind:'inline',value:{kind:'tool_call',tool_call_id:'expiry-tool',title:'Read diagnostic',tool_kind:'read',detail:'Capped diagnostic',started_detail:'Capped diagnostic',capped_detail_sequence:2,status:'completed'}}};
+      const pending:ConversationViewRow={...item(3),body:{kind:'deferred',reference:{body_id:'row:3',version:'1',byte_count:delayedBody.length,media_type:'application/json'}}};
+      return{conversation_id:id,protocol_version:1,projection_version:1,lens:'focus',scope:{kind:'timeline',key:null},items:expired&&!deferredExpired?[tool]:[tool,pending],older:null,newer:null,body_bytes:0};
+    }
     if(folds)return foldPage(url);
     if(visual)return visualPage(url);
     const lens=url.searchParams.get('lens')==='full'?'full':'focus';
@@ -73,6 +84,9 @@ export function installConversationViewReaderFixture():void {
   window.fetch=async(input,init)=>{
     const value=String(input);if(!value.startsWith('/api/conversation/'))return originalFetch(input,init);
     calls.push(value);const url=new URL(value,location.origin);
+    if(expiry&&url.pathname.endsWith('/view/body/content')&&deferredExpired)return Response.json({error:{code:'diagnostic_expired',message:'Expired'}},{status:410});
+    if(expiry&&url.pathname.endsWith('/view/body/content'))return await new Promise<Response>(resolve=>{completeBody=()=>resolve(new Response(delayedBody));});
+    if(expiry&&url.pathname.endsWith('/events/2/detail'))return expired?Response.json({error:{code:'diagnostic_expired',message:'Expired'}},{status:410}):Response.json({detail:'Cached whole diagnostic'});
     if(folds&&url.pathname.endsWith('/view/body/content'))return new Response(deferredOwner);
     if(visual&&url.pathname.endsWith('/view/body/content'))return new Response(JSON.parse(url.searchParams.get('reference')!).body_id==='completed:13'?deferredEndingText:liveText);
     if(url.pathname.endsWith('/view/pages'))return Response.json(page(url));
@@ -82,7 +96,7 @@ export function installConversationViewReaderFixture():void {
   };
   class Source extends EventTarget{
     onerror:null|(()=>void)=null;closed=false;
-    constructor(raw:string){super();calls.push(raw);const url=new URL(raw,location.origin);queueMicrotask(()=>{
+    constructor(raw:string){super();sources.push(this);calls.push(raw);const url=new URL(raw,location.origin);queueMicrotask(()=>{
       if(this.closed)return;
       const result=page(url);if(url.searchParams.get('transcript')==='false')result.items=[];
       const after=url.searchParams.get('after');
@@ -91,5 +105,11 @@ export function installConversationViewReaderFixture():void {
     });}
     close(){this.closed=true;}
   }
+  (window as any).__expireDiagnostics=()=>{
+    expired=true;status.diagnostics_expired=true;
+    for(const source of sources){if((source as Source).closed)continue;source.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify({page:page(new URL('/?lens=focus',location.origin)),coverage:{through_sequence:sequence},status})}));}
+  };
+  (window as any).__expireDeferred=()=>{deferredExpired=true;(window as any).__expireDiagnostics();};
+  (window as any).__completeDiagnosticBody=()=>completeBody?.();
   window.EventSource=Source as unknown as typeof EventSource;
 }

@@ -1,5 +1,13 @@
 """Rebuildable projection schema. The ordinary migration owns installation."""
 
+# Reverse reads of expanded turns must seek ordinary messages without walking
+# hidden tool or addressed-message runs. This changes indexes, not projections.
+EARLIER_MESSAGES_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS conversation_view_rows_ordinary_turn ON "
+    "conversation_view_rows(conversation_id,turn_key,sequence) "
+    "WHERE row_kind='agent_message' AND focus_visible=0 AND removed=0"
+)
+
 SCHEMA_STATEMENTS = (
     """CREATE TABLE conversation_view_state (
         conversation_id TEXT PRIMARY KEY
@@ -19,6 +27,7 @@ SCHEMA_STATEMENTS = (
         removed INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (conversation_id, sequence)
     )""",
+    EARLIER_MESSAGES_INDEX_SQL,
     "CREATE INDEX conversation_view_rows_kind ON "
     "conversation_view_rows(conversation_id, row_kind, sequence)",
     "CREATE INDEX conversation_view_rows_changed ON "

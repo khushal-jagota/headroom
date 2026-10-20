@@ -491,10 +491,11 @@ async def read_conversation_events(
     reads_backwards = after is None
     if reads_backwards and limit is not None:
         events = await runtime.store.read_latest_events(
-            conversation_id, before_sequence=before, limit=limit
+            conversation_id, before_sequence=before, limit=limit + 1
         )
         # Reading back from the end, more to come means older rows before this page.
-        has_more = bool(events) and events[0].sequence > 1
+        has_more = len(events) > limit
+        events = events[-limit:]
     else:
         # Reading on from a position, more to come means rows after this page. One row
         # past the limit answers that without a second query, and is not returned.
@@ -505,6 +506,7 @@ async def read_conversation_events(
     return {
         "events": [_public_event_json(event, backend_key=record.backend_key) for event in events],
         "has_more": has_more,
+        "diagnostics_expired": await runtime.store.diagnostics_expired(conversation_id),
     }
 
 
@@ -519,6 +521,8 @@ async def read_conversation_event_detail(
     """
     record = await _require_conversation(runtime, conversation_id)
     event = await runtime.store.read_event(conversation_id, sequence)
+    if event is None and await runtime.store.sequence_expired(conversation_id, sequence):
+        raise PlannerError(ErrorCode.diagnostic_expired, "This diagnostic detail expired.")
     if event is None or not isinstance(event.payload, ToolCallFinishedEventPayload):
         raise HTTPException(
             status_code=404,

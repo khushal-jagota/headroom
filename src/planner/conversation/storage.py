@@ -691,6 +691,27 @@ class ConversationStore:
             self._read_events_after_sync, conversation_id, after_sequence
         )
 
+    async def diagnostics_expired(self, conversation_id: str) -> bool:
+        """Whether omission metadata records expired diagnostics in this conversation."""
+        return await asyncio.to_thread(self._expiry_sync, conversation_id, None)
+
+    async def sequence_expired(self, conversation_id: str, sequence: int) -> bool:
+        """Whether this exact original event position was recorded as expired."""
+        return await asyncio.to_thread(self._expiry_sync, conversation_id, sequence)
+
+    def _expiry_sync(self, conversation_id: str, sequence: int | None) -> bool:
+        from planner.conversation.retention.read import diagnostics_expired, sequence_expired
+
+        conn = self._connect()
+        try:
+            return (
+                diagnostics_expired(conn, conversation_id)
+                if sequence is None
+                else sequence_expired(conn, conversation_id, sequence)
+            )
+        finally:
+            conn.close()
+
     async def read_latest_events(
         self, conversation_id: str, *, before_sequence: int | None, limit: int
     ) -> tuple[StoredConversationEvent, ...]:

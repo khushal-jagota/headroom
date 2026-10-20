@@ -28,6 +28,7 @@ from planner.conversation.views.storage import (
     read_turn,
 )
 from planner.conversation.views.writer import append_projection
+from planner.maintenance.diagnostic_history import install_expiry_metadata
 
 FIXTURES = json.loads((Path(__file__).parents[1] / "fixtures/conversation_views.json").read_text())
 
@@ -41,6 +42,7 @@ def database(events: list[dict[str, Any]]) -> sqlite3.Connection:
         "CREATE TABLE conversation_events(conversation_id TEXT,sequence INTEGER,kind TEXT,"
         "payload TEXT,created_at INTEGER,PRIMARY KEY(conversation_id,sequence))"
     )
+    install_expiry_metadata(conn)
     for sql in SCHEMA_STATEMENTS:
         conn.execute(sql)
     for row in events:
