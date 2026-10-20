@@ -71,6 +71,12 @@ than assuming their defaults. The live unit's verified values on October 20, 202
 were 90 seconds, true, 9, and `control-group`. A refused legitimate stop can
 therefore take 90 seconds before SIGKILL stops all processes in that unit.
 
+The first deployment with this guard is its first test against the actual live
+service. If manager identification fails during that deployment, the stop waits
+for the unit timeout and then systemd uses SIGKILL. This failure delays shutdown.
+The guard does not prevent the replacement service from starting. The operator
+owns this first live stop check.
+
 Lifecycle tests use disposable units, isolated state, and unique process markers.
 They prove manager shutdown, visible foreign-signal refusal, and timeout
 escalation. A live-service stop check belongs to the operator. Workers never run

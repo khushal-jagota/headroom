@@ -74,6 +74,14 @@ Ticket server refuses that signal, follow its diagnostic and use SIGKILL only
 against that recorded PID. Never use a broad process pattern. The live service
 remains operator-owned.
 
+A detached dogfood launch can also enter guarded mode. For example, a `setsid`
+launcher can exit before the supervisor captures its parent, so the parent is
+already PID 1. If PID 1 is the verified systemd manager, the supervisor selects
+guarded mode. The Worker's exact-PID SIGTERM then produces a refusal. Use the
+recorded PID and the diagnostic's SIGKILL guidance for that dogfood server.
+`setsid` alone changes the session, not the parent. The parent at capture decides
+the shutdown mode.
+
 Interactive commands use `~/Deployments/Panels/current/app/bin/panels` instead. The
 global `panels` wrapper follows that command. The deployed command establishes its own
 application root and exact SHA, preserves the rest of the caller context, and does not
