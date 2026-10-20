@@ -38,12 +38,13 @@
   import RequestRecapAction from "../components/RequestRecapAction.svelte";
   import RecapSlot from "../components/RecapSlot.svelte";
   import TicketLifecycleControls from "../components/TicketLifecycleControls.svelte";
+  import type { InlineEditDraft } from "../lib/inlineEditDraft";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import ArtifactPreview from "../components/ArtifactPreview.svelte";
   import ArtifactsBand from "../components/ArtifactsBand.svelte";
   import WorkerProposalCard from "../components/WorkerProposalCard.svelte";
   import { workerPageHistory } from "../lib/workerPageHistory";
-  import { managedFileTargetFromLinkHref, ticketPageArtifactItems } from "../lib/artifactStrip";
+  import { managedFileTargetFromLinkHref } from "../lib/artifactStrip";
   import { isPlainLinkClick } from "../lib/linkClick";
   import {
     resolvePreview,
@@ -88,7 +89,7 @@
   $effect(()=>{if(currentMasthead) heldMasthead=currentMasthead;});
   let masthead=$derived(heldMasthead ? {...heldMasthead,
     conversation_signal:navigationConversationSignal(currentView,heldMasthead.conversation_id)} : undefined);
-  const ticket = createQuery(() => queries.ticket(stableId));
+  const ticket = createQuery(() => queries.workspaceTicket(stableId));
   // What a conversation for this Ticket's worker would start on, asked of the server
   // because the server is what resolves it: the Worker type's launch defaults and
   // whatever this Ticket last ran on, through the same code that will create it.
@@ -135,6 +136,11 @@
     }
   }
   let conversationId=$state<string | null>(null);
+  $effect(() => navigation.owner.setDemand("ticket", {
+    selected: { kind: "ticket", id: stableId },
+    selected_conversation_id: null, windows: []
+  }));
+  onDestroy(() => navigation.owner.setDemand("ticket", undefined));
   let observedPointer:string | undefined;
   $effect(()=>{
     if(!canonicalTicket) return;
@@ -205,6 +211,16 @@
   // stage that settles moves into the fold above and is rebuilt there, so the answer
   // cannot live in the stage. It lives here, where it outlives the move.
   let readerStageFolds = new SvelteMap<string, boolean>();
+  let stepsOpen = $state(false);
+  const fieldDrafts = new Map<string, InlineEditDraft>();
+  function fieldDraft(name: string): InlineEditDraft {
+    let draft = fieldDrafts.get(name);
+    if (!draft) {
+      const created = $state<InlineEditDraft>({ value: null, error: null, saving: false });
+      draft = created; fieldDrafts.set(name, draft);
+    }
+    return draft;
+  }
 
   /** Show a file on this screen, or close the one it is showing.
    *
@@ -395,6 +411,7 @@
     const root=mastheadElement;
     const generation=navigation.state.generation;
     const typeLabel=mastheadTypeLabel;
+    sectionDisclosureVersion;
     if(!view?.runtimeCurrent || !source || source!==heldMasthead || !header || !root) return;
     const observation=mastheadObserver.observeSelectors(view.publication,generation);
     let obsolete=false;
@@ -441,7 +458,14 @@
     const changed=()=>{sectionDisclosureVersion+=1;};
     const events=['click','keydown','input','toggle'];
     for(const event of events) node.addEventListener(event,changed,true);
-    return {destroy(){for(const event of events) node.removeEventListener(event,changed,true);}};
+    // Content checkpoints do not rerender unchanged data. A separately mounted
+    // control still needs a fresh DOM observation before it can certify a command.
+    const observer = new MutationObserver(changed);
+    observer.observe(node, { childList: true, subtree: true });
+    return {destroy(){
+      observer.disconnect();
+      for(const event of events) node.removeEventListener(event,changed,true);
+    }};
   }
   $effect(()=>{
     const view=currentView,shown=section,root=sectionElement,header=mastheadElement,generation=navigation.state.generation;
@@ -486,7 +510,7 @@
       <div class="ticket-page">
       <div class="ticket-reading">
       <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
-        <header bind:this={mastheadElement} class="ticket-head" data-ticket-masthead-id={masthead.id}>
+        <header bind:this={mastheadElement} use:sectionObservationEvents class="ticket-head" data-ticket-masthead-id={masthead.id}>
           <div class="worker-eyebrow" data-ticket-identity>
             <span data-project-fact>{masthead.project || "No project"}</span>
             <span aria-hidden="true">·</span>
@@ -593,12 +617,13 @@
               </section>
             {/if}
             <div class="worker-bands">
-              <details class="worker-steps" data-stage-fold>
+              <details class="worker-steps" data-stage-fold bind:open={stepsOpen}>
                 <summary data-stage-fold-open>Steps<span class="band-count">{completedFields.length} of {lc.fieldIds.length} done</span></summary>
+                {#if stepsOpen}
                 <div class="worker-step-rows">
                   {#each occurredFields as name (`${detail.id}:${name}`)}
                     {@const stageState = ticketSectionFieldState(section,currentView,name)}
-                    <TicketStageSection {name} value={detail.field_values[name] ?? ""}
+                    <TicketStageSection {name} ticketId={stableId} draft={fieldDraft(name)} value={detail.field_values[name]}
                       approval={detail.field_approvals?.[name]}
                       {stageState} lifecycle={lc} ticketStage={detail.stage}
                       emptyText={emptyTicketFieldText} editableValue={true}
@@ -609,8 +634,9 @@
                       onCompleteGate={(raw) => completeGate(name,raw)} />
                   {/each}
                 </div>
+                {/if}
               </details>
-              <ArtifactsBand items={ticketPageArtifactItems(detail.id, detail.artifacts, lc.fieldIds, detail.field_values, detail.pending_proposal)} />
+              <ArtifactsBand owner={{ kind: "ticket", id: detail.id }} />
             </div>
           {/if}
         </div>

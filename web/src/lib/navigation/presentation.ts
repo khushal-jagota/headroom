@@ -1,7 +1,9 @@
-import type { TicketValue, TicketRecord, OrchestratorRecord, ProjectRecord, AddressRecord } from './contracts';
+import type { TicketValue, TicketRecord, OrchestratorRecord, ProjectRecord, AddressRecord, ViewWindow, ViewCounts, ViewContentReference, ViewSettledOrchestratorRecord } from './contracts';
 import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
 import type { AgentState } from '../types';
-import type { WorkspaceTicket, WorkspaceOrchestrator, WorkspaceChief } from '../workspaceRail';
+import type { WorkspaceTicket, WorkspaceOrchestrator, WorkspaceSettledOrchestrator, WorkspaceChief } from '../workspaceRail';
+import { workspaceMessageIndex } from '../workspaceMessageDiscovery';
+import { workspaceRailChildMessageConversations } from '../workspaceRail';
 import type { ConversationSignal } from '../conversationSignal';
 import type { WorkspaceMessageConversation } from '../types';
 
@@ -9,6 +11,7 @@ export type NavigationTicket = WorkspaceTicket & Pick<TicketValue,'created_at' |
 export type NavigationWorkspacePresentation = {
   readonly tickets: NavigationTicket[];
   readonly orchestrators: WorkspaceOrchestrator[];
+  readonly settledOrchestrators:WorkspaceSettledOrchestrator[];
   readonly chief: WorkspaceChief | null;
   readonly messages: WorkspaceMessageConversation[];
   readonly conversationSignals: ReadonlyMap<string,Partial<ConversationSignal>>;
@@ -33,6 +36,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const conversationSignals=new Map([...view.conversations].map(([id,knowledge])=>[id,signal(knowledge)]));
   const rawTicketsById=new Map<string,TicketRecord>();
   const rawOrchestratorsById=new Map<string,OrchestratorRecord>();
+  const rawSettledOrchestratorsById=new Map<string,ViewSettledOrchestratorRecord>();
   const rawProjectsById=new Map<string,ProjectRecord>();
   const addressesByConversation=new Map<string,AddressRecord[]>();
   const reviewItems: import('../types').NavigationReviewItem[]=[];
@@ -53,14 +57,17 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       }
     }
     if(record.kind==='ticket') rawTicketsById.set(record.id,record);
-    else if(record.kind==='orchestrator') rawOrchestratorsById.set(record.id,record);
+    else if(record.kind==='orchestrator') {
+      if('recap' in record.value)rawOrchestratorsById.set(record.id,{kind:record.kind,id:record.id,value:record.value});
+      else rawSettledOrchestratorsById.set(record.id,{kind:record.kind,id:record.id,value:record.value});
+    }
     else if(record.kind==='project') rawProjectsById.set(record.id,record);
     else if(record.kind==='chief') chiefRecord=record;
     else if(record.kind==='address') {const addresses=addressesByConversation.get(record.value.conversation_id) ?? [];addresses.push(record);addressesByConversation.set(record.value.conversation_id,addresses);}
   }
   const projects=new Map([...rawProjectsById].map(([id,record])=>[id,record.value]));
   const orchestratorRecords=[...rawOrchestratorsById.values()];
-  const orchestratorsById=new Map(orchestratorRecords.map(record=>[record.id,record.value]));
+  const orchestratorsById=new Map([...orchestratorRecords,...rawSettledOrchestratorsById.values()].map(record=>[record.id,record.value]));
   const tickets: NavigationTicket[]=[...rawTicketsById.values()].flatMap(record=>{
     if(record.kind!=='ticket') return [];
     const row=record.value;
@@ -75,7 +82,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       awaiting_approval:parked && owner,awaiting_agent_approval:parked && !owner,assigned:row.stage_ownership==='user',
       agent_state:agentState(row.ticket_status,row.stage,knowledge),
       waiting_to_closeout:row.gating_field==='consequences' && row.ticket_status==='empty',
-      gating_field:row.gating_field,recap:row.recap,recap_preview:row.recap_preview,
+      gating_field:row.gating_field,recap:row.recap,recap_reference:'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null,recap_preview:row.recap_preview,
       orchestrator:parent === null ? {kind:'chief',id:'chief'} : {kind:'sprint_item',id:parent},
       sprint_item_id:parent,sprint_item_title:parent === null ? null : orchestratorsById.get(parent)?.title ?? null}];
   });
@@ -99,8 +106,15 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
     return {id:record.id,title:row.title,created_at:row.created_at,
       settled:row.settled,project_id:row.project_id,project:projects.get(row.project_id)?.name,
-      recap:row.recap,recap_preview:row.recap_preview,conversation_id:row.conversation_id,
+      recap:row.recap,recap_reference:'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null,recap_preview:row.recap_preview,conversation_id:row.conversation_id,
       conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`orchestrator:${record.id}`) ?? [],
+      awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
+      awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge)};
+  });
+  const settledOrchestrators:WorkspaceSettledOrchestrator[]=[...rawSettledOrchestratorsById.values()].map(record=>{
+    const row=record.value;
+    const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
+    return {id:record.id,...row,conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`orchestrator:${record.id}`) ?? [],
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
       awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge)};
   });
@@ -137,10 +151,33 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const siblings=messagesByParent.get(message.parentId) ?? [];
     siblings.push(message);messagesByParent.set(message.parentId,siblings);
   }
-  return {tickets,orchestrators,chief,messages,conversationSignals,rawTicketsById,rawOrchestratorsById,rawProjectsById,
-    ticketsById:new Map(tickets.map(ticket=>[ticket.id,ticket])),orchestratorsById:new Map(orchestrators.map(item=>[item.id,item])),
+  const messageIndex=workspaceMessageIndex(messages,tickets,byTicket);
+  const railMessagesByParent=new Map<string,readonly WorkspaceMessageConversation[]>();
+  for(const parent of [...orchestrators,...settledOrchestrators]) {
+    railMessagesByParent.set(parent.id,workspaceRailChildMessageConversations(messages,parent,tickets,messageIndex));
+  }
+  const addressesById=new Map([...addressesByConversation.values()].flat().map(record=>[record.id,record]));
+  const unreadConversationIdsByWindow=new Map<string,ReadonlySet<string>>();
+  const scopedRailMessagesByParent=new Map<string,readonly WorkspaceMessageConversation[]>();
+  for(const window of view.publication.view?.windows ?? []) {
+    if(window.request.section!=='unread')continue;
+    const ids=new Set<string>();
+    for(const key of window.members) {
+      const address=key.kind==='address' ? addressesById.get(key.id) : undefined;
+      if(address)ids.add(address.value.conversation_id);
+    }
+    unreadConversationIdsByWindow.set(window.window_id,ids);
+    if(window.request.owner?.kind==='orchestrator') {
+      const parentId=window.request.owner.id;
+      scopedRailMessagesByParent.set(parentId,(railMessagesByParent.get(parentId) ?? []).filter(row=>ids.has(row.conversationId)));
+    }
+  }
+  return {tickets,orchestrators,settledOrchestrators,chief,messages,conversationSignals,rawTicketsById,rawOrchestratorsById,rawProjectsById,
+    ticketsById:byTicket,orchestratorsById:new Map(orchestrators.map(item=>[item.id,item])),
     ticketsByParent,messagesByParent,ticketMastheadsById,addressesByConversation,
-    review:finishReviewPresentation(view,reviewItems,currentConversationIds,exactOutClaimCount)};
+    railMessagesByParent,scopedRailMessagesByParent,unreadConversationIdsByWindow,
+    review:finishReviewPresentation(view,reviewItems,currentConversationIds,exactOutClaimCount),
+    viewWindows:view.publication.view?.windows ?? [],globalCounts:view.publication.view?.counts ?? null};
 }
 
 /** Review follows the canonical complete queue, independently of sidebar filters. */
@@ -161,6 +198,8 @@ function finishReviewPresentation(view:EffectiveNavigationView,items:import('../
     if (!fact || fact.state !== 'fresh') { runningConversationCount = null; break; }
     if (runningConversationCount !== null && fact.value) runningConversationCount += 1;
   }
+  const counts=view.publication.view?.counts;
+  if(counts){runningConversationCount=view.runtimeCurrent?counts.running_conversations:null;exactOutClaimCount=counts.out_claims;}
   return {items,runningConversationCount,exactOutClaimCount,currentConversationIds:pointers};
 }
 
@@ -194,6 +233,9 @@ export function navigationTicketMasthead(view:EffectiveNavigationView,id:string)
 }
 
 export type NavigationPresentationIndexes = {
+  readonly railMessagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
+  readonly scopedRailMessagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
+  readonly unreadConversationIdsByWindow:ReadonlyMap<string,ReadonlySet<string>>;
   readonly addressesByConversation:ReadonlyMap<string,readonly AddressRecord[]>;
   readonly rawTicketsById:ReadonlyMap<string,TicketRecord>;
   readonly rawOrchestratorsById:ReadonlyMap<string,OrchestratorRecord>;
@@ -206,6 +248,8 @@ export type NavigationPresentationIndexes = {
 };
 export type NavigationPresentation = NavigationWorkspacePresentation & NavigationPresentationIndexes & {
   readonly review:NavigationReviewPresentation;
+  readonly viewWindows:readonly ViewWindow[];
+  readonly globalCounts:ViewCounts | null;
 };
 
 /** Provider lifetime owns this cache; a knowledge-only change has a different key. */
@@ -220,3 +264,8 @@ export function createNavigationPresentationCache() {
 
 // Held section metadata reuses the same per-fact presentation rules.
 export { agentState as navigationAgentState, value as navigationKnownBoolean };
+
+/** Membership comes from the server window, not dependency rows resident for another surface. */
+export function navigationWindow(view:NavigationPresentation|null|undefined,section:ViewWindow['request']['section'],owner:ViewWindow['request']['owner']=null,childFilter:ViewWindow['request']['child_filter']='all',group:ViewWindow['request']['group']='all'):ViewWindow|undefined {
+  return view?.viewWindows.find(window=>window.request.section===section && window.request.owner?.kind===owner?.kind && window.request.owner?.id===owner?.id && window.request.child_filter===childFilter && window.request.group===group);
+}

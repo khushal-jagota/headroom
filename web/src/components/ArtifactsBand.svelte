@@ -1,13 +1,24 @@
 <script lang="ts">
+  import { createQuery } from '@tanstack/svelte-query';
+  import { jsonQuery } from '../lib/queryCatalogue';
   import ArtifactStrip from "./ArtifactStrip.svelte";
+  import PagedArtifacts from './PagedArtifacts.svelte';
   import type { ArtifactStripItem } from "../lib/artifactStrip";
-  let { items }: { items: ArtifactStripItem[] } = $props();
+  import type { ArtifactOwnerKind, ArtifactDirectoryPage } from '../lib/catalogs/artifacts';
+  let { items = [], owner }: { items?: ArtifactStripItem[]; owner?: {kind:ArtifactOwnerKind;id:string} } = $props();
+  let open = $state(false);
+  let observedCount = $state<number | null>(null);
+  const summary = createQuery(() => ({...jsonQuery<ArtifactDirectoryPage>(
+    ['artifact-catalog-count',owner?.kind,owner?.id],
+    `/api/artifact-catalog/${owner?.kind}/${encodeURIComponent(owner?.id ?? '')}?limit=1`),enabled:Boolean(owner) && !open}));
+  let count = $derived(owner ? summary.data?.total ?? observedCount : items.length);
 </script>
-<details class="artifacts-band" data-artifacts-band>
-  <summary>Artifacts<span class="count">{items.length}</span></summary>
-  <div class="body">
-    {#if items.length}<ArtifactStrip {items} />{:else}<p class="empty">No artifacts yet.</p>{/if}
-  </div>
+<details class="artifacts-band" data-artifacts-band bind:open>
+  <summary>Artifacts<span class="count">{count ?? '…'}</span></summary>
+  {#if open}<div class="body">
+    {#if owner}<nav class="artifact-strip" aria-label="Artifacts" data-artifact-strip><div class="artifact-strip-items"><PagedArtifacts {owner} onCount={(value)=>observedCount=value} /></div></nav>
+    {:else if items.length}<ArtifactStrip {items} />{:else}<p class="empty">No artifacts yet.</p>{/if}
+  </div>{/if}
 </details>
 <style>
   .artifacts-band { line-height:1.6; border-top:1px solid var(--border-color); border-bottom:1px solid var(--border-color); }

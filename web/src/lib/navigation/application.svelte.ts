@@ -1,8 +1,6 @@
 import { getContext, onDestroy, onMount, setContext } from 'svelte';
-import { createNavigationCollection } from './collection';
-import { createNavigationOwner, type NavigationOwnerState } from './owner';
-import { createNavigationSelectors } from './selectors.svelte';
-import { createNavigationTransport } from './transport';
+import type { NavigationOwnerState } from './owner';
+import { createScopedNavigationOwner } from './views/owner';
 import { createCommandEvidence } from './commandEvidence';
 import { navigationConfiguration } from './configuration';
 import { createNavigationPresentationCache } from './presentation';
@@ -10,13 +8,17 @@ export type { RecordImpact,CommandImpact,CommandEvidence,ResponseMetadata } from
 
 const applicationContext = Symbol('navigation application');
 
-/** One replica belongs to the application, above every route and conversation pane. */
+/** One bounded view belongs to the application, above every route and conversation pane. */
 export function provideNavigationApplication() {
-  const collection = createNavigationCollection();
-  const owner = createNavigationOwner({ adapter: collection, transport: createNavigationTransport() });
+  const owner = createScopedNavigationOwner();
   let state = $state.raw<NavigationOwnerState>(owner.getState());
   const unsubscribe = owner.subscribe((next) => { state = next; });
-  const selectors = createNavigationSelectors(collection, () => state);
+  const selectors = {
+    get publication(){return state.publication ?? null;},
+    get records(){return state.publication?.records ?? [];},
+    get effective(){return state.effective ?? null;},
+    recordsOfKind(kind:string){return state.publication?.records.filter(record=>record.kind===kind) ?? [];},
+  };
   const commands=createCommandEvidence(owner,navigationConfiguration.maximumCommandEvidence);
   const presentationFor=createNavigationPresentationCache();
   const application = {
@@ -34,7 +36,6 @@ export function provideNavigationApplication() {
   onDestroy(() => {
     commands.clear();
     owner.dispose();
-    collection.destroy();
     unsubscribe();
   });
   return application;

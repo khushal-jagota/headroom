@@ -112,6 +112,12 @@ const indexPath = join(scratchRoot, `scheduled-tasks-index-${process.pid}.html`)
     if (path === "/api/review") {
       return json({ items: [], running_worker_count: 0, awaiting_approval_count: 0 });
     }
+    if (path.startsWith("/api/resource-body?")) {
+      const key = new URL(path, location.origin).searchParams.get("key");
+      if (key === "/api/worker-types" || key === "/api/worker-types?supported=true") {
+        return json({ key, epoch: "fixture", revision: "manifest-1", body: { worker_types: key.endsWith("?supported=true") ? workerTypes.filter(entry => entry.creatable !== false) : workerTypes } });
+      }
+    }
     if (path === "/api/projects?detail=full") return json({ projects });
     if (path === "/api/items?detail=full") return json({ items: sprintItems });
     if (path === "/api/worker-types?supported=true") return json({ worker_types: workerTypes.filter(entry => entry.creatable !== false) });

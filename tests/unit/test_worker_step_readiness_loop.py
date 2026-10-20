@@ -949,6 +949,40 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
         asyncio_loop.close()
 
 
+def test_a_ticket_deleted_between_the_candidate_select_and_its_read_is_skipped(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A force delete can land between the candidate select and the per-ticket read.
+
+    That race is reproduced for real here: the read for the targeted Ticket deletes it
+    first, through the production delete path, then calls through to the real read,
+    which raises the genuine not-found error rather than a simulated one.
+    """
+    doomed = world.ready_ticket(title="Deleted mid-poll")
+    survivor = world.ready_ticket(title="Survivor")
+    real_read_ticket = tickets_data.read_ticket
+
+    def read_ticket_after_a_race_delete(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
+        if ticket_id == doomed:
+            tickets_data.delete_ticket(
+                conn,
+                ticket_id,
+                principal=OWNER_PRINCIPAL,
+                now=0,
+                even_while_running=True,
+            )
+        return real_read_ticket(conn, ticket_id)
+
+    monkeypatch.setattr(tickets_data, "read_ticket", read_ticket_after_a_race_delete)
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    try:
+        scheduled = readiness_loop.poll_once()
+        assert scheduled == [survivor]
+    finally:
+        readiness_loop.stop()
+        asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+        thread.join(5)
+        asyncio_loop.close()
 
 
 

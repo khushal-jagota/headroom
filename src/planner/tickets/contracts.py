@@ -362,4 +362,7 @@ class ReviewTransferNotice:
     ticket_id: str
     ticket_title: str
     previous_holder: Principal
+    new_holder: Principal
     new_holder_name: str
+    notify_previous_holder: bool
+    mover_name: str | None

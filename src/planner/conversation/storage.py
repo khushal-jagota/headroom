@@ -74,6 +74,7 @@ from planner.conversation.publication.coordinator import (
     SignalPublicationCoordinator,
 )
 from planner.conversation.publication.mutations import SignalRuntimeMutation
+from planner.conversation.views.writer import append_projection
 from planner.core.commit_capture import register_capture_task, run_in_capture_thread
 from planner.core.config import CONVERSATION_WRITE_LOCK_RETRY_SECONDS
 from planner.core.contracts import Principal, PrincipalKind
@@ -1228,6 +1229,7 @@ class ConversationStore:
             (latest_sequence + len(payloads), conversation_id),
         )
         apply_facts(conn, conversation_id, lifecycle)
+        append_projection(conn, written)
         return tuple(written)
 
     def _read_events_after_sync(

@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { build } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { markdownWorkerPlugins } from "../../build/markdown-worker.mjs";
 import { scratchDirectory, ownedByProcess } from "../support/scratch.mjs";
 import { selectedEntries, validateCompanion } from "./contracts.mjs";
 
@@ -94,7 +95,7 @@ async function runSelected(entries, options, receipt, requiredCompanions) {
     receipt.timing.prepareSeconds = (performance.now() - prepareStarted) / 1000;
     const output = join(temporary, "dist");
     const buildStarted = performance.now();
-    await build({root: webRoot, base: "/", configFile: false, logLevel: "warn", plugins: [svelte()],
+    await build({root: webRoot, base: "/", configFile: false, logLevel: "warn", plugins: [svelte()], worker: { plugins: markdownWorkerPlugins },
       build: {outDir: output, emptyOutDir: true, rollupOptions: {input: prepared.flatMap(case_ => case_.inputs)}}});
     receipt.timing.sharedBuildSeconds = (performance.now() - buildStarted) / 1000;
     const serverStarted = performance.now();

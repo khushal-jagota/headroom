@@ -70,17 +70,14 @@ class SprintItemDeletion:
 
 
 class ItemWorkspaceDocument(TypedDict):
-    """Content only; the canonical history reader owns its existing entry shape."""
+    """Selected document only; catalogs have separate bounded readers."""
 
     goal: str
     recap: str
-    conversation_history: list[dict[str, str | int]]
 
 
 class ItemWorkspaceContent(ItemWorkspaceDocument):
-    """Exact content door; managed-file serialization owns artifact entry shapes."""
-
-    artifacts: list[dict[str, object]]
+    """Exact content door without unopened artifact or conversation catalogs."""
 
 
 # --- request bodies (§9 wire shapes) ---

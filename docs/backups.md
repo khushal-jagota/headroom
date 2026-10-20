@@ -1,19 +1,19 @@
 # Database and managed-file backups
 
-Panels protects its canonical SQLite record and its managed-file tree with small local
-snapshots. A backup can run while Panels is serving requests: SQLite copies the live database
+Panels protects its canonical SQLite record, worker settings, and managed skills with
+small local snapshots. A backup can run while Panels is serving requests: SQLite copies the live database
 through its online backup API, so committed WAL data is included without stopping the
-application, and the managed-file tree is copied alongside it.
+application, and the settings and skills are copied alongside it.
 
 ```
 live SQLite database ──online copy──┐
-managed-file tree    ──file copy────┤
+settings + skills   ──file copy────┤
                                      ▼
                             temporary snapshot
                             │ integrity + checksums
                             ▼
                     atomic verified snapshot
-                            │ keep newest seven verified snapshots
+                            │ keep newest three verified snapshots
                             ▼
                     operator-selected restore
 ```
@@ -24,22 +24,28 @@ managed root exists — a `files/` directory holding a copy of each captured roo
 the database checksum, the format, the list of captured managed roots with the manifest's
 checksum, and the fact that verification passed.
 
-The managed-file tree includes **ticket files** (`files/`) and the Panels **skills**
-(`skills/`) beside the database. The skills there are copies Panels writes from the
-database, so the database is what actually has to be restored; the copies are rebuilt
-from it whenever it is opened.
+New snapshots capture **worker settings** (`worker-settings/`) and Panels **skills**
+(`skills/`) beside the database. They exclude the adjacent artifact tree (`files/`),
+including ticket files and uploads. The skills are copies Panels writes from the
+database; they are rebuilt from it whenever it is opened.
 The user's normal Hermes, Codex, and Claude homes only link to that authority; backup
 does not capture or replace unrelated user-installed skills. The managed skills root is
 captured only once it exists; until then its absence is normal, not a failure.
 
+The format remains `panels-backup-v2`: metadata lists the roots actually captured.
+Existing snapshots are unchanged and can still restore their captured artifact content.
+A restore of a new snapshot leaves any existing destination `files/` tree untouched.
+On a fresh destination, excluded artifacts are unavailable: old artifact links and uploads
+can fail, but the restored application can still start and serve its database records.
+
 The temporary directory is never published, and a snapshot publishes only when both the database
 integrity check and the managed-file manifest verify. A failed copy, integrity check,
 verification, metadata write, or atomic publish therefore leaves existing verified snapshots
-untouched. Retention runs only after publication and keeps the seven newest verified snapshots,
+untouched. Retention runs only after publication and keeps the three newest verified snapshots,
 removing only verified recovery points beyond that set. If removal fails, the older recovery point
 remains.
 
-The database and managed-file tree are independently verified recovery artifacts captured
+The database and captured managed roots are independently verified recovery artifacts captured
 back-to-back at nightly granularity; they are not a single transactional point-in-time. This is
 recoverability to recent state, not point-in-time versioning.
 
@@ -83,7 +89,12 @@ panels environment restore --snapshot /path/to/backups/snapshot-... --destinatio
 ```
 
 Both commands derive every managed root from the database path, so the nightly setup
-needs no additional inputs.
+needs no additional inputs. Restore changes only the roots listed in the snapshot;
+legacy snapshots that list `files` restore it through the same existing path.
+
+Restore verification uses isolated copies only. Never restore onto the live database,
+files tree, or service, and never stop production to prove a restore. The runbook
+describes both an isolated recovery check and the separate operator production procedure.
 
 The concrete nightly setup, configurable paths, inspection commands, and pre-deployment hook
 are in [ops/panels-environments/backup-restore.md](../ops/panels-environments/backup-restore.md).
@@ -100,4 +111,4 @@ Off-host copies and a broader disaster recovery product remain out of scope unti
 recovery design exists. Deployment's automatic app recovery is described in
 [production deployment](deployment.md); it does not restore persistent state.
 
-_Last verified: 2026-08-10._
+_Last verified: 2026-10-20._

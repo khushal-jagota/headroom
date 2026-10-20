@@ -1682,22 +1682,34 @@ def _release_a_holder_the_move_left_below(
     capture_ticket_attention(conn, ticket_id, now)
 
 
+def _resolve_holder_name(conn: sqlite3.Connection, holder: Principal) -> str:
+    if holder.kind is PrincipalKind.owner:
+        return "The user"
+    if holder.kind is PrincipalKind.chief:
+        return "The Chief"
+    table = "sprint_items" if holder.kind is PrincipalKind.sprint_item else "tickets"
+    row = conn.execute(f"SELECT title FROM {table} WHERE id=?", (holder.id,)).fetchone()
+    assert row is not None
+    return str(row["title"])
+
+
 def _review_transfer_notice(
-    conn: sqlite3.Connection, before: Ticket, after: Ticket
+    conn: sqlite3.Connection, before: Ticket, after: Ticket, actor: Principal
 ) -> ReviewTransferNotice | None:
     if not review_transfer.review_transferred(before, after):
         return None
-    holder = after.ceiling_holder
-    if holder.kind is PrincipalKind.owner:
-        name = "The user"
-    elif holder.kind is PrincipalKind.chief:
-        name = "The Chief"
-    else:
-        table = "sprint_items" if holder.kind is PrincipalKind.sprint_item else "tickets"
-        row = conn.execute(f"SELECT title FROM {table} WHERE id=?", (holder.id,)).fetchone()
-        assert row is not None
-        name = str(row["title"])
-    return ReviewTransferNotice(after.id, after.title, before.ceiling_holder, name)
+    new_holder = after.ceiling_holder
+    moved_by_someone_else = actor != new_holder
+    notify_previous_holder = moved_by_someone_else and actor != before.ceiling_holder
+    return ReviewTransferNotice(
+        after.id,
+        after.title,
+        before.ceiling_holder,
+        new_holder,
+        _resolve_holder_name(conn, new_holder),
+        notify_previous_holder,
+        _resolve_holder_name(conn, actor) if moved_by_someone_else else None,
+    )
 
 
 def _collect_review_transfer(
@@ -1937,7 +1949,7 @@ def edit_ticket(
                     proposal_field=updated.pending_proposal.field,
                     now=now,
                 )
-        notice = _review_transfer_notice(conn, ticket, updated)
+        notice = _review_transfer_notice(conn, ticket, updated, principal)
     _collect_review_transfer(conn, notice, review_transfer_notices)
     return updated
 
@@ -1978,7 +1990,7 @@ def classify_ticket(
             now=now,
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        notice = _review_transfer_notice(conn, ticket, updated)
+        notice = _review_transfer_notice(conn, ticket, updated, principal)
     _collect_review_transfer(conn, notice, review_transfer_notices)
     return updated
 
@@ -2025,7 +2037,7 @@ def unclassify_ticket(
             now=now,
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        notice = _review_transfer_notice(conn, ticket, updated)
+        notice = _review_transfer_notice(conn, ticket, updated, principal)
     _collect_review_transfer(conn, notice, review_transfer_notices)
     return updated
 

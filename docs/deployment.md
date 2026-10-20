@@ -401,6 +401,20 @@ the database and managed files. Deployment then retains the prior app as a tempo
 fallback, installs the candidate at `current/app`, restarts Panels, and requires health
 to report the requested commit.
 
+Each health proof gets 300 seconds after the service restart command returns.
+The live service uses `Type=simple`, so its first schema migration and remaining
+application startup share this window. Build and backup time precede it.
+The workspace projection upgrade measured 98.3 seconds on a production-size copy.
+With approximately 14 seconds for remaining startup, the estimated margin is 187.7
+seconds. This is an estimate from separate observations, not an end-to-end deployment
+measurement. The explicit deployment timeout parameter still overrides the default.
+Exact-SHA readiness and verified rollback requirements remain unchanged.
+
+The workflow's control checkout supplies this budget. Deployments controlled by an
+older checkout retain that checkout's budget even when the candidate is newer.
+The separate 45-second installed-candidate smoke check uses fresh state. It does not
+measure migration of the production archive.
+
 Every candidate, including its staged copy, must contain the complete current runtime
 and both executable entrypoints. The existing app still receives manifest, artifact,
 and safe-tree validation, but it may predate the interactive `bin/panels` entrypoint.

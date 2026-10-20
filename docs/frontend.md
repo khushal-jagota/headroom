@@ -6,9 +6,9 @@ document at `/`; the Vite chunks are mounted under `/_app/`. Shared tokens and
 application CSS live in `assets/`. The Markdown pipeline and managed rendering
 lifecycle live under `web/src/lib/`.
 
-Answers travel compressed. The server gzips any response over 1 KB, which matters most
-for a conversation open: the largest thread is 9.4 MB of JSON and goes over the wire as
-1.8 MB. A live event stream never reaches the compression at all: the server decides from
+Answers travel compressed. The server gzips responses over 1 KB. Conversation opens
+request a bounded selected view instead of the complete history. A live event stream
+never reaches the compression at all: the server decides from
 the address, before the request is answered, and sends a stream down a route that has no
 compression in it. That is not fussiness. Compression cannot say anything about a
 response until it has seen some of the body, so it holds the response's headers back
@@ -65,7 +65,8 @@ One screen per part of the system:
   right pane. The workspace address preserves these selections across reload and Back.
   Standalone utility routes remain available. The open utility uses the same accent-bright
   border as a selected orchestrator card.
-  Fine pointers with hover capability reveal a popup after 200 milliseconds. Visible
+  Settled orchestrator titles have no popup. They remain selectable and retain Reopen and conversation marks.
+  Fine pointers with hover capability reveal other rail popups after 200 milliseconds. Visible
   keyboard focus reveals it immediately. Touch reveals it after a 400 millisecond hold.
   Movement, release, or cancellation stops an unfinished hold. Taps and clicks select.
   A completed hold suppresses its click. One popup swaps targets without another delay.
@@ -74,8 +75,9 @@ One screen per part of the system:
   full recap, and one sentence from the served Worker manifest and current facts.
   “Currently doing” requires an actual working signal. Idle Workers say “At” their stage.
   Approval, answer, assignment, error, and blocked facts use their specific wording.
-  The popup has no stage ladder or named blockers. Recaps arrive through the existing
-  board and orchestrator projections, without detail requests or another transport.
+  The popup has no stage ladder or named blockers. Small recaps arrive with navigation.
+  A larger recap carries a version-bound reference; the visible popup reads that body
+  and releases it when its owning surface closes. A changed version refuses the read.
   Orchestrator popups show their full recap in a recessed recap.
   The Chief popup states the eligible Ticket count.
   Empty orchestrator recaps use that same factual fallback. The panel stays
@@ -111,17 +113,18 @@ One screen per part of the system:
   upward within half the space above those controls. Its header stays visible while
   active work and settled rows scroll separately. Both lists remain usable in short
   viewports. The height share is a layout value, without a preference or settings UI.
+  Manual fold toggles respond immediately, independently of queued rail updates. Height,
+  chevron, and body fade share one 340 millisecond beat. Late rows mount directly without
+  another arrival animation. Closing returns focus to the header when necessary.
+  Reduced motion skips that beat. Settle/Reopen retains its separate row choreography.
 
   Settling fades the active card and its rows out over 160 milliseconds before
   the Settled row arrives with the usual 140 millisecond delay and 320 millisecond
   fade. Reopening uses the same sequence in reverse: the card and headings arrive
   first, then its Workers. Layout changes share the existing 340 millisecond
   space adjustment. A closed Settled section stays closed and its count crossfades.
-  Opening and closing change section height and rotate the chevron together;
-  contents fade within that movement. Child-message arrivals and departures use
-  the same queue, so the rows below slide when their height changes. The latest
-  requested state waits through a transition. Reduced motion applies the final
-  state immediately, and closing returns focus to the header if it hid focus.
+  Manual fold requests bypass that structural queue. Coherent settled page updates
+  do not restart the fold animation. The latest manual choice wins during rapid reversal.
 
   Orchestrator pages show active groups first, then Backlogged and Done headers.
   Backlogged contains unfinished deferred Tickets. Done contains every completed Ticket,
@@ -162,15 +165,14 @@ One screen per part of the system:
   row positions, while the popup continues to use fresh content. Settling
   an orchestrator changes its location without changing either conversation fact.
 
-  The Chief of Staff keeps its own exact conversation marks. A browser with no saved lens
-  choice opens in Focus. Focus shows the owner's prompts, explicit messages to the owner,
+  The Chief of Staff keeps its own exact conversation marks. A fresh pane opens in Focus. Focus shows the owner's prompts, explicit messages to the owner,
   permission requests, agent questions, and their settled answers. Failed turns, stopped turns,
   and missing explicit replies remain visible as compact system rows. Full shows every
   notebook row, every held prompt, all live
   agent text, and every tool call without a Focus fold. One header toggle switches the
   lens, and the unmodified `f` key does the same when no editable control owns it. The
-  browser keeps that choice across conversation switches, new conversations, and later
-  visits. Notification links use the saved lens through the ordinary conversation route.
+  browser keeps an explicit choice across conversation switches and New within that pane.
+  A fresh pane, including a fresh notification-link visit, starts in Focus.
 
   Complete turn boundaries settle both the Focus transcript and its rest line. A turn
   with a hidden automatic prompt has no Focus turn head. Its visible owner result rows
@@ -242,7 +244,8 @@ One screen per part of the system:
 - **Chief children** — the Chief and ordinary orchestrators show one scoped Worker list.
   Active groups stay visible. Backlogged and Done have independent collapsible headers.
   Each Chief section retains its own bounded pages and reader choices. Ordinary
-  orchestrators use their full workspace data and retain independent reader choices.
+  orchestrators retain exact group counts and independent reader choices. Open groups
+  request bounded scrolling windows; closed groups request counts without row bodies.
   The standalone Workers page is removed. Former `#/backlog` addresses redirect to
   Workspace. Project facts remain text. The browser New Ticket form and global
   project/type list are removed; API and CLI creation remain available.
@@ -349,24 +352,63 @@ The picker stays open and reports failures in its existing feedback line.
 _Usage code paths:_ `web/src/routes/BackendsRoute.svelte`, `web/src/components/usage/`,
 and `web/src/lib/conversation/recordedUsageWire.ts`.
 
+## Workspace navigation
+
+The application holds one bounded server-owned view. It requests visible rail windows,
+opened groups and the selected owner, including an explicitly selected old conversation.
+The server expands each admitted row's dependencies from indexed canonical projections.
+It returns exact global and section counts, so hidden history never has to enter browser
+memory to make a count correct. Selected owners remain available outside rail membership.
+
+One view admits at most 512 records and 768 KiB including metadata. Scrolling windows
+request at most 60 rows and Chief pages keep their existing 30-row size. Combined requests
+share a 256-row budget and preserve up to 160 semantic count windows (138 for the full
+ordinary workspace). Parent pages stay stable. Other bodies share remaining capacity;
+explicit viewport intent prioritizes a count-only surface. Short pages accept wheel,
+touch or keyboard continuation even without native scroll overflow. Overlapping windows
+replace prior rows and preserve a surviving visible row's position. Stale domain cursors
+explicitly rebase, and vanished suffixes return the nearest reachable edge. Canonical saved text
+is not truncated: large selected or hovered recaps have a separate surface-owned body.
+
+The indexed view and exact aggregates update in the canonical navigation transaction.
+One server coordinator reads semantic changes for all subscribers. Bookkeeping-only
+revisions send coverage checkpoints, which advance command-fence coverage without another
+selector pass or DOM update. Changed content still requires actual selector and rendered
+DOM acknowledgements. Scope replacement, authority loss and source epoch changes revoke
+old evidence; late responses cannot restore an obsolete scope. The legacy whole-workspace
+protocol remains available for compatibility clients, but the application does not mount it.
+
+Ordering keys use the installed ICU version and include that version in cursor identity.
+The admitted workspace orderings are English (US) and German (Germany); other browser
+languages use English (US). A changed ordering generation invalidates old cursors. This
+is an explicit supported comparator boundary, not a claim that every browser ICU version
+or locale produces identical arbitrary-text ordering.
+
 ## The two rules that shape it
 
-- **The server says "something changed"; the browser refetches what it is showing.**
-  Every live-updated read the browser makes is listed in one place — its name and
-  the address it comes from — so a screen asks for a resource by name and gets both.
-  The reads are cached and shared: two screens asking for the same thing make one
-  request. The shell's deployment status is always mounted. A few one-shot reads, like
-  the worker configuration probe, are plain fetches and sit outside the list.
+- **The server says "something changed"; the browser checks what changed on screen.**
+  Screens share named, cached reads from one query catalogue. A contentless commit signal
+  starts one coalesced version probe for the resources that mounted screens currently use.
+  The browser fetches only bodies whose source version changed. One probe can run at a
+  time, with one pending round for further commits. The signal itself carries no domain
+  vocabulary, and navigation and conversation tails retain their own scope and continuity.
 
-  The server holds open a change stream and sends one line down it every time a write
-  is committed through the database door. (One internal conversation cache writes
-  outside that door and stays silent; it feeds no screen.) The line says nothing
-  about what changed — there is no vocabulary here to keep in step with the backend. The browser answers by marking every cached
-  read stale, and only the reads a screen is currently using are fetched again;
-  everything else waits until something needs it. A burst of writes collapses into
-  one round of refetching. A refetch that comes back the same leaves the page alone,
-  so a busy stream does not make the screen flicker. A successful write from the
-  browser does the same thing itself, without waiting for the stream to say so.
+  Domains declare authoritative source dependencies in one registry. Database revisions
+  change in the same transaction as their source. A body and its revision come from one
+  coherent read. Installed configuration and deployment status use their own captured
+  authorities. A restart changes the server epoch and forces reconciliation. A late probe
+  cannot mark an older body current, and a stopped coordinator cannot update the next page.
+
+  Unregistered reads retain explicit refresh behavior. A failed version probe falls back
+  to one refresh of mounted reads. Direct filesystem artifact discovery stays on that
+  fallback because files can change without a database write. Hidden tabs defer commit
+  refreshes until return. Confirmed browser writes keep their immediate invalidation.
+
+  Inactive decoded response bodies have a shared least-recently-used budget of 64 entries
+  and four MiB. The browser counts bytes once when each response enters the cache. An
+  oversized body leaves immediately after its last observer leaves. The age limit remains
+  an additional bound. Drafts and outgoing messages do not belong to this response cache.
+
   A confirmed conversation read also refreshes mounted queries immediately when its
   accepted position covers a previously unread owner message. Overlapping read replies
   refresh each covered interval once. Tool-only reads keep normal stream coalescing.
@@ -388,9 +430,8 @@ and `web/src/lib/conversation/recordedUsageWire.ts`.
   separate deployment-status read described above. When the stream drops, the browser
   retries on its own. Unless a durable deployment problem takes precedence, the
   label says Reconnecting until it is back. Because anything that changed during the gap went
-  unheard, opening the stream refetches
-  what is on screen — that, plus the same refetch when the window is focused again, is
-  the whole recovery story. The server sends an occasional invisible keep-alive line
+  unheard, opening the stream reconciles versions for mounted resources. Window focus
+  also refreshes active reads. Unchanged versioned bodies stay in place. The server sends an occasional invisible keep-alive line
   down a quiet stream, which changes nothing on screen.
 
   There is no second transcript to merge: the record's rows are what a pane shows, read
@@ -404,6 +445,18 @@ and `web/src/lib/conversation/recordedUsageWire.ts`.
   code, block quotes, thematic breaks, and nested mixed lists. Raw HTML stays visible
   as text. A strict sanitizer removes scripts, event handlers, unsafe URLs, ids,
   styles, and DOM-clobbering attributes before any DOM node is created.
+  Large read-only documents use that exact parser in one cancellable worker. FIFO jobs
+  prevent a replaced preview from canceling another reader. Deferred conversation JSON
+  uses the same worker and the generated canonical body schema. Replies retain their
+  job identity and cannot revive an obsolete surface. Visible Markdown block groups keep
+  measured placeholders when they leave the viewport. Full-text copy includes unmounted
+  groups. Tables and lists retain their complete logical container, intrinsic layout, and
+  numbering. An unusually large selected container can therefore exceed the ordinary DOM
+  window. Editable serialization keeps its synchronous exact-source behavior.
+  Images, HTML frames, PDF frames, and media players mount automatically near the viewport.
+  Distant or hidden previews release native resources and text reads. Measured placeholders
+  preserve their place. A custom visibility gate owns image admission, so native lazy
+  loading does not leave a zero-height admitted image permanently unloaded.
 - **Loopback links stay ordinary links.** Markdown does not rewrite `localhost` or
   `127.0.0.1` addresses. Panels does not expose development servers through its origin.
   Workers use durable Ticket-owned files for reviewable work.
@@ -538,9 +591,22 @@ hand-rolling the same shapes per screen. Each does one job:
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
 - **LiveConversation** — what makes a conversation live, and the only thing that does:
-  it opens one by id, replays the rows after the one it holds and keeps going, keeps the
-  messages this browser has sent that the record has not caught up with, and turns send,
-  stop, answer and New into calls. The Ticket screen and the Chief of Staff both mount it.
+  it opens one selected server view, keeps bounded history pages and one selected tail,
+  and retains this browser's messages until the durable record acknowledges them.
+  It turns send, stop, answer and New into calls. The Ticket screen and Chief both mount it.
+  Fresh panes request Focus. Full requires an explicit choice, which survives conversation
+  switches within that pane. The server owns lens visibility, turn folds, and work groups.
+  Historical page order is separate from delivered read coverage. Loading older history
+  never acknowledges newer messages. During a page read, stream admission pauses and
+  resumes from unchanged coverage with all retained ranges.
+
+  A page holds at most 100 items and 128 KiB of ordinary bodies. The selected reader keeps
+  at most 300 items, 512 KiB of ordinary bodies, and 20 scope windows. The viewport mounts
+  at most 150 nearby message bodies. Large bodies use versioned source references and
+  visible demand. They keep their full text, formatting, and copy behavior. Rest and hidden
+  panes release transcript bodies, requests, and previews. Drafts, pending sends, logical
+  scroll anchors, and bounded disclosure identities stay outside that expendable view.
+  Reconnects reconcile pending send receipts even when durable coverage does not advance.
 - **ConversationPane / ConversationTranscript / ConversationComposer** — what a
   conversation looks like: the rows, the one raised ask, the status line, and the
   composer with its model, effort and skill choices. The composer also owns pending
@@ -644,6 +710,29 @@ refetch it earns), `web/src/lib/conversation/` and `web/src/components/conversat
 remaining `web/src/lib/` helpers (API, Managed Markdown, `markdownPipeline.ts`,
 `labelize`, dates), `assets/tokens.css` (design tokens), `assets/app.css` (shared
 styling), `web/dist/` (built app served by FastAPI).
+
+## Demand for page content
+
+Worker Steps retains its count and approval summaries while closed. Historical field
+bodies load only when their existing folds open. An unloaded body is different from an
+empty field. Logical drafts and save errors survive closed-body eviction. The current
+proposal, controls, and assigned gate body retain coherent admission against current facts.
+
+Artifacts and prior conversations use separate bounded metadata pages. Artifact folders
+retain the existing expansion and preview links. Filesystem artifacts precede proposal
+links and historical field links. The server indexes Markdown links at source writes, so
+closed fields need no body download merely to discover an artifact. The selected owner's
+filesystem reconciliation preserves descendant ordering, empty-folder suppression, and
+files written outside the API. It runs off the server event loop and has a bounded cache.
+
+The conversation picker retains selection, keyboard movement, focus return, and typeahead
+across unloaded history. SQL indexes scope pages and selected-position reads to the owner.
+Localized typeahead scans bounded cursor batches when a label is outside the loaded page.
+The browser retains a bounded window of entries, rather than every historical label.
+
+The app keeps the workspace available initially and imports other routes and selected
+inspectors on demand. Hashed Vite assets use immutable caching for one year. HTML and
+unhashed assets revalidate so the next load sees the current deployment.
 
 ## Handoffs
 

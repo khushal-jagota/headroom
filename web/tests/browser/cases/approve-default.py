@@ -10,6 +10,8 @@ def run(browser, urls):
         str(Path(__file__).resolve().parents[2] / "support/navigation/browser-fixture.py")
     )
     navigation_response = fixture["navigation_response"]
+    scoped_navigation_response = fixture["scoped_navigation_response"]
+    import hashlib
     import json
     import os
     from pathlib import Path
@@ -166,15 +168,11 @@ def run(browser, urls):
                 row = tickets[record["id"]]
                 proposal = row["pending_proposal"]
                 definition = next(
-
-                        worker
-                        for worker in manifest["worker_types"]
-                        if worker["worker_type"] == row["worker_type"]
-
+                    worker
+                    for worker in manifest["worker_types"]
+                    if worker["worker_type"] == row["worker_type"]
                 )
-                stage = next(
-                    stage for stage in definition["stages"] if stage["id"] == row["stage"]
-                )
+                stage = next(stage for stage in definition["stages"] if stage["id"] == row["stage"])
                 record["value"].update(
                     ceiling=row["ceiling"],
                     ceiling_holder=row["ceiling_holder"],
@@ -189,13 +187,75 @@ def run(browser, urls):
                 )
         return response
 
+    def resource_revision(key):
+        parts = key.split("/")
+        value = tickets.get(parts[3], {}) if key.startswith("/api/tickets/") else manifest
+        return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+    def workspace_ticket(ticket_id):
+        source = tickets[ticket_id]
+        definition = coding if source["worker_type"] == "coding" else exploration
+        gate = next(
+            row["gating_field"] for row in definition["stages"] if row["id"] == source["stage"]
+        )
+        return {
+            **source,
+            "locale": "en-US",
+            "orchestrator": {"kind": "sprint_item", "id": "item_one"},
+            "record_sha256": source.get("record_sha256", "record-initial"),
+            "field_values": {gate: source["field_values"].get(gate, "")} if gate else {},
+            "field_summaries": {
+                field: {"revision": "1", "byte_count": len(value.encode())}
+                for field, value in source["field_values"].items()
+            },
+            "field_approvals": source.get("field_approvals", {}),
+        }
+
     def respond(route):
         nonlocal read_count, refuse_resume
         path = route.request.url.split("/api/", 1)[1]
+        resource_key = None
+        if path.startswith("resource-body?"):
+            resource_key = parse_qs(path.split("?", 1)[1])["key"][0]
+            path = resource_key.removeprefix("/api/")
+        if path.startswith("resource-versions?"):
+            keys = json.loads(parse_qs(path.split("?", 1)[1])["keys"][0])
+            route.fulfill(
+                json={
+                    "epoch": "fixture",
+                    "resources": [{"key": key, "revision": resource_revision(key)} for key in keys],
+                }
+            )
+            return
         if path.startswith("tickets?"):
             path = "tickets/" + parse_qs(path.split("?", 1)[1])["id"][0]
-        if path.split("?")[0] == "navigation/snapshot":
+        if path.split("?")[0] in {"navigation/snapshot", "navigation/view/snapshot"}:
             result = navigation_snapshot()
+            if path.startswith("navigation/view/"):
+                result = scoped_navigation_response(
+                    result, json.loads(parse_qs(path.split("?", 1)[1])["view"][0])
+                )
+        elif path.startswith("artifact-catalog/"):
+            result = {"revision": "empty", "directory": "", "offset": 0, "total": 0, "entries": []}
+        elif path.startswith("conversation-history/"):
+            result = {
+                "revision": "empty",
+                "offset": 0,
+                "total": 0,
+                "active_index": None,
+                "entries": [],
+            }
+        elif path.startswith("tickets/") and path.endswith("/workspace"):
+            read_count += 1
+            result = workspace_ticket(path.split("/")[1])
+        elif path.startswith("tickets/") and "/workspace/fields/" in path:
+            _, ticket_id, _, _, field = path.split("/")
+            result = {
+                "ticket_id": ticket_id,
+                "field": field,
+                "revision": "1",
+                "value": tickets[ticket_id]["field_values"].get(field, ""),
+            }
         elif path == "review":
             raise AssertionError("competing Review summary read")
         elif path.endswith("/backlog") or path.endswith("/resume"):
@@ -302,6 +362,13 @@ def run(browser, urls):
             result = {"backends": []}
         else:
             result = {}
+        if resource_key is not None:
+            result = {
+                "epoch": "fixture",
+                "key": resource_key,
+                "revision": resource_revision(resource_key),
+                "body": result,
+            }
         route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
 
     page = browser.new_page()
@@ -639,6 +706,29 @@ def run(browser, urls):
     page.evaluate("window.__refresh()")
     expect(page.locator("[data-ticket-backlog-action]")).to_have_count(0)
     print("approval complete literal principals and guarded backlog/resume preservation passed")
+    for window_size in (5, 60):
+        scroll = page.evaluate("size => window.__scrollWindowProof(size)", window_size)
+        assert scroll["forward"]["moves"] == 1, scroll
+        assert scroll["forward"]["start"] == window_size // 2, scroll
+        assert abs(scroll["forward"]["top"]) <= 1, scroll
+        assert scroll["forward"]["height"] == scroll["height"], scroll
+        assert scroll["forward"]["rows"] == window_size, scroll
+        assert scroll["backward"]["start"] == 0, scroll
+        assert abs(scroll["backward"]["top"]) <= 1, scroll
+        assert scroll["backward"]["rows"] == window_size, scroll
+    for window_size in (1, 5):
+        scroll = page.evaluate("size => window.__scrollWindowProof(size, true)", window_size)
+        assert scroll["initialMoves"] == 0, scroll
+        assert scroll["forward"]["moves"] == 1, scroll
+        assert scroll["forward"]["start"] == max(1, window_size // 2), scroll
+        assert scroll["backward"]["moves"] == 2, scroll
+        assert scroll["backward"]["start"] == 0, scroll
+        assert scroll["backward"]["rows"] == window_size, scroll
+    activated = page.evaluate("() => window.__scrollWindowProof(1, true, true)")
+    assert activated["activations"] == 1, activated
+    assert activated["initialMoves"] == 0, activated
+    assert activated["forward"]["start"] == 1, activated
+    assert activated["backward"]["start"] == 0, activated
     assert errors == [], errors
     if artifact_dir:
         (Path(artifact_dir) / "frontend-assertions.json").write_text(

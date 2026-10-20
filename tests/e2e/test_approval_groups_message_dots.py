@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, Route, expect
@@ -114,18 +115,18 @@ def test_approval_membership_and_each_workers_durable_message_dot(
 
     context = context_factory()
     diagnostics = ApprovalMessageDiagnostics(context, server, EVIDENCE)
-    pending_events: list[tuple[Route, str]] = []
+    transcript_pattern = "**/api/conversation/conversations/dot-ticket/view/tail?*transcript=true*"
+    pending_events: list[Route] = []
     pending_workspace: list[tuple[Route, str]] = []
 
     def delay_transcript(route: Route) -> None:
-        response = route.fetch()
-        body = response.text()
-        pending_events.append((route, body))
-        diagnostics.record("transcript-held", url=route.request.url, body=body)
+        pending_events.append(route)
+        diagnostics.record("transcript-held", url=route.request.url)
+        route.request.frame.page.evaluate("() => { window.__proofTranscriptHeld = true; }")
 
     try:
         diagnostics.record("transcript-route-install-start")
-        context.route("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
+        context.route(transcript_pattern, delay_transcript)
         diagnostics.record("transcript-route-install-return")
         page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
         left = page.locator(f'[data-sprint-item="{item["id"]}"]')
@@ -153,7 +154,8 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             diagnostics.record("workspace-held", url=route.request.url, body=body)
             page.evaluate("() => { window.__proofWorkspaceHeld = true; }")
 
-        workspace_pattern = f"**/api/items/{item['id']}/workspace-content"
+        workspace_key = quote(f"/api/items/{item['id']}/workspace-content", safe="")
+        workspace_pattern = f"**/api/resource-body?key={workspace_key}"
         diagnostics.record("workspace-route-install-start")
         context.route(workspace_pattern, delay_workspace)
         diagnostics.record("workspace-route-install-return")
@@ -194,15 +196,18 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         page.wait_for_function(
             "() => document.querySelector('[data-conversation-state=peeked]')", timeout=WAIT_MS
         )
+        # Peeked is local UI state; metadata and reader bootstrap can still be pending.
+        # Establish that the interceptor holds delivery before testing the read boundary.
+        page.wait_for_function("() => window.__proofTranscriptHeld === true", timeout=WAIT_MS)
         # The snapshot can name an unread latest sequence, but undelivered rows cannot be read.
         assert pending_events
         assert _read_position(server, "dot-ticket") == 0
-        for route, body in pending_events:
-            diagnostics.record("transcript-release", url=route.request.url, body=body)
-            route.fulfill(status=200, content_type="application/json", body=body)
+        for route in pending_events:
+            diagnostics.record("transcript-release", url=route.request.url)
+            route.continue_()
         pending_events.clear()
         diagnostics.record("transcript-route-remove-start")
-        context.unroute("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
+        context.unroute(transcript_pattern, delay_transcript)
         diagnostics.record("transcript-route-remove-return")
         page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
         expect(page.get_by_text("Child direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
@@ -298,7 +303,12 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     finally:
         diagnostics.persist_and_close(context)
         # Failed assertions must not strand intercepted requests during context teardown.
-        for route, body in (*pending_events, *pending_workspace):
+        for route in pending_events:
+            try:
+                route.continue_()
+            except PlaywrightError:
+                pass  # Already handled or the test's page closed.
+        for route, body in pending_workspace:
             try:
                 route.fulfill(status=200, content_type="application/json", body=body)
             except PlaywrightError:

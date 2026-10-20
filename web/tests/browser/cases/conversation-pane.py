@@ -2,7 +2,186 @@
 """Independent browser case, extracted without assertion changes."""
 
 
+def _catalogs(browser, url):
+    from urllib.parse import parse_qs, urlsplit
+
+    from playwright.sync_api import expect
+
+    page = browser.new_page(viewport={"width": 1100, "height": 800})
+    requests = []
+    def history(route):
+        args = parse_qs(urlsplit(route.request.url).query)
+        offset = int(args.get("offset", [0])[0])
+        selected = args.get("selected", [None])[0]
+        prefix = args.get("prefix", [None])[0]
+        active = int(selected[1:]) if selected else None
+        if prefix:
+            active = next((index for index in range(135) if f"History {index:03}".lower().startswith(prefix)), None)
+        if active is not None:
+            offset = active // 60 * 60
+        requests.append(("history", offset))
+        route.fulfill(json={"revision":"one", "offset":offset, "total":135, "active_index":active,
+            "entries":[{"conversation_id":f"c{index:03}","created_at":index,"label":f"History {index:03}"} for index in range(offset,min(offset+60,135))]})
+    def artifacts(route):
+        args = parse_qs(urlsplit(route.request.url).query)
+        offset = int(args.get("offset", [0])[0])
+        limit = int(args.get("limit", [60])[0])
+        directory = args.get("directory", [""])[0]
+        count = 3 if directory else 135
+        rows = []
+        for index in range(offset, min(count, offset+limit)):
+            folder = not directory and index == 0
+            path = "folder" if folder else f"{directory+'/' if directory else ''}file{index:03}.md"
+            rows.append({"key":path,"path":path,"label":path,"kind":"3" if folder else "md",
+                "href":None if folder else f"/files/tickets/t_catalog/{path}","directory":"folder" if folder else None,"child_count":3 if folder else 0})
+        requests.append(("artifacts", offset))
+        route.fulfill(json={"revision":"one","directory":directory,"offset":offset,"total":count,"entries":rows})
+    try:
+        page.route("**/api/conversation-history/**", history)
+        page.route("**/api/artifact-catalog/**", artifacts)
+        page.goto(url+"?catalogs=1", wait_until="domcontentloaded")
+        trigger = page.get_by_role("button",name="Prior conversation",exact=True)
+        trigger.click()
+        box = page.get_by_role("listbox")
+        expect(box.get_by_role("option")).to_have_count(61)
+        box.press("End")
+        expect(page.locator("[data-listbox-picker-active]")).to_have_attribute("data-listbox-picker-value","c134")
+        expect(box.get_by_role("option")).to_have_count(15)
+        box.press("Enter")
+        expect(page.locator("[data-history-selection]")).to_have_text("c134")
+        trigger.click()
+        box.press("Home")
+        expect(page.locator("[data-listbox-picker-active]")).to_have_attribute("data-listbox-picker-value","__current__")
+        for key in ("h", "i", "s", "t", "o", "r", "y", " ", "1", "2", "3"):
+            box.press(key)
+        expect(page.locator("[data-listbox-picker-active]")).to_have_attribute("data-listbox-picker-value","c123")
+        box.press("Escape")
+        expect(trigger).to_be_focused()
+        page.locator("[data-artifacts-band] > summary").click()
+        window = page.locator(".artifact-catalog-window").first
+        expect(window.locator(":scope > [data-artifact-folder]")).to_have_count(1)
+        window.locator("[data-artifact-folder]").click()
+        expect(page.locator('.artifact-catalog-children [data-artifact-chip]')).to_have_count(3)
+        window.locator("[data-artifact-folder]").click()
+        window.evaluate("element => { element.scrollTop=130*36; element.dispatchEvent(new Event('scroll')); }")
+        expect(window.locator('[data-artifact-chip="file134.md"]')).to_have_count(1)
+        assert window.locator('[data-artifact-chip]').count() <= 60
+        assert ("history",120) in requests and ("artifacts",120) in requests
+        print("PASS catalog browser boundary: bounded history End/Home/typeahead and artifact folder/scroll windows", flush=True)
+    finally:
+        page.close()
+
+
+def _preview_lifecycle(browser, url):
+    import base64
+    import time
+
+    from playwright.sync_api import expect
+
+    started = time.monotonic()
+    page = browser.new_page(viewport={"width": 1100, "height": 800})
+    reads = []
+    page.on("pageerror",lambda error: print("PREVIEW ERROR",str(error),flush=True))
+    page.on("console",lambda message: print("PREVIEW CONSOLE",message.text,flush=True) if message.type=="error" else None)
+    def preview(route):
+        reads.append(route.request.url)
+        route.fulfill(content_type="text/html", body="<html><body>Automatic visible preview</body></html>")
+    try:
+        page.route("**/files/tickets/t_preview/*.html", preview)
+        page.route("**/files/tickets/t_preview/*.png",lambda route: route.fulfill(content_type="image/png",body=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=")))
+        page.goto(url+"?previews=1", wait_until="domcontentloaded")
+        page.wait_for_function("document.querySelectorAll('[data-file-preview-html]').length > 0")
+        assert 0 < len(reads) < 8, reads
+        assert page.locator("iframe").count() < 8
+        page.wait_for_function("document.querySelectorAll('[data-preview-fixture] img').length > 0")
+        assert page.locator("[data-preview-fixture] img").count() < 8
+        page.locator("[data-preview-fixture]").evaluate("element=>{element.scrollTop=element.scrollHeight}")
+        page.wait_for_function("Array.from(document.querySelectorAll('[data-file-preview-html]')).some(frame=>frame.title.includes('preview23'))")
+        assert page.locator("iframe").count() < 8
+        page.evaluate("Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});document.dispatchEvent(new Event('visibilitychange'))")
+        expect(page.locator("iframe")).to_have_count(0)
+        expect(page.locator("[data-preview-fixture] img")).to_have_count(0)
+        page.evaluate("Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'});document.dispatchEvent(new Event('visibilitychange'))")
+        page.wait_for_function("document.querySelectorAll('[data-file-preview-html]').length > 0")
+        page.evaluate("window.__previewMode('large')")
+        page.locator("[data-preview-fixture]").evaluate("element=>{element.scrollTop=0}")
+        page.get_by_role("textbox",name="Parser input").fill("typing while parsing")
+        try:
+            page.get_by_text("Paragraph 0",exact=True).wait_for(timeout=5000)
+        except Exception:
+            print("PREVIEW STATE",page.locator("[data-preview-fixture]").inner_html()[:2000],flush=True)
+            raise
+        assert page.locator("[data-markdown-window] h2").count() < 1600
+        assert page.locator("[data-markdown-window] h2").count() > 0
+        copied = page.locator(".markdown-block").first.evaluate("""element=>{
+          const range=document.createRange();range.selectNodeContents(element);
+          const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+          let text='';const event=new Event('copy',{bubbles:true,cancelable:true});
+          Object.defineProperty(event,'clipboardData',{value:{setData:(kind,value)=>{if(kind==='text/plain')text=value}}});
+          element.dispatchEvent(event);selection.removeAllRanges();return text;
+        }""")
+        assert "Paragraph 0" in copied and "Paragraph 1599" in copied
+        page.locator("[data-preview-fixture]").evaluate("element=>{element.scrollTop=element.scrollHeight}")
+        page.get_by_text("Paragraph 1599",exact=True).wait_for()
+        assert page.locator("[data-markdown-window] h2").count() < 1600
+        page.evaluate("window.__previewMode('copy')")
+        page.locator("[data-preview-fixture]").evaluate("element=>{element.scrollTop=0}")
+        page.get_by_text("FIRST Paragraph 0",exact=True).wait_for()
+        page.get_by_text("SECOND Paragraph 0",exact=True).wait_for()
+        assert page.locator("[data-copy-first] [data-markdown-window]:empty").count() > 0
+        assert page.locator("[data-copy-second] [data-markdown-window]:empty").count() > 0
+        copied = page.locator("[data-copy-selection]").evaluate("""element=>{
+          const copy=(partial)=>{
+            const range=document.createRange();
+            if(partial){
+              const start=element.querySelector('[data-copy-before]').firstChild;
+              const end=element.querySelector('[data-copy-after]').firstChild;
+              range.setStart(start,start.textContent.indexOf('KEEP START'));
+              range.setEnd(end,'KEEP END'.length);
+            }else range.selectNodeContents(element);
+            const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+            const writes=[];const event=new Event('copy',{bubbles:true,cancelable:true});
+            Object.defineProperty(event,'clipboardData',{value:{setData:(kind,value)=>{if(kind==='text/plain')writes.push(value)}}});
+            document.dispatchEvent(event);selection.removeAllRanges();return writes;
+          };
+          return {full:copy(false),partial:copy(true)};
+        }""")
+        assert len(copied["full"]) == 1 and len(copied["partial"]) == 1
+        for value in [copied["full"][0],copied["partial"][0]]:
+            markers=["FIRST Paragraph 0","FIRST Paragraph 1599","OUTSIDE BETWEEN messages","SECOND Paragraph 0","SECOND Paragraph 1599"]
+            positions=[value.index(marker) for marker in markers]
+            assert positions == sorted(positions)
+            assert all(value.count(marker)==1 for marker in ["FIRST Paragraph 1599","SECOND Paragraph 1599","OUTSIDE BETWEEN messages"])
+        assert "OUTSIDE BEFORE prefix KEEP START" in copied["full"][0]
+        assert "KEEP END suffix OUTSIDE AFTER" in copied["full"][0]
+        assert copied["partial"][0].startswith("KEEP START")
+        assert copied["partial"][0].rstrip().endswith("KEEP END")
+        assert "OUTSIDE BEFORE" not in copied["partial"][0] and "OUTSIDE AFTER" not in copied["partial"][0]
+        page.evaluate("window.__previewMode('none')")
+        expect(page.locator("[data-markdown-window]")).to_have_count(0)
+        page.evaluate("window.__containerLongTasks=[];window.__containerObserver=new PerformanceObserver(list=>window.__containerLongTasks.push(...list.getEntries().map(entry=>entry.duration)));window.__containerObserver.observe({type:'longtask',buffered:false})")
+        input_box=page.get_by_role("textbox",name="Parser input")
+        input_box.focus()
+        latencies=[]
+        for _ in range(20):
+            page.evaluate("setTimeout(()=>window.__containerRevision(),0)")
+            before=time.perf_counter()
+            page.keyboard.press("x")
+            page.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+            latencies.append((time.perf_counter()-before)*1000)
+        expect(page.locator("[data-preview-fixture] table tr")).to_have_count(50)
+        expect(page.locator("[data-preview-fixture] ol li")).to_have_count(54)
+        long_tasks=page.evaluate("window.__containerObserver.disconnect();window.__containerLongTasks")
+        latencies.sort()
+        print("MARKDOWN_CONTAINER_METRICS",{"table_rows":50,"ordered_items":54,"samples":20,"queued_input_roundtrip_p50_ms":round(latencies[9],2),"p95_ms":round(latencies[18],2),"max_ms":round(latencies[-1],2),"long_tasks":long_tasks},flush=True)
+        print(f"PASS preview lifecycle: visible automatic frames/images, offscreen/hidden disposal, worker Markdown windows and full-text copy ({time.monotonic()-started:.2f}s)",flush=True)
+    finally:
+        page.close()
+
+
 def _run(browser, urls):
+    _catalogs(browser, urls[0])
+    _preview_lifecycle(browser, urls[0])
 
     import os
     import traceback
@@ -100,7 +279,7 @@ def _run(browser, urls):
 
     def prepare_scroll_case(page, url, kind, mode):
         page.goto(url, wait_until="domcontentloaded")
-        page.evaluate("(kind) => window.__setupScrollRegression(kind)", kind)
+        page.evaluate("({kind,mode}) => window.__setupScrollRegression(kind,mode)", {"kind":kind,"mode":mode})
         state(page, "peeked")
         page.locator(INPUT).fill("\n".join("Draft line " + str(n) for n in range(6)))
         settled(page)
@@ -424,9 +603,17 @@ def _run(browser, urls):
         page.route(pattern, lambda route: pending.append(route))
         held = prepare_scroll_case(page, url, kind, mode)
         page.wait_for_function("() => document.querySelector('[data-conversation-row]') !== null")
+        # The preview now starts only near the viewport. Wait for its observer,
+        # then keep the original delayed native-layout/anchor assertion.
+        for _ in range(50):
+            if pending:
+                break
+            page.wait_for_timeout(20)
+        if len(pending)!=1:
+            print("DELAYED_VISIBILITY",kind,mode,page.evaluate("""()=>({thread:document.querySelector('[data-conversation-thread]').getBoundingClientRect().toJSON(),slots:Array.from(document.querySelectorAll('[data-conversation-image-slot]')).map(node=>({rect:node.getBoundingClientRect().toJSON(),html:node.outerHTML}))})"""),flush=True)
         assert len(pending) == 1, (kind, len(pending))
         row_count = page.locator("[data-conversation-row]").count()
-        page.locator('[data-conversation-row="agent_message"]').nth(12).evaluate(
+        page.locator('[data-conversation-row="agent_message"]').nth(27 if mode=="following" else 12).evaluate(
             "row => window.__delayedRow = row"
         )
         before = newest_reading(page)
@@ -551,7 +738,7 @@ def _run(browser, urls):
     state(page, "rest")
     assert page.locator("[data-conversation-rest-bar]").is_visible()
     assert "Line 27:" in page.locator("[data-conversation-rest-line]").inner_text()
-    assert page.locator(THREAD).count() == 1
+    assert page.locator(THREAD).count() == 0
     assert not page.locator(THREAD).is_visible()
 
     page.locator(INPUT).click()
@@ -1389,8 +1576,147 @@ def _run(browser, urls):
     print("conversation-pane-browser.test.mjs: all assertions passed")
 
 
+def _bounded_reader(browser, url):
+    page = browser.new_page(viewport={"width": 1000, "height": 900})
+    page.goto(url + "?reader=1")
+    page.wait_for_function("() => document.querySelectorAll('[data-conversation-view-key]').length > 0")
+    page.wait_for_function("() => document.querySelector('[data-conversation-thread]')?.textContent.includes('Owner answer 2000.')")
+    assert page.locator('[data-conversation-row="agent_message"]').count() <= 150
+    assert page.evaluate("() => window.__viewCalls.every(url => !url.includes('/events?') && (!url.includes('/tail?') || url.includes('/view/tail?')))")
+    before = page.evaluate("() => window.__viewCalls.filter(url => url.includes('/view/pages')).length")
+    page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
+    page.wait_for_function("before => window.__viewCalls.filter(url => url.includes('/view/pages')).length > before", arg=before)
+    assert page.locator('[data-conversation-view-key]').count() <= 300
+    assert page.locator('[data-conversation-row="agent_message"]').count() <= 150
+    page.evaluate("() => window.__readerState('rest')")
+    page.wait_for_function("() => !document.querySelector('[data-conversation-thread]')")
+    assert page.locator('[data-conversation-view-key]').count() == 0
+    page.evaluate("() => window.__readerState('opened')")
+    page.wait_for_selector('[data-conversation-thread]')
+    page.wait_for_function("() => document.querySelectorAll('[data-conversation-row=agent_message]').length > 0")
+    assert page.locator('[data-conversation-view-key]').count() <= 300
+    # Persisted projected prompts must retain the same bubble layout as outgoing
+    # prompts. Class-only assertions miss a virtualization wrapper breaking flex.
+    for width in (1000, 420):
+        page.set_viewport_size({"width": width, "height": 900})
+        for key in ("e1998", "e1999"):
+            bubble = page.locator(f'[data-conversation-view-key="{key}"] .chat-u')
+            bubble.scroll_into_view_if_needed()
+            geometry = bubble.evaluate("""element => {
+                const row = element.getBoundingClientRect();
+                const wrapper = element.closest('[data-conversation-view-key]').getBoundingClientRect();
+                return {right: row.right, width: row.width, parentRight: wrapper.right,
+                    parentWidth: wrapper.width, maxWidth: parseFloat(getComputedStyle(element).maxWidth)};
+            }""")
+            assert abs(geometry["right"] - geometry["parentRight"]) < 1, geometry
+            assert geometry["width"] <= geometry["parentWidth"] * geometry["maxWidth"] / 100 + 1, geometry
+            if key == "e1998":
+                assert geometry["width"] < geometry["parentWidth"] * 0.65, geometry
+        other = page.locator('[data-conversation-view-key="e1997"] .chat-system')
+        other.scroll_into_view_if_needed()
+        assert "Chief" in other.inner_text()
+    page.set_viewport_size({"width": 1000, "height": 900})
+
+    page.close()
+
+
+def _projected_visual_relationships(browser, url):
+    import json
+    import os
+    from pathlib import Path
+
+    page = browser.new_page(viewport={"width": 1000, "height": 1100})
+    page.goto(url + "?reader=1&visual=1")
+    second = page.locator('[data-conversation-view-key="e4"] .chat-a')
+    second.wait_for()
+    second.scroll_into_view_if_needed()
+    focus = second.evaluate("""element => {
+        const wrapper = element.closest('[data-conversation-view-key]');
+        const decoration = node => ({separator: getComputedStyle(node, '::before').content,
+            margin: parseFloat(getComputedStyle(node).marginBlockStart)});
+        const decorations = [decoration(element), decoration(wrapper)];
+        const first = document.querySelector('[data-conversation-view-key="e2"]');
+        return {decorations, first: [decoration(first), decoration(first.querySelector('.chat-a'))]};
+    }""")
+    page.locator('[data-conversation-lens-choice="full"]').click()
+    page.locator('[data-conversation-tool="tool-5"]').wait_for()
+    stream = page.locator('[data-conversation-row="streaming"]')
+    stream.wait_for()
+    stream.scroll_into_view_if_needed()
+    page.wait_for_function("""() => !document.querySelector('[data-conversation-view-key="e13"]') &&
+        window.__viewCalls.some(raw => {
+            const url = new URL(raw, location.origin);
+            const reference = url.searchParams.get('reference');
+            return reference && JSON.parse(reference).body_id === 'completed:13';
+        })""")
+    full = page.evaluate("""() => {
+        const rect = element => element.getBoundingClientRect();
+        const first = document.querySelector('[data-conversation-tool="tool-5"]');
+        const second = document.querySelector('[data-conversation-tool="tool-6"]');
+        const thread = document.querySelector('.chat-thread-content');
+        const a = document.querySelector('[data-conversation-view-key="e2"] .chat-a');
+        const b = document.querySelector('[data-conversation-view-key="e4"] .chat-a');
+        const streaming = document.querySelector('[data-conversation-row="streaming"]');
+        const prompt = document.querySelector('[data-conversation-view-key="e1"] .chat-u');
+        const ending = document.querySelector('[data-conversation-view-key="e8"]');
+        const last = document.querySelector('[data-conversation-view-key="e11"] .chat-a');
+        const probe = document.createElement('span');
+        probe.style.color = 'var(--text-muted)';
+        streaming.append(probe);
+        const muted = getComputedStyle(probe).color;
+        probe.remove();
+        let rule = false;
+        for(let node = first.parentElement; node && node !== thread; node=node.parentElement)
+            rule ||= parseFloat(getComputedStyle(node).borderInlineStartWidth) > 0;
+        return {
+            toolIndent: rect(first).left - rect(thread).left,
+            toolGap: rect(second).top - rect(first).bottom,
+            toolRule: rule,
+            firstTop: rect(prompt).top - rect(thread).top,
+            groupBeforeGap: rect(first).top - rect(b).bottom,
+            groupAfterGap: rect(ending).top - rect(second).bottom,
+            streamingGap: rect(streaming).top - rect(last).bottom,
+            proseGap: rect(b).top - rect(a).bottom,
+            threadGap: parseFloat(getComputedStyle(thread).rowGap),
+            emptyHeights: ['e0', 'e3', 'e7', 'e12', 'e13', 'work:5'].map(key => {
+                const node = document.querySelector(`[data-conversation-view-key="${key}"]`);
+                return node ? rect(node).height : 0;
+            }),
+            streamingColor: getComputedStyle(streaming).color, muted,
+            visibleEndings: document.querySelectorAll('[data-conversation-row="turn_ended"]').length
+        };
+    }""")
+    proof = {"focus": focus, "full": full}
+    print("PROJECTED_VISUAL_PROOF " + json.dumps(proof), flush=True)
+    evidence = os.environ.get("PANELS_CONVERSATION_PARITY_EVIDENCE")
+    if evidence:
+        output = Path(evidence)
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "visual-geometry.json").write_text(json.dumps(proof, indent=2))
+        page.screenshot(path=str(output / "projected-full.png"))
+    failures = []
+    if not any(row["separator"] not in ("none", "normal") and row["margin"] > 0 for row in focus["decorations"]):
+        failures.append("Focus messages lost their separator")
+    if any(row["separator"] not in ("none", "normal") for row in focus["first"]):
+        failures.append("A separator appeared across the owner prompt")
+    if not full["toolRule"] or full["toolIndent"] <= 0 or abs(full["toolGap"] - 4) > 1:
+        failures.append("Full tools lost their run layout")
+    if any(full["emptyHeights"]) or abs(full["proseGap"] - full["threadGap"]) > 1:
+        failures.append("Invisible bookkeeping rows consume transcript space")
+    if abs(full["firstTop"]) > 1 or any(abs(full[key] - full["threadGap"]) > 1 for key in ("groupBeforeGap", "groupAfterGap", "streamingGap")):
+        failures.append("Leading, trailing, or group markers alter transcript spacing")
+    if full["streamingColor"] != full["muted"]:
+        failures.append("Streaming prose lost its muted color")
+    if full["visibleEndings"] != 3:
+        failures.append("Failed/interrupted/compaction-warning endings disappeared")
+    page.close()
+    assert not failures, {"failures": failures, "proof": proof}
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        _projected_visual_relationships(browser, urls[0])
+        _bounded_reader(browser, urls[0])
         _run(browser, urls)

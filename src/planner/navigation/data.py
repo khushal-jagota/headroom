@@ -801,6 +801,9 @@ def finalize(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO navigation_journal VALUES(?,?)", (base + 1, _json(batch)))
     conn.execute("UPDATE navigation_meta SET revision=? WHERE singleton=1", (base + 1,))
     conn.execute("DELETE FROM navigation_dirty")
+    from planner.navigation.views.projection import update as update_views
+
+    update_views(conn, upserts, deletes)
 
 
 def _replace_epoch(conn: sqlite3.Connection) -> None:
@@ -815,6 +818,9 @@ def _replace_epoch(conn: sqlite3.Connection) -> None:
 def reset_epoch(conn: sqlite3.Connection) -> Continuity:
     _require_current_schema(conn)
     _replace_epoch(conn)
+    from planner.navigation.views.projection import rebuild as rebuild_views
+
+    rebuild_views(conn)
     return cast(Continuity, _continuity(conn))
 
 
@@ -851,6 +857,9 @@ def rebuild(conn: sqlite3.Connection) -> None:
     for root in sorted(roots, key=lambda key: (key[0] == "totals", key)):
         _put_root(conn, root, definitions=definitions, ticket_owners=ticket_owners)
     _replace_epoch(conn)
+    from planner.navigation.views.projection import rebuild as rebuild_views
+
+    rebuild_views(conn)
 
 
 def _require_current_schema(conn: sqlite3.Connection) -> None:
