@@ -7,9 +7,9 @@ import { workspaceAddress } from './workspaceAddress';
 export function childrenSectionDomMatches(
   root: HTMLElement, principal: OrchestratorPrincipal, filter: string,
   rows: readonly WorkItemTicketFacts[],
-  groups: readonly {key:string; label:string; tickets:readonly WorkItemTicketFacts[]}[],
+  groups: readonly {key:string; label:string; count?:number; tickets:readonly WorkItemTicketFacts[]}[],
   page: ListPageFacts | undefined, open: Readonly<Record<string,boolean>>,
-  sectionOpen: boolean, count: number,
+  sectionOpen: boolean, count: number, scopedWindow?:import("./navigation/contracts").ViewWindow, scrolling=false,
 ): boolean {
   if (root.dataset.workerSection !== filter) return false;
   const details = [...root.querySelectorAll<HTMLDetailsElement>('details[data-workspace-group]')];
@@ -31,7 +31,7 @@ export function childrenSectionDomMatches(
       const node = details[index];
       return node.dataset.workspaceGroup === group.key && node.open === (open[group.key] ?? true)
         && node.querySelector('.sprint-workspace-status-label')?.textContent === group.label
-        && node.querySelector('[data-group-count]')?.textContent === String(group.tickets.length)
+        && node.querySelector('[data-group-count]')?.textContent === String(group.count ?? group.tickets.length)
         && (!node.open || ticketRowsMatch(node,group.tickets));
     })) return false;
   } else {
@@ -45,8 +45,15 @@ export function childrenSectionDomMatches(
   }
   const empty = root.querySelector('.sprint-workspace-empty');
   const expectedEmpty = filter === 'active' ? 'No active Workers' : filter === 'backlogged' ? 'No backlogged Workers' : 'No completed Workers';
-  if (rows.length === 0 ? empty?.textContent !== expectedEmpty : empty !== null) return false;
+  if ((filter==='active' && scrolling ? count===0 : rows.length===0) ? empty?.textContent !== expectedEmpty : empty !== null) return false;
   const controls = root.querySelector('.child-pages');
+  if(scopedWindow && scrolling)return controls===null;
+  if(scopedWindow){
+    if(!scopedWindow.previous && !scopedWindow.next)return controls===null;
+    const buttons=controls?.querySelectorAll('button');
+    return controls?.querySelector('span')?.textContent===`${scopedWindow.members.length} of ${scopedWindow.total}`
+      && buttons?.[0].disabled===!scopedWindow.previous && buttons?.[1].disabled===!scopedWindow.next;
+  }
   if (!page || !(page.omitted_before > 0 || page.omitted_after > 0)) return controls === null;
   const buttons = controls?.querySelectorAll('button');
   return controls?.querySelector('span')?.textContent === `${page.return_count ? page.omitted_before+1 : 0}–${page.omitted_before+page.return_count} of ${page.match_count}`

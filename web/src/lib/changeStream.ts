@@ -1,17 +1,20 @@
 import { writable } from "svelte/store";
 import { ensureDebug } from "./debug";
 import { queryClient } from "./queryClient";
+import { createResourceCoordinator } from "./resourceVersions/coordinator";
+import { RESOURCE_REFRESH_DEBOUNCE_MS } from "./resourceVersions/config";
 
 // The server sends one contentless "something changed" frame per commit. The
-// browser answers by marking every cached read stale; only the queries a screen
-// is actually using refetch. Nothing about what changed travels over the wire.
+// browser probes versions for mounted resources and refetches changed bodies.
+// Unregistered reads retain explicit invalidation. The signal stays contentless.
 export type ConnectionStatus = "connected" | "reconnecting";
 
 // Commits inside one fixed window collapse into one round of refetches. A working agent
 // commits in bursts of dozens, and each round asks the server for everything on screen
 // again. The first commit starts the deadline so a sustained stream cannot keep the visible
 // screen stale. Confirmed browser actions can refresh immediately without this delay.
-export const INVALIDATE_DEBOUNCE_MS = 1_500;
+export const INVALIDATE_DEBOUNCE_MS = RESOURCE_REFRESH_DEBOUNCE_MS;
+const resources = createResourceCoordinator(queryClient);
 
 export const connectionStatus = writable<ConnectionStatus>("reconnecting");
 
@@ -20,21 +23,22 @@ let flushTimer: number | null = null;
 /** Something was committed while nobody was looking at this tab. */
 let changedWhileHidden = false;
 
-function invalidateEverything(): Promise<void> {
+function reconcileResources(): Promise<void> {
   ensureDebug().flushes += 1;
-  return queryClient.invalidateQueries();
+  return resources.refresh();
 }
 
 function flush(): void {
   flushTimer = null;
-  void invalidateEverything();
+  if (document.visibilityState === "hidden") { changedWhileHidden = true; return; }
+  void reconcileResources();
 }
 
 /** Coming back to the tab is when what happened while it was away is worth fetching. */
 function onVisibilityChange(): void {
   if (document.visibilityState !== "visible" || !changedWhileHidden) return;
   changedWhileHidden = false;
-  void invalidateEverything();
+  void reconcileResources();
 }
 
 export function startChangeStream(): void {
@@ -48,7 +52,8 @@ export function startChangeStream(): void {
     connectionStatus.set("connected");
     // A connection just opened, so anything that changed while it was down is
     // still unseen: reconcile by refetching what is on screen.
-    void invalidateEverything().then(() => {
+    if (document.visibilityState === "hidden") { changedWhileHidden = true; return; }
+    void reconcileResources().then(() => {
       if (stream !== source) return;
       ensureDebug().sseReconciliations += 1;
     });
@@ -74,6 +79,7 @@ export function startChangeStream(): void {
 }
 
 export function stopChangeStream(): void {
+  resources.stop();
   document.removeEventListener("visibilitychange", onVisibilityChange);
   changedWhileHidden = false;
   if (flushTimer !== null) {

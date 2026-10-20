@@ -91,7 +91,11 @@ def run(browser, urls):
     for focused, visible, sequence in [(False, True, 7), (True, False, 8)]:
         page.evaluate("([f,v]) => window.__setAttention(f,v)", [focused, visible])
         emit_message(sequence)
-        page.get_by_text("B message " + str(sequence), exact=True).wait_for()
+        if visible:
+            page.get_by_text("B message " + str(sequence), exact=True).wait_for()
+        else:
+            # Hidden pages keep authoritative rest facts and release transcript bodies.
+            assert page.get_by_text("B message " + str(sequence), exact=True).count() == 0
         assert page.evaluate("window.__ownerReads.at(-1).sequence") == sequence - 1
         page.evaluate("window.__setAttention(true,true)")
         page.wait_for_function(
@@ -228,6 +232,8 @@ def run(browser, urls):
     assert page.evaluate("window.__navigationStreams - window.__closedNavigationStreams") == 0
     page.reload(wait_until="domcontentloaded")
     page.wait_for_function("window.__tailExists?.('conversation-a')")
-    assert full_choice.get_attribute("aria-pressed") == "true"
+    # A fresh page starts Focus; explicit Full survives only within the mounted pane.
+    assert focus_choice_first.get_attribute("aria-pressed") == "true"
+    assert full_choice.get_attribute("aria-pressed") == "false"
     pass
     print("live-conversation-switch-browser.test.mjs: all assertions passed")

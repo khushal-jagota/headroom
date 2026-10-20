@@ -136,7 +136,8 @@ def test_archive_then_delete_preserves_private_snapshot_artifacts_and_upgrade_re
     )
     tmp_db.execute("INSERT INTO ticket_conversations VALUES ('conv_old','t_cancelled')")
     tmp_db.execute(
-        "INSERT INTO conversation_events VALUES ('conv_old',1,'prompt','{\"text\":\"History\"}',1)"
+        "INSERT INTO conversation_events VALUES ('conv_old',1,'prompt',?,1)",
+        (json.dumps({"text": "History", "sender_label": "owner", "mode": "queue"}),),
     )
     tmp_db.execute(
         "INSERT INTO ticket_revision_feedback VALUES "
@@ -364,7 +365,7 @@ def test_pre_cutover_snapshot_recovers_materialized_cancelled_records_without_ol
         assert conn.execute("SELECT count(*) FROM tickets").fetchone()[0] == 0
         assert {
             row[0] for row in conn.execute("SELECT version_num FROM alembic_version")
-        } == {"goal_and_recap_for_orchestrators"}
+        } == {"workspace_content_projections"}
     finally:
         conn.close()
 

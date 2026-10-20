@@ -135,7 +135,7 @@ off the server event loop because the CPU sample waits briefly.
 
 `panels environment cleanup` is a dry run. `--apply` collects a fresh inventory and
 re-proves every target before changing it. It can rotate configured oversized logs,
-remove expired backup temporaries, and prune verified backups beyond seven. It never
+remove expired backup temporaries, and prune verified backups beyond three. It never
 kills a process or removes a worktree, cache, environment, deployed app, or ambiguous
 path.
 
@@ -154,3 +154,12 @@ path.
 ---
 
 _Last verified: 2026-08-09._
+
+## Python build prerequisites
+
+The indexed workspace ordering uses PyICU, pinned in `requirements.txt`. Install
+ICU headers, `pkg-config`, and a C++ compiler before creating the Python environment.
+On Debian use `apt-get install libicu-dev pkg-config build-essential`. On macOS use
+`brew install icu4c pkg-config`, then set `PKG_CONFIG_PATH` to
+`$(brew --prefix icu4c)/lib/pkgconfig` for the Python dependency installation.
+The runtime needs the matching ICU shared libraries.

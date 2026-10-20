@@ -18,6 +18,7 @@ import httpx
 
 from planner.environments.app import AppManifest, AppValidationError, validate_app_manifest
 from planner.environments.backup import SNAPSHOT_METADATA_NAME, is_verified_snapshot
+from planner.environments.deployment_configuration import DEPLOYMENT_HEALTH_TIMEOUT_SECONDS
 from planner.environments.deployment_gate import verify_gate_evidence
 from planner.environments.deployment_gate_contracts import GateEvidence
 
@@ -223,7 +224,7 @@ def deploy_app(
     service: ServiceController,
     health: HealthClient,
     now: Callable[[], float] = time.monotonic,
-    health_timeout_seconds: float = 120.0,
+    health_timeout_seconds: float = DEPLOYMENT_HEALTH_TIMEOUT_SECONDS,
     lock_path: Path | None = None,
     lifecycle_transition: LifecycleTransition | None = None,
     gate_evidence: GateEvidence | None = None,

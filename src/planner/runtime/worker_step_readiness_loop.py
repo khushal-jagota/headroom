@@ -40,6 +40,7 @@ from planner.conversation.contracts import (
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
 from planner.core.db import connect
+from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime import conversation_start, worker_memory, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import (
     compose_worker_step_prompt,
@@ -381,7 +382,15 @@ class WorkerStepReadinessLoop:
             ready_ticket_ids: list[str] = []
             registry = configured_worker_type_registry()
             for row in rows:
-                ticket = tickets_data.read_ticket(conn, str(row["id"]))
+                try:
+                    ticket = tickets_data.read_ticket(conn, str(row["id"]))
+                except PlannerError as error:
+                    if error.code is ErrorCode.not_found:
+                        # Deleted between the candidate select above and this read.
+                        # The deletion already succeeded; skip it rather than fail
+                        # every other ready Ticket in this pass.
+                        continue
+                    raise
                 worker_type_definition = registry.require(ticket.worker_type)
                 if not worker_step_readiness.is_ready_for_worker_step(
                     conn,

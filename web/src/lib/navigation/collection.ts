@@ -1,6 +1,6 @@
 import { createCollection } from '@tanstack/db';
 import type { SyncConfig } from '@tanstack/db';
-import type { Continuity, NavigationRecord, SnapshotResponse, BatchEnvelope } from './contracts';
+import type { Continuity, NavigationRecord, SnapshotResponse, BatchEnvelope, ViewRecord, ViewWindow, ViewCounts } from './contracts';
 import { assertCursorMatches, parseBatchEnvelope, parseSnapshotResponse, recordKey, sameAuthority } from './validation';
 
 export interface NavigationPublication {
@@ -10,7 +10,8 @@ export interface NavigationPublication {
   readonly cursor: string | null;
   readonly mode: SnapshotResponse['mode'];
   readonly authority: SnapshotResponse['authority'];
-  readonly records: readonly NavigationRecord[];
+  readonly records: readonly (NavigationRecord | ViewRecord)[];
+  readonly view?: { readonly id: string; readonly scopeGeneration: number; readonly contentVersion: string; readonly orderingGeneration: string; readonly windows: readonly ViewWindow[]; readonly counts: ViewCounts };
 }
 type PublicationMetadata = Omit<NavigationPublication, 'records'>;
 export type NavigationRow = { key: string; type: 'record'; record: NavigationRecord }

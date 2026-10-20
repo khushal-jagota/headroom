@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal, TypeAliasType, get_args, get_origin, get_type_hints, is_typeddict
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULES = ("contracts", "proof_contracts", "delivery_contracts")
+MODULES = ("contracts", "proof_contracts", "delivery_contracts", "views.contracts")
 
 
 def generate() -> str:
@@ -64,6 +64,7 @@ def generate() -> str:
     delivery = importlib.import_module("planner.navigation.delivery_contracts")
     constants = (
         f"export const WIRE_VERSION = {delivery.WIRE_VERSION};\n"
+        "export const VIEW_WIRE_VERSION = 3;\n"
         f"export const SCHEMA_VERSION = {navigation.SCHEMA_VERSION};\n"
         f"export const SUPPORTED_SEMANTICS = {json.dumps(navigation.SUPPORTED_SEMANTICS)};\n"
     )

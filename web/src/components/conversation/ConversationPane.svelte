@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ConversationHistoryPicker from "./ConversationHistoryPicker.svelte";
+  import type { HistoryOwnerKind } from "../../lib/catalogs/history";
   /** The pane: who this is, its controls, and the one box you speak into.
    *
    * A page that wants the conversation as a layer says how far open it is, and this is one
@@ -6,6 +8,8 @@
    * thread give up their height and the rest bar says what happened last, and peeking and
    * opening give it back. The same viewport, composer, and draft survive every move.
    */
+  import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
+  import {progressFor,restFor} from '../../lib/conversation/view/presentation';
   import type { Snippet } from "svelte";
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
@@ -65,6 +69,7 @@
     composerDisabled = false,
     showRunPicker = true,
     readOnly = false,
+    historyOwner,
     pastConversations = [],
     pastConversationsLabel = "Conversation",
     selectedPastConversationId = $bindable(null),
@@ -72,6 +77,9 @@
     lens = $bindable("focus"),
     conversationState = $bindable(null),
     emptyState,
+    reader = null,
+    viewAnchor = $bindable(null),
+    transcriptVisible = true,
     onSend,
     onStop,
     onAnswer,
@@ -85,6 +93,9 @@
   }: {
     /** Which conversation is on the screen. A message's files are fetched under it, so a
      *  piece can only ever reach a file kept for the conversation it belongs to. */
+    reader?: ConversationViewReader | null;
+    viewAnchor?: ViewReaderAnchor | null;
+    transcriptVisible?: boolean;
     conversationId: string;
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
@@ -136,6 +147,7 @@
     readOnly?: boolean;
     /** The owner's earlier conversations, for the options menu to offer beside its own
      *  actions. Empty for an owner that keeps one, and then no picker is drawn. */
+    historyOwner?: {kind:HistoryOwnerKind;id:string};
     pastConversations?: readonly PastConversation[];
     /** What the picker is called to a screen reader, in the owner's own words. */
     pastConversationsLabel?: string;
@@ -185,10 +197,23 @@
 
   // Only at rest is there a bar to put it in. Peeked and opened have the turn head.
   let rowsForLens = $derived(visibleRows ?? rows);
-  let taskProgress = $derived(taskProgressFrom(rowsForLens));
+  let planEntries = $state<import('../../lib/conversation/wire').PlanEntry[]>([]);
+  let planController:AbortController|null=null;
+  let planVersion='';
+  let planLoading=false;
+  async function demandPlan():Promise<void>{
+    const currentReader=reader;
+    const reference=currentReader?.status?.plan;
+    if(!currentReader||!reference||planLoading||planVersion===reference.version)return;
+    planController?.abort();const controller=new AbortController();planController=controller;planLoading=true;
+    try{const value=JSON.parse(await currentReader.body(reference,controller.signal)) as {entries:import('../../lib/conversation/wire').PlanEntry[]};if(!controller.signal.aborted&&reader===currentReader){planEntries=value.entries;planVersion=reference.version;}}
+    catch{}finally{if(planController===controller)planLoading=false;}
+  }
+  $effect(()=>{const version=reader?.status?.plan?.version??'';if(version!==planVersion){planEntries=[];planVersion='';}return()=>planController?.abort();});
+  let taskProgress = $derived(reader?.status ? {...progressFor(reader.status),entries:planEntries,onDemand:()=>void demandPlan(),onRelease:()=>{planController?.abort();planEntries=[];planVersion='';}} : taskProgressFrom(rowsForLens));
   let restLine = $derived(
     conversationState === "rest"
-      ? restLineFrom(
+      ? reader?.status ? restFor(reader.status,ownSenderLabel ?? "",ownerReadThroughSequence,taskProgress) : restLineFrom(
           rows,
           ownSenderLabel ?? "",
           { ...taskProgress, turnRunning: running },
@@ -360,7 +385,7 @@
           </svg>
         </button>
       {/if}
-      {#if !readOnly || pastConversations.length > 0}
+      {#if !readOnly || historyOwner || pastConversations.length > 0}
         <div class="chat-overflow" bind:this={menuElement}>
           <button
             type="button"
@@ -404,7 +429,9 @@
                    above the card: the card is already named by the screen it is on. A
                    read-only pane keeps this section and loses the one above it, so the
                    way back to the current conversation is where it was left. -->
-              {#if pastConversations.length > 0}
+              {#if historyOwner}
+                <ConversationHistoryPicker owner={historyOwner} bind:selected={selectedPastConversationId} label={pastConversationsLabel} {conversationExists} />
+              {:else if pastConversations.length > 0}
                 <label class="chat-overflow-history" data-conversation-history>
                   <select
                     aria-label={pastConversationsLabel}
@@ -432,7 +459,10 @@
     </div>
   </div>
 
+  {#if conversationState !== "rest" && transcriptVisible}
   <ConversationViewport
+    bind:viewAnchor
+    {reader}
     {conversationId}
     {rows}
     visibleRows={rowsForLens}
@@ -444,6 +474,8 @@
     {conversationState}
     {emptyState}
   />
+
+  {/if}
 
   {#if conversationState === "peeked" || conversationState === "opened"}
     <TaskProgress

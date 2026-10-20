@@ -24,6 +24,8 @@ describe('Ticket field approval presentation', () => {
       const html = field(approval);
       expect(html.match(/<details[^>]*>/)?.[0]).not.toMatch(/\sopen(?:[\s=>]|$)/);
       expect(html.match(/<summary[^>]*>[\s\S]*?<\/summary>/)?.[0]).toContain(labels[index]);
+      expect(html).not.toContain('Agreed plan');
+      expect(html).not.toContain('data-markdown-inline-edit');
       expect(html).not.toContain('Project release');
       expect(html).not.toContain('item-private-id');
     });

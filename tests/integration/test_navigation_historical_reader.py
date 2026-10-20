@@ -98,7 +98,7 @@ def test_exact_staging_ingress_reader_reversal_and_lossy_fixture_restore(
         assert current["schema_version"] == 6
         initial_epoch = current["epoch"]
         facts = source_facts(connection)
-        assert facts["heads"] == [["goal_and_recap_for_orchestrators"]]
+        assert facts["heads"] == [["workspace_content_projections"]]
         assert {key: value for key, value in facts.items() if key != "heads"} == {
             key: value for key, value in before["source"].items() if key != "heads"
         }

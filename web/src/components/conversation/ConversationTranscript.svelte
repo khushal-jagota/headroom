@@ -39,8 +39,10 @@
     conversationId,
     models = [],
     ownSenderLabel = null,
-    livenessPulse = 0
+    livenessPulse = 0,
+    projectedItems = null
   }: {
+    projectedItems?: readonly ThreadItem[] | null;
     rows: readonly TranscriptRow[];
     visibleRows: readonly TranscriptRow[];
     lens: ConversationLens;
@@ -55,7 +57,7 @@
     ownSenderLabel?: string | null;
   } = $props();
 
-  let items = $derived<ThreadItem[]>(conversationThreadItemsForLens(rows, visibleRows, lens));
+  let items = $derived<readonly ThreadItem[]>(projectedItems ?? conversationThreadItemsForLens(rows, visibleRows, lens));
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
   let expandedTurns = $state<Record<string, boolean>>({});

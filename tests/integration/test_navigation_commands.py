@@ -90,7 +90,7 @@ def test_real_application_command_families_and_store_writes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tests.integration.test_navigation_runtime import make_app
+    from tests.integration.navigation_runtime_support import make_app
 
     from planner.conversation.backends.contracts import BackendSpawnFailed
     from planner.conversation.contracts import ConversationBackendKey
