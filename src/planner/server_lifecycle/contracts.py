@@ -34,3 +34,28 @@ class ServerRestartConnectionError(ServerLifecycleError):
 
 class ServerRestartProtocolError(ServerLifecycleError):
     """The supervisor returned a malformed or incompatible control reply."""
+
+
+@dataclass(frozen=True)
+class ProcessIdentity:
+    pid: int
+    start_time: int
+    executable_path: str | None
+    executable_device: int | None
+    executable_inode: int | None
+    identity_source: Literal["proc_executable", "dbus_manager"] = "proc_executable"
+    manager_bus: Literal["user", "system"] | None = None
+    manager_uid: int | None = None
+
+
+@dataclass(frozen=True)
+class ShutdownPolicy:
+    mode: Literal["dogfood", "guarded"]
+    launch_parent_pid: int
+    authorized_manager: ProcessIdentity | None
+
+
+@dataclass(frozen=True)
+class ShutdownDecision:
+    accepted: bool
+    reason: str
