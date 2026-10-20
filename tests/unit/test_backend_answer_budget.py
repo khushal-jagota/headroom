@@ -14,6 +14,11 @@ test. Timing it would not help either, because load on this machine moved betwee
 
 The ceilings are today's cost, not a target. They come down when the three loops below
 read sets instead of rows.
+
+How to read a failure here is written once, in the module docstring of
+tests/unit/test_conversation_view_budget.py. The short of it: a failure is a question, not
+a number to adjust, and a ceiling that rises without the arithmetic written beside it stops
+being a gate.
 """
 
 from __future__ import annotations
