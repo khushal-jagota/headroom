@@ -5,7 +5,7 @@ from alembic import op
 from planner.core.migrations.server_ownership_correction_data import SERVER_OWNERSHIP_SECTION
 
 revision = "worker_server_ownership"
-down_revision = "goal_and_recap_for_orchestrators"
+down_revision = "workspace_content_projections"
 branch_labels = None
 depends_on = None
 
