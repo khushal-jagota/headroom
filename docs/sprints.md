@@ -56,8 +56,11 @@ its launch configuration with the item. Existing items received the same fixed
 configuration during migration. Former loose Workers now explicitly name Chief.
 
 Creation with a nonblank goal saves the orchestrator, then starts its supervisor with
-that goal. Creation without a goal leaves it idle. Later messages and manager wakes
-also start the supervisor conversation. Startup failure does not delete the orchestrator.
+that exact goal as a queued message from Panels. Startup requires no explicit reply to
+the creator. If the orchestrator sends no reply, startup leaves no `explicit_reply_missing`
+signal in Focus. No replacement signal detects a clean delivery followed by silent inaction.
+Full shows the goal under Panels. Creation without a goal leaves it idle.
+Later messages and manager wakes also start the supervisor conversation. Startup failure does not delete the orchestrator.
 Use the saved orchestrator to recover. An uncertain delivery gets no automatic replay.
 A reset kills current work and clears the agent link.
 Conversation records and message files remain as history. Detailed context belongs in the

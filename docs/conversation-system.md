@@ -376,6 +376,13 @@ from the authenticated request. Panels records that address on every durable out
 including held, refused, uncertain, and discarded prompts. Browser-supplied display
 labels are not authority.
 
+Automatic recap requests and saved-goal startup messages name Panels as their source.
+They carry no sender principal and no explicit reply requirement. Full shows these
+messages under the Panels label. Focus excludes them. The authenticated caller still
+controls authorization and launch choices. These automatic actions cannot settle a
+separate reply that the caller owes. HTTP and CLI callers cannot select system
+attribution. Earlier conversation rows keep their recorded source and visibility.
+
 Panels also derives an exact Send Message target from each authenticated sender. It adds
 that trusted reply requirement only to the backend wire prompt. When a genuine
 requirement exists, it starts the entire prompt with nothing before it. Every
@@ -393,8 +400,14 @@ orchestrator, or Chief principal. It empties the recap being replaced and steers
 fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
 keep it short and top level." Only the owner may ask, and the owner is the only principal
 it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
-the agent writes rather than words it sends back, so it is the one addressed send that
-carries no reply requirement and leaves no missing-reply marker.
+the agent writes rather than words it sends back. This system message carries no reply
+requirement and leaves no missing-reply marker.
+
+Automatic orchestrator startup sends the exact saved goal as a queued Panels message.
+Its answer is the work the orchestrator does. It requires no explicit reply to its
+creator, so startup produces no `explicit_reply_missing` signal in Focus when the
+orchestrator sends no reply. No replacement signal detects a clean delivery followed by
+silent inaction. Work indicators, failure rows, and delivery outcomes do not cover that gap.
 
 An actual native slash command uses its backend's exact control route, so its wire form
 does not carry the reply requirement. The adapter reports that fact with its delivery

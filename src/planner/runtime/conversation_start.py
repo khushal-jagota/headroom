@@ -333,8 +333,8 @@ async def _send_with_addressed_receipt(
     reply_requested: bool,
     record_refusal: bool = False,
 ) -> AddressedPromptDeliveryReceipt:
-    """Use the internal freshness receipt only for an addressed employee send."""
-    if sender is not None and recipient is not None:
+    """Keep recipient attribution and freshness for caller-authored and system sends."""
+    if recipient is not None:
         refusal_options = {"record_refusal": True} if record_refusal else {}
         return await system.send_with_receipt(
             conversation_id,

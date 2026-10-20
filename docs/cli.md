@@ -234,7 +234,11 @@ conversation. `sprint item` remains an alias. `set` takes `goal`, `recap`, `titl
 `project` and `project-id`. There is no `body` field: a stale `set <item> body` fails
 rather than writing the wrong one. Artifact operations keep their existing
 managed roots. `send-message --sprint-item` keeps its stable recipient address.
-`orchestrator create --goal-file <goal-file>` starts the supervisor with the goal.
+`orchestrator create --goal-file <goal-file>` starts the supervisor with the exact goal
+as a queued message from Panels. It requires no explicit reply to the creator and creates
+no Focus-visible `explicit_reply_missing` signal if the supervisor sends no reply.
+No replacement signal detects a clean delivery followed by silent inaction.
+Full shows the goal under Panels. The CLI exposes no system attribution override.
 A blank or absent goal leaves it idle. The result reports the saved orchestrator and
 startup outcome. Refused, failed, or uncertain startup still leaves the orchestrator saved.
 Inspect it and recover on that same orchestrator instead of creating another one.
