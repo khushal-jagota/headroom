@@ -197,7 +197,7 @@ def test_delivery_addresses_both_targets_on_a_third_party_move(
     assert len(new_holder_observations) == 1
     assert new_holder_observations[0].kind is InMemoryConversationObservationKind.prompt_delivered
     assert new_holder_observations[0].content == text_message_content(
-        f"Reassigning supervisor moved the review of {notice.ticket_title} to your review."
+        f"Reassigning supervisor moved the review of {notice.ticket_title} to you."
     )
 
     owner_conversation = tickets_data.read_ticket(tmp_db, ticket_id).conversation_id
@@ -272,5 +272,5 @@ def test_delivery_names_the_mover_in_the_new_holder_message(
     ]
     assert len(message_to_owner) == 1
     assert message_to_owner[0].content == text_message_content(
-        f"The Chief moved the review of {notice.ticket_title} to your review."
+        f"The Chief moved the review of {notice.ticket_title} to you."
     )

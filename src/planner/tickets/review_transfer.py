@@ -46,7 +46,7 @@ async def _notify_review_transfer(
     now: int,
 ) -> None:
     new_holder_text = (
-        f"{notice.mover_name} moved the review of {notice.ticket_title} to your review."
+        f"{notice.mover_name} moved the review of {notice.ticket_title} to you."
         if notice.mover_name is not None
         else f"You now hold the review of {notice.ticket_title}."
     )
