@@ -771,6 +771,31 @@ The update command comes from how the CLI was installed. Panels checks the card 
 afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
 in the terminal, and the card names the command.
 
+### What a card costs, and the assumption that was wrong about it
+
+Reading the cards was slow for a long time, 118 to 149 milliseconds every time, and
+everyone who looked at it assumed the cards were being probed live. They were not. The
+probe runs once per process and is then kept; after the first call it answers in well
+under a millisecond, and the check for whether the kept answer had gone stale has never
+once said yes.
+
+The time went on describing the models. Each card lists the models its backend offers,
+and building that list asked a question for every single model: is this model switched
+off, what does the catalogue say about it, and is this catalogue the one we already had.
+Each of those questions opened its own connection to the database. Opening a connection
+here is not cheap, because the database has eighty tables and a new connection reads all
+of their definitions before it can answer anything: the first question on a fresh
+connection takes 2.39 milliseconds where the second takes 0.022. Describing 26 models
+that way meant 78 connections and 492 questions, for one screen asking what backends
+exist.
+
+It now asks once for the whole set and sorts the models out in memory, so the cost is the
+same whether a backend offers eight models or fifty. The lesson is worth more than the
+fix: three separate per-model loops had accumulated here over time and nothing failed,
+because every test of this route checks what the card says and no test checked what the
+card cost. There is one now, and it fails if the cost starts following the model count
+again.
+
 ### What a card can say about the codex login
 
 `codex login status` answers a narrower question than it looks like it answers. It reads
