@@ -160,9 +160,12 @@ def test_one_worker_type_is_versioned_in_the_shape_of_the_whole_list(
     one = provider.capture(resource_db, request(), "/api/worker-types/coding/manifest")
     assert whole is not None and one is not None
 
-    coding = next(
-        entry for entry in whole.read()["worker_types"] if entry["worker_type"] == "coding"
-    )
+    whole_body = whole.read()
+    assert isinstance(whole_body, dict)
+    worker_types = whole_body["worker_types"]
+    assert isinstance(worker_types, list)
+    assert all(isinstance(entry, dict) for entry in worker_types)
+    coding = next(entry for entry in worker_types if entry["worker_type"] == "coding")
     assert one.read() == {"worker_types": [coding]}
     assert one.revision != whole.revision
     assert len(json.dumps(one.read())) < len(json.dumps(whole.read()))

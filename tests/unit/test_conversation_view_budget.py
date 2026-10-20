@@ -31,13 +31,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Any
+from typing import Any, Literal
 
 from tests.unit.test_conversation_view_projection import FIXTURES, database
 from tests.unit.test_conversation_view_storage import event, prompt
 
 from planner.conversation.views.api import _changes
-from planner.conversation.views.contracts import ViewRetainedRange
+from planner.conversation.views.contracts import (
+    ViewHistoryScope,
+    ViewPageCursor,
+    ViewRetainedRange,
+)
 from planner.conversation.views.live_output import ConversationViewLiveOutput
 from planner.conversation.views.status import read_status
 from planner.conversation.views.storage import read_page
@@ -234,9 +238,9 @@ def test_sparse_cursor_and_expanded_reads_remain_bounded_as_history_grows() -> N
             assert work.steps <= 16_000
             measurements["sparse"].append(work)
         with database(events) as conn:
-            scope = {"kind": "work_group", "key": "work:e2"}
+            scope: ViewHistoryScope = {"kind": "work_group", "key": "work:e2"}
             first = read_page(conn, "fixture", "full", scope=scope)
-            cursor = {
+            cursor: ViewPageCursor = {
                 "projection_version": first["projection_version"],
                 "lens": "full",
                 "scope": scope,
@@ -289,7 +293,7 @@ def test_reverse_availability_does_not_walk_hidden_tool_or_message_runs() -> Non
                 with database(rows) as conn:
                     for lens in ("focus", "full"):
                         for edge in (0, 2):
-                            cursor = {
+                            cursor: ViewPageCursor = {
                                 "projection_version": 1,
                                 "lens": lens,
                                 "scope": {"kind": "timeline", "key": None},
@@ -318,7 +322,7 @@ def test_expanded_reverse_reads_seek_past_tools_and_addressed_messages() -> None
         for row in fixture["events"]
         if row["kind"] == "message_to_owner"
     )
-    scope = {"kind": "turn", "key": "turn:e1"}
+    scope: ViewHistoryScope = {"kind": "turn", "key": "turn:e1"}
     for kind in ("tool_call_started", "message_to_owner", "agent_message"):
         costs: dict[tuple[str, int], list[int]] = {}
         for count in (128, 1024):
@@ -342,8 +346,13 @@ def test_expanded_reverse_reads_seek_past_tools_and_addressed_messages() -> None
                 event(count + 4, "turn_ended", {"ending": "completed", "error_summary": None}),
             ]
             with database(events) as conn:
-                for direction, sequence in (("older", 4), ("older", 0), ("newer", count + 5)):
-                    cursor = {
+                edges: tuple[tuple[Literal["older", "newer"], int], ...] = (
+                    ("older", 4),
+                    ("older", 0),
+                    ("newer", count + 5),
+                )
+                for direction, sequence in edges:
+                    cursor: ViewPageCursor = {
                         "projection_version": 1,
                         "lens": "full",
                         "scope": scope,
