@@ -1180,6 +1180,25 @@ offers skills. An at sign offers apps and plugins. Leading whitespace, an empty 
 line, or a trigger on a later line does not open the menu. The composer narrows that
 eligible list as text is typed.
 
+### When the menu arrives
+
+The catalog is read when the conversation opens and again each time a turn ends. It does
+not arrive with the record. It used to, and it dominated it: the largest real catalog is
+66,211 bytes for 155 entries, where everything else the record stores about a conversation
+comes to about 620. The record is re-read every time the conversation gains a row, so
+watching one agent work for seventy seconds sent the same closed menu 68 times, about
+2.3 MB of it.
+
+Turn end is the occasion because a backend only reports its commands a moment into its
+first turn. Reading the menu lazily, when somebody first types a trigger, would show an
+empty menu on a conversation that has a full one today.
+
+The cost of reading it then and not more often: for the length of one turn the menu can be
+out of date. A skill or command that appears while a turn is streaming is not offered until
+that turn ends or the conversation is reopened. A turn is seconds to minutes, the menu is
+only consulted when somebody opens it to type, and the alternative is re-sending all 66 KB
+of it every time an agent writes a line.
+
 The keyboard owns the highlight. It starts at the top of the list and moves with the
 arrow keys. A row takes the highlight when the pointer really moves onto it. A menu that
 opens or changes size under a pointer standing still does not move the highlight, because

@@ -428,6 +428,35 @@ async def advance_owner_read(
 MAXIMUM_EVENT_PAGE = 100
 
 
+@router.get("/conversations/{conversation_id}/composer-catalog")
+async def read_conversation_composer_catalog(
+    conversation_id: str, runtime: Runtime
+) -> dict[str, Any]:
+    """The typeahead menu for this conversation's composer, as its backend reported it.
+
+    This used to ride inside the record, and it was 97.4% of it: 160 entries, about 35 KB
+    of commands and skills, against roughly 950 bytes of conversation. The record is
+    re-read whenever the conversation gains a row, so watching one agent work for seventy
+    seconds sent the same closed menu 68 times.
+
+    It is its own read because it changes on its own occasions - a backend reports its
+    commands a moment into the first turn - and not when a row arrives.
+    """
+    record = await _require_conversation(runtime, conversation_id)
+    return {
+        "composer_catalog": [
+            {
+                "kind": str(entry.kind),
+                "display_text": entry.display_text,
+                "insertion_text": entry.insertion_text,
+                "description": entry.description,
+                "argument_hint": entry.argument_hint,
+            }
+            for entry in record.composer_catalog
+        ]
+    }
+
+
 @router.get("/conversations/{conversation_id}/events")
 async def read_conversation_events(
     conversation_id: str,
@@ -901,25 +930,6 @@ async def _conversation_view(runtime: ConversationRuntime, conversation_id: str)
         "reasoning_effort": record.reasoning_effort,
         "workspace_folder": str(record.workspace_folder),
         "access": str(record.access),
-        "role_text": record.role_text,
-        # The names only: a surface shows which identity a conversation carries, and the
-        # values are the identity itself and have no business coming back out.
-        "identity_environment_variable_names": [
-            name for name, _value in record.identity_environment_variables
-        ],
-        # The conversation's composer catalog, as its backend last reported it. It comes
-        # off the conversation rather than off a running child, so it is there when a
-        # person opens the conversation to write the first message.
-        "composer_catalog": [
-            {
-                "kind": str(entry.kind),
-                "display_text": entry.display_text,
-                "insertion_text": entry.insertion_text,
-                "description": entry.description,
-                "argument_hint": entry.argument_hint,
-            }
-            for entry in record.composer_catalog
-        ],
         "latest_sequence": record.latest_sequence,
         "owner_read_through_sequence": record.owner_read_through_sequence,
         "is_running": await runtime.system.is_running(conversation_id),
