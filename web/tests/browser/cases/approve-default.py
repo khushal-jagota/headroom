@@ -316,6 +316,13 @@ def run(browser, urls):
                     [item for item in accept_attempts if item["ticket_id"] == "t_failure"]
                 ),
             }
+        elif path.startswith("worker-types/") and path.endswith("/manifest"):
+            worker_type = path.split("/")[1]
+            matches = [row for row in manifest["worker_types"] if row["worker_type"] == worker_type]
+            if not matches:
+                route.fulfill(status=404, json={"error": {"code": "unknown_worker_type", "message": f"Unknown worker type: {worker_type}"}})
+                return
+            result = {"worker_types": matches}
         elif path == "worker-types":
             result = manifest
         elif path.startswith("tickets/") and "/accept/" in path:
@@ -370,6 +377,11 @@ def run(browser, urls):
                 "body": result,
             }
         route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
+
+    # Protect the real Workspace shell and its separate lazy-import/resource boundaries.
+    if len(urls) > 1:
+        proof = runpy.run_path(str(Path(__file__).with_name("workspace-skeleton-proof.py")))
+        proof["run"](browser, urls[1], respond)
 
     page = browser.new_page()
     page.on("pageerror", lambda error: print(str(error), flush=True))

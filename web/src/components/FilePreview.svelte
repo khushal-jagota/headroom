@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "./SkeletonRegion.svelte";
   import { onDestroy } from "svelte";
   import { observeVisibleContent } from "../lib/visibleContent";
   import type { FilePreviewTarget } from "../lib/filePreview";
@@ -156,6 +157,7 @@
       <div class="file-preview-document-header">
         {@render openLink(resolved.previewHref ?? resolved.href)}
       </div>
+      <SkeletonRegion shape="document" loading={text === null} loadingText="Loading preview...">
       <iframe
         bind:this={htmlFrame}
         class="file-preview-frame"
@@ -163,6 +165,7 @@
         sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
         title={resolved.label}
       ></iframe>
+      </SkeletonRegion>
     </article>
   {:else if resolved.kind === "markdown" && expansion.expandable}
     <article class="file-preview-document">
@@ -170,11 +173,9 @@
         {@render openLink(resolved.previewHref ?? resolved.href)}
       </div>
       <div class="file-preview-document-body">
-        {#if text === null}
-          <div class="quiet-line">Loading preview...</div>
-        {:else}
-          <MarkdownBlock text={text} depth={expansion.nextDepth} visited={expansion.nextVisited} />
-        {/if}
+        <SkeletonRegion shape="document" loading={text === null} loadingText="Loading preview...">
+          {#if text !== null}<MarkdownBlock text={text} depth={expansion.nextDepth} visited={expansion.nextVisited} />{/if}
+        </SkeletonRegion>
       </div>
     </article>
   {:else if resolved.kind === "markdown"}
@@ -184,7 +185,9 @@
       <div class="file-preview-document-header">
         {@render openLink(resolved.previewHref ?? resolved.href)}
       </div>
-      <pre class="conversation-text-preview">{text ?? "Loading preview..."}</pre>
+      <SkeletonRegion shape="document" loading={text === null} loadingText="Loading preview...">
+        {#if text !== null}<pre class="conversation-text-preview">{text}</pre>{/if}
+      </SkeletonRegion>
     </article>
   {:else if resolved.kind === "download"}
     <a class="file-preview-link" href={resolved.href} download="">Download {resolved.label}</a>

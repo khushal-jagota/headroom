@@ -45,6 +45,14 @@
         "conversation-composer"
       ],
       "companions": []
+    },
+    {
+      "id": "skeleton",
+      "path": "web/tests/skeleton-regions-browser.test.mjs",
+      "cases": [
+        "skeleton-regions"
+      ],
+      "companions": []
     }
   ]
 }

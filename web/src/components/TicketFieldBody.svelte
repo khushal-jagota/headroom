@@ -22,7 +22,7 @@
   let body = $derived(value ?? field.data?.value);
 </script>
 
-<ResourceState error={value === undefined ? field.error : null} loading={field.isLoading}
+<ResourceState shape="block" error={value === undefined ? field.error : null} loading={field.isLoading}
   hasData={body !== undefined} loadingText="Loading field...">
   {#if body !== undefined}
     {#if editable && onSave}

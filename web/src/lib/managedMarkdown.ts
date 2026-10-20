@@ -1,5 +1,6 @@
 import { mount, unmount } from "svelte";
 import FilePreview from "../components/FilePreview.svelte";
+import ManagedMarkdownRegion from "../components/ManagedMarkdownRegion.svelte";
 import { resolvePreview, targetFromHref } from "./filePreview";
 import { renderMarkdownToElement, renderParsedMarkdown, serializeMarkdownDomToSource } from "./markdownPipeline";
 import { parseMarkdownInWorker } from "./markdown/workerClient";
@@ -74,18 +75,20 @@ export function createManagedMarkdownSurface(
   let parsing: AbortController | null = null;
   let stopVirtualDocument: (() => void) | null = null;
   let renderGeneration = 0;
+  let documentRegion: ReturnType<typeof ManagedMarkdownRegion> | null = null;
 
   function cancelReadOnlyWork(): void {
     renderGeneration += 1;
     parsing?.abort(); parsing = null;
     stopVirtualDocument?.(); stopVirtualDocument = null;
+    unmountAllPreviews();
+    if (documentRegion) { void unmount(documentRegion); documentRegion = null; }
   }
 
-  function renderLargeDocument(document: ParsedMarkdown, presentation: ReadOnlyRenderInput): void {
-    unmountAllPreviews(); host.replaceChildren();
+  function renderLargeDocument(target: HTMLElement, document: ParsedMarkdown, presentation: ReadOnlyRenderInput): void {
     const root = globalThis.document.createElement("div");
     root.className = "markdown markdown-block";
-    host.appendChild(root);
+    target.appendChild(root);
     const groups: { element: HTMLElement; nodes: MarkdownTreeNode[]; mounted: boolean }[] = [];
     const stops: (() => void)[] = [];
     let pending: MarkdownTreeNode[] = []; let weight = 0;
@@ -133,16 +136,27 @@ export function createManagedMarkdownSurface(
     cancelReadOnlyWork();
     if (next.source.length < MARKDOWN_WORKER_THRESHOLD) { repaint(next.source, next); return; }
     disconnectObserver(); unmountAllPreviews(); host.replaceChildren();
-    const loading = document.createElement("div"); loading.className = "quiet-line";
-    loading.textContent = "Loading text..."; host.appendChild(loading);
+    const region = mount(ManagedMarkdownRegion, { target: host });
+    documentRegion = region;
     const controller = new AbortController(); parsing = controller;
     const generation = renderGeneration;
     parseMarkdownInWorker(next.source, controller.signal).then(document => {
       if (destroyed || controller.signal.aborted || generation !== renderGeneration) return;
-      parsing = null; renderLargeDocument(document, next);
+      parsing = null;
+      region.reveal(target => {
+        if (destroyed || generation !== renderGeneration) return;
+        renderLargeDocument(target, document, next);
+      });
     }).catch(error => {
       if (destroyed || controller.signal.aborted || generation !== renderGeneration) return;
-      parsing = null; loading.textContent = error instanceof Error ? error.message : "Text could not load.";
+      parsing = null;
+      region.reveal(target => {
+        if (destroyed || generation !== renderGeneration) return;
+        const message = globalThis.document.createElement("div");
+        message.className = "quiet-line";
+        message.textContent = error instanceof Error ? error.message : "Text could not load.";
+        target.appendChild(message);
+      });
     });
   }
 

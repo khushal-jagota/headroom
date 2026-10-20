@@ -135,12 +135,9 @@
       Retry
     </button>
   </div>
-{:else if !chief}
-  <div class="quiet-line chief-conversation-resource" data-chief-conversation-loading>
-    Loading conversation...
-  </div>
 {:else}
   <LiveConversation
+    ownerLoading={!chief}
     bind:conversationState
     {conversationId}
     persistenceKey="owner:chief"

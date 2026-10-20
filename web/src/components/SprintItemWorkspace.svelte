@@ -252,12 +252,13 @@
 <svelte:window onkeydown={closeFileOnEscape} />
 
 <OrchestratorWorkspace
+  class="orchestrator-resource-workspace"
   bind:conversationState
   data-sprint-item-workspace={itemId}
   data-sprint-item-view={itemId}
   onDocumentClick={openManagedFileInPlace}
 >
-    <ResourceState
+    <ResourceState shape="document" layout="fill"
       error={workspace.error}
       loading={workspace.isLoading}
       hasData={workspace.data !== undefined}
@@ -331,6 +332,7 @@
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={hoverWorker?.title ?? ""} kicker={workspace.data?.title ?? "Orchestrator"} worker={hoverWorker} cards={[]} rail={hoverTarget} recapTarget={hoverWorker ? { kind: "ticket", id: hoverWorker.id } : null} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
+  :global(.orchestrator-resource-workspace .sprint-item-column) { height:100%; min-height:0; display:flex; flex-direction:column; }
   .page-eyebrow { display:flex; align-items:center; gap:var(--space-2); font-size:13px; color:var(--text-faintest); }
   .page-eyebrow a { color:inherit; text-decoration:none; }
   .page-eyebrow a:hover { color:var(--text-strong); }

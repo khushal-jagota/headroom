@@ -139,7 +139,7 @@
 {/snippet}
 
 <section class="review-screen" data-screen="review" bind:this={screenElement}>
-  <ResourceState error={navigation.state.error} loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
+  <ResourceState shape="block" error={navigation.state.error} loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
     {#if !items.length}
       <div class="review-empty-state" data-review-empty>
         <div class="review-empty-mark" aria-hidden="true"><span></span></div>

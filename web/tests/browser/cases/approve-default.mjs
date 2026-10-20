@@ -75,7 +75,7 @@ client.setDefaultOptions({ queries: { retry: false } });
 let hostKind = $state<'ticket' | 'review'>('ticket');
 let ticketId = $state('t_coding');
 let field = $state('success_condition');
-(window as any).__showTicket = async (id: string) => { if(!navigation.owner.getState().publication?.records.some(record=>record.kind==='ticket' && record.id===id)) await navigation.owner.recover(); hostKind = 'ticket'; ticketId = id; };
+(window as any).__showTicket = (id: string) => { hostKind = 'ticket'; ticketId = id; };
 (window as any).__showReview = async (id: string, nextField: string) => { await navigation.owner.recover(); hostKind = 'review'; ticketId = id; field = nextField; };
 (window as any).__refresh = () => Promise.all([
   client.refetchQueries({ queryKey: ['ticket'] }),
@@ -93,5 +93,25 @@ let field = $state('success_condition');
   await writeFile(main, `globalThis.EventSource=class extends EventTarget {onerror=null;constructor(url){super();this.url=String(url);if(this.url.startsWith('/api/navigation/view/events?')){globalThis.__navigationSource=this;fetch(this.url.replace('/events?','/snapshot?')).then(response=>{if(!response.ok)throw new Error('unavailable');return response.json();}).then(value=>{if(!this.closed)this.dispatchEvent(new MessageEvent('snapshot',{data:JSON.stringify(value)}));}).catch(()=>{if(!this.closed)this.onerror?.();});}}close(){this.closed=true;}};import { mount } from 'svelte'; import Host from './${stem}.svelte'; import '../../assets/tokens.css'; import '../../assets/app.css'; mount(Host, {target: document.getElementById('app')!});`);
   await writeFile(index, `<html><body><div id="app"></div><script type="module" src="./${stem}.ts"></script></body></html>`);
 
-  return {inputs: [index], arguments: [index], python: fileURLToPath(new URL("./approve-default.py", import.meta.url))};
+  // A second entry reuses the same API fixture but preserves BoardRoute's real lazy import.
+  const workspaceHost = join(scratchRoot, `${stem}-workspace.svelte`);
+  const workspaceMain = join(scratchRoot, `${stem}-workspace.ts`);
+  const workspaceIndex = join(scratchRoot, `${stem}-workspace.html`);
+  await writeFile(workspaceHost, `<script lang="ts">
+import { QueryClientProvider } from '@tanstack/svelte-query';
+import { queryClient as client } from '../src/lib/queryClient';
+import { provideNavigationApplication } from '../src/lib/navigation/application.svelte';
+import BoardRoute from '../src/routes/BoardRoute.svelte';
+provideNavigationApplication();
+client.setDefaultOptions({queries:{retry:false}});
+let address = $state<import('../src/lib/workspaceAddress').WorkspaceAddress>({selection:{kind:'ticket',id:'t_coding'},view:'tickets',openFile:null});
+(window as any).__workspaceAddressChange = () => { address = {...address,view:'items',openFile:null}; };
+</script>
+<QueryClientProvider {client}><BoardRoute {address} /></QueryClientProvider>
+<style>:global(html),:global(body),:global(#app){height:100%;margin:0;overflow:hidden;}</style>`);
+  const existingMain = await (await import('node:fs/promises')).readFile(main, 'utf8');
+  await writeFile(workspaceMain, existingMain.replace(`./${stem}.svelte`, `./${stem}-workspace.svelte`));
+  await writeFile(workspaceIndex, `<html><body><div id="app"></div><script type="module" src="./${stem}-workspace.ts"></script></body></html>`);
+
+  return {inputs: [index, workspaceIndex], arguments: [index, workspaceIndex], python: fileURLToPath(new URL("./approve-default.py", import.meta.url))};
 }

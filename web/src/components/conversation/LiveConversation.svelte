@@ -82,6 +82,7 @@
 
   let {
     conversationId = null,
+    ownerLoading = false,
     persistenceKey,
     label,
     backends = $bindable([]),
@@ -100,6 +101,8 @@
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     conversationId?: string | null;
+    /** The owner is still reading which conversation belongs here. */
+    ownerLoading?: boolean;
     /** Stable owner identity used before the server assigns a Conversation id. */
     persistenceKey: string;
     label: string;
@@ -875,6 +878,7 @@
   bind:backends
   workspaceFolder={view?.workspace_folder ?? null}
   {reader}
+  transcriptLoading={ownerLoading || opening || (reader?.loading === true && reader.status === null)}
   bind:viewAnchor
   transcriptVisible={documentIsVisible}
   {rows}

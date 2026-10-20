@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "../components/SkeletonRegion.svelte";
   import { onMount, tick } from "svelte";
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
@@ -230,18 +231,18 @@
   {#if nativeRefreshError}<p class="error" role="alert">Local usage: {nativeRefreshError}</p>{/if}
   {#if metric !== "limits"}
     {#if recorded.error}<p class="error" role="alert">Local usage: {sentenceFor(recorded.error)}{summary ? " The previous reading remains below." : ""}</p>{/if}
-    {#if recorded.isFetching}<p class="quiet-line" role="status">Reading stored usage…</p>{/if}
+    <SkeletonRegion shape="rows" loading={recorded.isFetching && !summary && !recorded.error} loadingText="Reading stored usage…">
     {#if summary}
       <div aria-busy={recorded.isFetching}><RecordedUsage {summary} providers={recordedProviders} {metric} /></div>
     {:else if !recorded.isFetching && !recorded.error}<p class="quiet-line">No stored usage was reported.</p>{/if}
+    </SkeletonRegion>
   {:else}
   {#if error}<p class="error" role="alert">Allowances: {error}</p>{/if}
 
-  {#if loading}
-    <p class="quiet-line">Loading backends…</p>
-  {:else if supportedBackends.length === 0}
+  <SkeletonRegion shape="rows" loading={loading && supportedBackends.length === 0 && !error} loadingText="Loading backends…">
+  {#if !loading && supportedBackends.length === 0}
     <p class="quiet-line">No backends were reported.</p>
-  {:else}
+  {:else if supportedBackends.length > 0}
     <div class="rows">
       {#each visibleBackends as snapshot (snapshot.backend_key)}
         {@const open = openBackend === snapshot.backend_key}
@@ -379,6 +380,7 @@
     </div>
     {#if !visibleBackends.length}<p class="quiet-line">Select a backend to view its allowances.</p>{/if}
   {/if}
+  </SkeletonRegion>
   {/if}
   {/if}
 </section>

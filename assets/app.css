@@ -6663,3 +6663,83 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
 .workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .workspace-ticket-bucket .worker-row .conversation-signal-marks { justify-self:end; }
+
+/* Approved skeleton system. */
+/* 1 — the region. Any element that can show a skeleton carries this. */
+.resource{position:relative}
+.resource > .resource-state{position:absolute;inset:0;overflow:hidden}
+.resource > .resource-state--scroll{overflow-y:auto}
+
+/* 2 — the skeleton layer */
+.skeleton{
+  -webkit-mask-image:linear-gradient(to bottom,#000 40%,transparent 96%);
+          mask-image:linear-gradient(to bottom,#000 40%,transparent 96%);
+}
+/* A transcript stacks from the bottom, so it dissolves upward instead. */
+.skeleton--up{
+  display:flex;flex-direction:column;justify-content:flex-end;
+  -webkit-mask-image:linear-gradient(to top,#000 45%,transparent 98%);
+          mask-image:linear-gradient(to top,#000 45%,transparent 98%);
+}
+
+/* 3 — the two marks. A line stands for type and is the height of that type's ink.
+       A block stands for something whose shape we do not know. */
+.skeleton-line{display:block;height:10px;border-radius:var(--radius-sm);background:var(--skeleton-line)}
+.skeleton-line--xs{height:9px}                                   /* 13px type  */
+.skeleton-line--serif{height:11px}                               /* 16.5px serif */
+.skeleton-line--title{height:21px;border-radius:var(--radius-md)}/* 28px title */
+.skeleton-block{display:block;border-radius:var(--radius-lg);background:var(--skeleton-block)}
+
+/* A bar sits in a box the height of the real line, so its centre is the text's centre. */
+.skeleton-row{display:flex;align-items:center;height:24px}        /* 15px / 24px   */
+.skeleton-row--xs{height:19.5px}                                  /* 13px / 19.5px */
+.skeleton-row--ui{height:22.5px}                                  /* 15px / 1.5    */
+.skeleton-row--eyebrow{height:20px}
+.skeleton-row--title{height:34.72px}
+
+/* 4 — the swap. The outgoing layer leaves from wherever its entrance got to, so a
+       skeleton caught half way in never flashes to full before it goes. */
+.skeleton[data-entering]{animation:skeleton-in calc(var(--skeleton-fade) * .6) ease-in-out}
+.skeleton[data-leaving]{animation:skeleton-out calc(var(--skeleton-fade) * 1.3) ease-in-out forwards}
+.resource-arriving{animation:skeleton-in var(--skeleton-fade) ease-in-out}
+@keyframes skeleton-in{from{opacity:0}to{opacity:1}}
+@keyframes skeleton-out{from{opacity:var(--skeleton-from,1)}to{opacity:0}}
+
+/* 5 — an inline wait: a hole one or two lines tall inside something already drawn.
+       No dissolve, no delay, one bar where the words will be. */
+.skeleton-inline{display:inline-block;vertical-align:middle;height:10px;border-radius:var(--radius-sm);
+  background:var(--skeleton-line)}
+
+@media (prefers-reduced-motion:reduce){
+  .skeleton[data-entering],.skeleton[data-leaving],.resource-arriving{animation:none}
+}
+
+/* Region integration. Flow reservations are the drawn shape's geometry, and end
+   with the outgoing layer. Fill regions receive their size from their parent. */
+.skeleton-region[data-active]{min-height:var(--skeleton-reservation)}
+.skeleton-region:not([data-active]):not(.skeleton-region--fill),
+.skeleton-content:not(.resource-state):not(.resource-arriving){display:contents}
+.skeleton-region--fill{height:100%;min-height:0;flex:1;min-width:0}
+.skeleton-region--fill[data-active]{min-height:0}
+.skeleton-region--fill > .skeleton-content{display:flex;flex-direction:column;overflow:auto}
+.skeleton-region > .skeleton{pointer-events:none}
+.skeleton-region--inline{display:inline-block;vertical-align:middle;min-width:72px;height:24px}
+.skeleton-region--inline > .skeleton{display:flex;align-items:center;mask-image:none;-webkit-mask-image:none}
+.skeleton-region--inline .skeleton-inline{width:72px}
+.skeleton-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.skeleton-rows-head{height:35px;background:var(--surface-2);border-radius:var(--radius-md)}
+.skeleton-rows-body{padding:var(--space-1) 0}
+.skeleton-list-row{height:38px;display:flex;align-items:center;gap:var(--space-3);padding:7px var(--space-3);box-sizing:border-box}
+.skeleton-list-row > .skeleton-row{flex:1}
+.skeleton-row-mark{width:15px;flex:none}
+.skeleton-document-eyebrow{height:20px;margin-bottom:var(--space-3)}
+.skeleton-document-title{margin-bottom:var(--space-3)}
+.skeleton-document-meta{height:22.5px;margin-bottom:var(--space-5)}
+.skeleton-document-block{margin-bottom:var(--space-5)}
+.skeleton-thread{display:flex;flex-direction:column;gap:var(--space-5);padding:var(--space-5) var(--space-3) var(--space-4);flex:none}
+.skeleton-thread > .skeleton-block{flex:none}
+.skeleton-whole-block{height:100%}
+
+.skeleton-rows{padding:var(--space-5)}
+.skeleton-document{padding:var(--space-5) var(--space-7)}
+@media (max-width:720px){.skeleton-document{padding:var(--space-5) var(--space-4)}}

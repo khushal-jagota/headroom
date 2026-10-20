@@ -20,7 +20,7 @@ const failure = { code: "network", message: "network error" };
 
 function body(props: Record<string, unknown>): string {
   return render(ResourceState, {
-    props: { loadingText: "Loading...", children, ...props }
+    props: { loadingText: "Loading...", shape: "rows", children, ...props }
   }).body;
 }
 
@@ -37,6 +37,26 @@ describe("ResourceState", () => {
     const markup = body({ error: failure, hasData: false });
 
     expect(markup).toContain("network error");
+    expect(markup).not.toContain("data-the-data");
+  });
+
+  it("keeps stale data through a refresh without a skeleton or loading announcement", () => {
+    const markup = body({ loading: true, hasData: true });
+    expect(markup).toContain("data-the-data");
+    expect(markup).not.toContain('aria-hidden="true"');
+    expect(markup).toMatch(/role="status">(?:<!--.*?-->)*<\/span>/);
+    expect(markup).not.toContain("Loading...");
+  });
+
+  it("announces a cold wait without exposing decorative shapes to assistive technology", () => {
+    const markup = body({ loading: true });
+    // The status closes before the busy root opens, at the same top level.
+    // This protects the announcement from aria-busy deferral.
+    const elements = markup.replace(/<!--[\s\S]*?-->/g, "").trim();
+    expect(elements).toMatch(/^<span class="skeleton-status" role="status">Loading\.\.\.<\/span>\s*<div[^>]*aria-busy="true"/);
+    expect(markup).toContain('class="skeleton-status"');
+    expect(markup).toContain('aria-hidden="true"');
+    expect(markup).toContain('aria-busy="true"');
     expect(markup).not.toContain("data-the-data");
   });
 
