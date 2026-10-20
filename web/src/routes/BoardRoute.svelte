@@ -39,6 +39,9 @@
     return context;
   })();
   const manifests = createQuery(() => queries.workerTypeManifests());
+  // Chief recap is dedicated content outside navigation records, so the popover
+  // reads it from the same settings query the Chief conversation pane already uses.
+  const chiefSettings = createQuery(() => queries.chiefSettings());
   let workspace = $state.raw<NavigationPresentation | null>(null);
   let displayedPublication = $state.raw<NavigationPublication | null>(null);
   $effect(() => {
@@ -129,8 +132,8 @@
     const projected=buildWorkspaceRail([], [full]);
     return [...projected.items,...projected.settledItems][0];
   });
-  let hoverRecap = $derived(hoverChief ? workspaceListRecap(desiredRail.chiefGroups,"",chiefWindow?.total)
-    : workspaceListRecap(hoveredItem?.groups ?? [], hoverBody.body ?? hoveredItem?.recap,hoveredItem?navigationWindow(workspace,'rail_tickets',{kind:'orchestrator',id:hoveredItem.id})?.total:undefined));
+  let hoverRecap = $derived(hoverChief ? workspaceListRecap(chiefSettings.data?.recap)
+    : workspaceListRecap(hoverBody.body ?? hoveredItem?.recap));
   let hoverSignal = $derived(hoverConversationIdOverride !== null ? workspace?.conversationSignals.get(hoverConversationIdOverride)
     : hoverChief ? workspace?.chief?.conversation_signal : hoveredItem?.conversationSignal);
   let hoverConversationId = $derived(hoverConversationIdOverride ?? (hoverChief ? workspace?.chief?.conversation_id : hoveredItem?.conversationId));
