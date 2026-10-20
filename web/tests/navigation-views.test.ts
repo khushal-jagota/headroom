@@ -1,4 +1,6 @@
 import {describe,it,expect} from 'vitest';
+import {parseFrame,applyFrame} from '../src/lib/navigation/views/validation';
+import {createNavigationPresentationCache} from '../src/lib/navigation/presentation';
 import {WORK_ITEM_TICKET_GROUPS} from '../src/lib/workItemPresentation';
 import {createScopedNavigationOwner,viewWindow,defaultViewRequest} from '../src/lib/navigation/views/owner';
 import type {CurrentViewSnapshot,ViewFrame,ViewRequest,Fence} from '../src/lib/navigation/contracts';
@@ -7,7 +9,7 @@ import {authority,continuity,conversation} from './support/navigation/fixtures';
 
 function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapshot {
   const source=conversation('c');
-  return {event:'snapshot',wire_version:3,projection_version:1,view_id:`view-${request.scope_generation}`,
+  return {event:'snapshot',wire_version:3,projection_version:2,view_id:`view-${request.scope_generation}`,
     scope_generation:request.scope_generation,ordering_generation:'fixture',coverage:{...continuity,revision},
     content_version:name,mode:'current',authority:authority(),proof:null,
     content:{records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
@@ -81,6 +83,41 @@ describe('bounded navigation owner',()=>{
       const next=owner.getState();const painted=observer.observeSelectors(next.publication!,next.generation);observer.acknowledgeRender(next.publication!,painted);
       expect((await pending).status).toBe('included');
     }finally{owner.dispose();}
+  });
+  it('accepts only projection 2 and replaces lean/full records under one key',async()=>{
+    const {owner,connections}=fixture();
+    const presentationFor=createNavigationPresentationCache();
+    try {
+      expect(defaultViewRequest().projection_version).toBe(2);
+      const started=owner.start();
+      const initial=snapshot(connections[0].request);
+      const lean={kind:'orchestrator' as const,id:'settled',value:{title:'Settled',created_at:1,settled:true as const,conversation_id:'c'}};
+      initial.content.records.push(lean);
+      expect(()=>parseFrame({...initial,projection_version:1})).toThrow();
+      expect(()=>applyFrame(undefined,{...initial,projection_version:1} as unknown as ViewFrame)).toThrow('projection version');
+      connections[0].send(parseFrame(initial));await started;
+      const first=presentationFor(owner.getState().effective!);
+      expect(first.settledOrchestrators.map(item=>item.id)).toEqual(['settled']);
+      expect(first.rawOrchestratorsById.has('settled')).toBe(false);
+      expect(first.orchestratorsById.has('settled')).toBe(false);
+      expect(first.settledOrchestrators[0]).not.toHaveProperty('recap');
+      const full={...lean,value:{...lean.value,recap:'Retained for selection',recap_preview:'Retained',project_id:'p',recap_reference:null}};
+      const patch:ViewFrame={event:'patch',wire_version:3,projection_version:2,view_id:initial.view_id,
+        scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
+        coverage:{...continuity,revision:'1'},previous_coverage:initial.coverage,content_version:'full',previous_content_version:initial.content_version,
+        upserts:[full],evictions:[],windows:[],counts:initial.content.counts};
+      connections[0].send(parseFrame(patch));
+      const promoted=presentationFor(owner.getState().effective!);
+      expect(promoted.rawOrchestratorsById.get('settled')?.value.recap).toBe('Retained for selection');
+      expect(promoted.orchestratorsById.get('settled')?.project).toBe('one');
+      expect(promoted.settledOrchestrators).toHaveLength(0);
+      connections[0].send(parseFrame({...patch,coverage:{...continuity,revision:'2'},previous_coverage:patch.coverage,
+        content_version:'lean-again',previous_content_version:'full',upserts:[lean]}));
+      const demoted=presentationFor(owner.getState().effective!);
+      expect(owner.getState().publication!.records.filter(row=>row.kind==='orchestrator')).toHaveLength(1);
+      expect(demoted.rawOrchestratorsById.has('settled')).toBe(false);
+      expect(demoted.settledOrchestrators).toHaveLength(1);
+    } finally {owner.dispose();}
   });
   it('bounds combined open surfaces without mutating demand or changing Chief page size',()=>{
     const {owner}=fixture();

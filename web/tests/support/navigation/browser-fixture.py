@@ -236,7 +236,7 @@ def scoped_navigation_response(response: FixtureObject, view: FixtureObject) -> 
     return {
         "event": "snapshot",
         "wire_version": 3,
-        "projection_version": 1,
+        "projection_version": 2,
         "view_id": identity(cast(ViewRequest, descriptor)),
         "scope_generation": descriptor["scope_generation"],
         "ordering_generation": ORDERING_GENERATION,
