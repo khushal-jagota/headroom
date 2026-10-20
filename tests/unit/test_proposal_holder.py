@@ -272,3 +272,15 @@ def test_a_move_puts_a_stranded_proposal_back_in_the_user_review(
         "SELECT CAST(guidance AS BLOB) FROM tickets WHERE id=?", (ticket.id,)
     ).fetchone()[0]).hexdigest()
     assert before == after
+
+
+def test_a_backlogged_ticket_is_excluded_from_the_review_queue(tmp_db: Connection) -> None:
+    visible = _park(tmp_db, OWNER_PRINCIPAL, now=10)
+    backlogged = _park(tmp_db, OWNER_PRINCIPAL, now=20)
+    data.set_ticket_backlog(
+        tmp_db, backlogged.id, is_backlogged=True, principal=OWNER_PRINCIPAL, now=21
+    )
+
+    ticket_ids = [item["ticket_id"] for item in views.review_view(tmp_db)["items"]]
+    assert visible.id in ticket_ids
+    assert backlogged.id not in ticket_ids
