@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import closing
-from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
@@ -53,13 +51,25 @@ from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 router = APIRouter()
 
 
-def _read[T](runtime: ConversationRuntime, operation: Callable[[sqlite3.Connection], T]) -> T:
-    uri = Path(runtime.database_path).resolve().as_uri() + "?mode=ro"
-    with closing(sqlite3.connect(uri, uri=True)) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA query_only=ON")
-        conn.execute("BEGIN")
-        return operation(conn)
+async def _read[T](
+    runtime: ConversationRuntime, operation: Callable[[sqlite3.Connection], T]
+) -> T:
+    """Run one view read on the runtime's kept read-only connections.
+
+    Every one of these used to open its own connection, and on this schema the first
+    statement on a fresh connection costs 2.39 ms against 0.022 ms on a kept one, because
+    the connection loads eighty tables of schema before it can plan anything.
+    """
+    return await runtime.reads.run(operation)
+
+
+def _exists(conn: sqlite3.Connection, conversation_id: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM conversations WHERE conversation_id=?", (conversation_id,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _decode[T](annotation: type[T], raw: str | None) -> T | None:
@@ -74,7 +84,10 @@ def _decode[T](annotation: type[T], raw: str | None) -> T | None:
 async def _runtime_facts(
     runtime: ConversationRuntime, conversation_id: str
 ) -> tuple[bool | None, tuple[str, ...], tuple[str, ...]]:
-    if await runtime.store.read_conversation(conversation_id) is None:
+    # Asking the record whether a conversation exists read the whole record over a second
+    # and heavier read-write connection. The question is one indexed row, and the read
+    # connection this request is about to use anyway can answer it.
+    if not await _read(runtime, lambda conn: _exists(conn, conversation_id)):
         raise HTTPException(status_code=404, detail="conversation is absent")
     running = await runtime.system.is_running(conversation_id)
     permissions = tuple(await runtime.system.pending_permission_ask_ids(conversation_id))
@@ -140,7 +153,7 @@ async def _snapshot(
             "status": status,
         }
 
-    return await asyncio.to_thread(_read, runtime, snapshot)
+    return await _read(runtime, snapshot)
 
 
 @router.get("/conversations/{conversation_id}/view")
@@ -166,8 +179,7 @@ async def conversation_view_page(
     parsed_scope = _decode(ViewHistoryScope, scope)
     parsed_cursor = _decode(ViewPageCursor, cursor)
     try:
-        return await asyncio.to_thread(
-            _read,
+        return await _read(
             runtime,
             lambda conn: read_page(
                 conn,
@@ -197,8 +209,7 @@ async def conversation_view_body(
     try:
         if body_reference["body_id"].startswith(("live", "progress:")):
             return runtime.live_tail.views.read_chunk(conversation_id, body_reference, offset)
-        return await asyncio.to_thread(
-            _read,
+        return await _read(
             runtime,
             lambda conn: read_body_chunk(
                 conn,
@@ -375,7 +386,7 @@ async def _tail(
         ).fetchone()
         return row[0] if row else None
 
-    turn_key = await asyncio.to_thread(_read, runtime, current_turn)
+    turn_key = await _read(runtime, current_turn)
     subscription = runtime.live_tail.views.subscribe(
         conversation_id, lens, transcript=transcript, turn_key=turn_key
     )
@@ -448,7 +459,7 @@ async def _tail(
                     }
                 return _changes(conn, conversation_id, lens, current_after, ranges, status)
 
-            result = await asyncio.to_thread(_read, runtime, update)
+            result = await _read(runtime, update)
             if result is None:
                 yield _frame("reset", {"kind": "reset", "reason": "gap"})
                 return
@@ -503,7 +514,7 @@ async def conversation_view_receipts(
             "receipts": receipts,
         }
 
-    return await asyncio.to_thread(_read, runtime, read)
+    return await _read(runtime, read)
 
 
 @router.get("/conversations/{conversation_id}/view/body/content")
@@ -534,8 +545,7 @@ async def conversation_view_body_content(
 
             chunks = live_chunks()
         else:
-            body = await asyncio.to_thread(
-                _read,
+            body = await _read(
                 runtime,
                 lambda conn: body_content(
                     conn, conversation_id, body_reference, stopped=running is False

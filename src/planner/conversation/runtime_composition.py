@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Mapping
 from contextlib import AbstractContextManager, AsyncExitStack, closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
@@ -41,6 +41,7 @@ from planner.core.db import (
     transaction_control_guard,
     transaction_savepoint_depth,
 )
+from planner.core.read_connections import ReadConnections
 from planner.core.transaction_guards import GuardRegistration, register_transaction_guard
 
 
@@ -180,6 +181,14 @@ class ConversationRuntime:
     # Absent when this process has no backend that can start a sign-in. The routes say
     # so rather than pretending the affordance exists.
     codex_sign_in: CodexSignInService | None = None
+    # Not a constructor argument: a reader pool is nothing but the database path, so
+    # asking every caller to pass one would be asking them to repeat themselves.
+    reads: ReadConnections = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "reads", ReadConnections(self.database_path, name="conversation-read")
+        )
 
     async def shutdown(self) -> None:
         """Let the watchers go first, then stop the system's children.
@@ -189,6 +198,7 @@ class ConversationRuntime:
         """
         self.live_tail.close_all_subscriptions()
         await self.system.shutdown()
+        self.reads.close()
         if self.codex_sign_in is not None:
             await self.codex_sign_in.shutdown()
 
