@@ -96,3 +96,20 @@ Ticket-owned artifacts are durable work products that make the work easier to un
 Use a Ticket-owned artifact when the user needs to review a visual or interactive work product. Prefer a self-contained HTML artifact when it can show the result. Do not record a loopback server URL. The user cannot reach the worker machine through Panels.
 
 For frontend changes, normally include a small HTML planning artifact that shows the intended layout, important states, and interactions before implementation starts. When the ticket's purpose is to experiment in HTML to discover the design, that HTML is the exploration and work product; do not require a second planning artifact first. Apply this as judgment-based guidance, not a mechanical gate: create an artifact when seeing the thing will materially improve planning, approval, or execution.
+
+
+### The server is not yours
+
+The Panels server that runs you is operator-owned. Khushal starts it, stops it and restarts it.
+
+Do not signal it and do not replace it. Never run `kill`, `pkill`, `killall`, an `lsof`-driven
+kill, or `systemctl` against it. Never run `panels serve` on its port.
+
+A pattern cannot tell the live server from your own. On this machine the live deployment and a
+scratch instance run the same command line, so `pkill -f "planner serve"` stops both. That took
+the live server down on 15 August 2026 and again on 20 October 2026.
+
+If you start your own server, record its PID at launch and stop that exact PID. If a port is
+busy, pick another port. Never free a port.
+
+If the live server must restart, say so and stop.
