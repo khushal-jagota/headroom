@@ -143,7 +143,7 @@ def read_row(
     fold_rule: Literal["never", "earlier_message", "work"] = "never"
     if kind == "tool_call":
         fold_rule = "work"
-    elif kind == "agent_message" and row["turn_key"] is not None:
+    elif body["kind"] == "agent_message" and not body["to_owner"] and row["turn_key"] is not None:
         fold_rule = "earlier_message"
     result: ConversationViewRow = {
         "kind": "row",
@@ -188,7 +188,13 @@ def read_turn(
     ).fetchone()
     is_stopped = stopped and row["ending_sequence"] is None
     ended = row["ending_sequence"] is not None
-    count = row["focus_message_count"] if focus else row["full_message_count"]
+    # Focus contains addressed messages only. Full retains its existing latest-message
+    # boundary, but addressed messages never contribute to the expansion count.
+    ordinary_count = row["full_message_count"] - row["focus_message_count"]
+    retained_ordinary = (
+        row["latest_full_message_sequence"] is not None
+        and row["latest_full_message_sequence"] != row["latest_focus_message_sequence"]
+    )
     last = row["latest_focus_message_sequence"] if focus else row["latest_full_message_sequence"]
     return {
         "kind": "turn",
@@ -201,7 +207,11 @@ def read_turn(
         "ending": event.ConversationTurnEnding(row["ending"]) if row["ending"] else None,
         "duration_seconds": max(0, row["ended_at"] - row["created_at"]) if ended else None,
         "tool_call_count": 0 if focus else row["tool_call_count"],
-        "folded_message_count": max(0, count - 1) if ended or is_stopped else 0,
+        "folded_message_count": (
+            max(0, ordinary_count - int(retained_ordinary))
+            if not focus and (ended or is_stopped)
+            else 0
+        ),
         "latest_message_key": f"e{last}" if last is not None else None,
         "is_latest": latest is not None and latest[0] == key,
     }
@@ -251,7 +261,8 @@ def _candidates_sql(
         rows = (
             "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,0 AS slot "
             "FROM conversation_view_rows r " + join + "WHERE r.conversation_id=? AND r.removed=0 "
-            f"AND {visible}r.turn_key=? AND r.row_kind='agent_message' AND r.sequence<>{latest}"
+            f"AND {visible}r.turn_key=? AND r.row_kind='agent_message' "
+            f"AND r.focus_visible=0 AND r.sequence<>{latest}"
         )
         if focus:
             return rows, [scope["key"]]
@@ -264,7 +275,7 @@ def _candidates_sql(
         "SELECT 'row' AS kind,'e'||r.sequence AS key,r.sequence AS sequence,0 AS slot "
         "FROM conversation_view_rows r " + join + "WHERE r.conversation_id=? AND r.removed=0 "
         f"AND {visible}r.row_kind<>'tool_call' "
-        f"AND NOT(r.row_kind='agent_message' AND {has_head} AND ({settled}) "
+        f"AND NOT(r.row_kind='agent_message' AND r.focus_visible=0 AND {has_head} AND ({settled}) "
         f"AND r.sequence<>{latest})"
     )
     heads = (
@@ -502,6 +513,7 @@ def scope_contains_item(
         return bool(
             row["turn_key"] == scope["key"]
             and row["row_kind"] == "agent_message"
+            and not row["focus_visible"]
             and sequence != latest
         )
     if row["row_kind"] == "tool_call":
@@ -519,6 +531,7 @@ def scope_contains_item(
     headed = row["focus_head"] if lens == "focus" else row["turn_key"] is not None
     return not (
         row["row_kind"] == "agent_message"
+        and not row["focus_visible"]
         and headed
         and (stopped or row["turn_ending_sequence"] is not None)
         and sequence != latest

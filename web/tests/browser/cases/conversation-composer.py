@@ -5,7 +5,6 @@
 def run(browser, urls):
 
     import base64
-    import math
 
     INPUT = "[data-conversation-input]"
     ATTACHMENTS = "[data-chat-image-name], [data-chat-file-name]"
@@ -184,7 +183,7 @@ def run(browser, urls):
     page.locator(INPUT).fill("\n".join("line " + str(n) for n in range(40)))
     settled(page)
     tall = height(page)
-    cap = math.floor(min(720 * 0.44, tall["line"] * 12) / tall["line"]) * tall["line"]
+    cap = tall["line"] * 6
     assert abs(tall["h"] - tall["padding"] - cap) <= 1, (tall, cap)
     assert tall["overflow"] == "auto" and tall["scroll"] > tall["h"], tall
     page.locator(INPUT).evaluate("e => e.scrollTop = e.scrollHeight")
@@ -192,7 +191,7 @@ def run(browser, urls):
     page.locator("[data-conversation-pane]").evaluate("e => e.style.height = '360px'")
     settled(page)
     shorter = height(page)
-    assert shorter["h"] < tall["h"], (tall, shorter)
+    assert abs(shorter["h"] - tall["h"]) <= 0.1, (tall, shorter)
     page.locator(INPUT).fill("short")
     settled(page)
     assert height(page)["h"] <= small["h"] + 1
@@ -227,10 +226,13 @@ def run(browser, urls):
     page.keyboard.press("Shift+Enter")
     settled(page)
     trailing = height(page)
-    assert abs(trailing["h"] - six_lines["h"] - six_lines["line"]) <= 1, (six_lines, trailing)
+    assert abs(trailing["h"] - six_lines["h"]) <= 0.1, (six_lines, trailing)
+    assert six_lines["overflow"] == "hidden", six_lines
+    assert trailing["overflow"] == "auto" and trailing["scroll"] > trailing["h"], trailing
     page.keyboard.press("Backspace")
     settled(page)
     assert abs(height(page)["h"] - six_lines["h"]) <= 0.1
+    assert height(page)["overflow"] == "hidden"
 
     # Native text paste grows the actual textarea; mixed drag/drop and image paste
     # travel through browser events into the same ordered attachment strip.

@@ -77,8 +77,8 @@ type OpenTurn = {
   anchorIndex: number | null;
   groupIndexes: number[];
   openGroupIndex: number | null;
-  /** Where this turn's own messages landed, in the order it said them. The last is the
-   *  answer and stays; the ones before it are commentary and fold. */
+  /** Where this turn's ordinary messages landed. Addressed owner messages never fold.
+   *  The last ordinary message stays; earlier commentary folds. */
   messageIndexes: number[];
 };
 
@@ -206,7 +206,12 @@ export function threadItems(
     const rowIndex = visible ? items.length : null;
     if (visible) items.push({ kind: "row", key: row.key, row, behindTheFoldOf: null });
 
-    if (row.kind === "agent_message" && turn.anchorIndex !== null && rowIndex !== null) {
+    if (
+      row.kind === "agent_message"
+      && !row.toOwner
+      && turn.anchorIndex !== null
+      && rowIndex !== null
+    ) {
       turn.messageIndexes = [...turn.messageIndexes, rowIndex];
     }
 

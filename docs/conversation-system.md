@@ -677,19 +677,18 @@ elapsed time and newest tool call. In peeked and opened states, the same checkli
 in a centered 34-pixel strip between the thread and composer while unfinished work runs.
 The plan never appears under the turn that first stated it.
 
-When the turn is over that head becomes a fold, and everything the turn produced
-goes behind it: its tool calls, and everything the agent said on the way to its
-answer. What stays out is the person's own message, the last thing the agent
-said, and — when a turn failed or was stopped — the line saying so. A turn that
-thought out loud for five paragraphs is exactly as long to scroll past as one
-that made five tool calls, so both collapse the same way and a finished turn
-reads as one paragraph with a "Worked for 14s" you can open. Opening it puts
-everything back where it happened, the commentary between the runs of tool calls
-it sat between rather than gathered up at the end. A turn that never said
-anything keeps nothing back, because there is no answer to hold; a turn still
-running folds nothing at all.
+Full shows every message and tool call. Its turn and work groups expand
+automatically. Focus shows the person's prompts, messages addressed to the owner,
+requests and answers, and failure or stop rows. Messages addressed to the owner
+never go behind a turn fold, including in the older transcript renderer.
 
-Each tool call inside that fold is one line: what happened, and the single fact
+A normally settled Focus turn keeps its head and its own line, such as
+"Worked for 14s". It has no chevron or toggle because nothing remains behind it.
+Focus reports zero folded messages and zero tool calls, even when the stored turn
+contains tools. A turn that stops without an ending and has nothing behind it
+keeps its stop row but has no head, as before.
+
+Each tool call is one line: what happened, and the single fact
 that says which call it was — the command that ran, the path that was read, the
 pattern that was searched for. The three agents do not agree on how they say
 this, so the pane reads what each of them actually gives and says the same kind

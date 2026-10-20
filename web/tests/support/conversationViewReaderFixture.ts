@@ -2,6 +2,7 @@
 import type {ConversationViewItem,ConversationViewPage,ConversationViewRow,ConversationViewStatus,ViewPageCursor,ViewRowBody} from '../../src/lib/conversation/view/contracts';
 export function installConversationViewReaderFixture():void {
   const id='bounded-reader';
+  const folds=new URLSearchParams(location.search).has('folds');
   const visual=new URLSearchParams(location.search).has('visual');
   let sequence=2000;
   const calls:string[]=[];
@@ -28,7 +29,29 @@ export function installConversationViewReaderFixture():void {
     items.sort((a,b)=>a.order.sequence-b.order.sequence||a.order.slot-b.order.slot);
     return{conversation_id:id,protocol_version:1,projection_version:1,lens,scope,items,older:null,newer:null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
   }
+  // A settled owner turn exercises the real reader's Full autoexpansion and the
+  // never-fold metadata before a deferred owner body has been materialized.
+  const deferredOwner=JSON.stringify({kind:'agent_message',to_owner:true,content:[{piece:'text',text:'Owner answer one.'}]});
+  function foldPage(url:URL):ConversationViewPage {
+    const lens=url.searchParams.get('lens')==='full'?'full':'focus';
+    const scope=JSON.parse(url.searchParams.get('scope')??'{"kind":"timeline","key":null}');
+    const row=(n:number,body:ViewRowBody,turn='turn:1'):ConversationViewRow=>({...item(n),row_kind:body.kind,turn_key:turn,body:{kind:'inline',value:body}});
+    const prompt=(n:number)=>row(n,{kind:'prompt',sender_label:'owner',mode:'queue',sent_at_unix_milliseconds:n,content:[{piece:'text',text:'Owner prompt '+n}]},'turn:'+n);
+    const prose=(n:number,text:string,owner:boolean,turn='turn:1'):ConversationViewRow=>({...row(n,{kind:'agent_message',to_owner:owner,content:[{piece:'text',text}]},turn),fold_rule:owner?'never':'earlier_message'});
+    const turn=(n:number,count:number,ending:'completed'|'failed'|null,stopped=false):ConversationViewItem=>({kind:'turn',key:'turn:'+n,order:{sequence:n,slot:1},changed_through_sequence:16,settled:true,stopped,started_at_unix_milliseconds:n,ending,is_latest:n===14,duration_seconds:ending===null?null:1,tool_call_count:lens==='full'&&n===1?2:0,folded_message_count:lens==='full'?count:0,latest_message_key:'e'+(n===1?9:n===11?12:15)});
+    const tool=(n:number):ConversationViewRow=>({...row(n,{kind:'tool_call',tool_call_id:'fold-tool-'+n,title:'Stored tool '+n,tool_kind:'read',detail:'Stored detail',started_detail:'Stored detail',capped_detail_sequence:null,status:'completed'}),work_group_key:'work:6',order:{sequence:n,slot:1},fold_rule:'work'});
+    const owner=prose(3,'Owner answer one.',true);
+    owner.body={kind:'deferred',reference:{body_id:'owner:3',version:'1',byte_count:deferredOwner.length,media_type:'application/json'}};
+    let items:ConversationViewItem[]=[prompt(1),turn(1,3,'completed'),owner,prose(5,'Owner answer two.',true),prose(9,'Owner answer three.',true),prompt(11),turn(11,0,'failed'),prose(12,'Owner answer before failure.',true,'turn:11'),row(13,{kind:'turn_ended',ending:'failed',error_summary:'Visible fold failure',automatic_compaction_result:null},'turn:11'),prompt(14),turn(14,0,null,true)];
+    if(lens==='full')items.push(prose(15,'Latest ordinary stopped output.',false,'turn:14'));
+    if(scope.kind==='turn')items=scope.key==='turn:1'?[prose(2,'Ordinary commentary one.',false),prose(4,'Ordinary commentary two.',false),prose(8,'Ordinary commentary three.',false),{kind:'work_group',key:'work:6',order:{sequence:6,slot:0},changed_through_sequence:10,turn_key:'turn:1',entry_count:2,latest_entry_key:'e7',settled:true}]:[];
+    if(scope.kind==='work_group')items=[tool(6),tool(7)];
+    items.sort((a,b)=>a.order.sequence-b.order.sequence||a.order.slot-b.order.slot);
+    return{conversation_id:id,protocol_version:1,projection_version:1,lens,scope,items,older:null,newer:null,body_bytes:new TextEncoder().encode(JSON.stringify(items)).byteLength};
+  }
+  if(folds){status.turn_key='turn:14';status.stopped_without_ending=true;}
   function page(url:URL):ConversationViewPage{
+    if(folds)return foldPage(url);
     if(visual)return visualPage(url);
     const lens=url.searchParams.get('lens')==='full'?'full':'focus';
     const cursor=JSON.parse(url.searchParams.get('cursor')??'null') as ViewPageCursor|null;
@@ -50,6 +73,7 @@ export function installConversationViewReaderFixture():void {
   window.fetch=async(input,init)=>{
     const value=String(input);if(!value.startsWith('/api/conversation/'))return originalFetch(input,init);
     calls.push(value);const url=new URL(value,location.origin);
+    if(folds&&url.pathname.endsWith('/view/body/content'))return new Response(deferredOwner);
     if(visual&&url.pathname.endsWith('/view/body/content'))return new Response(JSON.parse(url.searchParams.get('reference')!).body_id==='completed:13'?deferredEndingText:liveText);
     if(url.pathname.endsWith('/view/pages'))return Response.json(page(url));
     if(url.pathname.endsWith('/view/receipts'))return Response.json({conversation_id:id,coverage:{through_sequence:sequence},receipts:[]});
