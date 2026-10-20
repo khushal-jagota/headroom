@@ -618,7 +618,7 @@ def _board_sprint_items(
 def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
     rows = conn.execute(
         "SELECT id, title, stage, worker_type, worker_step_claim, "
-        "pending_proposal, ceiling_holder FROM tickets "
+        "pending_proposal, ceiling_holder, is_backlogged FROM tickets "
         "ORDER BY id",
     ).fetchall()
     registry = configured_worker_type_registry()
@@ -631,6 +631,8 @@ def _review_items(conn: sqlite3.Connection) -> list[JsonDict]:
             )
         )
         if facts.ticket_status is not TicketStatus.awaiting_approval:
+            continue
+        if bool(row["is_backlogged"]):
             continue
         holder = json.loads(str(row["ceiling_holder"]))
         if holder != {"kind": "owner", "id": "owner"}:
