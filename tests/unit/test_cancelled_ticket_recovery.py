@@ -366,9 +366,9 @@ def test_pre_cutover_snapshot_recovers_materialized_cancelled_records_without_ol
         # The head the build finishes at, asked for rather than written down. Spelling it
         # out made this assertion fail for whichever Ticket next added a migration, which
         # is what had already happened before this one did.
-        assert {
-            row[0] for row in conn.execute("SELECT version_num FROM alembic_version")
-        } == {head_revision()}
+        assert {row[0] for row in conn.execute("SELECT version_num FROM alembic_version")} == {
+            head_revision()
+        }
     finally:
         conn.close()
 

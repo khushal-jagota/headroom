@@ -79,9 +79,7 @@ def _row_record(conn: sqlite3.Connection, conversation_id: str, sequence: int) -
     return cast(sqlite3.Row, row)
 
 
-def conversation_backend(
-    conn: sqlite3.Connection, conversation_id: str
-) -> ConversationBackendKey:
+def conversation_backend(conn: sqlite3.Connection, conversation_id: str) -> ConversationBackendKey:
     """Which backend this conversation runs on, decided when it was created.
 
     Worth reading once and carrying. Read per row it was 83 identical statements on a

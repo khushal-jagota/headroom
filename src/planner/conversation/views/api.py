@@ -52,9 +52,7 @@ from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 router = APIRouter()
 
 
-async def _read[T](
-    runtime: ConversationRuntime, operation: Callable[[sqlite3.Connection], T]
-) -> T:
+async def _read[T](runtime: ConversationRuntime, operation: Callable[[sqlite3.Connection], T]) -> T:
     """Run one view read on the runtime's kept read-only connections.
 
     Every one of these used to open its own connection, and on this schema the first
