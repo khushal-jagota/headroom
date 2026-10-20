@@ -57,6 +57,25 @@ Linux uses systemd user services. `panels-live.service` launches the deployed ap
 deployment workflow, and the backup timer invokes the deployed app's backup command.
 The `vps` user controls them with `systemctl --user`.
 
+On Linux, a supervisor whose launch parent is systemd accepts SIGINT and SIGTERM
+only from that verified manager. A foreign signal produces a refusal on the
+server's stderr and does not request shutdown. The diagnostic names the sender
+and gives exact-PID SIGKILL guidance. Parent or manager identity failures also
+cause refusal. The guard never silently changes to ordinary shutdown behavior.
+
+The operator still stops the live unit with `systemctl --user stop panels-live.service`.
+If a supervisor cannot verify that request or cannot exit,
+systemd applies the unit's stop timeout and final kill policy. Check the effective
+`TimeoutStopUSec`, `SendSIGKILL`, `FinalKillSignal`, and `KillMode` properties rather
+than assuming their defaults. The live unit's verified values on October 20, 2026
+were 90 seconds, true, 9, and `control-group`. A refused legitimate stop can
+therefore take 90 seconds before SIGKILL stops all processes in that unit.
+
+Lifecycle tests use disposable units, isolated state, and unique process markers.
+They prove manager shutdown, visible foreign-signal refusal, and timeout
+escalation. A live-service stop check belongs to the operator. Workers never run
+that check against the service that hosts them.
+
 The live service receives provider secrets from protected environment files outside the
 deployment root. Voice transcription uses a mode-`0600` file at
 `~/.config/panels/panels-live.env`, loaded by a `panels-live.service` drop-in. The file
