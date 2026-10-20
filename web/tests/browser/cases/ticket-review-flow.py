@@ -607,6 +607,13 @@ def run(browser, urls):
             ticket.update(pending_proposal=None, ticket_status="empty")
             navigation_proposal = None
             result = ticket
+        elif path.startswith("worker-types/") and path.endswith("/manifest"):
+            worker_type = path.split("/")[1]
+            matches = [row for row in manifest["worker_types"] if row["worker_type"] == worker_type]
+            if not matches:
+                route.fulfill(status=404, json={"error": {"code": "unknown_worker_type", "message": f"Unknown worker type: {worker_type}"}})
+                return
+            result = {"worker_types": matches}
         elif path == "worker-types":
             result = manifest
         elif path == "workers/coding":
@@ -1340,6 +1347,12 @@ def run(browser, urls):
         "Malformed",
     ]:
         assert not click_was_claimed(saved_artifacts.get_by_role("link", name=label, exact=True))
+    # The opened conversation owns the full pane. Return to the document before a real click.
+    for _ in range(2):
+        if page.locator('[data-conversation-pane][data-conversation-state="rest"]').count():
+            break
+        page.keyboard.press("Escape")
+    expect(page.locator("[data-conversation-pane]")).to_have_attribute("data-conversation-state", "rest")
     html_link.click()
     viewer = page.locator("[data-ticket-artifact]")
     expect(viewer).to_have_attribute("aria-label", "plan.html")

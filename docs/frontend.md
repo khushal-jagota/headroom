@@ -585,8 +585,14 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ResourceState** — the shared error / loading scaffold. It asks what the screen has
   to show before it asks what went wrong: a screen that has data keeps showing it and
   puts a failed read as a line above it, and only a screen with nothing yet is given
-  over to the error line or the loading line. Data-empty states ("No ideas yet.") stay
-  in the screens.
+  over to the error line or a skeleton. Each screen selects a named shape: rows,
+  document, block, conversation, or inline. `loadingText` remains an accessible
+  status announcement. Data-empty states ("No ideas yet.") stay in the screens.
+  `SkeletonRegion` owns the shared shapes and cross-fade. Layouts size full panes.
+  Intrinsic content uses a temporary reservation derived from the skeleton shape,
+  then returns to natural height. The reservation does not predict the content.
+  The three skeleton tokens control the whisper fills and fade duration. Reduced
+  motion removes the fade. Worker activity marks remain separate.
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).

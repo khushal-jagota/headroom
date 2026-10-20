@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "./SkeletonRegion.svelte";
   /** One managed file, at full size, filling whatever box the host gives it.
    *
    * There are two hosts and one rendering: the `#/preview` address, and an artifact
@@ -78,6 +79,7 @@
 {#if !visible}
   <div aria-hidden="true"></div>
 {:else if resolved.kind === "html"}
+  <SkeletonRegion shape="document" layout="fill" loading={!error && !htmlFrameHref} loadingText="Loading preview...">
   {#if error}
     <div class="quiet-line">{error}</div>
   {:else if htmlFrameHref}
@@ -88,19 +90,18 @@
       sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
       title={resolved.label}
     ></iframe>
-  {:else}
-    <div class="quiet-line">Loading preview...</div>
   {/if}
+  </SkeletonRegion>
 {:else if resolved.kind === "markdown"}
+  <SkeletonRegion shape="document" layout="fill" loading={!error && markdownSource === null} loadingText="Loading preview...">
   {#if error}
     <div class="quiet-line">{error}</div>
   {:else if markdownSource !== null}
     <article class="file-preview-markdown-document" data-file-preview-markdown>
       <MarkdownBlock text={markdownSource} depth={1} visited={markdownVisited} />
     </article>
-  {:else}
-    <div class="quiet-line">Loading preview...</div>
   {/if}
+  </SkeletonRegion>
 {:else}
   <FilePreview {target} mode="full" />
 {/if}

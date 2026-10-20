@@ -121,7 +121,7 @@
     </div>
   {/snippet}
   {#snippet contents()}
-    <ResourceState error={tickets === undefined && !navigationErrorHandledByParent ? navigation?.state.error : null} loading={tickets === undefined && !shared}
+    <ResourceState shape="rows" error={tickets === undefined && !navigationErrorHandledByParent ? navigation?.state.error : null} loading={tickets === undefined && !shared}
       hasData={tickets !== undefined || shared !== undefined} loadingText={`Loading ${filter === "active" ? "Workers" : label}…`}>
       {#if filter === "active"}
         {#each groups as group (group.key)}

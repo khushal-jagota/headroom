@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "./SkeletonRegion.svelte";
   /** One waiting proposal, as a card.
    *
    * This is the ask itself — the Ticket's title, its recap,
@@ -250,6 +251,7 @@
   }
 </script>
 
+<SkeletonRegion shape="block" loading={!detail.error && ((detail.isFetching && !detail.data) || Boolean(detail.data && !manifest.error && !manifestMissingWorkerType && isStale(detail.data)))} loadingText="Loading approval...">
 {#if detail.error}
   <div>
     <ErrorLine error={detail.error} />
@@ -261,8 +263,6 @@
       <a data-open-ticket href={ticketHref}>open ticket</a>
     </div>
   </div>
-{:else if detail.isFetching && !detail.data}
-  <div class="quiet-line">Loading approval...</div>
 {:else if detail.data && (manifest.error || manifestMissingWorkerType)}
   {@const ticketDetail = detail.data}
   <div data-review-manifest-error>
@@ -278,9 +278,7 @@
   </div>
 {:else if detail.data}
   {@const ticketDetail = detail.data}
-  {#if isStale(ticketDetail)}
-    <div class="quiet-line">Loading approval...</div>
-  {:else}
+  {#if !isStale(ticketDetail)}
     <div
       bind:this={cardElement}
       data-proposal-identity={currentKey}
@@ -430,3 +428,5 @@
     {@render footer?.()}
   {/if}
 {/if}
+
+</SkeletonRegion>

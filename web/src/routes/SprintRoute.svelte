@@ -101,7 +101,7 @@
   class:sprint-screen--workspace={selectedItemId !== null}
   data-screen="sprint"
 >
-  <ResourceState
+  <ResourceState shape="document"
     error={resource.error}
     loading={resource.loading}
     hasData={resource.hasData}

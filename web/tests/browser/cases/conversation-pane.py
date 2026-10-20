@@ -9,6 +9,8 @@ def _catalogs(browser, url):
 
     page = browser.new_page(viewport={"width": 1100, "height": 800})
     requests = []
+    pending_artifacts = []
+    hold_artifacts = False
     def history(route):
         args = parse_qs(urlsplit(route.request.url).query)
         offset = int(args.get("offset", [0])[0])
@@ -35,7 +37,11 @@ def _catalogs(browser, url):
             rows.append({"key":path,"path":path,"label":path,"kind":"3" if folder else "md",
                 "href":None if folder else f"/files/tickets/t_catalog/{path}","directory":"folder" if folder else None,"child_count":3 if folder else 0})
         requests.append(("artifacts", offset))
-        route.fulfill(json={"revision":"one","directory":directory,"offset":offset,"total":count,"entries":rows})
+        response = {"revision":"one","directory":directory,"offset":offset,"total":count,"entries":rows}
+        if hold_artifacts and not directory:
+            pending_artifacts.append((route, response))
+        else:
+            route.fulfill(json=response)
     try:
         page.route("**/api/conversation-history/**", history)
         page.route("**/api/artifact-catalog/**", artifacts)
@@ -57,17 +63,87 @@ def _catalogs(browser, url):
         expect(page.locator("[data-listbox-picker-active]")).to_have_attribute("data-listbox-picker-value","c123")
         box.press("Escape")
         expect(trigger).to_be_focused()
+        hold_artifacts = True
         page.locator("[data-artifacts-band] > summary").click()
         window = page.locator(".artifact-catalog-window").first
-        expect(window.locator(":scope > [data-artifact-folder]")).to_have_count(1)
+        expect(window.locator(':scope > .skeleton-region[aria-busy="true"]')).to_have_count(1)
+        page.wait_for_timeout(50)
+        request, response = pending_artifacts.pop(0)
+        request.fulfill(json=response)
+        expect(window.locator(":scope > .skeleton-region > .skeleton-content > [data-artifact-page] > [data-artifact-folder]")).to_have_count(1)
+        # The cold skeleton and arriving chips share one region, rather than adding
+        # a second outgoing block after the chips and changing the scroll geometry.
+        assert window.locator(":scope > .skeleton-region").count() == 1
+        expect(window.locator(':scope > .skeleton-region .skeleton[data-leaving]')).to_have_count(1)
+        assert window.locator(':scope > .skeleton-region .skeleton').evaluate("element => getComputedStyle(element).position") == "absolute"
+        expect(window.locator(':scope > .skeleton-region .skeleton')).to_have_count(0)
+        hold_artifacts = False
         window.locator("[data-artifact-folder]").click()
         expect(page.locator('.artifact-catalog-children [data-artifact-chip]')).to_have_count(3)
         window.locator("[data-artifact-folder]").click()
-        window.evaluate("element => { element.scrollTop=130*36; element.dispatchEvent(new Event('scroll')); }")
+        # The requested page does not own the geometry until its response arrives.
+        # Hold the browser read to prove that entries and both spacers stay together.
+        before_spacer = window.locator(":scope > [data-artifact-before]")
+        after_spacer = window.locator(":scope > [data-artifact-after]")
+        before_height = before_spacer.evaluate("element => element.offsetHeight")
+        after_height = after_spacer.evaluate("element => element.offsetHeight")
+        hold_artifacts = True
+        window.evaluate("element => { element.scrollTop=100*36; element.dispatchEvent(new Event('scroll')); }")
+        expect(page.locator('.artifact-pending-page [aria-busy="true"]')).to_have_count(1)
+        expect(window.locator('[data-artifact-chip="file059.md"]')).to_have_count(1)
+        assert before_spacer.evaluate("element => element.offsetHeight") == before_height
+        assert after_spacer.evaluate("element => element.offsetHeight") == after_height
+        assert pending_artifacts
+        pending_artifacts.pop(0)[0].fulfill(status=503, json={"error":{"code":"offline","message":"offline"}})
+        expect(window.get_by_role("button", name="Retry", exact=True)).to_be_visible()
+        expect(window.locator('[data-artifact-chip="file059.md"]')).to_have_count(1)
+        assert before_spacer.evaluate("element => element.offsetHeight") == before_height
+        assert after_spacer.evaluate("element => element.offsetHeight") == after_height
+        window.get_by_role("button", name="Retry", exact=True).evaluate("element => element.click()")
+        expect(page.locator('.artifact-pending-page [aria-busy="true"]')).to_have_count(1)
+        page.wait_for_timeout(50)
+        request, response = pending_artifacts.pop(0)
+        overlay_box = page.locator('.artifact-pending-page').first.bounding_box()
+        request.fulfill(json=response)
         expect(window.locator('[data-artifact-chip="file134.md"]')).to_have_count(1)
+        expect(page.locator('.artifact-pending-page .skeleton[data-leaving]')).to_have_count(1)
+        assert window.locator('[data-artifact-page]').evaluate("element => getComputedStyle(element).animationName") == "skeleton-in"
+        assert page.locator('.artifact-pending-page').first.bounding_box() == overlay_box, (overlay_box, page.locator('.artifact-pending-page').first.bounding_box())
+        expect(page.locator('.artifact-pending-page .skeleton')).to_have_count(0)
         assert window.locator('[data-artifact-chip]').count() <= 60
-        assert ("history",120) in requests and ("artifacts",120) in requests
-        print("PASS catalog browser boundary: bounded history End/Home/typeahead and artifact folder/scroll windows", flush=True)
+        assert ("history",120) in requests and ("artifacts",80) in requests
+        # Upward paging draws only above the retained page, never over its chips.
+        prior_before = before_spacer.evaluate("element => element.offsetHeight")
+        prior_after = after_spacer.evaluate("element => element.offsetHeight")
+        window.evaluate("element => { element.scrollTop=element.querySelector('[data-artifact-before]').offsetHeight-150; element.dispatchEvent(new Event('scroll')); }")
+        expect(page.locator('.artifact-pending-page [aria-busy="true"]')).to_have_count(1)
+        expect(window.locator('[data-artifact-chip="file134.md"]')).to_have_count(1)
+        assert before_spacer.evaluate("element => element.offsetHeight") == prior_before
+        assert after_spacer.evaluate("element => element.offsetHeight") == prior_after
+        overlay_box = page.locator('.artifact-pending-page').first.bounding_box()
+        chip_box = window.locator('[data-artifact-chip="file080.md"]').bounding_box()
+        assert overlay_box and chip_box and overlay_box["height"] > 0
+        assert overlay_box["y"] + overlay_box["height"] <= chip_box["y"] + 1
+        page.wait_for_timeout(50)
+        request, response = pending_artifacts.pop(0)
+        assert response["offset"] == 40
+        request.fulfill(json=response)
+        expect(window.locator('[data-artifact-chip="file040.md"]')).to_have_count(1)
+        expect(page.locator('.artifact-pending-page .skeleton[data-leaving]')).to_have_count(1)
+        assert page.locator('.artifact-pending-page').first.bounding_box() == overlay_box
+        expect(page.locator('.artifact-pending-page .skeleton')).to_have_count(0)
+        # A different owner must never inherit the held page, even if its read fails.
+        page.evaluate("window.__catalogOwner('t_other')")
+        expect(window.locator('[data-artifact-chip]')).to_have_count(0)
+        expect(window.locator('[aria-busy="true"]')).to_have_count(1)
+        page.wait_for_timeout(50)
+        assert pending_artifacts
+        pending_artifacts.pop(0)[0].fulfill(status=503, json={"error":{"code":"offline","message":"offline"}})
+        expect(window.get_by_role("button", name="Retry", exact=True)).to_be_visible()
+        expect(window.locator('[data-artifact-chip]')).to_have_count(0)
+        assert before_spacer.evaluate("element => element.offsetHeight") == 0
+        assert after_spacer.evaluate("element => element.offsetHeight") == 0
+        print("PASS catalog browser boundary: bounded history, artifact windows, retained pending/error geometry and owner isolation", flush=True)
     finally:
         page.close()
 
@@ -622,6 +698,7 @@ def _run(browser, urls):
             "row => window.__delayedRow = row"
         )
         before = newest_reading(page)
+        before_row_height = page.evaluate("window.__delayedRow.getBoundingClientRect().height")
         if mode == "scrollback":
             assert page.evaluate("performance.now() - window.__lastRegressionWheel") < 400
         # This is response release, with no row assignment, replaced message, or app event.
@@ -666,13 +743,13 @@ def _run(browser, urls):
         if held:
             assert held["text"].startswith("Tall paragraph"), held
             actual = assert_paragraph(page, held)
-            assert newest_reading(page)["scrollTop"] > before["scrollTop"] + 100, (
-                before,
-                newest_reading(page),
-            )
+            actual_scroll = newest_reading(page)["scrollTop"]
         else:
             actual = assert_newest(page)
-            assert actual["scrollTop"] > before["scrollTop"] + 100, (before, actual)
+            actual_scroll = actual["scrollTop"]
+        growth = page.evaluate("window.__delayedRow.getBoundingClientRect().height") - before_row_height
+        assert growth > 0, growth
+        assert abs((actual_scroll - before["scrollTop"]) - growth) <= 2, (growth, before, actual_scroll)
         print(
             "DELAYED_GEOMETRY",
             kind,

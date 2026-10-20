@@ -38,6 +38,8 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   const catalogsOnly=new URLSearchParams(window.location.search).has("catalogs");
   const catalogClient=new QueryClient({defaultOptions:{queries:{retry:false}}});
   let catalogSelected=$state<string|null>(null);
+  let catalogOwner=$state("t_catalog");
+  (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
   import OrchestratorWorkspace from "../src/components/OrchestratorWorkspace.svelte";
   import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
   const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
@@ -530,7 +532,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   <section style="padding:40px;width:600px;" data-catalog-fixture>
     <ConversationHistoryPicker owner={{kind:"ticket",id:"t_catalog"}} bind:selected={catalogSelected} label="Prior conversation" conversationExists={true} />
     <output data-history-selection>{catalogSelected ?? "current"}</output>
-    <ArtifactsBand owner={{kind:"ticket",id:"t_catalog"}} />
+    <ArtifactsBand owner={{kind:"ticket",id:catalogOwner}} />
   </section>
 </QueryClientProvider>
 {:else}

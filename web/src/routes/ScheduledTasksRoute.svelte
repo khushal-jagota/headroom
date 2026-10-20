@@ -332,7 +332,7 @@
       {#if toggleError}<ErrorLine error={toggleError} />{/if}
 
       <div class="scheduled-task-list" data-scheduled-tasks>
-        <ResourceState
+        <ResourceState shape="rows"
           error={schedules.error}
           loading={schedules.isFetching}
           hasData={Boolean(schedules.data)}

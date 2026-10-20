@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "../../SkeletonRegion.svelte";
   import { DiagnosticExpiredError, DIAGNOSTIC_EXPIRED_MESSAGE } from "../../../lib/conversation/diagnosticExpiry";
   import { parseDeferredViewBody } from '../../../lib/markdown/workerClient';
   import type { ConversationViewRow, ViewRowBody, ViewBodyReference } from '../../../lib/conversation/view/contracts';
@@ -51,10 +52,13 @@
       return () => { abort.abort(); progress = null; };
   });
 </script>
+<SkeletonRegion shape="block" loading={row === null && !error} loadingText="Loading conversation detail…">
 {#if row?.kind==='tool_call'}
   <div data-conversation-work-entries>{#if error}<p role="status">{error}</p>{/if}<ToolCallRow row={{...row,progress}} conversationId={reader.id} {openRows} {wholeDetails}/></div>
 {:else if row!==null}
   <ConversationTranscript rows={[]} visibleRows={[]} lens={reader.lens} conversationId={reader.id} {models} {ownSenderLabel} projectedItems={[{kind:'row',key:item.key,row,behindTheFoldOf:null}]}/>
 {:else}
-  <div aria-busy={!error} role="status">{error??'Loading…'}</div>
+  <div aria-busy={!error} role="status">{error ?? ""}</div>
 {/if}
+
+</SkeletonRegion>

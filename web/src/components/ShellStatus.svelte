@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SkeletonRegion from "./SkeletonRegion.svelte";
   import { tick, onDestroy } from "svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
   import { runtimeCountImpact } from "../lib/reviewNavigationImpact";
@@ -170,6 +171,7 @@
             {vps.isFetching ? "Refreshing" : "Refresh"}
           </button>
         </div>
+        <SkeletonRegion shape="inline" loading={!vps.isError && !vps.data} loadingText="Loading VPS status">
         {#if vps.isError}
           <p class="vps-status-error" data-vps-status-error>VPS status is unavailable</p>
         {:else if vps.data}
@@ -199,9 +201,8 @@
               <dd>{backupAge(vps.data.backup)}</dd>
             </div>
           </dl>
-        {:else}
-          <p class="vps-status-loading">Loading VPS status</p>
         {/if}
+        </SkeletonRegion>
       </section>
     {/if}
   </div>

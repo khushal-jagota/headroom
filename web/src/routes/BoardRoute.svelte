@@ -29,6 +29,8 @@
   import WorkspaceMessages from "../components/WorkspaceMessages.svelte";
   import ChiefConversation from "../components/ChiefConversation.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import LazyRegion from "../components/LazyRegion.svelte";
+  import { cachedImport } from "../lib/lazyViews";
   import WorkspaceRailCard from "../components/WorkspaceRailCard.svelte";
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
 
@@ -57,6 +59,18 @@
   onDestroy(() => navigation.disposeRenderBoundary(railObserver));
   const feedbackCount = createQuery(() => queries.feedbackCount());
   let opening = $derived(whatTheAddressOpens(address));
+  const selectedPaneModule = $derived.by(() => {
+    if (opening.markedTicketId) return cachedImport("./TicketRoute.svelte", () => import("./TicketRoute.svelte"));
+    if (opening.openItemId) return cachedImport("../components/SprintItemWorkspace.svelte", () => import("../components/SprintItemWorkspace.svelte"));
+    switch (opening.markedUtility) {
+      case "usage": return cachedImport("./BackendsRoute.svelte", () => import("./BackendsRoute.svelte"));
+      case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./SettingsRoute.svelte"));
+      case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./IdeasRoute.svelte"));
+      case "feedback": return cachedImport("./FeedbackRoute.svelte", () => import("./FeedbackRoute.svelte"));
+      default: return null;
+    }
+  });
+  let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" || opening.markedUtility === "feedback" ? "rows" as const : "document" as const);
   // A link of the shape #/workspace/<id> is read as a Ticket, and an orchestrator id of
   // that shape used to open the Ticket page saying "ticket not found". The publication
   // knows which ids are orchestrators, so the address is corrected here, where that is
@@ -304,10 +318,11 @@
 </script>
 
 <section class="board-screen" data-screen="workspace">
-  <ResourceState error={navigation.state.error} loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
     <div class="board-workspace-wrap">
       <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
         <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
+          <div class="rail-work">
+          <ResourceState shape="block" layout="fill" error={navigation.state.error} loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
             <div role="presentation" class="active-work-scroll" onpointerover={(event) => freezeRows(event,false)} onpointerout={(event) => freezeRows(event,true)} data-active-work-scroll use:navigationScrollWindow={{window:parentWindow,activate:()=>navigation?.owner.prioritizeWindow(parentWindow?.request),selector:'.orchestrator-card:not(.chief)',key:node=>node.dataset.sprintItem ?? '',move:(anchor,direction)=>railPage('parents',anchor,direction)}} onscroll={() => hover.leave()}>
             <WorkspaceRailCard navigationWindow={chiefWindow} onWindow={(anchor,direction)=>railPage('chief',anchor,direction)} id="chief" title={workspace?.chief?.label ?? "Chief of Staff"} chief signal={workspace?.chief?.conversation_signal} conversationId={workspace?.chief?.conversation_id} selected={opening.chiefMarked} selectedTicketId={opening.markedTicketId} groups={rail.chiefGroups} onSelect={() => window.location.hash = workspaceAddress({kind:"chief"}, opening.view)} onTicket={(id) => selectCard(id,null)} onSettle={() => undefined} onHover={(target, immediate) => hover.enter({target,title:workspace?.chief?.label ?? "Chief of Staff",kicker:"Chief of Staff",chief:true}, immediate)} onWorkerHover={hoverWorkerRow} onLeave={() => hover.leave()} />
@@ -333,6 +348,8 @@
               {/if}
             </div>
           </div>
+          </ResourceState>
+          </div>
           <nav class="rail-utilities" aria-label="Workspace utilities">
             <a href={workspaceAddress({kind:"utility",utility:"usage"}, opening.view)} aria-current={opening.markedUtility === "usage" ? "page" : undefined} aria-label="Usage and Backends" title="Usage and Backends"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></a>
             <a href={workspaceAddress({kind:"utility",utility:"settings"}, opening.view)} aria-current={opening.markedUtility === "settings" ? "page" : undefined} aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m8 3-.5 2-1.4.8-2-.5-2 3.4L3.5 10l.1 1.6-1.4 1.4 2 3.4 2-.5 1.4.8.5 2h4l.5-2 1.4-.8 2 .5 2-3.4-1.4-1.4.1-1.6 1.4-1.3-2-3.4-2 .5-1.4-.8-.5-2Z" transform="translate(0 -1)" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2" /></svg></a>
@@ -353,7 +370,9 @@
         >
           {#if opening.chiefMarked}
             <ChiefConversation showRequestErrorLine={false} />
-          {:else if opening.markedTicketId}
+          {:else if selectedPaneModule}
+          <LazyRegion promise={selectedPaneModule} shape={paneShape} layout="fill">
+          {#if opening.markedTicketId}
             {#key opening.markedTicketId}
               {#await import("./TicketRoute.svelte") then view}
 <view.default
@@ -408,6 +427,8 @@
 {:catch error}
 <ErrorLine {error} />
 {/await}
+          {/if}
+          </LazyRegion>
           {:else}
             <div class="board-workspace-empty-inspector">
               <span>Select an orchestrator or Worker to inspect it.</span>
@@ -416,7 +437,6 @@
         </section>
       </div>
     </div>
-  </ResourceState>
 </section>
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={currentHoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} recap={hoverRecap} rail={railElement} recapTarget={hoverRecapTarget} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
