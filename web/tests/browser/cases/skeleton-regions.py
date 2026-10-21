@@ -236,7 +236,22 @@ def run(browser, urls):
     }""")
     assert not fast['skeleton'] and fast['status'] == '', fast
     assert fast['opacity'] == 1 and fast['animations'] == 0, fast
-    page.evaluate("window.__markdown('large')")
+    # Painted source remains available throughout a replacement parse.
+    page.evaluate("""() => {
+      window.__paintedMarkdown=document.querySelector('[data-markdown-fixture] h2');
+      window.__previousWorkers=window.__workers.length;
+      window.__markdown('refresh');
+    }""")
+    page.wait_for_function("window.__workers.length > window.__previousWorkers")
+    assert page.evaluate(
+        "window.__paintedMarkdown === document.querySelector('[data-markdown-fixture] h2')"
+    )
+    assert page.locator('[data-markdown-fixture] .skeleton').count() == 0
+    assert page.locator('[data-markdown-fixture] [aria-busy=true]').count() == 0
+    page.evaluate("window.__workers.at(-1).reply()")
+    page.wait_for_function("!window.__paintedMarkdown.isConnected")
+    # A fresh surface still has the delayed cold placeholder and accessible status.
+    page.evaluate("window.__markdown('destroy');window.__markdown('large')")
     fixture = page.locator('[data-markdown-fixture]')
     fixture.scroll_into_view_if_needed()
     page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
@@ -262,24 +277,36 @@ def run(browser, urls):
     page.wait_for_function("!document.querySelector('[data-markdown-fixture] .skeleton')")
     assert fixture.locator('[role=status]').inner_text() == ''
 
-    page.evaluate("window.__markdown('failure')")
-    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    page.evaluate("""() => {
+      window.__paintedMarkdown=document.querySelector('[data-markdown-fixture] h2');
+      window.__previousWorkers=window.__workers.length;
+      window.__markdown('failure');
+    }""")
+    page.wait_for_function("window.__workers.length > window.__previousWorkers")
+    assert fixture.locator('.skeleton').count() == 0
+    assert page.evaluate('window.__paintedMarkdown.isConnected')
     page.evaluate("window.__workers.at(-1).reply(true)")
     page.wait_for_function("document.querySelector('[data-markdown-fixture] .quiet-line')")
     assert fixture.locator('.quiet-line').inner_text() == 'Parse failed'
-    page.wait_for_function("!document.querySelector('[data-markdown-fixture] .skeleton')")
+    assert page.evaluate(
+        "window.__paintedMarkdown === document.querySelector('[data-markdown-fixture] h2')"
+    )
+    assert fixture.locator('.skeleton').count() == 0
     assert fixture.locator('[aria-busy=true]').count() == 0
 
-    page.evaluate("window.__markdown('obsolete')")
-    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    page.evaluate("window.__previousWorkers=window.__workers.length;window.__markdown('obsolete')")
+    page.wait_for_function("window.__workers.length > window.__previousWorkers")
+    assert page.evaluate('window.__paintedMarkdown.isConnected')
     page.evaluate("window.__oldWorker=window.__workers.at(-1);window.__markdown('small');window.__oldWorker.reply()")
     page.wait_for_function("document.querySelector('[data-markdown-fixture] h1')")
     assert fixture.locator('h1').inner_text() == 'Replacement document'
     assert page.evaluate('window.__oldWorker.terminated')
     assert fixture.locator('.skeleton-region, [data-markdown-window]').count() == 0
 
-    page.evaluate("window.__markdown('destroyed')")
-    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    page.evaluate("window.__previousWorkers=window.__workers.length;window.__markdown('destroyed')")
+    page.wait_for_function("window.__workers.length > window.__previousWorkers")
+    assert fixture.locator('h1').inner_text() == 'Replacement document'
+    assert fixture.locator('.skeleton').count() == 0
     page.evaluate("window.__markdownAnimations=document.querySelector('[data-markdown-fixture]').getAnimations({subtree:true});window.__markdown('destroy');window.__workers.at(-1).reply()")
     page.wait_for_function("!document.querySelector('[data-markdown-fixture] .skeleton-region')")
     assert page.evaluate(

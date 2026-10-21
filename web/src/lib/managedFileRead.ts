@@ -6,7 +6,8 @@
  *
  * Only a read that is *running* is shared. The entry goes the moment the read settles,
  * either way, so nothing resolved is kept here: a later read goes back to the server,
- * and the conditional answer there decides whether any bytes travel. That leaves one
+ * and the conditional answer there decides whether any bytes travel. Retained views
+ * reuse their mounted content without another call. Evicted views read again. That leaves one
  * place that knows whether a copy is still good, instead of two with different rules.
  */
 type SharedRead = {

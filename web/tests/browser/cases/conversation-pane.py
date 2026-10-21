@@ -152,28 +152,203 @@ def _preview_lifecycle(browser, url):
     started = time.monotonic()
     page = browser.new_page(viewport={"width": 1100, "height": 800})
     reads = []
+    held_reads = []
+    hold_previews = False
+    page.add_init_script("""window.__workerStarts=0;
+      window.__retainedRoots=()=>[...document.querySelectorAll('[data-visible-content-state=retained]')]
+        .filter(node=>!node.parentElement?.closest('[data-visible-content-state=retained]'));
+      const NativeWorker=window.Worker;
+      window.__heldWorkerMessages=[];
+      window.__releaseWorkerMessages=()=>{
+        window.__holdMarkdownWorker=false;
+        window.__heldWorkerMessages.splice(0).forEach(send=>send());
+      };
+      window.Worker=class extends NativeWorker {
+        constructor(...args){super(...args);window.__workerStarts++;}
+        postMessage(...args){
+          if(window.__holdMarkdownWorker){window.__heldWorkerMessages.push(()=>super.postMessage(...args));return;}
+          super.postMessage(...args);
+        }
+      };""")
     page.on("pageerror",lambda error: print("PREVIEW ERROR",str(error),flush=True))
     page.on("console",lambda message: print("PREVIEW CONSOLE",message.text,flush=True) if message.type=="error" else None)
     def preview(route):
         reads.append(route.request.url)
-        route.fulfill(content_type="text/html", body="<html><body>Automatic visible preview</body></html>")
+        if hold_previews:
+            held_reads.append(route)
+            return
+        route.fulfill(content_type="text/html", body="""<html><body data-count="0">
+          Automatic visible preview <button onclick="document.body.dataset.count=Number(document.body.dataset.count)+1">Increment</button>
+        </body></html>""")
+    def markdown_preview(route):
+        reads.append(route.request.url)
+        if hold_previews:
+            held_reads.append(route)
+            return
+        body = ('Small painted source' if 'refresh.md' in route.request.url else
+                '# Nested retained source\n\n' + 'Nested source words. ' * 10000)
+        route.fulfill(content_type='text/markdown', body=body)
     try:
         page.route("**/files/tickets/t_preview/*.html", preview)
+        page.route("**/files/tickets/t_preview/*.md", markdown_preview)
         page.route("**/files/tickets/t_preview/*.png",lambda route: route.fulfill(content_type="image/png",body=base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=")))
         page.goto(url+"?previews=1", wait_until="domcontentloaded")
         page.wait_for_function("document.querySelectorAll('[data-file-preview-html]').length > 0")
         assert 0 < len(reads) < 8, reads
-        assert page.locator("iframe").count() < 8
         page.wait_for_function("document.querySelectorAll('[data-preview-fixture] img').length > 0")
-        assert page.locator("[data-preview-fixture] img").count() < 8
-        page.locator("[data-preview-fixture]").evaluate("element=>{element.scrollTop=element.scrollHeight}")
-        page.wait_for_function("Array.from(document.querySelectorAll('[data-file-preview-html]')).some(frame=>frame.title.includes('preview23'))")
-        assert page.locator("iframe").count() < 8
-        page.evaluate("Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});document.dispatchEvent(new Event('visibilitychange'))")
-        expect(page.locator("iframe")).to_have_count(0)
-        expect(page.locator("[data-preview-fixture] img")).to_have_count(0)
-        page.evaluate("Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'});document.dispatchEvent(new Event('visibilitychange'))")
-        page.wait_for_function("document.querySelectorAll('[data-file-preview-html]').length > 0")
+        limit = page.evaluate("window.__inactiveLimit")
+        # Traverse enough distinct previews to exceed the inactive budget. Lazy admission
+        # and a fixed inactive budget bound native resources even after a complete scroll.
+        page.evaluate("window.__firstPreview=document.querySelector('[data-file-preview-html]')")
+        for index in (4, 8, 12, 16, 23):
+            page.locator(f'[data-preview-index="{index}"]').evaluate(
+                "element=>element.closest('[data-preview-fixture]').scrollTop=element.offsetTop"
+            )
+            page.wait_for_function(
+                "index=>Array.from(document.querySelectorAll('[data-file-preview-html]')).some(frame=>frame.title.includes('preview'+index+'.html'))",
+                arg=index,
+            )
+            page.wait_for_function("window.__retainedRoots().length <= window.__inactiveLimit")
+            resource_counts = page.evaluate("""() => ({
+              active:document.querySelectorAll('[data-visible-content-state=active]').length,
+              retained:window.__retainedRoots().length,
+              native:document.querySelectorAll('[data-preview-fixture] iframe,[data-preview-fixture] img').length})""")
+            assert resource_counts['retained'] <= limit, resource_counts
+            assert resource_counts['native'] <= resource_counts['active'] + limit, resource_counts
+        page.wait_for_function("!window.__firstPreview.isConnected")
+        # An evicted preview must read again; its measured slot holds both height and
+        # the reader's scroll position while that unavoidable read is held.
+        hold_previews = True
+        page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=0")
+        page.wait_for_function("document.querySelector('[data-preview-index=\"0\"] [data-visible-content-restoring]')")
+        restored_slot = page.locator('[data-preview-index="0"] [data-file-preview]').first
+        held_geometry = restored_slot.evaluate("""element=>({height:element.getBoundingClientRect().height,
+          scroll:element.closest('[data-preview-fixture]').scrollTop})""")
+        assert held_geometry['height'] > 160, held_geometry
+        page.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        assert restored_slot.evaluate("""element=>({height:element.getBoundingClientRect().height,
+          scroll:element.closest('[data-preview-fixture]').scrollTop})""") == held_geometry
+        assert held_reads, reads
+        # A changed width invalidates the old width's measured reservation.
+        page.set_viewport_size({'width': 800, 'height': 800})
+        page.wait_for_function("document.querySelector('[data-preview-index=\"0\"] [data-file-preview]').style.minHeight === ''")
+        hold_previews = False
+        for route in held_reads:
+            if 'preview0.html' in route.request.url:
+                route.fulfill(status=503, body='Temporary restore failure')
+            else:
+                route.fulfill(content_type="text/html", body="<html><body>Fresh evicted response</body></html>")
+        held_reads.clear()
+        page.wait_for_function("!document.querySelector('[data-preview-index=\"0\"] [data-visible-content-restoring]')")
+        assert not page.evaluate("window.__firstPreview.isConnected")
+        assert sum('preview0.html' in href for href in reads) == 2, reads
+        expect(restored_slot.locator('.quiet-line')).to_have_text('file fetch failed: 503')
+        # Failure completes restoration and is retryable when this preview returns.
+        page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=element.scrollHeight")
+        page.wait_for_function("document.querySelector('[data-preview-index=\"0\"] [data-visible-content-state]')?.dataset.visibleContentState !== 'active'")
+        page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=0")
+        restored_slot.frame_locator('iframe').get_by_role('button', name='Increment').wait_for()
+        assert sum('preview0.html' in href for href in reads) == 3, reads
+        page.set_viewport_size({'width': 1100, 'height': 800})
+        # A normal offscreen return remains inside the budget. Probe native identity,
+        # iframe script state, reads and parser starts independently of opacity.
+        for kind, target, selector in (
+            ('preview', '/files/tickets/t_preview/retained.html', '[data-file-preview-html]'),
+            ('document', '/files/tickets/t_preview/retained.html', '[data-file-preview-html]'),
+            ('image', '/files/tickets/t_preview/image-retained.png', 'img'),
+            ('markdown', '/files/tickets/t_preview/retained.html', '.markdown-block'),
+            ('nested', '/files/tickets/t_preview/nested.md', '.markdown-block'),
+        ):
+            page.evaluate("([kind,target])=>window.__retained(kind,target)", [kind, target])
+            page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=0")
+            content = page.locator('[data-retention-content]')
+            native = content.locator(selector).first
+            native.wait_for()
+            if kind in ('preview', 'document'):
+                content.frame_locator('iframe').get_by_role('button', name='Increment').click()
+                assert content.frame_locator('iframe').locator('body').get_attribute('data-count') == '1'
+            elif kind == 'image':
+                page.wait_for_function("document.querySelector('[data-retention-content] img')?.complete")
+            elif kind == 'nested':
+                content.get_by_role('heading', name='Nested retained source').wait_for()
+            else:
+                page.get_by_text('Paragraph 0', exact=True).wait_for()
+            native.evaluate("element=>{window.__retainedNode=element;window.__retainedWindow=element.contentWindow}")
+            before_reads = len(reads)
+            before_workers = page.evaluate('window.__workerStarts')
+            page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=element.scrollHeight")
+            page.wait_for_function("document.querySelector('[data-retention-content] [data-visible-content-state=retained]')")
+            page.evaluate("Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'hidden'});document.dispatchEvent(new Event('visibilitychange'))")
+            assert page.evaluate("window.__retainedNode.isConnected"), kind
+            assert page.evaluate("window.__retainedRoots().length") <= limit, kind
+            if kind == 'nested':
+                assert page.evaluate("window.__retainedRoots().filter(node=>node.closest('[data-retention-content]')).length") == 1
+                assert content.locator('[data-visible-content-state=released]').count() == 0
+            page.evaluate("Object.defineProperty(document,'visibilityState',{configurable:true,get:()=> 'visible'});document.dispatchEvent(new Event('visibilitychange'))")
+            page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=0")
+            page.wait_for_function("document.querySelector('[data-retention-content] [data-visible-content-state=active]')")
+            assert native.evaluate("element=>element===window.__retainedNode && element.contentWindow===window.__retainedWindow"), kind
+            assert len(reads) == before_reads, (kind, reads)
+            assert page.evaluate('window.__workerStarts') == before_workers, kind
+            if kind in ('preview', 'document'):
+                assert content.frame_locator('iframe').locator('body').get_attribute('data-count') == '1'
+            page.evaluate("window.__previewMode('none')")
+            page.wait_for_function("!window.__retainedNode.isConnected")
+            assert page.locator('[data-visible-content-state=retained]').count() == 0
+        # Explicit refresh rereads a mounted document. Changing its target while the
+        # refresh is pending cancels that generation; a late old body cannot win.
+        page.evaluate("window.__retained('document','/files/tickets/t_preview/reload.html')")
+        page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=0")
+        document_content = page.locator('[data-retention-content]')
+        document_content.frame_locator('iframe').get_by_role('button', name='Increment').wait_for()
+        document_content.locator('iframe').evaluate("element=>window.__refreshFrame=element")
+        refresh_before = sum('reload.html' in href for href in reads)
+        hold_previews = True
+        with page.expect_request('**/files/tickets/t_preview/reload.html'):
+            page.evaluate("window.__retained('document','/files/tickets/t_preview/reload.html',1)")
+        assert document_content.locator('iframe').evaluate("element=>element===window.__refreshFrame")
+        expect(document_content.locator('.skeleton')).to_have_count(0)
+        assert sum('reload.html' in href for href in reads) == refresh_before + 1
+        with page.expect_request('**/files/tickets/t_preview/replacement.html'):
+            page.evaluate("window.__retained('document','/files/tickets/t_preview/replacement.html')")
+        expect(document_content.locator('.skeleton')).to_have_count(1)
+        hold_previews = False
+        for route in held_reads:
+            route.fulfill(content_type='text/html', body='<html><body>' + (
+                'Current target' if 'replacement.html' in route.request.url else 'Obsolete refresh'
+            ) + '</body></html>')
+        held_reads.clear()
+        document_content.frame_locator('iframe').get_by_text('Current target', exact=True).wait_for()
+        assert document_content.frame_locator('iframe').get_by_text('Obsolete refresh').count() == 0
+        page.evaluate("window.__previewMode('none')")
+        expect(page.locator('[data-visible-content-state]')).to_have_count(0)
+        # A small painted Markdown file must also survive crossing the worker
+        # threshold on refresh. Hold both the HTTP read and actual parse separately.
+        page.evaluate("window.__retained('document','/files/tickets/t_preview/refresh.md')")
+        page.locator('[data-preview-fixture]').evaluate("element=>element.scrollTop=0")
+        small_source = page.get_by_text('Small painted source', exact=True)
+        small_source.wait_for()
+        small_source.evaluate("element=>window.__smallMarkdown=element")
+        hold_previews = True
+        with page.expect_request('**/files/tickets/t_preview/refresh.md'):
+            page.evaluate("window.__retained('document','/files/tickets/t_preview/refresh.md',1)")
+        assert page.evaluate('window.__smallMarkdown.isConnected')
+        assert page.locator('[data-retention-content] .skeleton').count() == 0
+        page.evaluate('window.__holdMarkdownWorker=true')
+        hold_previews = False
+        assert len(held_reads) == 1
+        held_reads.pop().fulfill(content_type='text/markdown',
+            body='## Large refreshed source\n\n' + 'Large refreshed words. ' * 10000)
+        page.wait_for_function('window.__heldWorkerMessages.length > 0')
+        page.evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        assert page.evaluate('window.__smallMarkdown.isConnected')
+        assert small_source.is_visible()
+        assert page.locator('[data-retention-content] .skeleton').count() == 0
+        page.evaluate('window.__releaseWorkerMessages()')
+        page.get_by_role('heading', name='Large refreshed source').wait_for()
+        assert not page.evaluate('window.__smallMarkdown.isConnected')
+        page.evaluate("window.__previewMode('none')")
+        expect(page.locator('[data-visible-content-state]')).to_have_count(0)
         page.evaluate("window.__previewMode('large')")
         page.locator("[data-preview-fixture]").evaluate("element=>{element.scrollTop=0}")
         page.get_by_role("textbox",name="Parser input").fill("typing while parsing")
@@ -245,7 +420,7 @@ def _preview_lifecycle(browser, url):
         long_tasks=page.evaluate("window.__containerObserver.disconnect();window.__containerLongTasks")
         latencies.sort()
         print("MARKDOWN_CONTAINER_METRICS",{"table_rows":50,"ordered_items":54,"samples":20,"queued_input_roundtrip_p50_ms":round(latencies[9],2),"p95_ms":round(latencies[18],2),"max_ms":round(latencies[-1],2),"long_tasks":long_tasks},flush=True)
-        print(f"PASS preview lifecycle: visible automatic frames/images, offscreen/hidden disposal, worker Markdown windows and full-text copy ({time.monotonic()-started:.2f}s)",flush=True)
+        print(f"PASS preview lifecycle: bounded retained frames/images, stable evicted restore, worker Markdown windows and full-text copy ({time.monotonic()-started:.2f}s)",flush=True)
     finally:
         page.close()
 

@@ -449,17 +449,29 @@ or locale produces identical arbitrary-text ordering.
   prevent a replaced preview from canceling another reader. Deferred conversation JSON
   uses the same worker and the generated canonical body schema. Replies retain their
   job identity and cannot revive an obsolete surface. Visible Markdown block groups keep
-  measured placeholders when they leave the viewport. Full-text copy includes unmounted
+  measured placeholders after inactive-view eviction. Full-text copy includes unmounted
   groups. Tables and lists retain their complete logical container, intrinsic layout, and
   numbering. An unusually large selected container can therefore exceed the ordinary DOM
   window. Editable serialization keeps its synchronous exact-source behavior.
   The worker parse wait uses the shared document skeleton. Its completed document or
   error line replaces the skeleton immediately. Replacement and removal cancel the parse
   and release the mounted placeholder region.
-  Images, HTML frames, PDF frames, and media players mount automatically near the viewport.
-  Distant or hidden previews release native resources and text reads. Measured placeholders
-  preserve their place. A custom visibility gate owns image admission, so native lazy
-  loading does not leave a zero-height admitted image permanently unloaded.
+  Images, HTML frames, PDF frames, and media players first mount near the viewport.
+  The shared visibility helper retains four inactive view roots across the document.
+  A retained view keeps its source, parsed text, DOM, and native resources intact.
+  Ordinary scroll and tab return reuse that view without another file read or parse.
+  A retained ancestor owns its descendants within the same slot. Visible views do not
+  consume inactive slots. Large Markdown still limits DOM through its group windows.
+  The oldest inactive root releases its subtree when another root exceeds the limit.
+  Owner removal releases its observers and content. No detached file cache exists.
+  Pending and failed views release on departure, so a later return can retry.
+  An evicted view reads again on return. Its measured box remains fixed through the
+  read, parse, and image or frame load. A generic skeleton cannot enlarge that box.
+  Readiness or failure ends the reservation. A new target, source, or width discards
+  obsolete geometry. Explicit refresh reads fresh content. A same-target document
+  refresh keeps available content visible until its replacement arrives.
+  Images use the same admission helper, so native lazy loading cannot strand them
+  in a zero-height slot.
 - **Loopback links stay ordinary links.** Markdown does not rewrite `localhost` or
   `127.0.0.1` addresses. Panels does not expose development servers through its origin.
   Workers use durable Ticket-owned files for reviewable work.
