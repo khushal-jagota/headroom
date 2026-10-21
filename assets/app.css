@@ -3139,7 +3139,7 @@ select {
   font-size: var(--type-sm);
 }
 
-/* THE SPRINT ITEM — the bucket's box, reused. It is not a Disclosure: selection opens
+/* THE MANAGER — the bucket's box, reused. It is not a Disclosure: selection opens
  * it, not a chevron. */
 .board-workspace-item {
   min-width: 0;
