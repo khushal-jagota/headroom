@@ -392,6 +392,42 @@
    ],
    "type": "object"
   },
+  "AppToolSummary": {
+   "description": "EXPERIMENTAL - metadata returned by app/read.",
+   "properties": {
+    "description": {
+     "type": "string"
+    },
+    "disabledReason": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "isEnabled": {
+     "default": true,
+     "type": "boolean"
+    },
+    "isReadOnly": {
+     "default": false,
+     "type": "boolean"
+    },
+    "name": {
+     "type": "string"
+    },
+    "title": {
+     "type": [
+      "string",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "description",
+    "name"
+   ],
+   "type": "object"
+  },
   "ApprovalsReviewer": {
    "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `auto_review` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. The legacy value `guardian_subagent` is accepted for compatibility.",
    "enum": [
@@ -437,53 +473,23 @@
    "title": "AppsInstalledResponse",
    "type": "object"
   },
-  "AppsListParams": {
+  "AppsReadParams": {
    "$schema": "http://json-schema.org/draft-07/schema#",
-   "description": "EXPERIMENTAL - list available apps/connectors.",
+   "description": "EXPERIMENTAL - read metadata for specific apps/connectors.",
    "properties": {
-    "cursor": {
-     "description": "Opaque pagination cursor returned by a previous call.",
-     "type": [
-      "string",
-      "null"
-     ]
-    },
-    "forceRefetch": {
-     "description": "When true, bypass app caches and fetch the latest data from sources.",
-     "type": "boolean"
-    },
-    "limit": {
-     "description": "Optional page size; defaults to a reasonable server-side value.",
-     "format": "uint32",
-     "minimum": 0.0,
-     "type": [
-      "integer",
-      "null"
-     ]
-    },
-    "threadId": {
-     "description": "Optional thread id used to evaluate app feature gating from that thread's config.",
-     "type": [
-      "string",
-      "null"
-     ]
-    }
-   },
-   "title": "AppsListParams",
-   "type": "object"
-  },
-  "AppsListResponse": {
-   "$schema": "http://json-schema.org/draft-07/schema#",
-   "description": "EXPERIMENTAL - app list response.",
-   "properties": {
-    "data": {
+    "appIds": {
+     "description": "App ids to read. The server accepts at most 100 ids and deduplicates repeated ids while preserving their first-request order.",
      "items": {
-      "$ref": "#/definitions/AppInfo"
+      "type": "string"
      },
      "type": "array"
     },
-    "nextCursor": {
-     "description": "Opaque cursor to pass to the next call to continue after the last item. If None, there are no more items to return.",
+    "includeTools": {
+     "description": "When true, include display-only public tool summaries in the returned metadata.",
+     "type": "boolean"
+    },
+    "threadId": {
+     "description": "Optional loaded thread id used to evaluate effective app configuration.",
      "type": [
       "string",
       "null"
@@ -491,9 +497,33 @@
     }
    },
    "required": [
-    "data"
+    "appIds"
    ],
-   "title": "AppsListResponse",
+   "title": "AppsReadParams",
+   "type": "object"
+  },
+  "AppsReadResponse": {
+   "$schema": "http://json-schema.org/draft-07/schema#",
+   "description": "EXPERIMENTAL - app/read response.",
+   "properties": {
+    "apps": {
+     "items": {
+      "$ref": "#/definitions/ConnectorMetadata"
+     },
+     "type": "array"
+    },
+    "missingAppIds": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "apps",
+    "missingAppIds"
+   ],
+   "title": "AppsReadResponse",
    "type": "object"
   },
   "AskForApproval": {
@@ -1191,6 +1221,68 @@
     "declined"
    ],
    "type": "string"
+  },
+  "ConnectorMetadata": {
+   "description": "EXPERIMENTAL - metadata returned by app/read.",
+   "properties": {
+    "description": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "distributionChannel": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "iconUrl": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "iconUrlDark": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "id": {
+     "type": "string"
+    },
+    "installUrl": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "pluginDisplayNames": {
+     "default": [],
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "toolSummaries": {
+     "items": {
+      "$ref": "#/definitions/AppToolSummary"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "id",
+    "name"
+   ],
+   "type": "object"
   },
   "CyberAccessProgram": {
    "description": "Requested cyber treatment for an OpenAI model turn. Authorization and model-tier restrictions remain server-owned.",

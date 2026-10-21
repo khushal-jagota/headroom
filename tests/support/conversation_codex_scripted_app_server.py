@@ -63,6 +63,7 @@ class ScriptedAppServer:
         self._turn_tasks: set[asyncio.Task[None]] = set()
         self._catalog_reads: dict[str, int] = {}
         self._app_list_notifications = 0
+        self._catalog_tasks: set[asyncio.Task[None]] = set()
         self._goal: dict[str, Any] | None = script.get("goal")
 
     # --- running ------------------------------------------------------------------------
@@ -143,13 +144,17 @@ class ScriptedAppServer:
             case "thread/goal/clear":
                 await self._answer_goal(request_id, "clear", parameters)
             case "skills/list":
-                await self._catalog_answer(request_id, "skills", {"data": []})
+                self._start_catalog_answer(request_id, "skills", {"data": []})
             case "app/installed":
-                await self._catalog_answer(request_id, "installed_apps", {"apps": []})
+                self._start_catalog_answer(request_id, "installed_apps", {"apps": []})
+            case "app/read":
+                self._start_catalog_answer(
+                    request_id, "app_metadata", {"apps": [], "missingAppIds": []}, parameters
+                )
             case "app/list":
                 await self._answer_app_list(request_id, parameters)
             case "plugin/installed":
-                await self._catalog_answer(request_id, "plugins", {"marketplaces": []})
+                self._start_catalog_answer(request_id, "plugins", {"marketplaces": []})
             case "turn/interrupt":
                 self._interrupted.set()
                 await self._respond(request_id, {})
@@ -234,17 +239,48 @@ class ScriptedAppServer:
 
     # --- the turn ---------------------------------------------------------------------------
 
-    async def _catalog_answer(self, request_id: Any, key: str, default: Any) -> None:
+    def _start_catalog_answer(
+        self, request_id: Any, key: str, default: Any, parameters: dict[str, Any] | None = None
+    ) -> None:
+        task = asyncio.create_task(self._catalog_answer(request_id, key, default, parameters))
+        self._catalog_tasks.add(task)
+        task.add_done_callback(self._catalog_tasks.discard)
+
+    async def _catalog_answer(
+        self, request_id: Any, key: str, default: Any, parameters: dict[str, Any] | None = None
+    ) -> None:
         configured = self._script.get(key, default)
+        read = self._catalog_reads.get(key, 0)
+        self._catalog_reads[key] = read + 1
         if isinstance(configured, list):
-            read = self._catalog_reads.get(key, 0)
-            self._catalog_reads[key] = read + 1
             configured = configured[min(read, len(configured) - 1)]
-        if configured == "error":
-            await self._respond_with_error(request_id, f"{key} failed")
+        # Delay and notification belong to an individual response. Unrelated RPCs
+        # continue through the main reader during a held source read.
+        if isinstance(configured, dict) and "response" in configured:
+            for notification in configured.get("notifications", []):
+                await self._notify(
+                    notification, {"data": []} if notification == "app/list/updated" else {}
+                )
+            await asyncio.sleep(configured.get("delay", 0))
+            configured = configured["response"]
+        if configured == "error" or (isinstance(configured, dict) and "error" in configured):
+            failure = configured["error"] if isinstance(configured, dict) else {}
+            await self._respond_with_error(
+                request_id,
+                failure.get("message", f"{key} failed"),
+                code=failure.get("code", -32603),
+                data=failure.get("data"),
+            )
             return
         if configured == "never":
             return
+        if key == "app_metadata" and parameters is not None:
+            configured = {
+                **configured,
+                "apps": [
+                    app for app in configured.get("apps", []) if app["id"] in parameters["appIds"]
+                ],
+            }
         await self._respond(request_id, configured)
 
     async def _answer_app_list(self, request_id: Any, parameters: dict[str, Any]) -> None:
