@@ -163,10 +163,6 @@ async def _turn(
     await sink.wait_for_the_turn_to_end()
 
 
-
-
-
-
 @real_codex_only
 def test_real_codex_consumes_a_guarded_steer_in_the_incumbent_turn(tmp_path: Path) -> None:
     async def exercise() -> None:
@@ -275,8 +271,6 @@ def test_real_codex_rejects_an_ended_steer_without_consuming_its_nonce(
     _run(exercise)
 
 
-
-
 @real_codex_only
 def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
     tmp_path: Path,
@@ -337,8 +331,6 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
             await child.stop()
 
     _run(exercise)
-
-
 
 
 @real_codex_only
@@ -427,11 +419,22 @@ async def _turn_with_effort(
 def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path) -> None:
     """A conversation whose child was stopped picks up again, remembering what was said."""
 
+    skill_directory = tmp_path / ".agents" / "skills" / "catalog-probe"
+    skill_directory.mkdir(parents=True)
+    (skill_directory / "SKILL.md").write_text(
+        "---\nname: catalog-probe\ndescription: Local catalog readiness probe.\n---\n"
+        "Reply normally. This skill exists only for catalog verification.\n",
+        encoding="utf-8",
+    )
+
     async def exercise() -> None:
         sink = _RecordingSink()
         child = _real_child(tmp_path, sink)
         await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
         try:
+            await sink.wait_for_catalog(
+                lambda entries: any(entry.display_text == "$catalog-probe" for entry in entries)
+            )
             await _turn(
                 child,
                 sink,
@@ -449,6 +452,9 @@ def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path
         resumed = _real_child(tmp_path, resumed_sink)
         await resumed.start(_resolved_start(tmp_path), vendor_session_cursor=cursor)
         try:
+            await resumed_sink.wait_for_catalog(
+                lambda entries: any(entry.display_text == "$catalog-probe" for entry in entries)
+            )
             await _turn(
                 resumed,
                 resumed_sink,
@@ -466,12 +472,6 @@ def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path
             await resumed.stop()
 
     _run(exercise)
-
-
-
-
-
-
 
 
 class _NothingHandler:

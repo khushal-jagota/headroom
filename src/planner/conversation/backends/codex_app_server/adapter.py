@@ -57,6 +57,10 @@ from planner.conversation.backends.codex_app_server.auth_failure import (
     error_summary_for,
     read_a_failed_turn,
 )
+from planner.conversation.backends.codex_app_server.catalog import CatalogCoordinator
+from planner.conversation.backends.codex_app_server.catalog_config import (
+    CATALOG_REQUEST_TIMEOUT_SECONDS,
+)
 from planner.conversation.backends.codex_app_server.client import (
     CodexAppServerClient,
     CodexAppServerError,
@@ -177,10 +181,6 @@ TOOL_CALL_TITLE_MAXIMUM_CHARACTERS = 200
 # message that was meant to displace the turn.
 CANCEL_SETTLING_TIMEOUT_SECONDS = 15.0
 
-# Catalogue notifications arrive in bursts while Codex rebuilds a source. Give the reader
-# one short window to collect the burst before issuing one complete snapshot refresh.
-CATALOG_REFRESH_COALESCE_SECONDS = 0.05
-CATALOG_REQUEST_TIMEOUT_SECONDS = 60.0
 
 # What a codex tool item's own status means to a conversation's record. Declined is a
 # finish: the work was asked for and did not happen.
@@ -350,9 +350,15 @@ class CodexAppServerBackendChild:
         self._standard_error_the_next_turn_starts_from = 0
         self._asks_raised = 0
         self._catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
-        self._catalog_refresh_requested = False
-        self._catalog_refresh_task: asyncio.Task[None] | None = None
-        self._catalog_refresh_lock = asyncio.Lock()
+        self._published_catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
+        self._catalog_publish_lock = asyncio.Lock()
+        self._catalog_coordinator = CatalogCoordinator(
+            read_skills=lambda: self._read_skills(str(self._resolved_start.workspace_folder)),
+            read_plugins=lambda: self._read_plugins(str(self._resolved_start.workspace_folder)),
+            read_installed=lambda: self._read_installed_apps(self._bound_thread()),
+            read_metadata=self._read_app_metadata,
+            publish=self._publish_catalog,
+        )
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -383,10 +389,12 @@ class CodexAppServerBackendChild:
                 await self._start_thread(resolved_start)
             else:
                 await self._resume_thread(resolved_start, vendor_session_cursor)
-            await self._refresh_catalog()
+            await self._publish_catalog()
+            self._catalog_coordinator.start()
         except BaseException:
             # The process is up but this child is not usable, and nobody upstream holds it
             # yet, so the only place it can be cleaned up is here.
+            await self._catalog_coordinator.close()
             await self._client.stop()
             raise
 
@@ -424,9 +432,7 @@ class CodexAppServerBackendChild:
         self._turn = turn
         try:
             invocation = (
-                self._catalog_invocation(sender_content)
-                if sender_message_count == 1
-                else None
+                self._catalog_invocation(sender_content) if sender_message_count == 1 else None
             )
         except PromptWriteFailed:
             self._turn = None
@@ -506,21 +512,15 @@ class CodexAppServerBackendChild:
         sender_content = content if sender_content is None else sender_content
         turn = self._turn
         if turn is None:
-            return BackendSteerRefused(
-                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-            )
+            return BackendSteerRefused(PromptDeliveryRefusalReason.no_running_turn_to_steer_into)
         if turn.token != turn_token:
             return BackendSteerRefused(
                 PromptDeliveryRefusalReason.running_turn_changed_before_steer
             )
         if turn.kind != "ordinary":
-            return BackendSteerRefused(
-                PromptDeliveryRefusalReason.running_turn_cannot_accept_steer
-            )
+            return BackendSteerRefused(PromptDeliveryRefusalReason.running_turn_cannot_accept_steer)
         if turn.turn_id is None:
-            return BackendSteerRefused(
-                PromptDeliveryRefusalReason.no_running_turn_to_steer_into
-            )
+            return BackendSteerRefused(PromptDeliveryRefusalReason.no_running_turn_to_steer_into)
 
         captured_native_turn_id = turn.turn_id
         try:
@@ -528,9 +528,7 @@ class CodexAppServerBackendChild:
         except PromptWriteFailed:
             return BackendSteerRefused(PromptDeliveryRefusalReason.message_cannot_be_steered)
         if invocation is not None and invocation.kind is ComposerCatalogEntryKind.command:
-            return BackendSteerRefused(
-                PromptDeliveryRefusalReason.command_cannot_join_running_turn
-            )
+            return BackendSteerRefused(PromptDeliveryRefusalReason.command_cannot_join_running_turn)
         try:
             thread_id = self._bound_thread()
         except PromptWriteFailed:
@@ -549,9 +547,7 @@ class CodexAppServerBackendChild:
             PromptWriteFailed,
             ValidationError,
         ):
-            return BackendSteerRefused(
-                PromptDeliveryRefusalReason.message_cannot_be_steered
-            )
+            return BackendSteerRefused(PromptDeliveryRefusalReason.message_cannot_be_steered)
 
         try:
             result = await self._client.request(
@@ -595,9 +591,7 @@ class CodexAppServerBackendChild:
         if interrupt_turn_id is None:
             return
         thread_id = self._bound_thread()
-        parameters = bindings.TurnInterruptParams(
-            threadId=thread_id, turnId=interrupt_turn_id
-        )
+        parameters = bindings.TurnInterruptParams(threadId=thread_id, turnId=interrupt_turn_id)
         try:
             await self._client.request("turn/interrupt", _wire(parameters))
         except CodexAppServerError as did_not_reach:
@@ -653,12 +647,7 @@ class CodexAppServerBackendChild:
 
     async def stop(self) -> None:
         """Shut the child down for good."""
-        refresh = self._catalog_refresh_task
-        self._catalog_refresh_task = None
-        if refresh is not None:
-            refresh.cancel()
-            with suppress(asyncio.CancelledError):
-                await refresh
+        await self._catalog_coordinator.close()
         turn = self._turn
         self._turn = None
         if turn is not None:
@@ -752,104 +741,51 @@ class CodexAppServerBackendChild:
 
     # --- the composer catalogue ----------------------------------------------------------
 
-    async def _refresh_catalog(self) -> None:
-        """Publish a fresh truthful snapshot, even when one source is unavailable."""
-        async with self._catalog_refresh_lock:
-            snapshot = await self._read_catalog_snapshot()
-            await self._sink.composer_catalog_reported(snapshot.entries)
+    async def _publish_catalog(self) -> None:
+        async with self._catalog_publish_lock:
+            coordinator = self._catalog_coordinator
+            if coordinator.closed:
+                return
+            snapshot = _catalog_snapshot(
+                coordinator.skills,
+                coordinator.installed,
+                tuple(app for _, app in coordinator.metadata.values() if app is not None),
+                coordinator.plugins,
+            )
             self._catalog_snapshot = snapshot
+            if snapshot == self._published_catalog_snapshot:
+                return
+            await self._sink.composer_catalog_reported(snapshot.entries)
+            self._published_catalog_snapshot = snapshot
 
-    def _request_catalog_refresh(self) -> None:
-        """Coalesce invalidations without making the app-server reader wait for requests."""
-        self._catalog_refresh_requested = True
-        if self._catalog_refresh_task is not None and not self._catalog_refresh_task.done():
-            return
-        self._catalog_refresh_task = asyncio.create_task(
-            self._run_catalog_refreshes(),
-            name=f"planner.conversation.codex.catalog.{self._resolved_start.conversation_id}",
+    async def _read_skills(self, workspace: str) -> bindings.SkillsListResponse:
+        result = await self._catalog_request(
+            "skills/list", bindings.SkillsListParams(cwds=[workspace])
         )
+        return bindings.SkillsListResponse.model_validate(result)
 
-    async def _run_catalog_refreshes(self) -> None:
-        try:
-            await asyncio.sleep(CATALOG_REFRESH_COALESCE_SECONDS)
-            while self._catalog_refresh_requested:
-                self._catalog_refresh_requested = False
-                await self._refresh_catalog()
-        finally:
-            self._catalog_refresh_task = None
-
-    async def _read_catalog_snapshot(self) -> _CatalogSnapshot:
-        thread_id = self._bound_thread()
-        workspace = str(self._resolved_start.workspace_folder)
-        skills, installed_apps, apps, plugins = await asyncio.gather(
-            self._read_skills(workspace),
-            self._read_installed_apps(thread_id),
-            self._read_all_apps_or_none(thread_id),
-            self._read_plugins(workspace),
+    async def _read_installed_apps(self, thread_id: str) -> bindings.AppsInstalledResponse:
+        result = await self._catalog_request(
+            "app/installed", bindings.AppsInstalledParams(threadId=thread_id, forceRefresh=True)
         )
-        return _catalog_snapshot(skills, installed_apps, apps, plugins)
+        return bindings.AppsInstalledResponse.model_validate(result)
 
-    async def _read_skills(self, workspace: str) -> bindings.SkillsListResponse | None:
-        try:
-            result = await self._catalog_request(
-                "skills/list", bindings.SkillsListParams(cwds=[workspace])
-            )
-            skills = bindings.SkillsListResponse.model_validate(result)
-        except (CodexAppServerError, ValidationError) as failed:
-            self._log_catalog_source_failure("skills/list", failed)
-            return None
-        for entry in skills.data:
-            for error in entry.errors:
-                LOGGER.warning(
-                    "conversation %s: skills/list could not read %s: %s",
-                    self._resolved_start.conversation_id,
-                    error.path,
-                    error.message,
-                )
-        return skills
-
-    async def _read_installed_apps(self, thread_id: str) -> bindings.AppsInstalledResponse | None:
-        try:
-            result = await self._catalog_request(
-                "app/installed", bindings.AppsInstalledParams(threadId=thread_id)
-            )
-            return bindings.AppsInstalledResponse.model_validate(result)
-        except (CodexAppServerError, ValidationError) as failed:
-            self._log_catalog_source_failure("app/installed", failed)
-            return None
-
-    async def _read_all_apps_or_none(self, thread_id: str) -> tuple[bindings.AppInfo, ...] | None:
-        try:
-            return await self._read_all_apps(thread_id)
-        except (CodexAppServerError, ValidationError) as failed:
-            self._log_catalog_source_failure("app/list", failed)
-            return None
-
-    async def _read_plugins(self, workspace: str) -> bindings.PluginInstalledResponse | None:
-        try:
-            result = await self._catalog_request(
-                "plugin/installed", bindings.PluginInstalledParams(cwds=[workspace])
-            )
-            plugins = bindings.PluginInstalledResponse.model_validate(result)
-        except (CodexAppServerError, ValidationError) as failed:
-            self._log_catalog_source_failure("plugin/installed", failed)
-            return None
-        for error in plugins.marketplaceLoadErrors or []:
-            LOGGER.warning(
-                "conversation %s: plugin/installed could not read %s: %s",
-                self._resolved_start.conversation_id,
-                error.marketplacePath,
-                error.message,
-            )
-        return plugins
-
-    def _log_catalog_source_failure(self, source: str, failure: Exception) -> None:
-        LOGGER.warning(
-            "conversation %s: Codex catalogue source %s failed: %s",
-            self._resolved_start.conversation_id,
-            source,
-            failure,
+    async def _read_plugins(self, workspace: str) -> bindings.PluginInstalledResponse:
+        result = await self._catalog_request(
+            "plugin/installed", bindings.PluginInstalledParams(cwds=[workspace])
         )
+        return bindings.PluginInstalledResponse.model_validate(result)
+
+    async def _read_app_metadata(self, ids: list[str]) -> bindings.AppsReadResponse:
+        result = await self._catalog_request(
+            "app/read",
+            bindings.AppsReadParams(
+                appIds=ids,
+                threadId=self._bound_thread(),
+                includeTools=False,
+            ),
+        )
+        return bindings.AppsReadResponse.model_validate(result)
 
     async def _catalog_request(self, method: str, parameters: BaseModel) -> Any:
         """Read catalogue data without letting a stale source poison the prompt wire."""
@@ -859,23 +795,6 @@ class CodexAppServerBackendChild:
             poison_wire_on_timeout=False,
             timeout_seconds=CATALOG_REQUEST_TIMEOUT_SECONDS,
         )
-
-    async def _read_all_apps(self, thread_id: str) -> tuple[bindings.AppInfo, ...]:
-        cursor: str | None = None
-        all_apps: list[bindings.AppInfo] = []
-        seen_cursors: set[str] = set()
-        while True:
-            result = await self._catalog_request(
-                "app/list", bindings.AppsListParams(cursor=cursor, threadId=thread_id)
-            )
-            page = bindings.AppsListResponse.model_validate(result)
-            all_apps.extend(page.data)
-            cursor = page.nextCursor
-            if cursor is None:
-                return tuple(all_apps)
-            if cursor in seen_cursors:
-                raise CodexAppServerError("app/list repeated a pagination cursor")
-            seen_cursors.add(cursor)
 
     def _catalog_invocation(self, content: MessageContent) -> _CatalogInvocation | None:
         if not content or not isinstance(content[0], MessageText):
@@ -1344,8 +1263,10 @@ class CodexAppServerBackendChild:
                 await self._on_item_completed(notification)
             case bindings.ErrorNotification():
                 self._on_error(notification)
-            case bindings.SkillsChangedNotification() | bindings.AppListUpdatedNotification():
-                self._request_catalog_refresh()
+            case bindings.SkillsChangedNotification():
+                self._catalog_coordinator.hint_skills()
+            case bindings.AppListUpdatedNotification():
+                self._catalog_coordinator.hint_apps()
             case _:
                 LOGGER.debug("codex sent %s, which nothing here reads", method)
 
@@ -1578,6 +1499,7 @@ class CodexAppServerBackendChild:
         exits is the loudest version of the fault this reads for, and saying only that the
         process ended would lose the one line that explains it.
         """
+        await self._catalog_coordinator.close()
         turn = self._turn
         if turn is None:
             return
@@ -1873,7 +1795,7 @@ def _shortened_or_nothing(text: str | None, limit: int) -> str | None:
 def _catalog_snapshot(
     skills: bindings.SkillsListResponse | None,
     installed_apps: bindings.AppsInstalledResponse | None,
-    apps: tuple[bindings.AppInfo, ...] | None,
+    apps: tuple[bindings.ConnectorMetadata, ...] | None,
     plugins: bindings.PluginInstalledResponse | None,
 ) -> _CatalogSnapshot:
     """Join Codex's catalogue sources into one deterministic, executable snapshot."""
@@ -1906,25 +1828,28 @@ def _catalog_snapshot(
                 )
             )
 
-    callable_apps = {
-        app.id
-        for app in (() if installed_apps is None else installed_apps.apps)
-        if app.enabled and app.callable
-    }
-    for app in () if apps is None or installed_apps is None else apps:
-        if app.id not in callable_apps or not app.isEnabled or not app.isAccessible:
+    metadata = {app.id: app for app in (() if apps is None else apps)}
+    for runtime_app in () if installed_apps is None else installed_apps.apps:
+        if not runtime_app.enabled or not runtime_app.callable:
             continue
-        token = f"@{_mention_token(app.name)}"
+        app = metadata.get(runtime_app.id)
+        name = (app.name if app is not None and app.name.strip() else None) or (
+            runtime_app.runtimeName
+            if runtime_app.runtimeName and runtime_app.runtimeName.strip()
+            else runtime_app.id
+        )
+        app_description = app.description if app is not None else None
+        token = f"@{_mention_token(name)}"
         candidates.append(
             (
                 token,
                 ComposerCatalogEntry(
                     kind=ComposerCatalogEntryKind.app,
-                    display_text=f"@{app.name}",
+                    display_text=f"@{name}",
                     insertion_text=f"{token} ",
-                    description=app.description or f"Use {app.name}",
+                    description=app_description or f"Use {name}",
                 ),
-                _CatalogInvocation(ComposerCatalogEntryKind.app, app.name, f"app://{app.id}"),
+                _CatalogInvocation(ComposerCatalogEntryKind.app, name, f"app://{runtime_app.id}"),
             )
         )
 

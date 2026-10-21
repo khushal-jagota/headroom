@@ -107,9 +107,7 @@ class CodexChildWouldNotStart(CodexAppServerError):
 class CodexWireFailed(CodexAppServerError):
     """The message did not reach the child, or the wire it would go over is finished."""
 
-    def __init__(
-        self, message: str, *, request_may_have_been_written: bool = False
-    ) -> None:
+    def __init__(self, message: str, *, request_may_have_been_written: bool = False) -> None:
         super().__init__(message)
         self.request_may_have_been_written = request_may_have_been_written
 
@@ -165,7 +163,8 @@ class CodexAppServerClient:
         # default; the sign-in client passes its own, because its models come from a
         # separately pinned bundle and must not become shapes the turn adapter believes.
         self._consumed_notifications: Mapping[str, type[BaseModel]] = (
-            CONSUMED_SERVER_NOTIFICATIONS if consumed_notifications is None
+            CONSUMED_SERVER_NOTIFICATIONS
+            if consumed_notifications is None
             else consumed_notifications
         )
         self._process: asyncio.subprocess.Process | None = None
@@ -329,7 +328,7 @@ class CodexAppServerClient:
             message["params"] = dict(params)
         try:
             await self._write(message)
-        except CodexWireFailed:
+        except (CodexWireFailed, asyncio.CancelledError):
             self._pending.pop(request_id, None)
             if not answer.done():
                 answer.cancel()
@@ -358,6 +357,7 @@ class CodexAppServerClient:
                 f"{method} was not answered", request_may_have_been_written=True
             ) from never_answered
         except asyncio.CancelledError:
+            self._remove_pending_answer(answer)
             raise
         except CodexWireFailed:
             raise
@@ -530,9 +530,7 @@ class CodexAppServerClient:
     def _fail_everything_pending(self, why: str) -> None:
         for answer in list(self._pending.values()):
             if not answer.done():
-                answer.set_exception(
-                    CodexWireFailed(why, request_may_have_been_written=True)
-                )
+                answer.set_exception(CodexWireFailed(why, request_may_have_been_written=True))
         self._pending.clear()
 
 

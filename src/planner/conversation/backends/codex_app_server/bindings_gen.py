@@ -12,8 +12,8 @@ The pin these models were generated under:
     from the dump's        codex_app_server_protocol.schemas.json
     dump digest (sha256)   5bc6033305d9eb75a5ddd8488968445256c0ca4481ac2daf55d4ea46712b703f
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) c6f84887d8f8455325e72045e73d6866df74730dfa43156521da7dfab2f7425e
-    definitions generated  185
+    subset digest (sha256) a31f600ea8d79ae2fb3cc781355010de4de849cb0ed972f0334a73847a7997c4
+    definitions generated  187
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -133,15 +133,23 @@ class AppScreenshot(BaseModel):
     userPrompt: str
 
 
+class AppToolSummary(BaseModel):
+    description: str
+    disabledReason: str | None = None
+    isEnabled: bool | None = True
+    isReadOnly: bool | None = False
+    name: str
+    title: str | None = None
+
+
 class AppsInstalledParams(BaseModel):
     forceRefresh: bool | None = None
     threadId: str | None = None
 
 
-class AppsListParams(BaseModel):
-    cursor: str | None = None
-    forceRefetch: bool | None = None
-    limit: Annotated[int | None, Field(ge=0)] = None
+class AppsReadParams(BaseModel):
+    appIds: list[str]
+    includeTools: bool | None = None
     threadId: str | None = None
 
 
@@ -240,6 +248,18 @@ class CommandExecutionOutputDeltaNotification(BaseModel):
     itemId: str
     threadId: str
     turnId: str
+
+
+class ConnectorMetadata(BaseModel):
+    description: str | None = None
+    distributionChannel: str | None = None
+    iconUrl: str | None = None
+    iconUrlDark: str | None = None
+    id: str
+    installUrl: str | None = None
+    name: str
+    pluginDisplayNames: list[str] | None = []
+    toolSummaries: list[AppToolSummary] | None = None
 
 
 class InputTextDynamicToolCallOutputContentItem(BaseModel):
@@ -908,6 +928,11 @@ class AppsInstalledResponse(BaseModel):
     apps: list[InstalledApp]
 
 
+class AppsReadResponse(BaseModel):
+    apps: list[ConnectorMetadata]
+    missingAppIds: list[str]
+
+
 class ActiveTurnNotSteerable(BaseModel):
     turnKind: Literal["review", "compact"]
 
@@ -1355,11 +1380,6 @@ class AppInfo(BaseModel):
 
 class AppListUpdatedNotification(BaseModel):
     data: list[AppInfo]
-
-
-class AppsListResponse(BaseModel):
-    data: list[AppInfo]
-    nextCursor: str | None = None
 
 
 class ErrorNotification(BaseModel):

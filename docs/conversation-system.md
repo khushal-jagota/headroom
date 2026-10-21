@@ -1292,11 +1292,13 @@ follow the conversation folder. Their visible text is `/name`, and their inserti
 is `/name `. Their adapters retain the live command names so ordinary and steered command
 dispatch keeps the slash token at the absolute start.
 
-Codex reads its catalog from the app-server after each thread starts or resumes. It joins
-enabled skills, callable installed apps, and enabled installed plugins with the native
-`/compact`, `/review`, and `/goal` commands. App metadata comes from `app/list`. Current app
-callability comes from `app/installed`. This prevents an installed but unusable connector
-from appearing in the menu.
+Codex publishes its native commands when a thread starts or resumes, then reads enabled
+skills, callable installed apps, and enabled installed plugins in the background. Apps
+come from thread-scoped `app/installed` runtime state, using the runtime name or exact ID.
+Only enabled, callable apps appear. Optional `app/read` requests enrich their names and
+descriptions in batches of at most 100 IDs. Metadata cannot grant callability. Panels
+never reads the full app directory for this menu. Missing or failed metadata keeps the
+runtime labels, and slow metadata cannot hold up a message.
 
 Codex runs each of those commands through a call of its own, and every one of those
 calls starts a turn. So a Codex command cannot join a turn that is already running. A
@@ -1306,12 +1308,20 @@ the current one ends. The held row says it is waiting because a command runs as 
 turn. Hermes and Claude take a steered command inside the running turn, and keep their
 behaviour.
 
-Codex refreshes the complete catalog after skill or app change notifications. Refreshes
-run beside the app-server reader and merge repeated notifications. Each source is read
-independently. A failed source contributes nothing to the new snapshot, while fresh
-sibling sources remain available. Apps appear only when both app reads succeed. Source
-errors name the failed source in the log. Every refresh publishes its truthful new
-snapshot, including a snapshot that contains only native commands.
+App-change hints refresh installed state; skill-change hints refresh skills and plugins.
+Each of these sources, plus optional app metadata, runs independently. Bursts merge over
+50 milliseconds, and successful app refreshes wait at least one second before another.
+A failed source retries after 5, 10, 20, 40, 80, 160, then 300 seconds, without another
+hint. Further hints cannot shorten a failed source's wait. Failed skills, plugins, or
+installed state remove that source's entries until recovery; failed metadata retains
+runtime labels. Warnings contain only the source, error category, numeric error code
+when present, and retry delay, capped at 240 characters.
+
+Successful app metadata stays with that child for 15 minutes. An installed-state update
+fetches missing or expired metadata; expiry alone starts no polling. Removing an app
+also removes its metadata, and a late reply cannot restore its entry or invocation.
+Unchanged entries and invocations produce no catalog event. Stopping the child cancels
+and awaits its source requests and retries.
 
 Codex resolves a selected token against that complete snapshot when the prompt starts.
 Skills use Codex skill input. Apps and plugins use exact mention paths. Exact protocol
