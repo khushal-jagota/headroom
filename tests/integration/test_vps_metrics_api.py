@@ -62,9 +62,10 @@ def test_stored_api_limits_and_immutable_process_pages(tmp_path: Path) -> None:
             first = client.get("/api/vps-metrics/processes", params={"limit": 1}).json()
             assert first["total"] == 2
             sample["timestamp"] += 2
+            sample["monotonic"] += 2
             sample["processes"] = []
             sample["process_count"] = 0
-            store.append(sample)
+            assert store.append(sample) != sequence
             second = client.get(
                 "/api/vps-metrics/processes",
                 params={

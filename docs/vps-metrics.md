@@ -23,10 +23,16 @@ An expired sequence returns HTTP 410.
 `end`, and `resolution` (`raw`, `minute`, or `coarse`). Each response contains at most
 2,000 points. Invalid ranges and configured limit violations return HTTP 422. A storage
 failure returns HTTP 503. Stored timestamps remain visible after a collection failure.
+The 500 ms read deadline also covers history decoding. If a large range exceeds it,
+split the range into smaller requests. Retention coverage describes the stored tier;
+individual points carry signal-specific valid duration.
 
 Host CPU uses total machine capacity as 100%. Process and service CPU use one core as
 100%, so those measurements can exceed 100%. The sample includes the core count.
 Process RSS differs from service cgroup memory. Process I/O differs from host device I/O.
+Nested cgroup totals overlap, so do not add parent and child service totals together.
+User service health covers the current operating user's manager. Temperature and fans
+are unavailable on this KVM guest.
 Missing measurements contain a null value and a reason. Cached slow fields carry their
 own source timestamp. Arguments and environment values do not enter the inventory.
 
