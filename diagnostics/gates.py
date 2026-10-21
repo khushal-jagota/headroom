@@ -6,6 +6,7 @@ Every gesture here is dispatched as wheel events with realistic deltas and
 intervals. Nothing assigns scrollTop. A probe that drives the scroll position
 directly reaches states a hand cannot, and measures itself rather than the product.
 """
+
 import json
 import pathlib
 import sys
@@ -17,35 +18,42 @@ HERE = pathlib.Path(__file__).resolve().parent
 PROBE = (HERE / "probe.js").read_text()
 DRAFT = "DRAFT-KEEP-THIS-TEXT-" + "x" * 40
 
-STATE = """() => {
-  const t = document.querySelector('[data-conversation-thread]');
-  const i = document.querySelector('[data-conversation-input]');
-  if (t === null) return {present: false, typed: i ? i.value.length : null,
-                          rows: document.querySelectorAll('[data-conversation-view-key]').length};
-  const spacer = document.querySelector('[data-conversation-reserved-space]');
-  const laid = [];
-  const consider = el => {
-    if (spacer && el === spacer) return;
-    if (el.hasAttribute('data-conversation-content')) { for (const k of el.children) consider(k); return; }
-    if (el.getClientRects().length > 0) { laid.push(el); return; }
-    for (const k of el.children) consider(k);
-  };
-  for (const k of t.children) consider(k);
-  const last = laid[laid.length - 1];
-  const top = t.getBoundingClientRect().top;
-  const lastBottom = last ? Math.round(last.getBoundingClientRect().bottom - top + t.scrollTop) : null;
-  return {
-    present: true,
-    scrollTop: Math.round(t.scrollTop), scrollHeight: Math.round(t.scrollHeight),
-    clientHeight: Math.round(t.clientHeight),
-    fromBottom: Math.round(t.scrollHeight - t.clientHeight - t.scrollTop),
-    blankBelowNewestLine: lastBottom === null ? null : Math.round(t.scrollHeight - lastBottom),
-    typed: i ? i.value.length : null,
-    rows: t.querySelectorAll('[data-conversation-view-key]').length,
-    filledRows: [...t.querySelectorAll('[data-conversation-view-key]')].filter(n => n.children.length > 0).length,
-    jump: !!document.querySelector('.chat-jump')
-  };
-}"""
+STATE = (
+    "() => {\n"
+    "  const t = document.querySelector('[data-conversation-thread]');\n"
+    "  const i = document.querySelector('[data-conversation-input]');\n"
+    "  if (t === null) return {present: false, typed: i ? i.value.length : null,\n"
+    "                          rows: "
+    "document.querySelectorAll('[data-conversation-view-key]').length};\n"
+    "  const spacer = document.querySelector('[data-conversation-reserved-space]');\n"
+    "  const laid = [];\n"
+    "  const consider = el => {\n"
+    "    if (spacer && el === spacer) return;\n"
+    "    if (el.hasAttribute('data-conversation-content')) { for (const k of el.children) "
+    "consider(k); return; }\n"
+    "    if (el.getClientRects().length > 0) { laid.push(el); return; }\n"
+    "    for (const k of el.children) consider(k);\n"
+    "  };\n"
+    "  for (const k of t.children) consider(k);\n"
+    "  const last = laid[laid.length - 1];\n"
+    "  const top = t.getBoundingClientRect().top;\n"
+    "  const lastBottom = last ? Math.round(last.getBoundingClientRect().bottom - top + "
+    "t.scrollTop) : null;\n"
+    "  return {\n"
+    "    present: true,\n"
+    "    scrollTop: Math.round(t.scrollTop), scrollHeight: Math.round(t.scrollHeight),\n"
+    "    clientHeight: Math.round(t.clientHeight),\n"
+    "    fromBottom: Math.round(t.scrollHeight - t.clientHeight - t.scrollTop),\n"
+    "    blankBelowNewestLine: lastBottom === null ? null : Math.round(t.scrollHeight - "
+    "lastBottom),\n"
+    "    typed: i ? i.value.length : null,\n"
+    "    rows: t.querySelectorAll('[data-conversation-view-key]').length,\n"
+    "    filledRows: [...t.querySelectorAll('[data-conversation-view-key]')].filter(n => "
+    "n.children.length > 0).length,\n"
+    "    jump: !!document.querySelector('.chat-jump')\n"
+    "  };\n"
+    "}"
+)
 
 
 def settle(page, seconds):
@@ -63,7 +71,9 @@ def open_conversation(page, base):
     settle(page, 2)
     if page.query_selector("[data-conversation-expand]") is not None:
         page.click("[data-conversation-expand]")
-    page.wait_for_selector("[data-conversation-pane][data-conversation-state='opened']", timeout=60000)
+    page.wait_for_selector(
+        "[data-conversation-pane][data-conversation-state='opened']", timeout=60000
+    )
     settle(page, 9)
     page.evaluate("window.__probe.mark('opened')")
     return first_thread
@@ -72,7 +82,11 @@ def open_conversation(page, base):
 def hover(page):
     box = page.eval_on_selector(
         "[data-conversation-thread]",
-        "n => { const r = n.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; }")
+        (
+            "n => { const r = n.getBoundingClientRect(); return {x: r.x + r.width / 2, y: "
+            "r.y + r.height / 2}; }"
+        ),
+    )
     page.mouse.move(box["x"], box["y"])
 
 
@@ -122,10 +136,15 @@ def main():
             inertia(page, -1)
             settle(page, 3)
             after = page.evaluate(STATE)
-            up.append({"round": index, "asked_for": 16 * 420 + 620,
-                       "delivered": before["scrollTop"] - after["scrollTop"],
-                       "content_grew": after["scrollHeight"] - before["scrollHeight"],
-                       "fromBottom": after["fromBottom"]})
+            up.append(
+                {
+                    "round": index,
+                    "asked_for": 16 * 420 + 620,
+                    "delivered": before["scrollTop"] - after["scrollTop"],
+                    "content_grew": after["scrollHeight"] - before["scrollHeight"],
+                    "fromBottom": after["fromBottom"],
+                }
+            )
         report["back_through_history"] = up
 
         # 2. Coming back down to the newest line, fast.
@@ -136,10 +155,15 @@ def main():
             inertia(page, 1)
             settle(page, 3)
             after = page.evaluate(STATE)
-            down.append({"round": index, "asked_for": 16 * 420 + 620,
-                         "delivered": after["scrollTop"] - before["scrollTop"],
-                         "content_grew": after["scrollHeight"] - before["scrollHeight"],
-                         "fromBottom": after["fromBottom"]})
+            down.append(
+                {
+                    "round": index,
+                    "asked_for": 16 * 420 + 620,
+                    "delivered": after["scrollTop"] - before["scrollTop"],
+                    "content_grew": after["scrollHeight"] - before["scrollHeight"],
+                    "fromBottom": after["fromBottom"],
+                }
+            )
         report["down_to_the_newest_line"] = down
 
         # 3. Latest. A hand flicks, the momentum decays, the hand reaches the control
@@ -163,22 +187,37 @@ def main():
                 inertia(page, -1)
             settle(page, 6)
             after = page.evaluate(STATE)
-            presses.append({"press": index,
-                            "case": "wheel still arriving after the press (not a hand)"
-                                    if momentum_after_the_press else "momentum, then the press",
-                            "before_fromBottom": before["fromBottom"],
-                            "after_fromBottom": after["fromBottom"],
-                            "control_still_offered": after["jump"],
-                            "landed": after["fromBottom"] <= 2})
+            presses.append(
+                {
+                    "press": index,
+                    "case": "wheel still arriving after the press (not a hand)"
+                    if momentum_after_the_press
+                    else "momentum, then the press",
+                    "before_fromBottom": before["fromBottom"],
+                    "after_fromBottom": after["fromBottom"],
+                    "control_still_offered": after["jump"],
+                    "landed": after["fromBottom"] <= 2,
+                }
+            )
         report["latest"] = presses
 
         log = page.evaluate("window.__probe.dump()")
         report["structure"] = {
-            "transcript_destroyed": sum(1 for e in log if e["type"] == "unmount" and e.get("kind") == "transcript"),
-            "thread_destroyed": sum(1 for e in log if e["type"] == "unmount" and e.get("kind") == "thread"),
-            "composer_destroyed": sum(1 for e in log if e["type"] == "unmount" and e.get("kind") == "composer-input"),
-            "snapshots": sum(1 for e in log if e["type"] == "sse-event" and e.get("name") == "snapshot"),
-            "history_page_reads": sum(1 for e in log if e["type"] == "fetch-start" and "/view/pages" in e.get("url", "")),
+            "transcript_destroyed": sum(
+                1 for e in log if e["type"] == "unmount" and e.get("kind") == "transcript"
+            ),
+            "thread_destroyed": sum(
+                1 for e in log if e["type"] == "unmount" and e.get("kind") == "thread"
+            ),
+            "composer_destroyed": sum(
+                1 for e in log if e["type"] == "unmount" and e.get("kind") == "composer-input"
+            ),
+            "snapshots": sum(
+                1 for e in log if e["type"] == "sse-event" and e.get("name") == "snapshot"
+            ),
+            "history_page_reads": sum(
+                1 for e in log if e["type"] == "fetch-start" and "/view/pages" in e.get("url", "")
+            ),
         }
         rows = [e for e in log if e["type"] == "row" and e.get("was") is not None]
         report["rows"] = {
