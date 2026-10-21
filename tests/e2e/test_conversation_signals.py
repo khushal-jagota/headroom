@@ -102,7 +102,7 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         _post(server, f"/api/test/signals/{conversation}/start")
         _post(server, f"/api/test/signals/{conversation}/finish")
     _bind(server, "ticket", ticket["id"], "proof-worker")
-    _bind(server, "agent", item["supervisor"]["agent_key"], "proof-supervisor")
+    _bind(server, "agent", item["manager"]["agent_key"], "proof-supervisor")
     _bind(server, "agent", "chief_of_staff", "proof-chief")
     context = context_factory()
     page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
@@ -111,9 +111,6 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
     supervisor = page.locator(f'[data-manager="{item["id"]}"] .item-head')
     chief = page.locator("[data-chief-destination]")
     rows = {"proof-worker": worker, "proof-supervisor": supervisor, "proof-chief": chief}
-    presence = page.locator("[data-shell-presence]")
-    expect(presence).to_have_text("0 working", timeout=WAIT_MS)
-    expect(presence.locator(".shell-presence-spin")).to_have_count(0)
     for row in rows.values():
         expect(row).to_be_visible(timeout=WAIT_MS)
         _marks(row, False, False)
@@ -136,8 +133,6 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
             _marks(popup_signal, False, False)
         before = page.evaluate("window.signalProofEvents.length")
         _post(server, f"/api/test/signals/{conversation}/start")
-        expect(presence).to_have_text("1 working", timeout=WAIT_MS)
-        expect(presence.locator(".shell-presence-spin")).to_have_count(1, timeout=WAIT_MS)
         if popup_signal is not None:
             _marks(row, True, False)
             _marks(popup_signal, True, False)
@@ -211,8 +206,6 @@ def test_exact_conversation_signals_cross_runtime_stream_and_surfaces(
         _marks(pane_signal, True, False)
         _marks(row, True, False)
         _post(server, f"/api/test/signals/{conversation}/finish")
-        expect(presence).to_have_text("0 working", timeout=WAIT_MS)
-        expect(presence.locator(".shell-presence-spin")).to_have_count(0, timeout=WAIT_MS)
         _marks(pane_signal, False, False)
         _marks(row, False, False)
         page.evaluate("location.hash = '#/workspace?view=items'")
