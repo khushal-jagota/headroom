@@ -188,7 +188,7 @@ One screen per part of the system:
   inheriting the old conversation's reading. A failed advance over-shows attention rather
   than hiding a reply.
 
-  On screens wider than 960px, the right side starts with a quiet invitation. An Item
+  On screens wider than 720px, the right side starts with a quiet invitation. An Item
   title opens the existing Manager workspace at `#/workspace/item/<item-id>`.
   A Ticket opens the complete Ticket screen at `#/workspace/<ticket-id>`. A Ticket
   opened from inside an Item, in the rail or in the Item workspace, writes
@@ -196,8 +196,8 @@ One screen per part of the system:
   Which of the two views the rail shows rides along as `?view=tickets` or `?view=items`,
   and only when the reader asked for the view the selection does not already imply. All
   of these addresses survive refresh, sharing, and browser history. A stale Item drops
-  out of the address, keeping a Ticket that was open beside it. At 960px or less, an
-  Item workspace or a Worker replaces the rail. Its inline eyebrow supplies the way back.
+  out of the address, keeping a Ticket that was open beside it. At 720px or less, an
+  Item workspace or a Worker replaces the rail. The Workspace action in the bottom bar supplies the way back.
 
   A Ticket never opens as a full-screen page. Every Ticket link in the app, including
   the ones in manager views and Review, uses the Workspace address. The old
@@ -281,16 +281,32 @@ The workspace keeps its resize handle within its own visual layer. Open shell me
 cover that handle and receive pointer actions above it. The handle keeps its pointer
 and keyboard controls when unobscured.
 
-The shell retains Review and Workspace navigation. The Workspace footer supplies Settings,
-Ideas, Feedback, and Usage/Backends icons. Each has an accessible name, tooltip, and keyboard
-focus. Feedback retains its count. More supplies fallback destinations when the footer is
-absent, including compact selected panes. A visible footer suppresses duplicate More links.
-Settings replaces separate Config, Scheduled tasks, and Notifications entries.
+Every destination shares one persistent Workspace rail and one pane. The rail keeps its
+scroll, width preference, Settled section, and running conversations while the pane changes.
+The former top bar and mobile title are gone. Review, Usage, Ideas, Feedback, VPS, and
+Settings appear in that order at the foot of the rail, with labels on hover or keyboard
+focus. Only Review carries a queue count. VPS is a placeholder for its separate screen.
+Settings groups Config, Scheduled tasks, and Notifications. Existing links, including
+Workspace utility aliases, continue to open the same details.
 
-The Feedback control is the last item in the status strip on every page. It opens a
-desktop popover or a phone sheet and saves a text note with optional page context. A
-device-local draft survives a close. The Feedback page and agent CLI read the durable
-record from the server.
+At 720px and below, the selected pane replaces the rail above a bottom bar containing
+Review, Workspace, and More. Workspace returns to the rail. More groups Ideas and
+Feedback under Work, and Usage, VPS, and Settings under System. Inner pane and
+conversation layouts keep their own breakpoints.
+
+A filled status card sits above the destination icons or compact bar. It says Deploying
+for fresh preparation and restart, Reconnecting for connection loss or expired progress,
+and Problem for failure or rollback. Failure takes precedence over connection loss.
+Healthy operation and successful recovery show no card. The card opens space before
+arriving and leaves before that space closes; reduced motion removes the animation.
+
+The rail's Feedback icon and More's Feedback item open the same persistent composer.
+It appears above the complete foot, including its status card, outside the rail's clipped
+content. On phones it uses a sheet above the bar and visible keyboard. Saving records
+a text note with optional page context. A device-local draft survives dismissal and
+navigation. Closing returns keyboard focus to the visible Feedback control, or More on
+phones. The composer count link and save notification open the Feedback pane. The
+Feedback page and agent CLI read the durable record from the server.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens

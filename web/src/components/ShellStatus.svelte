@@ -1,217 +1,106 @@
 <script lang="ts">
-  import SkeletonRegion from "./SkeletonRegion.svelte";
-  import { tick, onDestroy } from "svelte";
-  import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { runtimeCountImpact } from "../lib/reviewNavigationImpact";
-  import { shellRuntimeDomMatches } from "../lib/shellDom";
+  import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import type { ConnectionStatus } from "../lib/changeStream";
-  import {
-    deploymentStatusExpiryDelay,
-    resolveDeploymentStatus,
-    type VisibleDeploymentState
-  } from "../lib/deploymentStatus";
+  import { deploymentStatusExpiryDelay, resolveDeploymentStatus } from "../lib/deploymentStatus";
   import { queries } from "../lib/queryCatalogue";
-  import type {
-    DeploymentOutcome,
-    VpsBackupMetric,
-    VpsPercentageMetric,
-    VpsStatusSummary
-  } from "../lib/types";
+  import { RAIL_MOTION } from "../lib/workspaceRailMotion";
 
-  let {
-    connectionState
-  }: {
-    connectionState: ConnectionStatus;
-  } = $props();
-
-  const navigation = (() => { const value = navigationApplication(); if (!value) throw new Error("Shell requires the application navigation owner"); return value; })();
-  const observer = navigation.registerRenderBoundary(`shell-runtime:${crypto.randomUUID()}`,impact => {
-    const view=navigation.state.effective;return runtimeCountImpact(impact,view ? navigation.presentationFor(view) : undefined);
-  });
-  onDestroy(() => navigation.disposeRenderBoundary(observer));
-  let root = $state<HTMLElement | null>(null);
-  let displayed = $state.raw<import("../lib/navigation/knowledge").EffectiveNavigationView | null>(null);
-  $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
-  let runningWorkerCount = $derived(displayed ? navigation.presentationFor(displayed).review.runningConversationCount : null);
-  $effect(() => {
-    const effective = displayed;
-    const generation = navigation.state.generation;
-    const element = root;
-    const count = runningWorkerCount;
-    const label = statusLabels[statusState];
-    if (!effective?.runtimeCurrent || !element) return;
-    const publication = effective.publication;
-    const observation = observer.observeSelectors(publication,generation);
-    let obsolete = false;
-    void tick().then(() => {
-      if (!obsolete && element.isConnected && navigation.state.generation === generation
-        && navigation.selectors.effective === effective && shellRuntimeDomMatches(element,count,label)) observer.acknowledgeRender(publication,observation);
-    });
-    return () => { obsolete = true; };
-  });
-
+  let { connectionState }: { connectionState: ConnectionStatus } = $props();
   let clock = $state(Date.now());
-  let isOpen = $state(false);
   const deployment = createQuery(() => queries.deploymentStatus());
-  const vps = createQuery(() => ({
-    ...queries.vpsStatusSummary(),
-    enabled: isOpen
-  }));
-  const statusState = $derived(
-    resolveDeploymentStatus(deployment.data, connectionState, clock)
+  const statusState = $derived(resolveDeploymentStatus(deployment.data, connectionState, clock));
+  const statusWord = $derived(
+    statusState === "preparing" || statusState === "restarting" ? "Deploying"
+      : statusState === "problem" ? "Problem"
+      : statusState === "reconnecting" ? "Reconnecting" : null
   );
-
-  const statusLabels: Record<VisibleDeploymentState, string> = {
-    connected: "Connected",
-    reconnecting: "Reconnecting",
-    preparing: "Preparing",
-    restarting: "Restarting",
-    back_up: "Back up",
-    problem: "Problem"
-  };
-
-  const metricStateLabels = {
-    healthy: "Healthy",
-    warning: "Warning",
-    critical: "Critical",
-    unavailable: "Unavailable"
-  } as const;
-
-  const outcomeLabels: Record<DeploymentOutcome, string> = {
-    succeeded: "Succeeded",
-    failed: "Failed",
-    rolled_back: "Rolled back"
-  };
+  let displayedWord = $state<string | null>(null);
+  let open = $state(false);
+  let closing = $state(false);
+  let slot = $state<HTMLDivElement | null>(null);
+  const motionStyle = `--glide-space:${RAIL_MOTION.space}ms;--glide-fade:${RAIL_MOTION.fadeIn}ms;--glide-delay:${RAIL_MOTION.fadeDelay}ms;--glide-exit:${RAIL_MOTION.exit}ms;--glide-ease:${RAIL_MOTION.ease};--glide-enter:${RAIL_MOTION.enter};--glide-leave:${RAIL_MOTION.leave}`;
 
   $effect(() => {
-    const status = deployment.data;
     const now = Date.now();
     clock = now;
-    const delay = deploymentStatusExpiryDelay(status, now);
+    const delay = deploymentStatusExpiryDelay(deployment.data, now);
     if (delay === null) return;
-    const timer = window.setTimeout(() => {
-      clock = Date.now();
-    }, delay);
+    const timer = window.setTimeout(() => { clock = Date.now(); }, delay);
     return () => window.clearTimeout(timer);
   });
 
-  function shortSha(sha: string | null): string {
-    return sha ? sha.slice(0, 8) : "Unavailable";
-  }
-
-  function percentage(metric: VpsPercentageMetric): string {
-    if (metric.used_percent === null) return "Unavailable";
-    return `${Math.round(metric.used_percent)}% · ${metricStateLabels[metric.state]}`;
-  }
-
-  function backupAge(metric: VpsBackupMetric): string {
-    if (metric.age_seconds === null) return "Unavailable";
-    const seconds = Math.max(0, Math.round(metric.age_seconds));
-    if (seconds < 60) return `${seconds}s ago · ${metricStateLabels[metric.state]}`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago · ${metricStateLabels[metric.state]}`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 48) return `${hours}h ago · ${metricStateLabels[metric.state]}`;
-    return `${Math.floor(hours / 24)}d ago · ${metricStateLabels[metric.state]}`;
-  }
-
-  function deploymentOutcome(summary: VpsStatusSummary): string {
-    return summary.deployment.outcome
-      ? outcomeLabels[summary.deployment.outcome]
-      : "Unavailable";
-  }
-
-  function deploymentOutcomeState(summary: VpsStatusSummary): string {
-    if (!summary.deployment.outcome) return "unavailable";
-    return summary.deployment.outcome === "succeeded" ? "healthy" : "critical";
-  }
+  $effect(() => {
+    const word = statusWord;
+    let obsolete = false;
+    let frame: number | undefined;
+    let timer: number | undefined;
+    if (word !== null) {
+      displayedWord = word;
+      closing = false;
+      // Establish collapsed layout before entrance. Updates retain the card,
+      // including a reversal during exit.
+      void tick().then(() => {
+        if (obsolete) return;
+        if (slot) void slot.offsetHeight;
+        frame = window.requestAnimationFrame(() => { if (!obsolete) open = true; });
+      });
+    } else {
+      open = false;
+      closing = true;
+      timer = window.setTimeout(() => {
+        displayedWord = null;
+        closing = false;
+      }, RAIL_MOTION.exit + RAIL_MOTION.space);
+    }
+    return () => {
+      obsolete = true;
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  });
 </script>
 
-<div
-  bind:this={root}
-  class="shell-status"
-  role="status"
-  aria-live="polite"
-  aria-label={`${statusLabels[statusState]}.${runningWorkerCount === null ? "" : ` ${runningWorkerCount} working.`}`}
-  data-shell-status
->
-  <div class="vps-status" data-vps-status>
-    <button
-      class="shell-connection shell-connection-trigger"
-      type="button"
-      aria-expanded={isOpen}
-      aria-controls="shell-vps-status-popover"
-      aria-label={`${statusLabels[statusState]}. Show deployment and VPS status`}
-      data-connection-status
-      data-state={connectionState}
-      data-connection-state={connectionState}
-      data-status-state={statusState}
-      onclick={() => (isOpen = !isOpen)}
-    >
-      <span class="shell-connection-mark" aria-hidden="true"></span>
-      <span class="shell-connection-label" role="status" aria-live="polite">
-        {statusLabels[statusState]}
-      </span>
-    </button>
-    {#if isOpen}
-      <section
-        id="shell-vps-status-popover"
-        class="vps-status-popover"
-        aria-label="Deployment and VPS status"
-      >
-        <div class="vps-status-heading">
-          <strong>VPS status</strong>
-          <button
-            type="button"
-            class="vps-status-refresh"
-            onclick={() => void vps.refetch()}
-            disabled={vps.isFetching}
-          >
-            {vps.isFetching ? "Refreshing" : "Refresh"}
-          </button>
-        </div>
-        <SkeletonRegion shape="inline" loading={!vps.isError && !vps.data} loadingText="Loading VPS status">
-        {#if vps.isError}
-          <p class="vps-status-error" data-vps-status-error>VPS status is unavailable</p>
-        {:else if vps.data}
-          <dl class="vps-status-list" data-vps-status-content>
-            <div>
-              <dt>Deployed commit</dt>
-              <dd>{shortSha(vps.data.deployed_sha)}</dd>
-            </div>
-            <div data-state={deploymentOutcomeState(vps.data)}>
-              <dt>Deployment</dt>
-              <dd>{deploymentOutcome(vps.data)}</dd>
-            </div>
-            <div data-state={vps.data.cpu.state}>
-              <dt>CPU</dt>
-              <dd>{percentage(vps.data.cpu)}</dd>
-            </div>
-            <div data-state={vps.data.ram.state}>
-              <dt>RAM</dt>
-              <dd>{percentage(vps.data.ram)}</dd>
-            </div>
-            <div data-state={vps.data.disk.state}>
-              <dt>Disk</dt>
-              <dd>{percentage(vps.data.disk)}</dd>
-            </div>
-            <div data-state={vps.data.backup.state}>
-              <dt>Latest verified backup</dt>
-              <dd>{backupAge(vps.data.backup)}</dd>
-            </div>
-          </dl>
-        {/if}
-        </SkeletonRegion>
-      </section>
+<div bind:this={slot} class="status-slot" data-shell-status
+  data-open={open ? "" : undefined} data-closing={closing ? "" : undefined}
+  aria-hidden={statusWord === null ? "true" : undefined} style={motionStyle}>
+  <div>
+    {#if displayedWord !== null}
+      <div class="status-card" data-state={displayedWord === "Problem" ? "wrong" : "changing"}
+        data-connection-status data-connection-state={connectionState} data-status-state={statusState}
+        role="status" aria-live="polite">
+        <span class="status-mark" aria-hidden="true"></span>
+        <span class="status-word">{displayedWord}</span>
+      </div>
     {/if}
   </div>
-  {#if runningWorkerCount !== null}
-  <span class="shell-presence" data-shell-presence>
-    {#if runningWorkerCount > 0}
-      <span class="shell-presence-spin" aria-hidden="true"></span>
-    {/if}
-    {runningWorkerCount} working
-  </span>
-  {/if}
 </div>
+
+<style>
+  .status-slot { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--glide-space) var(--glide-ease); }
+  .status-slot > div { min-height: 0; overflow: hidden; }
+  .status-slot[data-open] { grid-template-rows: 1fr; }
+  .status-slot[data-closing] { grid-template-rows: 0fr; transition-delay: var(--glide-exit); }
+  .status-card {
+    display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); margin-bottom: var(--space-2);
+    border-radius: var(--radius-sm); background: var(--accent-surface); color: var(--accent-text); font-size: var(--type-xs);
+    opacity: 0; transform: translateY(var(--space-1));
+    transition: opacity var(--glide-fade) var(--glide-enter) var(--glide-delay), transform var(--glide-fade) var(--glide-enter) var(--glide-delay);
+  }
+  .status-slot[data-open] .status-card { opacity: 1; transform: none; }
+  .status-slot[data-closing] .status-card {
+    opacity: 0; transform: translateY(calc(var(--space-1) * -1));
+    transition: opacity var(--glide-exit) var(--glide-leave), transform var(--glide-exit) var(--glide-leave);
+  }
+  .status-card[data-state="wrong"] { background: var(--error-surface); color: var(--text-strong); }
+  .status-mark { width: 7px; height: 7px; flex: none; border-radius: var(--radius-pill); background: var(--accent-bright); }
+  .status-card[data-state="wrong"] .status-mark { background: var(--accent-error); }
+  .status-card[data-state="changing"] .status-mark { animation: status-pulse 1.6s var(--motion-ease) infinite; }
+  .status-word { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @keyframes status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  @media (max-width: 720px) { .status-card { margin: 0; border-radius: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .status-slot, .status-card { transition-duration: 1ms; transition-delay: 0ms; }
+    .status-card[data-state="changing"] .status-mark { animation: none; }
+  }
+</style>

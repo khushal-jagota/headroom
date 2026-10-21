@@ -1269,14 +1269,13 @@ def run(browser, urls):
     expect(page.locator("[data-review-card]")).to_have_count(0)
     runtime_working = True
     page.evaluate("window.__refresh()")
-    expect(page.locator("[data-shell-presence]")).to_have_text("1 working")
+    expect(page.locator("[data-shell-presence]")).to_have_count(0)
     expect(page.locator(".review-empty-meta")).to_have_text("1 agent in progress")
     snapshot_unavailable = True
     # A failed replacement read does not revoke the still-valid active stream.
     # Exercise actual active-stream loss for this fail-closed runtime assertion.
     page.evaluate("window.__navigationSource.onerror?.(); window.__refresh()")
     expect(page.locator("[data-shell-presence]")).to_have_count(0)
-    assert "working" not in page.locator("[data-shell-status]").get_attribute("aria-label")
     expect(page.locator("[data-review-empty]")).to_contain_text(
         "There is nothing to review right now."
     )
@@ -1284,7 +1283,7 @@ def run(browser, urls):
     snapshot_unavailable = False
     runtime_working = False
     page.evaluate("window.__refresh()")
-    expect(page.locator("[data-shell-presence]")).to_have_text("0 working")
+    expect(page.locator("[data-shell-presence]")).to_have_count(0)
     expect(page.locator(".review-empty-meta")).to_have_text("0 agents in progress")
     artifact_started = time.monotonic()
     # End the deliberate incompatible-manifest scenario before the next Ticket visit.

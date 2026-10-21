@@ -21,7 +21,7 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
     updated_at: Date.now() / 1000, handled_at: null
   }];
   const requests: any[] = [];
-  class QuietEventSource { onopen = null; onmessage = null; onerror = null; close() {} }
+  class QuietEventSource { onopen = null; onmessage = null; onerror = null; addEventListener() {} removeEventListener() {} close() {} }
   (globalThis as any).EventSource = QuietEventSource;
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
     status, headers: { "Content-Type": "application/json" }
@@ -39,6 +39,7 @@ const indexPath = join(scratchRoot, `feedback-index-${suffix}.html`);
     requests.push({ path, method, body });
     if (path.startsWith("/api/resource-body?")) {
       const key = new URL(path, location.origin).searchParams.get("key");
+      if (key === "/api/deployment-status") return json({ key, epoch: "fixture", revision: "1", body: {state:"preparing", deployed_sha:null,target_sha:"abc",outcome:null,detail:null,valid_until:new Date(Date.now()+600000).toISOString()} });
       if (key === "/api/feedback/count") return json({ key, epoch: "fixture", revision: String(response().open_count), body: { open_count: response().open_count } });
     }
     if (path === "/api/review") return json({ items: [], running_worker_count: 0 });
