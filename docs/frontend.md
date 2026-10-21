@@ -591,11 +591,25 @@ hand-rolling the same shapes per screen. Each does one job:
   over to the error line or a skeleton. Each screen selects a named shape: rows,
   document, block, conversation, or inline. `loadingText` remains an accessible
   status announcement. Data-empty states ("No ideas yet.") stay in the screens.
-  `SkeletonRegion` owns the shared shapes and cross-fade. Layouts size full panes.
-  Intrinsic content uses a temporary reservation derived from the skeleton shape,
-  then returns to natural height. The reservation does not predict the content.
-  The three skeleton tokens control the whisper fills and fade duration. Reduced
-  motion removes the fade. Worker activity marks remain separate.
+  `SkeletonRegion` owns the shared shapes and cross-fade, including inline values.
+  Waits reserve their current space immediately and show a skeleton after 200ms,
+  only if work remains pending. The stable status node announces after 100ms;
+  busy state follows actual work immediately. Ready content mounts at once and
+  fades in over 300ms, including cached content and initial idle mounts. Existing
+  child opacity entrances keep their own cadence. A shown
+  skeleton fades out from its actual opacity without a minimum hold.
+  Layouts size full panes. Intrinsic content keeps its shape reservation during
+  the delay and any skeleton exit, then returns to natural height. This can still
+  move following content; the reservation does not predict the content.
+  Four skeleton tokens control the whisper fills, fade duration, and visual delay.
+  The mounted region reads the inherited delay; the announcement uses half of it.
+  Flow content keeps its transparent wrappers throughout the fade so flex/grid
+  gaps and margins stay put. The fade reaches painted element roots through
+  transparent Markdown hosts and keeps their existing transform animations.
+  Flow snippets supply element roots; raw text uses an inline region.
+  Reduced motion keeps the delay and replaces immediately, accepting one static
+  skeleton frame when completion follows appearance. Changing that preference
+  during a fade clears the transition. Worker activity marks remain separate.
   Action buttons keep their own busy labels. The model picker's Refresh button
   says “Reading…” and exposes `aria-busy` during its explicit refresh. This label
   describes the action, not a region without content, so it is outside skeleton scope.
