@@ -5510,7 +5510,7 @@ details:not([open]) > summary > .manager-workspace-chevron {
 @media (max-width: 720px) {
   .fb-scrim {
     position: fixed;
-    z-index: 23;
+    z-index: 11;
     inset: 0;
     display: block;
     border: 0;

@@ -138,6 +138,11 @@ def run(browser, urls):
       const nav=document.querySelector('.workspace-mobile-nav')?.getBoundingClientRect();
       return sheet && nav && sheet.bottom <= nav.top + 1;
     }""")
+    # Capture's scrim belongs below the persistent bar, so More remains reachable.
+    assert more.evaluate("""node => {
+      const box=node.getBoundingClientRect();
+      return node.contains(document.elementFromPoint(box.left+box.width/2, box.top+box.height/2));
+    }"""), "Feedback scrim blocks the compact bar"
     sheet = phone.locator("[data-feedback-capture]").bounding_box()
     nav = phone.locator(".workspace-mobile-nav").bounding_box()
     assert sheet and nav and sheet["y"] + sheet["height"] <= nav["y"] + 1, (sheet, nav)
