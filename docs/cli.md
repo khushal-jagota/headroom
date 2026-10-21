@@ -253,6 +253,16 @@ unrelated supervisor.
 an ordinary orchestrator. Structured create and edit use the same explicit `orchestrator`
 reference. Assignment and the ceiling holder are independent.
 
+`orchestrator list` labels each row active or settled. With no state flag, it includes both.
+Use `--active` or `--settled` to filter before pagination. The flags are mutually exclusive
+and combine with search and Project filters. JSON summaries and `show` headers carry
+the boolean `settled`, including selected-part reads. An absent field does not establish
+that an orchestrator is active. `sprint item` uses the same behavior.
+
+Settled orchestrators are finished destinations. Choose an active orchestrator for new
+work before Ticket creation or assignment. This guidance does not change permissions
+or prevent an existing Worker from continuing.
+
 `orchestrator settle <item>` is owner-only. Add `--active` to return it to active.
 Chief cannot settle. Day and date-range Sprint commands are removed.
 The `sprint item` aliases continue to address ordinary orchestrators.

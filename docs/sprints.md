@@ -37,6 +37,12 @@ orchestrators. Existing `panels sprint item` paths remain aliases. Use
 `panels orchestrator settle <item>` settles an ordinary orchestrator. `--active` returns
 it to active. The server accepts only the owner for this action.
 
+Settled orchestrators are finished destinations. Choose an active orchestrator for new
+work. The CLI exposes that state in lists and records, including selected-part reads.
+Its state filters apply before pagination. See [the CLI guide](cli.md#orchestrator-assignment-and-settlement)
+for the flags and the `settled` field. Settlement does not change assignment authority
+or stop existing Workers.
+
 Date-range Sprints, their records, commitments, and placement are removed.
 The former Sprint screen and calendar read commands no longer exist.
 `panels sprint item` remains an alias for retained orchestrator operations.
