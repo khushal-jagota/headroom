@@ -306,6 +306,7 @@ def test_manager_mutations_remain_in_the_navigation_command_inventory() -> None:
     for manager_router in (router, legacy_router):
         for route in manager_router.routes:
             if isinstance(route, APIRoute):
+                assert route.methods is not None
                 for method in route.methods & {"POST", "PATCH", "PUT", "DELETE"}:
                     assert is_navigation_command(method, "/api" + route.path), route.path
     excluded = {(route.method, route.path) for route in EXCLUDED_COMMAND_ROUTES}

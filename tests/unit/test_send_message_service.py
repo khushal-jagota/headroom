@@ -29,10 +29,10 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import TestClock as PlannerTestClock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.managers import data as managers_data
 from planner.message_delivery import recap_request, service
 from planner.runtime import conversation_start
 from planner.runtime.conversation_start import DeliveredMessage
-from planner.managers import data as managers_data
 from planner.tickets import data as tickets_data
 
 

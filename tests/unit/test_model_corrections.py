@@ -371,8 +371,8 @@ def test_manager_correction_preserves_identity_and_blocks_stale_receipt(
 ) -> None:
     from dataclasses import replace
 
-    from planner.projects.data import create_project
     from planner.managers import data as sprints
+    from planner.projects.data import create_project
 
     seed_resolution(tmp_db)
     project = create_project(tmp_db, name="Corrections", summary="", now=1)

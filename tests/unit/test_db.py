@@ -1251,7 +1251,8 @@ def test_manager_rename_preserves_occupied_identity_claims_receipts_and_archived
     ) == ("si_kept", "manager", "si_kept", "Keep sprint item text")
     assert tuple(
         conn.execute(
-            "SELECT manager_id,target_kind,status,sender_message_id,message FROM manager_wake_batches "
+            "SELECT manager_id,target_kind,status,sender_message_id,message "
+            "FROM manager_wake_batches "
             "WHERE id=51"
         ).fetchone()
     ) == (

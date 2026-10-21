@@ -7,8 +7,8 @@ import pytest
 
 from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import OWNER_PRINCIPAL
-from planner.projects import data as projects
 from planner.managers import data as sprints
+from planner.projects import data as projects
 from planner.tickets import data, locale_configuration, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 from planner.worker_settings import service as worker_settings

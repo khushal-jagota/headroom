@@ -491,7 +491,9 @@ def _main() -> None:
                 "backlog": ticket.is_backlogged,
                 "status": ticket.ticket_status.value,
                 "project": ticket.project_id,
-                "orchestrator": getattr(ticket, "sprint_item_id"),
+                "orchestrator": getattr(  # noqa: B009 - subprocess loads the historical Ticket type
+                    ticket, "sprint_item_id"
+                ),
                 "conversation": ticket.conversation_id,
                 "fields": dict(ticket.field_values),
                 "proposal": None

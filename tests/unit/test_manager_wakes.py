@@ -40,9 +40,9 @@ from planner.manager_wakes.runtime import (
     deliver_batch,
     reconcile_batch_outcomes,
 )
-from planner.runtime import conversation_start
 from planner.managers import data as managers_data
 from planner.managers.contracts import ManagerLaunchConfiguration
+from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
 

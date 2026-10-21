@@ -32,9 +32,9 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.core.loops import BackgroundLoops, start_background_loops
 from planner.core.server import create_app
-from planner.runtime import conversation_start
 from planner.managers import data as sprints_data
 from planner.managers import service as sprints_service
+from planner.runtime import conversation_start
 from planner.tickets import data as tickets_data
 from planner.tickets import revision_feedback
 

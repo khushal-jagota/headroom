@@ -170,11 +170,13 @@ def test_the_holder_moves_while_a_proposal_is_parked(tmp_db: Connection) -> None
 
 
 def _manager(conn: Connection, title: str, clock: Clock) -> str:
-    return managers_data.create_manager(conn, title=title, project_id="project_vylo", clock=clock).id
+    return managers_data.create_manager(
+        conn, title=title, project_id="project_vylo", clock=clock
+    ).id
 
 
 def _park_under(conn: Connection, manager_id: str, *, now: int = 10) -> Ticket:
-    """A Ticket under an Manager, with a proposal parked for that same Manager."""
+    """A Ticket under a Manager, with a proposal parked for that same Manager."""
     holder = Principal(PrincipalKind.manager, manager_id)
     ticket = data.create_ticket(
         conn,

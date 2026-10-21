@@ -16,8 +16,8 @@ from planner.core.config import load_config
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.projects import data as projects_data
 from planner.managers import data as managers_data
+from planner.projects import data as projects_data
 from planner.tickets import data, views
 from planner.tickets.contracts import Ticket
 

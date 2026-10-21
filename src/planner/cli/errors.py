@@ -259,10 +259,10 @@ def _show_click_exception(
     render_human_error(message, recovery=command_shape(ctx))
 
 
-class CompatibilityChoice(click.Choice):
+class CompatibilityChoice(click.Choice[str]):
     """Normalize issued Manager field names before canonical choice validation."""
 
-    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> Any:
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
         if value in {"sprint-item", "orchestrator"} and "manager" in self.choices:
             value = "manager"
         return super().convert(value, param, ctx)
