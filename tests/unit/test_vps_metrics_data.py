@@ -5,12 +5,19 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
 
 import pytest
 
 from planner.environments.vps_metrics.config import MetricsConfig
-from planner.environments.vps_metrics.contracts import QueryLimitError, Sample, SnapshotExpiredError
+from planner.environments.vps_metrics.contracts import (
+    AggregateStatistics,
+    HistoryPoint,
+    ProcessRecord,
+    QueryLimitError,
+    Resolution,
+    Sample,
+    SnapshotExpiredError,
+)
 from planner.environments.vps_metrics.data import Store
 
 
@@ -32,23 +39,29 @@ def sample(timestamp: float, value: float = 10, *, boot: str = "boot") -> Sample
     )
 
 
-def store(tmp_path: Path, **options: object) -> Store:
-    result = Store(tmp_path / "metrics.sqlite3", replace(MetricsConfig(), **options))  # type: ignore[arg-type]
+def store(tmp_path: Path, config: MetricsConfig | None = None) -> Store:
+    result = Store(tmp_path / "metrics.sqlite3", config)
     result.initialize()
     return result
 
 
-def history(result: Store, resolution: str = "minute") -> list[dict]:
+def history(result: Store, resolution: Resolution = "minute") -> list[HistoryPoint]:
     with sqlite3.connect(result.path) as conn:
         return result.history(
             conn, signal="cpu", entity=None, start=0, end=1800, resolution=resolution
-        )["points"]  # type: ignore[arg-type,return-value]
+        )["points"]
+
+
+def statistics(point: HistoryPoint) -> AggregateStatistics:
+    result = point["statistics"]
+    assert result is not None
+    return result
 
 
 def test_weighted_rollups_split_buckets_and_keep_gap_reboot_and_reset_absent(
     tmp_path: Path,
 ) -> None:
-    result = store(tmp_path, history_points=3)
+    result = store(tmp_path, MetricsConfig(history_points=3))
 
     def append(current: Sample) -> None:
         current["services"] = [
@@ -69,13 +82,13 @@ def test_weighted_rollups_split_buckets_and_keep_gap_reboot_and_reset_absent(
     append(sample(80, 40))
     append(sample(200, 60))  # Only preceding 15 seconds have coverage.
     reset = sample(215)
-    reset["metrics"]["cpu"].update(value=None, reason="counter reset", duration=15)
+    reset["metrics"]["cpu"].update({"value": None, "reason": "counter reset", "duration": 15})
     append(reset)
     append(sample(220, 100, boot="second"))  # Restart baseline has no duration.
     points = history(result)
     assert [(p["timestamp"], p["value"]) for p in points] == [(0, 20), (60, 35), (180, 60)]
-    assert [p["statistics"]["valid_duration"] for p in points] == [10, 20, 15]
-    assert points[-1]["statistics"]["expected_duration"] == 30
+    assert [statistics(p)["valid_duration"] for p in points] == [10, 20, 15]
+    assert statistics(points[-1])["expected_duration"] == 30
     with sqlite3.connect(result.path) as conn:
         service = result.history(
             conn, signal="cpu", entity="service", start=0, end=1800, resolution="minute"
@@ -83,7 +96,7 @@ def test_weighted_rollups_split_buckets_and_keep_gap_reboot_and_reset_absent(
         assert [point["value"] for point in service["points"]] == [500, 500, 500]
         assert service["coverage"]["retained_start"] == 0
     coarse = history(result, "coarse")
-    assert coarse[0]["statistics"]["valid_duration"] == 45
+    assert statistics(coarse[0])["valid_duration"] == 45
     assert coarse[0]["value"] == pytest.approx(1800 / 45)
 
 
@@ -95,19 +108,19 @@ def test_slow_source_timestamps_are_not_recounted_for_cached_reads(tmp_path: Pat
         result.append(current)
     points = history(result)
     assert len(points) == 1
-    assert points[0]["statistics"]["valid_duration"] == 60
-    assert points[0]["statistics"]["count"] == 1
+    assert statistics(points[0])["valid_duration"] == 60
+    assert statistics(points[0])["count"] == 1
 
 
 def test_restart_progress_survives_raw_eviction_and_failure_rolls_back(tmp_path: Path) -> None:
-    result = store(tmp_path, raw_seconds=1)
+    result = store(tmp_path, MetricsConfig(raw_seconds=1))
     result.append(sample(0))
     sequence = result.append(sample(15, 20))
     reopened = Store(result.path, result.config)
     assert reopened.append(sample(15, 20)) == sequence
     reopened.prune(100)
     assert reopened.append(sample(15, 20)) == sequence
-    assert history(reopened)[0]["statistics"]["valid_duration"] == 15
+    assert statistics(history(reopened)[0])["valid_duration"] == 15
     failing = Store(
         result.path,
         replace(result.config, transaction_payload_bytes=100, process_snapshot_bytes=100),
@@ -117,11 +130,14 @@ def test_restart_progress_survives_raw_eviction_and_failure_rolls_back(tmp_path:
     # Compressible metadata still counts its actual stored (plain JSON) bytes.
     compressible = sample(30)
     compressible["metrics"]["cpu"]["unit"] = "a" * 100_000
-    for overrides, reason in (
-        (dict(metrics_payload_bytes=10_000), "metrics payload budget"),
-        (dict(transaction_payload_bytes=10_000, process_snapshot_bytes=1000), "transaction"),
+    for config, reason in (
+        (replace(result.config, metrics_payload_bytes=10_000), "metrics payload budget"),
+        (
+            replace(result.config, transaction_payload_bytes=10_000, process_snapshot_bytes=1000),
+            "transaction",
+        ),
     ):
-        bounded = Store(result.path, replace(result.config, **overrides))
+        bounded = Store(result.path, config)
         with pytest.raises(sqlite3.OperationalError, match=reason):
             bounded.append(compressible)
     with sqlite3.connect(result.path) as conn:
@@ -130,20 +146,17 @@ def test_restart_progress_survives_raw_eviction_and_failure_rolls_back(tmp_path:
 
 
 def test_process_pages_are_immutable_and_oversize_is_explicit(tmp_path: Path) -> None:
-    result = store(tmp_path, process_snapshot_bytes=1000, process_seconds=20)
+    result = store(tmp_path, MetricsConfig(process_snapshot_bytes=1000, process_seconds=20))
     current = sample(0)
     current["processes"] = [
-        cast(
-            dict,
-            dict(
-                identity=dict(boot_id="boot", pid=i, start_ticks=1),
-                parent_pid=0,
-                uid=0,
-                name="short",
-                state="S",
-                service="x",
-                metrics={},
-            ),
+        ProcessRecord(
+            identity=dict(boot_id="boot", pid=i, start_ticks=1),
+            parent_pid=0,
+            uid=0,
+            name="short",
+            state="S",
+            service="x",
+            metrics={},
         )
         for i in range(3)
     ]
@@ -168,12 +181,14 @@ def test_process_pages_are_immutable_and_oversize_is_explicit(tmp_path: Path) ->
 def test_payload_age_budgets_churn_and_read_limits(tmp_path: Path) -> None:
     result = store(
         tmp_path,
-        metrics_payload_bytes=1500,
-        process_payload_bytes=300,
-        raw_seconds=30,
-        minute_seconds=90,
-        coarse_seconds=120,
-        history_points=2,
+        MetricsConfig(
+            metrics_payload_bytes=1500,
+            process_payload_bytes=300,
+            raw_seconds=30,
+            minute_seconds=90,
+            coarse_seconds=120,
+            history_points=2,
+        ),
     )
     for timestamp in range(0, 301, 15):
         current = sample(timestamp)
@@ -208,7 +223,7 @@ def test_payload_age_budgets_churn_and_read_limits(tmp_path: Path) -> None:
         current["timestamp"] = current["monotonic"] = timestamp
         coherent.append(current)
     with sqlite3.connect(coherent.path) as conn:
-        before = {
+        before: dict[tuple[str, int, str], set[str]] = {
             (resolution, bucket, boot): set()
             for resolution, bucket, boot in conn.execute(
                 "SELECT resolution,bucket,boot FROM aggregates"
@@ -230,7 +245,7 @@ def test_payload_age_budgets_churn_and_read_limits(tmp_path: Path) -> None:
     )
     smaller.prune(180)
     with sqlite3.connect(coherent.path) as conn:
-        after = {key: set() for key in before}
+        after: dict[tuple[str, int, str], set[str]] = {key: set() for key in before}
         for resolution, bucket, boot, entity in conn.execute(
             "SELECT resolution,bucket,boot,entity FROM aggregates"
         ):
@@ -257,7 +272,9 @@ def test_activity_shared_and_fixed_duration_and_failure_preserves_sample(tmp_pat
         latest = follower.latest(conn, 11)
         assert latest["collection"]["reason"] == "disk full"
         assert latest["collection"]["last_sample_at"] == 0
-        assert latest["sample"]["timestamp"] == 0
+        latest_sample = latest["sample"]
+        assert latest_sample is not None
+        assert latest_sample["timestamp"] == 0
 
 
 def test_reopened_writer_enforces_sqlite_page_cap_atomically(tmp_path: Path) -> None:
@@ -272,16 +289,20 @@ def test_reopened_writer_enforces_sqlite_page_cap_atomically(tmp_path: Path) -> 
     with pytest.raises(sqlite3.OperationalError, match="full"):
         limited.append(current)
     with sqlite3.connect(result.path) as conn:
-        assert result.latest(conn, 0)["sample"]["timestamp"] == 0
+        latest_sample = result.latest(conn, 0)["sample"]
+        assert latest_sample is not None
+        assert latest_sample["timestamp"] == 0
         assert conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 1
 
 
 def test_pinned_wal_reader_causes_backpressure_and_recovers(tmp_path: Path) -> None:
     result = store(
         tmp_path,
-        wal_bytes=32 * 1024,
-        transaction_payload_bytes=16 * 1024,
-        process_snapshot_bytes=8 * 1024,
+        MetricsConfig(
+            wal_bytes=32 * 1024,
+            transaction_payload_bytes=16 * 1024,
+            process_snapshot_bytes=8 * 1024,
+        ),
     )
     result.append(sample(0))
     reader = sqlite3.connect(result.path)
@@ -295,4 +316,6 @@ def test_pinned_wal_reader_causes_backpressure_and_recovers(tmp_path: Path) -> N
     reader.close()
     result.append(sample(400))
     with sqlite3.connect(result.path) as conn:
-        assert result.latest(conn, 400)["sample"]["timestamp"] == 400
+        latest_sample = result.latest(conn, 400)["sample"]
+        assert latest_sample is not None
+        assert latest_sample["timestamp"] == 400
