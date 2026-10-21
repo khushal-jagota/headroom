@@ -33,9 +33,49 @@ def run(browser, urls):
     held = []
     held_latest = []
     cancelled = []
+    pending = set()
     mode = {"fail": False, "expire": False, "hold": False, "hold_latest": False}
     page.on("pageerror", lambda error: errors.append(str(error)))
+    def started(request):
+        if '/api/vps-metrics/' in request.url:
+            pending.add(request)
+
+    def finished(request):
+        pending.discard(request)
+
+    page.on("request", started)
+    page.on("requestfinished", finished)
+    page.on("requestfailed", finished)
     page.on("requestfailed", lambda request: cancelled.append(request.url))
+    page.add_init_script("""{
+      const originalFetch = window.fetch;
+      let active = 0;
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        window.__vpsMetricsIdle = active === 0;
+        document.documentElement?.setAttribute('data-vps-test-idle', String(active === 0));
+      };
+      window.__vpsMetricsIdle = true;
+      window.fetch = async (...args) => {
+        if (!String(args[0]).includes('/api/vps-metrics/')) return originalFetch(...args);
+        active++;
+        window.__vpsMetricsIdle = false;
+        document.documentElement?.setAttribute('data-vps-test-idle', 'false');
+        let completed = false;
+        const done = () => {
+          if (completed) return;
+          completed = true;
+          active--;
+          channel.port2.postMessage(null);
+        };
+        try {
+          const response = await originalFetch(...args);
+          const text = response.text.bind(response);
+          response.text = async () => { try { return await text(); } finally { done(); } };
+          return response;
+        } catch (error) { done(); throw error; }
+      };
+    }""")
     page.clock.install(time=datetime.fromtimestamp(fixture.now, UTC))
     page.clock.pause_at(datetime.fromtimestamp(fixture.now, UTC))
 
@@ -72,10 +112,21 @@ def run(browser, urls):
         expect(root).to_be_visible()
         expect(rows).to_have_count(2)
         expect(root.locator('[data-vps-metric]')).to_have_count(6)
+        drain()
         page.wait_for_function("document.querySelectorAll('[data-vps-metric] svg').length > 0")
 
+    def drain():
+        # MessageChannel runs after the response consumers and their promise chains.
+        # Unlike timers, it still runs while the controlled browser clock is paused.
+        expect(page.locator('html')).to_have_attribute('data-vps-test-idle', 'true')
+        assert page.evaluate('window.__vpsMetricsIdle')
+        assert not pending, [request.url for request in pending]
+
     def tick(milliseconds=2100):
+        drain()
         page.clock.fast_forward(milliseconds)
+        if not mode['hold_latest']:
+            drain()
 
     def shot(name):
         EVIDENCE.mkdir(parents=True, exist_ok=True)
@@ -90,9 +141,11 @@ def run(browser, urls):
         expect(root.get_by_text("Panels", exact=True)).to_be_visible()
         assert "L" in cpu.locator(".trend-line").first.get_attribute("d")
         shot("vps-wide.png")
-        for width, name in [(1000, "vps-medium.png"), (390, "vps-compact.png")]:
+        for width, name in [(748, "vps-medium.png"), (390, "vps-compact.png")]:
             page.set_viewport_size({"width": width, "height": 1100})
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
+            columns = root.locator('.instruments').evaluate("node => getComputedStyle(node).gridTemplateColumns.split(' ').length")
+            assert columns == (2 if width == 748 else 1), (width, columns)
             if width == 390:
                 assert rows.filter(has_text="python").locator(".row-value").first.evaluate("""element => {
                     const range = document.createRange();
@@ -107,13 +160,16 @@ def run(browser, urls):
         expect(root).to_contain_text("no feed")
         expect(cpu).to_contain_text("27")
 
+        fixture.now = page.evaluate("Date.now() / 1000")
         fixture.append(cpu=90, overrides={"memory_available_bytes": 3e9, "load_1": 5, "pressure.io.some.avg10": 3})
         tick()
         expect(cpu).to_have_attribute("data-state", "raised")
+        expect(root).to_have_attribute("data-current", "true")
         shot("vps-raised.png")
         fixture.append(cpu=95, overrides={"memory_available_bytes": 1e9, "load_1": 7, "pressure.io.some.avg10": 20, "pressure.cpu.some.avg10": 60})
         tick()
         expect(cpu).to_have_attribute("data-state", "wrong")
+        expect(root).to_have_attribute("data-current", "true")
         shot("vps-wrong.png")
 
         # Current nulls hide an old retained trend and retain their reason.
@@ -139,6 +195,7 @@ def run(browser, urls):
         month = root.locator('[data-vps-window="30d"]')
         month.focus()
         month.click()
+        drain()
         expect(month).to_be_focused()
         page.wait_for_function("document.querySelector('[data-vps-window=\"30d\"]').getAttribute('aria-pressed') === 'true'")
         expect(root.locator('[data-vps-metric="cpu"] svg')).to_have_count(1)
@@ -161,6 +218,7 @@ def run(browser, urls):
             except Exception:
                 pass  # Chromium can discard the aborted request before delivery.
         held.clear()
+        drain()
         expect(cpu.locator("svg")).to_have_count(1)
         expect(root.locator('[data-vps-window="5m"]')).to_have_attribute("aria-pressed", "true")
 
