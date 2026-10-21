@@ -105,7 +105,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     for name in ("dot-ticket", "dot-supervisor", "dot-chief"):
         _conversation(server, name)
     _bind(server, "ticket", ticket["id"], "dot-ticket")
-    _bind(server, "agent", item["supervisor"]["agent_key"], "dot-supervisor")
+    _bind(server, "agent", item["manager"]["agent_key"], "dot-supervisor")
     _bind(server, "agent", "chief_of_staff", "dot-chief")
     _message(
         server, "dot-ticket", Principal(PrincipalKind.ticket, ticket["id"]), "Child direct message"
@@ -127,7 +127,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         context.route(transcript_pattern, delay_transcript)
         diagnostics.record("transcript-route-install-return")
         page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
-        left = page.locator(f'[data-sprint-item="{item["id"]}"]')
+        left = page.locator(f'[data-manager="{item["id"]}"]')
         owner_row = left.locator(f'[data-ticket-id="{ticket["id"]}"]')
         expect(owner_row.locator('[data-conversation-signal="message"]')).to_have_count(
             1, timeout=WAIT_MS
@@ -152,7 +152,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             diagnostics.record("workspace-held", url=route.request.url, body=body)
             page.evaluate("() => { window.__proofWorkspaceHeld = true; }")
 
-        workspace_key = quote(f"/api/items/{item['id']}/workspace-content", safe="")
+        workspace_key = quote(f"/api/managers/{item['id']}/workspace-content", safe="")
         workspace_pattern = f"**/api/resource-body?key={workspace_key}"
         diagnostics.record("workspace-route-install-start")
         context.route(workspace_pattern, delay_workspace)
@@ -169,7 +169,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         diagnostics.record("workspace-route-remove-start")
         context.unroute(workspace_pattern, delay_workspace)
         diagnostics.record("workspace-route-remove-return")
-        right = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
+        right = page.locator(f'[data-manager-workspace="{item["id"]}"]')
         expect(right.locator('[data-workspace-group="awaiting_approval"]')).to_contain_text(
             ticket["title"]
         )
@@ -179,7 +179,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(
             ticket["title"]
         )
-        assert right.locator(".sprint-workspace-title-mark").count() == 0
+        assert right.locator(".manager-workspace-title-mark").count() == 0
         # Unfinished groups arrive open. The two approval holders remain distinct.
         for key in ("awaiting_approval", "status_awaiting_approval"):
             group = right.locator(f'[data-workspace-group="{key}"]')
@@ -239,7 +239,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         assert _read_position(server, "dot-ticket") == 1
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         assert (
-            page.locator(f'[data-sprint-item="{item["id"]}"] .item-head .stage-mark').count() == 0
+            page.locator(f'[data-manager="{item["id"]}"] .item-head .stage-mark').count() == 0
         )
 
         _post(
@@ -257,7 +257,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         left.locator(".item-head").click(timeout=WAIT_MS)
-        expect(right.locator(".sprint-workspace-title-mark")).to_be_visible(timeout=WAIT_MS)
+        expect(right.locator(".manager-workspace-title-mark")).to_be_visible(timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
         expect(owner_row).to_be_visible(timeout=WAIT_MS)
         expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
@@ -267,7 +267,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         assert _read_position(server, "dot-supervisor") == 0
         capture_success(page, str(EVIDENCE / "supervisor-own-message-title-and-rail.png"))
         page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
-        expect(right.locator(".sprint-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
+        expect(right.locator(".manager-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_have_count(0, timeout=WAIT_MS)
         assert _read_position(server, "dot-supervisor") == 1
         page.goto(server.base + "/#/workspace?view=items")
