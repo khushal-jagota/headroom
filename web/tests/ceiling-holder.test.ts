@@ -4,8 +4,9 @@ const parent = { id:"si_parent", title:"Actual outcome title" };
 describe("holder role wording and identity", () => {
   it("uses approved roles with the assigned manager identity as detail", () => {
     expect(holderOptionsFor(parent)).toEqual([
-      { value:"owner", label:"User" }, { value:"chief", label:"Chief" },
-      { value:"si_parent", label:"Manager", detail:"Actual outcome title" }
+      { value:"owner", label:"User" },
+      { value:"si_parent", label:"Manager", detail:"Actual outcome title" },
+      { value:"chief", label:"Chief" }
     ]);
     expect(holderLabelFor(parent, {kind:"manager", id:"si_parent"})).toBe("Manager");
   });
@@ -13,5 +14,11 @@ describe("holder role wording and identity", () => {
     expect(holderLabelFor(parent, {kind:"manager", id:"si_other"})).toBe("Manager · si_other");
     expect(holderLabelFor(parent, {kind:"ticket", id:"t_other"})).toBe("Worker · t_other");
     expect(holderOptionsFor(parent, {kind:"manager", id:"si_other"}).at(-1)).toEqual({value:"si_other", label:"Manager", detail:"si_other"});
+  });
+  it("omits the manager option when no manager is assigned", () => {
+    expect(holderOptionsFor(null)).toEqual([
+      { value:"owner", label:"User" },
+      { value:"chief", label:"Chief" }
+    ]);
   });
 });
