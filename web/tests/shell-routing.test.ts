@@ -3,6 +3,7 @@ import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
 import { describe, expect, it, vi } from "vitest";
 import { feedbackPageContext, feedbackPageHref } from "../src/lib/feedback";
 import { canonicalShellHash } from "../src/lib/shellRouting";
+import { nestedHref, parseUtilityPath, prefixHref } from "../src/lib/utilityAddress";
 
 describe("historical shell addresses", () => {
   it.each([
@@ -71,4 +72,39 @@ it("preserves the bare Home redirect to Chief", () => {
       vi.unstubAllGlobals();
     }
   }
+});
+
+// The Settings rules used to live inline in the shell router, where the pane could not
+// reach them. They moved so both roots read one copy, and they had no test of their own.
+describe("where a utility screen can be", () => {
+  it("defaults Settings to Config and accepts its two flat sections", () => {
+    expect(parseUtilityPath("settings", [])).toEqual({
+      utility: "settings", settings: { section: "config", roleKind: "index" }
+    });
+    expect(parseUtilityPath("settings", ["scheduled-tasks"])).toEqual({
+      utility: "settings", settings: { section: "scheduled-tasks", roleKind: "index" }
+    });
+    expect(parseUtilityPath("settings", ["config", "workers", "coding"])).toEqual({
+      utility: "settings", settings: { section: "config", roleKind: "worker", roleId: "coding" }
+    });
+  });
+
+  it.each([
+    ["settings", ["unknown"]],
+    ["settings", ["notifications", "detail"]],
+    ["settings", ["config", "unknown"]],
+    ["usage", ["unknown"]],
+    ["ideas", ["anything"]],
+    ["feedback", ["anything"]]
+  ] as const)("refuses %s/%j", (utility, path) => {
+    expect(parseUtilityPath(utility, path as unknown as string[])).toBeNull();
+  });
+
+  it("builds a page address by appending, and nothing at all for the default", () => {
+    const href = prefixHref("#/settings");
+    expect(href([])).toBe("#/settings");
+    expect(href(["config", "workers", "coding"])).toBe("#/settings/config/workers/coding");
+    expect(nestedHref(href, ["config"])(["chief-of-staff"]))
+      .toBe("#/settings/config/chief-of-staff");
+  });
 });

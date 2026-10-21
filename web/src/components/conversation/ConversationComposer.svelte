@@ -36,6 +36,8 @@
     type ComposerDraft,
     type ComposerSendAttempt
   } from "./composer/draftTransaction";
+  import { untrack } from "svelte";
+  import { readComposerDraft, writeComposerDraft } from "../../lib/conversation/composerDraft";
   import {
     applyComposerRunSelectionIntent,
     resolveComposerRunControls
@@ -87,6 +89,7 @@
 
   let {
     conversationId = null,
+    draftKey,
     backendKey = null,
     conversationExists = false,
     running = false,
@@ -119,6 +122,7 @@
   }: {
     /** The current conversation, or none before the first message creates it. */
     conversationId?: string | null;
+    draftKey: string;
     /** The backend this conversation runs on — or, before there is one, the backend a
      *  message sent from here would create it on. */
     backendKey?: ConversationBackendKey | null;
@@ -181,7 +185,17 @@
     onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
   } = $props();
 
-  let text = $state("");
+  // Restored before the first paint, so a rebuilt composer comes back with the words
+  // in it rather than empty.
+  let text = $state(untrack(() => readComposerDraft(draftKey)));
+  let draftKeyOnScreen = untrack(() => draftKey);
+  $effect(() => {
+    const key = draftKey;
+    if (key === untrack(() => draftKeyOnScreen)) return;
+    draftKeyOnScreen = key;
+    text = readComposerDraft(key);
+  });
+  $effect(() => { writeComposerDraft(draftKey, text); });
   let deliveryMode = $state<PromptDeliveryMode>("steer");
   let runSelection = $state<ComposerRunSelection>({
     pickedBackend: null,

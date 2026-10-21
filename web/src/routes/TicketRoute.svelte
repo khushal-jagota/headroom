@@ -582,7 +582,7 @@
             {@const currentField = section.record.value.gating_field}
             {@const history = workerPageHistory(lc, detail)}
             {@const completedFields = history.completed}
-            {@const occurredFields = history.fields}
+            {@const stepFields = history.fields}
             {#if currentField}
               <section class:worker-live-card={detail.pending_proposal?.field !== currentField} class="worker-current" data-worker-live-card data-proposal-created-at={detail.pending_proposal?.created_at} data-proposal-revision={detail.pending_proposal?.revision}>
                 {#if detail.pending_proposal?.field === currentField}
@@ -619,7 +619,7 @@
                 <summary data-stage-fold-open>Steps<span class="band-count">{completedFields.length} of {lc.fieldIds.length} done</span></summary>
                 {#if stepsOpen}
                 <div class="worker-step-rows">
-                  {#each occurredFields as name (`${detail.id}:${name}`)}
+                  {#each stepFields as name (`${detail.id}:${name}`)}
                     {@const stageState = ticketSectionFieldState(section,currentView,name)}
                     <TicketStageSection {name} ticketId={stableId} draft={fieldDraft(name)} value={detail.field_values[name]}
                       approval={detail.field_approvals?.[name]}

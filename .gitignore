@@ -18,3 +18,7 @@ web/node_modules
 web/.test-scratch/
 .worktrees/
 .claude/worktrees/
+diagnostics/before/
+diagnostics/gates/
+diagnostics/dogfood/
+diagnostics/run-before-main/

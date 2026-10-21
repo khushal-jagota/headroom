@@ -2,10 +2,12 @@
   import ConfigRoute from "./ConfigRoute.svelte";
   import NotificationsRoute from "./NotificationsRoute.svelte";
   import ScheduledTasksRoute from "./ScheduledTasksRoute.svelte";
-  let { section = "config", roleKind = "index", roleId }: {
+  import { nestedHref, prefixHref, type UtilityHref } from "../lib/utilityAddress";
+  let { section = "config", roleKind = "index", roleId, href = prefixHref("#/settings") }: {
     section?: string;
     roleKind?: "index" | "agent" | "skill" | "worker";
     roleId?: string;
+    href?: UtilityHref;
   } = $props();
 </script>
 
@@ -13,13 +15,12 @@
   <header class="settings-title"><h1>Settings</h1></header>
   <div class="settings-head">
     <nav class="settings-sections" aria-label="Settings">
-      <a href="#/settings/config" aria-current={section === "config" ? "page" : undefined}>Config</a>
-      <a href="#/settings/scheduled-tasks" aria-current={section === "scheduled-tasks" ? "page" : undefined}>Scheduled tasks</a>
-      <a href="#/settings/notifications" aria-current={section === "notifications" ? "page" : undefined}>Notifications</a>
+      <a href={href(["config"])} aria-current={section === "config" ? "page" : undefined}>Config</a>
+      <a href={href(["scheduled-tasks"])} aria-current={section === "scheduled-tasks" ? "page" : undefined}>Scheduled tasks</a>
+      <a href={href(["notifications"])} aria-current={section === "notifications" ? "page" : undefined}>Notifications</a>
     </nav>
-    <a class="settings-usage" href="#/backends"><span aria-hidden="true">←</span> Usage</a>
   </div>
-  {#if section === "config"}<ConfigRoute {roleKind} {roleId} />
+  {#if section === "config"}<ConfigRoute {roleKind} {roleId} href={nestedHref(href, ["config"])} />
   {:else if section === "scheduled-tasks"}<ScheduledTasksRoute />
   {:else if section === "notifications"}<NotificationsRoute />{/if}
 </section>
@@ -47,7 +48,6 @@
   a[aria-current="page"] { color:var(--text-strong); font-weight:500; }
   a:hover { color:var(--text-strong); }
   a:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:var(--space-1); }
-  .settings-usage { display:inline-flex; gap:var(--space-1); align-items:center; color:var(--text-faint); font-size:var(--type-xs); white-space:nowrap; }
   @media(max-width:720px) {
     .settings-head { gap:var(--space-2); }
     .settings-sections { gap:var(--space-4); font-size:var(--type-xs); }

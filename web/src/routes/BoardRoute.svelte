@@ -22,6 +22,7 @@
   import { buildWorkspaceRail, workspaceListRecap, type WorkspaceRailItem } from "../lib/workspaceRail";
   import { RAIL_MIN_WIDTH, RAIL_MAX_WIDTH, RAIL_DEFAULT_WIDTH, RAIL_SETTLED_MAX_HEIGHT_SHARE, clampRailWidth, readRailWidth, saveRailWidth, railWidthForKey, createRailHoverController } from "../lib/workspaceRailInteraction";
   import { correctedWorkspaceAddress, whatTheAddressOpens, workspaceAddress, type WorkspaceAddress } from "../lib/workspaceAddress";
+  import { parseUtilityPath, type UtilityHref, type WorkspaceUtility } from "../lib/utilityAddress";
   import type { ManagedFileTarget } from "../lib/filePreview";
   import type { WorkspaceMessageConversation } from "../lib/types";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
@@ -71,6 +72,19 @@
     }
   });
   let paneShape = $derived(opening.markedUtility === "usage" || opening.markedUtility === "ideas" || opening.markedUtility === "feedback" ? "rows" as const : "document" as const);
+  // The screen's own position, read the same way its standalone page reads it. The
+  // address is parsed before it reaches here, so a placement is always present.
+  let placement = $derived(
+    opening.markedUtility === null
+      ? null
+      : parseUtilityPath(opening.markedUtility, opening.markedUtilityPath)
+  );
+  // An embedded screen links through this instead of writing its page address. The
+  // whole Workspace address is rebuilt each time, so the rail's current list survives
+  // every click inside the screen.
+  function utilityHref(utility: WorkspaceUtility): UtilityHref {
+    return segments => workspaceAddress({ kind: "utility", utility, path: segments }, opening.view);
+  }
   // A link of the shape #/workspace/<id> is read as a Ticket, and an orchestrator id of
   // that shape used to open the Ticket page saying "ticket not found". The publication
   // knows which ids are orchestrators, so the address is corrected here, where that is
@@ -351,10 +365,10 @@
           </ResourceState>
           </div>
           <nav class="rail-utilities" aria-label="Workspace utilities">
-            <a href={workspaceAddress({kind:"utility",utility:"usage"}, opening.view)} aria-current={opening.markedUtility === "usage" ? "page" : undefined} aria-label="Usage and Backends" title="Usage and Backends"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></a>
-            <a href={workspaceAddress({kind:"utility",utility:"settings"}, opening.view)} aria-current={opening.markedUtility === "settings" ? "page" : undefined} aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m8 3-.5 2-1.4.8-2-.5-2 3.4L3.5 10l.1 1.6-1.4 1.4 2 3.4 2-.5 1.4.8.5 2h4l.5-2 1.4-.8 2 .5 2-3.4-1.4-1.4.1-1.6 1.4-1.3-2-3.4-2 .5-1.4-.8-.5-2Z" transform="translate(0 -1)" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2" /></svg></a>
-            <a href={workspaceAddress({kind:"utility",utility:"ideas"}, opening.view)} aria-current={opening.markedUtility === "ideas" ? "page" : undefined} aria-label="Ideas" title="Ideas"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 14h6m-5 3h4M6 10a5 5 0 1 1 8 0l-1 2H7Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg></a>
-            <a href={workspaceAddress({kind:"utility",utility:"feedback"}, opening.view)} aria-current={opening.markedUtility === "feedback" ? "page" : undefined} aria-label="Feedback" title="Feedback"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 4h14v10H8l-5 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>{#if (feedbackCount.data?.open_count || 0) > 0}<span class="fb-count">{feedbackCount.data?.open_count}</span>{/if}</a>
+            <a href={workspaceAddress({kind:"utility",utility:"usage",path:[]}, opening.view)} aria-current={opening.markedUtility === "usage" ? "page" : undefined} aria-label="Usage and Backends" title="Usage and Backends"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></a>
+            <a href={workspaceAddress({kind:"utility",utility:"settings",path:[]}, opening.view)} aria-current={opening.markedUtility === "settings" ? "page" : undefined} aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m8 3-.5 2-1.4.8-2-.5-2 3.4L3.5 10l.1 1.6-1.4 1.4 2 3.4 2-.5 1.4.8.5 2h4l.5-2 1.4-.8 2 .5 2-3.4-1.4-1.4.1-1.6 1.4-1.3-2-3.4-2 .5-1.4-.8-.5-2Z" transform="translate(0 -1)" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2" /></svg></a>
+            <a href={workspaceAddress({kind:"utility",utility:"ideas",path:[]}, opening.view)} aria-current={opening.markedUtility === "ideas" ? "page" : undefined} aria-label="Ideas" title="Ideas"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 14h6m-5 3h4M6 10a5 5 0 1 1 8 0l-1 2H7Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg></a>
+            <a href={workspaceAddress({kind:"utility",utility:"feedback",path:[]}, opening.view)} aria-current={opening.markedUtility === "feedback" ? "page" : undefined} aria-label="Feedback" title="Feedback"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 4h14v10H8l-5 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>{#if (feedbackCount.data?.open_count || 0) > 0}<span class="fb-count">{feedbackCount.data?.open_count}</span>{/if}</a>
           </nav>
         </section>
         <!-- A focusable separator implements the WAI-ARIA window splitter keyboard pattern. -->
@@ -370,6 +384,40 @@
         >
           {#if opening.chiefMarked}
             <ChiefConversation showRequestErrorLine={false} />
+          {:else if opening.markedUtility !== null && selectedPaneModule && placement}
+          <!-- The pane owns the scroll for a utility screen. These screens are written as
+               pages that let the document scroll, so without this they have no scroller of
+               their own, and borrowing one from the loading region would make the pane
+               depend on how a skeleton happens to be styled. -->
+          <div class="board-workspace-utility" data-utility-scroll>
+          <LazyRegion promise={selectedPaneModule} shape={paneShape}>
+          {#if placement.utility === "usage"}
+            {#await import("./BackendsRoute.svelte") then view}
+<view.default {...placement.usage} href={utilityHref("usage")} />
+{:catch error}
+<ErrorLine {error} />
+{/await}
+          {:else if placement.utility === "settings"}
+            {#await import("./SettingsRoute.svelte") then view}
+<view.default {...placement.settings} href={utilityHref("settings")} />
+{:catch error}
+<ErrorLine {error} />
+{/await}
+          {:else if placement.utility === "ideas"}
+            {#await import("./IdeasRoute.svelte") then view}
+<view.default />
+{:catch error}
+<ErrorLine {error} />
+{/await}
+          {:else if placement.utility === "feedback"}
+            {#await import("./FeedbackRoute.svelte") then view}
+<view.default {onDismissed} />
+{:catch error}
+<ErrorLine {error} />
+{/await}
+          {/if}
+          </LazyRegion>
+          </div>
           {:else if selectedPaneModule}
           <LazyRegion promise={selectedPaneModule} shape={paneShape} layout="fill">
           {#if opening.markedTicketId}
@@ -403,30 +451,6 @@
 <ErrorLine {error} />
 {/await}
             {/key}
-          {:else if opening.markedUtility === "usage"}
-            {#await import("./BackendsRoute.svelte") then view}
-<view.default />
-{:catch error}
-<ErrorLine {error} />
-{/await}
-          {:else if opening.markedUtility === "settings"}
-            {#await import("./SettingsRoute.svelte") then view}
-<view.default />
-{:catch error}
-<ErrorLine {error} />
-{/await}
-          {:else if opening.markedUtility === "ideas"}
-            {#await import("./IdeasRoute.svelte") then view}
-<view.default />
-{:catch error}
-<ErrorLine {error} />
-{/await}
-          {:else if opening.markedUtility === "feedback"}
-            {#await import("./FeedbackRoute.svelte") then view}
-<view.default {onDismissed} />
-{:catch error}
-<ErrorLine {error} />
-{/await}
           {/if}
           </LazyRegion>
           {:else}
@@ -441,6 +465,14 @@
 
 <WorkspaceRailHover bind:element={hoverElement} visible={hoverVisible} instant={hoverInstant} target={hoverTarget} title={currentHoverTitle} kicker={currentHoverKicker} signal={hoverSignal} conversationId={hoverConversationId} worker={hoverWorker} recap={hoverRecap} rail={railElement} recapTarget={hoverRecapTarget} onKeepOpen={() => hover.keepOpen()} onLeave={() => hover.leave()} />
 <style>
+  /* The pane's own scroller for a utility screen. It is here, scoped to this component,
+     rather than in the shared stylesheet, so no skeleton rule can take it away. */
+  .board-workspace-utility { flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; }
+  /* Whatever stands in the pane takes the pane's height, so a screen that is still
+     arriving reserves the whole pane rather than stopping part of the way down. The
+     selector names no class: the only element this reaches is the block the screen is
+     mounted in, beside a text-only status node. */
+  .board-workspace-utility > :global(div) { flex:1 0 auto; min-height:0; }
   .approved-rail-shell { position:relative; isolation:isolate; grid-template-columns:var(--rail-width) minmax(0,1fr); }
   .approved-rail { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:var(--type-sm); line-height:normal; padding:var(--space-3); }
   .rail-work { display:flex; flex-direction:column; flex:1; min-height:0; }

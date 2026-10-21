@@ -67,7 +67,7 @@ def _catalogs(browser, url):
         page.locator("[data-artifacts-band] > summary").click()
         window = page.locator(".artifact-catalog-window").first
         expect(window.locator(':scope > .skeleton-region[aria-busy="true"]')).to_have_count(1)
-        page.wait_for_timeout(50)
+        expect(window.locator(':scope > .skeleton-region .skeleton[data-entering]')).to_have_count(1)
         request, response = pending_artifacts.pop(0)
         request.fulfill(json=response)
         expect(window.locator(":scope > .skeleton-region > .skeleton-content > [data-artifact-page] > [data-artifact-folder]")).to_have_count(1)
@@ -101,7 +101,7 @@ def _catalogs(browser, url):
         assert after_spacer.evaluate("element => element.offsetHeight") == after_height
         window.get_by_role("button", name="Retry", exact=True).evaluate("element => element.click()")
         expect(page.locator('.artifact-pending-page [aria-busy="true"]')).to_have_count(1)
-        page.wait_for_timeout(50)
+        expect(page.locator('.artifact-pending-page .skeleton[data-entering]')).to_have_count(1)
         request, response = pending_artifacts.pop(0)
         overlay_box = page.locator('.artifact-pending-page').first.bounding_box()
         request.fulfill(json=response)
@@ -124,7 +124,7 @@ def _catalogs(browser, url):
         chip_box = window.locator('[data-artifact-chip="file080.md"]').bounding_box()
         assert overlay_box and chip_box and overlay_box["height"] > 0
         assert overlay_box["y"] + overlay_box["height"] <= chip_box["y"] + 1
-        page.wait_for_timeout(50)
+        expect(page.locator('.artifact-pending-page .skeleton[data-entering]')).to_have_count(1)
         request, response = pending_artifacts.pop(0)
         assert response["offset"] == 40
         request.fulfill(json=response)
@@ -354,6 +354,19 @@ def _run(browser, urls):
         assert page.locator('button[aria-label="Jump to latest message"]').is_visible()
         return actual
 
+    def assert_native_growth(page, held, growth):
+        # Native anchoring can hold an existing node or let growth above it move it.
+        # It must not replace that node or return a scrollback reader to the end.
+        settled(page)
+        actual = page.evaluate("""() => ({connected: window.__heldParagraph.isConnected,
+          text: window.__heldParagraph.textContent,
+          top: window.__heldParagraph.getBoundingClientRect().top - document.querySelector('[data-conversation-thread]').getBoundingClientRect().top})""")
+        assert actual["connected"] and actual["text"] == held["text"], (held, actual)
+        displacement = actual["top"] - held["top"]
+        assert -3 <= displacement <= growth + 3, (held, actual, growth)
+        assert page.locator('button[aria-label="Jump to latest message"]').is_visible()
+        return actual
+
     def prepare_scroll_case(page, url, kind, mode):
         page.goto(url, wait_until="domcontentloaded")
         page.evaluate("({kind,mode}) => window.__setupScrollRegression(kind,mode)", {"kind":kind,"mode":mode})
@@ -465,29 +478,35 @@ def _run(browser, urls):
         page.evaluate("window.__proseDelta(0)")
         assert_paragraph(page, held)
         # All original candidates disappear again, and the saved position now exceeds
-        # the shortened transcript's range. Clamp there, then retain scrollback intent.
+        # the shortened transcript's range. The native clamp reaches the newest line.
         before = newest_reading(page)["scrollTop"]
         page.evaluate("window.__replaceAllScrollRows(20)")
         settled(page)
         limit = page.locator(THREAD).evaluate("thread => thread.scrollHeight-thread.clientHeight")
         actual = newest_reading(page)["scrollTop"]
         assert before > limit and abs(actual - limit) <= 3, (before, limit, actual)
-        held = visible_paragraph(page)
+        assert_newest(page)
         page.evaluate(
             "window.__appendConversationLine();window.__appendConversationLine();window.__appendConversationLine()"
         )
-        assert_paragraph(page, held)
+        assert_newest(page)
 
     def layer_send_case(page, url):
-        held = prepare_scroll_case(page, url, "plain", "scrollback")
+        prepare_scroll_case(page, url, "plain", "scrollback")
         page.evaluate("window.__sendScrollRegression(true)")
         state(page, "opened")
-        assert_paragraph(page, held)
-        # A later viewport resize cannot replay the send that lost placement to layer.
+        settled(page)
+        sent = answer_room_reading(page)
+        assert 0 <= sent["promptTop"] <= 32, sent
+        # Explicit send placement wins even when the layer changes height.
         page.locator(INPUT).fill("one\ntwo\nthree\nfour\nfive")
-        assert_paragraph(page, held)
+        settled(page)
+        resized = answer_room_reading(page)
+        assert abs(resized["promptTop"] - sent["promptTop"]) <= 3, (sent, resized)
         page.evaluate("window.__answerScrollRegression(1)")
-        assert_paragraph(page, held)
+        settled(page)
+        answered = answer_room_reading(page)
+        assert abs(answered["promptTop"] - sent["promptTop"]) <= 3, (sent, answered)
 
     def answer_room_reading(page):
         return page.locator(THREAD).evaluate("""thread => {
@@ -554,11 +573,13 @@ def _run(browser, urls):
         page.wait_for_timeout(100)
         settled(page)
         after = newest_reading(page)
-        assert abs(page.evaluate("window.__nativeRaceBefore") - before) <= 3
-        assert abs(after["scrollTop"] - before - 120) <= 3, (before, after)
+        # The browser can adjust for growth before native wheel motion begins.
+        native_before = page.evaluate("window.__nativeRaceBefore")
+        assert abs(after["scrollTop"] - native_before - 120) <= 3, (native_before, after)
+        assert after["scrollTop"] > before + 50, (before, after)
         held = visible_paragraph(page)
         page.evaluate("window.__raceImage.style.height = '220px'")
-        assert_paragraph(page, held)
+        assert_native_growth(page, held, 40)
 
     def short_message_growth_case(page, url):
         prepare_scroll_case(page, url, "plain", "scrollback")
@@ -579,7 +600,9 @@ def _run(browser, urls):
         )
         held = visible_paragraph(page)
         page.evaluate("window.__raceImage.style.height = '180px'")
-        assert_paragraph(page, held)
+        assert_native_growth(page, held, 180)
+        assert newest_reading(page)["scrollTop"] <= 1
+        assert page.evaluate("window.__raceImage.getBoundingClientRect().height") == 180
 
     def descendant_keyboard_case(page, url):
         for key in ["PageDown", "Home", "End", "Control+Home", "Control+End"]:
@@ -623,8 +646,10 @@ def _run(browser, urls):
                 page.evaluate("window.__raceImage.style.height = '180px'")
             if key.endswith("End"):
                 assert_newest(page)
-            else:
+            elif key.endswith("Home"):
                 assert_paragraph(page, held)
+            else:
+                assert_native_growth(page, held, 180)
         # Plain buttons still allow native arrow scrolling, while Space activates.
         prepare_scroll_case(page, url, "plain", "scrollback")
         install_controlled_image(page)
@@ -646,8 +671,9 @@ def _run(browser, urls):
                 after,
             )
             held = visible_paragraph(page)
+            old_height = page.evaluate("window.__raceImage.getBoundingClientRect().height")
             page.evaluate('(amount) => window.__raceImage.style.height = amount+"px"', amount)
-            assert_paragraph(page, held)
+            assert_native_growth(page, held, amount - old_height)
         before = newest_reading(page)["scrollTop"]
         page.keyboard.press("Space")
         settled(page)
@@ -740,16 +766,17 @@ def _run(browser, urls):
         settled(page)
         assert page.evaluate("window.__delayedRow.isConnected")
         assert page.locator("[data-conversation-row]").count() == row_count
+        growth = page.evaluate("window.__delayedRow.getBoundingClientRect().height") - before_row_height
+        assert growth > 0, growth
         if held:
             assert held["text"].startswith("Tall paragraph"), held
-            actual = assert_paragraph(page, held)
+            actual = assert_native_growth(page, held, growth)
             actual_scroll = newest_reading(page)["scrollTop"]
         else:
             actual = assert_newest(page)
             actual_scroll = actual["scrollTop"]
-        growth = page.evaluate("window.__delayedRow.getBoundingClientRect().height") - before_row_height
-        assert growth > 0, growth
-        assert abs((actual_scroll - before["scrollTop"]) - growth) <= 2, (growth, before, actual_scroll)
+        if not held:
+            assert abs((actual_scroll - before["scrollTop"]) - growth) <= 2, (growth, before, actual_scroll)
         print(
             "DELAYED_GEOMETRY",
             kind,
@@ -1675,18 +1702,105 @@ def _run(browser, urls):
     print("conversation-pane-browser.test.mjs: all assertions passed")
 
 
+def _owner_width_frames(browser, url):
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
+    output = Path(os.environ.get("PANELS_OWNER_WIDTH_ARTIFACT_DIR", os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp")))
+    output.mkdir(parents=True, exist_ok=True)
+    proof = []
+    # Reuse the real reader/pane host. This small set covers the slow fade on open,
+    # reload and a narrow pane, plus immediate completion and reduced motion.
+    for name, width, mode, motion, open_from_rest, expected_cap in (
+        ("open", 1000, "delayed", "no-preference", True, 78),
+        ("narrow", 420, "delayed", "no-preference", False, 86),
+        ("immediate", 1000, "immediate", "no-preference", False, 78),
+        ("reduced", 420, "delayed", "reduce", False, 86),
+    ):
+        page = browser.new_page(viewport={"width": width, "height": 900}, reduced_motion=motion)
+        # Install before navigation so even the first immediate-body frame counts.
+        page.add_init_script("""
+          window.__ownerWidthFrames = [];
+          function sampleOwnerWidth() {
+            for (const key of ['e1', 'e2']) {
+              const element = document.querySelector('[data-conversation-view-key="'+key+'"] .chat-u');
+              if (!element) continue;
+              const bounds = element.getBoundingClientRect();
+              const wrapper = element.closest('[data-conversation-view-key]').getBoundingClientRect();
+              const opacity = Number(getComputedStyle(element).opacity);
+              const thread = element.closest('[data-conversation-thread]').getBoundingClientRect();
+              if (bounds.width && opacity > 0 && bounds.bottom > thread.top && bounds.top < thread.bottom) window.__ownerWidthFrames.push({key, width:bounds.width,
+                right:bounds.right, parentRight:wrapper.right, parentWidth:wrapper.width, opacity,
+                maxWidth:parseFloat(getComputedStyle(element).maxWidth),
+                active:!!element.closest('.skeleton-region[data-active]')});
+            }
+            if (!window.__stopOwnerWidth) requestAnimationFrame(sampleOwnerWidth);
+          }
+          requestAnimationFrame(sampleOwnerWidth);
+        """)
+        page.goto(url + "?reader=1&owner-width=" + mode + ("&reader-rest=1" if open_from_rest else ""))
+        if open_from_rest:
+            page.evaluate("window.__readerState('opened')")
+        for navigation in ([name, "reload"] if name == "open" else [name]):
+            if navigation == "reload":
+                page.reload()
+                page.evaluate("window.__readerState('opened')")
+            if mode == "delayed":
+                page.wait_for_selector('[data-conversation-view-key="e1"] .skeleton[data-entering]')
+                page.evaluate("window.__releaseOwnerBody()")
+            if motion != "reduce" and mode == "delayed":
+                page.wait_for_function("window.__ownerWidthFrames.some(frame => frame.key === 'e1' && frame.active && frame.opacity > .5)")
+                if navigation == "open":
+                    page.screenshot(path=str(output / "implementation-owner-width-during-fade.png"))
+            page.wait_for_function("window.__ownerWidthFrames.filter(frame => frame.key === 'e1' && !frame.active).length >= 3")
+            frames = page.evaluate("window.__ownerWidthFrames")
+            (output / ("implementation-owner-width-" + navigation + "-frames.json")).write_text(json.dumps(frames, indent=2))
+            if navigation == "open":
+                page.screenshot(path=str(output / "implementation-owner-width-settled.png"))
+            short = [frame for frame in frames if frame["key"] == "e1"]
+            settled = [frame for frame in short if not frame["active"]]
+            active = [frame for frame in short if frame["active"]]
+            assert short and settled, (navigation, frames)
+            if motion != "reduce" and mode == "delayed":
+                assert active, (navigation, frames)
+            assert 0 < settled[-1]["parentWidth"] <= width, (navigation, settled[-1])
+            assert settled[-1]["parentRight"] <= width + 1, (navigation, settled[-1])
+            final_width = settled[-1]["width"]
+            for frame in frames:
+                assert abs(frame["right"] - frame["parentRight"]) < 1, (navigation, frame)
+                assert frame["width"] <= frame["parentWidth"] * expected_cap / 100 + 1, (navigation, frame)
+                assert frame["maxWidth"] == expected_cap, (navigation, frame)
+                if frame["key"] == "e1":
+                    assert abs(frame["width"] - final_width) < 1, (navigation, frame, final_width)
+                    assert frame["width"] < frame["parentWidth"] * .65, (navigation, frame)
+            assert page.locator('[data-conversation-view-key="e3"] .chat-system').inner_text().startswith("Chief")
+            proof.append({"case": navigation, "paneWidth": settled[-1]["parentWidth"], "bubbleWidth": final_width,
+                          "activeFrames": len(active), "settledFrames": len(settled)})
+        page.evaluate("window.__stopOwnerWidth=true")
+        page.close()
+    proof.append({"seconds": round(time.perf_counter() - started, 3), "navigations": 5, "newHosts": 0})
+    (output / "implementation-owner-width-proof.json").write_text(json.dumps(proof, indent=2))
+    print("OWNER_WIDTH_PROOF " + json.dumps(proof), flush=True)
+
+
 def _bounded_reader(browser, url):
     page = browser.new_page(viewport={"width": 1000, "height": 900})
     page.goto(url + "?reader=1")
     page.wait_for_function("() => document.querySelectorAll('[data-conversation-view-key]').length > 0")
     page.wait_for_function("() => document.querySelector('[data-conversation-thread]')?.textContent.includes('Owner answer 2000.')")
-    assert page.locator('[data-conversation-row="agent_message"]').count() <= 150
+    # What the reader retains is what is drawn. One bound, not two: a row that is
+    # held but not drawn has to claim a height it has not measured, and that is what
+    # made the thread change size under a gesture.
+    assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
     assert page.evaluate("() => window.__viewCalls.every(url => !url.includes('/events?') && (!url.includes('/tail?') || url.includes('/view/tail?')))")
     before = page.evaluate("() => window.__viewCalls.filter(url => url.includes('/view/pages')).length")
     page.locator('[data-conversation-thread]').evaluate("node => {node.scrollTop=0;node.dispatchEvent(new Event('scroll'));}")
     page.wait_for_function("before => window.__viewCalls.filter(url => url.includes('/view/pages')).length > before", arg=before)
     assert page.locator('[data-conversation-view-key]').count() <= 300
-    assert page.locator('[data-conversation-row="agent_message"]').count() <= 150
+    assert page.locator('[data-conversation-row="agent_message"]').count() <= 300
     page.evaluate("() => window.__readerState('rest')")
     page.wait_for_function("() => !document.querySelector('[data-conversation-thread]')")
     assert page.locator('[data-conversation-view-key]').count() == 0
@@ -1978,6 +2092,7 @@ def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        _owner_width_frames(browser, urls[0])
         _conversation_repairs(browser, urls[0])
         _projected_visual_relationships(browser, urls[0])
         _bounded_reader(browser, urls[0])

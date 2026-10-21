@@ -5,7 +5,6 @@ import type { ConversationViewItem, ConversationViewPage, ConversationViewSnapsh
 import { VIEW_PROJECTION_VERSION, VIEW_PROTOCOL_VERSION } from './contracts';
 export const READER_ITEMS = 300;
 export const READER_BODY_BYTES = 512 * 1024;
-export const DOM_ITEMS = 150;
 const timeline: ViewHistoryScope = { kind: 'timeline', key: null };
 const encoder = new TextEncoder();
 const byteSizes = new WeakMap<ConversationViewItem, number>();
@@ -41,17 +40,32 @@ export class ConversationViewReader {
     private releaseSource: () => void = () => { };
     private abort = new AbortController();
     private generation = 0;
-    /** Invalidates rendered bodies, independently of ordinary stream reconnects. */
-    contentGeneration = $state(0);
-    private replaceHistory(): void {
+    /** Everything held is suspect, so read it all again - but keep showing it.
+     *
+     * What the reader is looking at stays true until something truer arrives. Taking it
+     * away first leaves them watching an empty conversation for as long as the re-read
+     * takes, and if the re-read never lands they are left with nothing at all. The
+     * replacement happens in one write, when the replacement exists.
+     *
+     * An ordinary reconnect does not even come here. The stream is torn down once per
+     * page of scroll-back by design, so treating its snapshot as a new conversation
+     * threw the reader's history away every time they scrolled back. */
+    private rereadHistory(): void {
+        this.discardedBodies++;
         this.cancelPages();
         this.pageQueue = Promise.resolve();
-        this.status = null;
-        this.pages = [];
         this.coverage = 0;
-        this.contentGeneration++;
+        this.wholeHistoryIsSuspect = true;
         this.revision++;
     }
+    private wholeHistoryIsSuspect = false;
+    /** Counts the times the bodies drawn in the page stopped being true.
+     *
+     * Diagnostic output expires, and a runtime that goes away takes its output with
+     * it. What a row has already read is then wrong and has to be read again. This
+     * says so without anything being unmounted: a cache is not what a reader is
+     * looking at, and dropping one lets the row show the truth rather than a blank. */
+    discardedBodies = $state(0);
     private retry: ReturnType<typeof setTimeout> | null = null;
     private disposed = false;
     private reconnecting: Promise<void> | null = null;
@@ -101,6 +115,37 @@ export class ConversationViewReader {
     private checkPage(page: ConversationViewPage): void {
         if (page.conversation_id !== this.id || page.lens !== this.lens || page.protocol_version !== VIEW_PROTOCOL_VERSION || page.projection_version !== VIEW_PROJECTION_VERSION || page.items.length > 100 || page.body_bytes > 128 * 1024)
             throw new Error('Conversation view version or bounds changed');
+    }
+    /** Take a snapshot as the truth about the range it covers, and nothing beyond it.
+     *
+     * One arrives on every reconnect, and the stream reconnects once per page of
+     * scroll-back, so reading it as the truth about the whole timeline threw away
+     * everything the reader had scrolled back to admit. Items inside its range that it
+     * does not carry are gone. Items outside it are untouched. */
+    private admitSnapshot(page: ConversationViewPage): void {
+        // A page that names nothing older and nothing newer is the whole scope, so it
+        // is the truth about all of it, including what it leaves out.
+        if (page.older === null && page.newer === null) {
+            this.accept(page, true);
+            return;
+        }
+        const first = page.items[0]?.order;
+        const last = page.items.at(-1)?.order;
+        if (first !== undefined && last !== undefined) {
+            const key = scopeKey(page.scope);
+            const covered = (order: { sequence: number; slot: number }): boolean =>
+                (order.sequence > first.sequence || (order.sequence === first.sequence && order.slot >= first.slot))
+                && (order.sequence < last.sequence || (order.sequence === last.sequence && order.slot <= last.slot));
+            this.pages = this.pages.map(held => scopeKey(held.scope) === key
+                ? { ...held, items: held.items.filter(item => !covered(item.order)) }
+                : held);
+        }
+        this.accept(page, false);
+    }
+    /** Diagnostics that expired take every body read from them with them. */
+    private noteStatus(status: ConversationViewStatus): void {
+        if (status.diagnostics_expired && this.status?.diagnostics_expired !== true) this.discardedBodies++;
+        this.status = status;
     }
     private accept(page: ConversationViewPage, replace: boolean, direction: 'older' | 'newer' = 'older'): void {
         this.checkPage(page);
@@ -196,9 +241,14 @@ export class ConversationViewReader {
                 try {
                     const value = JSON.parse((event as MessageEvent<string>).data) as ConversationViewSnapshot;
                     this.checkPage(value.page);
-                    this.replaceHistory();
-                    this.accept(value.page, true);
-                    this.status = value.status;
+                    // A reconnect's snapshot is the newest page of a conversation already
+                    // on screen. Merge it. Nothing about identity changed.
+                    if (this.wholeHistoryIsSuspect) {
+                        this.wholeHistoryIsSuspect = false;
+                        this.pages = [];
+                    }
+                    this.admitSnapshot(value.page);
+                    this.noteStatus(value.status);
                     this.coverage = value.coverage.through_sequence;
                     if (this.restoring && this.initialAnchor) {
                         const cursor: ViewPageCursor = { projection_version: VIEW_PROJECTION_VERSION, lens: this.lens, scope: timeline, order: { ...this.initialAnchor.order, slot: this.initialAnchor.order.slot + 1 } };
@@ -220,7 +270,7 @@ export class ConversationViewReader {
                         throw new Error('Conversation view gap');
                     const epochChanged = this.status !== null && this.status.runtime_epoch !== value.status.runtime_epoch;
                     if (epochChanged) {
-                        this.replaceHistory();
+                        this.rereadHistory();
                         source.close();
                         this.source = null;
                         this.retry = setTimeout(() => { this.retry = null; void this.connect().catch(() => undefined); }, 0);
@@ -231,7 +281,7 @@ export class ConversationViewReader {
                         return;
                     }
                     const stoppedChanged = this.status?.stopped_without_ending !== value.status.stopped_without_ending;
-                    this.status = value.status;
+                    this.noteStatus(value.status);
                     this.coverage = value.coverage.through_sequence;
                     if (this.transcript && (value.upserts.length > 0 || value.removed_keys.length > 0 || value.scope_changes.some(change => change.removed_keys.length > 0) || stoppedChanged)) {
                         const updates = new Map(value.upserts.map(item => [item.key, item]));
@@ -270,11 +320,11 @@ export class ConversationViewReader {
                     ready();
                 }
                 catch (error) {
-                    this.replaceHistory();
+                    this.rereadHistory();
                     fail(error);
                 }
             });
-            source.addEventListener('reset', () => { if (!active()) return; this.replaceHistory(); fail(new Error('Conversation view reset')); });
+            source.addEventListener('reset', () => { if (!active()) return; this.rereadHistory(); fail(new Error('Conversation view reset')); });
             source.onerror = () => fail(new Error('Conversation disconnected'));
             const abort = () => { source.close(); if (!settled) {
                 settled = true;

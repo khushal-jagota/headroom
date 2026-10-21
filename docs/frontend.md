@@ -222,7 +222,7 @@ One screen per part of the system:
   stay intact in requests.
 
   Steps and Artifacts are closed bands below the live card. Steps retain their circular progress marks. Each step opens its own
-  text. Future stages and a separate historical record do not appear.
+  text. Future stages appear with their upcoming progress marks and empty text. A separate historical record does not appear.
   Artifacts remain accessible even when no inline link exists,
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
@@ -588,11 +588,25 @@ hand-rolling the same shapes per screen. Each does one job:
   over to the error line or a skeleton. Each screen selects a named shape: rows,
   document, block, conversation, or inline. `loadingText` remains an accessible
   status announcement. Data-empty states ("No ideas yet.") stay in the screens.
-  `SkeletonRegion` owns the shared shapes and cross-fade. Layouts size full panes.
-  Intrinsic content uses a temporary reservation derived from the skeleton shape,
-  then returns to natural height. The reservation does not predict the content.
-  The three skeleton tokens control the whisper fills and fade duration. Reduced
-  motion removes the fade. Worker activity marks remain separate.
+  `SkeletonRegion` owns the shared shapes and cross-fade, including inline values.
+  Waits reserve their current space immediately and show a skeleton after 200ms,
+  only if work remains pending. The stable status node announces after 100ms;
+  busy state follows actual work immediately. Ready content mounts at once and
+  fades in over 300ms, including cached content and initial idle mounts. Existing
+  child opacity entrances keep their own cadence. A shown
+  skeleton fades out from its actual opacity without a minimum hold.
+  Layouts size full panes. Intrinsic content keeps its shape reservation during
+  the delay and any skeleton exit, then returns to natural height. This can still
+  move following content; the reservation does not predict the content.
+  Four skeleton tokens control the whisper fills, fade duration, and visual delay.
+  The mounted region reads the inherited delay; the announcement uses half of it.
+  Flow content keeps its transparent wrappers throughout the fade so flex/grid
+  gaps and margins stay put. The fade reaches painted element roots through
+  transparent Markdown hosts and keeps their existing transform animations.
+  Flow snippets supply element roots; raw text uses an inline region.
+  Reduced motion keeps the delay and replaces immediately, accepting one static
+  skeleton frame when completion follows appearance. Changing that preference
+  during a fade clears the transition. Worker activity marks remain separate.
   Action buttons keep their own busy labels. The model picker's Refresh button
   says “Reading…” and exposes `aria-busy` during its explicit refresh. This label
   describes the action, not a region without content, so it is outside skeleton scope.
@@ -624,6 +638,9 @@ hand-rolling the same shapes per screen. Each does one job:
   Messages that contain only attachments use that same path. A file-bearing message that
   still waits for its durable row keeps its bytes in browser database storage, so a reload
   restores it across the full supported file-size range.
+  Saved message rows preserve their column layout during a deferred body's placeholder
+  fade. Owner bubbles keep their content width and right alignment from their first
+  visible frame through the end of the fade.
   Its delivery control defaults to Steer and also offers Queue and Send now. A held row
   names why Panels queued a steer fallback.
 
@@ -644,13 +661,17 @@ hand-rolling the same shapes per screen. Each does one job:
   is read only: the actions go, the picker stays, and it is the way back to the current
   conversation.
 
-  The transcript keeps a settled visible paragraph or message as its position reference.
-  Rows, folds, late images, Markdown previews, and viewport size changes share one position
-  decision after layout. A reader who follows the end keeps the newest content in sight.
-  A reader who scrolls back keeps the same visible text. If every saved reference disappears,
-  the view keeps the nearest valid scroll position. Latest reflects the actual content,
-  separately from the answer room below a sent message. Reply content consumes that room.
-  A resize counts the reply already present and cannot recreate exhausted room.
+  The transcript uses native browser scroll behavior. A reader who follows the end
+  keeps the newest content in sight. A reader who scrolls back leaves that mode.
+  The browser holds the top line when it can. If content above or within the view
+  grows, text below it can move. Panels does not restore an exact paragraph offset.
+  Opening the conversation, sending a message, and Latest each place the view once.
+  An explicit send places the sent prompt near the top, even during a layer resize.
+  If a shorter transcript clamps the view to the end, later content follows the end.
+  Latest reflects the actual content, separately from the answer room below a sent
+  message. Reply content consumes that room. A resize counts the reply already present
+  and cannot recreate exhausted room. Exact text preservation during image growth
+  is not a requirement for this release. Further conversation refinement is separate work.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and

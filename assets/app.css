@@ -6155,12 +6155,15 @@ details:not([open]) > summary > .sprint-workspace-chevron {
        skeleton caught half way in never flashes to full before it goes. */
 .skeleton[data-entering]{animation:skeleton-in calc(var(--skeleton-fade) * .6) ease-in-out}
 .skeleton[data-leaving]{animation:skeleton-out calc(var(--skeleton-fade) * 1.3) ease-in-out forwards}
+/* Flow wrappers keep this CSS animation even with display:contents. It supplies
+   the painted roots' timeline; animationend clears arriving and disconnects the
+   flow observer. Removing it or replacing it with a transition breaks cleanup. */
 .resource-arriving{animation:skeleton-in var(--skeleton-fade) ease-in-out}
 @keyframes skeleton-in{from{opacity:0}to{opacity:1}}
 @keyframes skeleton-out{from{opacity:var(--skeleton-from,1)}to{opacity:0}}
 
 /* 5 — an inline wait: a hole one or two lines tall inside something already drawn.
-       No dissolve, no delay, one bar where the words will be. */
+       No edge dissolve; the bar shares the delay and transitions of other shapes. */
 .skeleton-inline{display:inline-block;vertical-align:middle;height:10px;border-radius:var(--radius-sm);
   background:var(--skeleton-line)}
 
@@ -6172,7 +6175,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
    with the outgoing layer. Fill regions receive their size from their parent. */
 .skeleton-region[data-active]{min-height:var(--skeleton-reservation)}
 .skeleton-region:not([data-active]):not(.skeleton-region--fill),
-.skeleton-content:not(.resource-state):not(.resource-arriving){display:contents}
+.skeleton-content:not(.resource-state):not(.skeleton-content--inline){display:contents}
 .skeleton-region--fill{height:100%;min-height:0;flex:1;min-width:0}
 .skeleton-region--fill[data-active]{min-height:0}
 .skeleton-region--fill > .skeleton-content{display:flex;flex-direction:column;overflow:auto}

@@ -16,8 +16,9 @@
     type WorkspaceAddress,
     type WorkspaceSelection
   } from "./lib/workspaceAddress";
-  import { canonicalShellHash, parseConfigSelection } from "./lib/shellRouting";
-  import { parseUsageSelection, type UsageTab } from "./lib/usageAddress";
+  import { canonicalShellHash } from "./lib/shellRouting";
+  import { parseUtilityPath } from "./lib/utilityAddress";
+  import type { UsageTab } from "./lib/usageAddress";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import ReleaseUpdate from "./components/ReleaseUpdate.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
@@ -141,32 +142,39 @@
       }
       return workspaceRoute(address);
     }
+    // A utility screen's path means the same thing here and in the Workspace pane, so
+    // both roots read it through the one module rather than keeping a copy of the rules.
     if (name === "settings") {
-      params.section = segments[1] || "config";
-      const detail = segments.slice(2);
-      if (params.section !== "config") {
-        if (!["notifications", "scheduled-tasks"].includes(params.section) || detail.length) {
-          return { name: "unknown", params: {}, key: "unknown" };
-        }
-      } else {
-        const config = parseConfigSelection(detail);
-        if (config === null) return { name: "unknown", params: {}, key: "unknown" };
-        params.roleKind = config.roleKind;
-        if (config.roleId) params.id = config.roleId;
+      const placement = parseUtilityPath("settings", segments.slice(1));
+      if (placement === null || placement.utility !== "settings") {
+        return { name: "unknown", params: {}, key: "unknown" };
       }
+      params.section = placement.settings.section;
+      params.roleKind = placement.settings.roleKind;
+      if (placement.settings.roleId) params.id = placement.settings.roleId;
     }
     if (name === "backends") {
-      const usage = parseUsageSelection(segments.slice(1));
-      if (usage === null) return { name: "unknown", params: {}, key: "unknown" };
-      params.tab = usage.tab;
-      params.roleKind = usage.roleKind;
-      if (usage.roleId) params.id = usage.roleId;
+      const placement = parseUtilityPath("usage", segments.slice(1));
+      if (placement === null || placement.utility !== "usage") {
+        return { name: "unknown", params: {}, key: "unknown" };
+      }
+      params.tab = placement.usage.tab;
+      params.roleKind = placement.usage.roleKind;
+      if (placement.usage.roleId) params.id = placement.usage.roleId;
     }
     // Usage owns its tab state so period/provider choices survive tab navigation.
     // Its Config detail keys live inside the page, beside the shared editor mount.
     const screenKey = name === "backends" ? "backends" : segments.join("/") || "workspace";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
+
+  // The popover sends the reader to the Feedback list. From inside the Workspace that
+  // list is the pane, so following it does not throw the Workspace away.
+  let feedbackListHref = $derived(
+    route.name === "workspace" && route.workspace
+      ? workspaceAddress({ kind: "utility", utility: "feedback", path: [] }, route.workspace.view)
+      : "#/feedback"
+  );
 
   function currentNav(name: string): boolean {
     if (name === "workspace") return route.name === "workspace";
@@ -340,7 +348,7 @@
     <ShellStatus
       connectionState={$connectionStatus}
     />
-    <FeedbackCapture context={currentFeedbackContext} openCount={feedbackCount.data?.open_count || 0} onSaved={showSavedToast} />
+    <FeedbackCapture context={currentFeedbackContext} openCount={feedbackCount.data?.open_count || 0} viewHref={feedbackListHref} onSaved={showSavedToast} />
   </div>
   {#if moreOpen}
     <button

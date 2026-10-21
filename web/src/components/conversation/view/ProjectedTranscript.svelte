@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { untrack } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import type { ConversationViewReader } from '../../../lib/conversation/view/reader.svelte';
-  import { compareItems, DOM_ITEMS } from '../../../lib/conversation/view/reader.svelte';
+  import { compareItems } from '../../../lib/conversation/view/reader.svelte';
   import type { ConversationViewItem, ViewHistoryScope, ViewPageCursor } from '../../../lib/conversation/view/contracts';
   import type { BackendModel } from '../../../lib/conversation/wire';
   import TurnAnchor from '../TurnAnchor.svelte';
@@ -15,7 +16,6 @@
       ownSenderLabel: string | null;
       livenessPulse: number;
   } = $props();
-  let visible = new SvelteSet<string>();
   let openRows = $derived(reader.openTools);
   let wholeDetails = new SvelteMap<string, string>();
   // Only a deferred ending needs a body read to discover that it has no visual
@@ -73,17 +73,15 @@
       }
       return result;
   });
-  const mounted = $derived(new Set(items.filter(item => presentation.has(item.key) && visible.has(item.key)).slice(-(DOM_ITEMS - 1)).map(item => item.key)));
+  // Bodies that stopped being true are dropped where they are held, so the rows that
+  // read them read again. Nothing is unmounted to achieve it.
+  $effect(() => { reader.discardedBodies; untrack(() => { wholeDetails.clear(); emptyEndings.clear(); }); });
   $effect(() => {
       const versions = new Map(items.flatMap(item => item.kind === 'row' && item.row_kind === 'turn_ended' && item.body.kind === 'deferred' ? [[item.key, endingVersion(item.body.reference)] as const] : []));
       for (const [key, version] of emptyEndings)
           if (versions.get(key) !== version)
               emptyEndings.delete(key);
   });
-  function onVisible(key: string, value: boolean): void { if (value)
-      visible.add(key);
-  else
-      visible.delete(key); }
   // Tool outputs are expendable. Logical disclosure keys survive page admission changes.
   $effect(() => { let bytes = 0; for (const [key, value] of [...wholeDetails].reverse()) {
       bytes += value.length * 2;
@@ -104,15 +102,23 @@
       observer.observe(node);
       return { destroy: () => observer.disconnect(), update: (next: typeof request) => { current = next; observer.unobserve(node); observer.observe(node); } };
   }
+  /** Ask for this head's own bounded scope, but only once it is near the reader.
+   *
+   * Every head in the retained window asking at once would be up to a hundred page
+   * reads for a thread nobody has scrolled to yet. This is the only thing the
+   * transcript ever needed visibility for, so it is the only thing that still has it. */
   function demand(node: HTMLElement, item: ConversationViewItem) {
-      if ((item.kind === 'turn' || item.kind === 'work_group')) {
-          const scope: ViewHistoryScope = { kind: item.kind === 'turn' ? 'turn' : 'work_group', key: item.key };
-          if (reader.lens === 'full' || reader.isExpanded(scope)) {
-              if (!reader.pages.some(page => page.scope.kind === scope.kind && page.scope.key === scope.key))
-                  void reader.expand(scope, true);
-          }
-      }
-      return { destroy: () => { } };
+      if (item.kind !== 'turn' && item.kind !== 'work_group') return { destroy: () => { } };
+      const scope: ViewHistoryScope = { kind: item.kind === 'turn' ? 'turn' : 'work_group', key: item.key };
+      const ask = (): void => {
+          if (reader.lens !== 'full' && !reader.isExpanded(scope)) return;
+          if (reader.pages.some(page => page.scope.kind === scope.kind && page.scope.key === scope.key)) return;
+          void reader.expand(scope, true);
+      };
+      const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting) ask(); },
+          { root: node.closest('[data-conversation-thread]'), rootMargin: '100% 0px' });
+      observer.observe(node);
+      return { destroy: () => observer.disconnect() };
   }
 </script>
 <div class="c2-transcript" data-conversation-transcript>
@@ -125,7 +131,7 @@
       {#if page.older}<div use:edge={{scope:page.scope,cursor:page.older,direction:'older'}} data-conversation-history-edge="older" aria-hidden="true"></div>{/if}
     {/each}
     {#if item.kind!=='row'||presentation.has(item.key)}
-    <ViewItem itemKey={item.key} active={presentation.has(item.key)?mounted.has(item.key):visible.has(item.key)} marker={!presentation.has(item.key)} assistantContinuation={presentation.get(item.key)?.assistantContinuation??false} tool={item.kind==='row'&&item.row_kind==='tool_call'} toolContinuation={presentation.get(item.key)?.toolContinuation??false} {onVisible}>
+    <ViewItem itemKey={item.key} marker={!presentation.has(item.key)} assistantContinuation={presentation.get(item.key)?.assistantContinuation??false} tool={item.kind==='row'&&item.row_kind==='tool_call'} toolContinuation={presentation.get(item.key)?.toolContinuation??false}>
       {#if item.kind==='turn'}
         <div use:demand={item}>
           <TurnAnchor settled={item.settled} stopped={item.stopped} startedAtUnixMilliseconds={item.started_at_unix_milliseconds} ending={item.ending} isLatest={item.is_latest} durationSeconds={item.duration_seconds} toolCallCount={item.tool_call_count} foldedMessageCount={item.folded_message_count} expanded={reader.lens==='full'||reader.isExpanded({kind:'turn',key:item.key})} {livenessPulse} onToggle={reader.lens==='full'?undefined:()=>void reader.expand({kind:'turn',key:item.key},!reader.isExpanded({kind:'turn',key:item.key}))}/>
@@ -144,7 +150,7 @@
     {/each}
   {/each}
   {#if reader.lens==='full'&&reader.status?.live_output}
-    <ViewItem itemKey="live-output" active={visible.has('live-output')} marker={reader.status.live_output.byte_count===0} {onVisible}><LiveOutput {reader}/></ViewItem>
+    <ViewItem itemKey="live-output" marker={reader.status.live_output.byte_count===0}><LiveOutput {reader}/></ViewItem>
   {/if}
   {#if reader.status?.stopped_without_ending}<div class="acp-turn-end" data-conversation-row="turn_stopped">{TURN_STOPPED_SENTENCE}</div>{/if}
   {#each reader.pages as page (`${page.scope.kind}:${page.scope.key}`)}
