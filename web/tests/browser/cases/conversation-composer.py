@@ -12,6 +12,23 @@ def run(browser, urls):
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
     )
 
+    def _unsent_words_outlive_a_rebuild(page, url):
+        """Words typed and not sent are the one thing retrying cannot recover.
+
+        Anything above the composer can rebuild it - a brief disconnection did, on the
+        owner's machine - so the draft is kept outside the component that draws it.
+        """
+        page.goto(url + "?draft=outlives-a-rebuild", wait_until="domcontentloaded")
+        page.locator(INPUT).fill("")
+        page.locator(INPUT).type("half a thought, unsent")
+        page.wait_for_timeout(50)
+        page.goto(url + "?draft=outlives-a-rebuild", wait_until="domcontentloaded")
+        assert page.locator(INPUT).input_value() == "half a thought, unsent"
+        page.locator(INPUT).fill("")
+        page.wait_for_timeout(50)
+        page.goto(url + "?draft=outlives-a-rebuild", wait_until="domcontentloaded")
+        assert page.locator(INPUT).input_value() == ""
+
     def settled(page):
         page.evaluate(
             "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
@@ -94,6 +111,7 @@ def run(browser, urls):
     page.add_init_script(
         "Object.defineProperty(navigator, 'mediaDevices', {value:{getUserMedia:async()=>{throw Error('not used')}}});"
     )
+    _unsent_words_outlive_a_rebuild(page, [__file__, *urls][1])
     for width in [980, 390]:
         page.set_viewport_size({"width": width, "height": 800})
         for state in [

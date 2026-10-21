@@ -41,6 +41,7 @@ const indexPath = join(scratchRoot, `composer-redesign-index-${process.pid}.html
 <main data-conversation-pane style="--conversation-target:32px;--conversation-glyph:22px">
   <div class="thread">The conversation remains above the composer.</div>
   <ConversationComposer conversationId="fixture" conversationExists backendKey="claude"
+    draftKey={new URLSearchParams(location.search).get("draft") ?? "composer-fixture-" + crypto.randomUUID()}
     {running} {ask} {heldPromptRows} {errorNote} supportsSteer
     current={{model:"opus",reasoningEffort:"high"}}
     models={[{model_id:"opus",display_name:"Opus with a deliberately long model display name",enabled:true},{model_id:"sonnet",display_name:"Sonnet",enabled:true}]}

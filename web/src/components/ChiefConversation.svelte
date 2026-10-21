@@ -123,6 +123,9 @@
     <OrchestratorChildren navigationErrorHandledByParent principal={{ kind: "chief", id: "chief" }} />
   </section>
   {#snippet conversation()}
+<!-- A failed read is a line next to the conversation, not a screen in place of it.
+     Replacing it takes the transcript, and takes words somebody typed and has not
+     sent with it - which no amount of retrying brings back. -->
 {#if navigation.state.error}
   <div class="chief-conversation-resource" data-chief-conversation-error>
     {#if showRequestErrorLine}<ErrorLine error={navigation.state.error} />{/if}
@@ -135,7 +138,7 @@
       Retry
     </button>
   </div>
-{:else}
+{/if}
   <LiveConversation
     ownerLoading={!chief}
     bind:conversationState
@@ -148,7 +151,6 @@
     sendMessage={sendToTheChief}
     onNewConversation={newConversation}
   />
-{/if}
 
   {/snippet}
 </OrchestratorWorkspace>

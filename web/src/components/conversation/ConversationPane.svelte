@@ -8,7 +8,6 @@
    * thread give up their height and the rest bar says what happened last, and peeking and
    * opening give it back. The same viewport, composer, and draft survive every move.
    */
-  import SkeletonRegion from "../SkeletonRegion.svelte";
   import type {ConversationViewReader,ViewReaderAnchor} from '../../lib/conversation/view/reader.svelte';
   import {progressFor,restFor} from '../../lib/conversation/view/presentation';
   import type { Snippet } from "svelte";
@@ -81,6 +80,7 @@
     reader = null,
     viewAnchor = $bindable(null),
     transcriptVisible = true,
+    draftKey,
     transcriptLoading = false,
     onSend,
     onStop,
@@ -98,6 +98,7 @@
     reader?: ConversationViewReader | null;
     viewAnchor?: ViewReaderAnchor | null;
     transcriptVisible?: boolean;
+    draftKey: string;
     transcriptLoading?: boolean;
     conversationId: string;
     backendKey?: ConversationBackendKey | null;
@@ -463,8 +464,10 @@
   </div>
 
   {#if conversationState !== "rest" && transcriptVisible}
-  <div class="conversation-transcript-region">
-  <SkeletonRegion shape="conversation" layout="fill" loading={transcriptLoading} loadingText="Loading conversation...">
+  <!-- The conversation is never taken off the screen to say that it is loading. A
+       region that removes its children while it waits removes the transcript the
+       reader is in, and with it everything the viewport knows about where they were. -->
+  <div class="conversation-transcript-region" aria-busy={transcriptLoading}>
   <ConversationViewport
     bind:viewAnchor
     {reader}
@@ -479,7 +482,6 @@
     {conversationState}
     {emptyState}
   />
-  </SkeletonRegion>
   </div>
 
   {/if}
@@ -505,6 +507,7 @@
     </div>
   {:else}
     <ConversationComposer
+      {draftKey}
       conversationId={conversationExists ? conversationId : null}
       {backendKey}
       {conversationExists}

@@ -880,6 +880,7 @@
   {reader}
   transcriptLoading={ownerLoading || opening || (reader?.loading === true && reader.status === null)}
   bind:viewAnchor
+  draftKey={persistenceKey}
   transcriptVisible={documentIsVisible}
   {rows}
   {visibleRows}
