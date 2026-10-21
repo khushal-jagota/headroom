@@ -20,6 +20,12 @@
   /* The thread's flex alignment for rows rendered through display: contents
      transcript containers. */
   div { display: flex; flex-direction: column; }
+  /* An active flow skeleton temporarily owns the row's layout. Keep its children
+     in the same flex column until it returns to display: contents after the fade. */
+  div > :global(.skeleton-region[data-active]:not(.skeleton-region--fill):not(.skeleton-region--inline)) {
+    display: flex;
+    flex-direction: column;
+  }
   /* A structural head takes no height and no share of the thread's flex gap. It
      requests its own bounded scope from the action inside it. */
   .marker { height: 0; margin-block-start: calc(var(--space-5) * -1); }

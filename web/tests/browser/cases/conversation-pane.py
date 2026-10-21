@@ -1702,6 +1702,90 @@ def _run(browser, urls):
     print("conversation-pane-browser.test.mjs: all assertions passed")
 
 
+def _owner_width_frames(browser, url):
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    started = time.perf_counter()
+    output = Path(os.environ.get("PANELS_OWNER_WIDTH_ARTIFACT_DIR", os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp")))
+    output.mkdir(parents=True, exist_ok=True)
+    proof = []
+    # Reuse the real reader/pane host. This small set covers the slow fade on open,
+    # reload and a narrow pane, plus immediate completion and reduced motion.
+    for name, width, mode, motion, open_from_rest, expected_cap in (
+        ("open", 1000, "delayed", "no-preference", True, 78),
+        ("narrow", 420, "delayed", "no-preference", False, 86),
+        ("immediate", 1000, "immediate", "no-preference", False, 78),
+        ("reduced", 420, "delayed", "reduce", False, 86),
+    ):
+        page = browser.new_page(viewport={"width": width, "height": 900}, reduced_motion=motion)
+        # Install before navigation so even the first immediate-body frame counts.
+        page.add_init_script("""
+          window.__ownerWidthFrames = [];
+          function sampleOwnerWidth() {
+            for (const key of ['e1', 'e2']) {
+              const element = document.querySelector('[data-conversation-view-key="'+key+'"] .chat-u');
+              if (!element) continue;
+              const bounds = element.getBoundingClientRect();
+              const wrapper = element.closest('[data-conversation-view-key]').getBoundingClientRect();
+              const opacity = Number(getComputedStyle(element).opacity);
+              const thread = element.closest('[data-conversation-thread]').getBoundingClientRect();
+              if (bounds.width && opacity > 0 && bounds.bottom > thread.top && bounds.top < thread.bottom) window.__ownerWidthFrames.push({key, width:bounds.width,
+                right:bounds.right, parentRight:wrapper.right, parentWidth:wrapper.width, opacity,
+                maxWidth:parseFloat(getComputedStyle(element).maxWidth),
+                active:!!element.closest('.skeleton-region[data-active]')});
+            }
+            if (!window.__stopOwnerWidth) requestAnimationFrame(sampleOwnerWidth);
+          }
+          requestAnimationFrame(sampleOwnerWidth);
+        """)
+        page.goto(url + "?reader=1&owner-width=" + mode + ("&reader-rest=1" if open_from_rest else ""))
+        if open_from_rest:
+            page.evaluate("window.__readerState('opened')")
+        for navigation in ([name, "reload"] if name == "open" else [name]):
+            if navigation == "reload":
+                page.reload()
+                page.evaluate("window.__readerState('opened')")
+            if mode == "delayed":
+                page.wait_for_selector('[data-conversation-view-key="e1"] .skeleton[data-entering]')
+                page.evaluate("window.__releaseOwnerBody()")
+            if motion != "reduce" and mode == "delayed":
+                page.wait_for_function("window.__ownerWidthFrames.some(frame => frame.key === 'e1' && frame.active && frame.opacity > .5)")
+                if navigation == "open":
+                    page.screenshot(path=str(output / "implementation-owner-width-during-fade.png"))
+            page.wait_for_function("window.__ownerWidthFrames.filter(frame => frame.key === 'e1' && !frame.active).length >= 3")
+            frames = page.evaluate("window.__ownerWidthFrames")
+            (output / ("implementation-owner-width-" + navigation + "-frames.json")).write_text(json.dumps(frames, indent=2))
+            if navigation == "open":
+                page.screenshot(path=str(output / "implementation-owner-width-settled.png"))
+            short = [frame for frame in frames if frame["key"] == "e1"]
+            settled = [frame for frame in short if not frame["active"]]
+            active = [frame for frame in short if frame["active"]]
+            assert short and settled, (navigation, frames)
+            if motion != "reduce" and mode == "delayed":
+                assert active, (navigation, frames)
+            assert 0 < settled[-1]["parentWidth"] <= width, (navigation, settled[-1])
+            assert settled[-1]["parentRight"] <= width + 1, (navigation, settled[-1])
+            final_width = settled[-1]["width"]
+            for frame in frames:
+                assert abs(frame["right"] - frame["parentRight"]) < 1, (navigation, frame)
+                assert frame["width"] <= frame["parentWidth"] * expected_cap / 100 + 1, (navigation, frame)
+                assert frame["maxWidth"] == expected_cap, (navigation, frame)
+                if frame["key"] == "e1":
+                    assert abs(frame["width"] - final_width) < 1, (navigation, frame, final_width)
+                    assert frame["width"] < frame["parentWidth"] * .65, (navigation, frame)
+            assert page.locator('[data-conversation-view-key="e3"] .chat-system').inner_text().startswith("Chief")
+            proof.append({"case": navigation, "paneWidth": settled[-1]["parentWidth"], "bubbleWidth": final_width,
+                          "activeFrames": len(active), "settledFrames": len(settled)})
+        page.evaluate("window.__stopOwnerWidth=true")
+        page.close()
+    proof.append({"seconds": round(time.perf_counter() - started, 3), "navigations": 5, "newHosts": 0})
+    (output / "implementation-owner-width-proof.json").write_text(json.dumps(proof, indent=2))
+    print("OWNER_WIDTH_PROOF " + json.dumps(proof), flush=True)
+
+
 def _bounded_reader(browser, url):
     page = browser.new_page(viewport={"width": 1000, "height": 900})
     page.goto(url + "?reader=1")
@@ -2008,6 +2092,7 @@ def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        _owner_width_frames(browser, urls[0])
         _conversation_repairs(browser, urls[0])
         _projected_visual_relationships(browser, urls[0])
         _bounded_reader(browser, urls[0])

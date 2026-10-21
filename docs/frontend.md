@@ -641,6 +641,9 @@ hand-rolling the same shapes per screen. Each does one job:
   Messages that contain only attachments use that same path. A file-bearing message that
   still waits for its durable row keeps its bytes in browser database storage, so a reload
   restores it across the full supported file-size range.
+  Saved message rows preserve their column layout during a deferred body's placeholder
+  fade. Owner bubbles keep their content width and right alignment from their first
+  visible frame through the end of the fade.
   Its delivery control defaults to Steer and also offers Queue and Send now. A held row
   names why Panels queued a steer fallback.
 

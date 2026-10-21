@@ -2,6 +2,10 @@
 import type {ConversationViewItem,ConversationViewPage,ConversationViewRow,ConversationViewStatus,ViewPageCursor,ViewRowBody} from '../../src/lib/conversation/view/contracts';
 export function installConversationViewReaderFixture():void {
   const id='bounded-reader';
+  const ownerWidth=new URLSearchParams(location.search).get('owner-width');
+  const widthBody=JSON.stringify({kind:'prompt',sender_label:'owner',mode:'queue',sent_at_unix_milliseconds:1,content:[{piece:'text',text:'Short prompt.'}]});
+  let releaseOwnerBody: (()=>void)|null=null;
+  (window as any).__releaseOwnerBody=()=>releaseOwnerBody?.();
   const expiry=new URLSearchParams(location.search).has('expiry');
   let expired=false;
   let deferredExpired=false;
@@ -57,6 +61,11 @@ export function installConversationViewReaderFixture():void {
   }
   if(folds){status.turn_key='turn:14';status.stopped_without_ending=true;}
   function page(url:URL):ConversationViewPage{
+    if(ownerWidth){
+      const items:ConversationViewRow[]=[1,2,3].map(n=>({...item(n),row_kind:'prompt',body:{kind:'inline',value:{kind:'prompt',sender_label:n===3?'Chief':'owner',mode:'queue',sent_at_unix_milliseconds:n,content:[{piece:'text',text:n===2?'A long owner prompt retains its existing width limit. '.repeat(8):'Short prompt.'}]}}}));
+      items[0].body={kind:'deferred',reference:{body_id:'owner-width:1',version:'1',byte_count:widthBody.length,media_type:'application/json'}};
+      return{conversation_id:id,protocol_version:1,projection_version:1,lens:'focus',scope:{kind:'timeline',key:null},items,older:null,newer:null,body_bytes:0};
+    }
     if(expiry){
       const tool:ConversationViewRow={...item(1),row_kind:'tool_call',body:{kind:'inline',value:{kind:'tool_call',tool_call_id:'expiry-tool',title:'Read diagnostic',tool_kind:'read',detail:'Capped diagnostic',started_detail:'Capped diagnostic',capped_detail_sequence:2,status:'completed'}}};
       const pending:ConversationViewRow={...item(3),body:{kind:'deferred',reference:{body_id:'row:3',version:'1',byte_count:delayedBody.length,media_type:'application/json'}}};
@@ -84,6 +93,7 @@ export function installConversationViewReaderFixture():void {
   window.fetch=async(input,init)=>{
     const value=String(input);if(!value.startsWith('/api/conversation/'))return originalFetch(input,init);
     calls.push(value);const url=new URL(value,location.origin);
+    if(ownerWidth&&url.pathname.endsWith('/view/body/content'))return ownerWidth==='immediate'?new Response(widthBody):await new Promise<Response>(resolve=>{releaseOwnerBody=()=>resolve(new Response(widthBody));});
     if(expiry&&url.pathname.endsWith('/view/body/content')&&deferredExpired)return Response.json({error:{code:'diagnostic_expired',message:'Expired'}},{status:410});
     if(expiry&&url.pathname.endsWith('/view/body/content'))return await new Promise<Response>(resolve=>{completeBody=()=>resolve(new Response(delayedBody));});
     if(expiry&&url.pathname.endsWith('/events/2/detail'))return expired?Response.json({error:{code:'diagnostic_expired',message:'Expired'}},{status:410}):Response.json({detail:'Cached whole diagnostic'});
