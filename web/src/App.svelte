@@ -389,7 +389,7 @@
   <main class="shell-content">
     {#if isKnownRoute()}
       {#key route.key}
-        <div class="screen screen-enter">
+        <div class="screen" class:screen-enter={route.name !== "workspace"}>
           {#snippet selectedRoute()}
           {#if route.name === "day"}
             {#await import("./routes/DayRoute.svelte") then view}

@@ -71,11 +71,8 @@ def _catalogs(browser, url):
         request, response = pending_artifacts.pop(0)
         request.fulfill(json=response)
         expect(window.locator(":scope > .skeleton-region > .skeleton-content > [data-artifact-page] > [data-artifact-folder]")).to_have_count(1)
-        # The cold skeleton and arriving chips share one region, rather than adding
-        # a second outgoing block after the chips and changing the scroll geometry.
+        # Ready chips replace the cold placeholder without a second layout block.
         assert window.locator(":scope > .skeleton-region").count() == 1
-        expect(window.locator(':scope > .skeleton-region .skeleton[data-leaving]')).to_have_count(1)
-        assert window.locator(':scope > .skeleton-region .skeleton').evaluate("element => getComputedStyle(element).position") == "absolute"
         expect(window.locator(':scope > .skeleton-region .skeleton')).to_have_count(0)
         hold_artifacts = False
         window.locator("[data-artifact-folder]").click()
@@ -104,12 +101,11 @@ def _catalogs(browser, url):
         expect(page.locator('.artifact-pending-page .skeleton[data-entering]')).to_have_count(1)
         request, response = pending_artifacts.pop(0)
         overlay_box = page.locator('.artifact-pending-page').first.bounding_box()
+        assert overlay_box and overlay_box['height'] > 0
         request.fulfill(json=response)
         expect(window.locator('[data-artifact-chip="file134.md"]')).to_have_count(1)
-        expect(page.locator('.artifact-pending-page .skeleton[data-leaving]')).to_have_count(1)
-        assert window.locator('[data-artifact-page]').evaluate("element => getComputedStyle(element).animationName") == "skeleton-in"
-        assert page.locator('.artifact-pending-page').first.bounding_box() == overlay_box, (overlay_box, page.locator('.artifact-pending-page').first.bounding_box())
         expect(page.locator('.artifact-pending-page .skeleton')).to_have_count(0)
+        assert window.locator('[data-artifact-page]').evaluate("element => getComputedStyle(element).opacity === '1' && element.getAnimations({subtree:true}).length === 0")
         assert window.locator('[data-artifact-chip]').count() <= 60
         assert ("history",120) in requests and ("artifacts",80) in requests
         # Upward paging draws only above the retained page, never over its chips.
@@ -129,9 +125,8 @@ def _catalogs(browser, url):
         assert response["offset"] == 40
         request.fulfill(json=response)
         expect(window.locator('[data-artifact-chip="file040.md"]')).to_have_count(1)
-        expect(page.locator('.artifact-pending-page .skeleton[data-leaving]')).to_have_count(1)
-        assert page.locator('.artifact-pending-page').first.bounding_box() == overlay_box
         expect(page.locator('.artifact-pending-page .skeleton')).to_have_count(0)
+        assert window.locator('[data-artifact-page]').evaluate("element => getComputedStyle(element).opacity === '1' && element.getAnimations({subtree:true}).length === 0")
         # A different owner must never inherit the held page, even if its read fails.
         page.evaluate("window.__catalogOwner('t_other')")
         expect(window.locator('[data-artifact-chip]')).to_have_count(0)
@@ -1712,7 +1707,7 @@ def _owner_width_frames(browser, url):
     output = Path(os.environ.get("PANELS_OWNER_WIDTH_ARTIFACT_DIR", os.environ.get("PANELS_E2E_FAILURE_DIR", "/tmp")))
     output.mkdir(parents=True, exist_ok=True)
     proof = []
-    # Reuse the real reader/pane host. This small set covers the slow fade on open,
+    # Reuse the real reader/pane host for first-frame visibility and width on open,
     # reload and a narrow pane, plus immediate completion and reduced motion.
     for name, width, mode, motion, open_from_rest, expected_cap in (
         ("open", 1000, "delayed", "no-preference", True, 78),
@@ -1732,10 +1727,16 @@ def _owner_width_frames(browser, url):
               const wrapper = element.closest('[data-conversation-view-key]').getBoundingClientRect();
               const opacity = Number(getComputedStyle(element).opacity);
               const thread = element.closest('[data-conversation-thread]').getBoundingClientRect();
-              if (bounds.width && opacity > 0 && bounds.bottom > thread.top && bounds.top < thread.bottom) window.__ownerWidthFrames.push({key, width:bounds.width,
+              const ancestors=[];
+              for(let node=element;node;node=node.parentElement){
+                const style=getComputedStyle(node);
+                ancestors.push({opacity:+style.opacity,transform:style.transform,
+                  animations:node.getAnimations().filter(a=>a.playState!=='finished').length});
+              }
+              if (bounds.width && bounds.bottom > thread.top && bounds.top < thread.bottom) window.__ownerWidthFrames.push({key, width:bounds.width,
                 right:bounds.right, parentRight:wrapper.right, parentWidth:wrapper.width, opacity,
                 maxWidth:parseFloat(getComputedStyle(element).maxWidth),
-                active:!!element.closest('.skeleton-region[data-active]')});
+                ancestors});
             }
             if (!window.__stopOwnerWidth) requestAnimationFrame(sampleOwnerWidth);
           }
@@ -1751,25 +1752,21 @@ def _owner_width_frames(browser, url):
             if mode == "delayed":
                 page.wait_for_selector('[data-conversation-view-key="e1"] .skeleton[data-entering]')
                 page.evaluate("window.__releaseOwnerBody()")
-            if motion != "reduce" and mode == "delayed":
-                page.wait_for_function("window.__ownerWidthFrames.some(frame => frame.key === 'e1' && frame.active && frame.opacity > .5)")
-                if navigation == "open":
-                    page.screenshot(path=str(output / "implementation-owner-width-during-fade.png"))
-            page.wait_for_function("window.__ownerWidthFrames.filter(frame => frame.key === 'e1' && !frame.active).length >= 3")
+            page.wait_for_function("window.__ownerWidthFrames.filter(frame => frame.key === 'e1').length >= 3")
             frames = page.evaluate("window.__ownerWidthFrames")
             (output / ("implementation-owner-width-" + navigation + "-frames.json")).write_text(json.dumps(frames, indent=2))
             if navigation == "open":
                 page.screenshot(path=str(output / "implementation-owner-width-settled.png"))
             short = [frame for frame in frames if frame["key"] == "e1"]
-            settled = [frame for frame in short if not frame["active"]]
-            active = [frame for frame in short if frame["active"]]
-            assert short and settled, (navigation, frames)
-            if motion != "reduce" and mode == "delayed":
-                assert active, (navigation, frames)
+            settled = short
+            assert short, (navigation, frames)
             assert 0 < settled[-1]["parentWidth"] <= width, (navigation, settled[-1])
             assert settled[-1]["parentRight"] <= width + 1, (navigation, settled[-1])
             final_width = settled[-1]["width"]
             for frame in frames:
+                assert frame['opacity'] == 1, (navigation, frame)
+                assert all(node['opacity'] == 1 and node['transform'] == 'none' and node['animations'] == 0
+                           for node in frame['ancestors']), (navigation, frame)
                 assert abs(frame["right"] - frame["parentRight"]) < 1, (navigation, frame)
                 assert frame["width"] <= frame["parentWidth"] * expected_cap / 100 + 1, (navigation, frame)
                 assert frame["maxWidth"] == expected_cap, (navigation, frame)
@@ -1778,7 +1775,7 @@ def _owner_width_frames(browser, url):
                     assert frame["width"] < frame["parentWidth"] * .65, (navigation, frame)
             assert page.locator('[data-conversation-view-key="e3"] .chat-system').inner_text().startswith("Chief")
             proof.append({"case": navigation, "paneWidth": settled[-1]["parentWidth"], "bubbleWidth": final_width,
-                          "activeFrames": len(active), "settledFrames": len(settled)})
+                          "readyFrames": len(settled)})
         page.evaluate("window.__stopOwnerWidth=true")
         page.close()
     proof.append({"seconds": round(time.perf_counter() - started, 3), "navigations": 5, "newHosts": 0})

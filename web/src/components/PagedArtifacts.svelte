@@ -1,6 +1,5 @@
 <script lang="ts">
   import SkeletonRegion from "./SkeletonRegion.svelte";
-  import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { createQuery } from '@tanstack/svelte-query';
   import { jsonQuery } from '../lib/queryCatalogue';
@@ -15,7 +14,7 @@
   let requestedPage = $state({ identity: "", offset: 0 });
   const identity = $derived(`${owner.kind}/${owner.id}/${directory}`);
   const offset = $derived(requestedPage.identity === identity ? requestedPage.offset : 0);
-  let heldPage = $state<{ identity: string; page: ArtifactDirectoryPage; arriving: boolean }>();
+  let heldPage = $state<{ identity: string; page: ArtifactDirectoryPage }>();
   const displayed = $derived(heldPage?.identity === identity ? heldPage.page : undefined);
   const total = $derived(displayed?.total ?? 0);
   const displayedOffset = $derived(displayed?.offset ?? 0);
@@ -25,7 +24,6 @@
   let viewportScroll = $state(0);
   let pendingTop = $state(0);
   let pendingHeight = $state(0);
-  let arrivingPage = $state<{identity: string; offset: number} | null>(null);
   const openFolders = new SvelteSet<string>();
   function toggleFolder(path:string) {
     if (openFolders.has(path)) openFolders.delete(path);
@@ -36,11 +34,10 @@
     `/api/artifact-catalog/${owner.kind}/${encodeURIComponent(owner.id)}?directory=${encodeURIComponent(directory)}&offset=${offset}&limit=${CATALOG_PAGE_SIZE}`));
   const pendingPage = $derived(page.isFetching && (!displayed || displayed.offset !== offset));
   // The pending page occupies only the currently empty part of the viewport.
-  // Keep those viewport coordinates through the exit, even when spacers change.
+  // Measure those viewport coordinates before the next page changes the spacers.
   $effect(() => {
     viewportScroll;
     if (!pendingPage || !displayed || !viewport) return;
-    arrivingPage = { identity, offset };
     const content = viewport.querySelector<HTMLElement>(":scope > .skeleton-region > .skeleton-content > [data-artifact-page]");
     if (!content) return;
     const box = viewport.getBoundingClientRect();
@@ -55,7 +52,7 @@
   });
   $effect(() => {
     if (!page.data) return;
-    heldPage = { identity, page: page.data, arriving: untrack(() => arrivingPage?.identity === identity && arrivingPage.offset === page.data?.offset) }; onCount?.(page.data.total);
+    heldPage = { identity, page: page.data }; onCount?.(page.data.total);
     if (offset >= page.data.total && offset > 0) requestedPage = { identity, offset: Math.max(0,Math.floor((page.data.total-1)/CATALOG_PAGE_SIZE)*CATALOG_PAGE_SIZE) };
   });
   function scroll() {
@@ -78,7 +75,7 @@
   {#if page.error}<p role="status">Artifacts could not load. <button onclick={() => page.refetch()}>Retry</button></p>{/if}
   <SkeletonRegion shape="rows" loading={pendingPage && !displayed} loadingText="Loading artifacts…">
   {#key `${identity}/${displayedOffset}`}
-  <div data-artifact-page class:resource-arriving={heldPage?.identity === identity && heldPage.arriving}>
+  <div data-artifact-page>
   {#each displayed?.entries ?? [] as item (item.key)}
     {@const target = managedFileTargetFromLinkHref(item.href)}
     {#if item.directory}

@@ -21,7 +21,7 @@
      transcript containers. */
   div { display: flex; flex-direction: column; }
   /* An active flow skeleton temporarily owns the row's layout. Keep its children
-     in the same flex column until it returns to display: contents after the fade. */
+     in the same flex column until readiness restores display: contents. */
   div > :global(.skeleton-region[data-active]:not(.skeleton-region--fill):not(.skeleton-region--inline)) {
     display: flex;
     flex-direction: column;
