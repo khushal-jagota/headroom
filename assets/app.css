@@ -5335,10 +5335,6 @@ details:not([open]) > summary > .manager-workspace-chevron {
   display: none;
 }
 
-.fb-open {
-  z-index: 16;
-}
-
 .fb-toast {
   position: fixed;
   z-index: 30;
