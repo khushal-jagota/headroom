@@ -29,7 +29,7 @@ SOURCE_TABLES = (
     "projects",
     "worker_types",
     "chief_settings",
-    "sprint_items",
+    "managers",
     "agents",
     "tickets",
     "conversations",
@@ -131,21 +131,19 @@ def seed(db: Path) -> dict[str, Any]:
             parent = f"si_benchmark_{i:04d}"
             conversation = f"benchmark_parent_{i:04d}"
             conn.execute(
-                "INSERT INTO sprint_items(id,title,project_id,supervisor_backend,"
-                "supervisor_model,created_at,updated_at,settled) VALUES (?,?,?,'codex',"
+                "INSERT INTO managers(id,title,project_id,manager_backend,"
+                "manager_model,created_at,updated_at,settled) VALUES (?,?,?,'codex',"
                 "'gpt-5.6-sol',1,1,?)",
                 (parent, f"Synthetic parent {i}", "project_other", i % 3 == 0),
             )
             conn.execute(
                 "INSERT INTO agents(agent_key,conversation_id) VALUES (?,?)",
-                (f"sprint_item_supervisor_{parent}", conversation),
+                (f"manager_{parent}", conversation),
             )
         for i in range(400):
             cid = f"benchmark_parent_{i:04d}" if i < 100 else f"benchmark_ticket_{i:04d}"
             parent = f"si_benchmark_{i % 100:04d}"
-            identity = json.dumps(
-                [["PLAN_ACTOR", "sprint_item_supervisor"], ["PLAN_SPRINT_ITEM_ID", parent]]
-            )
+            identity = json.dumps([["PLAN_ACTOR", "manager"], ["PLAN_MANAGER_ID", parent]])
             history = 1000 if i in (0, 100, 200) else 4
             conn.execute(
                 "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,"
@@ -184,10 +182,10 @@ def seed(db: Path) -> dict[str, Any]:
             conn.execute(
                 "INSERT INTO tickets(id,title,worker_type,employee_backend,"
                 "employee_launch_model,stage,"
-                "ceiling,project_id,sprint_item_id,orchestrator_kind,field_values,created_at,updated_at,"
+                "ceiling,project_id,manager_id,manager_kind,field_values,created_at,updated_at,"
                 "conversation_id,pending_proposal,pending_proposal_revision) "
                 "VALUES (?,?,'coding','codex','gpt-5.6-sol','needs_success_condition',"
-                "'needs_success_condition','project_other',?,'sprint_item','{}',1,1,?,?,?)",
+                "'needs_success_condition','project_other',?,'manager','{}',1,1,?,?,?)",
                 (
                     f"t_benchmark_{i:04d}",
                     f"Synthetic ticket {i}",
@@ -259,12 +257,12 @@ def mutate(conn: sqlite3.Connection, index: int) -> None:
         )
     elif kind == 1:
         conn.execute(
-            "UPDATE tickets SET sprint_item_id=?,updated_at=? WHERE id=?",
+            "UPDATE tickets SET manager_id=?,updated_at=? WHERE id=?",
             (f"si_benchmark_{(index + 17) % 100:04d}", index + 2, ticket),
         )
     elif kind == 2:
         conn.execute(
-            "UPDATE sprint_items SET settled=1-settled,updated_at=? WHERE id=?",
+            "UPDATE managers SET settled=1-settled,updated_at=? WHERE id=?",
             (index + 2, f"si_benchmark_{index % 100:04d}"),
         )
     elif kind == 3:
@@ -317,8 +315,7 @@ def mutate_fanout(conn: sqlite3.Connection, index: int) -> None:
     conn.execute("BEGIN IMMEDIATE")
     if index == 0:
         conn.execute(
-            "UPDATE sprint_items SET project_id='project_benchmark_second' "
-            "WHERE id='si_benchmark_0000'"
+            "UPDATE managers SET project_id='project_benchmark_second' WHERE id='si_benchmark_0000'"
         )
     else:
         row = conn.execute(

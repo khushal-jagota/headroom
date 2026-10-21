@@ -13,7 +13,7 @@ def occurrence_json(occurrence: ScheduledTicketOccurrence) -> JsonDict:
     return {
         "schedule_id": occurrence.schedule_id,
         "occurrence_key": occurrence.occurrence_key,
-        "target_day_id": occurrence.target_day_id,
+        "target_date": occurrence.target_date,
         "outcome": occurrence.outcome.value,
         "ticket_id": occurrence.ticket_id,
         "error": occurrence.error,
@@ -36,12 +36,10 @@ def schedule_json(
         "kickoff_note": schedule.template.kickoff_note,
         "deadline": schedule.template.deadline,
         "project_id": schedule.template.project_id,
-        "sprint_id": schedule.template.sprint_id,
-        "placement_mode": schedule.template.placement_mode.value,
-        "sprint_item_id": schedule.template.sprint_item_id,
-        "orchestrator": {
-            "kind": schedule.template.orchestrator_kind,
-            "id": schedule.template.sprint_item_id or "chief",
+        "manager_id": schedule.template.manager_id,
+        "manager": {
+            "kind": schedule.template.manager_kind,
+            "id": schedule.template.manager_id or "chief",
         },
         "employee_backend": schedule.template.employee_backend,
         "employee_launch_model": schedule.template.employee_launch_model,

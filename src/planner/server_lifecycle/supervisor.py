@@ -12,7 +12,6 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from types import FrameType
 from typing import Final
 
 from planner.core.config import load_config
@@ -30,6 +29,12 @@ from planner.server_lifecycle.control import (
     resolve_server_control_socket_path,
     resolve_server_lifecycle_lease_path,
 )
+from planner.server_lifecycle.logic.shutdown import decide_shutdown
+from planner.server_lifecycle.process_identity import (
+    capture_shutdown_policy,
+    revalidate_manager_identity,
+)
+from planner.server_lifecycle.signals import SupervisorSignals
 
 _CONTROL_SOCKET_DRAIN_BYTES: Final = 4096
 
@@ -92,6 +97,8 @@ class ServerSupervisor:
         self._application_child: subprocess.Popen[bytes] | None = None
         self._control_listener: socket.socket | None = None
         self._operator_shutdown_requested = False
+        self._shutdown_policy = capture_shutdown_policy()
+        self._signals = SupervisorSignals()
 
     def run(self) -> int:
         self._lease.acquire()
@@ -103,27 +110,24 @@ class ServerSupervisor:
             self._lease.release()
 
     def _run_lifecycle_loop(self) -> int:
-        signal_read, signal_write = os.pipe()
-        os.set_blocking(signal_read, False)
-        os.set_blocking(signal_write, False)
-        previous_wakeup_fd = signal.set_wakeup_fd(signal_write)
-        watched_signals = (signal.SIGINT, signal.SIGTERM, signal.SIGCHLD)
-        previous_handlers = {watched: signal.getsignal(watched) for watched in watched_signals}
-        signal.signal(signal.SIGINT, self._handle_operator_signal)
-        signal.signal(signal.SIGTERM, self._handle_operator_signal)
-        signal.signal(signal.SIGCHLD, self._handle_child_signal)
         selector = selectors.DefaultSelector()
-        assert self._control_listener is not None
-        selector.register(self._control_listener, selectors.EVENT_READ, "control")
-        selector.register(signal_read, selectors.EVENT_READ, "signal")
         try:
+            self._signals.start()
+        except BaseException:
+            selector.close()
+            raise
+        signal_read = self._signals.read_fd
+        assert self._control_listener is not None
+        try:
+            selector.register(self._control_listener, selectors.EVENT_READ, "control")
+            selector.register(signal_read, selectors.EVENT_READ, "signal")
             self._spawn_application_child()
             while True:
                 if self._operator_shutdown_requested:
                     self._stop_application_child()
                     return 0
                 if self._application_child_has_exited():
-                    return 1
+                    return 0 if self._operator_shutdown_requested else 1
 
                 events = selector.select()
                 if any(key.data == "signal" for key, _ in events):
@@ -132,7 +136,7 @@ class ServerSupervisor:
                     self._stop_application_child()
                     return 0
                 if self._application_child_has_exited():
-                    return 1
+                    return 0 if self._operator_shutdown_requested else 1
 
                 restart_requested = False
                 for key, _ in events:
@@ -145,7 +149,7 @@ class ServerSupervisor:
                     self._stop_application_child()
                     return 0
                 if self._application_child_has_exited():
-                    return 1
+                    return 0 if self._operator_shutdown_requested else 1
                 if restart_requested:
                     self._stop_application_child()
                     if self._operator_shutdown_requested:
@@ -153,14 +157,13 @@ class ServerSupervisor:
                     self._spawn_application_child()
         finally:
             selector.close()
-            for watched, handler in previous_handlers.items():
-                signal.signal(watched, handler)
-            signal.set_wakeup_fd(previous_wakeup_fd)
-            os.close(signal_read)
-            os.close(signal_write)
-            child = self._application_child
-            if child is not None and child.poll() is None:
-                self._stop_application_child()
+            try:
+                child = self._application_child
+                if child is not None and child.poll() is None:
+                    self._stop_application_child()
+            finally:
+                for signum, sender_pid in self._signals.stop():
+                    self._dispatch_signal(signum, sender_pid)
 
     def _bind_control_socket(self) -> None:
         self._control_socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,11 +195,19 @@ class ServerSupervisor:
             else os.pathsep.join((source_path, existing_pythonpath))
         )
         environment["PLAN_SERVER_CONTROL_SOCKET"] = str(self._control_socket_path)
+        original_mask = sorted(int(item) for item in self._signals.child_signal_mask)
         try:
             listener_fd = environment.get("PLAN_SERVER_LISTENER_FD")
             pass_fds = (int(listener_fd),) if listener_fd is not None else ()
             self._application_child = subprocess.Popen(
-                [self._interpreter, "-m", "planner.server_lifecycle.application"],
+                [
+                    self._interpreter,
+                    "-c",
+                    "import os,signal,sys; "
+                    f"signal.pthread_sigmask(signal.SIG_SETMASK, {original_mask!r}); "
+                    "os.execv(sys.executable, [sys.executable, '-m', "
+                    "'planner.server_lifecycle.application'])",
+                ],
                 cwd=self._launch_root,
                 env=environment,
                 start_new_session=True,
@@ -303,7 +314,13 @@ class ServerSupervisor:
             return
         if child.poll() is None:
             child.terminate()
-        child.wait()
+        while True:
+            try:
+                child.wait(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                self._drain_signal_pipe(self._signals.read_fd)
+        self._drain_signal_pipe(self._signals.read_fd)
         self._application_child = None
 
     def _application_child_has_exited(self) -> bool:
@@ -311,28 +328,53 @@ class ServerSupervisor:
         if child is None:
             return False
         if child.poll() is not None:
+            self._drain_signal_pipe(self._signals.read_fd)
             return True
         # Linux can expose a zombie before waitpid reports it after the supervisor resumes.
         try:
             process_state = Path(f"/proc/{child.pid}/stat").read_text().rpartition(") ")[2]
         except OSError:
             return False
-        return process_state.startswith("Z ")
+        if process_state.startswith("Z "):
+            self._drain_signal_pipe(self._signals.read_fd)
+            return True
+        return False
 
-    def _handle_operator_signal(self, _signum: int, _frame: FrameType | None) -> None:
-        self._operator_shutdown_requested = True
-
-    @staticmethod
-    def _handle_child_signal(_signum: int, _frame: FrameType | None) -> None:
-        return
-
-    @staticmethod
-    def _drain_signal_pipe(signal_read: int) -> None:
-        try:
-            while os.read(signal_read, 4096):
-                pass
-        except BlockingIOError:
+    def _dispatch_signal(self, signum: int, sender_pid: int | None) -> None:
+        if signum not in {signal.SIGINT, signal.SIGTERM}:
             return
+        policy = self._shutdown_policy
+        manager = policy.authorized_manager
+        current_parent_pid = os.getppid()
+        manager_identity = None
+        if (
+            manager is not None
+            and sender_pid == manager.pid
+            and current_parent_pid == policy.launch_parent_pid
+        ):
+            manager_identity = revalidate_manager_identity(manager)
+            current_parent_pid = os.getppid()
+        decision = decide_shutdown(
+            policy,
+            sender_pid=sender_pid,
+            current_parent_pid=current_parent_pid,
+            manager_identity=manager_identity,
+        )
+        if decision.accepted:
+            self._operator_shutdown_requested = True
+            return
+        sender = f"sender PID {sender_pid}" if sender_pid and sender_pid > 0 else "unknown sender"
+        print(
+            f"Panels supervisor refused {signal.Signals(signum).name} from {sender}: "
+            f"{decision.reason}. To force shutdown, send SIGKILL "
+            f"to exact supervisor PID {os.getpid()}.",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def _drain_signal_pipe(self, _signal_read: int) -> None:
+        for signum, sender_pid in self._signals.drain():
+            self._dispatch_signal(signum, sender_pid)
 
 
 def run_server_supervisor() -> int:

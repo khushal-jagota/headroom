@@ -4,14 +4,14 @@ This is the only place that reads the database on authority's behalf. It gathers
 facts the rule needs and hands them to :mod:`planner.core.authority.logic`, which stays
 dependency-free.
 
-The chain is already in the data and this module stores nothing new. A Ticket's Outcome
-is ``tickets.sprint_item_id``. A planning Ticket's reach is declared in
+The chain is already in the data and this module stores nothing new. A Ticket's Manager
+is ``tickets.manager_id``. A planning Ticket's reach is declared in
 :mod:`planner.core.authority.declarations`, which is code, not a row.
 
 A position is a truthful local claim, exactly as it was before: the caller's
 ``X-Plan-Actor`` and its one id header, resolved once in
 :mod:`planner.core.authctx`. Nothing here authenticates a claim, and nothing here
-compares a claimed Outcome manager against an agent key. What
+compares a claimed Manager against an agent key. What
 the rule does add is that a claim must name the thing being acted on.
 """
 
@@ -36,20 +36,20 @@ from planner.core.contracts import (
     principal_legacy_actor,
 )
 
-_ABOVE_EVERY_OUTCOME = frozenset({PrincipalKind.owner, PrincipalKind.chief})
+_ABOVE_EVERY_MANAGER = frozenset({PrincipalKind.owner, PrincipalKind.chief})
 
 
-def _target_parent_outcome_id(conn: sqlite3.Connection, target: Target) -> str | None:
-    """The Outcome a Ticket target sits under right now, if it sits under one.
+def _target_parent_manager_id(conn: sqlite3.Connection, target: Target) -> str | None:
+    """The Manager a Ticket target sits under right now, if it sits under one.
 
-    Every Sprint Item is an Outcome with a supervisor identity.
+    Every Manager is a Manager with a Manager identity.
     """
     if target.kind is not TargetKind.ticket:
         return None
     row = conn.execute(
         "SELECT item.id AS id FROM tickets AS ticket "
-        "JOIN sprint_items AS item ON item.id = ticket.sprint_item_id "
-        "WHERE ticket.id = ? AND ticket.orchestrator_kind = 'sprint_item'",
+        "JOIN managers AS item ON item.id = ticket.manager_id "
+        "WHERE ticket.id = ? AND ticket.manager_kind = 'manager'",
         (target.id,),
     ).fetchone()
     return None if row is None else str(row["id"])
@@ -69,39 +69,39 @@ def _caller_declared_targets(conn: sqlite3.Connection, caller: Principal) -> tup
     return stands_above_for_worker_type(str(row["worker_type"]))
 
 
-def _caller_parent_outcome_id(conn: sqlite3.Connection, caller: Principal) -> str | None:
-    """The Outcome the caller sits under, if the caller is a Ticket that sits under one.
+def _caller_parent_manager_id(conn: sqlite3.Connection, caller: Principal) -> str | None:
+    """The Manager the caller sits under, if the caller is a Ticket that sits under one.
 
-    The same column as ``_target_parent_outcome_id``, asked about the caller.
+    The same column as ``_target_parent_manager_id``, asked about the caller.
     """
     if caller.kind is not PrincipalKind.ticket:
         return None
     row = conn.execute(
         "SELECT item.id AS id FROM tickets AS ticket "
-        "JOIN sprint_items AS item ON item.id = ticket.sprint_item_id "
-        "WHERE ticket.id = ? AND ticket.orchestrator_kind = 'sprint_item'",
+        "JOIN managers AS item ON item.id = ticket.manager_id "
+        "WHERE ticket.id = ? AND ticket.manager_kind = 'manager'",
         (caller.id,),
     ).fetchone()
     return None if row is None else str(row["id"])
 
 
 def _target_is_itself_a_principal(conn: sqlite3.Connection, target: Target) -> bool:
-    """Whether the target is a real Ticket or Sprint Item that can act."""
+    """Whether the target is a real Ticket or Manager that can act."""
     if target.kind is TargetKind.ticket:
         row = conn.execute("SELECT 1 FROM tickets WHERE id = ?", (target.id,)).fetchone()
         return row is not None
-    if target.kind is TargetKind.outcome:
-        row = conn.execute("SELECT 1 FROM sprint_items WHERE id = ?", (target.id,)).fetchone()
+    if target.kind is TargetKind.manager:
+        row = conn.execute("SELECT 1 FROM managers WHERE id = ?", (target.id,)).fetchone()
         return row is not None
     return False
 
 
 def chain_facts(conn: sqlite3.Connection, caller: Principal, target: Target) -> ChainFacts:
     return ChainFacts(
-        target_parent_outcome_id=_target_parent_outcome_id(conn, target),
+        target_parent_manager_id=_target_parent_manager_id(conn, target),
         caller_declared_targets=_caller_declared_targets(conn, caller),
         target_is_itself_a_principal=_target_is_itself_a_principal(conn, target),
-        caller_parent_outcome_id=_caller_parent_outcome_id(conn, caller),
+        caller_parent_manager_id=_caller_parent_manager_id(conn, caller),
     )
 
 
@@ -166,7 +166,7 @@ def require_above_or_self(conn: sqlite3.Connection, caller: Principal, target: T
 def require_in_chain(conn: sqlite3.Connection, caller: Principal, target: Target) -> None:
     """Admit a caller that is in the target's chain: above it, it, or below it.
 
-    The parent question at creation. A Ticket may put work under the Outcome it already
+    The parent question at creation. A Ticket may put work under the Manager it already
     answers to, and under no other.
     """
     if not shares_the_chain(caller, target, chain_facts(conn, caller, target)):
@@ -174,15 +174,15 @@ def require_in_chain(conn: sqlite3.Connection, caller: Principal, target: Target
 
 
 def _facts_for_a_ticket_being_created(
-    conn: sqlite3.Connection, principal: Principal, *, parent_outcome_id: str | None
+    conn: sqlite3.Connection, principal: Principal, *, parent_manager_id: str | None
 ) -> ChainFacts:
     """The rule's facts about a Ticket that does not exist yet.
 
-    Nothing here is guessed. The Ticket's id is already allocated, its Outcome is the
+    Nothing here is guessed. The Ticket's id is already allocated, its Manager is the
     parent the request named, and a Ticket being written is a principal by definition.
     """
     return ChainFacts(
-        target_parent_outcome_id=parent_outcome_id,
+        target_parent_manager_id=parent_manager_id,
         caller_declared_targets=_caller_declared_targets(conn, principal),
         target_is_itself_a_principal=True,
     )
@@ -193,7 +193,7 @@ def require_above_a_ticket_being_created(
     caller: Principal,
     *,
     ticket_id: str,
-    parent_outcome_id: str | None,
+    parent_manager_id: str | None,
 ) -> None:
     """Admit a caller that will stand above the Ticket it is creating.
 
@@ -202,30 +202,30 @@ def require_above_a_ticket_being_created(
     so it gets the same answer and not a softer one.
     """
     target = Target(TargetKind.ticket, ticket_id)
-    facts = _facts_for_a_ticket_being_created(conn, caller, parent_outcome_id=parent_outcome_id)
+    facts = _facts_for_a_ticket_being_created(conn, caller, parent_manager_id=parent_manager_id)
     if not stands_above(caller, target, facts):
         _refuse(caller, target)
 
 
-def refuse_outcome_re_parenting(caller: Principal, ticket_id: str) -> None:
-    """The one stated exception to the rule, asked wherever a Ticket's Outcome is set.
+def refuse_manager_re_parenting(caller: Principal, ticket_id: str) -> None:
+    """The one stated exception to the rule, asked wherever a Ticket's Manager is set.
 
-    An Outcome stands above its Tickets because of ``tickets.sprint_item_id``. Setting that
+    A Manager stands above its Tickets because of ``tickets.manager_id``. Setting that
     column is reassigning authority rather than exercising it, and "strictly below" cannot
-    refuse it: at the moment of the call the Ticket really is below the Outcome that is
-    moving it away. Only Khushal and the Chief, who stand above every Outcome, may do it.
+    refuse it: at the moment of the call the Ticket really is below the Manager that is
+    moving it away. Only Khushal and the Chief, who stand above every Manager, may do it.
 
     Asked of the caller alone, because no answer about the Ticket can decide it. That
-    includes the Ticket itself: a Ticket that could set its own Outcome could leave one,
-    or leave every Outcome, and choose who is allowed to act on it. Being a thing does not
+    includes the Ticket itself: a Ticket that could set its own Manager could leave one,
+    or leave every Manager, and choose who is allowed to act on it. Being a thing does not
     include choosing who stands above you.
     """
-    if caller.kind in _ABOVE_EVERY_OUTCOME:
+    if caller.kind in _ABOVE_EVERY_MANAGER:
         return
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "only Khushal or the Chief can move a Ticket out of its own chain",
-        {"field": "sprint_item_id", "ticket_id": ticket_id},
+        {"field": "manager_id", "ticket_id": ticket_id},
     )
 
 
@@ -233,7 +233,7 @@ __all__ = [
     "chain_facts",
     "is_above",
     "is_above_or_self",
-    "refuse_outcome_re_parenting",
+    "refuse_manager_re_parenting",
     "require_above",
     "require_above_a_ticket_being_created",
     "require_above_or_self",

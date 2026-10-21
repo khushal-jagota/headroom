@@ -8,6 +8,7 @@ import uuid
 from typing import Any, cast
 
 from planner.core.ticket_blocks import LIVE_BLOCKER_PREDICATE
+from planner.managers.data import manager_agent_key
 from planner.navigation.contracts import (
     PREPARED_SCHEMA_VERSION,
     SCHEMA_VERSION,
@@ -37,7 +38,7 @@ type TicketOwners = dict[str, dict[str, dict[str, Any]]]
 # UPDATE capture deliberately ignores private provider cursors, catalog and compaction.
 SOURCES: dict[str, tuple[str, str | None]] = {
     "tickets": ("id", None),
-    "sprint_items": ("id", None),
+    "managers": ("id", None),
     "projects": ("id", "id,name,priority"),
     "worker_types": ("worker_type", "worker_type,definition_json"),
     "chief_settings": ("employee_id", "employee_id,label"),
@@ -79,6 +80,11 @@ def attach(conn: sqlite3.Connection) -> None:
 
 
 def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
+        from planner.navigation import historical_data
+
+        historical_data.create_schema(conn, schema_version=schema_version)
+        return
     if not conn.in_transaction:
         raise RuntimeError("navigation schema requires a transaction")
     if schema_version not in (1, 2, 3):
@@ -104,7 +110,7 @@ def create_schema(conn: sqlite3.Connection, *, schema_version: int = 3) -> None:
 
 def _priority_source_shape(conn: sqlite3.Connection) -> bool:
     """Recognize the two accepted canonical histories before changing any rows."""
-    tables = ("projects", "sprint_items", "tickets", "scheduled_ticket_schedules")
+    tables = ("projects", "managers", "tickets", "scheduled_ticket_schedules")
     shapes = []
     for table in tables:
         columns = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -138,8 +144,8 @@ def _install_source_triggers(conn: sqlite3.Connection) -> None:
                 for alias in aliases:
                     capture += _capture_dirty(
                         "@totals",
-                        f"CASE WHEN {alias}.sprint_item_id IS NULL THEN 'chief:chief' "
-                        f"ELSE 'orchestrator:' || {alias}.sprint_item_id END",
+                        f"CASE WHEN {alias}.manager_id IS NULL THEN 'chief:chief' "
+                        f"ELSE 'manager:' || {alias}.manager_id END",
                     )
             # Every source row captures dependencies before cascades erase their rows.
             timing = "AFTER" if operation == "INSERT" else "BEFORE"
@@ -155,6 +161,11 @@ def _install_source_triggers(conn: sqlite3.Connection) -> None:
 
 def upgrade_current_workspace(conn: sqlite3.Connection) -> None:
     """Join accepted source removal and navigation without granting Signal authority."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
+        from planner.navigation import historical_data
+
+        historical_data.upgrade_current_workspace(conn)
+        return
     if not conn.in_transaction:
         raise RuntimeError("navigation upgrade requires a transaction")
     if _priority_source_shape(conn):
@@ -168,6 +179,11 @@ def upgrade_current_workspace(conn: sqlite3.Connection) -> None:
 
 
 def upgrade_compact_lifecycle(conn: sqlite3.Connection) -> None:
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
+        from planner.navigation import historical_data
+
+        historical_data.upgrade_compact_lifecycle(conn)
+        return
     if not conn.in_transaction:
         raise RuntimeError("navigation upgrade requires a transaction")
     _priority_source_shape(conn)
@@ -185,6 +201,11 @@ def upgrade_compact_lifecycle(conn: sqlite3.Connection) -> None:
 
 
 def upgrade_consumer_metadata(conn: sqlite3.Connection) -> None:
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
+        from planner.navigation import historical_data
+
+        historical_data.upgrade_consumer_metadata(conn)
+        return
     if not conn.in_transaction:
         raise RuntimeError("navigation upgrade requires a transaction")
     _priority_source_shape(conn)
@@ -214,11 +235,7 @@ def _record(kind: str, identity: str, value: dict[str, Any]) -> NavigationRecord
 
 
 def _parent(ticket: dict[str, Any]) -> Key:
-    return (
-        ("orchestrator", str(ticket["sprint_item_id"]))
-        if ticket["sprint_item_id"]
-        else ("chief", "chief")
-    )
+    return ("manager", str(ticket["manager_id"])) if ticket["manager_id"] else ("chief", "chief")
 
 
 def _root_dependencies(conn: sqlite3.Connection, source: Key) -> set[Key]:
@@ -249,7 +266,7 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
     if table == "tickets":
         roots.add(("ticket", identity))
         roots.update(("conversation", item) for item in _conversation_ids(conn, identity))
-        for row in rows(conn, "SELECT sprint_item_id FROM tickets WHERE id=?", (identity,)):
+        for row in rows(conn, "SELECT manager_id FROM tickets WHERE id=?", (identity,)):
             p = _parent(row)
             roots.add(("totals", ":".join(p)))
         roots.update(
@@ -260,14 +277,14 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
             )
         )
         roots.add(("totals", "workspace"))
-    elif table == "sprint_items":
-        roots.add(("orchestrator", identity))
-        roots.add(("totals", "orchestrator:" + identity))
-        for row in conn.execute("SELECT id FROM tickets WHERE sprint_item_id=?", (identity,)):
+    elif table == "managers":
+        roots.add(("manager", identity))
+        roots.add(("totals", "manager:" + identity))
+        for row in conn.execute("SELECT id FROM tickets WHERE manager_id=?", (identity,)):
             roots.update(_new_roots(conn, "tickets", str(row[0])))
         for row in conn.execute(
             "SELECT conversation_id FROM agents WHERE agent_key=? AND conversation_id IS NOT NULL",
-            ("sprint_item_supervisor_" + identity,),
+            (manager_agent_key(identity, conn),),
         ):
             roots.add(("conversation", str(row[0])))
     elif table == "projects":
@@ -282,8 +299,13 @@ def _new_roots(conn: sqlite3.Connection, table: str, identity: str) -> set[Key]:
     elif table == "agents":
         if identity == "chief_of_staff":
             roots.add(("chief", "chief"))
-        elif identity.startswith("sprint_item_supervisor_"):
-            roots.add(("orchestrator", identity.removeprefix("sprint_item_supervisor_")))
+        elif identity.startswith(("manager_", "sprint_item_supervisor_")):
+            roots.add(
+                (
+                    "manager",
+                    identity.removeprefix("manager_").removeprefix("sprint_item_supervisor_"),
+                )
+            )
         for row in conn.execute(
             "SELECT conversation_id FROM agents WHERE agent_key=? AND conversation_id IS NOT NULL",
             (identity,),
@@ -302,7 +324,7 @@ def _ticket_owners_by_conversation(conn: sqlite3.Connection) -> TicketOwners:
     """Read current ownership once for this rebuild, including historical aliases."""
     tickets = {
         ticket["id"]: ticket
-        for ticket in rows(conn, "SELECT id,sprint_item_id,conversation_id FROM tickets")
+        for ticket in rows(conn, "SELECT id,manager_id,conversation_id FROM tickets")
     }
     owners: TicketOwners = {}
     for ticket in tickets.values():
@@ -332,21 +354,21 @@ def _derive(
         priority_column = "t.priority," if version < PREPARED_SCHEMA_VERSION else ""
         found = rows(
             conn,
-            "SELECT t.title,t.worker_type,t.stage,t.deadline,t.orchestrator_kind,"
-            "t.sprint_item_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,"
+            "SELECT t.title,t.worker_type,t.stage,t.deadline,t.manager_kind,"
+            "t.manager_id,t.conversation_id,t.ceiling,t.locale,t.worker_step_claim,"
             "t.pending_proposal,t.is_backlogged,t.ceiling_holder,t.pending_proposal_revision,"
             "t.updated_at,t.created_at,t.recap,"
             + priority_column
             + "COALESCE(i.project_id,t.project_id) effective_project "
-            "FROM tickets t LEFT JOIN sprint_items i ON i.id=t.sprint_item_id WHERE t.id=?",
+            "FROM tickets t LEFT JOIN managers i ON i.id=t.manager_id WHERE t.id=?",
             (identity,),
         )
         if not found:
             return [], deps
         t = found[0]
         deps.add(("worker_types", t["worker_type"]))
-        if t["sprint_item_id"]:
-            deps.add(("sprint_items", t["sprint_item_id"]))
+        if t["manager_id"]:
+            deps.add(("managers", t["manager_id"]))
         blockers = rows(
             conn,
             "SELECT blocker.id,blocker.stage FROM ticket_blocks b JOIN tickets blocker "
@@ -400,8 +422,8 @@ def _derive(
                 "worker_type",
                 "stage",
                 "deadline",
-                "orchestrator_kind",
-                "sprint_item_id",
+                "manager_kind",
+                "manager_id",
                 "conversation_id",
                 "ceiling",
                 "locale",
@@ -436,14 +458,14 @@ def _derive(
                 value["recap"] = str(t["recap"])
             value["recap_preview"] = recap_preview(str(t["recap"]))
         records.append(_record(kind, identity, value))
-    elif kind in ("orchestrator", "chief"):
-        if kind == "orchestrator":
-            deps.add(("sprint_items", identity))
-            found = rows(conn, "SELECT * FROM sprint_items WHERE id=?", (identity,))
+    elif kind in ("manager", "chief"):
+        if kind == "manager":
+            deps.add(("managers", identity))
+            found = rows(conn, "SELECT * FROM managers WHERE id=?", (identity,))
             if not found:
                 return [], deps
             t = found[0]
-            key = "sprint_item_supervisor_" + identity
+            key = manager_agent_key(identity, conn)
             value = {
                 "title": t["title"],
                 "project_id": t["project_id"],
@@ -458,7 +480,7 @@ def _derive(
                 # `transactional_navigation` rebuilds this projection with current code
                 # while the chain is mid-flight, so on a database that has not reached
                 # the goal-and-recap rename yet the only column here is still `body`.
-                # A fresh database never shows this, because it has no orchestrators
+                # A fresh database never shows this, because it has no managers
                 # to derive at that point.
                 recap = str(t["recap"]) if "recap" in t else str(t["body"])
                 if version >= PREPARED_SCHEMA_VERSION:
@@ -536,7 +558,7 @@ def _derive(
         owners = (
             rows(
                 conn,
-                "SELECT t.id,t.sprint_item_id,t.conversation_id FROM tickets t "
+                "SELECT t.id,t.manager_id,t.conversation_id FROM tickets t "
                 "LEFT JOIN ticket_conversations tc ON tc.ticket_id=t.id "
                 "WHERE t.conversation_id=? OR tc.conversation_id=? GROUP BY t.id",
                 (identity, identity),
@@ -547,8 +569,8 @@ def _derive(
         for t in owners:
             deps.add(("tickets", t["id"]))
             parent = _parent(t)
-            if parent[0] == "orchestrator":
-                deps.add(("sprint_items", parent[1]))
+            if parent[0] == "manager":
+                deps.add(("managers", parent[1]))
             addresses[("ticket", t["id"])] = {
                 "owner_kind": "ticket",
                 "owner_id": t["id"],
@@ -569,12 +591,12 @@ def _derive(
                     "parent_kind": None,
                     "parent_id": None,
                 }
-            elif key.startswith("sprint_item_supervisor_"):
-                owner = key.removeprefix("sprint_item_supervisor_")
-                deps.add(("sprint_items", owner))
-                if conn.execute("SELECT 1 FROM sprint_items WHERE id=?", (owner,)).fetchone():
-                    addresses[("orchestrator", owner)] = {
-                        "owner_kind": "orchestrator",
+            elif key.startswith(("manager_", "sprint_item_supervisor_")):
+                owner = key.removeprefix("manager_").removeprefix("sprint_item_supervisor_")
+                deps.add(("managers", owner))
+                if conn.execute("SELECT 1 FROM managers WHERE id=?", (owner,)).fetchone():
+                    addresses[("manager", owner)] = {
+                        "owner_kind": "manager",
                         "owner_id": owner,
                         "conversation_id": identity,
                         "current": True,
@@ -591,14 +613,20 @@ def _derive(
             )
         except (ValueError, TypeError):
             values = {}
-        if values.get("PLAN_ACTOR") == "sprint_item_supervisor":
-            owner = values.get("PLAN_SPRINT_ITEM_ID", "")
-            deps.add(("sprint_items", owner))
-            if conn.execute("SELECT 1 FROM sprint_items WHERE id=?", (owner,)).fetchone():
+        if values.get("PLAN_ACTOR") in ("manager", "sprint_item_supervisor"):
+            owner = values.get("PLAN_MANAGER_ID", values.get("PLAN_SPRINT_ITEM_ID", ""))
+            if (
+                values.get("PLAN_MANAGER_ID")
+                and values.get("PLAN_SPRINT_ITEM_ID")
+                and values["PLAN_MANAGER_ID"] != values["PLAN_SPRINT_ITEM_ID"]
+            ):
+                raise ValueError("conflicting Manager conversation identities")
+            deps.add(("managers", owner))
+            if conn.execute("SELECT 1 FROM managers WHERE id=?", (owner,)).fetchone():
                 addresses.setdefault(
-                    ("orchestrator", owner),
+                    ("manager", owner),
                     {
-                        "owner_kind": "orchestrator",
+                        "owner_kind": "manager",
                         "owner_id": owner,
                         "conversation_id": identity,
                         "current": False,
@@ -617,18 +645,16 @@ def _derive(
             ).fetchone()[0]
         else:
             parent_kind, parent_id = identity.split(":", 1)
-            if parent_kind == "orchestrator":
-                deps.add(("sprint_items", parent_id))
-                if not conn.execute(
-                    "SELECT 1 FROM sprint_items WHERE id=?", (parent_id,)
-                ).fetchone():
+            if parent_kind == "manager":
+                deps.add(("managers", parent_id))
+                if not conn.execute("SELECT 1 FROM managers WHERE id=?", (parent_id,)).fetchone():
                     return [], deps
                 child_count = conn.execute(
-                    "SELECT COUNT(*) FROM tickets WHERE sprint_item_id=?", (parent_id,)
+                    "SELECT COUNT(*) FROM tickets WHERE manager_id=?", (parent_id,)
                 ).fetchone()[0]
             else:
                 child_count = conn.execute(
-                    "SELECT COUNT(*) FROM tickets WHERE orchestrator_kind='chief'"
+                    "SELECT COUNT(*) FROM tickets WHERE manager_kind='chief'"
                 ).fetchone()[0]
             conversation_count = conn.execute(
                 "SELECT COUNT(DISTINCT conversation_id) FROM ("
@@ -739,6 +765,11 @@ def _continuity(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def finalize(conn: sqlite3.Connection) -> None:
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
+        from planner.navigation import historical_data
+
+        historical_data.finalize(conn)
+        return
     if not available(conn):
         return
     dirty = {(str(r[0]), str(r[1])) for r in conn.execute("SELECT kind,id FROM navigation_dirty")}
@@ -768,7 +799,7 @@ def finalize(conn: sqlite3.Connection) -> None:
                     if a["parent_kind"]
                     else (a["owner_kind"], a["owner_id"])
                 )
-                if parent[0] in ("chief", "orchestrator"):
+                if parent[0] in ("chief", "manager"):
                     roots.add(("totals", ":".join(str(part) for part in parent)))
             derived[root] = _derive(conn, root, definitions)
             new, _ = derived[root]
@@ -780,7 +811,7 @@ def finalize(conn: sqlite3.Connection) -> None:
                         if a["parent_kind"]
                         else (a["owner_kind"], a["owner_id"])
                     )
-                    if parent[0] in ("chief", "orchestrator"):
+                    if parent[0] in ("chief", "manager"):
                         roots.add(("totals", ":".join(str(part) for part in parent)))
             roots.add(("totals", "workspace"))
     upserts: list[NavigationRecord] = []
@@ -801,6 +832,9 @@ def finalize(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO navigation_journal VALUES(?,?)", (base + 1, _json(batch)))
     conn.execute("UPDATE navigation_meta SET revision=? WHERE singleton=1", (base + 1,))
     conn.execute("DELETE FROM navigation_dirty")
+    from planner.navigation.views.projection import update as update_views
+
+    update_views(conn, upserts, deletes)
 
 
 def _replace_epoch(conn: sqlite3.Connection) -> None:
@@ -815,10 +849,18 @@ def _replace_epoch(conn: sqlite3.Connection) -> None:
 def reset_epoch(conn: sqlite3.Connection) -> Continuity:
     _require_current_schema(conn)
     _replace_epoch(conn)
+    from planner.navigation.views.projection import rebuild as rebuild_views
+
+    rebuild_views(conn)
     return cast(Continuity, _continuity(conn))
 
 
 def rebuild(conn: sqlite3.Connection) -> None:
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='sprint_items'").fetchone():
+        from planner.navigation import historical_data
+
+        historical_data.rebuild(conn)
+        return
     if not conn.in_transaction:
         raise RuntimeError("navigation rebuild requires a transaction")
     legacy_source = _priority_source_shape(conn)
@@ -837,20 +879,23 @@ def rebuild(conn: sqlite3.Connection) -> None:
     roots: set[Key] = {("chief", "chief"), ("totals", "chief:chief"), ("totals", "workspace")}
     for table, kind, column in (
         ("tickets", "ticket", "id"),
-        ("sprint_items", "orchestrator", "id"),
+        ("managers", "manager", "id"),
         ("conversations", "conversation", "conversation_id"),
         ("projects", "project", "id"),
     ):
         for row in conn.execute(f"SELECT {column} FROM {table}"):
             identity = str(row[0])
             roots.add((kind, identity))
-            if kind == "orchestrator":
-                roots.add(("totals", "orchestrator:" + identity))
+            if kind == "manager":
+                roots.add(("totals", "manager:" + identity))
     definitions: dict[str, WorkerTypeDefinition] = {}
     ticket_owners = _ticket_owners_by_conversation(conn)
     for root in sorted(roots, key=lambda key: (key[0] == "totals", key)):
         _put_root(conn, root, definitions=definitions, ticket_owners=ticket_owners)
     _replace_epoch(conn)
+    from planner.navigation.views.projection import rebuild as rebuild_views
+
+    rebuild_views(conn)
 
 
 def _require_current_schema(conn: sqlite3.Connection) -> None:

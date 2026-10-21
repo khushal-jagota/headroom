@@ -3,8 +3,8 @@
   import type { ConversationSignal } from "../lib/conversationSignal";
   import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
-  import { fetchJson } from "../lib/api";
-  import { lifecycleFor, type WorkerTypesResponse } from "../lib/lifecycle";
+  import { queries } from "../lib/queryCatalogue";
+  import { lifecycleFor } from "../lib/lifecycle";
   import { RAIL_HOVER_RECAP_MAX_LINES } from "../lib/workspaceRailInteraction";
   import { workspaceWorkerStageSentence } from "../lib/workspaceRail";
   import type { WorkItemTicketFacts } from "../lib/workItemPresentation";
@@ -18,11 +18,11 @@
     recap?: string; worker?: WorkItemTicketFacts | null;
     rail: HTMLElement | null; cards?: readonly WorkItemTicketFacts[];
     signal?: Partial<ConversationSignal>; conversationId?: string | null;
-    recapTarget?: { kind: "ticket" | "sprint_item" | "chief"; id: string } | null;
+    recapTarget?: { kind: "ticket" | "manager" | "chief"; id: string } | null;
     onKeepOpen?: () => void; onLeave?: () => void;
     element?: HTMLDivElement | null;
   } = $props();
-  const manifests = createQuery(() => ({ queryKey: ["worker-types"], queryFn: () => fetchJson<WorkerTypesResponse>("/api/worker-types") }));
+  const manifests = createQuery(() => queries.workerTypeManifests());
   let currentWorker = $derived(worker);
   let stageSentence = $derived(currentWorker ? workspaceWorkerStageSentence(currentWorker, lifecycleFor(manifests.data, currentWorker.worker_type)) : "");
   let recapText = $derived(currentWorker ? currentWorker.recap ?? "" : recap);
@@ -100,9 +100,11 @@
        block where it is and the budget above keeps measuring. -->
   {#if recapText || recapTarget}
     <div bind:this={recapElement} class="recap" class:no-space={recapLines === 0 && !recapTarget}>
-      <RecapSlot>
-        {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
-      </RecapSlot>
+      {#key recapTarget ? `${recapTarget.kind}:${recapTarget.id}` : null}
+        <RecapSlot>
+          {#snippet children()}{#if recapText}<div class="recap-text" class:no-room={recapLines === 0} data-recap-text style:--recap-lines={recapLines}>{recapText}</div>{/if}{/snippet}
+        </RecapSlot>
+      {/key}
       {#if recapTarget}<RequestRecapAction kind={recapTarget.kind} id={recapTarget.id} class="recap-ask" />{/if}
     </div>
   {/if}

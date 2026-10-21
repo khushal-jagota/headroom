@@ -94,7 +94,7 @@
         </div>
       </section>
       <div class="list" data-ideas>
-        <ResourceState error={ideas.error} loading={ideas.isFetching} hasData={Boolean(ideas.data)} loadingText="Loading ideas...">
+        <ResourceState shape="rows" error={ideas.error} loading={ideas.isFetching} hasData={Boolean(ideas.data)} loadingText="Loading ideas...">
         {#if !(ideas.data?.ideas || []).length}
           <div class="quiet-line">No ideas yet.</div>
         {:else}

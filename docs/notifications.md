@@ -40,17 +40,17 @@ five choices for Tickets:
 - a Ticket stage becomes assigned to Khushal; and
 - a worker turn fails or a Ticket errors.
 
-Chief of Staff and Sprint Item supervisors each offer awaiting reply, needs an answer,
+Chief of Staff and Managers each offer awaiting reply, needs an answer,
 and errored.
 Approval and assignment belong to Tickets only. Each saved choice uses its subject and
 notification type as one key, so a Chief choice never changes the matching Ticket choice.
 
-Sprint Item supervisors share one subject between all of them, because a sprint holds
+Managers share one subject between all of them, because a sprint holds
 twenty or thirty Items and they are replaced each sprint. Upgrades preserve the old
-disabled supervisor-error preference while adding the reply choice.
+disabled Manager-error preference while adding the reply choice.
 
 The notification contains no transcript, prompt, permission detail, or worker output.
-Opening a Ticket notification goes to `/#/workspace/<ticket-id>`. A Sprint Item
+Opening a Ticket notification goes to `/#/workspace/<ticket-id>`. A Manager
 notification goes to `/#/workspace/item/<item-id>`. A notification sent
 before Tickets moved to the Workspace still carries the old `/#/ticket/<ticket-id>`
 address, which the app redirects. A Chief notification
@@ -66,7 +66,7 @@ When a parked review changes holder, Panels attempts a courtesy message to the p
 holder. The message identifies the Ticket and names the new holder. A holder change
 without a parked proposal sends no message. An unchanged final holder sends no message.
 
-The Chief and orchestrators receive the message through their existing conversation
+The Chief and managers receive the message through their existing conversation
 routes. The user receives it in the Ticket conversation as a Panels message. The notice
 requests no reply and grants no credit for a worker reply. Existing approval attention
 and proposal delivery to the new holder keep their current behavior.

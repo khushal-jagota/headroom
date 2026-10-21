@@ -19,24 +19,24 @@ function ticketMatches(row:HTMLElement,ticket:WorkItemTicketFacts) {
     && JSON.stringify(actualMark(row))===JSON.stringify(expectedMark(ticket.conversation_signal,ticket.conversation_id));
 }
 /** Read actual rendered values, including motion-controlled membership and marks. */
-export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:WorkspaceChief | null | undefined,settledOpen:boolean,messages:readonly WorkspaceMessageConversation[],tickets:readonly WorkspaceTicket[]):boolean {
-  const cards=[...root.querySelectorAll<HTMLElement>('.active-work-scroll > .orchestrator-card')];
+export function railDomMatches(root:HTMLElement,rail:WorkspaceRail,chief:WorkspaceChief | null | undefined,settledOpen:boolean,messages:readonly WorkspaceMessageConversation[],tickets:readonly WorkspaceTicket[],settledCount=rail.settledItems.length,expectedMessagesByParent?:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>):boolean {
+  const cards=[...root.querySelectorAll<HTMLElement>('.active-work-scroll > .manager-card')];
   if(cards.length!==rail.items.length+1) return false;
   const head=(card:HTMLElement,title:string,signal:Partial<ConversationSignal> | undefined,id:string | null | undefined)=>
     card.querySelector('.item-head .item-title')?.textContent===title
       && JSON.stringify(actualMark(card.querySelector('.item-head')!))===JSON.stringify(expectedMark(signal,id));
   if(!head(cards[0],chief?.label ?? 'Chief of Staff',chief?.conversation_signal,chief?.conversation_id)
     || !groupsMatch(cards[0],rail.chiefGroups)) return false;
-  if(!rail.items.every((item,index)=>cards[index+1].dataset.sprintItem===item.id
-    && cards[index+1].querySelector('.orchestrator-eyebrow > span')?.textContent===(item.project ?? '')
+  if(!rail.items.every((item,index)=>cards[index+1].dataset.manager===item.id
+    && cards[index+1].querySelector('.manager-eyebrow > span')?.textContent===(item.project ?? '')
     && cards[index+1].querySelector('.settle')?.getAttribute('aria-label')===`Settle ${item.title}`
     && head(cards[index+1],item.title,item.conversationSignal,item.conversationId) && groupsMatch(cards[index+1],item.groups))) return false;
-  if(root.querySelector('[data-settled-count]')?.textContent!==`(${rail.settledItems.length})`) return false;
+  if(root.querySelector('[data-settled-count]')?.textContent!==`(${settledCount})`) return false;
   const settled=[...root.querySelectorAll<HTMLElement>('[data-settled-item]')];
   return settledOpen ? settled.length===rail.settledItems.length && rail.settledItems.every((item,index)=>
     settled[index].dataset.settledItem===item.id && settled[index].querySelector('.settled-title > span')?.textContent===item.title
       && JSON.stringify(actualMark(settled[index].querySelector('.settled-title')!))===JSON.stringify(expectedMark(item.conversationSignal,item.conversationId))
-      && messagesMatch(settled[index],workspaceRailChildMessageConversations(messages,{...item,settled:item.settled},tickets))) : settled.length===0;
+      && messagesMatch(settled[index],expectedMessagesByParent ? expectedMessagesByParent.get(item.id) ?? [] : workspaceRailChildMessageConversations(messages,{...item,settled:item.settled},tickets))) : settled.length===0;
 }
 
 function messagesMatch(root:Element,expected:readonly WorkspaceMessageConversation[]):boolean {

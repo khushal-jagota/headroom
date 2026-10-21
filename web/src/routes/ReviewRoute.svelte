@@ -1,11 +1,12 @@
 <script lang="ts">
   import { tick, onDestroy } from "svelte";
   import { navigationApplication } from "../lib/navigation/application.svelte";
-  import { reviewProposalIdentity } from "../lib/navigation/presentation";
+  import { navigationWindow, reviewProposalIdentity } from "../lib/navigation/presentation";
   import { reviewQueueImpact, runtimeCountImpact } from "../lib/reviewNavigationImpact";
   import { reviewDomMatches } from "../lib/reviewDom";
   import { workspaceAddress } from "../lib/workspaceAddress";
   import type { NavigationReviewItem as ReviewItem } from "../lib/types";
+  import { viewWindow } from "../lib/navigation/views/owner";
   import ResourceState from "../components/ResourceState.svelte";
   import ReviewProposalCard from "../components/ReviewProposalCard.svelte";
 
@@ -18,6 +19,10 @@
   $effect(() => { const view = navigation.selectors.effective; if (view) displayed = view; });
   let review = $derived(displayed ? navigation.presentationFor(displayed).review : null);
 
+  let reviewAnchor=$state<string|null>(null);
+  let queueWindow=$derived(navigationWindow(displayed?navigation.presentationFor(displayed):undefined,'review'));
+  $effect(()=>navigation.owner.setDemand('review',{windows:[viewWindow('review',null,{anchor:reviewAnchor,limit:30})]}));
+  onDestroy(()=>navigation.owner.setDemand('review',undefined));
   let renderedBody = $state(0);
   let skipped = $state<Record<string, boolean>>({});
   // The route's own element. The approve shortcut's lookup is scoped to it, so a
@@ -29,12 +34,19 @@
     return `${item.ticket_id}:${item.field}`;
   }
 
-  let items = $derived(review?.items ?? []);
+  let items = $derived(queueWindow?(review?.items ?? []).filter(item=>queueWindow?.members.some(key=>key.id===item.ticket_id)):review?.items ?? []);
   let runningWorkerCount = $derived(review?.runningConversationCount ?? null);
   let currentItem = $derived.by<ReviewItem | null>(() => {
     if (!items.length) return null;
     const live = items.filter((item) => !skipped[itemKey(item)]);
     return live[0] || null;
+  });
+
+  $effect(()=>{
+    if(queueWindow?.next && items.length && items.every(item=>skipped[itemKey(item)])) {
+      reviewAnchor=queueWindow.next;
+      skipped={};
+    }
   });
 
   function runningWorkersText(count: number): string {
@@ -127,7 +139,7 @@
 {/snippet}
 
 <section class="review-screen" data-screen="review" bind:this={screenElement}>
-  <ResourceState error={navigation.state.error} loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
+  <ResourceState shape="block" error={navigation.state.error} loading={!review} hasData={Boolean(review)} loadingText="Loading review...">
     {#if !items.length}
       <div class="review-empty-state" data-review-empty>
         <div class="review-empty-mark" aria-hidden="true"><span></span></div>

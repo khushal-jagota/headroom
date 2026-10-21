@@ -11,11 +11,11 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryUncertain,
 )
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
+from planner.managers import data as managers_data
+from planner.managers import service as managers_service
 from planner.runtime import conversation_start
-from planner.sprints import data as sprints_data
-from planner.sprints import service as sprints_service
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import ReviewTransferNotice
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
@@ -45,13 +45,45 @@ async def _notify_review_transfer(
     *,
     now: int,
 ) -> None:
-    target = notice.previous_holder
-    content = text_message_content(
-        f"{notice.new_holder_name} took over the review of {notice.ticket_title}."
+    new_holder_text = (
+        f"{notice.mover_name} moved the review of {notice.ticket_title} to you."
+        if notice.mover_name is not None
+        else f"You now hold the review of {notice.ticket_title}."
     )
+    await _deliver(
+        system,
+        conn,
+        notice.ticket_id,
+        notice.new_holder,
+        text_message_content(new_holder_text),
+        now=now,
+    )
+    if notice.notify_previous_holder:
+        await _deliver(
+            system,
+            conn,
+            notice.ticket_id,
+            notice.previous_holder,
+            text_message_content(
+                f"{notice.mover_name} moved the review of {notice.ticket_title} "
+                f"to {notice.new_holder_name}."
+            ),
+            now=now,
+        )
+
+
+async def _deliver(
+    system: ConversationSystem,
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    target: Principal,
+    content: MessageContent,
+    *,
+    now: int,
+) -> None:
     if target.kind is PrincipalKind.owner:
-        async with conversation_start.conversation_link_lock(f"ticket:{notice.ticket_id}"):
-            ticket = tickets_data.read_ticket(conn, notice.ticket_id)
+        async with conversation_start.conversation_link_lock(f"ticket:{ticket_id}"):
+            ticket = tickets_data.read_ticket(conn, ticket_id)
             current = ticket.conversation_id
             if current is None:
                 linked = await conversation_start.start_ticket_conversation(
@@ -67,7 +99,7 @@ async def _notify_review_transfer(
                 current,
                 content,
                 sender_label="Panels",
-                sender=Principal(PrincipalKind.ticket, notice.ticket_id),
+                sender=Principal(PrincipalKind.ticket, ticket_id),
                 recipient=OWNER_PRINCIPAL,
                 credit_explicit_reply=False,
             )
@@ -86,25 +118,25 @@ async def _notify_review_transfer(
                 reply_requested=False,
                 now=now,
             )
-    elif target.kind is PrincipalKind.sprint_item:
-        async with sprints_service.supervisor_lifecycle_lock(target.id):
-            item = sprints_data.read_item(conn, target.id).item
+    elif target.kind is PrincipalKind.manager:
+        async with managers_service.manager_lifecycle_lock(target.id):
+            item = managers_data.read_manager(conn, target.id).item
             async with conversation_start.conversation_link_lock(
-                f"agent:{item.supervisor_agent_key}"
+                f"agent:{item.manager_agent_key}"
             ):
                 delivered = await conversation_start.send_to_agent_conversation(
                     system,
                     conn,
-                    item.supervisor_agent_key,
+                    item.manager_agent_key,
                     content,
-                    conversation_start.sprint_item_supervisor_resolve(item),
+                    conversation_start.manager_resolve(item),
                     conversation_id=conversation_start.read_agent_conversation(
-                        conn, item.supervisor_agent_key
+                        conn, item.manager_agent_key
                     ),
                     sender_label="Panels",
                     mode=PromptDeliveryMode.queue,
                     reply_requested=False,
-                    required_sprint_item_id=item.id,
+                    required_manager_id=item.id,
                 )
     else:
         async with conversation_start.conversation_link_lock(f"agent:{CHIEF_SETTINGS_KEY}"):
@@ -124,6 +156,6 @@ async def _notify_review_transfer(
     if isinstance(delivered.fate, (PromptDeliveryRefused, PromptDeliveryUncertain)):
         _LOG.warning(
             "review transfer notice did not reach its holder (ticket=%s, fate=%s)",
-            notice.ticket_id,
+            ticket_id,
             delivered.fate,
         )

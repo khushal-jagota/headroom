@@ -302,6 +302,8 @@ def source_facts(connection: sqlite3.Connection) -> dict[str, Any]:
         "ceiling_holder FROM tickets ORDER BY id",
         "heads": "SELECT version_num FROM alembic_version ORDER BY version_num",
     }
+    if "manager_id" in {row[1] for row in connection.execute("PRAGMA table_info(tickets)")}:
+        queries["tickets"] = queries["tickets"].replace("sprint_item_id", "manager_id")
     return {name: [list(row) for row in connection.execute(sql)] for name, sql in queries.items()}
 
 
@@ -429,7 +431,7 @@ def _main() -> None:
                 public_snapshot = snapshot(current)
                 assert public_snapshot["schema_version"] == 4
     else:
-        assert action in {"read", "read_incompatible"}, action
+        assert action in {"read", "read_incompatible", "read_unavailable"}, action
     connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")
@@ -439,6 +441,50 @@ def _main() -> None:
         from planner.worker_types.configuration import load_worker_runtime_definitions
 
         load_worker_runtime_definitions(connection)
+        denied: list[str] = []
+        for statement in (
+            "UPDATE native_usage_sources SET source_key='forbidden'",
+            "CREATE TABLE forbidden(value)",
+        ):
+            try:
+                connection.execute(statement)
+            except sqlite3.OperationalError as error:
+                assert "readonly" in str(error), str(error)
+                denied.append(statement)
+            else:
+                raise AssertionError("legacy reader connection admitted a write")
+        if action == "read_unavailable":
+            # The reviewed Manager rename changes the physical schema. Old binaries
+            # require their matched backup, rather than synthetic compatibility views.
+            assert expected_tip in {HISTORICAL_TIP, CURRENT_STAGING_TIP}
+            projects = {project.id: project.name for project in list_projects(connection)}
+            try:
+                read_ticket(connection, "t_historical")
+            except sqlite3.OperationalError as error:
+                failure = str(error)
+                assert failure in {
+                    "no such table: sprint_items",
+                    "no such column: tickets.sprint_item_id",
+                }, failure
+            else:
+                raise AssertionError("pre-rename Ticket reader unexpectedly succeeded")
+            print(
+                json.dumps(
+                    {
+                        "tip": observed,
+                        "unavailable": "structural_manager_rename",
+                        "failures": {"ticket": failure},
+                        "projects": projects,
+                        "denied_writes": len(denied),
+                        "source": source_facts(connection),
+                        "foreign_keys": [
+                            list(row) for row in connection.execute("PRAGMA foreign_key_check")
+                        ],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return
         if action == "read_incompatible":
             assert expected_tip == F097_TIP
             failures: dict[str, str] = {}
@@ -459,18 +505,6 @@ def _main() -> None:
             )
             return
         ticket = read_ticket(connection, "t_historical")
-        denied: list[str] = []
-        for statement in (
-            "UPDATE native_usage_sources SET source_key='forbidden'",
-            "CREATE TABLE forbidden(value)",
-        ):
-            try:
-                connection.execute(statement)
-            except sqlite3.OperationalError as error:
-                assert "readonly" in str(error), str(error)
-                denied.append(statement)
-            else:
-                raise AssertionError("legacy reader connection admitted a write")
         result = {
             "tip": observed,
             "public_snapshot": public_snapshot,
@@ -489,7 +523,9 @@ def _main() -> None:
                 "backlog": ticket.is_backlogged,
                 "status": ticket.ticket_status.value,
                 "project": ticket.project_id,
-                "orchestrator": ticket.sprint_item_id,
+                "orchestrator": getattr(  # noqa: B009 - subprocess loads the historical Ticket type
+                    ticket, "sprint_item_id"
+                ),
                 "conversation": ticket.conversation_id,
                 "fields": dict(ticket.field_values),
                 "proposal": None

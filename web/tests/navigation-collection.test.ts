@@ -15,7 +15,7 @@ describe('TanStack source publication', () => {
     const record: TicketRecord = {kind:'ticket',id:'t',value:{
       title:'Ticket',recap:'Ticket recap',recap_preview:'Ticket recap',worker_type:'coding',stage:'needs_implementation',ticket_status:'empty',
       blocked:false,created_at:1,updated_at:10,worker_step_claim_out:false,deadline:null,
-      project_id:null,orchestrator_kind:'chief',sprint_item_id:null,conversation_id:null,
+      project_id:null,manager_kind:'chief',manager_id:null,conversation_id:null,
       is_backlogged:false,ceiling:'needs_implementation',ceiling_holder:{kind:'owner',id:'owner'},
       gating_field:'plan',proposal_field:null,proposal_revision:0,proposal_created_at:null,stage_ownership:'worker',
       terminal:false,locale:'en'

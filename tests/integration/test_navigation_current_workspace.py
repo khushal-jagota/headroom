@@ -14,7 +14,7 @@ from typing import cast
 
 import pytest
 from alembic import command
-from tests.integration.test_navigation_staging_merge import historical_snapshot
+from tests.integration.navigation_staging_merge_support import historical_snapshot
 from tests.support.navigation_current import (
     current_navigation_database,
     prepared_navigation_database,
@@ -38,7 +38,7 @@ def assert_prepared_rejected(path: Path) -> None:
     """Exercise public admission without depending on a runtime guard's refusal."""
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
         current = historical_snapshot(conn)
-        assert current["schema_version"] == 5
+        assert current["schema_version"] == 7
         with pytest.raises(RuntimeError, match="current schema"):
             snapshot(conn)
         with pytest.raises(RuntimeError, match="current schema"):
@@ -49,7 +49,7 @@ def assert_prepared_rejected(path: Path) -> None:
                     Continuity,
                     {
                         "scope": current["scope"],
-                        "schema_version": 5,
+                        "schema_version": 7,
                         "semantics": "generic-source-facts-v5",
                         "epoch": current["epoch"],
                         "revision": current["revision"],
@@ -114,15 +114,15 @@ def test_actual_public_four_committed_source_removal_join_failure_and_recovery(
     finally:
         engine.dispose()
     with prepared_navigation_database(path) as conn:
-        assert historical_snapshot(conn)["schema_version"] == 5
+        assert historical_snapshot(conn)["schema_version"] == 7
     assert_prepared_rejected(path)
     with prepared_navigation_database(path) as conn:
-        assert historical_snapshot(conn)["schema_version"] == 5
+        assert historical_snapshot(conn)["schema_version"] == 7
     assert_prepared_rejected(path)
     with current_navigation_database(path) as conn:
         current = snapshot(conn)
-        assert current["schema_version"] == 6
-        assert current["semantics"] == "attention-knowledge-v6-recap"
+        assert current["schema_version"] == 8
+        assert current["semantics"] == "attention-knowledge-v8-manager"
         assert current["scope"] == old["scope"]
         assert current["epoch"] != old["epoch"]
         assert source_facts(conn)["events"] == original["source"]["events"]

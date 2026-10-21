@@ -51,9 +51,9 @@ try {
  console.log=originalLog;
  if(savedReport!==undefined)process.env.PANELS_COMPANION_REPORT=savedReport;
 }
-console.log('Honest scope outcomes and exact scratch ownership passed');
+console.log('Honest scope managers and exact scratch ownership passed');
 '''
     result = subprocess.run(["node", "--input-type=module", "-e", probe], cwd=root,
                             text=True, capture_output=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Honest scope outcomes and exact scratch ownership passed" in result.stdout
+    assert "Honest scope managers and exact scratch ownership passed" in result.stdout

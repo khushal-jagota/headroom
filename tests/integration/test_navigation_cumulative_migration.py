@@ -15,7 +15,7 @@ from typing import Any, cast
 import pytest
 from alembic import command
 from sqlalchemy import Engine
-from tests.integration.test_navigation_staging_merge import historical_snapshot
+from tests.integration.navigation_staging_merge_support import historical_snapshot
 from tests.support.navigation_current import (
     current_navigation_database,
     prepared_navigation_database,
@@ -280,11 +280,17 @@ def _assert_canonical(conn: sqlite3.Connection) -> None:
 
 def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dict[str, Any]]:
     current = historical_snapshot(conn)
-    assert current["schema_version"] == (6 if activated else 5)
+    renamed = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE name='managers'").fetchone() is not None
+    )
+    assert current["schema_version"] == (8 if activated else 7 if renamed else 5)
+    parent_kind = "manager" if renamed else "orchestrator"
+    assignment_column = "manager_kind" if renamed else "orchestrator_kind"
+    parent_column = "manager_id" if renamed else "sprint_item_id"
     records = current["records"]
     values = {(record["kind"], record["id"]): record["value"] for record in records}
     assert values["project", "fixture-project"] == {"name": "Fixture project"}
-    assert values["orchestrator", "parent"] == {
+    assert values[parent_kind, "parent"] == {
         "title": "Fixture parent",
         "recap": "",
         "recap_preview": "",
@@ -308,8 +314,8 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
         "worker_step_claim_out": True,
         "deadline": None,
         "project_id": "fixture-project",
-        "orchestrator_kind": "sprint_item",
-        "sprint_item_id": "parent",
+        assignment_column: "manager" if renamed else "sprint_item",
+        parent_column: "parent",
         "conversation_id": "current",
         "is_backlogged": True,
         "ceiling": "done",
@@ -322,7 +328,7 @@ def _assert_projection(conn: sqlite3.Connection, *, activated: bool) -> list[dic
         "locale": "vps",
     }
     assert values["totals", "workspace"] == {"child_count": 3, "distinct_conversation_count": 2}
-    assert values["totals", "orchestrator:parent"] == {
+    assert values["totals", parent_kind + ":parent"] == {
         "child_count": 3,
         "distinct_conversation_count": 2,
     }
@@ -441,12 +447,17 @@ def test_cumulative_branch_orders_install_reopen_restart_and_rebuild(
             engine.dispose()
         # Bootstrap preparation is distinct from initialization and complete install.
         with prepared_navigation_database(path) as conn:
-            assert historical_snapshot(conn) == physical
+            prepared = historical_snapshot(conn)
+            assert prepared["scope"] == physical["scope"]
+            assert prepared["schema_version"] == 7
+            assert prepared["epoch"] != physical["epoch"]
+            _assert_canonical(conn)
+            _assert_projection(conn, activated=False)
         with current_navigation_database(path) as conn:
             _assert_canonical(conn)
             records = _assert_projection(conn, activated=True)
             installed = snapshot(conn)
-            assert installed["semantics"] == "attention-knowledge-v6-recap"
+            assert installed["semantics"] == "attention-knowledge-v8-manager"
             assert installed["epoch"] != physical["epoch"]
             assert installed["scope"] == physical["scope"]
             assert installed["revision"] == "0"

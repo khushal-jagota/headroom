@@ -184,11 +184,11 @@ def test_proposal_route_accepts_only_the_ticket_own_worker(app_db: AppDb) -> Non
         )
         assert scoped.status_code == 200, scoped.text
         item = client.post(
-            "/api/items", json={"title": "Supervisor", "project_id": "project_vylo"}
+            "/api/managers", json={"title": "Supervisor", "project_id": "project_vylo"}
         ).json()
         attempts = (
             {
-                "X-Plan-Actor": "sprint_item_supervisor",
+                "X-Plan-Actor": "manager",
                 "X-Plan-Sprint-Item-ID": str(item["id"]),
             },
             {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": parent},

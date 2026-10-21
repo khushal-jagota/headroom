@@ -1331,3 +1331,46 @@ def _compression_as_the_server_composes_it(app: FastAPI) -> CompressExceptEventS
         minimum_size=1024,
         compresslevel=4,
     )
+
+
+def test_legacy_sparse_events_report_real_edges_and_expired_details(harness: _Harness) -> None:
+    """Omissions are disclosed, and neither sequence gaps nor unknown details invent history."""
+    from planner.core.db import connect
+    from planner.core.server import handle_planner_error
+
+    harness.app.add_exception_handler(PlannerError, handle_planner_error)
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "sparse")
+            for text in ("first", "expired", "last"):
+                await harness.store.append_event(
+                    "sparse", AgentMessageEventPayload(content=text_message_content(text))
+                )
+            path = f"{CONVERSATION_PREFIX}/conversations/sparse"
+            before = await client.get(path + "/events", params={"limit": 1})
+            assert before.json()["diagnostics_expired"] is False
+            with connect(harness.runtime.database_path) as conn:
+                conn.execute(
+                    "DELETE FROM conversation_events WHERE conversation_id='sparse' "
+                    "AND sequence IN (1,2)"
+                )
+                conn.execute("INSERT INTO conversation_expired_ranges VALUES ('sparse',1,2,1,2,2)")
+            page = (await client.get(path + "/events", params={"limit": 1})).json()
+            assert [event["sequence"] for event in page["events"]] == [3]
+            assert page["has_more"] is False
+            assert page["diagnostics_expired"] is True
+            empty = (await client.get(path + "/events", params={"before": 3, "limit": 1})).json()
+            assert empty["events"] == [] and empty["has_more"] is False
+            forward = (await client.get(path + "/events", params={"after": 0, "limit": 1})).json()
+            assert forward["events"] == page["events"] and forward["has_more"] is False
+            expired = await client.get(path + "/events/2/detail")
+            assert expired.status_code == 410
+            assert expired.json()["error"]["code"] == "diagnostic_expired"
+            for sequence in (3, 999):
+                assert (await client.get(path + f"/events/{sequence}/detail")).status_code == 404
+            async with _EventStreamDrive(harness.app, path + "/tail", "after=2") as stream:
+                name, event = await stream.next_named_frame()
+                assert name == COMMITTED_EVENT_STREAM_NAME and event["sequence"] == 3
+
+    _run(exercise)

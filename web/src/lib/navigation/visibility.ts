@@ -29,6 +29,18 @@ export interface Certification {
   proof: ProofResult | null;
 }
 
+/** Checkpoints preserve DOM evidence only for the exact admitted content and authority. */
+export function sameRenderedContent(left:NavigationPublication | undefined,right:NavigationPublication | undefined):boolean {
+  if(!left || !right) return false;
+  if(left===right) return true;
+  return !!left.view && !!right.view && left.view.id===right.view.id
+    && left.view.scopeGeneration===right.view.scopeGeneration
+    && left.view.contentVersion===right.view.contentVersion
+    && left.view.orderingGeneration===right.view.orderingGeneration
+    && left.continuity.scope===right.continuity.scope && left.continuity.epoch===right.continuity.epoch
+    && sameAuthority(left.authority,right.authority);
+}
+
 /** Collection, coherent selector and DOM observations are separate pieces of evidence. */
 export function createVisibilityTracker(certify: (fence: Fence) => Promise<Certification>) {
   const observers = new Map<RenderObserver, Observer>();
@@ -70,7 +82,7 @@ export function createVisibilityTracker(certify: (fence: Fence) => Promise<Certi
       if (fence.epoch !== current.epoch || fence.witnesses.length === 0) requestCertification(wait);
       return;
     }
-    if (wait.required.every((observer) => observer.generation === generation && observer.selectors === publication && observer.rendered === publication)) {
+    if (wait.required.every((observer) => observer.generation === generation && sameRenderedContent(observer.selectors,publication) && sameRenderedContent(observer.rendered,publication))) {
       finish(wait, { status, reason: null });
     }
   }
@@ -114,7 +126,7 @@ export function createVisibilityTracker(certify: (fence: Fence) => Promise<Certi
       const handle: RenderObserver = Object.freeze({
         id,
         observeSelectors(value: NavigationPublication, observedGeneration: number) {
-          if (!observer.active || value.mode !== 'current' || value !== publication || observedGeneration !== generation) return;
+          if (!observer.active || value.mode !== 'current' || !sameRenderedContent(value,publication) || observedGeneration !== generation) return;
           observer.generation = generation;
           observer.selectors = value;
           observer.rendered = undefined;
@@ -123,7 +135,7 @@ export function createVisibilityTracker(certify: (fence: Fence) => Promise<Certi
         },
         acknowledgeRender(value: NavigationPublication, observation: RenderObservation | undefined) {
           if (!observation || observation !== observer.observation || observation.generation !== generation) return;
-          if (!observer.active || observer.generation !== generation || value !== publication || observer.selectors !== value) return;
+          if (!observer.active || observer.generation !== generation || !sameRenderedContent(value,publication) || !sameRenderedContent(observer.selectors,value)) return;
           observer.rendered = value;
           inspectAll();
         },

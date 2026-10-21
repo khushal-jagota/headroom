@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, Route, expect
@@ -100,13 +101,11 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         },
     )
     _bind(server, "feedback", feedback["id"])
-    with sqlite3.connect(server.db_path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0] == 0
     ticket = tickets[0]
     for name in ("dot-ticket", "dot-supervisor", "dot-chief"):
         _conversation(server, name)
     _bind(server, "ticket", ticket["id"], "dot-ticket")
-    _bind(server, "agent", item["supervisor"]["agent_key"], "dot-supervisor")
+    _bind(server, "agent", item["manager"]["agent_key"], "dot-supervisor")
     _bind(server, "agent", "chief_of_staff", "dot-chief")
     _message(
         server, "dot-ticket", Principal(PrincipalKind.ticket, ticket["id"]), "Child direct message"
@@ -114,21 +113,21 @@ def test_approval_membership_and_each_workers_durable_message_dot(
 
     context = context_factory()
     diagnostics = ApprovalMessageDiagnostics(context, server, EVIDENCE)
-    pending_events: list[tuple[Route, str]] = []
+    transcript_pattern = "**/api/conversation/conversations/dot-ticket/view/tail?*transcript=true*"
+    pending_events: list[Route] = []
     pending_workspace: list[tuple[Route, str]] = []
 
     def delay_transcript(route: Route) -> None:
-        response = route.fetch()
-        body = response.text()
-        pending_events.append((route, body))
-        diagnostics.record("transcript-held", url=route.request.url, body=body)
+        pending_events.append(route)
+        diagnostics.record("transcript-held", url=route.request.url)
+        route.request.frame.page.evaluate("() => { window.__proofTranscriptHeld = true; }")
 
     try:
         diagnostics.record("transcript-route-install-start")
-        context.route("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
+        context.route(transcript_pattern, delay_transcript)
         diagnostics.record("transcript-route-install-return")
         page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
-        left = page.locator(f'[data-sprint-item="{item["id"]}"]')
+        left = page.locator(f'[data-manager="{item["id"]}"]')
         owner_row = left.locator(f'[data-ticket-id="{ticket["id"]}"]')
         expect(owner_row.locator('[data-conversation-signal="message"]')).to_have_count(
             1, timeout=WAIT_MS
@@ -153,7 +152,8 @@ def test_approval_membership_and_each_workers_durable_message_dot(
             diagnostics.record("workspace-held", url=route.request.url, body=body)
             page.evaluate("() => { window.__proofWorkspaceHeld = true; }")
 
-        workspace_pattern = f"**/api/items/{item['id']}/workspace-content"
+        workspace_key = quote(f"/api/managers/{item['id']}/workspace-content", safe="")
+        workspace_pattern = f"**/api/resource-body?key={workspace_key}"
         diagnostics.record("workspace-route-install-start")
         context.route(workspace_pattern, delay_workspace)
         diagnostics.record("workspace-route-install-return")
@@ -169,7 +169,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         diagnostics.record("workspace-route-remove-start")
         context.unroute(workspace_pattern, delay_workspace)
         diagnostics.record("workspace-route-remove-return")
-        right = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
+        right = page.locator(f'[data-manager-workspace="{item["id"]}"]')
         expect(right.locator('[data-workspace-group="awaiting_approval"]')).to_contain_text(
             ticket["title"]
         )
@@ -179,7 +179,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         expect(left.locator('[data-bucket-key="awaiting_approval"]')).to_contain_text(
             ticket["title"]
         )
-        assert right.locator(".sprint-workspace-title-mark").count() == 0
+        assert right.locator(".manager-workspace-title-mark").count() == 0
         # Unfinished groups arrive open. The two approval holders remain distinct.
         for key in ("awaiting_approval", "status_awaiting_approval"):
             group = right.locator(f'[data-workspace-group="{key}"]')
@@ -194,15 +194,18 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         page.wait_for_function(
             "() => document.querySelector('[data-conversation-state=peeked]')", timeout=WAIT_MS
         )
+        # Peeked is local UI state; metadata and reader bootstrap can still be pending.
+        # Establish that the interceptor holds delivery before testing the read boundary.
+        page.wait_for_function("() => window.__proofTranscriptHeld === true", timeout=WAIT_MS)
         # The snapshot can name an unread latest sequence, but undelivered rows cannot be read.
         assert pending_events
         assert _read_position(server, "dot-ticket") == 0
-        for route, body in pending_events:
-            diagnostics.record("transcript-release", url=route.request.url, body=body)
-            route.fulfill(status=200, content_type="application/json", body=body)
+        for route in pending_events:
+            diagnostics.record("transcript-release", url=route.request.url)
+            route.continue_()
         pending_events.clear()
         diagnostics.record("transcript-route-remove-start")
-        context.unroute("**/api/conversation/conversations/dot-ticket/events?*", delay_transcript)
+        context.unroute(transcript_pattern, delay_transcript)
         diagnostics.record("transcript-route-remove-return")
         page.locator('[data-conversation-lens-choice="full"]').click(timeout=WAIT_MS)
         expect(page.get_by_text("Child direct message", exact=True)).to_be_visible(timeout=WAIT_MS)
@@ -236,7 +239,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         assert _read_position(server, "dot-ticket") == 1
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         assert (
-            page.locator(f'[data-sprint-item="{item["id"]}"] .item-head .stage-mark').count() == 0
+            page.locator(f'[data-manager="{item["id"]}"] .item-head .stage-mark').count() == 0
         )
 
         _post(
@@ -245,7 +248,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         _message(
             server,
             "dot-supervisor",
-            Principal(PrincipalKind.sprint_item, item["id"]),
+            Principal(PrincipalKind.manager, item["id"]),
             "Supervisor direct message",
         )
         page.reload()
@@ -254,7 +257,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
         assert page.locator("[data-chief-destination] .stage-mark").count() == 0
         left.locator(".item-head").click(timeout=WAIT_MS)
-        expect(right.locator(".sprint-workspace-title-mark")).to_be_visible(timeout=WAIT_MS)
+        expect(right.locator(".manager-workspace-title-mark")).to_be_visible(timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_be_visible(timeout=WAIT_MS)
         expect(owner_row).to_be_visible(timeout=WAIT_MS)
         expect(owner_row.locator("[data-conversation-signal]")).to_have_count(0, timeout=WAIT_MS)
@@ -264,7 +267,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         assert _read_position(server, "dot-supervisor") == 0
         capture_success(page, str(EVIDENCE / "supervisor-own-message-title-and-rail.png"))
         page.locator("[data-conversation-rest-bar]").click(timeout=WAIT_MS)
-        expect(right.locator(".sprint-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
+        expect(right.locator(".manager-workspace-title-mark")).to_have_count(0, timeout=WAIT_MS)
         expect(left.locator(".item-head .stage-mark")).to_have_count(0, timeout=WAIT_MS)
         assert _read_position(server, "dot-supervisor") == 1
         page.goto(server.base + "/#/workspace?view=items")
@@ -298,7 +301,12 @@ def test_approval_membership_and_each_workers_durable_message_dot(
     finally:
         diagnostics.persist_and_close(context)
         # Failed assertions must not strand intercepted requests during context teardown.
-        for route, body in (*pending_events, *pending_workspace):
+        for route in pending_events:
+            try:
+                route.continue_()
+            except PlaywrightError:
+                pass  # Already handled or the test's page closed.
+        for route, body in pending_workspace:
             try:
                 route.fulfill(status=200, content_type="application/json", body=body)
             except PlaywrightError:

@@ -138,10 +138,10 @@ def test_a_worker_may_not_declare_a_worker_type(client: tuple[TestClient, Path])
     ]
 
 
-def test_chief_recap_is_owner_editable_durable_and_exact(
+def test_chief_recap_is_writable_by_the_owner_and_the_chief(
     client: tuple[TestClient, Path],
 ) -> None:
-    """The new write must persist alone and refuse agent writes or malformed payloads."""
+    """The Chief writes its own recap; other agents and malformed payloads are refused."""
     test_client, db_path = client
     settings_path = "/api/workers/chief-of-staff/settings"
     write_path = "/api/workers/chief-of-staff/recap"
@@ -157,8 +157,16 @@ def test_chief_recap_is_owner_editable_durable_and_exact(
     with connect(str(db_path)) as conn:
         assert conn.execute("SELECT recap FROM chief_settings").fetchone()[0] == recap
 
+    chief_recap = "Chief wrote this."
+    response = test_client.put(
+        write_path, json={"recap": chief_recap}, headers={"X-Plan-Actor": "chief"}
+    )
+    assert response.status_code == 200, response.text
+    assert test_client.get(settings_path).json()["recap"] == chief_recap
+    response = test_client.put(write_path, json={"recap": recap})
+    assert response.status_code == 200, response.text
+
     for headers in (
-        {"X-Plan-Actor": "chief"},
         {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_recap"},
         {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_recap"},
     ):
@@ -286,3 +294,49 @@ def test_skill_file_failure_reaches_http_as_an_incomplete_save(
         "phase": "file",
     }
     assert "Read the canonical skill before retry" in error["message"]
+
+
+def test_one_type_reads_back_exactly_what_the_whole_list_said(
+    client: tuple[TestClient, Path],
+) -> None:
+    """The list is 20,165 bytes for fourteen types; a Ticket page draws one.
+
+    The single-type read has to be the same entry in the same shape, because the
+    lifecycle, the stage table and the Ticket section admission all read that shape.
+    """
+    test_client, _db_path = client
+
+    whole = test_client.get("/api/worker-types").json()["worker_types"]
+    one = test_client.get("/api/worker-types/coding/manifest")
+
+    assert one.status_code == 200, one.text
+    assert one.json()["worker_types"] == [
+        entry for entry in whole if entry["worker_type"] == "coding"
+    ]
+
+    unknown = test_client.get("/api/worker-types/not-a-worker/manifest")
+    assert unknown.status_code == 404, unknown.text
+    assert unknown.json()["error"]["code"] == "not_found"
+    assert unknown.json()["error"]["detail"] == {"worker_type": "not-a-worker"}
+
+
+def test_reviewed_skill_batch_has_owner_authority_even_when_chief_can_edit_other_skills(
+    client: tuple[TestClient, Path],
+) -> None:
+    test_client, _db_path = client
+    source = "---\nname: batch-role\ndescription: Reviewed role\n---\n\nExact owner instructions.\n"
+    payload = {"skills": [{"name": "batch-role", "source_text": source, "expected_sha256": None}]}
+    before = test_client.get("/api/skills").json()
+    for headers in (
+        {"X-Plan-Actor": "chief"},
+        {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_denied"},
+        {"X-Plan-Actor": "manager", "X-Plan-Manager-ID": "si_denied"},
+        {"X-Plan-Actor": "sprint_item_supervisor", "X-Plan-Sprint-Item-ID": "si_denied"},
+    ):
+        result = test_client.post("/api/skills/apply", json=payload, headers=headers)
+        assert result.status_code == 400, result.text
+        assert result.json()["error"]["code"] == "agent_forbidden"
+        assert test_client.get("/api/skills").json() == before
+    accepted = test_client.post("/api/skills/apply", json=payload)
+    assert accepted.status_code == 200, accepted.text
+    assert test_client.get("/api/skills/batch-role").json()["source_text"] == source

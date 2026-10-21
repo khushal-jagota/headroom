@@ -31,15 +31,14 @@ EVIDENCE = Path("/home/vps/Deployments/Panels/current/data/files/tickets/t_9fh1v
 LONG_TITLE = "Review the entire Worker title when the adjustable rail clips this long approval row"
 
 
-
-
 def _seed(
-    server: ServerHandle, api: ApiHelper,
+    server: ServerHandle,
+    api: ApiHelper,
 ) -> tuple[JsonObject, JsonObject, JsonObject, JsonObject]:
     project = api.direct_post(server, "/api/projects", {"name": "Rail proof"})
     item = api.direct_post(
         server,
-        "/api/items",
+        "/api/managers",
         {
             "title": "Review the connected retirement rail",
             "project_id": project["id"],
@@ -47,9 +46,9 @@ def _seed(
     )
     empty = api.direct_post(
         server,
-        "/api/items",
+        "/api/managers",
         {
-            "title": "Empty orchestrator stays visible",
+            "title": "Empty manager stays visible",
             "project_id": project["id"],
         },
     )
@@ -60,7 +59,7 @@ def _seed(
             "title": LONG_TITLE,
             "worker_type": "coding",
             "brief": "Review the brief.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
         },
     )
     # Empty and Blocked children belong in the hover details, not attention groups.
@@ -75,7 +74,7 @@ def _seed(
                 "title": title,
                 "worker_type": "coding",
                 "brief": "Agreed brief.",
-                "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+                "manager": {"kind": "manager", "id": item["id"]},
                 "blocked_by_ticket_ids": blockers,
             },
         )
@@ -91,7 +90,7 @@ def _seed(
             "title": "Answer only Worker with no direct message",
             "worker_type": "coding",
             "brief": "Agreed brief.",
-            "orchestrator": {"kind": "sprint_item", "id": item["id"]},
+            "manager": {"kind": "manager", "id": item["id"]},
         },
     )
     api.direct_post(
@@ -110,7 +109,7 @@ def _seed(
     )
     for conversation in ("rail-chief", "rail-supervisor"):
         _conversation(server, conversation)
-    _bind(server, "agent", item["supervisor"]["agent_key"], "rail-supervisor")
+    _bind(server, "agent", item["manager"]["agent_key"], "rail-supervisor")
     _bind(server, "agent", "chief_of_staff", "rail-chief")
     return item, empty, ticket, question
 
@@ -124,20 +123,37 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     server = rail_server
     item, empty, ticket, question = _seed(server, api)
     context = context_factory()
-    page = open_page(context, server, "#/workspace?view=items", '[data-screen="workspace"]')
+    context.add_init_script("""
+      window.__railOrchestratorFields = {};
+      const Source = window.EventSource;
+      window.EventSource = class extends Source {
+        constructor(...args) {
+          super(...args);
+          for (const type of ['snapshot', 'patch']) this.addEventListener(type, event => {
+            const frame = JSON.parse(event.data);
+            for (const record of frame.content?.records ?? frame.upserts ?? []) {
+              if (record.kind === 'manager')
+                window.__railOrchestratorFields[record.id] = Object.keys(record.value).sort();
+            }
+          });
+        }
+      };
+    """)
+    page = open_page(context, server, "#/workspace?view=managers", '[data-screen="workspace"]')
     page.set_default_timeout(WAIT_MS)
     page.set_viewport_size({"width": 1440, "height": 1000})
     left = page.locator(".board-workspace-left")
-    card = left.locator(f'[data-sprint-item="{item["id"]}"]')
+    card = left.locator(f'[data-manager="{item["id"]}"]')
     row = card.locator(f'[data-ticket-id="{ticket["id"]}"]')
     expect(left.locator("[data-chief-destination]")).to_be_visible(timeout=WAIT_MS)
     expect(card).to_be_visible(timeout=WAIT_MS)
-    expect(left.locator(".orchestrator-card").first).to_have_class(re.compile(r"\bchief\b"))
+    expect(left.locator(".manager-card").first).to_have_class(re.compile(r"\bchief\b"))
     expect(
-        left.locator(".orchestrator-card.chief").get_by_role("button", name="Settle", exact=False)
+        left.locator(".manager-card.chief").get_by_role("button", name="Settle", exact=False)
     ).to_have_count(0)
-    expect(card.locator(".orchestrator-eyebrow")).to_contain_text("Rail proof")
-    expect(left.locator(f'[data-sprint-item="{empty["id"]}"]')).to_be_visible()
+    expect(card.locator(".manager-eyebrow")).to_contain_text("Rail proof")
+    expect(left.locator(f'[data-manager="{empty["id"]}"]')).to_be_visible()
+    api.direct_patch(server, f"/api/managers/{empty['id']}/settled", {"settled": True})
     expect(row.get_by_role("img", name="Unread message")).to_be_visible(timeout=WAIT_MS)
     expect(card.locator(".item-head .stage-mark")).to_have_count(0)
     expect(left.locator("[data-chief-destination] .stage-mark")).to_have_count(0)
@@ -152,12 +168,14 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(page.locator(f'[data-screen="ticket"][data-ticket-id="{ticket["id"]}"]')).to_be_visible()
     with page.expect_response(
         lambda response: (
-            response.url.endswith(f"/api/items/{item['id']}/settled")
+            response.url.endswith(f"/api/managers/{item['id']}/settled")
             and response.request.method == "PATCH"
         )
     ) as write:
         card.get_by_role("button", name=f"Settle {item['title']}", exact=True).click()
     assert write.value.ok
+    # Keep this membership proof outside the intentional Worker-hover freeze.
+    page.mouse.move(1000, 50)
     expect(card).to_have_count(0, timeout=WAIT_MS)
     assert write.value.json()["settled"] is True
     assert page.evaluate("location.hash") == worker_hash
@@ -172,10 +190,25 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     page.wait_for_function("location.hash === '#/workspace'", timeout=WAIT_MS)
     expect(page.locator("[data-backlog-tickets]")).to_have_count(0)
     left.get_by_role("button", name="Settled", exact=False).click()
+    lean_title = left.locator(f'[data-settled-item="{empty["id"]}"] .settled-title')
+    expect(lean_title).to_be_visible(timeout=WAIT_MS)
+    page.wait_for_function(
+        "id => JSON.stringify(window.__railOrchestratorFields[id]) === "
+        "JSON.stringify(['conversation_id','created_at','settled','title'])",
+        arg=empty["id"],
+        timeout=WAIT_MS,
+    )
+    lean_title.hover()
+    lean_title.focus()
+    page.evaluate(
+        "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
+    )
+    expect(page.locator("[data-rail-hover-panel]")).to_have_attribute("aria-hidden", "true")
+    capture_success(page, str(EVIDENCE / "settled-lean-no-popover.png"))
     scoped_parent = left.locator(f'[data-settled-item="{item["id"]}"]')
     scoped_parent.locator(".settled-title").click()
-    scoped_pane = page.locator(f'[data-sprint-item-workspace="{item["id"]}"]')
-    scoped_row = scoped_pane.locator(f'[data-sprint-ticket-id="{ticket["id"]}"]')
+    scoped_pane = page.locator(f'[data-manager-workspace="{item["id"]}"]')
+    scoped_row = scoped_pane.locator(f'[data-worker-ticket-id="{ticket["id"]}"]')
     # An absent row can mean loading, so inspect the mounted fold before toggling it.
     scoped_group = scoped_pane.locator('[data-workspace-group="awaiting_approval"]')
     expect(scoped_group).to_be_visible(timeout=WAIT_MS)
@@ -198,7 +231,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     expect(card).to_be_visible(timeout=WAIT_MS)
     with sqlite3.connect(server.db_path) as conn:
         assert (
-            conn.execute("SELECT settled FROM sprint_items WHERE id=?", (item["id"],)).fetchone()[0]
+            conn.execute("SELECT settled FROM managers WHERE id=?", (item["id"],)).fetchone()[0]
             == 0
         )
     expect(row.get_by_role("img", name="Unread message")).to_be_visible()
@@ -207,7 +240,7 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     _message(
         server,
         "rail-supervisor",
-        Principal(PrincipalKind.sprint_item, item["id"]),
+        Principal(PrincipalKind.manager, item["id"]),
         "Supervisor own direct message",
     )
     page.reload()

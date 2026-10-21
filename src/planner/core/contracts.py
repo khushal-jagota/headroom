@@ -18,8 +18,14 @@ class PrincipalKind(StrEnum):
 
     owner = "owner"
     chief = "chief"
-    sprint_item = "sprint_item"
+    manager = "manager"
     ticket = "ticket"
+
+    @classmethod
+    def _missing_(cls, value: object) -> PrincipalKind | None:
+        if value == "sprint_item":
+            return cls.manager
+        return None
 
 
 OWNER_PRINCIPAL_ID: Final = "owner"
@@ -55,7 +61,7 @@ def principal_legacy_actor(principal: Principal) -> str:
     return {
         PrincipalKind.owner: "unattributed",
         PrincipalKind.chief: "chief",
-        PrincipalKind.sprint_item: "sprint_item_supervisor",
+        PrincipalKind.manager: "manager",
         PrincipalKind.ticket: "worker",
     }[principal.kind]
 
@@ -92,6 +98,7 @@ class ErrorCode(StrEnum):
     agent_forbidden = "agent_forbidden"  # attributed agent hits a direct-only action
     gateway_offline = "gateway_offline"  # §11
     already_running = "already_running"  # Hermes 4009 session busy
+    diagnostic_expired = "diagnostic_expired"
     not_found = "not_found"
     validation = "validation"  # generic input validation
     skill_save_incomplete = "skill_save_incomplete"

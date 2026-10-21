@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath
 
-from planner.files.contracts import SprintItemFile, TicketFile
+from planner.files.contracts import ManagerFile, TicketFile
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _ENCODED_UNSAFE_RE = re.compile(r"%(?:25|2e|2f|5c)", re.IGNORECASE)
@@ -25,7 +25,8 @@ def conversation_files_root(db_path: str | Path) -> Path:
     return Path(db_path).parent / "files" / "conversations"
 
 
-def sprint_item_files_root(db_path: str | Path) -> Path:
+def manager_files_root(db_path: str | Path) -> Path:
+    # Retain the existing private directory so both URL generations resolve the same bytes.
     return Path(db_path).parent / "files" / "sprint-items"
 
 
@@ -38,15 +39,15 @@ def resolve_ticket_file(db_path: str | Path, ticket_id: str, relative_path: str)
     return TicketFile(ticket_id=ticket_id, relative_path=relative_path, absolute_path=target)
 
 
-def resolve_sprint_item_file(
-    db_path: str | Path, sprint_item_id: str, relative_path: str
-) -> SprintItemFile:
-    sprint_item_id = str(sprint_item_id)
+def resolve_manager_file(
+    db_path: str | Path, manager_id: str, relative_path: str
+) -> ManagerFile:
+    manager_id = str(manager_id)
     relative_path = str(relative_path)
-    _validate_safe_id(sprint_item_id, "Sprint Item")
+    _validate_safe_id(manager_id, "Manager")
     _validate_relative_path(relative_path)
-    target = _resolve_managed_file(sprint_item_files_root(db_path), sprint_item_id, relative_path)
-    return SprintItemFile(sprint_item_id, relative_path, target)
+    target = _resolve_managed_file(manager_files_root(db_path), manager_id, relative_path)
+    return ManagerFile(manager_id, relative_path, target)
 
 
 def resolve_conversation_file(

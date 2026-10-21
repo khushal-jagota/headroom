@@ -33,7 +33,7 @@ textarea {
 .chat-attachments,
 .board-workspace-left,
 .ticket-doc,
-.sprint-item-doc {
+.manager-doc {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--border-color) transparent;
@@ -613,8 +613,6 @@ textarea {
   }
 }
 
-.sprint-outcome-block { display: grid; gap: var(--space-1); }
-.sprint-outcome-block { padding-block: var(--space-2); }
 .ticket-row-backlog { margin-left: auto; padding-left: var(--space-2); color: var(--text-faintest); font-size: var(--type-sm); }
 
 @media (max-width: 390px) {
@@ -1456,7 +1454,7 @@ textarea {
 /* --- List row ------------------------------------------------------------ */
 
 /* THE LIST ROW — one row primitive (title left, metadata right, hover) for every
- * hand-rolled row: sprint tickets, backlog items, flat ideas, board cards. Base is a
+ * hand-rolled row: Worker tickets, backlog items, flat ideas, board cards. Base is a
  * flex baseline row with a flex-1 title and one title-color-on-hover rule; per-screen
  * variants (--ticket, --backlog, --idea, --board) set their own spacing/seams/tokens. */
 .list-row {
@@ -1547,199 +1545,6 @@ button.list-row:hover .list-row-title {
   color: var(--text-muted);
   font-family: var(--font-serif);
   font-size: var(--type-serif-sm);
-}
-
-/* --- Day = daily hub ----------------------------------------------------- */
-/* The Day screen is a quiet read: focus, live dots, a short take, action tiles,
-   and one watch line. The route owns the state composition. This block owns only
-   its responsive presentation and uses the closed token scales. */
-
-[data-screen="day"] .doc {
-  width: 100%;
-}
-
-[data-screen="day"] .col {
-  max-width: var(--measure-read);
-  margin: 0 auto;
-  padding: var(--space-7) var(--space-5) var(--space-page-tail);
-}
-
-[data-screen="day"] .date {
-  color: var(--text-faint);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-[data-screen="day"] .date .dim {
-  color: var(--text-faintest);
-}
-
-[data-screen="day"] .focus,
-[data-screen="day"] .empty-focus {
-  max-width: 18ch;
-  margin: var(--space-4) 0 0;
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-hero);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
-  line-height: 1.16;
-}
-
-[data-screen="day"] .lands {
-  max-width: 46ch;
-  margin: var(--space-4) 0 0;
-  color: var(--text-muted);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-lg);
-  line-height: 1.5;
-}
-
-[data-screen="day"] .lands .pre {
-  color: var(--text-faint);
-}
-
-[data-screen="day"] .dots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin: var(--space-7) 0 0;
-}
-
-[data-screen="day"] .take {
-  max-width: 46ch;
-  margin: var(--space-4) 0 0;
-  color: var(--text-faint);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-md);
-  line-height: 1.5;
-}
-
-[data-screen="day"] .acts {
-  display: flex;
-  gap: var(--space-4);
-  margin: var(--space-7) 0 0;
-}
-
-[data-screen="day"] .act {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: var(--space-5);
-  border-radius: var(--radius-lg);
-  background: var(--surface-ink);
-  color: var(--text-strong);
-  text-decoration: none;
-  transition: background var(--motion-base) var(--motion-ease),
-    transform var(--motion-base) var(--motion-ease);
-}
-
-[data-screen="day"] .act:hover {
-  background-image: var(--interaction-hover);
-  transform: translateY(-2px);
-}
-
-[data-screen="day"] .act .n {
-  color: var(--text-strong);
-  font-size: var(--type-lg);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-[data-screen="day"] .act .k {
-  color: var(--text-muted);
-  font-size: var(--type-sm);
-}
-
-[data-screen="day"] .act--you {
-  background: var(--accent-bright);
-}
-
-[data-screen="day"] .act--you:hover {
-  background-image: var(--interaction-hover);
-}
-
-[data-screen="day"] .act--you .n,
-[data-screen="day"] .act--you .k {
-  color: var(--surface-ink);
-}
-
-[data-screen="day"] .act--you .k {
-  font-weight: 600;
-}
-
-[data-screen="day"] .watch {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-4);
-  margin: var(--space-6) 0 0;
-  padding-top: var(--space-5);
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-[data-screen="day"] .watch .lbl {
-  flex: none;
-  color: var(--accent-bright);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-[data-screen="day"] .watch .v {
-  color: var(--text-muted);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-md);
-  line-height: 1.5;
-}
-
-[data-screen="day"] .empty-focus {
-  color: var(--text-faintest);
-}
-
-[data-screen="day"] .empty-line {
-  margin: var(--space-5) 0 0;
-  color: var(--text-faint);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-lg);
-}
-
-[data-screen="day"] .plan {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: var(--space-6) 0 0;
-  color: var(--accent-bright);
-  font-size: var(--type-sm);
-  text-decoration: none;
-}
-
-[data-screen="day"] .plan:hover {
-  color: var(--text-strong);
-}
-
-@media (max-width: 560px) {
-  [data-screen="day"] .col {
-    padding: var(--space-6) var(--space-4) var(--space-page-tail);
-  }
-
-  [data-screen="day"] .acts {
-    flex-wrap: wrap;
-    gap: var(--space-3);
-  }
-
-  [data-screen="day"] .act {
-    flex: 1 1 calc(50% - var(--space-2));
-  }
-
-  [data-screen="day"] .act--you {
-    flex-basis: 100%;
-  }
 }
 
 /* Wide step output (code wells, markdown pre) must scroll inside its own box, never
@@ -3309,7 +3114,7 @@ select {
   min-width: 0;
 }
 
-/* A box inside a box reads as noise, so a bucket nested in a Sprint Item drops the box
+/* A box inside a box reads as noise, so a bucket nested in a Manager drops the box
  * and steps its label under the Item title. Everything else about it is the bucket. */
 .disclosure--workspace-bucket--nested {
   padding: 0;
@@ -3334,7 +3139,7 @@ select {
   font-size: var(--type-sm);
 }
 
-/* THE SPRINT ITEM — the bucket's box, reused. It is not a Disclosure: selection opens
+/* THE MANAGER — the bucket's box, reused. It is not a Disclosure: selection opens
  * it, not a chevron. */
 .board-workspace-item {
   min-width: 0;
@@ -3413,14 +3218,8 @@ select {
   margin-top: var(--space-5);
 }
 
-.board-workspace-quiet-line {
-  padding: var(--space-2) var(--board-workspace-rail-pad-x);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-}
-
 /* One ticket row grammar — title, condition mark — shared by the
- * workspace rail and the Sprint Item detail sections (SprintTicketRow.svelte). */
+ * workspace rail and the Manager detail sections (WorkerRow.svelte). */
 .ticket-row {
   width: 100%;
   display: flex;
@@ -3938,7 +3737,7 @@ select {
   flex: 1;
 }
 
-.sprint-item-reading {
+.manager-reading {
   position: relative;
   display: flex;
   flex: 1;
@@ -4027,8 +3826,8 @@ select {
 }
 
 /* --- The conversation, the section under a document ------------------------ */
-/* One card, one class family, every host. The Ticket page, the Sprint Item page and the
- * Atlas supervisor panel all end in this same conversation, so it is keyed to its own
+/* One card, one class family, every host. The Ticket page, the Manager page and the
+ * Atlas manager panel all end in this same conversation, so it is keyed to its own
  * name and not to any one of theirs. A host is any element that ends its column with
  * `.conversation-layer`; a host that also wants the narrow-pane insets names itself a
  * `conversation-host` container. Where one host genuinely differs from another, the
@@ -4166,7 +3965,7 @@ select {
 
 /* A narrow pane gives the conversation its gutters back: 48px a side would spend a
  * quarter of the width on margin. The pane and not the window decides, because the
- * Workspace right pane is narrow on a window that is not — and the Sprint Item beside
+ * Workspace right pane is narrow on a window that is not — and the Manager beside
  * this Ticket in that same slot has always measured its pane. Two rulers for one inset
  * put a step between the two of them at every width where the pane and the window
  * disagree. On the full-screen route the pane is the window, so nothing moves there.
@@ -4308,7 +4107,7 @@ select {
 
 /* The recap is the title's quiet, editable second line. It has no surface of its own.
  *
- * It is also the voice the Sprint Item's brief and the Sprint's primary bet speak in, and
+ * It is also the voice the Manager's brief and the Sprint's primary bet speak in, and
  * ClampedText.svelte is what draws all three: the clamp below is its resting height and
  * the measurement it takes is the same number of lines. */
 .ticket-recap {
@@ -4406,7 +4205,7 @@ select {
   padding: var(--space-4) var(--page-gutter) var(--space-6);
 }
 
-/* One compact file index is shared by Ticket and Sprint Item reading columns. */
+/* One compact file index is shared by Ticket and Manager reading columns. */
 .artifact-strip {
   display: flex;
   align-items: baseline;
@@ -4503,14 +4302,14 @@ a.artifact-chip:hover,
 
 /* --- The page's one column ------------------------------------------------ */
 /* Header, body and conversation are the same column, so it is stated once here, after
- * all three, and they cannot drift apart again. The Sprint Item's two columns are the
+ * all three, and they cannot drift apart again. The Manager's two columns are the
  * same column as well: an Item and a Ticket open in the same slot, one after the other,
  * and a second formula for the same measure is what makes them step apart there.
  *
  * The column is measured against its pane and never the window, because both routes
  * also render in the Workspace right pane, which is around 500px narrower than the
  * window around it. That is what `cqi` reads and what `.ticket-screen` and
- * `.sprint-item-page` declare. `cqi` takes the nearest container either way, so each
+ * `.manager-page` declare. `cqi` takes the nearest container either way, so each
  * selector measures against its own pane and this stays one rule.
  *
  * On a pane wide enough for them the column is the pane less a 192px gutter each side.
@@ -4521,7 +4320,7 @@ a.artifact-chip:hover,
 .ticket-head,
 .ticket-col,
 .conversation-column,
-.sprint-item-column {
+.manager-column {
   width: min(
     100%,
     max(
@@ -4589,7 +4388,7 @@ a.artifact-chip:hover,
  * conversation. Opened remains an explicit full-height reading mode.
  *
  * The Ticket asks for this and no other host does, so it is written on the Ticket screen
- * rather than in the shared card: a Sprint Item's peeked share is 60% at every height. */
+ * rather than in the shared card: a Manager's peeked share is 60% at every height. */
 @media (max-width: 720px) and (max-height: 480px) {
   [data-screen="ticket"] .conversation-layer:has([data-conversation-state="peeked"]) {
     height: 52%;
@@ -4792,263 +4591,14 @@ a.artifact-chip:hover,
   }
 }
 
-/* --- Sprint = TRACKING page (redesign) ----------------------------------- */
-/* The tracking overview reads Project → Sprint Item. A dedicated Item view owns
-   Ticket rows, and the documents view preserves the editable sprint record. All three
-   use one centered column and stay scoped under [data-screen="sprint"]. */
-
-[data-screen="sprint"] .doc {
-  width: 100%;
-}
-
-[data-screen="sprint"] .col {
-  max-width: var(--measure-index);                 /* a single centered column — the sprint frame */
-  margin: 0 auto;
-  padding: 0 var(--space-4) var(--space-page-tail);
-}
-
-/* Tracking header — the serif sprint name, then one quiet meta line (dates · day N
- * of M · done count · a Sprint documents link). No hairline: space carries it. */
-[data-screen="sprint"] .sprint-head {
-  padding: var(--space-6) 0 0;
-}
-
-[data-screen="sprint"] .sprint-title {
-  margin: 0;
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-hero);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
-  line-height: 1.26;
-  color: var(--text-strong);
-}
-
-/* The primary bet and Sprint Item body use the Ticket recap voice. The text is
- * the control only when the clamp hides content; the four-and-a-half lines it clamps to
- * are asked for where the text is written, as ClampedText's `lines`. */
-[data-screen="sprint"] .sprint-summary {
-  cursor: default;
-}
-
-[data-screen="sprint"] .sprint-summary .markdown > :first-child {
-  margin-top: 0;
-}
-
-[data-screen="sprint"] .sprint-summary .markdown > :last-child {
-  margin-bottom: 0;
-}
-
-[data-screen="sprint"] .sprint-summary--expandable {
-  cursor: pointer;
-}
-
-[data-screen="sprint"] .sprint-summary--expandable:hover,
-[data-screen="sprint"] .sprint-summary--expandable:focus-visible {
-  color: var(--text-muted);
-}
-
-[data-screen="sprint"] .sprint-meta-line {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-  font-size: var(--type-sm);
-  color: var(--text-faintest);
-  font-variant-numeric: tabular-nums;
-}
-
-[data-screen="sprint"] .sprint-meta-line .sep {
-  color: var(--text-faintest);
-}
-
-[data-screen="sprint"] .sprint-docs-link {
-  margin-left: auto;
-  color: var(--text-faintest);
-  text-decoration: none;
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .sprint-docs-link:hover {
-  color: var(--text-default);
-}
-
-/* Documents page — a back link to the sprint, then the serif title + sub, then the
- * three phase disclosures (reusing the .disclosure--phase / .field styling below). */
-[data-screen="sprint"] .sprint-back {
-  display: inline-block;
-  padding: var(--space-6) 0 0;
-  font-size: var(--type-sm);
-  color: var(--text-faintest);
-  text-decoration: none;
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .sprint-back:hover {
-  color: var(--text-default);
-}
-
-[data-screen="sprint"] .sprint-docs-head {
-  padding: var(--space-4) 0 var(--space-5);
-}
-
-[data-screen="sprint"] .sprint-docs-title {
-  margin: 0;
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-display);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
-  line-height: 1.26;
-  color: var(--text-strong);
-}
-
-[data-screen="sprint"] .sprint-docs-sub {
-  padding-top: var(--space-2);
-  font-size: var(--type-sm);
-  color: var(--text-faintest);
-}
-
-/* Sprint Overview (rev6): Kickoff / Checkpoint / Sprint Review. Three headed
-   .disclosure--phase sections; the phase decides which is open (JS). Each field is a
-   label + the shared .ed inline-edit surface. No freeze, no accent, no ✓/●/○ marks. */
-[data-screen="sprint"] .disclosure--phase {
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-[data-screen="sprint"] .disclosure--phase > .disclosure-summary {
-  gap: var(--space-3);
-  padding: var(--space-5) 0;
-}
-
-[data-screen="sprint"] .disclosure--phase .pnm {
-  font-size: var(--type-md);
-  font-weight: 500;
-  color: var(--text-default);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .disclosure--phase > .disclosure-summary:hover .pnm {
-  color: var(--text-strong);
-}
-
-/* the phase meta ("set at the start" / "day four" / "end of sprint") is a plain
- * lowercase whisper — no weight, no tracking, per the docs mockup. */
-[data-screen="sprint"] .disclosure--phase .pmeta {
-  flex: 1;
-  font-size: var(--type-sm);
-  font-weight: 400;
-  color: var(--text-faintest);
-}
-
-[data-screen="sprint"] .disclosure--phase .disclosure-chev::before {
-  font-size: var(--type-sm);
-}
-
-[data-screen="sprint"] .disclosure--phase > .disclosure-body {
-  padding: 0 0 var(--space-6);
-}
-
-
-[data-screen="sprint"] .field + .field {
-  margin-top: var(--space-5);
-}
-
-[data-screen="sprint"] .field .flabel {
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--text-faintest);
-  margin-bottom: var(--space-2);
-}
-
-[data-screen="sprint"] .field .fval {
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-md);
-  line-height: 1.68;
-  color: var(--text-default);
-}
-
-/* Sprint tracking rebuild: Projects contain Sprint Items. Ticket rows live only
- * on the dedicated Sprint Item view. The Project fold reuses Workspace's bucket
- * disclosure behavior, with the Sprint screen's unboxed reading layout. */
-[data-screen="sprint"] .sprint-projects {
-  margin-top: var(--space-6);
-}
-
-[data-screen="sprint"] .sprint-projects .disclosure--workspace-bucket {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-}
-
-[data-screen="sprint"] .sprint-projects .disclosure--workspace-bucket + .disclosure--workspace-bucket {
-  margin-top: var(--space-7);
-}
-
-[data-screen="sprint"] .sprint-projects .disclosure--workspace-bucket > .disclosure-summary {
-  margin-bottom: var(--space-3);
-}
-
-[data-screen="sprint"] .sprint-projects .disclosure--workspace-bucket:not([open]) > .disclosure-summary {
-  margin-bottom: 0;
-}
-
-[data-screen="sprint"] .sprint-project-items {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-[data-screen="sprint"] .sprint-item-row {
-  width: 100%;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-2);
-  margin: 0 calc(-1 * var(--space-2));
-  border-top: var(--border-hairline) solid var(--border-color);
-  color: inherit;
-  transition: background var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .sprint-project-items > .sprint-item-row:first-child {
-  border-top: 0;
-}
-
-[data-screen="sprint"] .sprint-no-outcome {
-  margin-top: var(--space-7);
-}
-
-[data-screen="sprint"] .sprint-no-outcome > summary {
-  list-style: none;
-  cursor: pointer;
-}
-
-[data-screen="sprint"] .sprint-no-outcome > summary::-webkit-details-marker {
-  display: none;
-}
-
-[data-screen="sprint"] .sprint-item-row .list-row-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-[data-screen="sprint"] .sprint-item-rollup {
-  flex: 0 0 auto;
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-
 /* In the workspace host the rail is the way back, so the link is for narrow screens
  * only — below 960px the rail is hidden and this is the only way out. */
-[data-screen="workspace"] .sprint-item-back {
+[data-screen="workspace"] .manager-back {
   display: none;
 }
 
 @media (max-width: 960px) {
-  [data-screen="workspace"] .sprint-item-back {
+  [data-screen="workspace"] .manager-back {
     display: inline-block;
     padding-top: var(--space-4);
     color: var(--text-faintest);
@@ -5057,117 +4607,15 @@ a.artifact-chip:hover,
     transition: color var(--motion-fast) var(--motion-ease);
   }
 
-  [data-screen="workspace"] .sprint-item-back:hover {
+  [data-screen="workspace"] .manager-back:hover {
     color: var(--text-default);
   }
 }
 
-[data-screen="sprint"] .sprint-item-back {
-  display: inline-block;
-  padding-top: var(--space-6);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-  text-decoration: none;
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .sprint-item-back:hover {
-  color: var(--text-default);
-}
-
-[data-screen="sprint"] .sprint-ticket-row {
-  width: 100%;
-  gap: var(--space-3);
-  padding: var(--space-2);
-  margin: 0 calc(-1 * var(--space-2));
-  border-radius: var(--radius-md);
-  color: inherit;
-  transition: background var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .sprint-ticket-row .list-row-title {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: var(--type-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-[data-screen="sprint"] .sprint-ticket-state {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-  font-size: var(--type-xs);
-  text-align: right;
-  white-space: nowrap;
-}
-
-[data-screen="sprint"] .sprint-ticket-row--settled .list-row-title,
-[data-screen="sprint"] .sprint-ticket-row--settled .sprint-ticket-state {
-  color: var(--text-faintest);
-}
-
-@media (max-width: 600px) {
-  [data-screen="sprint"] .sprint-title {
-    font-size: 24px;
-  }
-
-  [data-screen="sprint"] .sprint-meta-line {
-    flex-wrap: wrap;
-  }
-
-  [data-screen="sprint"] .sprint-docs-link {
-    flex-basis: 100%;
-    margin-left: 0;
-  }
-
-  [data-screen="sprint"] .sprint-item-row,
-  [data-screen="sprint"] .sprint-ticket-row {
-    align-items: flex-start;
-  }
-
-  [data-screen="sprint"] .sprint-item-row .list-row-title,
-  [data-screen="sprint"] .sprint-ticket-row .list-row-title {
-    display: -webkit-box;
-    overflow: hidden;
-    line-height: 1.35;
-    text-overflow: clip;
-    white-space: normal;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
-  [data-screen="sprint"] .sprint-item-rollup,
-  [data-screen="sprint"] .sprint-ticket-row .stage-mark,
-  [data-screen="sprint"] .sprint-ticket-state {
-    margin-top: 3px;
-  }
-}
-
-/* --- Sprint Item workspace ----------------------------------------------- */
-.shell:has(.sprint-screen--workspace) {
-  height: 100dvh;
-  display: flex;
-  flex-direction: column;
-}
-
-.shell:has(.sprint-screen--workspace) .shell-content,
-.shell:has(.sprint-screen--workspace) .screen,
-.sprint-screen--workspace {
-  flex: 1;
-  min-height: 0;
-  height: 100%;
-}
-
-.shell:has(.sprint-screen--workspace) .shell-content {
-  padding: 0;
-}
-
-/* The page is the pane, so it is the size container, exactly as .ticket-screen is. It
- * has to be this element and not the Sprint screen around it: the same component also
- * renders from the Workspace route, which has no Sprint screen, and a rule that lives on
- * one route is a rule that is dead on the other. Inline-size only, so the height chain
- * from the shell down to the page is untouched. */
-.sprint-item-page {
+/* --- Manager workspace ----------------------------------------------- */
+/* The page is the pane, so it owns the size container, exactly as .ticket-screen does.
+ * Inline-size leaves the height chain from the shell to the page untouched. */
+.manager-page {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -5179,10 +4627,10 @@ a.artifact-chip:hover,
   container-type: inline-size;
   /* Its own name for its own rules, and `conversation-host` for the one question every
    * host of the conversation card asks of its pane. See .ticket-screen. */
-  container-name: sprint-item-pane conversation-host;
+  container-name: manager-pane conversation-host;
 }
 
-.sprint-item-doc {
+.manager-doc {
   flex: 1;
   min-width: 0;
   max-width: 100%;
@@ -5190,7 +4638,7 @@ a.artifact-chip:hover,
   overflow: auto;
 }
 
-.sprint-item-column {
+.manager-column {
   padding-bottom: var(--space-6);
   padding-inline: var(--page-gutter);
 }
@@ -5203,21 +4651,21 @@ a.artifact-chip:hover,
  * asks about, and an unnamed one would quietly re-point at the first container anyone put
  * in between. It has to sit after the rule above: `@container` adds no specificity, so
  * source order is all that decides between them. */
-@container sprint-item-pane (min-width: 1152px) {
-  .sprint-item-column {
+@container manager-pane (min-width: 1152px) {
+  .manager-column {
     padding-inline: var(--space-7);
   }
 
-  .sprint-item-doc {
+  .manager-doc {
     scrollbar-gutter: stable both-edges;
   }
 }
 
-.sprint-workspace-head {
+.manager-workspace-head {
   padding-top: var(--space-4);
 }
 
-.sprint-workspace-identity {
+.manager-workspace-identity {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5228,7 +4676,7 @@ a.artifact-chip:hover,
   text-transform: uppercase;
 }
 
-.sprint-workspace-title {
+.manager-workspace-title {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -5241,14 +4689,14 @@ a.artifact-chip:hover,
   line-height: 1.26;
 }
 
-.sprint-workspace-title-mark {
+.manager-workspace-title-mark {
   flex: 0 0 auto;
 }
 
 
 /* The brief keeps the Ticket recap's voice and its clamp, and drops the 62ch measure,
    which is the one thing that made it narrower than the list under it. */
-.sprint-workspace-brief {
+.manager-workspace-brief {
   max-width: none;
   margin-top: var(--space-2);
   color: var(--text-faint);
@@ -5257,27 +4705,27 @@ a.artifact-chip:hover,
   line-height: 1.5;
 }
 
-.sprint-workspace-brief .quiet-line {
+.manager-workspace-brief .quiet-line {
   color: var(--text-faintest);
   font-style: italic;
 }
 
 /* The page is three blocks — head, work, index. One seam between them, stated once:
  * the same step above the rule as below it, and the same step at every seam. */
-.sprint-workspace-work,
-.sprint-workspace-section {
+.manager-workspace-work,
+.manager-workspace-section {
   margin-top: var(--space-5);
   padding-top: var(--space-5);
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
-.sprint-workspace-section-heading {
+.manager-workspace-section-heading {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.sprint-workspace-section > summary {
+.manager-workspace-section > summary {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -5287,13 +4735,13 @@ a.artifact-chip:hover,
   cursor: pointer;
 }
 
-.sprint-workspace-section > summary::-webkit-details-marker {
+.manager-workspace-section > summary::-webkit-details-marker {
   display: none;
 }
 
 /* Section labels keep the small uppercase voice, so a section and a status are never
    mistaken for each other. */
-.sprint-workspace-section-label {
+.manager-workspace-section-label {
   flex: 1;
   font-family: var(--font-ui);
   font-size: var(--type-xs);
@@ -5306,7 +4754,7 @@ a.artifact-chip:hover,
 
 /* The same proximity rule as the rail's buckets: the row's own top padding binds the
  * body to the header above it, and the section carries no margin of its own. */
-.sprint-workspace-section-body {
+.manager-workspace-section-body {
   margin-top: 0;
 }
 
@@ -5314,11 +4762,11 @@ a.artifact-chip:hover,
    same object, so it speaks with the rail's voice: the serif, at the nested bucket's
    size. Colour carries the hierarchy instead of size — faint ink, greyer than the Ticket
    under it, and never louder than the block that contains it. */
-.sprint-workspace-status + .sprint-workspace-status {
+.manager-workspace-status + .manager-workspace-status {
   margin-top: var(--space-5);
 }
 
-.sprint-workspace-status > summary {
+.manager-workspace-status > summary {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -5344,7 +4792,7 @@ a.artifact-chip:hover,
  * the row's own padding; a block that opens with a group header gets nothing. Only the
  * first group is against the label — the rest are spaced by the group-to-group margin
  * above, which is correct. */
-.sprint-workspace-section-body > .sprint-workspace-status:first-child {
+.manager-workspace-section-body > .manager-workspace-status:first-child {
   margin-top: var(--space-2);
 }
 
@@ -5352,32 +4800,32 @@ a.artifact-chip:hover,
    shut group header, which does not, and the seam to the next block came out at two
    different values because of it. Scoped to the shut state: an open header's bottom pad
    would push its own rows away, and that is the one gap already right. */
-.sprint-workspace-status:not([open]) > summary {
+.manager-workspace-status:not([open]) > summary {
   padding-bottom: var(--space-2);
 }
 
-.sprint-workspace-status > summary::-webkit-details-marker {
+.manager-workspace-status > summary::-webkit-details-marker {
   display: none;
 }
 
-.sprint-workspace-status > summary:hover {
+.manager-workspace-status > summary:hover {
   color: var(--text-muted);
 }
 
-.sprint-workspace-status-label {
+.manager-workspace-status-label {
   flex: 1;
   min-width: 0;
 }
 
-.sprint-workspace-status-body {
+.manager-workspace-status-body {
   margin-top: 0;
 }
 
 /* The count and the chevron are one slot: a summary shows the count while it is shut
  * and the chevron while it is open. They therefore have to measure the same, or every
  * open and shut would move the rest of the page by the difference. */
-.sprint-workspace-count,
-.sprint-workspace-chevron {
+.manager-workspace-count,
+.manager-workspace-chevron {
   flex: none;
   min-width: var(--space-4);
   margin-left: auto;
@@ -5391,49 +4839,49 @@ a.artifact-chip:hover,
 
 /* A shut status or section still names and counts itself, but the count is a whisper —
    it must not read at the heading's size. */
-.sprint-workspace-status > summary > .sprint-workspace-count,
-.sprint-workspace-section > summary > .sprint-workspace-count {
+.manager-workspace-status > summary > .manager-workspace-count,
+.manager-workspace-section > summary > .manager-workspace-count {
   font-size: var(--type-sm);
   font-weight: 400;
   color: var(--text-faintest);
 }
 
-.sprint-workspace-chevron::before {
+.manager-workspace-chevron::before {
   content: "›";
   color: var(--text-faintest);
 }
 
-details[open] > summary > .sprint-workspace-count {
+details[open] > summary > .manager-workspace-count {
   display: none;
 }
 
-details[open] > summary > .sprint-workspace-chevron::before {
+details[open] > summary > .manager-workspace-chevron::before {
   content: "⌄";
 }
 
-details:not([open]) > summary > .sprint-workspace-chevron {
+details:not([open]) > summary > .manager-workspace-chevron {
   display: none;
 }
 
 /* The Ticket line. One size up from the shared row, and a shade whiter than the status
    above it, so the two levels never read as one. In the detail column the row pulls out
    to the column gutter. */
-.sprint-item-column .ticket-row {
+.manager-column .ticket-row {
   margin-inline: calc(var(--space-2) * -1);
   padding: var(--space-2);
   font-size: var(--type-md);
 }
 
 
-.sprint-workspace-empty {
+.manager-workspace-empty {
   padding-block: var(--space-2);
   color: var(--text-faintest);
   font-size: var(--type-sm);
 }
 
-/* The Sprint Item ends in the shared conversation card (.conversation-layer, set once on
+/* The Manager ends in the shared conversation card (.conversation-layer, set once on
  * the Ticket screen above) and takes its narrow-pane insets from its own pane, because
- * .sprint-item-page names itself a `conversation-host` container.
+ * .manager-page names itself a `conversation-host` container.
  *
  * This card once did two things the Ticket's did not: it kept a step of space between
  * head, transcript and well, and it refused to light the well's other three edges on
@@ -5442,16 +4890,16 @@ details:not([open]) > summary > .sprint-workspace-chevron {
  * pane closes the seam to nothing like the Ticket's, and focus is shown on the card
  * rather than on the well, so there was nothing left for either rule to say. */
 
-@container sprint-item-pane (max-width: 720px) {
-  .sprint-workspace-title {
+@container manager-pane (max-width: 720px) {
+  .manager-workspace-title {
     font-size: 24px;
   }
 
-  .sprint-item-column .ticket-row {
+  .manager-column .ticket-row {
     align-items: flex-start;
   }
 
-  .sprint-item-column .ticket-row-title {
+  .manager-column .ticket-row-title {
     display: -webkit-box;
     overflow: hidden;
     line-height: 1.35;
@@ -5486,7 +4934,7 @@ details:not([open]) > summary > .sprint-workspace-chevron {
   }
 }
 
-@container sprint-item-pane (max-width: 720px) {
+@container manager-pane (max-width: 720px) {
   .artifact-strip {
     display: block;
   }
@@ -6657,9 +6105,85 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 /* Workspace ticket buckets share row geometry across buttons and message links. */
 .workspace-ticket-bucket { margin-top:var(--space-4); }
 .workspace-ticket-bucket .bucket-label { font-size:10.5px; line-height:normal; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); padding-bottom:6px; margin-bottom:var(--space-1); border-bottom:var(--border-hairline) solid var(--border-color); }
-.workspace-ticket-bucket .worker-row { width:100%; display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
+.workspace-ticket-bucket .worker-row { width:calc(100% + (var(--space-2) * 2)); display:grid; grid-template-columns:minmax(0,1fr) 14px; align-items:center; gap:var(--space-2); padding:var(--space-1) var(--space-2); margin:0 calc(var(--space-2) * -1); border:0; border-radius:var(--radius-sm); background:transparent; text-align:left; color:var(--text-muted); font:inherit; font-size:var(--type-sm); line-height:1.5; cursor:pointer; transition:color var(--motion-fast) var(--motion-ease),background var(--motion-fast) var(--motion-ease); }
 .workspace-ticket-bucket a.worker-row { text-decoration:none; }
 .workspace-ticket-bucket .worker-row:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
 .workspace-ticket-bucket .worker-row:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:1px; }
 .workspace-ticket-bucket .ticket-row-title { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.workspace-ticket-bucket .worker-row .stage-mark { justify-self:end; margin-left:0; margin-right:0; }
+.workspace-ticket-bucket .worker-row .conversation-signal-marks { justify-self:end; }
+
+/* Approved skeleton system. */
+/* 1 — the region. Any element that can show a skeleton carries this. */
+.resource{position:relative}
+.resource > .resource-state{position:absolute;inset:0;overflow:hidden}
+.resource > .resource-state--scroll{overflow-y:auto}
+
+/* 2 — the skeleton layer */
+.skeleton{
+  -webkit-mask-image:linear-gradient(to bottom,#000 40%,transparent 96%);
+          mask-image:linear-gradient(to bottom,#000 40%,transparent 96%);
+}
+/* A transcript stacks from the bottom, so it dissolves upward instead. */
+.skeleton--up{
+  display:flex;flex-direction:column;justify-content:flex-end;
+  -webkit-mask-image:linear-gradient(to top,#000 45%,transparent 98%);
+          mask-image:linear-gradient(to top,#000 45%,transparent 98%);
+}
+
+/* 3 — the two marks. A line stands for type and is the height of that type's ink.
+       A block stands for something whose shape we do not know. */
+.skeleton-line{display:block;height:10px;border-radius:var(--radius-sm);background:var(--skeleton-line)}
+.skeleton-line--xs{height:9px}                                   /* 13px type  */
+.skeleton-line--serif{height:11px}                               /* 16.5px serif */
+.skeleton-line--title{height:21px;border-radius:var(--radius-md)}/* 28px title */
+.skeleton-block{display:block;border-radius:var(--radius-lg);background:var(--skeleton-block)}
+
+/* A bar sits in a box the height of the real line, so its centre is the text's centre. */
+.skeleton-row{display:flex;align-items:center;height:24px}        /* 15px / 24px   */
+.skeleton-row--xs{height:19.5px}                                  /* 13px / 19.5px */
+.skeleton-row--ui{height:22.5px}                                  /* 15px / 1.5    */
+.skeleton-row--eyebrow{height:20px}
+.skeleton-row--title{height:34.72px}
+
+/* 4 — only the placeholder has an entrance. Ready content appears immediately. */
+.skeleton[data-entering]{animation:skeleton-in calc(var(--skeleton-fade) * .6) ease-in-out}
+@keyframes skeleton-in{from{opacity:0}to{opacity:1}}
+
+/* 5 — an inline wait: a hole one or two lines tall inside something already drawn.
+       No edge dissolve; the bar shares the delay and entrance of other shapes. */
+.skeleton-inline{display:inline-block;vertical-align:middle;height:10px;border-radius:var(--radius-sm);
+  background:var(--skeleton-line)}
+
+@media (prefers-reduced-motion:reduce){
+  .skeleton[data-entering]{animation:none}
+}
+
+/* Region integration. Flow reservations are the drawn shape's geometry, and end
+   when the wait ends. Fill regions receive their size from their parent. */
+.skeleton-region[data-active]{min-height:var(--skeleton-reservation)}
+.skeleton-region:not([data-active]):not(.skeleton-region--fill),
+.skeleton-content:not(.resource-state):not(.skeleton-content--inline){display:contents}
+.skeleton-region--fill{height:100%;min-height:0;flex:1;min-width:0}
+.skeleton-region--fill[data-active]{min-height:0}
+.skeleton-region--fill > .skeleton-content{display:flex;flex-direction:column;overflow:auto}
+.skeleton-region > .skeleton{pointer-events:none}
+.skeleton-region--inline{display:inline-block;vertical-align:middle;min-width:72px;height:24px}
+.skeleton-region--inline > .skeleton{display:flex;align-items:center;mask-image:none;-webkit-mask-image:none}
+.skeleton-region--inline .skeleton-inline{width:72px}
+.skeleton-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.skeleton-rows-head{height:35px;background:var(--surface-2);border-radius:var(--radius-md)}
+.skeleton-rows-body{padding:var(--space-1) 0}
+.skeleton-list-row{height:38px;display:flex;align-items:center;gap:var(--space-3);padding:7px var(--space-3);box-sizing:border-box}
+.skeleton-list-row > .skeleton-row{flex:1}
+.skeleton-row-mark{width:15px;flex:none}
+.skeleton-document-eyebrow{height:20px;margin-bottom:var(--space-3)}
+.skeleton-document-title{margin-bottom:var(--space-3)}
+.skeleton-document-meta{height:22.5px;margin-bottom:var(--space-5)}
+.skeleton-document-block{margin-bottom:var(--space-5)}
+.skeleton-thread{display:flex;flex-direction:column;gap:var(--space-5);padding:var(--space-5) var(--space-3) var(--space-4);flex:none}
+.skeleton-thread > .skeleton-block{flex:none}
+.skeleton-whole-block{height:100%}
+
+.skeleton-rows{padding:var(--space-5)}
+.skeleton-document{padding:var(--space-5) var(--space-7)}
+@media (max-width:720px){.skeleton-document{padding:var(--space-5) var(--space-4)}}

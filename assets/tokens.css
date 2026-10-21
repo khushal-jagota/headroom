@@ -58,6 +58,12 @@
   --motion-enter: 320ms;
   --motion-enter-step: 40ms;
 
+  /* Skeleton fills and the shared swap duration. */
+  --skeleton-line:rgba(255,255,255,.045);
+  --skeleton-block:rgba(255,255,255,.028);
+  --skeleton-fade:300ms;
+  --skeleton-delay:200ms;
+
   /* Spacing scale */
   --space-1: 4px;
   --space-2: 8px;

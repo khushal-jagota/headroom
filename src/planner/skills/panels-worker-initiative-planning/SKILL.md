@@ -44,7 +44,7 @@ direction or inventing a reconciliation.
 ### needs_brief — preserve the confirmed direction
 
 Keep the user's wording, the approved Exploration answer when one exists, the source
-sprint item or project context, and explicit boundaries. State what is confirmed and
+manager or project context, and explicit boundaries. State what is confirmed and
 what still needs top-level planning without turning uncertainty about *how* into
 uncertainty about *whether* to pursue the direction.
 
@@ -133,7 +133,7 @@ Each outline should give only what creation and later Ticket work need:
 - **inherited context** — only shared decisions that materially constrain this Ticket;
 - **local questions** — decisions intentionally left to this Ticket;
 - **dependencies** — blocking relationships, interfaces, or ordering that matter; and
-- **destination** — the initiative's Project and Sprint, plus its Sprint Item when that
+- **destination** — the initiative's Project and Sprint, plus its Manager when that
   classification still applies.
 
 Check the package against the Rough Split into Parts. Every important part should be
@@ -152,13 +152,13 @@ Create exactly the approved outlines and nothing broader. Use the outlined Worke
 title, placement, and kickoff context. Load and follow `panels-ticket-creation` for the
 shared creation model; the approved outlines remain the authority for what may be
 created. Preserve the planning Ticket's direct Project and Sprint on each new Ticket.
-Preserve its Sprint Item only when that classification applies. Do not move Initiative
+Preserve its Manager only when that classification applies. Do not move Initiative
 Planning work to Personal / Planning or invent a new container. When creating a
 Ticket that relies on existing Tickets being complete, pass each prerequisite Ticket id
 with repeatable `--blocked-by <ticket-id>`.
 
 Encode shared context proportionately: each created Ticket should understand its own
-boundary without receiving the entire initiative record. Update the sprint item only
+boundary without receiving the entire initiative record. Update the manager only
 when approved shared information naturally belongs there; do not create mandatory
 duplicate storage.
 

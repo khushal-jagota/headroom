@@ -6,7 +6,7 @@ re-implements a domain rule.
 This module also homes the shared request plumbing (config/clock accessors, the
 per-request connection dependency, the transaction context manager, and the enum
 and body-key marshallers). The other api modules import these from here; the direction
-is strictly one-way (sprints/days/dispatch api -> tickets api), and views modules
+is strictly one-way (domain API -> tickets API), and views modules
 import no api module at all.
 
 Request bodies arrive as plain dicts and are marshalled into the TypedDict shapes
@@ -67,6 +67,7 @@ from planner.list_reads.detail import (
     reject_parameters,
     require_full_for_one,
 )
+from planner.managers.assignment import normalize_assignment
 from planner.message_delivery import service as message_delivery_service
 from planner.message_delivery.contracts import MessageDeliveryResult, MessageRecordedToOwner
 from planner.projects import data as projects_data
@@ -231,7 +232,7 @@ async def silence_the_worker_before_deleting(
 
 @contextmanager
 def txn(conn: sqlite3.Connection) -> Iterator[None]:
-    """Wrap a NON-self-transacting writer (days/dispatch/Ticket blocks) so a mid-sequence
+    """Wrap a NON-self-transacting writer (Ticket blocks) so a mid-sequence
     PlannerError rolls back cleanly. Never wrap a ticket/sprint writer — those open
     their own BEGIN IMMEDIATE and would raise 'transaction within a transaction'."""
     conn.execute("BEGIN IMMEDIATE")
@@ -347,10 +348,11 @@ def _marshal_settled_field_values(
 
 
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
-    obsolete = set(raw) & {"sprint_id", "sprint_item_id", "day", "day_id"}
+    raw = normalize_assignment(raw)
+    obsolete = set(raw) & {"sprint_id", "manager_id", "sprint_item_id", "day", "day_id"}
     if obsolete:
         raise PlannerError(
-            ErrorCode.validation, "use orchestrator assignment instead of calendar placement"
+            ErrorCode.validation, "use manager assignment instead of calendar placement"
         )
     for key in raw:
         if key not in CreateTicketBody.__annotations__:
@@ -362,7 +364,7 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
-        orchestrator=raw.get("orchestrator"),
+        manager=raw.get("manager"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
         ceiling=body_opt_str(raw, "ceiling"),
         ceiling_holder=raw.get("ceiling_holder"),
@@ -410,7 +412,7 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
     if not isinstance(kind_raw, str):
         raise PlannerError(
             ErrorCode.validation,
-            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            f"{field} kind must be owner, chief, manager, or ticket",
             {field: raw},
         )
     try:
@@ -418,7 +420,7 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
     except (TypeError, ValueError):
         raise PlannerError(
             ErrorCode.validation,
-            f"{field} kind must be owner, chief, sprint_item, or ticket",
+            f"{field} kind must be owner, chief, manager, or ticket",
             {field: raw},
         ) from None
     if not isinstance(principal_id, str):
@@ -429,12 +431,12 @@ def _parse_principal(raw: object, field: str) -> Principal | None:
         raise PlannerError(ErrorCode.validation, str(exc), {field: raw}) from exc
 
 
-def _parse_orchestrator(raw: object) -> Principal:
-    orchestrator = _parse_principal(raw, "orchestrator")
-    if orchestrator is None:
-        raise PlannerError(ErrorCode.validation, "orchestrator must name Chief or an orchestrator")
-    admission.validate_orchestrator(orchestrator)
-    return orchestrator
+def _parse_manager(raw: object) -> Principal:
+    manager = _parse_principal(raw, "manager")
+    if manager is None:
+        raise PlannerError(ErrorCode.validation, "manager must name Chief or a Manager")
+    admission.validate_manager(manager)
+    return manager
 
 
 def _parse_stated_holder(raw: object, field: str) -> Principal:
@@ -548,9 +550,9 @@ async def create_ticket(
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
     )
     now = clk.now_unix()
-    orchestrator = (
-        _parse_orchestrator(body["orchestrator"])
-        if "orchestrator" in raw
+    manager = (
+        _parse_manager(body["manager"])
+        if "manager" in raw or "orchestrator" in raw
         else Principal(PrincipalKind.chief, "chief")
     )
     project = projects_data.resolve_project(
@@ -567,19 +569,14 @@ async def create_ticket(
         brief=body["brief"],
         project_id=project.id if project is not None else None,
         deadline=body["deadline"],
-        sprint_item_id=(
-            orchestrator.id if orchestrator.kind is PrincipalKind.sprint_item else None
-        ),
-        orchestrator_kind=orchestrator.kind.value,
+        manager_id=(manager.id if manager.kind is PrincipalKind.manager else None),
+        manager_kind=manager.kind.value,
         worker_type=body["worker_type"],
         locale=body.get("locale"),
         employee_backend=body.get("employee_backend"),
         employee_launch_model=body.get("employee_launch_model"),
         employee_launch_reasoning_effort=body.get("employee_launch_reasoning_effort"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
-        planning_now=clk.now(),
-        sprint_item_id_explicit=orchestrator.kind is PrincipalKind.sprint_item,
-        project_id_explicit="project" in raw or "project_id" in raw,
         stated_ceiling=body["ceiling"],
         stated_holder=_parse_principal(body["ceiling_holder"], "ceiling_holder"),
     )
@@ -605,15 +602,27 @@ async def read_tickets(
     search: str | None = None,
     project: str | None = None,
     project_id: str | None = None,
-    sprint_id: str | None = None,
-    sprint_item_id: str | None = None,
-    orchestrator_kind: str | None = None,
-    orchestrator_id: str | None = None,
-    day: str | None = None,
+    manager_id: str | None = None,
+    manager_kind: str | None = None,
+    sprint_item_id: Annotated[str | None, Query(include_in_schema=False)] = None,
+    orchestrator_kind: Annotated[str | None, Query(include_in_schema=False)] = None,
+    orchestrator_id: Annotated[str | None, Query(include_in_schema=False)] = None,
     limit: int | None = None,
     offset: int | None = None,
 ) -> JsonDict:
     """Read Tickets at the level the caller asks for, or one Ticket by id."""
+    for legacy_id in (sprint_item_id, orchestrator_id):
+        if legacy_id is not None:
+            if manager_id is not None and manager_id != legacy_id:
+                raise PlannerError(ErrorCode.validation, "conflicting Manager filters")
+            manager_id = legacy_id
+    if manager_kind == "sprint_item":
+        manager_kind = "manager"
+    if orchestrator_kind is not None:
+        previous_kind = "manager" if orchestrator_kind == "sprint_item" else orchestrator_kind
+        if manager_kind is not None and manager_kind != previous_kind:
+            raise PlannerError(ErrorCode.validation, "conflicting Manager filters")
+        manager_kind = previous_kind
     level = parse_read_detail(detail)
     scope = {
         "stage": stage,
@@ -626,11 +635,8 @@ async def read_tickets(
         "search": search,
         "project": project,
         "project_id": project_id,
-        "sprint_id": sprint_id,
-        "sprint_item_id": sprint_item_id,
-        "orchestrator_kind": orchestrator_kind,
-        "orchestrator_id": orchestrator_id,
-        "day": day,
+        "manager_id": manager_id,
+        "manager_kind": manager_kind,
         "limit": limit,
         "offset": offset,
     }
@@ -646,15 +652,13 @@ async def read_tickets(
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
-    if day is not None or sprint_id is not None:
-        raise PlannerError(ErrorCode.validation, "calendar filters are retired")
 
     if level is ReadDetail.full:
         reject_parameters(
             "detail=full",
             {
-                "orchestrator_kind": orchestrator_kind,
-                "orchestrator_id": orchestrator_id,
+                "manager_kind": manager_kind,
+                "manager_id": manager_id,
                 "is_backlogged": is_backlogged,
                 "worker_type": worker_type,
                 "exclude_stage": exclude_stage,
@@ -677,22 +681,17 @@ async def read_tickets(
             clk.now_unix(),
             stage=stage[0] if stage else None,
             project_id=resolved_project.id if resolved_project is not None else None,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
+            manager_id=manager_id,
         )
         await add_work_attention(conn, conversations, conversation_record, tickets=rows)
         return {"tickets": rows}
 
-    orchestrator = None
-    if orchestrator_kind is not None or orchestrator_id is not None:
-        orchestrator = _parse_orchestrator(
+    manager = None
+    if manager_kind is not None or manager_id is not None:
+        manager = _parse_manager(
             {
-                "kind": orchestrator_kind,
-                "id": (
-                    "chief"
-                    if orchestrator_kind == "chief" and orchestrator_id is None
-                    else orchestrator_id
-                ),
+                "kind": manager_kind or "manager",
+                "id": ("chief" if manager_kind == "chief" and manager_id is None else manager_id),
             }
         )
 
@@ -723,7 +722,7 @@ async def read_tickets(
             offset=0 if offset is None else offset,
         ),
         filters=TicketListFilters(
-            orchestrator=orchestrator,
+            manager=manager,
             stages=included_stages,
             excluded_stages=tuple(exclude_stage or ()),
             ticket_statuses=statuses,
@@ -734,8 +733,7 @@ async def read_tickets(
             search=search,
         ),
         project_id=resolved_project.id if resolved_project is not None else None,
-        sprint_id=sprint_id,
-        sprint_item_id=sprint_item_id,
+        manager_id=manager_id,
     )
     await add_work_attention(conn, conversations, conversation_record, tickets=page.rows)
     return page.response("tickets")
@@ -746,7 +744,7 @@ class ResolvedEmployeeConfiguration:
     """A launch configuration that has passed every check a write can make beforehand.
 
     Holding it as a value is what lets a caller validate at one moment and write at
-    another. The supervisor restart needs exactly that: a configuration it cannot write
+    another. The Manager restart needs exactly that: a configuration it cannot write
     must be refused before the old conversation is killed, or a bad argument would cost
     the Ticket its worker and give it nothing back.
     """
@@ -898,7 +896,7 @@ async def restart_ticket_worker(
     """Start this Ticket's worker step again, optionally on a named configuration.
 
     New on Khushal's surface. No ordinary route did this: reset and re-configure exist
-    separately, and neither releases the claim and starts. Only an Outcome manager could
+    separately, and neither releases the claim and starts. Only a Manager could
     reach it, through a wrapper of its own.
 
     The configuration is resolved before the restart, so a backend or model this Ticket
@@ -961,10 +959,10 @@ async def delete_ticket(
     force: Annotated[bool, Query()] = False,
 ) -> JsonDict:
     require_above(conn, ctx.principal, authority.ticket(ticket_id))
-    # An Outcome deletes its own child Ticket outright, and force is how the user reaches
+    # A Manager deletes its own child Ticket outright, and force is how the user reaches
     # the same place. Both walk past the running guards, so the Ticket's turn is killed
     # here instead: a Worker must never outlive the Ticket it belongs to.
-    even_while_running = force or ctx.principal.kind is PrincipalKind.sprint_item
+    even_while_running = force or ctx.principal.kind is PrincipalKind.manager
     if even_while_running:
         await silence_the_worker_before_deleting(conn, conversations, ticket_id)
     else:
@@ -980,24 +978,28 @@ async def delete_ticket(
         "ok": True,
         "ticket_id": deleted.ticket_id,
         "title": deleted.title,
-        "day_ids": list(deleted.day_ids),
-        "sprint_item_ids": list(deleted.sprint_item_ids),
-        "sprint_ids": list(deleted.sprint_ids),
+        "manager_ids": list(deleted.manager_ids),
         "linked_ticket_ids": list(deleted.linked_ticket_ids),
     }
 
 
 @router.patch("/tickets/{ticket_id}")
 async def patch_ticket(
-    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk,
+    ticket_id: str,
+    body: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
     conversations: Conversations,
 ) -> JsonDict:
+    body = normalize_assignment(body)
     recognized = (
         "title",
         "deadline",
         "project",
         "project_id",
-        "orchestrator",
+        "manager",
         "recap",
         "field_values",
         "ceiling",
@@ -1026,8 +1028,8 @@ async def patch_ticket(
             conn, project_id=project_id_raw, project_name=project_raw
         )
         edit["project_id"] = project.id if project is not None else None
-    if "orchestrator" in body:
-        edit["orchestrator"] = _parse_orchestrator(body["orchestrator"])
+    if "manager" in body:
+        edit["manager"] = _parse_manager(body["manager"])
     if "recap" in body:
         edit["recap"] = body_str(body, "recap")
     if "ceiling" in body:
@@ -1394,15 +1396,13 @@ async def add_conversation_row_signals(
 ) -> JsonDict:
     """Attach the shared owner-attention and agent-state projection to board rows."""
     cards = [card for column in board["columns"] for card in column["cards"]]
-    children = [ticket for item in board["sprint_items"] for ticket in item["tickets"]]
+    children = [ticket for item in board["managers"] for ticket in item["tickets"]]
     await add_work_attention(
-        # This helper predates the shared projection. Keep its public name until the Day
-        # route moves with the other callers, but give it the one canonical behavior.
         conn,
         conversation_system,
         conversation_record,
         tickets=(*cards, *children),
-        sprint_items=board["sprint_items"],
+        managers=board["managers"],
     )
     return board
 

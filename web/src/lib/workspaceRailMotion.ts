@@ -15,6 +15,8 @@ export const railMoveDuration = (distance: number) => Math.round(Math.max(RAIL_M
 export type WorkspaceRailPresentation = {
   rail: WorkspaceRail;
   settledOpen: boolean;
+  /** Keep the closing body mounted while the header acknowledges the click. */
+  settledBodyOpen?: boolean;
   settledMessages: Record<string, WorkspaceMessageConversation[]>;
 };
 
@@ -58,6 +60,30 @@ export function createRailMotionController(root: () => HTMLElement | null,
   let frozen = false;
   let busy = false;
   let disposed = false;
+  let manualOpen: boolean | null = null;
+  let foldBodyOpen: boolean | null = null;
+  let foldGeneration = 0;
+  let foldBusy = false;
+  // A coherent settled page can arrive while an unrelated Worker moves. Keep
+  // that page live, but leave Settle/Reopen transitions in the shared rail lane.
+  let directSettled: WorkspaceRailPresentation | null = null;
+  // Scope withdrawal removes rows from the next publication before their
+  // closing fade ends. Keep that body's membership, but refresh its signals.
+  let closingBody: WorkspaceRailPresentation | null = null;
+  const foldAnimations = new Set<Animation>();
+  const activeParents = (value: WorkspaceRailPresentation) => value.rail.items.map(item => item.id).sort().join("\0");
+  function withFold(value: WorkspaceRailPresentation): WorkspaceRailPresentation {
+    if (manualOpen === null) return value;
+    const direct = directSettled && activeParents(value) === activeParents(directSettled) ? directSettled : null;
+    const settled = closingBody ?? direct;
+    return {...value, settledOpen:manualOpen, settledBodyOpen:foldBodyOpen ?? manualOpen,
+      ...(settled ? {rail:{...value.rail, settledItems:settled.rail.settledItems}, settledMessages:settled.settledMessages} : {})};
+  }
+  const present = (value: WorkspaceRailPresentation) => apply(withFold(value));
+  function markBusy() {
+    if (busy || foldBusy) root()?.setAttribute("data-rail-motion-busy", "");
+    else root()?.removeAttribute("data-rail-motion-busy");
+  }
   const animations = new Set<Animation>();
   let surfaces = new Map<HTMLElement, MotionSurface>();
   function measure() {
@@ -74,7 +100,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     }
     return media.matches;
   };
-  function animate(node: HTMLElement, frames: Keyframe[], duration: number, delay = 0, travelling = false, easing = RAIL_MOTION.ease): Promise<void> {
+  function animate(node: HTMLElement, frames: Keyframe[], duration: number, delay = 0, travelling = false, easing = RAIL_MOTION.ease, fold = false): Promise<void> {
     if (reduced() || typeof node.animate !== "function") return Promise.resolve();
     const surface = surfaces.get(node);
     if (surface) {
@@ -82,12 +108,14 @@ export function createRailMotionController(root: () => HTMLElement | null,
       node.style.setProperty("--rail-motion-surrounding", surface.surrounding);
     }
     node.classList.add("rail-moving");
-    const travellingCard = travelling ? node.closest<HTMLElement>(".orchestrator-card") : null;
+    const travellingCard = travelling ? node.closest<HTMLElement>(".manager-card") : null;
     if (travelling) { node.classList.add("rail-travelling"); travellingCard?.classList.add("rail-travelling-card"); }
     const animation = node.animate(frames, { duration, delay, easing, fill: "backwards" });
     animations.add(animation);
+    if (fold) foldAnimations.add(animation);
     return animation.finished.catch(() => {}).then(() => {
       animations.delete(animation);
+      foldAnimations.delete(animation);
       if (!Array.from(animations).some((active) => (active.effect as KeyframeEffect)?.target === node)) {
         node.classList.remove("rail-moving", "rail-travelling");
         node.style.removeProperty("--rail-motion-background");
@@ -103,38 +131,13 @@ export function createRailMotionController(root: () => HTMLElement | null,
     if (busy || frozen || disposed || !pending) return;
     busy = true;
     const previous = read();
-    const next = {...pending, rail: stabilizeWorkspaceRail(pending.rail, previous.rail)}; pending = null;
+    const next = withFold({...pending, rail: stabilizeWorkspaceRail(pending.rail, previous.rail)}); pending = null;
+    const directFold = () => manualOpen !== null && activeParents(previous) === activeParents(next);
     const railRoot = root();
-    railRoot?.setAttribute("data-rail-motion-busy", "");
+    markBusy();
     const section = railRoot?.querySelector<HTMLElement>(".settled");
     const oldHeight = section?.getBoundingClientRect().height ?? 0;
     const oldCount = railRoot?.querySelector<HTMLElement>("[data-settled-count]")?.textContent;
-    if (previous.settledOpen && !next.settledOpen && section) {
-      const body = section.querySelector<HTMLElement>("[data-settled-scroll]");
-      const header = section.querySelector<HTMLButtonElement>(".settled-head");
-      if (body?.contains(document.activeElement)) header?.focus();
-      // Keep the body mounted through the fade. Its space and chevron close in
-      // the same beat; a refresh arriving meanwhile waits in the shared queue.
-      const closing: Promise<void>[] = [];
-      section.style.overflow = "hidden";
-      closing.push(animate(section, [{height:`${oldHeight}px`}, {height:`${header?.getBoundingClientRect().height ?? 0}px`}], RAIL_MOTION.space));
-      const chevron = section.querySelector<HTMLElement>(".settled-chevron");
-      if (chevron) closing.push(animate(chevron, [{transform:"rotate(180deg)"}, {transform:"rotate(0deg)"}], RAIL_MOTION.space));
-      if (body) {
-        body.style.opacity = "0";
-        closing.push(animate(body, [{opacity:1}, {opacity:0}], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave));
-      }
-      await Promise.all(closing);
-      section.style.removeProperty("overflow");
-      if (disposed) return;
-      apply({...read(), settledOpen:false});
-      await tick();
-      pending ??= next;
-      busy = false;
-      railRoot?.removeAttribute("data-rail-motion-busy");
-      void drain();
-      return;
-    }
     const first = measure();
     // Exit while the old space still exists. Headings leave with their last row.
     const remaining = new Set<string>(["card:chief", "settled-section", ...next.rail.items.map((item) => `card:${item.id}`)]);
@@ -150,28 +153,29 @@ export function createRailMotionController(root: () => HTMLElement | null,
       if (messages.length) remaining.add(`settled-heading:${item.id}`);
       for (const message of messages) remaining.add(`settled-message:${item.id}:${message.conversationId}`);
     }
-    const exits = [...first].filter(([key]) => !remaining.has(key));
+    const settledPart = (key: string) => key.startsWith("settled:") || key.startsWith("settled-heading:") || key.startsWith("settled-message:");
+    const exits = [...first].filter(([key]) => !remaining.has(key) && !(directFold() && settledPart(key)));
     await Promise.all(exits.map(([, part]) => animate(part.node, [{ opacity: 1 }, { opacity: 0 }], RAIL_MOTION.exit, 0, false, RAIL_MOTION.leave)));
     if (disposed) return;
     // A pointer can arrive during an exit. Restore it, and defer the whole structure.
     if (frozen) {
       pending ??= next;
-      apply(signalsOnly(pending));
+      present(signalsOnly(pending));
       busy = false;
-      railRoot?.removeAttribute("data-rail-motion-busy");
+      markBusy();
       return;
     }
-    apply(next);
+    present(next);
     await tick();
     if (disposed) return;
     const last = measure();
     const plays: Promise<void>[] = [];
-    if (section) {
+    if (section && !directFold()) {
       const newHeight = section.getBoundingClientRect().height;
       if (Math.abs(oldHeight - newHeight) > .5) {
         section.style.overflow = "hidden";
         plays.push(animate(section, [{height:`${oldHeight}px`}, {height:`${newHeight}px`}], RAIL_MOTION.space)
-          .then(() => { section.style.removeProperty("overflow"); }));
+          .then(() => { if (!foldBusy) section.style.removeProperty("overflow"); }));
       }
       if (previous.settledOpen !== next.settledOpen) {
         const chevron = section.querySelector<HTMLElement>(".settled-chevron");
@@ -193,16 +197,16 @@ export function createRailMotionController(root: () => HTMLElement | null,
     }
     let distance = 0;
     for (const [key, part] of last) {
-      if (key === "settled-section") continue;
+      if (key === "settled-section" || (directFold() && settledPart(key))) continue;
       const old = first.get(key);
       if (old) distance = Math.max(distance, Math.abs(old.rect.top - part.rect.top));
     }
     const isRow = (key: string) => key.startsWith("row:") || key.startsWith("settled:") || key.startsWith("settled-message:");
-    const rowArrival = [...last.keys()].some((key) => isRow(key) && !first.has(key));
-    const rowExit = [...first.keys()].some((key) => isRow(key) && !last.has(key));
+    const rowArrival = [...last.keys()].some((key) => isRow(key) && !first.has(key) && !(directFold() && settledPart(key)));
+    const rowExit = [...first.keys()].some((key) => isRow(key) && !last.has(key) && !(directFold() && settledPart(key)));
     const duration = rowExit || rowArrival ? RAIL_MOTION.space : railMoveDuration(distance);
     for (const [key, part] of last) {
-      if (key === "settled-section") continue;
+      if (key === "settled-section" || (directFold() && settledPart(key))) continue;
       const old = first.get(key);
       if (!old) {
         plays.push(animate(part.node, [{ opacity: 0, transform: "translateY(-4px)" }, { opacity: 1, transform: "none" }],
@@ -229,7 +233,7 @@ export function createRailMotionController(root: () => HTMLElement | null,
     }
     await Promise.all(plays);
     busy = false;
-    railRoot?.removeAttribute("data-rail-motion-busy");
+    markBusy();
     void drain();
   }
   function signalsOnly(next: WorkspaceRailPresentation): WorkspaceRailPresentation {
@@ -247,18 +251,74 @@ export function createRailMotionController(root: () => HTMLElement | null,
             conversationId:ticket.conversation_id ?? message.conversationId} : message;
         })]))};
   }
+  async function setSettledOpen(open: boolean): Promise<void> {
+    if (disposed || (manualOpen ?? read().settledOpen) === open) return;
+    const generation = ++foldGeneration;
+    const section = root()?.querySelector<HTMLElement>(".settled");
+    const oldHeight = section?.getBoundingClientRect().height ?? 0;
+    const chevron = section?.querySelector<HTMLElement>(".settled-chevron");
+    const oldRotation = chevron ? getComputedStyle(chevron).transform : "none";
+    const oldBody = section?.querySelector<HTMLElement>("[data-settled-scroll]");
+    const oldOpacity = oldBody ? getComputedStyle(oldBody).opacity : "0";
+    if (!open && oldBody?.contains(document.activeElement)) section?.querySelector<HTMLButtonElement>(".settled-head")?.focus();
+    // The fold takes its own surfaces from any prior section resize, while
+    // unrelated Worker movement keeps its existing animation.
+    for (const animation of animations) {
+      const target = (animation.effect as KeyframeEffect)?.target;
+      if (foldAnimations.has(animation) || target === section || target === chevron || target === oldBody) animation.cancel();
+    }
+    foldAnimations.clear();
+    closingBody = !open && oldBody ? read() : null;
+    // A reversal keeps the visible body until a new coherent page arrives.
+    // A closed-scope publication cannot supply its reopened membership.
+    directSettled = null;
+    manualOpen = open;
+    foldBodyOpen = open || Boolean(oldBody);
+    foldBusy = true;
+    markBusy();
+    present(read());
+    await tick();
+    if (disposed || generation !== foldGeneration) return;
+    const plays: Promise<void>[] = [];
+    if (section) {
+      const headerHeight = section.querySelector<HTMLElement>(".settled-head")?.getBoundingClientRect().height ?? 0;
+      const height = open ? section.getBoundingClientRect().height : headerHeight;
+      section.style.overflow = "hidden";
+      if (Math.abs(height - oldHeight) > .5) plays.push(animate(section,
+        [{height:`${oldHeight}px`}, {height:`${height}px`}], RAIL_MOTION.space, 0, false, RAIL_MOTION.ease, true));
+      if (chevron) plays.push(animate(chevron,
+        [{transform:oldRotation}, {transform:`rotate(${open ? 180 : 0}deg)`}], RAIL_MOTION.space, 0, false, RAIL_MOTION.ease, true));
+      const body = section.querySelector<HTMLElement>("[data-settled-scroll]");
+      if (body) plays.push(animate(body, [{opacity:oldOpacity}, {opacity:open ? 1 : 0}],
+        RAIL_MOTION.space, 0, false, open ? RAIL_MOTION.enter : RAIL_MOTION.leave, true));
+    }
+    await Promise.all(plays);
+    if (disposed || generation !== foldGeneration) return;
+    section?.style.removeProperty("overflow");
+    foldBodyOpen = open;
+    closingBody = null;
+    foldBusy = false;
+    present(read());
+    markBusy();
+  }
   return {
+    // A manual fold never waits for unrelated rail motion or a row hover.
+    setSettledOpen(open: boolean) { void setSettledOpen(open); },
     update(next: WorkspaceRailPresentation) {
       if (disposed) return;
       pending = next;
-      if (frozen) apply(signalsOnly(next));
+      if (manualOpen !== null) {
+        directSettled = activeParents(read()) === activeParents(next) ? next : null;
+        if (closingBody) closingBody = signalsOnly(next);
+        present(frozen ? signalsOnly(next) : read());
+      } else if (frozen) present(signalsOnly(next));
       void drain();
     },
     freeze(value: boolean) {
       frozen = value;
-      if (value && pending && !disposed) apply(signalsOnly(pending));
+      if (value && pending && !disposed) present(signalsOnly(pending));
       if (!value) void drain();
     },
-    dispose() { root()?.removeAttribute("data-rail-motion-busy"); disposed = true; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
+    dispose() { root()?.removeAttribute("data-rail-motion-busy"); root()?.querySelector<HTMLElement>(".settled")?.style.removeProperty("overflow"); disposed = true; ++foldGeneration; pending = null; for (const animation of animations) animation.cancel(); animations.clear(); surfaces.clear(); media?.removeEventListener("change", motionPreferenceChanged); }
   };
 }

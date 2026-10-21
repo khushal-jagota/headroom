@@ -43,18 +43,6 @@ def test_a_row_keeps_the_owners_words_while_losing_the_build_text_around_them() 
     assert replaced_text not in corrected["panels"]
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def _create_example(payload: str, *, quote: str = "'", fence: str = "```sh") -> str:
     return (
         f"{fence}\npanels ticket create --input-json - <<{quote}JSON{quote}\n"
@@ -70,3 +58,31 @@ def _create_findings(text: str) -> list[dict[str, str]]:
         )
         if item.kind == "ticket_create_field"
     ]
+
+
+def test_nested_manager_examples_use_the_actual_principal_parser() -> None:
+    import json
+
+    from planner.managed_skills import PACKAGED_SKILLS_ROOT
+    from planner.skill_staleness import ticket_create_examples
+    from planner.tickets.api import _parse_manager, _parse_principal
+
+    examples = []
+    for source in PACKAGED_SKILLS_ROOT.glob("*/SKILL.md"):
+        for payload in ticket_create_examples(source.read_text()):
+            examples.append(payload)
+            if "manager" in payload:
+                parsed = _parse_manager(payload["manager"])
+                assert parsed.kind.value in {"manager", "chief"}
+            if "ceiling_holder" in payload:
+                assert _parse_principal(payload["ceiling_holder"], "ceiling_holder") is not None
+    assert examples
+    findings = stale_references_in(
+        "example",
+        _create_example(json.dumps({"manager": {"kind": "worker", "id": "t_one"}})),
+        command_root=click.Group("panels"),
+        stage_ids=frozenset(),
+    )
+    assert any(
+        item.kind == "ticket_create_assignment" and item.reference == "manager" for item in findings
+    )

@@ -1,15 +1,15 @@
 # Panels — the map
 
-Panels is a workspace for orchestrators and Workers on one host. Chief is a special
-orchestrator and an explicit Worker assignment destination. Ordinary orchestrators keep
-their former Sprint Item identities, artifacts, and supervisor conversations. Tickets
+Panels is a workspace for managers and Workers on one host. Chief is a special
+manager and an explicit Worker assignment destination. Ordinary managers keep
+their existing identities, artifacts, and Manager conversations. Tickets
 remain the stored Workers. Ideas hold possibilities in the background.
 
-The owner can settle any ordinary orchestrator. Chief never settles. Settlement changes
+The owner can settle any ordinary Manager. Chief never settles. Settlement changes
 presentation and does not gate Worker continuation or hide approvals and messages.
 Explicit Ticket backlog separately prevents automatic Worker progression. Resume restores
 ordinary checks. Delete removes a Ticket when its record is no longer needed.
-Sprint and Day records remain historical reads. Their live planning machinery is retired.
+Day records and date-range Sprints are removed. Managers keep their stable Item identities.
 
 This is the entry point. Read it to find which system owns a question, then read
 that system's doc.
@@ -18,7 +18,7 @@ that system's doc.
 
 ```
 browser and direct CLI ─────┐
-Sprint Item supervisor ─────┴──────────► domain writers ───────► record
+Manager ─────┴──────────► domain writers ───────► record
                                                ▲
 Ticket Worker ──field proposal──► proposal resolver
 direct user ──user-owned value───► proposal resolver
@@ -35,14 +35,14 @@ resolver alone can settle its value or advance its Stage. Retired planning Worke
 retain their history but no longer receive shared-plan write authority.
 A direct user can complete the unset gate of the current user-owned Stage. The same
 canonical transition settles the value and advances one Stage. There is no arbitrary
-Stage setter. A Sprint Item supervisor has no address of its own: it calls the routes
+Stage setter. A Manager has no address of its own: it calls the routes
 every other principal calls, and the rule holds it to its own current child Tickets.
 
 At its ceiling a Ticket proposes and waits, and there is one approval gate — a parked
 proposal is addressed to somebody, and anyone above the Ticket can decide it. Review
-holds owner-addressed parked proposals and explicit Worker help requests. A Sprint Item
+holds owner-addressed parked proposals and explicit Worker help requests. A Manager
 conversation starts through an addressed message or the existing durable manager-notice
-path. The supervisor reads canonical Item and Ticket state before it acts on a notice.
+path. The Manager reads canonical Item and Ticket state before it acts on a notice.
 
 ## The systems
 
@@ -76,6 +76,7 @@ path. The supervisor reads canonical Item and Ticket state before it acts on a n
   shows a conversation — a Ticket's and the Chief of Staff's.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
+- **Diagnostic history** (`diagnostic-history.md`) — explicit offline reports, history protection, and separate expiry and compaction decisions.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.
 - **Notifications** (`notifications.md`) — installable Panels, notification choices,
   and the durable Web Push path from a system fact to a phone.
@@ -84,10 +85,8 @@ path. The supervisor reads canonical Item and Ticket state before it acts on a n
 
 **The surfaces you plan on**
 
-- **Historical Days** (`days.md`) — retained writing and memberships, with no live
-  Today gate or planning schedule.
-- **Orchestrators and historical Sprints** (`sprints.md`) — explicit Chief assignment,
-  owner-controlled settlement, stable identities, and historical reads.
+- **Managers** (`managers.md`) — explicit Chief assignment,
+  owner-controlled settlement, and stable identities.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — committed work and remembered possibilities.
 - **Feedback** (`feedback.md`) — loose notes captured from any page and their handled history.
 - **Projects** (`projects.md`) — the data-backed project catalog.

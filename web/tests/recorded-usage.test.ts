@@ -7,6 +7,7 @@ import { remainingPercent } from "../src/lib/conversation/usagePresentation";
 import RecordedUsage from "../src/components/usage/RecordedUsage.svelte";
 import AllowanceWindows from "../src/components/usage/AllowanceWindows.svelte";
 import UsageHeader from "../src/components/usage/UsageHeader.svelte";
+import { prefixHref } from "../src/lib/utilityAddress";
 import { usageBackends } from "../src/components/usage/usageProviders";
 
 function metrics(overrides:Partial<UsageMetrics>={}):UsageMetrics {
@@ -125,15 +126,19 @@ describe("usage surfaces",()=>{
     expect(remainingPercent(32)).toBe(68);
   });
   it("keeps Config inside the Usage tab strip and includes every approved period",()=>{
-    const body=render(UsageHeader,{props:{tab:"limits",days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
+    const body=render(UsageHeader,{props:{tab:"limits",href:prefixHref("#/backends"),days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
     expect(body).toContain('href="#/backends/config"');
     expect(body).not.toContain('href="#/settings/config"');
     for(const label of ["24h","7d","30d","90d"])expect(body).toContain(label);
     expect(body).toMatch(/href="#\/backends\/limits"[^>]*aria-current="page"/);
     expect(body).toContain('aria-pressed="true"');
+    // The same strip embedded in the Workspace pane addresses the pane, not the page.
+    const inPane=render(UsageHeader,{props:{tab:"limits",href:(segments:string[])=>`#/workspace/utility/usage/${segments.join("/")}?view=managers`,days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
+    expect(inPane).toContain('href="#/workspace/utility/usage/cost?view=managers"');
+    expect(inPane).not.toContain('href="#/backends');
   });
   it("keeps the Config tab active without usage-only controls or an external marker",()=>{
-    const body=render(UsageHeader,{props:{tab:"config",days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
+    const body=render(UsageHeader,{props:{tab:"config",href:prefixHref("#/backends"),days:1,providerKeys:["codex"],selectedProviders:["codex"],busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
     expect(body).toMatch(/href="#\/backends\/config"[^>]*aria-current="page"/);
     for(const value of ["tokens","cost","limits"])expect(body).toContain(`href="#/backends/${value}"`);
     expect(body).not.toContain("Usage period");
@@ -146,7 +151,7 @@ describe("usage surfaces",()=>{
     const visible=usageBackends(all);
     expect(visible).toEqual([all[1],all[2]]);
     const keys=visible.map(backend=>backend.backend_key);
-    const body=render(UsageHeader,{props:{tab:"limits",days:1,providerKeys:keys,selectedProviders:keys,busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
+    const body=render(UsageHeader,{props:{tab:"limits",href:prefixHref("#/backends"),days:1,providerKeys:keys,selectedProviders:keys,busy:false,onDays:()=>{},onProviders:()=>{},onRefresh:()=>{}}}).body;
     expect(body).toContain("Codex");
     expect(body).toContain("Claude");
     expect(body).not.toContain("Hermes");

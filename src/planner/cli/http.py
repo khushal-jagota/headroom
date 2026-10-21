@@ -14,6 +14,7 @@ from typing import Any, NoReturn
 import httpx
 
 from planner.cli.errors import exit_with_human_error
+from planner.core.authctx import normalize_manager_identity
 
 _DEFAULT_BASE_URL = "http://127.0.0.1:8767"
 _TIMEOUT = 30.0
@@ -42,14 +43,16 @@ def _headers() -> dict[str, str]:
     """
     actor = os.environ.get("PLAN_ACTOR", "").strip()
     ticket_id = os.environ.get("PLAN_TICKET_ID", "").strip()
-    sprint_item_id = os.environ.get("PLAN_SPRINT_ITEM_ID", "").strip()
+    manager_id = normalize_manager_identity(
+        os.environ.get("PLAN_MANAGER_ID"), os.environ.get("PLAN_SPRINT_ITEM_ID")
+    )
     if not actor:
         return {}
-    headers = {"X-Plan-Actor": actor}
+    headers = {"X-Plan-Actor": "manager" if actor == "sprint_item_supervisor" else actor}
     if actor == "worker" and ticket_id:
         headers["X-Plan-Ticket-ID"] = ticket_id
-    if actor == "sprint_item_supervisor" and sprint_item_id:
-        headers["X-Plan-Sprint-Item-ID"] = sprint_item_id
+    if actor in {"manager", "sprint_item_supervisor"} and manager_id:
+        headers["X-Plan-Manager-ID"] = manager_id
     return headers
 
 

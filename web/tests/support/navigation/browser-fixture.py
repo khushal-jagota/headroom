@@ -6,6 +6,7 @@ from typing import Any
 
 from planner.navigation.contracts import SCHEMA_VERSION, SUPPORTED_SEMANTICS
 from planner.navigation.delivery_contracts import WIRE_VERSION
+from planner.navigation.views.contracts import VIEW_PROJECTION_VERSION, VIEW_WIRE_VERSION
 
 # Authored host inputs are raw JSON objects. The browser validates the resulting
 # wire payload through the production parser rather than a parallel fixture schema.
@@ -18,7 +19,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
     global _navigation_revision
     _navigation_revision += 1
     records: list[FixtureObject] = []
-    summaries = {row["id"]: row for row in board.get("sprint_items", [])}
+    summaries = {row["id"]: row for row in board.get("managers", [])}
     cards = {row["id"]: row for column in board.get("columns", []) for row in column["cards"]}
     for item in summaries.values():
         for row in item.get("tickets", []):
@@ -77,7 +78,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                         "owner_id": identity,
                         "conversation_id": conversation_id,
                         "current": True,
-                        "parent_kind": ("chief" if parent_id == "chief" else "orchestrator")
+                        "parent_kind": ("chief" if parent_id == "chief" else "manager")
                         if parent_id
                         else None,
                         "parent_id": parent_id,
@@ -86,7 +87,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
             )
 
     for row in cards.values():
-        parent = row.get("sprint_item_id")
+        parent = row.get("manager_id")
         parked = row.get("awaiting_approval", False) or row.get("awaiting_agent_approval", False)
         status = "awaiting_approval" if parked else row["ticket_status"]
         conv = conversation(row)
@@ -107,12 +108,12 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                     "worker_step_claim_out": status == "agent",
                     "deadline": row.get("deadline"),
                     "project_id": row.get("project_id"),
-                    "orchestrator_kind": "sprint_item" if parent else "chief",
-                    "sprint_item_id": parent,
+                    "manager_kind": "manager" if parent else "chief",
+                    "manager_id": parent,
                     "conversation_id": conv,
                     "is_backlogged": row.get("is_backlogged", False),
                     "ceiling": "done",
-                    "ceiling_holder": {"kind": "sprint_item", "id": parent or "fixture"}
+                    "ceiling_holder": {"kind": "manager", "id": parent or "fixture"}
                     if row.get("awaiting_agent_approval")
                     else {"kind": "owner", "id": "owner"},
                     "proposal_field": "implementation" if parked else None,
@@ -128,12 +129,15 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
             }
         )
         address("ticket", row["id"], conv, parent or "chief")
+        if row.get("project_id"):
+            records.append({"kind": "project", "id": row["project_id"],
+                            "value": {"name": row.get("project") or ""}})
     for row in summaries.values():
         conv = conversation(row)
         project_id = row.get("project_id") or "fixture-project"
         records.append(
             {
-                "kind": "orchestrator",
+                "kind": "manager",
                 "id": row["id"],
                 "value": {
                     "title": row["title"],
@@ -153,7 +157,7 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
                 "value": {"name": row.get("project") or ""},
             }
         )
-        address("orchestrator", row["id"], conv)
+        address("manager", row["id"], conv)
     chief = workers["chief_of_staff"]
     conv = conversation(chief)
     records.append(
@@ -198,4 +202,49 @@ def navigation_response(board: FixtureObject, workers: FixtureObject) -> Fixture
         "cursor": cursor,
         "snapshot": {**continuity, "records": list(unique.values())},
         "proof": None,
+    }
+
+
+def scoped_navigation_response(response: FixtureObject, view: FixtureObject) -> FixtureObject:
+    """Reuse production membership/index logic over this host's synthetic source rows."""
+    import sqlite3
+    from typing import cast
+
+    from planner.navigation.views.contracts import ViewRequest
+    from planner.navigation.views.logic import digest
+    from planner.navigation.views.ordering import ORDERING_GENERATION
+    from planner.navigation.views.projection import rebuild
+    from planner.navigation.views.read import identity, read_content, request
+    from planner.navigation.views.schema import prepare
+
+    descriptor = request(view)
+    source = response["snapshot"]
+    with sqlite3.connect(":memory:") as conn:
+        conn.execute("CREATE TABLE navigation_meta(scope,schema_version,epoch,revision)")
+        conn.execute("CREATE TABLE navigation_records(kind,id,value,PRIMARY KEY(kind,id))")
+        conn.execute("CREATE TABLE navigation_dirty(kind,id)")
+        conn.execute(
+            "INSERT INTO navigation_meta VALUES(?,?,?,?)",
+            (source["scope"], source["schema_version"], source["epoch"], int(source["revision"])),
+        )
+        conn.executemany(
+            "INSERT INTO navigation_records VALUES(?,?,?)",
+            [(row["kind"], row["id"], json.dumps(row["value"])) for row in source["records"]],
+        )
+        prepare(conn)
+        rebuild(conn)
+        coverage, content = read_content(conn, descriptor, current=response["mode"] == "current")
+    return {
+        "event": "snapshot",
+        "wire_version": VIEW_WIRE_VERSION,
+        "projection_version": VIEW_PROJECTION_VERSION,
+        "view_id": identity(cast(ViewRequest, descriptor)),
+        "scope_generation": descriptor["scope_generation"],
+        "ordering_generation": ORDERING_GENERATION,
+        "coverage": coverage,
+        "content_version": digest(content),
+        "mode": response["mode"],
+        "authority": response["authority"],
+        "content": content,
+        "proof": response["proof"],
     }

@@ -1,8 +1,8 @@
 <script lang="ts">
   import Disclosure from "./Disclosure.svelte";
   import StageMark from "./StageMark.svelte";
-  import InlineEdit from "./InlineEdit.svelte";
-  import MarkdownBlock from "./MarkdownBlock.svelte";
+  import TicketFieldBody from "./TicketFieldBody.svelte";
+  import type { InlineEditDraft } from "../lib/inlineEditDraft";
   import type { TicketFieldApproval } from "../lib/types";
   import { type FieldStageVisualState } from "../lib/ui";
   import {
@@ -14,7 +14,9 @@
 
   let {
     name,
-    value = "",
+    value,
+    ticketId,
+    draft,
     ticketStage,
     approval,
     lifecycle = null,
@@ -32,6 +34,8 @@
   }: {
     name: string;
     value?: string;
+    ticketId?: string;
+    draft?: InlineEditDraft;
     ticketStage: string;
     approval?: TicketFieldApproval;
     lifecycle?: Lifecycle | null;
@@ -51,8 +55,8 @@
     onCompleteGate?: (raw: string) => Promise<unknown>;
   } = $props();
 
-  let approvalLabel = $derived(approval?.method === "explicit_accept" && approval.principal?.kind === "sprint_item"
-    ? "Approved by Orchestrator"
+  let approvalLabel = $derived(approval?.method === "explicit_accept" && approval.principal?.kind === "manager"
+    ? "Approved by Manager"
     : approval?.display_label);
   let reviewVariant = $derived(variant === "review");
   let fieldLabel = $derived(fieldLabelFor(lifecycle, name));
@@ -65,18 +69,9 @@
 </script>
 
 {#snippet stageBody()}
-    {#if canCompleteGate && editableValue && onCompleteGate}
-      <div class="ticket-field-value">
-        <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onCompleteGate} />
-      </div>
-    {:else if canEditValue && editableValue && onSaveValue}
-      <div class="ticket-field-value">
-        <InlineEdit {value} markdown multiline placeholder="Value..." onSave={onSaveValue} />
-      </div>
-    {:else}
-      <MarkdownBlock text={value} quiet={emptyText} />
-    {/if}
-
+  <TicketFieldBody {ticketId} {name} {value} {draft} {emptyText}
+    editable={editableValue && (canCompleteGate || canEditValue)}
+    onSave={canCompleteGate ? onCompleteGate : onSaveValue} />
 {/snippet}
 
 {#if reviewVariant}
@@ -86,6 +81,7 @@
 {:else}
   <Disclosure
     variant="stage"
+    lazy
     {defaultOpen}
     {onReaderToggle}
     chevron="none"

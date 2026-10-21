@@ -5,7 +5,8 @@
       "id": "shell-feedback",
       "path": "web/tests/shell-feedback-browser.test.mjs",
       "cases": [
-        "feedback-inbox"
+        "feedback-inbox",
+        "workspace-utility-pane"
       ],
       "companions": []
     },
@@ -43,6 +44,14 @@
       "path": "web/tests/composer-voice-browser.test.mjs",
       "cases": [
         "conversation-composer"
+      ],
+      "companions": []
+    },
+    {
+      "id": "skeleton",
+      "path": "web/tests/skeleton-regions-browser.test.mjs",
+      "cases": [
+        "skeleton-regions"
       ],
       "companions": []
     }

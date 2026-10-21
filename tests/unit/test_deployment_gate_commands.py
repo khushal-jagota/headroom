@@ -129,6 +129,8 @@ export default defineConfig({test:{include:['tests/*.test.ts'],
 import {expect,test} from 'vitest';
 test('real runtime proof',()=>{const value:number=2;expect(value+2).toBe(4)});
 """)
+    write(web / "build/markdown-worker.mjs",
+          (ROOT / "web/build/markdown-worker.mjs").read_text())
     for name in ("browser/run.mjs", "browser/execute.py", "browser/contracts.mjs",
                  "support/scratch.mjs"):
         write(web / "tests" / name, (ROOT / "web/tests" / name).read_text())

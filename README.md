@@ -34,9 +34,9 @@ For coding tasks, links to supported local development servers can open through 
 
 ## Get help choosing the work
 
-Keep ideas in the backlog, choose priorities across projects, and decide what belongs in the current sprint and today.
+Keep Ideas for possible work and organize committed Tickets under Chief or ordinary Managers.
 
-Planning workers help review the previous day, agree today's direction, and check how it's going later. You can discuss the work with a Chief of Staff agent, too.
+Discuss direction with Chief and Managers. Their Workers carry bounded work through explicit review gates.
 
 The point is to spend less attention remembering what needs doing, and more on deciding what's worth doing.
 
@@ -93,7 +93,7 @@ Headroom runs on one host and stores its work record there. Agents still use the
 - [System map](docs/README.md) — the main documentation entry point.
 - [Tickets and gates](docs/tickets-and-gates.md) — stages, ownership, scope, and approval.
 - [Worker orchestration](docs/worker-orchestration.md) — how ready work starts.
-- [Days](docs/days.md) and [Sprints](docs/sprints.md) — planning and commitments.
+- [Managers](docs/managers.md) — shared direction, Ticket assignments, and supervisors.
 - [CLI](docs/cli.md) — direct actions and agent commands.
 - [Deployment](docs/deployment.md) and [backups](docs/backups.md) — operating an installation.
 

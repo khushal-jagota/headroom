@@ -73,7 +73,7 @@ describe("message-specific settlement", () => {
   });
 });
 
-it("keeps errored Tickets in a Sprint Item's nested attention groups", () => {
+it("keeps errored Tickets in a Manager's nested attention groups", () => {
   const broken = { ...ticketFacts({ agent_state: "errored", ticket_status: "agent" }),
     id: "broken", title: "Broken work", };
   expect(workspaceAttentionGroups([broken]).map((group) => [group.key, group.cards[0].id]))

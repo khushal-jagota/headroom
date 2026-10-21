@@ -152,7 +152,6 @@ def prepare_background_loops(
             candidate_schedule_loop = ScheduledTicketLoop(
                 config.db_path,
                 clock,
-                boundary_hour=config.boundary_hour,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
             candidate_loop = WorkerStepReadinessLoop(

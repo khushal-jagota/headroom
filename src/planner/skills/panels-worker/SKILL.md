@@ -47,15 +47,15 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   Stage and ceiling.
 - **`panels ticket show <id> [part,part]`** — read another Ticket's header and part
   manifest, or expand named saved fields, `proposal`, and `recap`.
-- **`panels ticket proposal [id] submit`**, piping the proposal text on stdin — answer your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body carries only what is proposed. Below the ceiling the answer settles the field and advances the Ticket. At the ceiling it parks for approval.
+- **`panels ticket proposal [id] submit`**, piping the proposal text on stdin — answer your own Ticket's current gated field. No Manager, holder Ticket, or other Worker can file it for you. The body carries only what is proposed. Below the ceiling the answer settles the field and advances the Ticket. At the ceiling it parks for approval.
   While your proposal is pending, run the same command again to replace the pending draft
   for that Stage. Re-propose when you find a mistake or receive steering. Do not wait for
   rejection first.
 - **`panels ticket edit [id] --input-json -`** — update the recap, alone or in one batch with other permitted Ticket fields. Keep the recap current as a separate edit from the proposal.
-- **`panels ticket request-help [id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, or confirmed Worker errors.
+- **`panels ticket request-help [id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--manager <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, or confirmed Worker errors.
 - **`panels send-message --owner --message "…"`** — send one addressed chat message to
   the owner through this Ticket's current conversation. Use the same command with exactly
-  one of `--chief`, `--ticket <id>`, or `--sprint-item <id>` to message another employee.
+  one of `--chief`, `--ticket <id>`, or `--manager <id>` to message another employee.
   This is conversation, not a substitute for a canonical Ticket action.
   Your ordinary turn-end prose is runtime-only; use this command when another principal
   must receive a message.
@@ -96,3 +96,20 @@ Ticket-owned artifacts are durable work products that make the work easier to un
 Use a Ticket-owned artifact when the user needs to review a visual or interactive work product. Prefer a self-contained HTML artifact when it can show the result. Do not record a loopback server URL. The user cannot reach the worker machine through Panels.
 
 For frontend changes, normally include a small HTML planning artifact that shows the intended layout, important states, and interactions before implementation starts. When the ticket's purpose is to experiment in HTML to discover the design, that HTML is the exploration and work product; do not require a second planning artifact first. Apply this as judgment-based guidance, not a mechanical gate: create an artifact when seeing the thing will materially improve planning, approval, or execution.
+
+
+### The server is not yours
+
+The Panels server that runs you is operator-owned. Khushal starts it, stops it and restarts it.
+
+Do not signal it and do not replace it. Never run `kill`, `pkill`, `killall`, an `lsof`-driven
+kill, or `systemctl` against it. Never run `panels serve` on its port.
+
+A pattern cannot tell the live server from your own. On this machine the live deployment and a
+scratch instance run the same command line, so `pkill -f "planner serve"` stops both. That took
+the live server down on 15 August 2026 and again on 20 October 2026.
+
+If you start your own server, record its PID at launch and stop that exact PID. If a port is
+busy, pick another port. Never free a port.
+
+If the live server must restart, say so and stop.

@@ -1,6 +1,6 @@
 # Planner
 
-Planner coordinates human decisions and AI employee work across tickets, days, and sprints.
+Planner coordinates human decisions and AI employee work across Tickets and Managers.
 
 ## Language
 
@@ -16,7 +16,7 @@ _Avoid_: State, lifecycle status
 
 **Review**:
 The human decision surface for parked Ticket proposals, alongside the current running-worker count.
-It does not contain Sprint items or an overdue digest.
+It does not contain Managers or an overdue digest.
 _Avoid_: Queues, approval queue
 
 **Conversation**:

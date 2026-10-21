@@ -19,7 +19,7 @@ deleted, its notes remain handled and move to the dismissed group.
 
 Agents use the command line. `panels feedback list` reads open notes. The command
 `panels feedback use --ticket <ticket-id> <feedback-id>...` marks the selected notes as
-used in one Ticket. The update is atomic and follows the caller's Ticket or Sprint Item
+used in one Ticket. The update is atomic and follows the caller's Ticket or Manager
 scope.
 
 _Code paths:_ `src/planner/feedback/`, `web/src/components/FeedbackCapture.svelte`,

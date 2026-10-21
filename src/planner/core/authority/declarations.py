@@ -13,11 +13,6 @@ PLANNING_SPRINT_WORKER_TYPE: Final = "planning-sprint"
 DAY_MORNING_FIELDS: Final = ("focus", "brief_take", "watchout", "if_today_lands")
 DAY_MIDDAY_FIELD: Final = "midday_reconciliation"
 
-# What an Outcome is, as sprint planning shapes it: its words and its placement. Not its
-# existence, not its agent, and not its files. Sprint planning writes briefs; it does not
-# delete Outcomes or reach into a manager's conversation, and the declaration says so.
-OUTCOME_BRIEF_FIELDS: Final = ("title", "body", "project_id")
-
 # Retired planning types retain their records but no longer write shared planning objects.
 # Retired planning types retain their records but no longer write shared planning objects.
 STANDS_ABOVE_BY_WORKER_TYPE: Final[dict[str, tuple[Target, ...]]] = {}
@@ -31,7 +26,6 @@ def stands_above_for_worker_type(worker_type: str) -> tuple[Target, ...]:
 __all__ = [
     "DAY_MIDDAY_FIELD",
     "DAY_MORNING_FIELDS",
-    "OUTCOME_BRIEF_FIELDS",
     "PLANNING_DAY_WORKER_TYPE",
     "PLANNING_MIDDAY_CHECK_WORKER_TYPE",
     "PLANNING_SPRINT_WORKER_TYPE",

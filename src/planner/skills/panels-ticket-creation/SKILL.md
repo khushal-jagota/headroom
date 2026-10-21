@@ -6,7 +6,7 @@ description: The shared Panels model for creating a coherent Ticket.
 # Creating a Ticket
 
 Use a Ticket for a concrete unit of work that one Worker can carry through its
-lifecycle. An orchestrator holds the shared responsibility for its Workers. An idea is a loose thought that is not committed work. Choose the Worker type whose lifecycle
+lifecycle. A Manager holds the shared responsibility for its Workers. An idea is a loose thought that is not committed work. Choose the Worker type whose lifecycle
 fits the job, use its registered specialist guidance, and let that type supply its
 normal employee runtime defaults.
 
@@ -15,16 +15,16 @@ the user's request plus only the factual context the Worker needs to understand 
 Ground references to existing work, preserve agreed boundaries and dependencies, and
 do not turn creation into premature planning.
 
-## Explicit orchestrator assignment
+## Explicit manager assignment
 
-A Worker names Chief or one ordinary orchestrator. Inspect existing orchestrators and
+A Worker names Chief or one ordinary Manager. Inspect existing managers and
 choose the one that describes responsibility for the job. Use Chief when no ordinary
-orchestrator applies. Do not create a thin fallback Item for Chief.
+manager applies. Do not create a thin fallback Item for Chief.
 
-The canonical field is `orchestrator`, with `kind` and `id`. Chief is
-`{"kind":"chief","id":"chief"}`. An ordinary orchestrator is
-`{"kind":"sprint_item","id":"<existing-item-id>"}`. Former Sprint Item IDs and
-supervisor conversations remain stable. Assignment is independent of the ceiling holder
+The canonical field is `manager`, with `kind` and `id`. Chief is
+`{"kind":"chief","id":"chief"}`. An ordinary Manager is
+`{"kind":"manager","id":"<existing-item-id>"}`. Former Manager IDs and
+Manager conversations remain stable. Assignment is independent of the ceiling holder
 and Chief's global authority. Existing Project validation still applies.
 
 Today and live Sprint placement are retired. Creation does not create a Day or Day
@@ -54,7 +54,7 @@ State only the ceiling you were actually given. Widening a Ticket beyond what th
 authorized is not a creation detail.
 
 After creation, read the Ticket back as a whole. Its title, Worker type, Brief,
-Project, explicit orchestrator assignment, deadline, and blockers must tell
+Project, explicit manager assignment, deadline, and blockers must tell
 one coherent story. Correct a mismatch through the
 ordinary owning surface rather than compensating for it in prose.
 
@@ -66,13 +66,13 @@ panels ticket create --input-json - <<'JSON'
   "title": "Clear outcome title",
   "worker_type": "coding",
   "project_id": "project_example",
-  "orchestrator": {"kind": "sprint_item", "id": "si_example"},
+  "manager": {"kind": "manager", "id": "si_example"},
   "brief": "Faithful intake context",
   "ceiling": "needs_success_condition",
-  "ceiling_holder": {"kind": "sprint_item", "id": "si_example"}
+  "ceiling_holder": {"kind": "manager", "id": "si_example"}
 }
 JSON
 ```
 
 Only `title` and `worker_type` are always required. Add optional keys only when the
-creation decision supplies them. Use canonical IDs and an explicit orchestrator reference. Read the created Ticket with `panels ticket show <id>`.
+creation decision supplies them. Use canonical IDs and an explicit manager reference. Read the created Ticket with `panels ticket show <id>`.

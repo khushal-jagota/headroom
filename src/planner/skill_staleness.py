@@ -22,12 +22,13 @@ sequence takes that shape.
 Ticket-create keys are read only from a complete shell fence containing one exact
 ``panels ticket create --input-json -`` command with a quoted heredoc and a literal
 JSON object. Extra shell syntax, dynamic or malformed bodies, incomplete fences and
-other examples are left alone. This is not a shell parser or a payload validator:
-only unsupported top-level keys are reported, and no example is executed.
+other examples are left alone. The checker validates supported top-level keys and
+nested Manager and ceiling-holder principal objects. No example is executed.
 
 Create examples are checked in both stored rows and packaged seeds. A clean stored
 row cannot establish that the seed a new database receives is correct. Packaged
-findings use ``packaged_ticket_create_field`` to distinguish their source. Other
+findings use ``packaged_ticket_create_field`` or ``packaged_ticket_create_assignment``
+to distinguish their source. Other
 reference checks remain confined to managed rows, because the packaged history is
 not what an existing database runs.
 """
@@ -43,6 +44,7 @@ from typing import Final
 
 import click
 
+from planner.core.contracts import Principal, PrincipalKind
 from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES, panels_skill_root
 from planner.tickets.contracts import CreateTicketBody
 
@@ -191,7 +193,7 @@ def shell_fences(source_text: str) -> Iterator[str]:
             body.append(body_line)
 
 
-def ticket_create_keys(source_text: str) -> Iterator[str]:
+def ticket_create_examples(source_text: str) -> Iterator[dict[str, object]]:
     """Keys in standalone, literal create examples whose shell meaning is unambiguous."""
 
     def reject_non_json_constant(value: str) -> None:
@@ -217,7 +219,25 @@ def ticket_create_keys(source_text: str) -> Iterator[str]:
         except (ValueError, RecursionError):
             continue
         if isinstance(payload, dict):
-            yield from payload
+            yield payload
+
+
+def ticket_create_keys(source_text: str) -> Iterator[str]:
+    for payload in ticket_create_examples(source_text):
+        yield from payload
+
+
+def _valid_principal_example(raw: object, *, manager: bool) -> bool:
+    if not isinstance(raw, dict) or set(raw) != {"kind", "id"}:
+        return False
+    try:
+        kind = PrincipalKind(raw["kind"])
+        if not isinstance(raw["id"], str):
+            return False
+        Principal(kind, raw["id"])
+    except (ValueError, TypeError):
+        return False
+    return not manager or kind in {PrincipalKind.manager, PrincipalKind.chief}
 
 
 def stale_references_in(
@@ -233,6 +253,12 @@ def stale_references_in(
     for key in ticket_create_keys(source_text):
         if key not in CreateTicketBody.__annotations__:
             found.add(StaleReference(skill_name, "ticket_create_field", key))
+    for payload in ticket_create_examples(source_text):
+        for field in ("manager", "ceiling_holder"):
+            if field in payload and not _valid_principal_example(
+                payload[field], manager=field == "manager"
+            ):
+                found.add(StaleReference(skill_name, "ticket_create_assignment", field))
     for match in COMMAND_SPAN.finditer(source_text):
         words = command_words(match.group(1))
         if words and not command_resolves(words, command_root):
@@ -288,4 +314,12 @@ def stale_references(
         for key in ticket_create_keys(path.read_text(encoding="utf-8")):
             if key not in CreateTicketBody.__annotations__:
                 found.append(StaleReference(path.parent.name, "packaged_ticket_create_field", key))
+        for payload in ticket_create_examples(path.read_text(encoding="utf-8")):
+            for field in ("manager", "ceiling_holder"):
+                if field in payload and not _valid_principal_example(
+                    payload[field], manager=field == "manager"
+                ):
+                    found.append(
+                        StaleReference(path.parent.name, "packaged_ticket_create_assignment", field)
+                    )
     return tuple(sorted(set(found), key=lambda item: (item.skill_name, item.kind, item.reference)))

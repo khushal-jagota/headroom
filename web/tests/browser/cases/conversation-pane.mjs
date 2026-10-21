@@ -15,6 +15,44 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     hostPath,
     String.raw`<script lang="ts">
   import { tick } from "svelte";
+  import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
+  import {installConversationViewReaderFixture} from "../tests/support/conversationViewReaderFixture";
+  const readerOnly=new URLSearchParams(window.location.search).has("reader");
+  let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":"opened");
+  if(readerOnly)installConversationViewReaderFixture();
+  (window as any).__readerState=(state:typeof readerState)=>readerState=state;
+
+  import MarkdownBlock from "../src/components/MarkdownBlock.svelte";
+  import FilePreview from "../src/components/FilePreview.svelte";
+  import FileDocument from "../src/components/FileDocument.svelte";
+  import VisibleMessageImage from "../src/components/conversation/VisibleMessageImage.svelte";
+  import { VISIBLE_CONTENT_INACTIVE_LIMIT } from "../src/lib/visibleContent/config";
+  (window as any).__inactiveLimit=VISIBLE_CONTENT_INACTIVE_LIMIT;
+  let retainedKind=$state('preview');
+  let retainedTarget=$state('/files/tickets/t_preview/retained.html');
+  let retainedReload=$state(0);
+  (window as any).__retained=(kind:string,target='/files/tickets/t_preview/retained.html',reload=0)=>{
+    previewMode='retained';retainedKind=kind;retainedTarget=target;retainedReload=reload;
+  };
+  import { targetFromHref } from "../src/lib/filePreview";
+  const previewsOnly=new URLSearchParams(window.location.search).has("previews");
+  let previewMode=$state("media");
+  let containerRevision=$state(0);
+  const containerMarkdown='| Name | Detail | Outcome |\n| --- | --- | --- |\n'+Array.from({length:49},(_,i)=>'| Row '+i+' | A representative exact table cell with text | Preserved |').join('\n')+'\n\n'+Array.from({length:54},(_,i)=>(i+1)+'. A representative ordered-list item retains its exact numbering.').join('\n');
+  (window as any).__containerRevision=()=>{containerRevision+=1;previewMode='containers';};
+  const largeMarkdown=Array.from({length:1600},(_,index)=>"## Paragraph "+index+"\n\n"+"This exact logical document stays readable while the parser runs away from input. ".repeat(3)).join("\n\n");
+  (window as any).__previewMode=(mode:string)=>{previewMode=mode;};
+  import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
+  import ConversationHistoryPicker from "../src/components/conversation/ConversationHistoryPicker.svelte";
+  import ArtifactsBand from "../src/components/ArtifactsBand.svelte";
+  const catalogsOnly=new URLSearchParams(window.location.search).has("catalogs");
+  const catalogClient=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  let catalogSelected=$state<string|null>(null);
+  let catalogOwner=$state("t_catalog");
+  (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
+  import ManagerFrame from "../src/components/ManagerFrame.svelte";
+  import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
+  const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import { discardHeldPrompt, promoteHeldPrompt } from "../src/lib/conversation/wire";
   import type { ConversationState } from "../src/lib/conversation/conversationState";
@@ -98,16 +136,12 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     return true;
   }
 
-  function dismissConversation(): void {
-    conversationState = "rest";
+  // The Ticket layout uses the same production predicate as TicketRoute. The
+  // manager below mounts its actual production workspace and handlers.
+  function dismissTicketOnPointerDown(event: PointerEvent): void {
+    if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
   }
-
-  function dismissBesidePane(event: MouseEvent): void {
-    const pressed = event.target;
-    if (!(pressed instanceof Element)) return;
-    if (pressed.closest("[data-conversation-pane]") !== null) return;
-    dismissConversation();
-  }
+  (window as any).__setConversationState = (state: ConversationState) => conversationState = state;
 
   (window as any).__appendConversationLine = () => {
     const index = nextRowIndex++;
@@ -124,23 +158,25 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   // Controlled content replay. Responses stay pending while the reader chooses a
   // position, then browser-owned image/Markdown completion changes the same rows.
-  (window as any).__setupScrollRegression = (kind: string) => {
+  (window as any).__setupScrollRegression = (kind: string, mode = "scrollback") => {
     conversationState = "peeked";
     lens = "full";
     running = false;
     const paragraphs = Array.from({ length: 32 }, (_, index) =>
-      "Tall paragraph " + index + ": " + words(index)).join("\n\n");
+      "Tall paragraph " + index + ": " + words(index));
+    const previewAt = mode === "following" ? 30 : 14;
     rows = Array.from({ length: 28 }, (_, index) => ({
       key: "regression-" + index,
       kind: "agent_message",
       sequence: index + 1,
       createdAt: 1_000 + index,
-      content: index === 12 && kind !== "plain"
+      content: index === (mode === "following" ? 27 : 12) && kind !== "plain"
         ? [
+            {piece: "text", text: paragraphs.slice(0, previewAt).join("\n\n")},
             kind === "image"
               ? {piece: "image", stored_file_id: "delayed.png", file_name: "delayed.png"}
               : {piece: "text", text: "[Delayed Markdown](/files/tickets/t_scrollregression/delayed.md)"},
-            {piece: "text", text: paragraphs}
+            {piece: "text", text: paragraphs.slice(previewAt).join("\n\n")}
           ]
         : [{piece: "text", text: words(index)}]
     }));
@@ -172,6 +208,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
   (window as any).__dropFirstConversationLines = (count: number) => {
     rows = rows.slice(count);
+  };
+  (window as any).__shortenFirstConversationLine = () => {
+    rows = rows.map((row, index) => index === 0
+      ? {...row, content: [{piece:"text", text:"A short message."}]} : row);
   };
   (window as any).__growFirstConversationLine = () => {
     rows = rows.map((row, index) =>
@@ -391,13 +431,20 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         createdAt: 4_001,
         content: [{ piece: "text", text: "hidden commentary" }]
       },
+      {key:"owner-first",kind:"agent_message",sequence:3_002,createdAt:4_002,
+        content:[{piece:"text",text:"Owner answer one."}],toOwner:true},
+      {key:"middle-commentary",kind:"agent_message",sequence:3_003,createdAt:4_003,
+        content:[{piece:"text",text:"middle commentary"}],toOwner:false},
+      {key:"owner-second",kind:"agent_message",sequence:3_004,createdAt:4_004,
+        content:[{piece:"text",text:"Owner answer two."}],toOwner:true},
       ...[1, 2, 3, 4].map(tool),
       {
         key: "full-answer",
         kind: "agent_message",
         sequence: 3_200,
         createdAt: 4_200,
-        content: [{ piece: "text", text: "final answer" }]
+        content: [{ piece: "text", text: "final answer" }],
+        toOwner: true
       },
       {
         key: "full-end",
@@ -409,7 +456,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
         automaticCompactionResult: null
       }
     ];
-    visibleRows = null;
+    visibleRows = rows.filter(row => row.kind === "prompt" || (row.kind === "agent_message" && row.toOwner === true));
     lens = "focus";
     conversationState = "opened";
   };
@@ -458,16 +505,61 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   };
 </script>
 
-<main class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
-  <section class="fixture-document">
-    <button type="button" data-ticket-behind onclick={dismissConversation}>Ticket content</button>
+{#if readerOnly}
+  <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
+    <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
+  </div>
+{:else if previewsOnly}
+  <input aria-label="Parser input" />
+  <div data-conversation-thread data-preview-fixture style="height:600px;overflow:auto">
+  {#if previewMode === "large"}
+    <MarkdownBlock text={largeMarkdown} />
+  {:else if previewMode === "copy"}
+    <div data-copy-selection>
+      <p data-copy-before>OUTSIDE BEFORE prefix KEEP START</p>
+      <div data-copy-first data-conversation-thread style="height:160px;overflow:auto">
+        <MarkdownBlock text={largeMarkdown.replaceAll('Paragraph ', 'FIRST Paragraph ')} />
+      </div>
+      <p data-copy-middle>OUTSIDE BETWEEN messages</p>
+      <div data-copy-second data-conversation-thread style="height:160px;overflow:auto">
+        <MarkdownBlock text={largeMarkdown.replaceAll('Paragraph ', 'SECOND Paragraph ')} />
+      </div>
+      <p data-copy-after>KEEP END suffix OUTSIDE AFTER</p>
+    </div>
+  {:else if previewMode === "containers"}
+    <MarkdownBlock text={containerMarkdown+'\n\nRevision '+containerRevision} />
+  {:else if previewMode === "retained"}
+    <section data-retention-content>
+      {#if retainedKind === 'preview' || retainedKind === 'nested'}
+        <FilePreview target={targetFromHref(retainedTarget)} />
+      {:else if retainedKind === 'document'}
+        <div style="height:500px"><FileDocument target={targetFromHref(retainedTarget)} reloadSignal={retainedReload} /></div>
+      {:else if retainedKind === 'image'}
+        <VisibleMessageImage src={()=>retainedTarget} alt="Retained image" outgoing={false} />
+      {:else}
+        <MarkdownBlock text={largeMarkdown} />
+      {/if}
+    </section>
+    <div style="height:1200px" data-retention-away>Scroll destination</div>
+  {:else if previewMode === "media"}
+    {#each Array.from({length:24},(_,index)=>index) as index}
+      <div style="min-height:340px" data-preview-index={index}>
+        <FilePreview target={targetFromHref('/files/tickets/t_preview/preview'+index+'.html')} />
+        <FilePreview target={targetFromHref('/files/tickets/t_preview/image'+index+'.png')} />
+      </div>
+    {/each}
+  {/if}
+  </div>
+{:else if catalogsOnly}
+<QueryClientProvider client={catalogClient}>
+  <section style="padding:40px;width:600px;" data-catalog-fixture>
+    <ConversationHistoryPicker owner={{kind:"ticket",id:"t_catalog"}} bind:selected={catalogSelected} label="Prior conversation" conversationExists={true} />
+    <output data-history-selection>{catalogSelected ?? "current"}</output>
+    <ArtifactsBand owner={{kind:"ticket",id:catalogOwner}} />
   </section>
-  <section
-    class="conversation-layer"
-    data-conversation-layer-host
-    onclickcapture={dismissBesidePane}
-  >
-    <div class="conversation-column">
+</QueryClientProvider>
+{:else}
+{#snippet conversationPane()}
       <ConversationPane
         bind:conversationState
         bind:lens
@@ -506,9 +598,24 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
           (window as any).__sentAgain = senderMessageId;
         }}
       />
-    </div>
-  </section>
-</main>
+{/snippet}
+<div class="fixture-ticket" class:ticket-screen={queueMatrixEnabled}>
+  {#if ticketGestures}
+    <main class="ticket-doc fixture-document" onpointerdowncapture={dismissTicketOnPointerDown}>
+      <button type="button" data-ticket-behind>Ticket content</button>
+    </main>
+    <section class="conversation-layer" onpointerdowncapture={dismissTicketOnPointerDown}>
+      <div class="conversation-column">{@render conversationPane()}</div>
+    </section>
+  {:else}
+    <ManagerFrame bind:conversationState>
+      <button type="button" data-ticket-behind>Ticket content</button>
+      {#snippet conversation()}{@render conversationPane()}{/snippet}
+    </ManagerFrame>
+  {/if}
+</div>
+
+{/if}
 
 <style>
   :global(html), :global(body), :global(#app) {
@@ -526,15 +633,15 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
     flex: 1;
     min-height: 0;
   }
-  .fixture-document button {
+  :global([data-ticket-behind]) {
     position: fixed;
     inset: 4px auto auto 4px;
     z-index: 3;
   }
-  .conversation-layer {
+  .fixture-ticket :global(.conversation-layer) {
     align-items: center;
   }
-  .fixture-ticket:not(.ticket-screen) .conversation-column {
+  .fixture-ticket:not(.ticket-screen) :global(.conversation-column) {
     box-sizing: border-box;
     width: min(680px, calc(100% - 96px));
   }

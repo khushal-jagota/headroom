@@ -5,7 +5,7 @@ import {
   targetFromPreviewHref,
   type ManagedFileTarget
 } from "./filePreview";
-import type { PendingTicketProposal, SprintItemArtifact, TicketFieldValues } from "./types";
+import type { PendingTicketProposal, ManagerArtifact, TicketFieldValues } from "./types";
 import { markdownLinkHrefs } from "./markdownPipeline";
 
 export type ArtifactStripItem = {
@@ -21,7 +21,7 @@ export type ArtifactStripItem = {
 function targetKey(target: ManagedFileTarget): string {
   return target.kind === "ticket-file"
     ? `ticket:${target.ticketId}:${target.path}`
-    : `item:${target.sprintItemId}:${target.path}`;
+    : `manager:${target.managerId}:${target.path}`;
 }
 
 function pathParts(path: string): { stem: string; parent: string; kind: string } {
@@ -56,19 +56,19 @@ function rows(
   });
 }
 
-export function sprintItemArtifactStripItems(
-  sprintItemId: string,
-  artifacts: SprintItemArtifact[],
+export function managerArtifactStripItems(
+  managerId: string,
+  artifacts: ManagerArtifact[],
   parentKey = ""
 ): ArtifactStripItem[] {
   return artifacts.map((artifact) => {
     const key = parentKey ? `${parentKey}/${artifact.name}` : artifact.name;
     const target = artifact.opens
-      ? targetFromHref(`/files/sprint-items/${sprintItemId}/${artifact.opens}`)
+      ? targetFromHref(`/files/managers/${managerId}/${artifact.opens}`)
       : null;
-    const managed = target && target.kind === "sprint-item-file" ? target : null;
+    const managed = target && target.kind === "manager-file" ? target : null;
     const dot = artifact.name.lastIndexOf(".");
-    const children = sprintItemArtifactStripItems(sprintItemId, artifact.children, key);
+    const children = managerArtifactStripItems(managerId, artifact.children, key);
     return {
       key,
       path: artifact.opens || key,
@@ -94,7 +94,7 @@ function managedTargets(markdown: string): ManagedFileTarget[] {
     const preview = targetFromPreviewHref(href);
     if (preview) return [preview];
     const target = targetFromHref(href);
-    return target.kind === "ticket-file" || target.kind === "sprint-item-file" ? [target] : [];
+    return target.kind === "ticket-file" || target.kind === "manager-file" ? [target] : [];
   });
 }
 
@@ -106,7 +106,7 @@ export function managedFileTargetFromLinkHref(href: string | null): ManagedFileT
   const preview = targetFromPreviewHref(href);
   if (preview) return preview;
   const direct = href ? targetFromHref(href) : null;
-  return direct?.kind === "ticket-file" || direct?.kind === "sprint-item-file" ? direct : null;
+  return direct?.kind === "ticket-file" || direct?.kind === "manager-file" ? direct : null;
 }
 
 export function ticketArtifactStripItems(
@@ -135,13 +135,13 @@ export function ticketArtifactStripItems(
  * Historical links to other managed files remain alongside them. */
 export function ticketPageArtifactItems(
   ticketId: string,
-  artifacts: SprintItemArtifact[] | undefined,
+  artifacts: ManagerArtifact[] | undefined,
   fieldIds: string[],
   values: TicketFieldValues,
   proposal: PendingTicketProposal | null
 ): ArtifactStripItem[] {
   const seen = new Set<string>();
-  function canonical(entries: SprintItemArtifact[], parentKey = ""): ArtifactStripItem[] {
+  function canonical(entries: ManagerArtifact[], parentKey = ""): ArtifactStripItem[] {
     return entries.map((artifact) => {
       const key = parentKey ? `${parentKey}/${artifact.name}` : artifact.name;
       const target = artifact.opens ? managedFileTargetFromLinkHref(`/files/tickets/${ticketId}/${artifact.opens}`) : null;

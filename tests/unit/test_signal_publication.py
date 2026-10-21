@@ -270,13 +270,13 @@ def test_association_only_batches_capture_old_and_new_and_deletion_is_fenced(
     connection = producer.connect()
     connection.execute("BEGIN")
     connection.execute("INSERT INTO tickets VALUES('worker','c')")
-    connection.execute("INSERT INTO agents VALUES('sprint_item_supervisor_example','c')")
+    connection.execute("INSERT INTO agents VALUES('manager_example','c')")
     connection.commit()
     batch = producer.batches[-1]
     assert batch.replacements == ()
     assert {(effect.owner_kind, effect.owner_id) for effect in batch.associations} == {
         ("ticket", "worker"),
-        ("orchestrator", "example"),
+        ("manager", "example"),
     }
     connection.execute("BEGIN")
     connection.execute("DELETE FROM conversations")
@@ -364,7 +364,7 @@ def test_replace_on_new_connection_captures_deleted_owner_and_rename_effects(
     connection = producer.connect()
     connection.execute("BEGIN")
     connection.execute("INSERT OR REPLACE INTO tickets VALUES('worker',NULL)")
-    connection.execute("INSERT INTO agents VALUES('sprint_item_supervisor_old','c')")
+    connection.execute("INSERT INTO agents VALUES('manager_old','c')")
     connection.commit()
     effects = producer.batches[-1].associations
     assert any(
@@ -374,7 +374,7 @@ def test_replace_on_new_connection_captures_deleted_owner_and_rename_effects(
         for effect in effects
     )
     connection.execute("BEGIN")
-    connection.execute("UPDATE agents SET agent_key='sprint_item_supervisor_new'")
+    connection.execute("UPDATE agents SET agent_key='manager_new'")
     connection.commit()
     effects = producer.batches[-1].associations
     assert [

@@ -19,6 +19,31 @@ Staff's. Worker orchestration uses the same system. There is no second path.
         + live tail                 (SQLite, written once)
 ```
 
+## Diagnostic history expiry
+
+Diagnostic expiry remains an explicit offline operator action. Normal startup
+installs the empty omission table and a read index; it does not expire history.
+The index lets expanded history find earlier messages without scanning hidden tool
+calls or addressed messages. Omission records keep
+the original event positions. Retained events and live replay keep those same positions.
+
+When omissions exist, conversation status and legacy event pages report
+`diagnostics_expired`. The shared transcript says “Some diagnostic history expired.”
+That notice comes from omission records, never from a gap in event numbers. Page
+edges describe retained history, so a gap alone does not offer another empty page.
+
+An opened diagnostic detail whose source expired returns the named
+`diagnostic_expired` error with HTTP 410. The reader says “This diagnostic detail
+expired.” Unknown details still return 404; changed body references still return
+409; invalid references still return 422. Chunked and downloaded bodies use the
+same distinction. A retained source of the wrong kind is not classified as expired.
+
+The omission table is additive metadata. The selected-view projection version stays
+at 1, and saved event positions and cursors remain valid. Replacement snapshots,
+resets, and runtime changes discard previously held pages and detail output before
+fresh canonical reads. They advance a content generation counter to invalidate cached output;
+they do not change how transcript content is generated.
+
 ## Durable lifecycle facts
 
 The notebook keeps completed receipts. A separate conversation-owned source keeps
@@ -116,12 +141,12 @@ dropped entirely, not stored and not shown.
 Late backend prose, deltas, tool activity, asks, usage, and extra endings remain
 live-turn facts and are discarded after the turn ends.
 
-Reading is one rule everywhere: fetch the rows after the last one you hold, then
-listen for new ones. Opening a conversation, reconnecting after a dropped
-connection, and a second device are all that same fetch. Nothing re-downloads
-mid-read.
+The durable event record remains authoritative. The browser reads indexed server views,
+not the complete event history. Each view supplies recent bounded pages, compact status,
+and one selected tail. Older pages remain available through the existing transcript and
+fold controls. Source references preserve access to complete large bodies.
 
-A browser with no saved lens choice opens through the Focus lens. Focus shows the
+A fresh conversation pane opens through the Focus lens. Focus shows the
 owner's prompts, explicit messages addressed to the owner, permission requests, agent questions, and
 the answers that settle those requests. Historical owner prompts without principals use
 their established owner label, so they remain readable without a record migration.
@@ -140,12 +165,20 @@ core supplies an honest unknown-reason fallback if an adapter supplies no usable
 Full shows the complete runtime notebook, every held prompt, all live agent text, and
 every tool call without a Focus fold. The header toggle and the unmodified `f` key switch
 the lens without replacing the conversation. Editable controls keep the key. The browser
-keeps the choice across conversation switches, new conversations, and later visits.
+keeps an explicit choice across conversation switches and New within the mounted pane.
+A fresh pane starts in Focus again.
 
-The lens changes only what the person reads. Liveness, streaming, reconnects, and
-snapshots continue to use the complete feed. A switch to another conversation invalidates
-the old read and tail. A late snapshot, row, frame, or refresh from the old conversation
-cannot change the newly opened conversation.
+Focus requests only visible content and compact current status. Full requests its history
+only after explicit selection. A Full request starts a temporary file for current-turn
+output. That file survives hidden views, rest, lens switches, and the final reader's exit.
+The canonical turn end or runtime reset removes it. Startup removes files from stale runtime
+identities. Open body responses keep their immutable file version through replacement.
+
+Rest and hidden panes release transcript bodies and native previews. They retain compact
+status and logical UI state. A conversation switch invalidates the old requests and tail.
+A late response from the previous conversation cannot change the new view. Page reads pause
+stream admission, then replay from unchanged coverage across every retained scope. A closed
+fold cancels its pending page. Page failures also resume the tail.
 
 While an active lens is open, the owner read position advances through the newest delivered
 row. Runtime-only rows can clear an unread mark because each lens displays every result that
@@ -167,7 +200,7 @@ establishes that nothing outside the conversation shows it.
 
 ## Work and messages on other screens
 
-Each Worker, supervisor, and Chief exposes the same `conversation_signal` from its own
+Each Worker, Manager, and Chief exposes the same `conversation_signal` from its own
 conversation. `working` means that its runtime is running. `message_for_owner` means that
 an explicit `message_to_owner` row is newer than the owner read position. Both can be true
 at once. A conversation with neither fact exposes two false values.
@@ -178,7 +211,7 @@ This presentation does not change either fact or the shell's actual-work count.
 
 A turn ending stops work and creates no message mark. Pending approvals, permission asks,
 Ticket stages, and child activity do not define either mark. Child totals remain separate
-from the supervisor's own conversation signal. Existing answer, approval, error, and
+from the Manager's own conversation signal. Existing answer, approval, error, and
 notification facts remain available for their own purposes.
 
 Reading or sending a prompt advances only that conversation's established read position.
@@ -189,9 +222,9 @@ end. This publication follows the runtime state transition, so a query cannot re
 answer from before the prompt or ending commit settled. The event stream carries no
 payload. Mounted queries fetch the canonical conversation signal again.
 
-The shell's working count sums that same working fact across Worker, supervisor, and
+The shell's working count sums that same working fact across Worker, Manager, and
 Chief conversations. Each conversation counts once, even when multiple records refer to
-it. Settled supervisors and backlogged Workers still count when their conversations run.
+it. Settled Managers and backlogged Workers still count when their conversations run.
 Worker-step claims do not define this count. Its existing query uses the same change
 stream refresh as the individual marks.
 
@@ -325,7 +358,7 @@ completed turn with no compaction confirmation.
 ## Sending
 
 The top-level `panels send-message` command is the plain-text command-line door into this
-same send operation. It accepts the owner, Chief, Ticket, or Sprint Item principal. An
+same send operation. It accepts the owner, Chief, Ticket, or Manager principal. An
 employee-to-owner send appends an addressed `message_to_owner` row to the employee's
 current conversation without invoking a backend. An employee without a current
 conversation cannot send to the owner. Employee recipients use their normal current
@@ -333,8 +366,8 @@ conversation path, creating it when any send needs one. Every mode starts a turn
 recipient is idle. Agent keys remain a private resolution detail. The command adds no
 second transport, queue, or conversation record.
 
-Existing ordinary orchestrator supervisors can address each other through this same
-Send Message path. Both Sprint Items must exist. This grants no authority over the
+Existing ordinary Managers can address each other through this same
+Send Message path. Both Managers must exist. This grants no authority over the
 recipient's record or Workers. Worker messages and help-recipient overrides retain
 their existing chain boundary.
 
@@ -342,6 +375,13 @@ Every employee-authored send carries canonical sender and recipient principals d
 from the authenticated request. Panels records that address on every durable outcome,
 including held, refused, uncertain, and discarded prompts. Browser-supplied display
 labels are not authority.
+
+Automatic recap requests and saved-goal startup messages name Panels as their source.
+They carry no sender principal and no explicit reply requirement. Full shows these
+messages under the Panels label. Focus excludes them. The authenticated caller still
+controls authorization and launch choices. These automatic actions cannot settle a
+separate reply that the caller owes. HTTP and CLI callers cannot select system
+attribution. Earlier conversation rows keep their recorded source and visibility.
 
 Panels also derives an exact Send Message target from each authenticated sender. It adds
 that trusted reply requirement only to the backend wire prompt. When a genuine
@@ -356,12 +396,18 @@ Panels classifies that accepted send as the reply, so its recipient receives no 
 reply requirement and agent conversations cannot form an acknowledgement loop.
 
 The owner can also ask an agent for a fresh recap. That ask is one route taking a Ticket,
-orchestrator, or Chief principal. It empties the recap being replaced and steers the same
+manager, or Chief principal. It empties the recap being replaced and steers the same
 fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
 keep it short and top level." Only the owner may ask, and the owner is the only principal
 it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
-the agent writes rather than words it sends back, so it is the one addressed send that
-carries no reply requirement and leaves no missing-reply marker.
+the agent writes rather than words it sends back. This system message carries no reply
+requirement and leaves no missing-reply marker.
+
+Automatic manager startup sends the exact saved goal as a queued Panels message.
+Its answer is the work the manager does. It requires no explicit reply to its
+creator, so startup produces no `explicit_reply_missing` signal in Focus when the
+manager sends no reply. No replacement signal detects a clean delivery followed by
+silent inaction. Work indicators, failure rows, and delivery outcomes do not cover that gap.
 
 An actual native slash command uses its backend's exact control route, so its wire form
 does not carry the reply requirement. The adapter reports that fact with its delivery
@@ -381,10 +427,10 @@ produce none. The markers and ending are one ordered transaction.
 
 When a failed turn belongs to a Ticket's current conversation, that transaction also
 snapshots the Ticket's current ceiling holder. The existing owner attention flag handles
-an owner-held ceiling. A Chief, Sprint Item, or Ticket holder receives one durable Panels
+an owner-held ceiling. A Chief, Manager, or Ticket holder receives one durable Panels
 notice through that principal's canonical conversation door. The failed event's
 conversation and sequence identify the notice, so replay cannot duplicate it. Historical,
-unattached, Chief, and Sprint Item conversation failures create no Ticket notice. A turn
+unattached, Chief, and Manager conversation failures create no Ticket notice. A turn
 started by a failure notice cannot create another failure notice.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
@@ -404,9 +450,9 @@ A confirmed steer refusal does the same. An uncertain steer remains terminal and
 enters the queue, because a retry can deliver the same message twice.
 
 A lower-level raw send route remains for testing conversation mechanics in isolation. It
-rejects every conversation associated with a Ticket, the Chief, or a Sprint Item
-supervisor. It therefore is not an employee conversation door and does not participate in
-principal addressing. No shipped screen uses it: Ticket, Chief, and Sprint Item composers
+rejects every conversation associated with a Ticket, the Chief, or a Manager
+Manager. It therefore is not an employee conversation door and does not participate in
+principal addressing. No shipped screen uses it: Ticket, Chief, and Manager composers
 all use the addressed Send Message operation.
 
 The conversation owns each backend exchange until its receipt settles. If its caller
@@ -558,9 +604,9 @@ evidence does not block a fresh installation. Available evidence still rejects a
 unknown or disabled selection, or an unsupported effort. This exception applies to
 creation only. A later turn still requires a successful resolution.
 
-This rule covers Workers, Chief, ordinary orchestrators, new conversations, reused
+This rule covers Workers, Chief, ordinary Managers, new conversations, reused
 conversations and queued messages. Steering retains the active turn's model. Saved legacy
-versions resolve within their own variant. New orchestrators use the managed launch
+versions resolve within their own variant. New managers use the managed launch
 defaults instead of a model pinned by a database trigger.
 
 An explicit correction action previews saved choices and applies selected corrections.
@@ -669,19 +715,23 @@ elapsed time and newest tool call. In peeked and opened states, the same checkli
 in a centered 34-pixel strip between the thread and composer while unfinished work runs.
 The plan never appears under the turn that first stated it.
 
-When the turn is over that head becomes a fold, and everything the turn produced
-goes behind it: its tool calls, and everything the agent said on the way to its
-answer. What stays out is the person's own message, the last thing the agent
-said, and — when a turn failed or was stopped — the line saying so. A turn that
-thought out loud for five paragraphs is exactly as long to scroll past as one
-that made five tool calls, so both collapse the same way and a finished turn
-reads as one paragraph with a "Worked for 14s" you can open. Opening it puts
-everything back where it happened, the commentary between the runs of tool calls
-it sat between rather than gathered up at the end. A turn that never said
-anything keeps nothing back, because there is no answer to hold; a turn still
-running folds nothing at all.
+Full shows every message and tool call. Its turn and work groups expand
+automatically. Focus shows the person's prompts, messages addressed to the owner,
+requests and answers, and failure or stop rows. Messages addressed to the owner
+never go behind a turn fold, including in the older transcript renderer.
 
-Each tool call inside that fold is one line: what happened, and the single fact
+A normally settled Focus turn keeps its head and its own line, such as
+"Worked for 14s". It has no chevron or toggle because nothing remains behind it.
+Focus reports zero folded messages and zero tool calls, even when the stored turn
+contains tools. A turn that stops without an ending and has nothing behind it
+keeps its stop row but has no head, as before.
+
+The fold rules assume that every `message_to_owner` event names the owner as its
+recipient. The body flag follows the event kind. SQL membership uses the
+recipient-sensitive Focus classification. If another recipient becomes valid for
+that event, both classifications must change together.
+
+Each tool call is one line: what happened, and the single fact
 that says which call it was — the command that ran, the path that was read, the
 pattern that was searched for. The three agents do not agree on how they say
 this, so the pane reads what each of them actually gives and says the same kind
@@ -710,6 +760,39 @@ do, which is whole.
 
 All of this is read from what the notebook already holds, so conversations
 recorded before any of it existed read the same way as new ones.
+
+### Scrolling back, and what is known about it
+
+Scrolling back asks for one page at a time. Before each page the browser closes its live
+stream and re-opens it once the page has arrived. That looks wasteful and is not: a
+conversation being written to while somebody reads backwards would otherwise keep
+interrupting the read, and closing the stream for the length of one page is what stops
+that. Expect the stream to be torn down and re-opened once per page of scroll-back.
+
+Scrolling back a long way has been reported as feeling stuck, and the cause is not known.
+Two things have been ruled out by measurement, so that nobody spends time on them again.
+The reader keeps three hundred items and drops the other end as it goes; driven past that
+limit it slides its window correctly, one page at a time, and it still does so while an
+agent is writing into the conversation. The stream churn above is also not it.
+
+Two facts for anybody measuring this next.
+
+A test that drives scrolling directly can produce a state a person cannot. Asking for
+another page while one is still arriving is harmless on its own, because a second request
+for the same thing waits for the first, but it does close the stream again, and it can do
+that while the previous re-open is still in flight. No hand moves that fast. A measurement
+that scrolls by script and finds the stream thrashing may be measuring its own gesture.
+
+And most conversations cannot reach the three hundred item limit in Focus at all, because
+Focus leaves out ordinary agent output. Counted across every conversation on the live
+machine, no Ticket conversation holds three hundred items in Focus: the largest holds 197
+of its 1,108 rows, and one conversation of 6,847 rows holds ten. The limit is reachable in
+Full on any long conversation, and in Focus only in the few very long conversations that
+are not a Ticket's.
+
+One known hole in testing this from outside: a Ticket page opens its conversation at rest,
+and the Focus and Full controls are not reachable until it is opened, so a script cannot
+simply land on a Ticket page and put a long conversation on screen in Full.
 
 ## Permissions
 
@@ -762,6 +845,31 @@ adds Codex and Claude update advice and a one-click update when Panels can run o
 The update command comes from how the CLI was installed. Panels checks the card again
 afterwards and reports the update as succeeded, unchanged, or failed. Logging in stays
 in the terminal, and the card names the command.
+
+### What a card costs, and the assumption that was wrong about it
+
+Reading the cards was slow for a long time, 118 to 149 milliseconds every time, and
+everyone who looked at it assumed the cards were being probed live. They were not. The
+probe runs once per process and is then kept; after the first call it answers in well
+under a millisecond, and the check for whether the kept answer had gone stale has never
+once said yes.
+
+The time went on describing the models. Each card lists the models its backend offers,
+and building that list asked a question for every single model: is this model switched
+off, what does the catalogue say about it, and is this catalogue the one we already had.
+Each of those questions opened its own connection to the database. Opening a connection
+here is not cheap, because the database has eighty tables and a new connection reads all
+of their definitions before it can answer anything: the first question on a fresh
+connection takes 2.39 milliseconds where the second takes 0.022. Describing 26 models
+that way meant 78 connections and 492 questions, for one screen asking what backends
+exist.
+
+It now asks once for the whole set and sorts the models out in memory, so the cost is the
+same whether a backend offers eight models or fifty. The lesson is worth more than the
+fix: three separate per-model loops had accumulated here over time and nothing failed,
+because every test of this route checks what the card says and no test checked what the
+card cost. There is one now, and it fails if the cost starts following the model count
+again.
 
 ### What a card can say about the codex login
 
@@ -1146,6 +1254,25 @@ argument hint. A slash at the absolute start of the message offers commands. A d
 offers skills. An at sign offers apps and plugins. Leading whitespace, an empty first
 line, or a trigger on a later line does not open the menu. The composer narrows that
 eligible list as text is typed.
+
+### When the menu arrives
+
+The catalog is read when the conversation opens and again each time a turn ends. It does
+not arrive with the record. It used to, and it dominated it: the largest real catalog is
+66,211 bytes for 155 entries, where everything else the record stores about a conversation
+comes to about 620. The record is re-read every time the conversation gains a row, so
+watching one agent work for seventy seconds sent the same closed menu 68 times, about
+2.3 MB of it.
+
+Turn end is the occasion because a backend only reports its commands a moment into its
+first turn. Reading the menu lazily, when somebody first types a trigger, would show an
+empty menu on a conversation that has a full one today.
+
+The cost of reading it then and not more often: for the length of one turn the menu can be
+out of date. A skill or command that appears while a turn is streaming is not offered until
+that turn ends or the conversation is reopened. A turn is seconds to minutes, the menu is
+only consulted when somebody opens it to type, and the alternative is re-sending all 66 KB
+of it every time an agent writes a line.
 
 The keyboard owns the highlight. It starts at the top of the list and moves with the
 arrow keys. A row takes the highlight when the pointer really moves onto it. A menu that

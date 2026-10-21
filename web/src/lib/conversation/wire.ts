@@ -1,3 +1,4 @@
+import { DiagnosticExpiredError, isDiagnosticExpiry } from './diagnosticExpiry';
 /** The conversation system's HTTP wire, as the browser speaks it.
  *
  * Every shape here is exactly what `/api/conversation` serializes, and every call is a
@@ -81,7 +82,7 @@ export type MessageContent = MessagePiece[];
 export type StoredMessageContent = { text: string } | { content: MessagePiece[] };
 
 export type Principal = {
-  kind: "owner" | "chief" | "sprint_item" | "ticket";
+  kind: "owner" | "chief" | "manager" | "ticket";
   id: string;
 };
 
@@ -191,15 +192,12 @@ export type ConversationView = {
   reasoning_effort: string | null;
   workspace_folder: string;
   access: string;
-  role_text: string | null;
-  identity_environment_variable_names: string[];
   latest_sequence: number;
   owner_read_through_sequence: number;
   is_running: boolean;
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
-  composer_catalog: ComposerCatalogEntry[];
 };
 
 /** One earlier conversation of the same owner, as the record lists it.
@@ -549,6 +547,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new ConversationWireError("The server sent something that is not JSON.", response.status);
     }
   }
+  if (isDiagnosticExpiry(raw)) throw new DiagnosticExpiredError();
   throw new ConversationWireError(detailSentence(raw, response.status), response.status);
 }
 
@@ -577,6 +576,21 @@ export function readConversation(conversationId: string): Promise<ConversationVi
   return request<ConversationView>(`/conversations/${encodeURIComponent(conversationId)}`);
 }
 
+/** The composer's typeahead menu, which is read on its own occasions.
+ *
+ * It used to arrive inside the record, where it was 97.4% of it - 66 KB of commands and
+ * skills against about 950 bytes of conversation - and the record is re-read every time
+ * the conversation gains a row. Watching an agent work for seventy seconds sent the same
+ * closed menu 68 times. */
+export async function readComposerCatalog(
+  conversationId: string
+): Promise<ComposerCatalogEntry[]> {
+  const answer = await request<{ composer_catalog: ComposerCatalogEntry[] }>(
+    `/conversations/${encodeURIComponent(conversationId)}/composer-catalog`
+  );
+  return answer.composer_catalog;
+}
+
 export async function advanceOwnerRead(
   conversationId: string,
   throughSequence: number
@@ -601,10 +615,11 @@ export async function readEventsAfter(
 /** The whole output of one finished tool call, which an open does not carry. */
 export async function readToolCallDetail(
   conversationId: string,
-  sequence: number
+  sequence: number,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const answer = await request<{ detail: string | null }>(
-    `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`
+    `/conversations/${encodeURIComponent(conversationId)}/events/${sequence}/detail`, {signal}
   );
   return answer.detail;
 }

@@ -1,14 +1,17 @@
-import type { TicketValue, TicketRecord, OrchestratorRecord, ProjectRecord, AddressRecord } from './contracts';
+import type { TicketValue, TicketRecord, ManagerRecord, ProjectRecord, AddressRecord, ViewWindow, ViewCounts, ViewContentReference, ViewSettledManagerRecord } from './contracts';
 import type { EffectiveNavigationView, KnownFact, ConversationKnowledge } from './knowledge';
 import type { AgentState } from '../types';
-import type { WorkspaceTicket, WorkspaceOrchestrator, WorkspaceChief } from '../workspaceRail';
+import type { WorkspaceTicket, WorkspaceManager, WorkspaceSettledManager, WorkspaceChief } from '../workspaceRail';
+import { workspaceMessageIndex } from '../workspaceMessageDiscovery';
+import { workspaceRailChildMessageConversations } from '../workspaceRail';
 import type { ConversationSignal } from '../conversationSignal';
 import type { WorkspaceMessageConversation } from '../types';
 
 export type NavigationTicket = WorkspaceTicket & Pick<TicketValue,'created_at' | 'terminal' | 'is_backlogged'>;
 export type NavigationWorkspacePresentation = {
   readonly tickets: NavigationTicket[];
-  readonly orchestrators: WorkspaceOrchestrator[];
+  readonly managers: WorkspaceManager[];
+  readonly settledManagers:WorkspaceSettledManager[];
   readonly chief: WorkspaceChief | null;
   readonly messages: WorkspaceMessageConversation[];
   readonly conversationSignals: ReadonlyMap<string,Partial<ConversationSignal>>;
@@ -32,7 +35,8 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   const records=view.publication.records;
   const conversationSignals=new Map([...view.conversations].map(([id,knowledge])=>[id,signal(knowledge)]));
   const rawTicketsById=new Map<string,TicketRecord>();
-  const rawOrchestratorsById=new Map<string,OrchestratorRecord>();
+  const rawManagersById=new Map<string,ManagerRecord>();
+  const rawSettledManagersById=new Map<string,ViewSettledManagerRecord>();
   const rawProjectsById=new Map<string,ProjectRecord>();
   const addressesByConversation=new Map<string,AddressRecord[]>();
   const reviewItems: import('../types').NavigationReviewItem[]=[];
@@ -40,7 +44,7 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
   let exactOutClaimCount=0;
   let chiefRecord:Extract<(typeof records)[number],{kind:'chief'}> | undefined;
   for(const record of records) {
-    if(record.kind==='ticket' || record.kind==='orchestrator' || record.kind==='chief') {
+    if(record.kind==='ticket' || record.kind==='manager' || record.kind==='chief') {
       if(record.value.conversation_id!==null) currentConversationIds.add(record.value.conversation_id);
     }
     if(record.kind==='ticket') {
@@ -53,21 +57,24 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       }
     }
     if(record.kind==='ticket') rawTicketsById.set(record.id,record);
-    else if(record.kind==='orchestrator') rawOrchestratorsById.set(record.id,record);
+    else if(record.kind==='manager') {
+      if('recap' in record.value)rawManagersById.set(record.id,{kind:record.kind,id:record.id,value:record.value});
+      else rawSettledManagersById.set(record.id,{kind:record.kind,id:record.id,value:record.value});
+    }
     else if(record.kind==='project') rawProjectsById.set(record.id,record);
     else if(record.kind==='chief') chiefRecord=record;
     else if(record.kind==='address') {const addresses=addressesByConversation.get(record.value.conversation_id) ?? [];addresses.push(record);addressesByConversation.set(record.value.conversation_id,addresses);}
   }
   const projects=new Map([...rawProjectsById].map(([id,record])=>[id,record.value]));
-  const orchestratorRecords=[...rawOrchestratorsById.values()];
-  const orchestratorsById=new Map(orchestratorRecords.map(record=>[record.id,record.value]));
+  const managerRecords=[...rawManagersById.values()];
+  const managersById=new Map([...managerRecords,...rawSettledManagersById.values()].map(record=>[record.id,record.value]));
   const tickets: NavigationTicket[]=[...rawTicketsById.values()].flatMap(record=>{
     if(record.kind!=='ticket') return [];
     const row=record.value;
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
     const owner=row.ceiling_holder.kind==='owner' && row.ceiling_holder.id==='owner';
     const parked=row.ticket_status==='awaiting_approval';
-    const parent=row.orchestrator_kind==='chief' ? null : row.sprint_item_id;
+    const parent=row.manager_kind==='chief' ? null : row.manager_id;
     return [{id:record.id,created_at:row.created_at,terminal:row.terminal,title:row.title,stage:row.stage,worker_type:row.worker_type,
       ticket_status:row.ticket_status,is_backlogged:row.is_backlogged,blocked:row.blocked,
       activity_at:row.updated_at,conversation_id:row.conversation_id,conversation_signal:signal(knowledge),
@@ -75,32 +82,39 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
       awaiting_approval:parked && owner,awaiting_agent_approval:parked && !owner,assigned:row.stage_ownership==='user',
       agent_state:agentState(row.ticket_status,row.stage,knowledge),
       waiting_to_closeout:row.gating_field==='consequences' && row.ticket_status==='empty',
-      gating_field:row.gating_field,recap:row.recap,recap_preview:row.recap_preview,
-      orchestrator:parent === null ? {kind:'chief',id:'chief'} : {kind:'sprint_item',id:parent},
-      sprint_item_id:parent,sprint_item_title:parent === null ? null : orchestratorsById.get(parent)?.title ?? null}];
+      gating_field:row.gating_field,recap:row.recap,recap_reference:'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null,recap_preview:row.recap_preview,
+      manager:parent === null ? {kind:'chief',id:'chief'} : {kind:'manager',id:parent},
+      manager_id:parent,manager_title:parent === null ? null : managersById.get(parent)?.title ?? null}];
   });
   const ticketsByParent=new Map<string,NavigationTicket[]>();
   const ticketMastheadsById=new Map<string,NavigationTicketMasthead>();
   for(const ticket of tickets) {
-    const key=ticket.orchestrator?.kind==='sprint_item' ? `orchestrator:${ticket.orchestrator.id}` : 'chief:chief';
+    const key=ticket.manager?.kind==='manager' ? `manager:${ticket.manager.id}` : 'chief:chief';
     const siblings=ticketsByParent.get(key) ?? [];
     siblings.push(ticket);ticketsByParent.set(key,siblings);
     const raw=rawTicketsById.get(ticket.id)!.value;
-    const parent=raw.sprint_item_id===null ? undefined : rawOrchestratorsById.get(raw.sprint_item_id);
-    if(raw.sprint_item_id!==null && !parent) continue;
-    const projectId=raw.sprint_item_id===null ? raw.project_id : parent!.value.project_id;
+    const parent=raw.manager_id===null ? undefined : rawManagersById.get(raw.manager_id);
+    if(raw.manager_id!==null && !parent) continue;
+    const projectId=raw.manager_id===null ? raw.project_id : parent!.value.project_id;
     if(projectId!==null && !rawProjectsById.has(projectId)) continue;
     ticketMastheadsById.set(ticket.id,{id:ticket.id,title:raw.title,worker_type:raw.worker_type,
       project:projectId===null ? null : rawProjectsById.get(projectId)!.value.name,
       conversation_id:raw.conversation_id,conversation_signal:signal(raw.conversation_id===null ? undefined : view.conversations.get(raw.conversation_id))});
   }
-  const orchestrators: WorkspaceOrchestrator[]=orchestratorRecords.map(record=>{
+  const managers: WorkspaceManager[]=managerRecords.map(record=>{
     const row=record.value;
     const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
     return {id:record.id,title:row.title,created_at:row.created_at,
       settled:row.settled,project_id:row.project_id,project:projects.get(row.project_id)?.name,
-      recap:row.recap,recap_preview:row.recap_preview,conversation_id:row.conversation_id,
-      conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`orchestrator:${record.id}`) ?? [],
+      recap:row.recap,recap_reference:'recap_reference' in row ? row.recap_reference as ViewContentReference|null : null,recap_preview:row.recap_preview,conversation_id:row.conversation_id,
+      conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`manager:${record.id}`) ?? [],
+      awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
+      awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge)};
+  });
+  const settledManagers:WorkspaceSettledManager[]=[...rawSettledManagersById.values()].map(record=>{
+    const row=record.value;
+    const knowledge=row.conversation_id === null ? undefined : view.conversations.get(row.conversation_id);
+    return {id:record.id,...row,conversation_signal:signal(knowledge),tickets:ticketsByParent.get(`manager:${record.id}`) ?? [],
       awaiting_reply:value(knowledge?.message_for_owner),awaiting_answer:value(knowledge?.awaiting_answer),
       awaiting_approval:false,awaiting_agent_approval:false,assigned:false,agent_state:agentState(null,null,knowledge)};
   });
@@ -120,16 +134,16 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     if(value(knowledge?.message_for_owner)!==true) continue;
     const key=`${address.owner_kind}:${address.owner_id}:${address.conversation_id}`;
     if(seen.has(key)) continue;
-    const ticket=byTicket.get(address.owner_id), item=orchestratorsById.get(address.owner_id);
+    const ticket=byTicket.get(address.owner_id), item=managersById.get(address.owner_id);
     const parentId=address.parent_kind==='chief' ? 'chief' : address.parent_id;
-    const parent=parentId === null ? undefined : orchestratorsById.get(parentId);
-    const title=address.owner_kind==='ticket' ? ticket?.title : address.owner_kind==='orchestrator' ? item?.title : chief?.label;
+    const parent=parentId === null ? undefined : managersById.get(parentId);
+    const title=address.owner_kind==='ticket' ? ticket?.title : address.owner_kind==='manager' ? item?.title : chief?.label;
     if(title===undefined) continue;
     seen.add(key);
-    messages.push({kind:address.owner_kind==='orchestrator' ? 'sprint_item' : address.owner_kind,
+    messages.push({kind:address.owner_kind==='manager' ? 'manager' : address.owner_kind,
       id:address.owner_id,title,conversationId:address.conversation_id,conversationSignal:signal(knowledge),
       parentId,parentTitle:parentId==='chief' ? chief?.label ?? null : parent?.title ?? null,
-      settled:address.owner_kind==='orchestrator' ? item?.settled === true : parent?.settled === true});
+      settled:address.owner_kind==='manager' ? item?.settled === true : parent?.settled === true});
   }
   const messagesByParent=new Map<string,WorkspaceMessageConversation[]>();
   for(const message of messages) {
@@ -137,10 +151,33 @@ export function navigationWorkspacePresentation(view: EffectiveNavigationView): 
     const siblings=messagesByParent.get(message.parentId) ?? [];
     siblings.push(message);messagesByParent.set(message.parentId,siblings);
   }
-  return {tickets,orchestrators,chief,messages,conversationSignals,rawTicketsById,rawOrchestratorsById,rawProjectsById,
-    ticketsById:new Map(tickets.map(ticket=>[ticket.id,ticket])),orchestratorsById:new Map(orchestrators.map(item=>[item.id,item])),
+  const messageIndex=workspaceMessageIndex(messages,tickets,byTicket);
+  const railMessagesByParent=new Map<string,readonly WorkspaceMessageConversation[]>();
+  for(const parent of [...managers,...settledManagers]) {
+    railMessagesByParent.set(parent.id,workspaceRailChildMessageConversations(messages,parent,tickets,messageIndex));
+  }
+  const addressesById=new Map([...addressesByConversation.values()].flat().map(record=>[record.id,record]));
+  const unreadConversationIdsByWindow=new Map<string,ReadonlySet<string>>();
+  const scopedRailMessagesByParent=new Map<string,readonly WorkspaceMessageConversation[]>();
+  for(const window of view.publication.view?.windows ?? []) {
+    if(window.request.section!=='unread')continue;
+    const ids=new Set<string>();
+    for(const key of window.members) {
+      const address=key.kind==='address' ? addressesById.get(key.id) : undefined;
+      if(address)ids.add(address.value.conversation_id);
+    }
+    unreadConversationIdsByWindow.set(window.window_id,ids);
+    if(window.request.owner?.kind==='manager') {
+      const parentId=window.request.owner.id;
+      scopedRailMessagesByParent.set(parentId,(railMessagesByParent.get(parentId) ?? []).filter(row=>ids.has(row.conversationId)));
+    }
+  }
+  return {tickets,managers,settledManagers,chief,messages,conversationSignals,rawTicketsById,rawManagersById,rawProjectsById,
+    ticketsById:byTicket,managersById:new Map(managers.map(item=>[item.id,item])),
     ticketsByParent,messagesByParent,ticketMastheadsById,addressesByConversation,
-    review:finishReviewPresentation(view,reviewItems,currentConversationIds,exactOutClaimCount)};
+    railMessagesByParent,scopedRailMessagesByParent,unreadConversationIdsByWindow,
+    review:finishReviewPresentation(view,reviewItems,currentConversationIds,exactOutClaimCount),
+    viewWindows:view.publication.view?.windows ?? [],globalCounts:view.publication.view?.counts ?? null};
 }
 
 /** Review follows the canonical complete queue, independently of sidebar filters. */
@@ -161,6 +198,8 @@ function finishReviewPresentation(view:EffectiveNavigationView,items:import('../
     if (!fact || fact.state !== 'fresh') { runningConversationCount = null; break; }
     if (runningConversationCount !== null && fact.value) runningConversationCount += 1;
   }
+  const counts=view.publication.view?.counts;
+  if(counts){runningConversationCount=view.runtimeCurrent?counts.running_conversations:null;exactOutClaimCount=counts.out_claims;}
   return {items,runningConversationCount,exactOutClaimCount,currentConversationIds:pointers};
 }
 
@@ -194,18 +233,23 @@ export function navigationTicketMasthead(view:EffectiveNavigationView,id:string)
 }
 
 export type NavigationPresentationIndexes = {
+  readonly railMessagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
+  readonly scopedRailMessagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
+  readonly unreadConversationIdsByWindow:ReadonlyMap<string,ReadonlySet<string>>;
   readonly addressesByConversation:ReadonlyMap<string,readonly AddressRecord[]>;
   readonly rawTicketsById:ReadonlyMap<string,TicketRecord>;
-  readonly rawOrchestratorsById:ReadonlyMap<string,OrchestratorRecord>;
+  readonly rawManagersById:ReadonlyMap<string,ManagerRecord>;
   readonly rawProjectsById:ReadonlyMap<string,ProjectRecord>;
   readonly ticketsById:ReadonlyMap<string,NavigationTicket>;
-  readonly orchestratorsById:ReadonlyMap<string,WorkspaceOrchestrator>;
+  readonly managersById:ReadonlyMap<string,WorkspaceManager>;
   readonly ticketsByParent:ReadonlyMap<string,readonly NavigationTicket[]>;
   readonly messagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
   readonly ticketMastheadsById:ReadonlyMap<string,NavigationTicketMasthead>;
 };
 export type NavigationPresentation = NavigationWorkspacePresentation & NavigationPresentationIndexes & {
   readonly review:NavigationReviewPresentation;
+  readonly viewWindows:readonly ViewWindow[];
+  readonly globalCounts:ViewCounts | null;
 };
 
 /** Provider lifetime owns this cache; a knowledge-only change has a different key. */
@@ -220,3 +264,8 @@ export function createNavigationPresentationCache() {
 
 // Held section metadata reuses the same per-fact presentation rules.
 export { agentState as navigationAgentState, value as navigationKnownBoolean };
+
+/** Membership comes from the server window, not dependency rows resident for another surface. */
+export function navigationWindow(view:NavigationPresentation|null|undefined,section:ViewWindow['request']['section'],owner:ViewWindow['request']['owner']=null,childFilter:ViewWindow['request']['child_filter']='all',group:ViewWindow['request']['group']='all'):ViewWindow|undefined {
+  return view?.viewWindows.find(window=>window.request.section===section && window.request.owner?.kind===owner?.kind && window.request.owner?.id===owner?.id && window.request.child_filter===childFilter && window.request.group===group);
+}

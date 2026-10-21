@@ -1,5 +1,5 @@
 import type { WorkspaceMessageConversation } from "./types";
-import type { WorkspaceTicket, WorkspaceOrchestrator, WorkspaceChief } from "./workspaceRail";
+import type { WorkspaceTicket, WorkspaceManager, WorkspaceChief } from "./workspaceRail";
 import type { WorkItemTicketFacts } from "./workItemPresentation";
 
 /** Count conversations, not rows or messages. An ask without an unread reply adds none. */
@@ -12,7 +12,7 @@ export function workspaceUnreadConversationCount(
 
 export function workspaceSettledUnreadCount(
   rows: readonly WorkspaceMessageConversation[],
-  items: readonly WorkspaceOrchestrator[] = []
+  items: readonly WorkspaceManager[] = []
 ): number {
   // One conversation can have more than one served reference. Its primary row need
   // not belong to the settled parent, so count membership before discarding aliases.
@@ -28,22 +28,46 @@ export function workspaceSettledUnreadCount(
     .map((row) => row.conversationId)).size;
 }
 
+export type WorkspaceMessageIndex = {
+  readonly unreadConversationIds:ReadonlySet<string>;
+  readonly ticketsById:ReadonlyMap<string,WorkspaceTicket>;
+  readonly firstMessageByTicket:ReadonlyMap<string,WorkspaceMessageConversation>;
+  readonly messagesByParent:ReadonlyMap<string,readonly WorkspaceMessageConversation[]>;
+};
+
+/** Build once for an effective publication, then reuse for every visible parent. */
+export function workspaceMessageIndex(rows:readonly WorkspaceMessageConversation[],cards:readonly WorkspaceTicket[],
+  ticketsById:ReadonlyMap<string,WorkspaceTicket>=new Map(cards.map(card=>[card.id,card]))):WorkspaceMessageIndex {
+  const unreadConversationIds=new Set<string>();
+  const firstMessageByTicket=new Map<string,WorkspaceMessageConversation>();
+  const messagesByParent=new Map<string,WorkspaceMessageConversation[]>();
+  for(const row of rows) {
+    unreadConversationIds.add(row.conversationId);
+    if(row.kind!=='ticket')continue;
+    if(!firstMessageByTicket.has(row.id))firstMessageByTicket.set(row.id,row);
+    if(row.parentId!==null && row.parentId!==undefined) {
+      const siblings=messagesByParent.get(row.parentId) ?? [];
+      siblings.push(row);messagesByParent.set(row.parentId,siblings);
+    }
+  }
+  return {unreadConversationIds,ticketsById,firstMessageByTicket,messagesByParent};
+}
+
 /** Retain each parent's real child access before deduplicating within that parent. */
 export function workspaceChildMessageConversations(
   rows: readonly WorkspaceMessageConversation[],
-  parent: Pick<WorkspaceOrchestrator, "id" | "title" | "settled"> & {tickets: readonly WorkItemTicketFacts[]},
-  cards: readonly WorkspaceTicket[] = []
+  parent: Pick<WorkspaceManager, "id" | "title" | "settled"> & {tickets: readonly WorkItemTicketFacts[]},
+  cards: readonly WorkspaceTicket[] = [],
+  index:WorkspaceMessageIndex=workspaceMessageIndex(rows,cards)
 ): WorkspaceMessageConversation[] {
-  const unread = new Set(rows.map((row) => row.conversationId));
-  const byTicket = new Map(cards.map((card) => [card.id,card]));
   const children = new Map<string,WorkspaceMessageConversation>();
   for (const ticket of parent.tickets) {
-    const canonical = byTicket.get(ticket.id);
+    const canonical = index.ticketsById.get(ticket.id);
     // The canonical same-Ticket address and read fact win over a stale child copy.
     if (canonical && (!canonical.awaiting_reply || ticketParentId(canonical) !== parent.id)) continue;
     const conversationId = canonical ? canonical.conversation_id : ticket.conversation_id;
-    if (!conversationId || !unread.has(conversationId)) continue;
-    const sameTicket = rows.find((row) => row.kind === "ticket" && row.id === ticket.id);
+    if (!conversationId || !index.unreadConversationIds.has(conversationId)) continue;
+    const sameTicket = index.firstMessageByTicket.get(ticket.id);
     if (sameTicket && sameTicket.parentId !== parent.id) continue;
     if (!children.has(conversationId)) children.set(conversationId, {
       conversationSignal: canonical ? canonical.conversation_signal : ticket.conversation_signal,
@@ -51,24 +75,22 @@ export function workspaceChildMessageConversations(
       parentId:parent.id, parentTitle:parent.title, settled:parent.settled === true
     });
   }
-  for (const row of rows) {
-    if (row.kind === "ticket" && row.parentId === parent.id && !children.has(row.conversationId)) {
-      children.set(row.conversationId,row);
-    }
+  for (const row of index.messagesByParent.get(parent.id) ?? []) {
+    if (!children.has(row.conversationId)) children.set(row.conversationId,row);
   }
   return [...children.values()];
 }
 
 function ticketParentId(card: WorkspaceTicket): string {
-  return card.orchestrator?.kind === "chief" ? "chief"
-    : card.orchestrator?.kind === "sprint_item" ? card.orchestrator.id
-    : card.sprint_item_id ?? "chief";
+  return card.manager?.kind === "chief" ? "chief"
+    : card.manager?.kind === "manager" ? card.manager.id
+    : card.manager_id ?? "chief";
 }
 
 /** Existing durable unread facts form this index; settlement never limits discovery. */
 export function workspaceMessageConversations(
   cards: readonly WorkspaceTicket[],
-  items: readonly WorkspaceOrchestrator[],
+  items: readonly WorkspaceManager[],
   chief?: WorkspaceChief | null
 ): WorkspaceMessageConversation[] {
   const byItem = new Map(items.map((item) => [item.id, item]));
@@ -86,7 +108,7 @@ export function workspaceMessageConversations(
       conversationSignal: card.conversation_signal,
       kind: "ticket", id: card.id, title: card.title, conversationId: card.conversation_id,
       parentId, parentTitle: parentId === "chief" ? chief?.label ?? "Chief of Staff"
-        : parent?.title ?? card.sprint_item_title,
+        : parent?.title ?? card.manager_title,
       settled: parentId !== "chief" && parent?.settled === true
     });
   }
@@ -102,7 +124,7 @@ export function workspaceMessageConversations(
     }
     if (item.awaiting_reply && item.conversation_id) add({
       conversationSignal: item.conversation_signal,
-      kind: "sprint_item", id: item.id, title: item.title, conversationId: item.conversation_id,
+      kind: "manager", id: item.id, title: item.title, conversationId: item.conversation_id,
       parentId: null, parentTitle: null, settled: item.settled === true
     });
   }

@@ -11,7 +11,6 @@ from tests.support.probe import shipped_definition
 from tests.support.ticket_progress import advance_ticket
 
 from planner.core.db import connect, create_schema
-from planner.days import data as days_data
 from planner.runtime.worker_step_readiness import (
     is_ready_for_worker_step,
 )
@@ -21,9 +20,6 @@ from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 NEW_WORKER_TYPE_DEFINITION = shipped_definition("new_worker")
-
-PLANNING_DAY_ID = "day_2026-07-14"
-OTHER_DAY_ID = "day_2026-07-13"
 
 
 def _db(tmp_path: Path) -> sqlite3.Connection:
@@ -36,7 +32,6 @@ def _ticket(
     conn: sqlite3.Connection,
     *,
     worker_type: str = "coding",
-    planning_day_id: str | None = PLANNING_DAY_ID,
     ceiling: str | None = None,
 ) -> Ticket:
     definition = configured_worker_type_registry().require(worker_type)
@@ -58,8 +53,6 @@ def _ticket(
         next_ceiling=ceiling or definition.stage_ids()[1],
         next_holder=OWNER_PRINCIPAL,
     )
-    if planning_day_id is not None:
-        days_data.add_day_ticket(conn, planning_day_id, ticket.id, 3)
     return ticket
 
 
@@ -76,8 +69,6 @@ def _ready(
             definition or configured_worker_type_registry().require(ticket.worker_type)
         ),
     )
-
-
 
 
 def test_user_owned_ticket_is_ready_once_per_stage_entry(tmp_path: Path) -> None:

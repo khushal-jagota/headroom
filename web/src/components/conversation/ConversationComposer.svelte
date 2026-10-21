@@ -36,6 +36,8 @@
     type ComposerDraft,
     type ComposerSendAttempt
   } from "./composer/draftTransaction";
+  import { untrack } from "svelte";
+  import { readComposerDraft, writeComposerDraft } from "../../lib/conversation/composerDraft";
   import {
     applyComposerRunSelectionIntent,
     resolveComposerRunControls
@@ -87,6 +89,7 @@
 
   let {
     conversationId = null,
+    draftKey,
     backendKey = null,
     conversationExists = false,
     running = false,
@@ -119,6 +122,7 @@
   }: {
     /** The current conversation, or none before the first message creates it. */
     conversationId?: string | null;
+    draftKey: string;
     /** The backend this conversation runs on — or, before there is one, the backend a
      *  message sent from here would create it on. */
     backendKey?: ConversationBackendKey | null;
@@ -181,7 +185,17 @@
     onSendHeldPromptAgain?: (senderMessageId: string) => Promise<void> | void;
   } = $props();
 
-  let text = $state("");
+  // Restored before the first paint, so a rebuilt composer comes back with the words
+  // in it rather than empty.
+  let text = $state(untrack(() => readComposerDraft(draftKey)));
+  let draftKeyOnScreen = untrack(() => draftKey);
+  $effect(() => {
+    const key = draftKey;
+    if (key === untrack(() => draftKeyOnScreen)) return;
+    draftKeyOnScreen = key;
+    text = readComposerDraft(key);
+  });
+  $effect(() => { writeComposerDraft(draftKey, text); });
   let deliveryMode = $state<PromptDeliveryMode>("steer");
   let runSelection = $state<ComposerRunSelection>({
     pickedBackend: null,
@@ -796,26 +810,11 @@
     if (takenOver && voiceState.phase !== "idle") voice?.cancel();
   });
 
-  function writingAreaPaneHeight(pane: HTMLElement): number {
-    const layer = pane.closest<HTMLElement>(".conversation-layer");
-    if (pane.dataset.conversationState === "rest" && layer?.parentElement) {
-      // At rest the card is intrinsically as tall as this composer. Its bounded page is
-      // the available pane: using the card itself would make each resize shrink its own
-      // ruler, then trigger another resize. Peeked/opened have their own fixed share.
-      return layer.parentElement.clientHeight;
-    }
-    return pane.clientHeight;
-  }
-
   let textareaMeasurement: ReturnType<typeof createComposerTextareaMeasurement> | null = null;
 
   function resizeWritingArea(): void {
     const input = inputElement;
     if (input === null || input.hidden || input.getClientRects().length === 0) return;
-    const pane = input.closest<HTMLElement>("[data-conversation-pane]");
-    if (pane === null) return;
-    const paneHeight = writingAreaPaneHeight(pane);
-    if (paneHeight === 0) return;
     const style = getComputedStyle(input);
     const lineHeight = Number.parseFloat(style.lineHeight);
     if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
@@ -823,7 +822,7 @@
       textareaMeasurement?.dispose();
       textareaMeasurement = createComposerTextareaMeasurement(input);
     }
-    const size = textareaMeasurement.measure(style, paneHeight);
+    const size = textareaMeasurement.measure(style);
     const height = `${size.height}px`;
     if (input.style.height !== height) input.style.height = height;
     if (input.style.overflowY !== size.overflowY) input.style.overflowY = size.overflowY;
@@ -841,27 +840,19 @@
   $effect(() => {
     const input = inputElement;
     if (input === null) return;
-    const pane = input.closest<HTMLElement>("[data-conversation-pane]");
-    if (pane === null) return;
     let measuredWidth = -1;
-    let measuredPaneHeight = -1;
     let resizeFrame = 0;
     const observer = new ResizeObserver(() => {
       const width = input.clientWidth;
-      const paneHeight = writingAreaPaneHeight(pane);
       // The textarea's own height is an output, never another reason to resize it.
-      if (width === measuredWidth && paneHeight === measuredPaneHeight) return;
+      if (width === measuredWidth) return;
       measuredWidth = width;
-      measuredPaneHeight = paneHeight;
       // Write on the next frame, outside observer delivery. Even one intentional height
       // change to an observed input can otherwise report undelivered observations.
       cancelAnimationFrame(resizeFrame);
       resizeFrame = requestAnimationFrame(resizeWritingArea);
     });
-    observer.observe(pane);
     observer.observe(input);
-    const page = pane.closest<HTMLElement>(".conversation-layer")?.parentElement;
-    if (page) observer.observe(page);
     return () => {
       observer.disconnect();
       cancelAnimationFrame(resizeFrame);

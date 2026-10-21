@@ -31,7 +31,6 @@ from planner.core.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
-from planner.days import data as days_data
 from planner.manager_wakes import data as manager_wakes_data
 from planner.notifications.attention import capture_ticket_attention
 from planner.tickets import derivation, revision_feedback
@@ -113,7 +112,7 @@ def _validate_ceiling_holder(
         )
     table = {
         PrincipalKind.ticket: "tickets",
-        PrincipalKind.sprint_item: "sprint_items",
+        PrincipalKind.manager: "managers",
     }.get(holder.kind)
     if table is None:
         return
@@ -153,41 +152,32 @@ def _validate_ticket_creation_placement(
     conn: sqlite3.Connection,
     *,
     project_id: str | None,
-    sprint_id: str | None,
-    sprint_item_id: str | None,
+    manager_id: str | None,
     blocked_by_ticket_ids: list[str] | None,
 ) -> None:
-    if sprint_item_id is not None:
-        if (
-            conn.execute("SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)).fetchone()
-            is None
-        ):
+    if manager_id is not None:
+        if conn.execute("SELECT 1 FROM managers WHERE id = ?", (manager_id,)).fetchone() is None:
             raise PlannerError(
                 ErrorCode.not_found,
-                "sprint item not found",
-                {"sprint_item_id": sprint_item_id},
+                "manager not found",
+                {"manager_id": manager_id},
             )
         item = conn.execute(
-            "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
+            "SELECT project_id FROM managers WHERE id = ?", (manager_id,)
         ).fetchone()
         if item is None:
             raise PlannerError(
                 ErrorCode.not_found,
-                "sprint item not found",
-                {"sprint_item_id": sprint_item_id},
+                "manager not found",
+                {"manager_id": manager_id},
             )
         if project_id != item["project_id"]:
-            raise PlannerError(ErrorCode.validation, "ticket placement does not match sprint item")
+            raise PlannerError(ErrorCode.validation, "ticket placement does not match manager")
     if project_id is not None:
         if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
             )
-    if (
-        sprint_id is not None
-        and conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone() is None
-    ):
-        raise PlannerError(ErrorCode.validation, "invalid sprint_id", {"sprint_id": sprint_id})
     for blocker_ticket_id in blocked_by_ticket_ids or []:
         if (
             conn.execute("SELECT 1 FROM tickets WHERE id = ?", (blocker_ticket_id,)).fetchone()
@@ -238,9 +228,8 @@ def resolve_ticket_creation_context(
     employee_launch_reasoning_effort: str | None = None,
     model_source_is_historical: bool = False,
     project_id: str | None = None,
-    sprint_id: str | None = None,
     deadline: str | None = None,
-    sprint_item_id: str | None = None,
+    manager_id: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
 ) -> ResolvedTicketCreationContext:
@@ -293,18 +282,17 @@ def resolve_ticket_creation_context(
             employee_launch_model=resolved.model,
             employee_launch_reasoning_effort=resolved.reasoning_effort,
         )
-    if sprint_item_id is not None:
+    if manager_id is not None:
         item = conn.execute(
-            "SELECT project_id FROM sprint_items WHERE id = ?",
-            (sprint_item_id,),
+            "SELECT project_id FROM managers WHERE id = ?",
+            (manager_id,),
         ).fetchone()
         if item is not None and project_id is None:
             project_id = str(item["project_id"])
     _validate_ticket_creation_placement(
         conn,
         project_id=project_id,
-        sprint_id=sprint_id,
-        sprint_item_id=sprint_item_id,
+        manager_id=manager_id,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
@@ -342,11 +330,9 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         deadline=row["deadline"],
         project_id=row["effective_project_id"],
         project_name=row["project_name"],
-        sprint_id=row["sprint_id"],
-        sprint_item_id=row["sprint_item_id"],
-        orchestrator_kind=str(row["orchestrator_kind"]),
-        effective_sprint_id=row["sprint_id"],
-        sprint_item_title=row["sprint_item_title"],
+        manager_id=row["manager_id"],
+        manager_kind=str(row["manager_kind"]),
+        manager_title=row["manager_title"],
         recap=row["recap"],
         ceiling=str(row["ceiling"]),
         ceiling_holder=_principal_from_json(str(row["ceiling_holder"])),
@@ -388,7 +374,7 @@ _TICKET_STORED_COLUMNS = (
     "stage",
     "deadline",
     "project_id",
-    "sprint_item_id",
+    "manager_id",
     "recap",
     "ceiling",
     "conversation_id",
@@ -396,13 +382,12 @@ _TICKET_STORED_COLUMNS = (
     "field_approvals",
     "created_at",
     "updated_at",
-    "sprint_id",
     "pending_proposal",
     "ceiling_holder",
     "worker_step_claim",
     "worker_step_claim_revision",
     "pending_proposal_revision",
-    "orchestrator_kind",
+    "manager_kind",
     "is_backlogged",
     "locale",
 )
@@ -411,14 +396,14 @@ _TICKET_STORED_SELECT = ", ".join(f"tickets.{column}" for column in _TICKET_STOR
 
 def _ticket_row(conn: sqlite3.Connection, ticket_id: str) -> sqlite3.Row:
     row: sqlite3.Row | None = conn.execute(
-        f"SELECT {_TICKET_STORED_SELECT}, CASE WHEN tickets.sprint_item_id IS NOT NULL "
-        "THEN sprint_items.project_id ELSE tickets.project_id END AS effective_project_id, "
+        f"SELECT {_TICKET_STORED_SELECT}, CASE WHEN tickets.manager_id IS NOT NULL "
+        "THEN managers.project_id ELSE tickets.project_id END AS effective_project_id, "
         "projects.name AS project_name, "
-        "sprint_items.title AS sprint_item_title, "
+        "managers.title AS manager_title, "
         f"{derivation.HAS_LIVE_BLOCKER_COLUMN} "
-        "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects ON projects.id = CASE WHEN tickets.sprint_item_id IS NOT NULL "
-        "THEN sprint_items.project_id ELSE tickets.project_id END "
+        "FROM tickets LEFT JOIN managers ON managers.id = tickets.manager_id "
+        "LEFT JOIN projects ON projects.id = CASE WHEN tickets.manager_id IS NOT NULL "
+        "THEN managers.project_id ELSE tickets.project_id END "
         "WHERE tickets.id = ?",
         (ticket_id,),
     ).fetchone()
@@ -639,7 +624,7 @@ def _write_worker_step_claim(
     now: int,
 ) -> None:
     before = conn.execute(
-        "SELECT worker_step_claim,worker_step_claim_revision,sprint_item_id,title "
+        "SELECT worker_step_claim,worker_step_claim_revision,manager_id,title "
         "FROM tickets WHERE id=?",
         (ticket_id,),
     ).fetchone()
@@ -658,16 +643,16 @@ def _write_worker_step_claim(
         before is not None
         and str(before["worker_step_claim"]) != worker_step_claim.value
         and worker_step_claim is WorkerStepClaim.errored
-        and before["sprint_item_id"] is not None
+        and before["manager_id"] is not None
         and conn.execute(
-            "SELECT 1 FROM sprint_items WHERE id=?",
-            (before["sprint_item_id"],),
+            "SELECT 1 FROM managers WHERE id=?",
+            (before["manager_id"],),
         ).fetchone()
         is not None
     ):
         manager_wakes_data.create_worker_error_wake(
             conn,
-            sprint_item_id=str(before["sprint_item_id"]),
+            manager_id=str(before["manager_id"]),
             ticket_id=ticket_id,
             claim_revision=int(before["worker_step_claim_revision"]) + 1,
             ticket_title=str(before["title"]),
@@ -934,14 +919,12 @@ def _proposal_wake_target(
 ) -> Principal | None:
     if route.kind is proposal_routing.ProposalRouteKind.chief:
         return CHIEF_PRINCIPAL
-    if route.kind is proposal_routing.ProposalRouteKind.item_manager and route.sprint_item_id:
+    if route.kind is proposal_routing.ProposalRouteKind.item_manager and route.manager_id:
         if (
-            conn.execute(
-                "SELECT 1 FROM sprint_items WHERE id=?", (route.sprint_item_id,)
-            ).fetchone()
+            conn.execute("SELECT 1 FROM managers WHERE id=?", (route.manager_id,)).fetchone()
             is not None
         ):
-            return Principal(PrincipalKind.sprint_item, route.sprint_item_id)
+            return Principal(PrincipalKind.manager, route.manager_id)
     return None
 
 
@@ -954,10 +937,9 @@ def create_ticket(
     title_max_chars: int,
     brief: str | None = "",
     project_id: str | None = None,
-    sprint_id: str | None = None,
     deadline: str | None = None,
-    sprint_item_id: str | None = None,
-    orchestrator_kind: str | None = None,
+    manager_id: str | None = None,
+    manager_kind: str | None = None,
     worker_type: str,
     locale: TicketLocale | str | None = None,
     employee_backend: str | None = None,
@@ -966,16 +948,15 @@ def create_ticket(
     model_source_is_historical: bool = False,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
-    day_id: str | None = None,
     stated_ceiling: str | None = None,
     stated_holder: Principal | None = None,
 ) -> Ticket:
     admission.require_creatable_worker_type(worker_type)
-    orchestrator_kind = orchestrator_kind or ("sprint_item" if sprint_item_id else "chief")
-    if orchestrator_kind not in {"chief", "sprint_item"} or (
-        (orchestrator_kind == "sprint_item") != (sprint_item_id is not None)
+    manager_kind = manager_kind or ("manager" if manager_id else "chief")
+    if manager_kind not in {"chief", "manager"} or (
+        (manager_kind == "manager") != (manager_id is not None)
     ):
-        raise PlannerError(ErrorCode.validation, "orchestrator kind does not match assignment")
+        raise PlannerError(ErrorCode.validation, "manager kind does not match assignment")
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
     runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
@@ -998,9 +979,8 @@ def create_ticket(
             model_source_is_historical=model_source_is_historical,
             locale=locale,
             project_id=project_id,
-            sprint_id=sprint_id,
             deadline=deadline,
-            sprint_item_id=sprint_item_id,
+            manager_id=manager_id,
             blocked_by_ticket_ids=blocked_by_ticket_ids,
             worker_runtime_definitions=runtime_definitions,
         )
@@ -1010,13 +990,13 @@ def create_ticket(
         # The one rule, asked here where the write happens, exactly as edit_ticket asks
         # it. Making a Ticket acts on nothing that exists, so nothing refuses that. The
         # three things creation arrives with each act on something, and each is asked
-        # about separately: putting work under an Outcome, and stating the two canonical
+        # about separately: putting work under a Manager, and stating the two canonical
         # values PATCH reserves for a caller above the Ticket.
-        if sprint_item_id is not None:
-            authority.require_in_chain(conn, principal, authority.outcome(sprint_item_id))
+        if manager_id is not None:
+            authority.require_in_chain(conn, principal, authority.manager(manager_id))
         if stated_ceiling is not None or stated_holder is not None:
             authority.require_above_a_ticket_being_created(
-                conn, principal, ticket_id=ticket_id, parent_outcome_id=sprint_item_id
+                conn, principal, ticket_id=ticket_id, parent_manager_id=manager_id
             )
         ceiling = (
             default_ceiling
@@ -1046,12 +1026,12 @@ def create_ticket(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, deadline, "
-            "project_id, sprint_id, sprint_item_id, orchestrator_kind, "
+            "project_id, manager_id, manager_kind, "
             "recap, ceiling, ceiling_holder, "
             "conversation_id, field_values, field_approvals, pending_proposal, "
             "pending_proposal_revision, "
             "created_at, updated_at, locale) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, NULL, "
             "?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -1062,10 +1042,9 @@ def create_ticket(
                 launch_configuration.employee_launch_reasoning_effort,
                 stage,
                 deadline,
-                None if sprint_item_id is not None else project_id,
-                sprint_id,
-                sprint_item_id,
-                orchestrator_kind,
+                None if manager_id is not None else project_id,
+                manager_id,
+                manager_kind,
                 ceiling,
                 _principal_to_json(ceiling_holder),
                 values_json,
@@ -1088,9 +1067,7 @@ def create_ticket(
         if wake_target is not None and initial_proposal is not None:
             manager_wakes_data.create_proposal_wake(
                 conn,
-                sprint_item_id=(
-                    wake_target.id if wake_target.kind is PrincipalKind.sprint_item else ""
-                ),
+                manager_id=(wake_target.id if wake_target.kind is PrincipalKind.manager else ""),
                 target=wake_target,
                 ticket_id=ticket_id,
                 proposal_revision=1,
@@ -1098,8 +1075,6 @@ def create_ticket(
                 proposal_field=initial_proposal.field,
                 now=now,
             )
-        if day_id is not None:
-            days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
             ticket_blocks.add_ticket_block(conn, blocker_ticket_id, ticket_id, now)
         capture_ticket_attention(conn, ticket_id, now)
@@ -1133,14 +1108,14 @@ def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
 def read_ticket_by_conversation_id(conn: sqlite3.Connection, conversation_id: str) -> Ticket:
     """Resolve the Ticket that owns this durable Employee conversation."""
     rows = conn.execute(
-        f"SELECT {_TICKET_STORED_SELECT}, CASE WHEN tickets.sprint_item_id IS NOT NULL "
-        "THEN sprint_items.project_id ELSE tickets.project_id END AS effective_project_id, "
+        f"SELECT {_TICKET_STORED_SELECT}, CASE WHEN tickets.manager_id IS NOT NULL "
+        "THEN managers.project_id ELSE tickets.project_id END AS effective_project_id, "
         "projects.name AS project_name, "
-        "sprint_items.title AS sprint_item_title, "
+        "managers.title AS manager_title, "
         f"{derivation.HAS_LIVE_BLOCKER_COLUMN} "
-        "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
-        "LEFT JOIN projects ON projects.id = CASE WHEN tickets.sprint_item_id IS NOT NULL "
-        "THEN sprint_items.project_id ELSE tickets.project_id END "
+        "FROM tickets LEFT JOIN managers ON managers.id = tickets.manager_id "
+        "LEFT JOIN projects ON projects.id = CASE WHEN tickets.manager_id IS NOT NULL "
+        "THEN managers.project_id ELSE tickets.project_id END "
         "JOIN ticket_conversations ON ticket_conversations.ticket_id = tickets.id "
         "WHERE ticket_conversations.conversation_id = ? ORDER BY tickets.id",
         (conversation_id,),
@@ -1268,7 +1243,7 @@ def mark_worker_step_claim_errored(
 
     An uncertain delivery cannot safely return a claim to readiness: the backend can
     have accepted the opener.  The errored claim leaves that uncertainty visible for
-    the existing supervisor restart route.  The exact claim identity prevents an old
+    the existing Manager restart route.  The exact claim identity prevents an old
     delivery result from overwriting a newer worker-step transition.
     """
     with _txn(conn):
@@ -1343,9 +1318,7 @@ def file_current_proposal(
             )
             manager_wakes_data.create_proposal_wake(
                 conn,
-                sprint_item_id=(
-                    wake_target.id if wake_target.kind is PrincipalKind.sprint_item else ""
-                ),
+                manager_id=(wake_target.id if wake_target.kind is PrincipalKind.manager else ""),
                 target=wake_target,
                 ticket_id=ticket_id,
                 proposal_revision=proposal_revision,
@@ -1364,11 +1337,9 @@ def _explicit_approval(conn: sqlite3.Connection, principal: Principal) -> Ticket
     elif principal == CHIEF_PRINCIPAL:
         name = "Chief"
     else:
-        row = conn.execute(
-            "SELECT title FROM sprint_items WHERE id = ?", (principal.id,)
-        ).fetchone()
+        row = conn.execute("SELECT title FROM managers WHERE id = ?", (principal.id,)).fetchone()
         if row is None:
-            raise PlannerError(ErrorCode.not_found, "approving orchestrator not found")
+            raise PlannerError(ErrorCode.not_found, "approving manager not found")
         name = str(row["title"])
     return TicketFieldApproval(
         TicketApprovalMethod.explicit_accept, principal, f"Approved by {name}"
@@ -1533,7 +1504,7 @@ def delete_ticket(
 
     `even_while_running` deletes a Ticket the status still calls claimed. The user asks
     for it with `--force`, for a status stranded at `agent` with no worker behind it, and
-    an Outcome deleting its own child Ticket always has it. It skips that one guard, and
+    a Manager deleting its own child Ticket always has it. It skips that one guard, and
     silencing a live worker is the route's, since only the conversation system knows one
     is there.
     """
@@ -1562,8 +1533,10 @@ def delete_ticket_records(
     """
     # Offline recovery stops before current-schema migrations can run. Read only
     # the deletion record, without the runtime Ticket projection and its new columns.
+    columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(tickets)")}
+    parent_column = "manager_id" if "manager_id" in columns else "sprint_item_id"
     ticket = conn.execute(
-        "SELECT id, title, worker_step_claim, sprint_item_id, sprint_id "
+        f"SELECT id, title, worker_step_claim, {parent_column} AS manager_id "
         "FROM tickets WHERE id = ?",
         (ticket_id,),
     ).fetchone()
@@ -1588,13 +1561,6 @@ def delete_ticket_records(
             {"ticket_id": ticket_id},
         )
 
-    day_ids = tuple(
-        str(row["day_id"])
-        for row in conn.execute(
-            "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id",
-            (ticket_id,),
-        ).fetchall()
-    )
     ticket_block_rows = conn.execute(
         "SELECT blocking_ticket_id, blocked_ticket_id FROM ticket_blocks "
         "WHERE blocking_ticket_id = ? OR blocked_ticket_id = ? "
@@ -1613,12 +1579,7 @@ def delete_ticket_records(
             }
         )
     )
-    sprint_item_ids = (ticket["sprint_item_id"],) if ticket["sprint_item_id"] is not None else ()
-    effective_sprint_id = ticket["sprint_id"]
-    sprint_ids = (effective_sprint_id,) if effective_sprint_id is not None else ()
-
-    for day_id in day_ids:
-        days_data.remove_day_ticket(conn, day_id, ticket_id, now)
+    manager_ids = (ticket["manager_id"],) if ticket["manager_id"] is not None else ()
     for row in ticket_block_rows:
         conn.execute(
             "DELETE FROM ticket_blocks WHERE blocking_ticket_id = ? AND blocked_ticket_id = ?",
@@ -1638,9 +1599,7 @@ def delete_ticket_records(
     return TicketDeletion(
         ticket_id=ticket_id,
         title=str(ticket["title"]),
-        day_ids=day_ids,
-        sprint_item_ids=sprint_item_ids,
-        sprint_ids=sprint_ids,
+        manager_ids=manager_ids,
         linked_ticket_ids=linked_ticket_ids,
     )
 
@@ -1653,14 +1612,14 @@ def _release_a_holder_the_move_left_below(
 ) -> None:
     """Return the ceiling to Khushal when a move leaves its holder no longer above.
 
-    Authority is derived from the Ticket's current Outcome and the ceiling holder is a
+    Authority is derived from the Ticket's current Manager and the ceiling holder is a
     stored address, so a move can leave the two disagreeing: the Ticket goes on asking a
     holder that every write door now refuses, and nothing says so. Khushal stands above
     everything, so the ceiling always has somewhere valid to go, and only Khushal or the
     Chief can make this move in the first place.
 
     The rule is re-asked rather than restated. This does not test whether the holder was
-    the Outcome just left: it asks whether the holder still stands above the Ticket as the
+    the Manager just left: it asks whether the holder still stands above the Ticket as the
     Ticket now is. A holder that does keeps the ceiling, whatever kind of thing it is.
 
     Asked on every move, not only while a proposal is parked. A wrong address is wrong
@@ -1670,7 +1629,7 @@ def _release_a_holder_the_move_left_below(
     if row is None:
         return
     # Read back rather than trust the Ticket loaded before the move: one edit can set the
-    # holder and move the Outcome together, and the holder that matters is the stored one.
+    # holder and move the Manager together, and the holder that matters is the stored one.
     holder = _principal_from_json(str(row["ceiling_holder"]))
     if authority.is_above(conn, holder, authority.ticket(ticket_id)):
         return
@@ -1682,22 +1641,34 @@ def _release_a_holder_the_move_left_below(
     capture_ticket_attention(conn, ticket_id, now)
 
 
+def _resolve_holder_name(conn: sqlite3.Connection, holder: Principal) -> str:
+    if holder.kind is PrincipalKind.owner:
+        return "The user"
+    if holder.kind is PrincipalKind.chief:
+        return "The Chief"
+    table = "managers" if holder.kind is PrincipalKind.manager else "tickets"
+    row = conn.execute(f"SELECT title FROM {table} WHERE id=?", (holder.id,)).fetchone()
+    assert row is not None
+    return str(row["title"])
+
+
 def _review_transfer_notice(
-    conn: sqlite3.Connection, before: Ticket, after: Ticket
+    conn: sqlite3.Connection, before: Ticket, after: Ticket, actor: Principal
 ) -> ReviewTransferNotice | None:
     if not review_transfer.review_transferred(before, after):
         return None
-    holder = after.ceiling_holder
-    if holder.kind is PrincipalKind.owner:
-        name = "The user"
-    elif holder.kind is PrincipalKind.chief:
-        name = "The Chief"
-    else:
-        table = "sprint_items" if holder.kind is PrincipalKind.sprint_item else "tickets"
-        row = conn.execute(f"SELECT title FROM {table} WHERE id=?", (holder.id,)).fetchone()
-        assert row is not None
-        name = str(row["title"])
-    return ReviewTransferNotice(after.id, after.title, before.ceiling_holder, name)
+    new_holder = after.ceiling_holder
+    moved_by_someone_else = actor != new_holder
+    notify_previous_holder = moved_by_someone_else and actor != before.ceiling_holder
+    return ReviewTransferNotice(
+        after.id,
+        after.title,
+        before.ceiling_holder,
+        new_holder,
+        _resolve_holder_name(conn, new_holder),
+        notify_previous_holder,
+        _resolve_holder_name(conn, actor) if moved_by_someone_else else None,
+    )
 
 
 def _collect_review_transfer(
@@ -1731,30 +1702,25 @@ def edit_ticket(
             authority.require_above(conn, principal, target)
         else:
             authority.require_above_or_self(conn, principal, target)
-        if admission.TICKET_FIELD_THAT_MOVES_THE_PARENT in edit or "orchestrator" in edit:
-            authority.refuse_outcome_re_parenting(principal, ticket_id)
+        if admission.TICKET_FIELD_THAT_MOVES_THE_PARENT in edit or "manager" in edit:
+            authority.refuse_manager_re_parenting(principal, ticket_id)
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
 
         title = edit["title"] if "title" in edit else ticket.title
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
-        sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
-        sprint_item_id = (
-            edit["sprint_item_id"] if "sprint_item_id" in edit else ticket.sprint_item_id
-        )
-        orchestrator_kind = ticket.orchestrator_kind
-        if "orchestrator" in edit:
-            if "sprint_item_id" in edit:
-                raise PlannerError(ErrorCode.validation, "use only orchestrator for assignment")
-            orchestrator = edit["orchestrator"]
-            admission.validate_orchestrator(orchestrator)
-            orchestrator_kind = orchestrator.kind.value
-            sprint_item_id = (
-                orchestrator.id if orchestrator.kind is PrincipalKind.sprint_item else None
-            )
-        elif "sprint_item_id" in edit:
-            orchestrator_kind = "sprint_item" if sprint_item_id is not None else "chief"
+        manager_id = edit["manager_id"] if "manager_id" in edit else ticket.manager_id
+        manager_kind = ticket.manager_kind
+        if "manager" in edit:
+            if "manager_id" in edit:
+                raise PlannerError(ErrorCode.validation, "use only manager for assignment")
+            manager = edit["manager"]
+            admission.validate_manager(manager)
+            manager_kind = manager.kind.value
+            manager_id = manager.id if manager.kind is PrincipalKind.manager else None
+        elif "manager_id" in edit:
+            manager_kind = "manager" if manager_id is not None else "chief"
         stored_project_row = conn.execute(
             "SELECT project_id FROM tickets WHERE id=?", (ticket_id,)
         ).fetchone()
@@ -1762,21 +1728,19 @@ def edit_ticket(
         old_stored_project_id = stored_project_row["project_id"]
         effective_project_id: str | None
         stored_project_id: str | None
-        if sprint_item_id is not None:
+        if manager_id is not None:
             item = conn.execute(
-                "SELECT project_id FROM sprint_items WHERE id=?", (sprint_item_id,)
+                "SELECT project_id FROM managers WHERE id=?", (manager_id,)
             ).fetchone()
             if item is None:
                 raise PlannerError(
                     ErrorCode.not_found,
-                    "sprint item not found",
-                    {"sprint_item_id": sprint_item_id},
+                    "manager not found",
+                    {"manager_id": manager_id},
                 )
             effective_project_id = str(item["project_id"])
             if "project_id" in edit and edit["project_id"] != effective_project_id:
-                raise PlannerError(
-                    ErrorCode.validation, "ticket placement does not match sprint item"
-                )
+                raise PlannerError(ErrorCode.validation, "ticket placement does not match manager")
             stored_project_id = None
         else:
             effective_project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
@@ -1790,17 +1754,15 @@ def edit_ticket(
         _validate_ticket_creation_placement(
             conn,
             project_id=effective_project_id,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
+            manager_id=manager_id,
             blocked_by_ticket_ids=None,
         )
         candidates: tuple[tuple[str, str, str | int | None, str | int | None], ...] = (
             ("title", "title", ticket.title, title),
             ("deadline", "deadline", ticket.deadline, deadline),
             ("project_id", "project_id", old_stored_project_id, stored_project_id),
-            ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
-            ("sprint_item_id", "sprint_item_id", ticket.sprint_item_id, sprint_item_id),
-            ("orchestrator_kind", "orchestrator_kind", ticket.orchestrator_kind, orchestrator_kind),
+            ("manager_id", "manager_id", ticket.manager_id, manager_id),
+            ("manager_kind", "manager_kind", ticket.manager_kind, manager_kind),
         )
         changes = [change for change in candidates if change[2] != change[3]]
 
@@ -1907,7 +1869,7 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
-        if any(change[0] == "sprint_item_id" for change in changes):
+        if any(change[0] == "manager_id" for change in changes):
             _release_a_holder_the_move_left_below(
                 conn,
                 ticket_id,
@@ -1927,8 +1889,8 @@ def edit_ticket(
             if wake_target is not None and updated.pending_proposal is not None:
                 manager_wakes_data.create_proposal_wake(
                     conn,
-                    sprint_item_id=(
-                        wake_target.id if wake_target.kind is PrincipalKind.sprint_item else ""
+                    manager_id=(
+                        wake_target.id if wake_target.kind is PrincipalKind.manager else ""
                     ),
                     target=wake_target,
                     ticket_id=ticket_id,
@@ -1937,7 +1899,7 @@ def edit_ticket(
                     proposal_field=updated.pending_proposal.field,
                     now=now,
                 )
-        notice = _review_transfer_notice(conn, ticket, updated)
+        notice = _review_transfer_notice(conn, ticket, updated, principal)
     _collect_review_transfer(conn, notice, review_transfer_notices)
     return updated
 
@@ -1946,7 +1908,7 @@ def classify_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    sprint_item_id: str,
+    manager_id: str,
     principal: Principal,
     now: int,
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
@@ -1957,20 +1919,20 @@ def classify_ticket(
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         item = conn.execute(
-            "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
+            "SELECT project_id FROM managers WHERE id = ?", (manager_id,)
         ).fetchone()
         if item is None:
             raise PlannerError(
                 ErrorCode.not_found,
-                "sprint item not found",
-                {"sprint_item_id": sprint_item_id},
+                "manager not found",
+                {"manager_id": manager_id},
             )
-        if ticket.sprint_item_id == sprint_item_id:
+        if ticket.manager_id == manager_id:
             return ticket
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = ?, orchestrator_kind = 'sprint_item', "
+            "UPDATE tickets SET manager_id = ?, manager_kind = 'manager', "
             "project_id = NULL, updated_at = ? WHERE id = ?",
-            (sprint_item_id, now, ticket_id),
+            (manager_id, now, ticket_id),
         )
         _release_a_holder_the_move_left_below(
             conn,
@@ -1978,7 +1940,7 @@ def classify_ticket(
             now=now,
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        notice = _review_transfer_notice(conn, ticket, updated)
+        notice = _review_transfer_notice(conn, ticket, updated, principal)
     _collect_review_transfer(conn, notice, review_transfer_notices)
     return updated
 
@@ -1987,7 +1949,7 @@ def unclassify_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    sprint_item_id: str,
+    manager_id: str,
     principal: Principal,
     now: int,
     review_transfer_notices: list[ReviewTransferNotice] | None = None,
@@ -1998,23 +1960,23 @@ def unclassify_ticket(
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         item = conn.execute(
-            "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
+            "SELECT project_id FROM managers WHERE id = ?", (manager_id,)
         ).fetchone()
         if item is None:
             raise PlannerError(
                 ErrorCode.not_found,
-                "sprint item not found",
-                {"sprint_item_id": sprint_item_id},
+                "manager not found",
+                {"manager_id": manager_id},
             )
         # Removal is a compare-and-clear operation. A retry after the first removal is a
         # no-op, and a stale retry after another request moved the ticket elsewhere must
         # not detach that newer membership.
-        if ticket.sprint_item_id is None:
+        if ticket.manager_id is None:
             return ticket
-        if ticket.sprint_item_id != sprint_item_id:
-            raise PlannerError(ErrorCode.validation, "Ticket has a different Outcome")
+        if ticket.manager_id != manager_id:
+            raise PlannerError(ErrorCode.validation, "Ticket has a different Manager")
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = NULL, orchestrator_kind = 'chief', "
+            "UPDATE tickets SET manager_id = NULL, manager_kind = 'chief', "
             "project_id = ?, updated_at = ? "
             "WHERE id = ?",
             (str(item["project_id"]), now, ticket_id),
@@ -2025,7 +1987,7 @@ def unclassify_ticket(
             now=now,
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        notice = _review_transfer_notice(conn, ticket, updated)
+        notice = _review_transfer_notice(conn, ticket, updated, principal)
     _collect_review_transfer(conn, notice, review_transfer_notices)
     return updated
 

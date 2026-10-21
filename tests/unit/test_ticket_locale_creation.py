@@ -7,8 +7,8 @@ import pytest
 
 from planner.core.clock import TestClock as ClockForTest
 from planner.core.contracts import OWNER_PRINCIPAL
+from planner.managers import data as sprints
 from planner.projects import data as projects
-from planner.sprints import data as sprints
 from planner.tickets import data, locale_configuration, views
 from planner.tickets.contracts import TITLE_MAX_CHARS, TicketLocale
 from planner.worker_settings import service as worker_settings
@@ -77,7 +77,7 @@ def test_inherited_project_resolves_before_locale(
         requires_macos=True,
         now=1,
     )
-    item = sprints.create_item(
+    item = sprints.create_manager(
         tmp_db,
         title="Parent",
         project_id=project.id,
@@ -88,7 +88,7 @@ def test_inherited_project_resolves_before_locale(
         title="Inherited",
         worker_type="coding",
         title_max_chars=TITLE_MAX_CHARS,
-        sprint_item_id=item.id,
+        manager_id=item.id,
     )
     assert context.project_id == project.id
     assert context.locale is TicketLocale.macos
@@ -99,7 +99,7 @@ def test_inherited_project_resolves_before_locale(
         principal=OWNER_PRINCIPAL,
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
-        sprint_item_id=item.id,
+        manager_id=item.id,
     )
     assert ticket.locale is TicketLocale.macos
 
