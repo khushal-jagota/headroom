@@ -17,10 +17,10 @@ export function holderOptionsFor(
   holder: Principal | null = null
 ): HolderOption[] {
   const options: HolderOption[] = [
-    { value: "owner", label: "User" },
-    { value: "chief", label: "Chief" }
+    { value: "owner", label: "User" }
   ];
   if (manager) options.push({ value: manager.id, label: "Manager", detail: manager.title });
+  options.push({ value: "chief", label: "Chief" });
   const current = holderValue(holder);
   if (!options.some((option) => option.value === current)) {
     options.push({ value: current, label: holder?.kind === "manager" ? "Manager" : "Worker", detail: holder?.id || current });
