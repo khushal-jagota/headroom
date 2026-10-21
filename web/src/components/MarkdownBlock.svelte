@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { MARKDOWN_WORKER_THRESHOLD } from "../lib/markdown/config";
-  import { observeVisibleContent } from "../lib/visibleContent";
+  import { observeVisibleContent, resetVisibleContentHeight } from "../lib/visibleContent";
   import {
     createManagedMarkdownSurface,
     type ReadOnlyManagedMarkdownSurface
@@ -21,17 +21,21 @@
   let host = $state<HTMLDivElement | null>(null);
   let surface: ReadOnlyManagedMarkdownSurface | null = null;
   let active = $state(false);
-  let heldHeight = $state(160);
   const large = $derived(typeof text === "string" && text.length >= MARKDOWN_WORKER_THRESHOLD);
+
+  $effect(() => {
+    text;
+    if (host) resetVisibleContentHeight(host);
+  });
 
   $effect(() => {
     if (!host) return;
     if (!large) { active = true; return; }
-    active = false;
-    return observeVisibleContent(host, (visible, height) => {
-      if (!visible && height > 0) heldHeight = height;
+    // A small document already owns a painted surface. Adopt that view into
+    // the bounded policy without destroying it before a larger refresh parses.
+    return observeVisibleContent(host, visible => {
       active = visible;
-    });
+    }, { initiallyMounted: surface !== null });
   });
 
   $effect(() => {
@@ -54,7 +58,7 @@
   }
 </script>
 
-<div class="markdown-host" class:markdown-host--large={large} style:min-height={large && !active ? `${heldHeight}px` : undefined} bind:this={host}></div>
+<div class="markdown-host" class:markdown-host--large={large} bind:this={host}></div>
 
 <style>
   .markdown-host--large { display: block !important; }

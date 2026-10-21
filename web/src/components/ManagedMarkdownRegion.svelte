@@ -1,7 +1,7 @@
 <script lang="ts">
   import SkeletonRegion from "./SkeletonRegion.svelte";
 
-  // The surface owns the contents of this host. Svelte owns the transition layers.
+  // The surface owns the contents of this host. Svelte owns the placeholder and content wrappers.
   // The action runs after insertion, so visibility observers find the scroll root.
   let renderContent = $state<((host: HTMLElement) => void) | null>(null);
   export function reveal(render: (host: HTMLElement) => void): void {

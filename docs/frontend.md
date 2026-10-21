@@ -445,17 +445,29 @@ or locale produces identical arbitrary-text ordering.
   prevent a replaced preview from canceling another reader. Deferred conversation JSON
   uses the same worker and the generated canonical body schema. Replies retain their
   job identity and cannot revive an obsolete surface. Visible Markdown block groups keep
-  measured placeholders when they leave the viewport. Full-text copy includes unmounted
+  measured placeholders after inactive-view eviction. Full-text copy includes unmounted
   groups. Tables and lists retain their complete logical container, intrinsic layout, and
   numbering. An unusually large selected container can therefore exceed the ordinary DOM
   window. Editable serialization keeps its synchronous exact-source behavior.
   The worker parse wait uses the shared document skeleton. Its completed document or
-  error line replaces the skeleton through the same cross-fade. Replacement and removal
-  cancel the parse and release the mounted transition region.
-  Images, HTML frames, PDF frames, and media players mount automatically near the viewport.
-  Distant or hidden previews release native resources and text reads. Measured placeholders
-  preserve their place. A custom visibility gate owns image admission, so native lazy
-  loading does not leave a zero-height admitted image permanently unloaded.
+  error line replaces the skeleton immediately. Replacement and removal cancel the parse
+  and release the mounted placeholder region.
+  Images, HTML frames, PDF frames, and media players first mount near the viewport.
+  The shared visibility helper retains four inactive view roots across the document.
+  A retained view keeps its source, parsed text, DOM, and native resources intact.
+  Ordinary scroll and tab return reuse that view without another file read or parse.
+  A retained ancestor owns its descendants within the same slot. Visible views do not
+  consume inactive slots. Large Markdown still limits DOM through its group windows.
+  The oldest inactive root releases its subtree when another root exceeds the limit.
+  Owner removal releases its observers and content. No detached file cache exists.
+  Pending and failed views release on departure, so a later return can retry.
+  An evicted view reads again on return. Its measured box remains fixed through the
+  read, parse, and image or frame load. A generic skeleton cannot enlarge that box.
+  Readiness or failure ends the reservation. A new target, source, or width discards
+  obsolete geometry. Explicit refresh reads fresh content. A same-target document
+  refresh keeps available content visible until its replacement arrives.
+  Images use the same admission helper, so native lazy loading cannot strand them
+  in a zero-height slot.
 - **Loopback links stay ordinary links.** Markdown does not rewrite `localhost` or
   `127.0.0.1` addresses. Panels does not expose development servers through its origin.
   Workers use durable Ticket-owned files for reviewable work.
@@ -587,25 +599,23 @@ hand-rolling the same shapes per screen. Each does one job:
   over to the error line or a skeleton. Each screen selects a named shape: rows,
   document, block, conversation, or inline. `loadingText` remains an accessible
   status announcement. Data-empty states ("No ideas yet.") stay in the screens.
-  `SkeletonRegion` owns the shared shapes and cross-fade, including inline values.
+  `SkeletonRegion` owns the shared placeholder shapes, including inline values.
   Waits reserve their current space immediately and show a skeleton after 200ms,
-  only if work remains pending. The stable status node announces after 100ms;
-  busy state follows actual work immediately. Ready content mounts at once and
-  fades in over 300ms, including cached content and initial idle mounts. Existing
-  child opacity entrances keep their own cadence. A shown
-  skeleton fades out from its actual opacity without a minimum hold.
+  only if work remains pending. The stable status node announces after 100ms.
+  Busy state follows actual work immediately. Ready content mounts at full opacity,
+  including cached content and initial idle mounts. Readiness or an error removes
+  the placeholder and its announcement immediately. A fast completion shows no skeleton.
   Layouts size full panes. Intrinsic content keeps its shape reservation during
-  the delay and any skeleton exit, then returns to natural height. This can still
-  move following content; the reservation does not predict the content.
-  Four skeleton tokens control the whisper fills, fade duration, and visual delay.
-  The mounted region reads the inherited delay; the announcement uses half of it.
-  Flow content keeps its transparent wrappers throughout the fade so flex/grid
-  gaps and margins stay put. The fade reaches painted element roots through
-  transparent Markdown hosts and keeps their existing transform animations.
-  Flow snippets supply element roots; raw text uses an inline region.
-  Reduced motion keeps the delay and replaces immediately, accepting one static
-  skeleton frame when completion follows appearance. Changing that preference
-  during a fade clears the transition. Worker activity marks remain separate.
+  the wait, then returns to natural height. This can still move subsequent content.
+  The reservation does not predict the content.
+  Four skeleton tokens control the whisper fills, placeholder entrance duration,
+  and visual delay. The mounted region reads the inherited delay. The announcement
+  uses half of it. Flow content keeps transparent wrappers so flex/grid gaps and
+  margins stay put. Fill and inline regions retain their existing geometry.
+  Reduced motion keeps the delay and removes the placeholder entrance animation.
+  Ready content has no shared entrance animation. Workspace routes omit the shell
+  entrance so loaded conversations remain at full opacity after a tab return or reopen.
+  Other routes retain their entrances. Worker activity marks remain separate.
   Action buttons keep their own busy labels. The model picker's Refresh button
   says “Reading…” and exposes `aria-busy` during its explicit refresh. This label
   describes the action, not a region without content, so it is outside skeleton scope.
@@ -637,9 +647,9 @@ hand-rolling the same shapes per screen. Each does one job:
   Messages that contain only attachments use that same path. A file-bearing message that
   still waits for its durable row keeps its bytes in browser database storage, so a reload
   restores it across the full supported file-size range.
-  Saved message rows preserve their column layout during a deferred body's placeholder
-  fade. Owner bubbles keep their content width and right alignment from their first
-  visible frame through the end of the fade.
+  Saved message rows preserve their column layout during a deferred body's wait.
+  Ready bodies appear immediately. Owner bubbles keep their content width and right
+  alignment from their first visible frame.
   Its delivery control defaults to Steer and also offers Queue and Send now. A held row
   names why Panels queued a steer fallback.
 

@@ -55,7 +55,9 @@ const indexPath = join(scratchRoot, `live-switch-index-${process.pid}.html`);
   );
   await writeFile(
     mainPath,
-    String.raw`import {viewSnapshot,viewChanges,type FixtureEvent} from "../tests/support/conversation/view-fixture";
+    String.raw`import "../../assets/tokens.css";
+import "../../assets/app.css";
+import {viewSnapshot,viewChanges,type FixtureEvent} from "../tests/support/conversation/view-fixture";
 import type {ConversationViewLens} from "../src/lib/conversation/view/contracts";
 import { SCHEMA_VERSION, SUPPORTED_SEMANTICS } from "../src/lib/navigation/contracts";
 import { encodeCursor } from "../src/lib/navigation/validation";

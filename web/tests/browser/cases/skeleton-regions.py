@@ -1,4 +1,4 @@
-"""Browser-only proof of opacity interruption, cancellation and layout ownership."""
+"""Browser-only proof of immediate ready content, wait cancellation and layout ownership."""
 import json
 import os
 from pathlib import Path
@@ -59,17 +59,16 @@ def run(browser, urls):
             status:window.__status.textContent,flow:document.querySelector('[data-flow]').getBoundingClientRect().height};
           window.__load(false);
           const content=region.querySelector('.skeleton-content');
-          const animation=content.getAnimations()[0]; animation.pause(); animation.currentTime=150;
           window.__waitClock.advance(500);
           return {pending,content:!!content,opacity:+getComputedStyle(content).opacity,
-            duration:animation.effect.getTiming().duration,busy:region.getAttribute('aria-busy'),
+            animations:content.getAnimations({subtree:true}).length,busy:region.getAttribute('aria-busy'),
             status:window.__status.textContent,skeleton:!!region.querySelector('.skeleton'),timers:window.__waitClock.size()};
         }""", completion)
         assert sample["pending"] == {"busy": "true", "skeleton": False,
                                      "status": "Loading document" if completion >= 100 else "",
                                      "flow": 112}, sample
-        assert sample["content"] and 0 < sample["opacity"] < 1, sample
-        assert sample["duration"] == 300, sample
+        assert sample["content"] and sample["opacity"] == 1, sample
+        assert sample["animations"] == 0, sample
         assert sample["busy"] == "false" and sample["status"] == "", sample
         assert not sample["skeleton"] and sample["timers"] == 0, sample
     # Inherited seconds override controls both admission and status; restart and
@@ -107,7 +106,7 @@ def run(browser, urls):
     }""")
     page.wait_for_function("document.querySelector('[data-entering]')")
     page.evaluate("window.__load(false)")
-    page.wait_for_function("!document.querySelector('[data-leaving]')")
+    assert page.locator('.skeleton').count() == 0
     page.evaluate("window.__statusChanges=[]")
     page.evaluate("window.__load(true)")
     page.wait_for_function("document.querySelector('[data-entering]')")
@@ -115,46 +114,30 @@ def run(browser, urls):
     assert page.evaluate("window.__statusChanges") == ["Loading document"]
     assert page.evaluate("!window.__status.closest('[aria-busy=true]')")
     assert page.locator('[data-fixed] [aria-busy=true]').count() == 1
-    # Control animation time rather than depend on host scheduling speed.
-    interrupted = page.evaluate("""async () => {
-      const layer = document.querySelector('[data-fixed] .skeleton');
-      const entrance = layer.getAnimations()[0];
-      entrance.pause(); entrance.currentTime = 10;
-      const inlineLayer=document.querySelector('[data-inline] .skeleton');
-      const inlineEntrance=inlineLayer.getAnimations()[0];
-      inlineEntrance.pause(); inlineEntrance.currentTime=10;
-      const inlineBefore=+getComputedStyle(inlineLayer).opacity;
-      const before = +getComputedStyle(layer).opacity;
+    # Completing even a partially entered placeholder removes it in the same flush.
+    completed = page.evaluate("""() => {
+      const layer=document.querySelector('[data-fixed] .skeleton');
+      const entrance=layer.getAnimations()[0]; entrance.pause(); entrance.currentTime=10;
+      const before=+getComputedStyle(layer).opacity;
       window.__load(false);
-      await new Promise(requestAnimationFrame);
-      const inline=document.querySelector('[data-inline] .skeleton-content');
-      const fade=inline.getAnimations()[0]; fade.pause(); fade.currentTime=150;
-      return {before, from:+layer.style.getPropertyValue('--skeleton-from'),
-        inline:+getComputedStyle(inline).opacity,inlineBefore,inlineFrom:+inlineLayer.style.getPropertyValue('--skeleton-from')};
+      return {before, placeholders:document.querySelectorAll('.skeleton').length,
+        ready:[...document.querySelectorAll('.skeleton-content')].map(node=>({
+          opacity:+getComputedStyle(node).opacity,animations:node.getAnimations({subtree:true}).length}))};
     }""")
-    assert 0 < interrupted["before"] < 1 and 0 < interrupted["inline"] < 1, interrupted
-    assert abs(interrupted["before"] - interrupted["from"]) < 0.001, interrupted
-    assert abs(interrupted["inlineBefore"] - interrupted["inlineFrom"]) < 0.001, interrupted
-    page.wait_for_function("!document.querySelector('[data-leaving]')")
-    # Initial idle mounts, including inline values, fade without a loading pass.
+    assert 0 < completed['before'] < 1, completed
+    assert completed['placeholders'] == 0, completed
+    assert all(item == {'opacity': 1, 'animations': 0} for item in completed['ready']), completed
+    # Cached fill, flow and inline content never needs a loading pass or entrance.
     cached = page.evaluate("""() => {
       window.__idle(true);
-      return [...document.querySelectorAll('[data-idle] .skeleton-content')].map(content=>{
-        const target=content.matches('.skeleton-content--inline')
-          ? content : content.firstElementChild;
-        const animation=target.getAnimations()[0]; animation.pause(); animation.currentTime=150;
-        const opacity=+getComputedStyle(target).opacity;
-        content.getAnimations({subtree:true}).forEach(animation=>animation.finish());
-        return {opacity,duration:animation.effect.getTiming().duration};
-      });
+      return [...document.querySelectorAll('[data-idle] .skeleton-content')].map(content=>({
+        opacity:+getComputedStyle(content).opacity,animations:content.getAnimations({subtree:true}).length}));
     }""")
-    assert len(cached) == 2 and all(
-        0 < item['opacity'] < 1 and item['duration'] == 300 for item in cached
-    ), cached
-    page.wait_for_function("!document.querySelector('[data-idle] .resource-arriving')")
+    assert len(cached) == 2, cached
+    assert all(item == {'opacity': 1, 'animations': 0} for item in cached), cached
     page.evaluate("window.__idle(false);window.__flat(true)")
     page.wait_for_function("document.querySelector('[data-flat] .markdown-host p')")
-    flat = page.evaluate("""async () => {
+    flat = page.evaluate("""() => {
       const fixture=document.querySelector('[data-flat]');
       const targets=[fixture.querySelector('[data-flat-first]'),
         fixture.querySelector('[data-flat-second]'),fixture.querySelector('.markdown-host').firstElementChild,
@@ -163,59 +146,42 @@ def run(browser, urls):
         .find(animation=>animation instanceof CSSAnimation);
       transform.pause(); transform.currentTime=100;
       const existing=fixture.querySelector('[data-flat-existing]').getAnimations();
-      const opacity=fixture.getAnimations({subtree:true}).filter(animation=>
-        animation.effect.getKeyframes().some(frame=>'opacity' in frame));
-      opacity.forEach(animation=>{animation.pause();animation.currentTime=1;});
       const geometry=()=>targets.map(target=>{
         const box=target.getBoundingClientRect();
         return {x:box.x,y:box.y,width:box.width,height:box.height};
       });
       const before=geometry();
-      opacity.forEach(animation=>animation.currentTime=150);
-      const during=geometry();
       const painted=targets.slice(0,3).map(target=>+getComputedStyle(target).opacity);
-      const easing=targets.slice(0,3).map(target=>target.getAnimations().find(animation=>
-        animation.effect.getKeyframes().some(frame=>'opacity' in frame)).effect.getTiming().easing);
-      opacity.forEach(animation=>animation.finish());
-      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
-      return {before,during,after:geometry(),painted,easing,
-        transform:transform.playState,
-        existing:existing.map(animation=>({name:animation.animationName,
+      const opacity=fixture.getAnimations({subtree:true}).filter(animation=>
+        animation.effect.getKeyframes().some(frame=>'opacity' in frame));
+      return {before,after:geometry(),painted,
+        opacity:opacity.map(animation=>animation.animationName),
+        transform:transform.playState,existing:existing.map(animation=>({name:animation.animationName,
           duration:animation.effect.getTiming().duration}))};
     }""")
-    assert flat['before'] == flat['during'] == flat['after'], flat
-    assert all(0 < opacity < 1 for opacity in flat['painted']), flat
-    assert flat['easing'] == ['ease-in-out'] * 3, flat
+    assert flat['before'] == flat['after'], flat
+    assert flat['painted'] == [1, 1, 1], flat
+    assert flat['opacity'] == ['review-arrive'], flat
     assert flat['transform'] == 'paused', flat
     assert flat['existing'] == [{'name': 'review-arrive', 'duration': 440}], flat
     page.evaluate("window.__flat(false)")
-    # A second load cancels the outgoing animation; its old completion cannot hide it.
+    # Repeated waits and unmount cannot leave a stale placeholder behind.
     page.evaluate("window.__load(true)")
     page.wait_for_function("document.querySelector('[data-entering]')")
-    page.evaluate("window.__load(false)")
-    page.wait_for_function("document.querySelector('[data-leaving]')")
-    page.evaluate("window.__load(true)")
-    page.wait_for_timeout(450)
-    assert page.locator('[data-fixed] .skeleton').count() == 1
-    assert page.locator('[data-leaving]').count() == 0
-    page.evaluate("window.__show(false)")
-    page.wait_for_timeout(450)
+    page.evaluate("window.__load(false);window.__load(true)")
     assert page.locator('.skeleton').count() == 0
-    assert not errors, errors
+    page.wait_for_function("document.querySelector('[data-entering]')")
+    page.evaluate("window.__show(false)")
+    assert page.locator('.skeleton').count() == 0
     page.evaluate("window.__show(true)")
     page.wait_for_function("document.querySelector('.skeleton')")
     page.emulate_media(reduced_motion="reduce")
     page.evaluate("window.__load(false)")
-    page.wait_for_function("!document.querySelector('.skeleton')")
-    assert page.locator('.resource-arriving').count() == 0
-    page.emulate_media(reduced_motion="no-preference")
-
-    page.evaluate("window.__load(true)")
-    page.wait_for_function("document.querySelector('.skeleton')")
-    page.evaluate("window.__load(false)")
-    page.wait_for_function("document.querySelector('[data-leaving]')")
-    page.emulate_media(reduced_motion="reduce")
-    page.wait_for_function("!document.querySelector('.skeleton, .resource-arriving')")
+    assert page.locator('.skeleton').count() == 0
+    assert page.locator('.skeleton-content').evaluate_all(
+        "nodes=>nodes.every(node=>getComputedStyle(node).opacity==='1' "
+        "&& node.getAnimations({subtree:true}).length===0)"
+    )
     page.emulate_media(reduced_motion="no-preference")
 
     measurements = []
@@ -235,10 +201,7 @@ def run(browser, urls):
             assert before["flow"] == 112, before
             assert before == waiting, (waiting, before)
             page.evaluate("value => {window.__shifts=[];window.__load(false,value)}", long)
-            page.wait_for_function("document.querySelector('[data-leaving]')")
-            during = page.locator('[data-flow]').bounding_box()["height"]
-            assert during >= before["flow"]
-            page.wait_for_function("!document.querySelector('.skeleton')")
+            assert page.locator('.skeleton').count() == 0
             after = page.evaluate("""() => ({
               control:document.querySelector('[data-control]').getBoundingClientRect().y,
               flow:document.querySelector('[data-flow]').getBoundingClientRect().height,
@@ -261,20 +224,34 @@ def run(browser, urls):
     page.evaluate("window.__show(false);window.__mockMarkdownWorker();window.__markdown('fast')")
     page.wait_for_function("document.querySelector('[data-markdown-fixture] [aria-busy=true]')")
     page.evaluate("window.__workers.at(-1).reply()")
-    page.wait_for_function("document.querySelector('[data-markdown-fixture] .resource-arriving')")
+    page.wait_for_function("document.querySelector('[data-markdown-fixture] h2')")
     fast = page.evaluate("""() => {
       const fixture=document.querySelector('[data-markdown-fixture]');
       const content=fixture.querySelector('.skeleton-content');
       let target=content.firstElementChild;
       while (getComputedStyle(target).display === 'contents') target=target.firstElementChild;
-      const animation=target.getAnimations()[0];
-      animation.pause(); animation.currentTime=150;
       return {skeleton:!!fixture.querySelector('.skeleton'),
         status:fixture.querySelector('[role=status]').textContent,
-        opacity:+getComputedStyle(target).opacity};
+        opacity:+getComputedStyle(target).opacity,animations:content.getAnimations({subtree:true}).length};
     }""")
-    assert not fast['skeleton'] and fast['status'] == '' and 0 < fast['opacity'] < 1, fast
-    page.evaluate("window.__markdown('large')")
+    assert not fast['skeleton'] and fast['status'] == '', fast
+    assert fast['opacity'] == 1 and fast['animations'] == 0, fast
+    # Painted source remains available throughout a replacement parse.
+    page.evaluate("""() => {
+      window.__paintedMarkdown=document.querySelector('[data-markdown-fixture] h2');
+      window.__previousWorkers=window.__workers.length;
+      window.__markdown('refresh');
+    }""")
+    page.wait_for_function("window.__workers.length > window.__previousWorkers")
+    assert page.evaluate(
+        "window.__paintedMarkdown === document.querySelector('[data-markdown-fixture] h2')"
+    )
+    assert page.locator('[data-markdown-fixture] .skeleton').count() == 0
+    assert page.locator('[data-markdown-fixture] [aria-busy=true]').count() == 0
+    page.evaluate("window.__workers.at(-1).reply()")
+    page.wait_for_function("!window.__paintedMarkdown.isConnected")
+    # A fresh surface still has the delayed cold placeholder and accessible status.
+    page.evaluate("window.__markdown('destroy');window.__markdown('large')")
     fixture = page.locator('[data-markdown-fixture]')
     fixture.scroll_into_view_if_needed()
     page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
@@ -289,31 +266,47 @@ def run(browser, urls):
         )
         fixture.screenshot(path=str(Path(output) / "markdown-worker-skeleton.png"))
     page.evaluate("window.__workers.at(-1).reply()")
-    page.wait_for_function("document.querySelector('[data-markdown-fixture] .resource-arriving')")
-    assert fixture.locator('.skeleton[data-leaving]').count() == 1
+    page.wait_for_function("document.querySelector('[data-markdown-fixture] h2')")
+    assert fixture.locator('.skeleton').count() == 0
+    assert fixture.locator('.skeleton-content').evaluate_all(
+        "nodes=>nodes.every(node=>getComputedStyle(node).opacity==='1' "
+        "&& node.getAnimations({subtree:true}).length===0)"
+    )
     page.wait_for_function("document.querySelector('[data-markdown-window] h2')")
     assert fixture.locator('h2').inner_text() == 'Worker document'
     page.wait_for_function("!document.querySelector('[data-markdown-fixture] .skeleton')")
     assert fixture.locator('[role=status]').inner_text() == ''
 
-    page.evaluate("window.__markdown('failure')")
-    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    page.evaluate("""() => {
+      window.__paintedMarkdown=document.querySelector('[data-markdown-fixture] h2');
+      window.__previousWorkers=window.__workers.length;
+      window.__markdown('failure');
+    }""")
+    page.wait_for_function("window.__workers.length > window.__previousWorkers")
+    assert fixture.locator('.skeleton').count() == 0
+    assert page.evaluate('window.__paintedMarkdown.isConnected')
     page.evaluate("window.__workers.at(-1).reply(true)")
     page.wait_for_function("document.querySelector('[data-markdown-fixture] .quiet-line')")
     assert fixture.locator('.quiet-line').inner_text() == 'Parse failed'
-    page.wait_for_function("!document.querySelector('[data-markdown-fixture] .skeleton')")
+    assert page.evaluate(
+        "window.__paintedMarkdown === document.querySelector('[data-markdown-fixture] h2')"
+    )
+    assert fixture.locator('.skeleton').count() == 0
     assert fixture.locator('[aria-busy=true]').count() == 0
 
-    page.evaluate("window.__markdown('obsolete')")
-    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    page.evaluate("window.__previousWorkers=window.__workers.length;window.__markdown('obsolete')")
+    page.wait_for_function("window.__workers.length > window.__previousWorkers")
+    assert page.evaluate('window.__paintedMarkdown.isConnected')
     page.evaluate("window.__oldWorker=window.__workers.at(-1);window.__markdown('small');window.__oldWorker.reply()")
     page.wait_for_function("document.querySelector('[data-markdown-fixture] h1')")
     assert fixture.locator('h1').inner_text() == 'Replacement document'
     assert page.evaluate('window.__oldWorker.terminated')
     assert fixture.locator('.skeleton-region, [data-markdown-window]').count() == 0
 
-    page.evaluate("window.__markdown('destroyed')")
-    page.wait_for_function("document.querySelector('[data-markdown-fixture] .skeleton')")
+    page.evaluate("window.__previousWorkers=window.__workers.length;window.__markdown('destroyed')")
+    page.wait_for_function("window.__workers.length > window.__previousWorkers")
+    assert fixture.locator('h1').inner_text() == 'Replacement document'
+    assert fixture.locator('.skeleton').count() == 0
     page.evaluate("window.__markdownAnimations=document.querySelector('[data-markdown-fixture]').getAnimations({subtree:true});window.__markdown('destroy');window.__workers.at(-1).reply()")
     page.wait_for_function("!document.querySelector('[data-markdown-fixture] .skeleton-region')")
     assert page.evaluate(

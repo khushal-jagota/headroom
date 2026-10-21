@@ -83,6 +83,19 @@ def run(browser, urls):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.route("**/api/**", respond)
+    # Watch before navigation; locator waits could otherwise consume shell motion.
+    page.add_init_script("""window.__shellFrames=[];
+      new MutationObserver(() => {
+        const screen=document.querySelector('main.shell-content > .screen');
+        if (!screen || screen === window.__sampledScreen) return;
+        window.__sampledScreen=screen;
+        requestAnimationFrame(() => {
+          const style=getComputedStyle(screen);
+          window.__shellFrames.push({hash:location.hash,opacity:+style.opacity,
+            transform:style.transform,entrance:screen.classList.contains('screen-enter'),
+            animations:screen.getAnimations().map(a=>a.animationName)});
+        });
+      }).observe(document,{childList:true,subtree:true});""")
 
     rail = page.locator(".rail-utilities")
     pane = page.locator(".board-workspace-right")
@@ -90,6 +103,10 @@ def run(browser, urls):
 
     # Usage opens in the pane, and its tabs stay there.
     page.goto(url + "#/workspace/utility/usage", wait_until="domcontentloaded")
+    page.wait_for_function("window.__shellFrames.length > 0")
+    workspace_frame = page.evaluate("window.__shellFrames[0]")
+    assert workspace_frame == {'hash': '#/workspace/utility/usage', 'opacity': 1,
+                               'transform': 'none', 'entrance': False, 'animations': []}, workspace_frame
     expect(rail).to_be_visible()
     expect(pane.locator("nav.metrics")).to_be_visible()
     pane.get_by_role("link", name="Tokens").click()
@@ -141,6 +158,13 @@ def run(browser, urls):
         "  && child.scrollHeight > child.clientHeight).length"
     )
     assert inner == 0, inner
+
+    # The existing shell also provides the control for preserved non-workspace motion.
+    page.evaluate("location.hash='#/settings'")
+    page.wait_for_function("window.__shellFrames.some(frame=>frame.hash==='#/settings')")
+    control = page.evaluate("window.__shellFrames.find(frame=>frame.hash==='#/settings')")
+    assert control['entrance'] and control['animations'] == ['screen-enter'], control
+    assert control['opacity'] < 1 and control['transform'] != 'none', control
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/items", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]

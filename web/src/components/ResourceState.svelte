@@ -16,7 +16,7 @@
 </script>
 
 <!-- Data takes precedence over errors and background reads. Keep the shared
-     region mounted so the first data arrival can dissolve its outgoing shape. -->
+     region mounted so ready content replaces the placeholder immediately. -->
 <SkeletonRegion {shape} {layout} {loadingText} loading={!hasData && !error && loading}>
   {#if error}<ErrorLine {error} />{/if}
   {#if hasData || !error}{@render children?.()}{/if}

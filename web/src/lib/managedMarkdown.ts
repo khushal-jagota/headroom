@@ -6,7 +6,7 @@ import { renderMarkdownToElement, renderParsedMarkdown, serializeMarkdownDomToSo
 import { parseMarkdownInWorker } from "./markdown/workerClient";
 import { MARKDOWN_GROUP_WEIGHT, MARKDOWN_WORKER_THRESHOLD } from "./markdown/config";
 import type { MarkdownTreeNode, ParsedMarkdown } from "./markdown/contracts";
-import { observeVisibleContent } from "./visibleContent";
+import { observeVisibleContent, holdVisibleContentHeight, resetVisibleContentHeight } from "./visibleContent";
 import { registerMarkdownCopyRange } from "./markdown/copy";
 
 export type ReadOnlyManagedMarkdownInput = Readonly<{
@@ -101,18 +101,18 @@ export function createManagedMarkdownSurface(
       root.appendChild(element);
       const group = { element, nodes, mounted: false }; groups.push(group);
       stops.push(registerMarkdownCopyRange(element, () => group.mounted ? null : nodes.map(markdownText).join("")));
-      stops.push(observeVisibleContent(element, (visible, measuredHeight) => {
+      stops.push(observeVisibleContent(element, visible => {
         if (group.mounted === visible || destroyed) return;
         group.mounted = visible;
         if (visible) {
           const rendered = renderParsedMarkdown({ children: nodes, definitions: document.definitions });
           mountRenderedPreviews(rendered, presentation.depth, presentation.visited);
-          element.style.minHeight = ""; element.replaceChildren(rendered);
+          if (!element.hasAttribute("data-visible-content-restoring")) element.style.minHeight = "";
+          element.replaceChildren(rendered);
         } else {
           for (const preview of [...previews.values()]) {
             if (element.contains(preview.slot)) unmountPreview(preview);
           }
-          element.style.minHeight = `${Math.max(24, measuredHeight)}px`;
           for (const [image, stop] of imageObservers) {
             if (element.contains(image)) { stop(); imageObservers.delete(image); }
           }
@@ -133,30 +133,52 @@ export function createManagedMarkdownSurface(
   }
 
   function updateReadOnly(next: ReadOnlyRenderInput): void {
-    cancelReadOnlyWork();
-    if (next.source.length < MARKDOWN_WORKER_THRESHOLD) { repaint(next.source, next); return; }
-    disconnectObserver(); unmountAllPreviews(); host.replaceChildren();
-    const region = mount(ManagedMarkdownRegion, { target: host });
-    documentRegion = region;
+    if (next.source.length < MARKDOWN_WORKER_THRESHOLD) {
+      cancelReadOnlyWork();
+      resetVisibleContentHeight(host);
+      repaint(next.source, next);
+      return;
+    }
+    // A source refresh keeps its painted document while the replacement parses.
+    // New targets mount a new surface and use the ordinary cold placeholder.
+    const painted = Boolean(host.querySelector(".markdown-block"));
+    renderGeneration += 1;
+    parsing?.abort();
+    if (!painted) {
+      cancelReadOnlyWork();
+      disconnectObserver(); host.replaceChildren();
+      documentRegion = mount(ManagedMarkdownRegion, { target: host });
+    }
     const controller = new AbortController(); parsing = controller;
-    const generation = renderGeneration;
+    let generation = renderGeneration;
+    function reveal(render: (target: HTMLElement) => void): void {
+      if (painted) {
+        holdVisibleContentHeight(host);
+        cancelReadOnlyWork();
+        generation = renderGeneration;
+        disconnectObserver(); host.replaceChildren();
+        documentRegion = mount(ManagedMarkdownRegion, { target: host });
+      }
+      documentRegion?.reveal(target => {
+        if (destroyed || generation !== renderGeneration) return;
+        render(target);
+      });
+    }
     parseMarkdownInWorker(next.source, controller.signal).then(document => {
       if (destroyed || controller.signal.aborted || generation !== renderGeneration) return;
       parsing = null;
-      region.reveal(target => {
-        if (destroyed || generation !== renderGeneration) return;
-        renderLargeDocument(target, document, next);
-      });
+      reveal(target => renderLargeDocument(target, document, next));
     }).catch(error => {
       if (destroyed || controller.signal.aborted || generation !== renderGeneration) return;
       parsing = null;
-      region.reveal(target => {
-        if (destroyed || generation !== renderGeneration) return;
-        const message = globalThis.document.createElement("div");
-        message.className = "quiet-line";
-        message.textContent = error instanceof Error ? error.message : "Text could not load.";
-        target.appendChild(message);
-      });
+      // Keep available text on a failed refresh. The error remains visible and
+      // causes a later viewport departure to release this failed view for retry.
+      const message = globalThis.document.createElement("div");
+      message.className = "quiet-line";
+      message.dataset.visibleContentFailed = "";
+      message.textContent = error instanceof Error ? error.message : "Text could not load.";
+      if (painted) host.appendChild(message);
+      else reveal(target => target.appendChild(message));
     });
   }
 
@@ -246,10 +268,10 @@ export function createManagedMarkdownSurface(
       if (!claimed) {
         if (renderedTarget instanceof HTMLImageElement) {
           const image = renderedTarget;
-          image.removeAttribute("src"); image.loading = "eager"; image.style.minHeight = "160px";
-          const stop = observeVisibleContent(image, (visible, height) => {
-            if (visible) { image.style.minHeight = ""; image.src = href; }
-            else { image.style.minHeight = `${Math.max(1, height)}px`; image.removeAttribute("src"); }
+          image.removeAttribute("src"); image.loading = "eager";
+          const stop = observeVisibleContent(image, visible => {
+            if (visible) image.src = href;
+            else image.removeAttribute("src");
           });
           imageObservers.set(image, () => { stop(); image.removeAttribute("src"); });
         }
