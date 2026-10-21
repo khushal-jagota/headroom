@@ -203,7 +203,11 @@ def test_payload_age_budgets_churn_and_read_limits(tmp_path: Path) -> None:
         with pytest.raises(QueryLimitError):
             result.history(conn, signal="cpu", entity=None, start=0, end=31, resolution="raw")
     # A lower budget removes complete aggregate buckets, never selected entities.
-    with sqlite3.connect(result.path) as conn:
+    coherent = store(tmp_path / "coherent")
+    for timestamp in range(0, 181, 15):
+        current["timestamp"] = current["monotonic"] = timestamp
+        coherent.append(current)
+    with sqlite3.connect(coherent.path) as conn:
         before = {
             (resolution, bucket, boot): set()
             for resolution, bucket, boot in conn.execute(
@@ -214,14 +218,25 @@ def test_payload_age_budgets_churn_and_read_limits(tmp_path: Path) -> None:
             "SELECT resolution,bucket,boot,entity FROM aggregates"
         ):
             before[(resolution, bucket, boot)].add(entity)
-    smaller = Store(result.path, replace(result.config, metrics_payload_bytes=1000))
-    smaller.prune(300)
-    with sqlite3.connect(result.path) as conn:
+        total = conn.execute("SELECT bytes FROM payload_totals WHERE kind='metrics'").fetchone()[0]
+        latest = coherent._get(conn, "latest_bytes", 0)
+        oldest_raw = conn.execute(
+            "SELECT bytes FROM samples ORDER BY timestamp LIMIT 1"
+        ).fetchone()[0]
+    assert len(before) > 1 and all(len(entities) == 2 for entities in before.values())
+    smaller = Store(
+        coherent.path,
+        replace(coherent.config, metrics_payload_bytes=total + latest - oldest_raw - 1),
+    )
+    smaller.prune(180)
+    with sqlite3.connect(coherent.path) as conn:
         after = {key: set() for key in before}
         for resolution, bucket, boot, entity in conn.execute(
             "SELECT resolution,bucket,boot,entity FROM aggregates"
         ):
             after[(resolution, bucket, boot)].add(entity)
+        assert any(not entities for entities in after.values())
+        assert any(entities for entities in after.values())
         assert all(not after[key] or after[key] == entities for key, entities in before.items())
     result.prune(2000)
     with sqlite3.connect(result.path) as conn:
