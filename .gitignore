@@ -21,3 +21,4 @@ web/.test-scratch/
 diagnostics/before/
 diagnostics/gates/
 diagnostics/dogfood/
+diagnostics/run-before-main/
