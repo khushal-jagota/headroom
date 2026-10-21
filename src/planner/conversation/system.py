@@ -958,16 +958,15 @@ class SqliteProcessConversationSystem:
     async def is_running(self, conversation_id: str) -> bool:
         """Whether a turn is running right now.
 
-        Read without taking the conversation's lock, on purpose. The lock is let go while a
-        send is on the wire, so holding it would not make this read any more current — it
-        would only make a question the browser asks constantly wait behind a spawn.
+        Inspect only live state, without adopting a record or waiting for the adoption lock.
+        A conversation absent from this runtime has no running turn.
         """
-        state = await self._conversation_state(conversation_id)
+        state = self._live_conversation_state(conversation_id)
         with self._signal_read():
             return state is not None and state.running_turn is not None
 
     async def has_pending_permission_ask(self, conversation_id: str) -> bool:
-        state = await self._conversation_state(conversation_id)
+        state = self._live_conversation_state(conversation_id)
         with self._signal_read():
             if state is None or state.running_turn is None:
                 return False
@@ -987,7 +986,7 @@ class SqliteProcessConversationSystem:
             return frozenset(state.running_turn.pending_permission_ask_ids)
 
     async def has_pending_user_input(self, conversation_id: str) -> bool:
-        state = await self._conversation_state(conversation_id)
+        state = self._live_conversation_state(conversation_id)
         with self._signal_read():
             if state is None or state.running_turn is None:
                 return False
@@ -3804,6 +3803,11 @@ class SqliteProcessConversationSystem:
     def _require_runtime_ownership(self) -> None:
         if self._shutting_down or self._runtime_ownership.closed:
             raise RuntimeError("the conversation runtime is shut down")
+
+    def _live_conversation_state(self, conversation_id: str) -> _ConversationState | None:
+        """Read existing runtime state without record I/O or adoption."""
+        self._require_runtime_ownership()
+        return self._conversations.get(conversation_id)
 
     async def _conversation_state(self, conversation_id: str) -> _ConversationState | None:
         """This process's state for a conversation, read from its row the first time.
