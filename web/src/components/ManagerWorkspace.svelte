@@ -268,7 +268,6 @@
         {@const item = workspace.data}
           <div bind:this={headerElement}>
           <ManagerHeader signal={item.conversation_signal} conversationId={item.conversation_id}
-            goal={item.goal} onSaveGoal={saveGoal}
             recap={item.recap} onSaveRecap={(value) => saveItem("recap", value)}
             recapTarget={{ kind: "manager", id: item.id }}>
             {#snippet eyebrow()}
@@ -298,7 +297,24 @@
                 if (ticket) hoverRow(element, ticket, immediate);
               }} onLeave={() => hover.leave()} />
           </section>
-          <div class="manager-artifacts"><ArtifactsBand owner={{kind:"manager",id:itemId}} /></div>
+          <div class="manager-bands disclosure-bands">
+            <details class="disclosure-band goal-band" data-goal-band>
+              <summary>Goal<span class="disclosure-band-trailing goal-chevron" aria-hidden="true"></span></summary>
+              <div class="disclosure-band-body">
+                <div class="manager-goal">
+                  <InlineEdit
+                    value={item.goal}
+                    markdown
+                    multiline
+                    ariaLabel="Manager goal"
+                    placeholder="Write what this manager is for…"
+                    onSave={saveGoal}
+                  />
+                </div>
+              </div>
+            </details>
+            <ArtifactsBand owner={{kind:"manager",id:itemId}} />
+          </div>
       {/if}
     </ResourceState>
   {#snippet readingAside()}
@@ -341,6 +357,10 @@
   :global(.manager-doc):hover .page-settle, .page-settle:focus-visible { opacity:1; }
   .page-settle:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
   .manager-workers { margin-top:var(--space-5); }
-  .manager-artifacts { margin-top:var(--space-5); }
+  .manager-bands { margin-top:var(--space-5); }
+  .manager-goal { font-size:var(--type-md); line-height:1.6; color:var(--text-faint); max-width:66ch; }
+  .goal-chevron { font-size:var(--type-md); line-height:1; }
+  .goal-chevron::before { content:"\203A"; }
+  .goal-band[open] > summary .goal-chevron::before { content:"\2304"; }
   a:focus-visible, button:focus-visible, .manager-workers :global(summary:focus-visible) { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
 </style>

@@ -6187,3 +6187,29 @@ details:not([open]) > summary > .manager-workspace-chevron {
 .skeleton-rows{padding:var(--space-5)}
 .skeleton-document{padding:var(--space-5) var(--space-7)}
 @media (max-width:720px){.skeleton-document{padding:var(--space-5) var(--space-4)}}
+
+/* Native document bands share their summary and body rhythm. */
+.disclosure-band {
+  line-height:1.6;
+  border-top:var(--border-hairline) solid var(--border-color);
+  border-bottom:var(--border-hairline) solid var(--border-color);
+}
+.disclosure-bands > .disclosure-band + .disclosure-band { border-top:0; }
+.disclosure-band > summary {
+  display:flex;
+  align-items:center;
+  gap:var(--space-3);
+  padding:14px var(--space-2);
+  margin-inline:calc(-1 * var(--space-2));
+  border-radius:var(--radius-sm);
+  font-size:var(--type-sm);
+  font-weight:600;
+  color:var(--text-faint);
+  cursor:pointer;
+  list-style:none;
+}
+.disclosure-band > summary::-webkit-details-marker { display:none; }
+.disclosure-band > summary:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
+.disclosure-band > summary:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
+.disclosure-band-trailing { margin-left:auto; font-weight:400; color:var(--text-faintest); }
+.disclosure-band-body { padding-bottom:var(--space-4); }

@@ -226,15 +226,19 @@ One screen per part of the system:
   and their preview opens over the page. Blockers, backend errors, kickoff
   configuration, and conversation behavior remain available in their existing states.
   Backlog and Resume remain the deferral controls.
-- **Manager** — project and parent navigation, title, goal, labelled recap, the ask
+- **Manager** — project and parent navigation, title, recap, the ask
   for a fresh recap, and a Settle control
   above grouped Workers. Worker rows show title and an exact-conversation dot.
   Hover or keyboard focus reuses the rail's recap and stage sentence panel. Groups keep the shared names
   and order, including exceptional states. The local page omits only the duplicate
   Messages group: unread Workers appear in their ordinary group with their own dot.
   Global Messages and rail discovery remain unchanged. Closed group headers include
-  distinct unread-conversation counts as text. Artifacts occupy their own closed band
-  below the Workers. Chief shares the same header, reading column, and conversation layer.
+  distinct unread-conversation counts as text. The recap sits directly under the title,
+  without a label, at 17px with the same clamp and edit controls as before.
+  Goal and Artifacts form two adjacent bands below the Workers, both closed by default.
+  Goal opens its editable Markdown in full, without a clamp or a separate surface.
+  The bands share their summary style, right-aligned indicator, and one border between them.
+  Chief shares the same header, reading column, and conversation layer. Chief has no Goal band.
   Chief keeps an editable recap in its managed settings, through the same header control.
   Chief cannot settle and has no Project or parent navigation.
 - **Chief children** — the Chief and ordinary Managers show one scoped Worker list.
