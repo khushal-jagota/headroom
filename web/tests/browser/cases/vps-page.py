@@ -85,7 +85,7 @@ def run(browser, urls):
         page.goto(urls[0], wait_until="domcontentloaded")
         settle()
         expect(cpu).to_contain_text("27")
-        expect(rows.filter(has_text="python")).to_contain_text("20.0% CPU")
+        expect(rows.filter(has_text="python")).to_contain_text("20% CPU")
         expect(rows.filter(has_text="python")).to_contain_text("400")
         expect(root.get_by_text("Panels", exact=True)).to_be_visible()
         assert "L" in cpu.locator(".trend-line").first.get_attribute("d")
@@ -93,6 +93,12 @@ def run(browser, urls):
         for width, name in [(1000, "vps-medium.png"), (390, "vps-compact.png")]:
             page.set_viewport_size({"width": width, "height": 1100})
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
+            if width == 390:
+                assert rows.filter(has_text="python").locator(".row-value").first.evaluate("""element => {
+                    const range = document.createRange();
+                    range.selectNodeContents(element);
+                    return range.getClientRects().length === 1;
+                }"""), "Process CPU must stay on one line"
             shot(name)
         page.set_viewport_size({"width": 1440, "height": 1100})
 

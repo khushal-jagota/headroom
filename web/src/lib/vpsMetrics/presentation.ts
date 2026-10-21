@@ -12,7 +12,7 @@ export function formatBytes(value: number | null): string {
   return `${(value / divisor).toFixed(divisor === 1 ? 0 : 1)} ${suffix}`;
 }
 export const formatRate = (value: number | null): string => value === null ? 'Unavailable' : `${formatBytes(value)}/s`;
-export const formatPercent = (value: number | null): string => value === null ? 'Unavailable' : `${value.toFixed(1)}%`;
+export const formatPercent = (value: number | null, digits = 1): string => value === null ? 'Unavailable' : `${value.toFixed(digits)}%`;
 export function formatUptime(value: number | null): string {
   if (value === null) return 'uptime unavailable';
   const days = Math.floor(value / 86400), hours = Math.floor(value % 86400 / 3600), minutes = Math.floor(value % 3600 / 60);
@@ -91,9 +91,9 @@ export function machineDescription(sample: Sample): string {
   const get = (key: string) => reading(sample.metrics, key);
   return `${sample.core_count > 0 ? sample.core_count : 'Unavailable'} cores · ${formatBytes(get('memory_total_bytes').value)} memory · ${formatBytes(get('filesystem.total_bytes').value)} disk · up ${formatUptime(get('uptime_seconds').value)}`;
 }
-export function formatReading(read: Reading): { value: string; unit: string } {
+export function formatReading(read: Reading, digits?: number): { value: string; unit: string } {
   if (read.value === null) return { value: read.reason || 'Unavailable', unit: '' };
-  const text = read.unit.includes('second') || read.unit === 'bytes/s' || read.unit === 'B/s' ? formatRate(read.value) : read.unit === 'bytes' || read.unit === 'B' ? formatBytes(read.value) : read.unit === '%' || read.unit === 'percent' ? formatPercent(read.value) : read.value.toFixed(2);
+  const text = read.unit.includes('second') || read.unit === 'bytes/s' || read.unit === 'B/s' ? formatRate(read.value) : read.unit === 'bytes' || read.unit === 'B' ? formatBytes(read.value) : read.unit === '%' || read.unit === 'percent' ? formatPercent(read.value, digits) : read.value.toFixed(digits ?? 2);
   const match = text.match(/^([\d.,-]+)\s*(.*)$/);
   return match ? { value: match[1], unit: match[2] } : { value: text, unit: '' };
 }
