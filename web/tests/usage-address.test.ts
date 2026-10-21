@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { parseConfigSelection } from "../src/lib/shellRouting";
-import { parseUsageSelection, usageTabHref } from "../src/lib/usageAddress";
+import { parseUsageSelection } from "../src/lib/usageAddress";
+import { prefixHref } from "../src/lib/utilityAddress";
 
 describe("reloadable Usage tabs", () => {
   it("opens Limits by default and gives each tab an explicit address", () => {
+    const pageHref = prefixHref("#/backends");
     expect(parseUsageSelection([])).toEqual({ tab: "limits", roleKind: "index" });
     for (const tab of ["tokens", "cost", "limits", "config"] as const) {
-      expect(usageTabHref(tab)).toBe(`#/backends/${tab}`);
+      expect(pageHref([tab])).toBe(`#/backends/${tab}`);
       expect(parseUsageSelection([tab])).toEqual({ tab, roleKind: "index" });
     }
   });
