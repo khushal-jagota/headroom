@@ -15,11 +15,19 @@ export function fadeFlowContent(node: HTMLElement, active: boolean) {
   }
 
   function start() {
-    // This animation keeps the shared token, easing and completion event on the
-    // transparent wrapper. Its painted roots follow the same browser timeline.
+    // Controller contract: SkeletonRegion applies resource-arriving before Svelte
+    // runs this action. app.css loads before the app mounts. This computed-style
+    // read flushes those rules, so getAnimations exposes skeleton-in even though
+    // display:contents produces no box. The browser proof covers this ordering.
+    // Keep that CSS animation: its timeline drives the painted roots, and its
+    // animationend clears arriving in SkeletonRegion. That update calls stop(),
+    // which disconnects our observer. A transition cannot replace this controller.
     const wrapperStyle = getComputedStyle(node);
     const entrance = node.getAnimations().find(animation =>
       animation instanceof CSSAnimation && animation.animationName === "skeleton-in");
+    // Reduced motion intentionally removes the controller. SkeletonRegion's mount
+    // and media handlers clear arriving in that case. With motion enabled, a miss
+    // means the class/style/controller contract above no longer holds.
     if (!entrance?.effect) return;
     const timing = { ...entrance.effect.getTiming(), easing: wrapperStyle.animationTimingFunction };
     function visit(parent: Element) {

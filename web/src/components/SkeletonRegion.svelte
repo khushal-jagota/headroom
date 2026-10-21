@@ -141,6 +141,10 @@
     </svelte:element>
   {/if}
   {#if !loading}
+    <!-- The entrance remains a lifecycle controller when this wrapper is
+         display:contents. Its animationend clears arriving and stops the flow
+         action's subtree observer. Do not remove it because the wrapper paints
+         nothing, or replace it with a transition that emits no animationend. -->
     <svelte:element this={shape === "inline" ? "span" : "div"} class="skeleton-content" class:skeleton-content--inline={shape === "inline"} class:resource-state={layout === "fill"} class:resource-arriving={arriving}
       use:fadeFlowContent={layout === "flow" && shape !== "inline" && arriving}
       onanimationend={(event: AnimationEvent) => { if (event.target === event.currentTarget && event.animationName === "skeleton-in" && !loading) arriving = false; }}>
