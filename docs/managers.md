@@ -45,7 +45,7 @@ or stop existing Workers.
 Date-range Sprints, their records, commitments, and placement are removed.
 The former Sprint screen and calendar read commands no longer exist.
 New commands use `panels manager`. Previously issued aliases continue to work.
-The stored Item names remain stable until their separate rename.
+Existing Manager IDs and conversation identities remain stable through the rename.
 
 The final visual layout waits for the approved design handoff. Its confirmed direction
 keeps Workers nested beneath managers and puts Project and Settle in the eyebrow
@@ -97,7 +97,7 @@ It deletes a current child Ticket through that same route. The deletion is perma
 nothing else guards it: a Ticket whose Worker is mid-turn is deleted too, and that Worker
 is killed with it.
 
-Config edits the canonical manager Manager role skill. Supported backends read
+Config edits the canonical Manager role skill. Supported backends read
 that managed source for future conversations. A save does not rewrite an existing
 conversation, its role record, or its history.
 
@@ -129,7 +129,7 @@ conversation link. It adds
 no second Ticket review or Worker-control route. Worker readiness remains the only
 automatic creator of a Worker step.
 
-Managed item artifacts live under `files/managers/<item-id>/`. The server exposes
+Managed Manager artifacts retain the physical directory `files/sprint-items/<item-id>/`. The server exposes
 them through `/files/managers/<item-id>/<relative-path>`. The workspace folds related
 files into openable entries. The CLI artifact list reports these openable targets, not
 every file at every depth. An artifact read accesses a known text path directly, including
