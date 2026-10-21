@@ -11,6 +11,7 @@ Scenarios:
 Drives a real Chromium against the running application and writes the probe's
 timeline plus a measured report into OUTPUT_DIRECTORY.
 """
+
 import json
 import pathlib
 import sys
@@ -51,7 +52,9 @@ def open_conversation(page, base, address):
     settle(page, 2)
     if page.query_selector("[data-conversation-expand]") is not None:
         page.click("[data-conversation-expand]")
-    page.wait_for_selector("[data-conversation-pane][data-conversation-state='opened']", timeout=30000)
+    page.wait_for_selector(
+        "[data-conversation-pane][data-conversation-state='opened']", timeout=30000
+    )
     settle(page, 8)
     page.evaluate("window.__probe.mark('opened')")
 
@@ -59,7 +62,10 @@ def open_conversation(page, base, address):
 def hover_thread(page):
     box = page.eval_on_selector(
         "[data-conversation-thread]",
-        "n => { const r = n.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2}; }",
+        (
+            "n => { const r = n.getBoundingClientRect(); return {x: r.x + r.width / 2, y: "
+            "r.y + r.height / 2}; }"
+        ),
     )
     page.mouse.move(box["x"], box["y"])
 
@@ -76,10 +82,22 @@ def quiet_window(page, label, seconds=2.5):
 
 def quiet_drift(log, label):
     """The reading anchor's own movement inside one quiet window."""
-    start = next((i for i, e in enumerate(log)
-                  if e["type"] == "mark" and e.get("name") == f"quiet-start-{label}"), None)
-    end = next((i for i, e in enumerate(log)
-                if e["type"] == "mark" and e.get("name") == f"quiet-end-{label}"), None)
+    start = next(
+        (
+            i
+            for i, e in enumerate(log)
+            if e["type"] == "mark" and e.get("name") == f"quiet-start-{label}"
+        ),
+        None,
+    )
+    end = next(
+        (
+            i
+            for i, e in enumerate(log)
+            if e["type"] == "mark" and e.get("name") == f"quiet-end-{label}"
+        ),
+        None,
+    )
     if start is None or end is None:
         return None
     window = [e for e in log[start:end] if e["type"] == "sample"]
@@ -99,7 +117,9 @@ def row_churn(log):
     return {
         "row_height_changes": len(grew),
         "largest_row_growth_pixels": max((e["height"] - e["was"] for e in grew), default=0),
-        "rows_that_grew_from_placeholder": sum(1 for e in grew if e["was"] <= 45 and e["height"] > 100),
+        "rows_that_grew_from_placeholder": sum(
+            1 for e in grew if e["was"] <= 45 and e["height"] > 100
+        ),
         "total_absolute_row_change_pixels": sum(abs(e["height"] - e["was"]) for e in grew),
     }
 
@@ -107,6 +127,7 @@ def row_churn(log):
 def structure(log):
     def count(event, kind):
         return sum(1 for e in log if e["type"] == event and e.get("kind") == kind)
+
     return {
         "thread_destroyed": count("unmount", "thread"),
         "thread_created": count("mount", "thread"),
@@ -116,8 +137,12 @@ def structure(log):
         "transcript_created": count("mount", "transcript"),
         "live_stream_opens": sum(1 for e in log if e["type"] == "sse-open"),
         "live_stream_closes": sum(1 for e in log if e["type"] == "sse-close"),
-        "snapshots": sum(1 for e in log if e["type"] == "sse-event" and e.get("name") == "snapshot"),
-        "history_page_reads": sum(1 for e in log if e["type"] == "fetch-start" and "/view/pages" in e.get("url", "")),
+        "snapshots": sum(
+            1 for e in log if e["type"] == "sse-event" and e.get("name") == "snapshot"
+        ),
+        "history_page_reads": sum(
+            1 for e in log if e["type"] == "fetch-start" and "/view/pages" in e.get("url", "")
+        ),
     }
 
 
@@ -153,20 +178,21 @@ def scenario_scrollback(page, report):
         if after is None:
             break
         if not after["here"]:
-            ticks.append({"tick": index, "anchor_destroyed": True,
-                          "scrollTop": after["scrollTop"]})
+            ticks.append({"tick": index, "anchor_destroyed": True, "scrollTop": after["scrollTop"]})
             page.evaluate("window.__probeAnchor()")
             continue
         asked = min(420, before["scrollTop"])
         moved = after["offset"] - before["offset"]
-        ticks.append({
-            "tick": index,
-            "asked_for": asked,
-            "content_moved": round(moved),
-            "skip": round(moved - asked),
-            "scrollTop": after["scrollTop"],
-            "scrollHeight": after["scrollHeight"],
-        })
+        ticks.append(
+            {
+                "tick": index,
+                "asked_for": asked,
+                "content_moved": round(moved),
+                "skip": round(moved - asked),
+                "scrollTop": after["scrollTop"],
+                "scrollHeight": after["scrollHeight"],
+            }
+        )
     page.evaluate("window.__probe.mark('scrollback-end')")
     measured = [t for t in ticks if "skip" in t]
     report["ticks"] = ticks
@@ -202,7 +228,11 @@ def scenario_navigation(page, report):
     page.evaluate("window.__probeAnchor()")
     before = page.evaluate(READ_STATE)
     composer_before = page.evaluate(
-        "() => { const i = document.querySelector('[data-conversation-input]'); return i ? i.value : null; }")
+
+            "() => { const i = document.querySelector('[data-conversation-input]'); return "
+            "i ? i.value : null; }"
+
+    )
     page.evaluate("window.__probe.mark('navigation-lost')")
     # One brief network blip, the kind a browser on another device meets every day.
     page.context.set_offline(True)
@@ -218,7 +248,11 @@ def scenario_navigation(page, report):
         "during_outage": during,
         "after_recovery": after,
         "typed_after": page.evaluate(
-            "() => { const i = document.querySelector('[data-conversation-input]'); return i ? i.value : null; }"),
+
+                "() => { const i = document.querySelector('[data-conversation-input]'); "
+                "return i ? i.value : null; }"
+
+        ),
     }
 
 
@@ -231,17 +265,21 @@ def scenario_snapback(page, report):
         at_start = page.evaluate("document.querySelector('[data-conversation-thread]').scrollTop")
         page.mouse.wheel(0, -420)
         page.wait_for_timeout(40)
-        right_after = page.evaluate("document.querySelector('[data-conversation-thread]').scrollTop")
+        right_after = page.evaluate(
+            "document.querySelector('[data-conversation-thread]').scrollTop"
+        )
         page.wait_for_timeout(900)
         settled = page.evaluate("document.querySelector('[data-conversation-thread]').scrollTop")
-        steps.append({
-            "step": index,
-            "before": round(at_start),
-            "right_after_the_wheel": round(right_after),
-            "after_it_settled": round(settled),
-            "the_wheel_moved_it": round(right_after - at_start),
-            "it_moved_back_by": round(settled - right_after),
-        })
+        steps.append(
+            {
+                "step": index,
+                "before": round(at_start),
+                "right_after_the_wheel": round(right_after),
+                "after_it_settled": round(settled),
+                "the_wheel_moved_it": round(right_after - at_start),
+                "it_moved_back_by": round(settled - right_after),
+            }
+        )
     page.evaluate("window.__probe.mark('snapback-end')")
     report["steps"] = steps
     report["measured"] = {
@@ -265,18 +303,21 @@ def scenario_flick(page, report):
         straight_after = page.evaluate(READ_STATE)
         settle(page, 4)
         settled = page.evaluate(READ_STATE)
-        rounds.append({
-            "round": index,
-            "asked_for_pixels": 16 * 420,
-            "before_scrollTop": before["scrollTop"],
-            "straight_after_scrollTop": straight_after["scrollTop"],
-            "settled_scrollTop": settled["scrollTop"],
-            "moved_back_after_the_hand_stopped": settled["scrollTop"] - straight_after["scrollTop"],
-            "kept_in_the_end": settled["scrollTop"] - before["scrollTop"],
-            "content_height_before": before["scrollHeight"],
-            "content_height_after": settled["scrollHeight"],
-            "jump_offered": settled["jump"],
-        })
+        rounds.append(
+            {
+                "round": index,
+                "asked_for_pixels": 16 * 420,
+                "before_scrollTop": before["scrollTop"],
+                "straight_after_scrollTop": straight_after["scrollTop"],
+                "settled_scrollTop": settled["scrollTop"],
+                "moved_back_after_the_hand_stopped": settled["scrollTop"]
+                - straight_after["scrollTop"],
+                "kept_in_the_end": settled["scrollTop"] - before["scrollTop"],
+                "content_height_before": before["scrollHeight"],
+                "content_height_after": settled["scrollHeight"],
+                "jump_offered": settled["jump"],
+            }
+        )
         # Put the reader back at the newest line for the next round.
         if page.query_selector(".chat-jump") is not None:
             page.click(".chat-jump")

@@ -2,34 +2,45 @@
 
 Usage: dogfood.py OUTPUT_DIRECTORY [BASE_URL]
 """
-import json, pathlib, subprocess, sys, time
+
+import json
+import pathlib
+import subprocess
+import sys
+
 from playwright.sync_api import sync_playwright
 
 HERE = pathlib.Path(__file__).resolve().parent
 PROBE = (HERE / "probe.js").read_text()
 WORDS = "Half a thought I have not finished and have not sent. It must survive everything."
 
-STATE = """() => {
-  const t = document.querySelector('[data-conversation-thread]');
-  const i = document.querySelector('[data-conversation-input]');
-  return {
-    thread: !!t,
-    rows: t ? t.querySelectorAll('[data-conversation-view-key]').length : 0,
-    filled: t ? [...t.querySelectorAll('[data-conversation-view-key]')].filter(n => n.children.length > 0).length : 0,
-    scrollTop: t ? Math.round(t.scrollTop) : null,
-    scrollHeight: t ? Math.round(t.scrollHeight) : null,
-    fromBottom: t ? Math.round(t.scrollHeight - t.clientHeight - t.scrollTop) : null,
-    typed: i ? i.value : null,
-    jump: !!document.querySelector('.chat-jump'),
-    skeleton: !!document.querySelector('.skeleton'),
-    spacer: (() => { const s = document.querySelector('[data-conversation-reserved-space]');
-                     return s ? Math.round(s.getBoundingClientRect().height) : null; })()
-  };
-}"""
+STATE = (
+    "() => {\n"
+    "  const t = document.querySelector('[data-conversation-thread]');\n"
+    "  const i = document.querySelector('[data-conversation-input]');\n"
+    "  return {\n"
+    "    thread: !!t,\n"
+    "    rows: t ? t.querySelectorAll('[data-conversation-view-key]').length : 0,\n"
+    "    filled: t ? [...t.querySelectorAll('[data-conversation-view-key]')].filter(n => "
+    "n.children.length > 0).length : 0,\n"
+    "    scrollTop: t ? Math.round(t.scrollTop) : null,\n"
+    "    scrollHeight: t ? Math.round(t.scrollHeight) : null,\n"
+    "    fromBottom: t ? Math.round(t.scrollHeight - t.clientHeight - t.scrollTop) : null,\n"
+    "    typed: i ? i.value : null,\n"
+    "    jump: !!document.querySelector('.chat-jump'),\n"
+    "    skeleton: !!document.querySelector('.skeleton'),\n"
+    "    spacer: (() => { const s = "
+    "document.querySelector('[data-conversation-reserved-space]');\n"
+    "                     return s ? Math.round(s.getBoundingClientRect().height) : null; "
+    "})()\n"
+    "  };\n"
+    "}"
+)
 
 
 def main():
-    out = pathlib.Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)
+    out = pathlib.Path(sys.argv[1])
+    out.mkdir(parents=True, exist_ok=True)
     base = sys.argv[2] if len(sys.argv) > 2 else "http://127.0.0.1:8831"
     notes = []
     shot = [0]
@@ -49,8 +60,13 @@ def main():
             return state
 
         def hover():
-            box = page.eval_on_selector("[data-conversation-thread]",
-                "n => { const r = n.getBoundingClientRect(); return {x: r.x + r.width/2, y: r.y + r.height/2}; }")
+            box = page.eval_on_selector(
+                "[data-conversation-thread]",
+                (
+                    "n => { const r = n.getBoundingClientRect(); return {x: r.x + "
+                    "r.width/2, y: r.y + r.height/2}; }"
+                ),
+            )
             page.mouse.move(box["x"], box["y"])
 
         page.goto(base + "/#/workspace/chief-of-staff", wait_until="load")
@@ -59,7 +75,8 @@ def main():
         page.click("[data-conversation-input]")
         page.wait_for_selector("[data-conversation-thread]", timeout=90000)
         page.wait_for_timeout(2000)
-        if page.query_selector("[data-conversation-expand]"): page.click("[data-conversation-expand]")
+        if page.query_selector("[data-conversation-expand]"):
+            page.click("[data-conversation-expand]")
         page.wait_for_timeout(9000)
         look("opened")
 
@@ -70,28 +87,40 @@ def main():
 
         # Read backwards the way you do when you are looking for something.
         hover()
-        for _ in range(18): page.mouse.wheel(0, -420); page.wait_for_timeout(55)
+        for _ in range(18):
+            page.mouse.wheel(0, -420)
+            page.wait_for_timeout(55)
         page.wait_for_timeout(2200)
         look("flicked-back")
-        for _ in range(10): page.mouse.wheel(0, -260); page.wait_for_timeout(210)
+        for _ in range(10):
+            page.mouse.wheel(0, -260)
+            page.wait_for_timeout(210)
         page.wait_for_timeout(1800)
         look("read-back-slowly")
 
         # The keyboard is a reader too.
         page.click("[data-conversation-thread]", position={"x": 20, "y": 20})
-        for _ in range(4): page.keyboard.press("PageUp"); page.wait_for_timeout(350)
+        for _ in range(4):
+            page.keyboard.press("PageUp")
+            page.wait_for_timeout(350)
         page.wait_for_timeout(1800)
         look("paged-up")
-        page.keyboard.press("End"); page.wait_for_timeout(2500)
+        page.keyboard.press("End")
+        page.wait_for_timeout(2500)
         look("pressed-end")
 
         # Back up, then the control that says it takes you to the newest line.
         hover()
-        for _ in range(16): page.mouse.wheel(0, -420); page.wait_for_timeout(70)
-        for d in (240, 160, 110, 70, 40): page.mouse.wheel(0, -d); page.wait_for_timeout(30)
+        for _ in range(16):
+            page.mouse.wheel(0, -420)
+            page.wait_for_timeout(70)
+        for d in (240, 160, 110, 70, 40):
+            page.mouse.wheel(0, -d)
+            page.wait_for_timeout(30)
         page.wait_for_timeout(2500)
         look("away-from-the-newest-line")
-        if page.query_selector(".chat-jump"): page.click(".chat-jump")
+        if page.query_selector(".chat-jump"):
+            page.click(".chat-jump")
         page.wait_for_timeout(5000)
         look("after-latest")
 
@@ -102,7 +131,8 @@ def main():
         page.evaluate("location.hash = '#/workspace/chief-of-staff'")
         page.wait_for_timeout(1200)
         look("coming-back")
-        if page.query_selector("[data-conversation-input]"): page.click("[data-conversation-input]")
+        if page.query_selector("[data-conversation-input]"):
+            page.click("[data-conversation-input]")
         page.wait_for_timeout(4000)
         look("back-in-the-conversation")
 
@@ -122,7 +152,9 @@ def main():
         page.type("[data-conversation-input]", WORDS, delay=10)
         page.wait_for_timeout(800)
         look("unsent-again")
-        subprocess.run(["bash", "-c", f"kill $(cat {pathlib.Path.cwd()}/data/probe/server.pid)"], check=False)
+        subprocess.run(
+            ["bash", "-c", f"kill $(cat {pathlib.Path.cwd()}/data/probe/server.pid)"], check=False
+        )
         page.wait_for_timeout(9000)
         look("server-gone")
         subprocess.run(["bash", "-c", str(HERE / "restart-server.sh")], check=False)
@@ -131,16 +163,22 @@ def main():
 
         page.reload(wait_until="load")
         page.wait_for_timeout(6000)
-        if page.query_selector("[data-conversation-input]"): page.click("[data-conversation-input]")
+        if page.query_selector("[data-conversation-input]"):
+            page.click("[data-conversation-input]")
         page.wait_for_timeout(4000)
         look("after-a-reload")
 
         (out / "notes.json").write_text(json.dumps(notes, indent=2))
         for n in notes:
-            print(f"{n['shot']:34s} rows={n['rows']:>3}/{n['filled']:<3} fromBottom={str(n['fromBottom']):>6} "
-                  f"jump={str(n['jump']):5s} skeleton={str(n['skeleton']):5s} spacer={str(n['spacer']):>5} "
-                  f"typed={'yes' if n['typed'] else ('empty' if n['typed'] == '' else 'none')}")
-        context.close(); browser.close()
+            print(
+                f"{n[('shot')]:34s} rows={n[('rows')]:>3}/{n[('filled')]:<3} fromBottom={
+                    str(n[('fromBottom')]):>6} "
+                f"jump={str(n[('jump')]):5s} skeleton={str(n[('skeleton')]):5s} spacer={
+                    str(n[('spacer')]):>5} "
+                f"typed={'yes' if n['typed'] else ('empty' if n['typed'] == '' else 'none')}"
+            )
+        context.close()
+        browser.close()
 
 
 if __name__ == "__main__":
