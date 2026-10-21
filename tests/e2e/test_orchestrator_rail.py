@@ -174,6 +174,8 @@ def test_settle_reopen_keeps_outstanding_work_and_worker_address(
     ) as write:
         card.get_by_role("button", name=f"Settle {item['title']}", exact=True).click()
     assert write.value.ok
+    # Keep this membership proof outside the intentional Worker-hover freeze.
+    page.mouse.move(1000, 50)
     expect(card).to_have_count(0, timeout=WAIT_MS)
     assert write.value.json()["settled"] is True
     assert page.evaluate("location.hash") == worker_hash

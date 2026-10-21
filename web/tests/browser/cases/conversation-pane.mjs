@@ -50,7 +50,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let catalogSelected=$state<string|null>(null);
   let catalogOwner=$state("t_catalog");
   (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
-  import ManagerWorkspace from "../src/components/ManagerWorkspace.svelte";
+  import ManagerFrame from "../src/components/ManagerFrame.svelte";
   import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
   const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
@@ -608,10 +608,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       <div class="conversation-column">{@render conversationPane()}</div>
     </section>
   {:else}
-    <ManagerWorkspace bind:conversationState>
+    <ManagerFrame bind:conversationState>
       <button type="button" data-ticket-behind>Ticket content</button>
       {#snippet conversation()}{@render conversationPane()}{/snippet}
-    </ManagerWorkspace>
+    </ManagerFrame>
   {/if}
 </div>
 
