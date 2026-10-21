@@ -18,7 +18,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   import LiveConversation from "../src/components/conversation/LiveConversation.svelte";
   import {installConversationViewReaderFixture} from "../tests/support/conversationViewReaderFixture";
   const readerOnly=new URLSearchParams(window.location.search).has("reader");
-  let readerState=$state<"opened"|"rest">("opened");
+  let readerState=$state<"opened"|"rest">(new URLSearchParams(window.location.search).has("reader-rest")?"rest":"opened");
   if(readerOnly)installConversationViewReaderFixture();
   (window as any).__readerState=(state:typeof readerState)=>readerState=state;
 
@@ -496,7 +496,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
 </script>
 
 {#if readerOnly}
-  <div style="height:700px;width:700px;display:flex;flex-direction:column">
+  <div style="height:700px;width:min(700px, 100%);display:flex;flex-direction:column">
     <LiveConversation conversationId="bounded-reader" persistenceKey="bounded-reader" label="Worker" bind:conversationState={readerState} sendMessage={async()=>({conversation_id:"bounded-reader",fate:"started"})}/>
   </div>
 {:else if previewsOnly}
