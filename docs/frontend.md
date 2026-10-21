@@ -661,13 +661,17 @@ hand-rolling the same shapes per screen. Each does one job:
   is read only: the actions go, the picker stays, and it is the way back to the current
   conversation.
 
-  The transcript keeps a settled visible paragraph or message as its position reference.
-  Rows, folds, late images, Markdown previews, and viewport size changes share one position
-  decision after layout. A reader who follows the end keeps the newest content in sight.
-  A reader who scrolls back keeps the same visible text. If every saved reference disappears,
-  the view keeps the nearest valid scroll position. Latest reflects the actual content,
-  separately from the answer room below a sent message. Reply content consumes that room.
-  A resize counts the reply already present and cannot recreate exhausted room.
+  The transcript uses native browser scroll behavior. A reader who follows the end
+  keeps the newest content in sight. A reader who scrolls back leaves that mode.
+  The browser holds the top line when it can. If content above or within the view
+  grows, text below it can move. Panels does not restore an exact paragraph offset.
+  Opening the conversation, sending a message, and Latest each place the view once.
+  An explicit send places the sent prompt near the top, even during a layer resize.
+  If a shorter transcript clamps the view to the end, later content follows the end.
+  Latest reflects the actual content, separately from the answer room below a sent
+  message. Reply content consumes that room. A resize counts the reply already present
+  and cannot recreate exhausted room. Exact text preservation during image growth
+  is not a requirement for this release. Further conversation refinement is separate work.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and

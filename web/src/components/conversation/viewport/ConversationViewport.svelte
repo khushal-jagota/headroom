@@ -137,6 +137,7 @@
     const geometry = threadGeometry(thread, reservedSpaceElement);
     if (!geometry.hasShape()) return;
     jumpVisible = !geometry.newestLineIsInSight(newestLineBottomPixels);
+    withTheNewestLineBeforeTheWrite = !jumpVisible;
     saveLogicalAnchor(thread);
   }
 
