@@ -35,7 +35,8 @@
   import WorkspaceRailCard from "../components/WorkspaceRailCard.svelte";
   import WorkspaceRailHover from "../components/WorkspaceRailHover.svelte";
 
-  let { address, onDismissed = () => undefined }: { address: WorkspaceAddress; onDismissed?: (noteId: string) => void } = $props();
+  import type { Snippet } from "svelte";
+  let { address, externalPane, railFoot, onDismissed = () => undefined }: { address: WorkspaceAddress; externalPane?: Snippet; railFoot?: Snippet; onDismissed?: (noteId: string) => void } = $props();
   const navigation = (() => {
     const context = navigationApplication();
     if (!context) throw new Error("Workspace requires the application navigation owner");
@@ -58,7 +59,6 @@
     const view=navigation.state.effective;return workspaceRailImpact(impact,view ? navigation.presentationFor(view) : undefined,rail,settledOpen);
   });
   onDestroy(() => navigation.disposeRenderBoundary(railObserver));
-  const feedbackCount = createQuery(() => queries.feedbackCount());
   let opening = $derived(whatTheAddressOpens(address));
   const selectedPaneModule = $derived.by(() => {
     if (opening.markedTicketId) return cachedImport("./TicketRoute.svelte", () => import("./TicketRoute.svelte"));
@@ -333,8 +333,8 @@
 
 <section class="board-screen" data-screen="workspace">
     <div class="board-workspace-wrap">
-      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
-        <section bind:this={railElement} class="board-workspace-left approved-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
+      <div bind:this={shellElement} class="board-workspace-shell approved-rail-shell" class:resizing class:board-workspace-shell--destination={Boolean(externalPane) || opening.markedUtility !== null} class:board-workspace-shell--chief={opening.chiefMarked} class:board-workspace-shell--item={itemPane} class:board-workspace-shell--ticket={Boolean(opening.markedTicketId)} style:--rail-width={railWidth === null ? RAIL_DEFAULT_WIDTH : `${railWidth}px`}>
+        <section bind:this={railElement} class="board-workspace-left approved-rail workspace-rail" aria-label="Workspace" style:--settled-max-height={`${RAIL_SETTLED_MAX_HEIGHT_SHARE * 100}%`}>
           <div class="rail-work">
           <ResourceState shape="block" layout="fill" error={navigation.state.error} loading={!workspace} hasData={Boolean(workspace)} loadingText="Loading workspace...">
           <div class="rail-work">
@@ -364,17 +364,13 @@
           </div>
           </ResourceState>
           </div>
-          <nav class="rail-utilities" aria-label="Workspace utilities">
-            <a href={workspaceAddress({kind:"utility",utility:"usage",path:[]}, opening.view)} aria-current={opening.markedUtility === "usage" ? "page" : undefined} aria-label="Usage and Backends" title="Usage and Backends"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 15V9m6 6V4m6 11v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg></a>
-            <a href={workspaceAddress({kind:"utility",utility:"settings",path:[]}, opening.view)} aria-current={opening.markedUtility === "settings" ? "page" : undefined} aria-label="Settings" title="Settings"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m8 3-.5 2-1.4.8-2-.5-2 3.4L3.5 10l.1 1.6-1.4 1.4 2 3.4 2-.5 1.4.8.5 2h4l.5-2 1.4-.8 2 .5 2-3.4-1.4-1.4.1-1.6 1.4-1.3-2-3.4-2 .5-1.4-.8-.5-2Z" transform="translate(0 -1)" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.2" /></svg></a>
-            <a href={workspaceAddress({kind:"utility",utility:"ideas",path:[]}, opening.view)} aria-current={opening.markedUtility === "ideas" ? "page" : undefined} aria-label="Ideas" title="Ideas"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 14h6m-5 3h4M6 10a5 5 0 1 1 8 0l-1 2H7Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg></a>
-            <a href={workspaceAddress({kind:"utility",utility:"feedback",path:[]}, opening.view)} aria-current={opening.markedUtility === "feedback" ? "page" : undefined} aria-label="Feedback" title="Feedback"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 4h14v10H8l-5 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>{#if (feedbackCount.data?.open_count || 0) > 0}<span class="fb-count">{feedbackCount.data?.open_count}</span>{/if}</a>
-          </nav>
+          {#if railFoot}{@render railFoot()}{/if}
         </section>
         <!-- A focusable separator implements the WAI-ARIA window splitter keyboard pattern. -->
         <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
         <div tabindex="0" class="rail-grip" role="separator" aria-label="Resize workspace panel" aria-orientation="vertical" aria-valuemin={RAIL_MIN_WIDTH} aria-valuemax={RAIL_MAX_WIDTH} aria-valuenow={Math.round(measuredRailWidth)} onpointerdown={resizePointer} onpointermove={resizeMove} onpointerup={() => resizing = false} onpointercancel={() => resizing = false} onlostpointercapture={() => resizing = false} onkeydown={resizeKey} ondblclick={() => setWidth(null)} style:left={`${measuredRailWidth}px`}></div>
         <section
+          class:board-workspace-right--destination={Boolean(externalPane)}
           class:board-workspace-right--ticket={Boolean(opening.markedTicketId)}
           class:board-workspace-right--chief={opening.chiefMarked}
           class:board-workspace-right--item={itemPane}
@@ -382,7 +378,9 @@
           class="board-workspace-right"
           aria-label={opening.chiefMarked ? "Chief of Staff conversation" : itemPane ? "Manager workspace" : "Workspace inspector"}
         >
-          {#if opening.chiefMarked}
+          {#if externalPane}
+            {@render externalPane()}
+          {:else if opening.chiefMarked}
             <ChiefConversation showRequestErrorLine={false} />
           {:else if opening.markedUtility !== null && selectedPaneModule && placement}
           <!-- The pane owns the scroll for a utility screen. These screens are written as
@@ -488,12 +486,6 @@
   .settled-count { position:relative; display:inline-block; }
   .settled-chevron { width:16px; height:16px; flex:none; }
   .settled--open .settled-chevron { transform:rotate(180deg); }
-  .rail-utilities { display:flex; flex:none; align-items:center; gap:var(--space-1); padding-top:var(--space-2); border-top:var(--border-hairline) solid var(--border-color); }
-  .rail-utilities a { display:flex; align-items:center; justify-content:center; width:32px; height:32px; color:var(--text-faintest); border:var(--border-hairline) solid transparent; border-radius:var(--radius-sm); }
-  .rail-utilities a[aria-current="page"], .rail-utilities a[aria-current="page"]:hover, .rail-utilities a[aria-current="page"]:focus-within { border-color:var(--accent-bright); }
-  .rail-utilities a:hover { background-image:var(--interaction-hover); color:var(--text-strong); }
-  .rail-utilities svg { width:18px; height:18px; }
-  .rail-utilities a:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
   .rule { flex:1; height:var(--border-hairline); background:var(--border-color); }
   .count { flex:none; font-size:var(--type-xs); color:var(--text-faintest); font-variant-numeric:tabular-nums; }
   .settled-item + .settled-item { margin-top:var(--space-3); }
@@ -505,11 +497,13 @@
   .reopen { opacity:0; margin-left:auto; color:var(--text-faint); font-size:12px; }
   .settled-row:hover .reopen,.settled-row:focus-within .reopen { opacity:1; }
   button:focus-visible { outline:var(--border-strong) solid var(--accent-bright); outline-offset:2px; }
-  @media(max-width:960px) {
+  @media(max-width:720px) {
     .approved-rail-shell { grid-template-columns:1fr; }
     .rail-grip { display:none; }
     .board-workspace-shell--chief .approved-rail,
     .board-workspace-shell--item .approved-rail,
-    .board-workspace-shell--ticket .approved-rail { display:none; }
+    .board-workspace-shell--ticket .approved-rail,
+    .board-workspace-shell--destination .approved-rail { display:none; }
+    .board-workspace-right--destination { display:flex; padding:0; }
   }
 </style>

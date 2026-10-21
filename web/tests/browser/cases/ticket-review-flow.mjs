@@ -20,7 +20,8 @@ import { navigationReviewPresentation } from '../src/lib/navigation/presentation
 import { reviewBadgeDomMatches } from '../src/lib/shellDom';
 (window as any).__badgeProof=()=>{
  const link=document.createElement('a');const badge=document.createElement('span');link.append(badge);
- badge.className='nav-badge hidden';
+ badge.className='count-badge hidden';
+ badge.setAttribute('data-review-badge','');
  const emptyHidden=reviewBadgeDomMatches(link,0);
  badge.classList.remove('hidden');const emptyVisible=reviewBadgeDomMatches(link,0);
  badge.classList.add('hidden');badge.textContent='2';const nonemptyHidden=reviewBadgeDomMatches(link,0);

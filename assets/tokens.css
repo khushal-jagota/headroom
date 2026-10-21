@@ -32,6 +32,7 @@
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
   --accent-surface: #222a38;
+  --error-surface: #382226;
   /* The fill of small marked things — a chip, a pill, the primary button. Dark enough
    * that it barely lifts off the page, which is what makes it right for them. */
   --accent-text: #dce6f8;

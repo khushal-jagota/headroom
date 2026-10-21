@@ -7,6 +7,8 @@ scroll has to be its own, which means proving it after loading finishes and the 
 is gone, with a real layout and a real scroll height.
 """
 
+import os
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect
@@ -83,41 +85,30 @@ def run(browser, urls):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.route("**/api/**", respond)
-    # Watch before navigation; locator waits could otherwise consume shell motion.
-    page.add_init_script("""window.__shellFrames=[];
-      new MutationObserver(() => {
-        const screen=document.querySelector('main.shell-content > .screen');
-        if (!screen || screen === window.__sampledScreen) return;
-        window.__sampledScreen=screen;
-        requestAnimationFrame(() => {
-          const style=getComputedStyle(screen);
-          window.__shellFrames.push({hash:location.hash,opacity:+style.opacity,
-            transform:style.transform,entrance:screen.classList.contains('screen-enter'),
-            animations:screen.getAnimations().map(a=>a.animationName)});
-        });
-      }).observe(document,{childList:true,subtree:true});""")
-
     rail = page.locator(".rail-utilities")
     pane = page.locator(".board-workspace-right")
     scroller = page.locator("[data-utility-scroll]")
 
-    # Usage opens in the pane, and its tabs stay there.
+    # The rail's failed source cannot gate independently loaded panes. Mark its real
+    # node so later URL changes prove this is one mounted shell, not a lookalike.
+    # Usage opens in the pane, and its period choice survives tab changes.
     page.goto(url + "#/workspace/utility/usage", wait_until="domcontentloaded")
-    page.wait_for_function("window.__shellFrames.length > 0")
-    workspace_frame = page.evaluate("window.__shellFrames[0]")
-    assert workspace_frame == {'hash': '#/workspace/utility/usage', 'opacity': 1,
-                               'transform': 'none', 'entrance': False, 'animations': []}, workspace_frame
     expect(rail).to_be_visible()
     expect(pane.locator("nav.metrics")).to_be_visible()
+    rail.evaluate("node => window.__persistentRail = node")
+    pane.get_by_role("link", name="Tokens", exact=True).click()
+    pane.get_by_role("button", name="7d", exact=True).click()
+    pane.get_by_role("link", name="Cost", exact=True).click()
+    expect(pane.get_by_role("button", name="7d", exact=True)).to_have_attribute("aria-pressed", "true")
     pane.get_by_role("link", name="Tokens").click()
     page.wait_for_function("location.hash === '#/workspace/utility/usage/tokens'")
     expect(rail).to_be_visible()
-    expect(pane.get_by_role("link", name="Tokens")).to_have_attribute("aria-current", "page")
+    expect(pane.get_by_role("link", name="Tokens", exact=True)).to_have_attribute("aria-current", "page")
 
     # The deep address is an address: it survives a reload, so it can also be pasted.
     page.reload(wait_until="domcontentloaded")
     expect(rail).to_be_visible()
-    expect(pane.get_by_role("link", name="Tokens")).to_have_attribute("aria-current", "page")
+    expect(pane.get_by_role("link", name="Tokens", exact=True)).to_have_attribute("aria-current", "page")
     assert page.evaluate("location.hash") == "#/workspace/utility/usage/tokens"
 
     # Settings keeps the pane and the list the rail was showing.
@@ -158,13 +149,88 @@ def run(browser, urls):
         "  && child.scrollHeight > child.clientHeight).length"
     )
     assert inner == 0, inner
+    # An editor change must replace its keyed Config detail instead of retaining
+    # the previous selection inside the persistent shell.
+    page.evaluate("location.hash='#/settings/config/chief-of-staff'")
+    expect(pane.locator('[data-agent-id="chief_of_staff"]')).to_be_visible()
+    page.evaluate("location.hash='#/settings/config/worker-skill'")
+    expect(pane.locator('[data-agent-id="panels-worker"]')).to_be_visible()
+    expect(pane.locator('[data-agent-id="chief_of_staff"]')).to_have_count(0)
 
-    # The existing shell also provides the control for preserved non-workspace motion.
+    # The new foot uses the public Usage route, whose internal choices must also
+    # survive a tab change across the persistent shell's external-pane boundary.
+    page.evaluate("location.hash='#/backends/tokens'")
+    expect(pane.locator('nav.metrics')).to_be_visible()
+    pane.get_by_role('button', name='7d', exact=True).click()
+    pane.get_by_role('link', name='Cost', exact=True).click()
+    expect(pane.get_by_role('button', name='7d', exact=True)).to_have_attribute('aria-pressed', 'true')
+
+    # Root destinations use the same mounted rail, even when its data is refused.
     page.evaluate("location.hash='#/settings'")
-    page.wait_for_function("window.__shellFrames.some(frame=>frame.hash==='#/settings')")
-    control = page.evaluate("window.__shellFrames.find(frame=>frame.hash==='#/settings')")
-    assert control['entrance'] and control['animations'] == ['screen-enter'], control
-    assert control['opacity'] < 1 and control['transform'] != 'none', control
+    expect(pane.locator('[data-settings]')).to_be_visible()
+    rail.evaluate("node => window.__persistentRail = node")
+    for destination, selector in [("#/review", ".review-screen"), ("#/vps", "[data-vps-placeholder]"), ("#/settings", "[data-settings]")]:
+        page.evaluate("hash => location.hash=hash", destination)
+        expect(pane.locator(selector)).to_be_visible()
+        assert rail.evaluate("node => node === window.__persistentRail")
+
+    # Preview's own full-height document styles must remain inside the same pane.
+    page.route("**/files/tickets/t_fixture/artifacts/wide.html", lambda route: route.fulfill(
+        content_type="text/html", body="<html><body style='width:3000px;height:3000px'>Wide artifact</body></html>"))
+    page.evaluate("location.hash='#/preview?source=ticket&ticket=t_fixture&path=artifacts%2Fwide.html'")
+    expect(pane.locator('[data-file-preview-route] iframe')).to_be_visible()
+    assert rail.evaluate("node => node === window.__persistentRail")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    bounds = pane.bounding_box()
+    assert bounds and bounds['y'] >= 0 and bounds['y'] + bounds['height'] <= 701, bounds
+
+    # At minimum width all six controls and both end labels remain inside the rail.
+    grip = page.get_by_role("separator", name="Resize workspace panel")
+    grip.focus()
+    for _ in range(20):
+        page.keyboard.press("Shift+ArrowLeft")
+    expect(grip).to_have_attribute("aria-valuenow", "232")
+    expect(rail.locator('.utility')).to_have_count(6)
+    rail_bounds = page.locator('.workspace-rail').bounding_box()
+    assert rail_bounds and abs(rail_bounds['width'] - 232) < 2, rail_bounds
+    for name in ["Review", "Usage", "Ideas", "Feedback", "VPS", "Settings"]:
+        control = rail.get_by_label(name, exact=True)
+        control.focus()
+        label = control.locator('.utility-label')
+        expect(label).to_have_css("opacity", "1")
+        box = label.bounding_box()
+        assert box and box['x'] >= rail_bounds['x'] and box['x'] + box['width'] <= rail_bounds['x'] + rail_bounds['width'] + 1, (name, box, rail_bounds)
+
+    # Only the shell changes at 720; every selected utility receives compact treatment.
+    page.set_viewport_size({"width": 721, "height": 700})
+    expect(page.locator('.workspace-rail')).to_be_visible()
+    expect(page.locator('.workspace-mobile-nav')).to_be_hidden()
+    page.set_viewport_size({"width": 720, "height": 700})
+    expect(page.locator('.workspace-rail')).to_be_hidden()
+    expect(page.locator('.workspace-mobile-nav')).to_be_visible()
+    expect(pane).to_be_visible()
+    page.locator('.workspace-mobile-nav [data-screen="workspace"]').click()
+    expect(page.locator('.workspace-rail')).to_be_visible()
+    expect(pane).to_be_hidden()
+    page.locator('[data-screen="more"]').click()
+    menu = page.locator('[data-shell-more-menu]')
+    expect(menu).to_contain_text("Work")
+    expect(menu).to_contain_text("System")
+    menu.get_by_role('link', name='Settings', exact=True).click()
+    expect(pane.locator('[data-settings]')).to_be_visible()
+    expect(page.locator('.workspace-rail')).to_be_hidden()
+    # Resizing while the compact bar owns focus must reveal an equivalent target.
+    for name in ["Review", "Workspace"]:
+        link = page.locator('.workspace-mobile-nav').get_by_role('link', name=name, exact=True)
+        link.focus()
+        page.set_viewport_size({"width": 721, "height": 700})
+        page.wait_for_function("document.activeElement && document.activeElement.getClientRects().length > 0 && document.activeElement !== document.body")
+        page.set_viewport_size({"width": 720, "height": 700})
+    evidence = Path(os.environ['PANELS_SIDEBAR_ARTIFACT_DIR'])
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(animations="disabled", path=str(evidence / 'shell-720.png'))
+    page.set_viewport_size({"width": 1280, "height": 700})
+    page.screenshot(animations="disabled", path=str(evidence / 'shell-desktop-minimum-rail.png'))
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
