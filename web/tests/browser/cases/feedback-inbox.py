@@ -78,7 +78,7 @@ def run(browser, urls):
     assert capture and foot and capture['y'] + capture['height'] <= foot['y'] + 1
     evidence = Path(os.environ["PANELS_SIDEBAR_ARTIFACT_DIR"])
     evidence.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(evidence / "feedback-desktop.png"))
+    page.screenshot(animations="disabled", path=str(evidence / "feedback-desktop.png"))
 
     # Shift+Enter inserts a line; Enter saves with the current route context.
     input_box.fill("first line")
@@ -147,7 +147,7 @@ def run(browser, urls):
     assert phone.locator("[data-feedback-save]").is_visible()
     evidence = Path(os.environ["PANELS_SIDEBAR_ARTIFACT_DIR"])
     evidence.mkdir(parents=True, exist_ok=True)
-    phone.screenshot(path=str(evidence / "feedback-mobile.png"))
+    phone.screenshot(animations="disabled", path=str(evidence / "feedback-mobile.png"))
     phone.keyboard.press("Escape")
     expect(more).to_be_focused()
     # A composer remains the same instance and keeps its draft through a width change.

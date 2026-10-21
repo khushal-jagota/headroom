@@ -98,7 +98,9 @@
   let compact = $state(false);
   let captureAnchor = $derived(compact ? compactFoot : desktopFoot);
   function feedbackFocusTarget(): HTMLElement | null {
-    return compact ? moreButtonElement : desktopFeedback;
+    // CSS responds to a resize before matchMedia delivers its change event.
+    // Pick the control that is visible when focus is actually restored.
+    return desktopFeedback?.getClientRects().length ? desktopFeedback : moreButtonElement;
   }
   function openFeedback(event: MouseEvent): void {
     moreOpen = false;
@@ -153,7 +155,16 @@
     moreOpen = !moreOpen;
   }
 
+  let lastNavigationFocus: HTMLElement | null = null;
+  function onWindowFocusIn(event: FocusEvent): void {
+    const element = event.target as HTMLElement;
+    if (element === document.body) return;
+    lastNavigationFocus = desktopFoot?.contains(element) || compactFoot?.contains(element) ? element : null;
+  }
+
   function onWindowPointerDown(event: PointerEvent): void {
+    const target = event.target as Node;
+    if (!desktopFoot?.contains(target) && !compactFoot?.contains(target)) lastNavigationFocus = null;
     if (
       moreOpen &&
       moreMenuElement &&
@@ -175,8 +186,11 @@
     const media = window.matchMedia("(max-width: 720px)");
     const syncCompact = () => {
       const activeElement = document.activeElement as HTMLElement | null;
-      const focusedScreen = activeElement?.closest<HTMLElement>("[data-screen]")?.dataset.screen;
-      const restoreFocus = moreOpen || desktopFoot?.contains(activeElement) || compactFoot?.contains(activeElement);
+      // Hiding a focused control can blur it before the media change is delivered.
+      const focusedElement = activeElement === document.body && lastNavigationFocus
+        && lastNavigationFocus.getClientRects().length === 0 ? lastNavigationFocus : activeElement;
+      const focusedScreen = focusedElement?.closest<HTMLElement>("[data-screen]")?.dataset.screen;
+      const restoreFocus = moreOpen || desktopFoot?.contains(focusedElement) || compactFoot?.contains(focusedElement);
       compact = media.matches;
       moreOpen = false;
       if (restoreFocus && !captureOpen) void tick().then(() => {
@@ -208,7 +222,7 @@
   });
 </script>
 
-<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} />
+<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} onfocusin={onWindowFocusIn} />
 
 <div class="shell">
   <ReleaseUpdate />

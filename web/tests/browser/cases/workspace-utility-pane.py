@@ -228,9 +228,9 @@ def run(browser, urls):
         page.set_viewport_size({"width": 720, "height": 700})
     evidence = Path(os.environ['PANELS_SIDEBAR_ARTIFACT_DIR'])
     evidence.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(evidence / 'shell-720.png'))
+    page.screenshot(animations="disabled", path=str(evidence / 'shell-720.png'))
     page.set_viewport_size({"width": 1280, "height": 700})
-    page.screenshot(path=str(evidence / 'shell-desktop-minimum-rail.png'))
+    page.screenshot(animations="disabled", path=str(evidence / 'shell-desktop-minimum-rail.png'))
 
     assert not errors, errors
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]

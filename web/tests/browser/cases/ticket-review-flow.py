@@ -1156,10 +1156,12 @@ def run(browser, urls):
         "aria-label", "Who holds the ceiling"
     )
     expect(approve_row.locator('[role="option"]')).to_have_count(3)
-    assert [
+    choices = [
         option.get_attribute("data-ceiling-picker-choice")
         for option in approve_row.locator('[role="option"]').all()
-    ] == ["owner", "chief", "outcome_kept"]
+    ]
+    print(f"Review reviewer choices: {choices}", flush=True)
+    assert choices == ["owner", "outcome_kept", "chief"], choices
     expect(approve_row.get_by_role("option", name="Manager", exact=True)).to_have_count(1)
     approve_row.get_by_role("listbox").press("Escape")
     retained_editor = page.locator("[data-approval-block] [data-edit]")

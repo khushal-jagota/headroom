@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { mutateJson } from "../lib/mutate";
   import type { FeedbackNote, FeedbackPageContext } from "../lib/feedback";
   import Button from "./Button.svelte";
@@ -53,7 +53,7 @@
     if (!open) return;
     rememberDraft();
     open = false;
-    if (restoreFocus) queueMicrotask(() => (focusTarget() ?? triggerElement)?.focus({ preventScroll: true }));
+    if (restoreFocus) void tick().then(() => (focusTarget() ?? triggerElement)?.focus({ preventScroll: true }));
   }
 
   export function toggleCapture(trigger: HTMLButtonElement): void {
