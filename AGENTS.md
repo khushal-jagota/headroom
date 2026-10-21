@@ -53,6 +53,9 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 - Create the Ticket branch and isolated worktree from current `staging`. Do the work
   in that worktree.
+- Fetch the remote target before you create the branch. State in the proposal the
+  commit you created the worktree from and the commit your final checks ran against.
+  A stale local ref passes every check against the wrong tree.
 - Set up the worktree's dependencies, environment inputs, generated prerequisites,
   and local runtime state, then verify that its source, dependencies, configuration,
   and state resolve to that worktree.
