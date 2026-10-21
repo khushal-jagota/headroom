@@ -98,6 +98,7 @@ async def read_managers(
     detail: str | None = None,
     object_id: Annotated[str | None, Query(alias="id")] = None,
     search: str | None = None,
+    settled: bool | None = None,
     project: str | None = None,
     project_id: str | None = None,
     limit: int | None = None,
@@ -111,6 +112,7 @@ async def read_managers(
             "id",
             {
                 "search": search,
+                "settled": settled,
                 "project": project,
                 "project_id": project_id,
                 "limit": limit,
@@ -125,7 +127,9 @@ async def read_managers(
     )
     resolved_project_id = resolved_project.id if resolved_project is not None else None
     if level is ReadDetail.full:
-        reject_parameters("detail=full", {"search": search, "limit": limit, "offset": offset})
+        reject_parameters(
+            "detail=full", {"search": search, "settled": settled, "limit": limit, "offset": offset}
+        )
         rows = managers_views.list_managers(conn, project_id=resolved_project_id)
         await add_work_attention(conn, conversations, conversation_record, managers=rows)
         return {"managers": rows}
@@ -137,6 +141,7 @@ async def read_managers(
         ),
         project_id=resolved_project_id,
         search=search,
+        settled=settled,
     )
     await add_work_attention(conn, conversations, conversation_record, managers=page.rows)
     return page.response("managers")

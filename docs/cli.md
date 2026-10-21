@@ -261,6 +261,16 @@ unrelated Manager.
 an ordinary Manager. Structured create and edit use the same explicit `manager`
 reference. Assignment and the ceiling holder are independent.
 
+`manager list` labels each row active or settled. With no state flag, it includes both.
+Use `--active` or `--settled` to filter before pagination. The flags are mutually exclusive
+and combine with search and Project filters. JSON summaries and `show` headers carry
+the boolean `settled`, including selected-part reads. An absent field does not establish
+that a Manager is active. Legacy aliases use the same behavior.
+
+Settled Managers are finished destinations. Choose an active Manager for new
+work before Ticket creation or assignment. This guidance does not change permissions
+or prevent an existing Worker from continuing.
+
 `manager settle <item>` is owner-only. Add `--active` to return it to active.
 Chief cannot settle. Day and date-range Sprint commands are removed.
 Legacy command aliases continue to address the same Managers.

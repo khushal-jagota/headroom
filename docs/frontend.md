@@ -46,7 +46,6 @@ One screen per part of the system:
   attention facts. Unread alone does not change a row’s category, order, or tone.
   The rail omits the Messages group. The sidebar preserves all facts, global unread
   discovery, and the shared classifier on other surfaces.
-  Empty cards say “Nothing in this list.”
 
   Attention rows are bright. Ongoing rows and their working spinners are dim.
   Unread message dots stay bright and take precedence over working spinners.
@@ -780,7 +779,7 @@ unhashed assets revalidate so the next load sees the current deployment.
 
 ---
 
-_Last verified: 2026-10-18._
+_Last verified: 2026-10-21._
 
 
 ## Frontend test commands

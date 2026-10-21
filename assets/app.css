@@ -3218,12 +3218,6 @@ select {
   margin-top: var(--space-5);
 }
 
-.board-workspace-quiet-line {
-  padding: var(--space-2) var(--board-workspace-rail-pad-x);
-  color: var(--text-faintest);
-  font-size: var(--type-sm);
-}
-
 /* One ticket row grammar — title, condition mark — shared by the
  * workspace rail and the Manager detail sections (WorkerRow.svelte). */
 .ticket-row {

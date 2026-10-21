@@ -47,7 +47,6 @@
       <ConversationSignalMark {signal} {conversationId} />
     </button>
   </div>
-  {#if !groups.length}<div class="board-workspace-quiet-line">Nothing in this list</div>{/if}
   {#each groups as group (group.key)}
     <div class="bucket workspace-ticket-bucket" data-bucket-key={group.key} data-tone={["awaiting_approval", "awaiting_answer", "assigned", "errored"].includes(group.key) ? "attention" : "quiet"}>
       <div class="bucket-label" data-rail-motion={`heading:${id}:${group.key}`}>{group.label}</div>

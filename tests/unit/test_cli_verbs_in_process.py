@@ -301,3 +301,65 @@ def test_structured_ticket_create_keeps_the_brief(
         assert detail["pending_proposal"]["field"] == "brief"
         assert detail["pending_proposal"]["body"] == body["brief"]
         assert detail["stage"] == "needs_brief"
+
+def test_manager_settlement_filters_before_paging(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
+    project = cli(server, "project", "create", "--name", "Settlement")
+    other = cli(server, "project", "create", "--name", "Other settlement")
+    ids = []
+    for title, project_id, settled in (
+        ("Find first active", project["id"], False),
+        ("Find first settled", project["id"], True),
+        ("Find second active", project["id"], False),
+        ("Find second settled", project["id"], True),
+        ("Find other settled", other["id"], True),
+        ("Unrelated settled", project["id"], True),
+    ):
+        item = cli(server, "manager", "create", "--title", title, "--project-id", project_id)
+        ids.append(item["id"])
+        if settled:
+            cli(server, "manager", "settle", item["id"])
+    # The fixture clock is fixed. Give each row a distinct creation time to prove paging order.
+    with closing(connect(str(server.db_path))) as conn:
+        conn.executemany("UPDATE managers SET created_at=? WHERE id=?", enumerate(ids, start=1))
+        conn.commit()
+    for flags, expected in (
+        ([], ids),
+        (["--active"], ids[::2][:2]),
+        (["--settled"], [ids[1], ids[3], ids[4], ids[5]]),
+    ):
+        page = cli(server, "manager", "list", *flags, "--limit", "1", "--offset", "1")
+        assert [item["id"] for item in page["managers"]] == expected[1:2]
+        if flags:
+            assert page["managers"][0]["settled"] is (flags == ["--settled"])
+        assert page["page"]["match_count"] == len(expected)
+        assert page["page"]["omitted_before"] == 1
+        assert page["page"]["omitted_after"] == len(expected) - 2
+        assert page["page"]["next_offset"] == (2 if len(expected) > 2 else None)
+    for selector, value in (("--project", "Settlement"), ("--project-id", project["id"])):
+        page = cli(
+            server,
+            "manager",
+            "list",
+            "--settled",
+            "--search",
+            "Find",
+            selector,
+            value,
+            "--limit",
+            "1",
+            "--offset",
+            "1",
+        )
+        assert [item["id"] for item in page["managers"]] == [ids[3]]
+        assert page["page"]["match_count"] == 2
+        assert page["managers"][0]["settled"] is True
+    for state in ("false", "true"):
+        for params in (
+            {"detail": "full", "settled": state},
+            {"detail": "full", "id": ids[0], "settled": state},
+        ):
+            response = api.client.get("/api/managers", params=params)
+            assert response.status_code == 400, response.text
+            assert response.json()["error"]["detail"]["parameters"] == ["settled"]

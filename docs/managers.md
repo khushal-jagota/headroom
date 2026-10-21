@@ -36,6 +36,12 @@ managers. Legacy `panels orchestrator` and `panels sprint item` paths remain hid
 `panels manager settle <item>` settles an ordinary Manager. `--active` returns
 it to active. The server accepts only the owner for this action.
 
+Settled Managers are finished destinations. Choose an active Manager for new
+work. The CLI exposes that state in lists and records, including selected-part reads.
+Its state filters apply before pagination. See [the CLI guide](cli.md#manager-assignment-and-settlement)
+for the flags and the `settled` field. Settlement does not change assignment authority
+or stop existing Workers.
+
 Date-range Sprints, their records, commitments, and placement are removed.
 The former Sprint screen and calendar read commands no longer exist.
 New commands use `panels manager`. Previously issued aliases continue to work.
