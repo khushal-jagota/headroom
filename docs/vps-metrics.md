@@ -55,4 +55,23 @@ names in that module. Numeric limits must be positive. Retention tiers must incr
 Restart the operator-owned service to apply changed environment values.
 
 The existing VPS status endpoints keep their original contracts and collection paths.
-This layer supplies stored evidence for a future page. It adds no browser behavior.
+The VPS destination opens the machine-health page inside the shared pane. It shows
+CPU, memory, load, disk I/O, network, and root disk capacity, followed by services and
+grouped processes. Service and process CPU percentages use the whole machine as 100%.
+Process groups keep their positions after their first CPU sort. Partial totals retain
+an explicit unavailable part rather than treating missing members as zero.
+
+The visible page renews activity and reads current samples every two seconds. A hidden
+browser page or a different pane stops reads and lease renewal. The existing lease
+expires on its own. The page resumes with a fresh read when it becomes visible.
+
+Five-minute trends use raw samples. The 24-hour window uses minute buckets. The 30-day
+window uses fifteen-minute buckets through adjacent bounded requests. A shorter retained
+record occupies only its actual part of the selected window. Missing values and gaps
+remain visible as gaps. The longer windows refresh at their bucket boundaries.
+
+A stale or failed feed retains the last readings, dims them, and shows their age with
+“no feed.” A missing primary measurement shows its reason and no trend. First-read
+placeholders follow reduced-motion preferences. Temperature, fans, and unsupported
+machine identity fields do not appear. The page does not include deployment or backup
+status and does not call the existing VPS status endpoints.
