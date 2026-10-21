@@ -35,14 +35,26 @@ There is no Day-based duplicate suppression. Two distinct schedules can supply t
 Worker type or title. Neither a preexisting Ticket nor an old Day membership suppresses
 an occurrence. The durable schedule/occurrence identity prevents only its own replay.
 
-Existing receipt `target_day_id` values remain unchanged. New receipts label the local
-calendar date as `day_YYYY-MM-DD`, including times before the former 5am boundary. That
-label is historical storage vocabulary. It creates no Day row or membership.
+Occurrence receipts store `target_date` as a non-null ISO calendar date.
+The removal migration validates each historical `day_YYYY-MM-DD` value and retains its date suffix.
+It preserves every receipt, occurrence key, outcome, Ticket link, error, and timestamp.
+Malformed historical dates abort the migration.
+New receipts use the local scheduling datetime's calendar date, including times before 5am.
+No receipt points to a Day record.
 
-The old cadence and placement enum values remain readable for historical configurations
-and receipts. Historical Sprint placement columns do not affect new Ticket placement.
-Calendar schedules cannot be reenabled through the live API. Useful ordinary schedules
-can still be edited or disabled. There is no schedule deletion operation.
+The Sprint placement columns and placement mode are removed.
+All six legacy schedules already name Chief with a null Item reference. Their assignment stays unchanged.
+Ordinary due schedules create Chief-assigned Tickets outside backlog unless they explicitly name an ordinary orchestrator.
+The stored Project remains unchanged. A null Project uses ordinary Ticket creation defaults.
+
+Old cadence values remain solely as deliberate historical descriptions.
+Retirement derives from a non-daily cadence or a retired Worker type.
+A retired row accepts only a disable action. Every other configuration change fails.
+The API rejects both a combined rewrite-and-enable request and a rewrite while disabled followed by an enable request.
+The Scheduled Tasks screen labels the row as retired history and disables its enable and edit controls.
+The runtime skips retired configurations even if external storage edits enable them.
+No separate retirement flag exists. No schedule deletion operation exists.
+These historical rows remain available for their receipts and cannot become new recurring work through the API.
 
 The template resolves its locale when created and stores that value. Each occurrence
 passes the stored locale explicitly, so later Project or Worker requirements do not

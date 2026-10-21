@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { dayActionTiles, dayVisualTicket } from "../src/lib/dayPresentation";
 import { workItemTicketGroupKey } from "../src/lib/workItemPresentation";
 import { buildWorkspaceRail } from "../src/lib/workspaceRail";
 import type { BoardSprintItem } from "../src/lib/types";
-import type { DayTicket, WorkAttention } from "../src/lib/types";
+import type { WorkAttention } from "../src/lib/types";
 
 const quiet: WorkAttention = {
   awaiting_reply: false, awaiting_answer: false, awaiting_approval: false,
@@ -24,7 +23,7 @@ describe("conversation dots across Worker references", () => {
       stage: "needs_implementation", ticket_status: "agent", conversation_id: null
     };
     expect(workItemTicketGroupKey(ticket)).toBe(expected);
-    expect(dayVisualTicket(ticket as DayTicket).ticket.conversation_signal).toBeUndefined();
+    expect(buildWorkspaceRail([], [{ id: "item", title: "Item", tickets: [ticket], ...quiet, ticket_rollup: quiet } as BoardSprintItem]).items[0].groups[0].cards[0].conversation_signal).toBeUndefined();
   });
 
   it("keeps the supervisor canonical signal separate from children and legacy attention", () => {
@@ -36,20 +35,4 @@ describe("conversation dots across Worker references", () => {
     expect(buildWorkspaceRail([], [item]).items[0].conversationSignal).toBeUndefined();
   });
 
-  it("keeps Home action counts when dots disappear or coexist with work", () => {
-    const visual = (id: string, values: Partial<WorkAttention>) => dayVisualTicket({
-      id, title: id, stage: "needs_implementation", ticket_status: "agent", conversation_id: null, ...quiet, ...values
-    } as DayTicket);
-    const tickets = [
-      visual("approval-running", { awaiting_approval: true, agent_state: "working" }),
-      visual("answer-running", { awaiting_answer: true, agent_state: "working" }),
-      visual("assigned-running", { assigned: true, agent_state: "working" }),
-      visual("assigned", { assigned: true }),
-      visual("message", { awaiting_reply: true })
-    ];
-    expect(tickets.every((ticket) => !ticket.ticket.conversation_signal)).toBe(true);
-    expect(dayActionTiles(tickets).map((tile) => [tile.key, tile.count])).toEqual([
-      ["needs-me", 2], ["review", 1], ["working", 1], ["assigned", 1]
-    ]);
-  });
 });

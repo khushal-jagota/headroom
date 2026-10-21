@@ -153,10 +153,13 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             evidence["cli_executable_receipts"] = (
                 cli_receipts.read_text().splitlines() if cli_receipts.exists() else []
             )
-            evidence["day_count"] = snapshot.execute("SELECT COUNT(*) FROM days").fetchone()[0]
-            evidence["day_ticket_count"] = snapshot.execute(
-                "SELECT COUNT(*) FROM day_tickets"
-            ).fetchone()[0]
+            evidence["calendar_tables"] = [
+                str(row[0])
+                for row in snapshot.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name IN ('days','day_tickets','sprints','sprint_outcomes')"
+                )
+            ]
         finally:
             snapshot.close()
         evidence_path.parent.mkdir(parents=True, exist_ok=True)
@@ -197,9 +200,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 assert response.is_success, response.text
                 return cast(dict[str, Any], response.json())
 
-            project = await post(
-                "project", "/api/projects", {"name": "Isolated Luna proof"}
-            )
+            project = await post("project", "/api/projects", {"name": "Isolated Luna proof"})
             item = await post(
                 "orchestrator",
                 "/api/items",
@@ -380,7 +381,7 @@ async def _exercise(runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             )
             assert done["stage"] == "done"
             keep()
-            assert evidence["day_count"] == evidence["day_ticket_count"] == 0
+            assert evidence["calendar_tables"] == []
             assert len(evidence["cli_executable_receipts"]) >= 4
             assert set(evidence["cli_executable_receipts"]) == {str(cli_executable)}
             evidence["result"] = "passed"

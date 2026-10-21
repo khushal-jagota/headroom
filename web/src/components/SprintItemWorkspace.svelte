@@ -46,7 +46,7 @@
   let {
     itemId,
     sprintName,
-    backHref = "#/sprint",
+    backHref = "#/workspace/chief-of-staff",
     workspaceResource = null,
     navigationErrorHandledByParent = false
     // A host that is already a way back can pass null so the line is not drawn.

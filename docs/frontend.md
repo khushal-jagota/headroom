@@ -20,8 +20,8 @@ anything had changed.
 
 One screen per part of the system:
 
-- **Historical Days** — dated Day links remain readable. The primary navigation no longer
-  supplies a Today planning screen. A bare former Home address opens Chief.
+- **Removed calendar screens** — Day and date-range Sprint screens no longer exist.
+  Old dated links use the unavailable-route view. A bare former Home address opens Chief.
 - **Review** — the human chamber for owner-addressed Ticket proposals: one oldest-first
   walk with a centred item, its Ticket title, and Skip and Open Ticket top-right.
   Proposal items add their labelled recap, ask, approval, and send-back controls.
@@ -131,7 +131,7 @@ One screen per part of the system:
   including completed Tickets that retain a backlog flag. Both headers start closed.
   Active groups start open. The sidebar excludes Backlog without a change to the shared
   classifier or unread index. Resume restores ordinary classification and readiness checks.
-  Historical Day counts and Feedback labels keep their separate rules.
+  Feedback labels keep their separate rules.
 
   Manual choices survive ordinary data refreshes in that page, including a group that
   disappears and returns. They do not persist across visits. These rounded group headers
@@ -153,7 +153,7 @@ One screen per part of the system:
   an explicit message sent to the owner remains unread in that conversation. Both can
   appear together. Ending a turn stops the spinner and never creates a dot. Approval,
   questions, assignment, errors, and child activity create neither mark. Missing signal
-  data stays quiet. Historical Day, Sprint, and Feedback references use these same marks
+  data stays quiet. Feedback references use these same marks
   when their served record includes the conversation signal. Lifecycle progress stays
   separate from conversation marks.
   Fold summaries use text counts, never aggregate dots. Status group membership and
@@ -201,10 +201,9 @@ One screen per part of the system:
   Item workspace or a Worker replaces the rail. Its inline eyebrow supplies the way back.
 
   A Ticket never opens as a full-screen page. Every Ticket link in the app, including
-  the ones on the Sprint page and in Review, uses the Workspace address. The old
+  the ones in orchestrator views and Review, uses the Workspace address. The old
   `#/ticket/<ticket-id>` address redirects there, so shared links and stored
-  notifications still work. A Ticket opens this way even when it is not on today's
-  board, because the Ticket resource answers for it rather than the board card.
+  notifications still work. The Ticket resource answers independently of the selected orchestrator.
 - **Worker** — one document with a clickable Project and human-readable Ticket type above its title and
   recap. The title is 28px, recap 17px, body 15px, labels 13px, and quiet text 11px.
   The ask for a fresh recap sits with the lifecycle controls. Pressing it empties the
@@ -239,8 +238,6 @@ One screen per part of the system:
   below the Workers. Chief shares the same header, reading column, and conversation layer.
   Chief keeps an editable recap in its managed settings, through the same header control.
   Chief cannot settle and has no Project or parent navigation.
-- **Historical Sprint** — retained dated links and documents remain readable. These
-  screens do not supply planning or change Worker continuation. See `sprints.md`.
 - **Chief children** — the Chief and ordinary orchestrators show one scoped Worker list.
   Active groups stay visible. Backlogged and Done have independent collapsible headers.
   Each Chief section retains its own bounded pages and reader choices. Ordinary
@@ -562,15 +559,15 @@ The screens are assembled from a small kit of shared pieces rather than
 hand-rolling the same shapes per screen. Each does one job:
 
 - **Disclosure** — the one expand/collapse surface (a native details/summary with a
-  chevron): Ticket recaps, sprint phases and items, ideas with bodies, the
+  chevron): Ticket recaps, orchestrator items, ideas with bodies, the
   Backlog Ticket form, board project sections.
 - **ListRow** — the one row shape (title on the left, metadata on the right, hover):
-  sprint tickets, Backlog Tickets, flat ideas, and board cards. Renders as a
+  orchestrator children, Backlog Tickets, flat ideas, and board cards. Renders as a
   link, a button, or a plain non-interactive row.
 - **SectionHeading** — a quiet "Label · count" group heading.
 - **ScreenHeader** — a screen's title row plus an optional meta pill.
 - **Button** — the one button (or link), in a primary, quiet, or pill look.
-- **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
+- **Pill** — a small static tag with an optional key label (dates, counts, due).
 - **Chip** — the small project tag, and the plain tag with no variant.
 - **StageMark** — the single stage dot showing a field's progress.
 - **WorkerProposalCard** — the single approval card on both the Ticket and Review
@@ -724,16 +721,11 @@ A ticket's stage labels and order are not baked into the frontend: they come fro
 server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each
 Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.ts`
 remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
-has loaded. `web/src/lib/dates.ts` holds the date formatting the Day and Sprint screens
-share — the short-month day label the redesign speaks in, plus the weekday name. The two
-visible native selects remain separate because they share almost nothing beyond being
-native selects.
+has loaded. Shared date helpers format the ordinary dates that remain.
 
 **The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
 diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not
-restated here. The Sprint tracking page derives its "day N of M" readout from the
-canonical sprint day. That day changes at 05:00 local time, in step with the server's
-planning-day boundary.
+restated here.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces),
@@ -772,7 +764,7 @@ unhashed assets revalidate so the next load sees the current deployment.
 ## Handoffs
 
 - Every backend doc owns the behaviour its screen projects — **Tickets & the gates**
-  (`tickets-and-gates.md`), **Days** (`days.md`), **Sprints** (`sprints.md`),
+  (`tickets-and-gates.md`), **Orchestrators** (`sprints.md`),
   **Backlog & Ideas** (`backlog-and-ideas.md`), **the conversation system**
   (`conversation-system.md`).
 - **Worker types** (`worker-types.md`) — the served manifest the Ticket screen turns
@@ -800,7 +792,7 @@ PARTIAL and keeps exit zero. Unlisted runtime files receive no credit from that 
 
 `npm --prefix web run test:browser` runs the shared browser catalog. Add entry names after
 `--` to select `shell-feedback`, `ticket-review`, `configuration-schedules`, `conversation`,
-`composer-voice`, `workspace`, `artifacts`, or `historical-sprint`. One invocation shares
+`composer-voice`, `workspace`, or `artifacts`. One invocation shares
 the build, static server, and Chromium process. Independent cases keep fresh contexts.
 
 The workspace entry first runs `workspace-rail-projection.test.ts` with typechecked
@@ -814,7 +806,7 @@ Other former direct host commands move to their catalog entry. Ideas and feedbac
 and scheduled tasks use `configuration-schedules`. Pane, conversation switches,
 unanswered sends, and open-state cases use `conversation`. Composer and voice use
 `composer-voice`. Rail, order, Settled groups, children, and reader state use `workspace`.
-File preview uses `artifacts`. Sprint documents use `historical-sprint`.
+File preview uses `artifacts`. The historical Sprint browser entry is removed.
 
 `npm --prefix web test` runs full Vitest and the browser catalog. `test:legacy` remains
 an alias for `test:browser`. Browser output names executed and omitted boundaries and

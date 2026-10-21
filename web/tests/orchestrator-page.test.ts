@@ -5,9 +5,7 @@ import type { SprintItemWorkspaceTicket } from "../src/lib/types";
 const ticket = (id:string, overrides:Partial<SprintItemWorkspaceTicket> = {}): SprintItemWorkspaceTicket => ({
   id, title:id, recap:"",recap_preview:"", is_backlogged:false, stage:"needs_implementation", activity_at:1,
   ticket_status:"agent", waiting_to_closeout:false, has_pending_proposal:false,
-  gating_field:null, blocked:false, worker_type:"coding", day_ids:[], sprint_id:null,
-  sprint_name:null, awaiting_reply:false, awaiting_answer:false, awaiting_approval:false,
-  awaiting_agent_approval:false, assigned:false, agent_state:"idle", conversation_id:`conversation-${id}`,
+  gating_field:null, blocked:false, worker_type:"coding", awaiting_reply:false, awaiting_answer:false, awaiting_approval:false, awaiting_agent_approval:false, assigned:false, agent_state:"idle", conversation_id:`conversation-${id}`,
   ...overrides
 });
 describe("complete orchestrator page groups", () => {

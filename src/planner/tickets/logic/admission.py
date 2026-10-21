@@ -21,7 +21,6 @@ TICKET_FIELDS_ONLY_FROM_ABOVE: Final[frozenset[str]] = frozenset(
     {
         "title",
         "project_id",
-        "sprint_id",
         "sprint_item_id",
         "orchestrator",
         "field_values",

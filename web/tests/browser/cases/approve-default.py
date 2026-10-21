@@ -78,7 +78,6 @@ def run(browser, urls):
         return {
             "project_id": "project_one",
             "project": "Panels",
-            "sprint_id": None,
             "sprint_item_id": "item_one",
             "sprint_item_title": "Outcome",
             "id": ticket_id,
@@ -94,7 +93,6 @@ def run(browser, urls):
             "ceiling_holder": {"kind": "sprint_item", "id": "item_one"},
             "conversation_id": None,
             "conversation_history": [],
-            "day_ids": [],
             "blocked": False,
             "is_backlogged": False,
             "blocker_summary": {"blocked_by": []},

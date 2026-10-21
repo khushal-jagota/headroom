@@ -3,9 +3,8 @@
 The command tree mirrors the product model:
 
 * send-message: send text to one Panels conversation owner
-* day: plan and inspect a planning day
 * ticket: create, inspect, organize, and approve tickets
-* sprint: create, inspect, edit, and populate sprints and sprint items
+* orchestrator: create, inspect, edit, and populate ordinary orchestrators
 
 Administrative and compatibility commands remain callable, but ordinary help exposes
 only the five actor-neutral roots used for Panels work.
@@ -45,15 +44,6 @@ _LOCALES = [locale.value for locale in TicketLocale]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
 _ACTOR_ENV = "PLAN_ACTOR"
 _SPRINT_ITEM_ID_ENV = "PLAN_SPRINT_ITEM_ID"
-
-_DAY_FIELDS = {
-    "focus": "focus",
-    "brief-take": "brief_take",
-    "watchout": "watchout",
-    "if-today-lands": "if_today_lands",
-    "midday-reconciliation": "midday_reconciliation",
-    "notes": "notes",
-}
 
 
 # One way to name who holds a ceiling, wherever tooling takes one. The kind follows from
@@ -234,14 +224,6 @@ def _feedback_list_line(note: dict[str, Any]) -> str:
     return f"{note['id']} · {captured_at.strftime('%Y-%m-%d %H:%M')} · {page} · {note['text']}"
 
 
-def _current_sprint_id(as_json: bool) -> str:
-    data = http.send("GET", "/api/sprint/current", as_json=as_json)
-    sprint = data.get("sprint") if isinstance(data, dict) else None
-    if sprint is None:
-        http.fail_validation("no current sprint", as_json, recovery="panels sprint list")
-    return str(sprint["id"])
-
-
 def _record_parts(raw: str | None, as_json: bool) -> tuple[str, ...] | None:
     try:
         return parse_part_names(raw)
@@ -290,7 +272,6 @@ def _ticket_record(
         "deadline",
         "project_id",
         "sprint_item_id",
-        "effective_sprint_id",
         "ceiling",
     )
     header = {key: data[key] for key in header_keys if key in data}
@@ -307,21 +288,12 @@ def _ticket_record(
     return header, parts
 
 
-def _sprint_record(
-    data: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, RecordPart]]:
-    header = {key: data[key] for key in ("id", "name", "date_start", "date_end")}
-    part_names = ("primary_bet", "kickoff", "checkpoint", "review")
-    return header, {name: part(data[name]) for name in part_names}
-
-
 def _sprint_item_record(
     data: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, RecordPart]]:
     header_keys = (
         "id",
         "title",
-        "committed_sprints",
         "project_id",
         "project",
     )
@@ -339,18 +311,6 @@ def _sprint_item_record(
             "employee_launch_reasoning_effort": launch["employee_launch_reasoning_effort"],
         }
     return (header, {"goal": part(data["goal"]), "recap": part(data["recap"])})
-
-
-def _day_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, RecordPart]]:
-    part_names = (
-        "focus",
-        "brief_take",
-        "watchout",
-        "if_today_lands",
-        "midday_reconciliation",
-        "notes",
-    )
-    return {"id": data["id"]}, {name: part(data[name]) for name in part_names}
 
 
 def _project_record(
@@ -391,16 +351,6 @@ def _gating_field_for_stage(manifest: dict[str, Any], stage: str) -> str | None:
             gating = candidate["gating_field"]
             return str(gating) if gating is not None else None
     return None
-
-
-def sprint_value_for_write(raw: str | None, as_json: bool) -> str | None:
-    if raw is None:
-        return None
-    if raw == "none":
-        return None
-    if raw == "current":
-        return _current_sprint_id(as_json)
-    return raw
 
 
 def _format_tickets(tickets: list[dict[str, Any]]) -> str:
@@ -453,20 +403,6 @@ def bounded_options(func: Callable[..., Any]) -> Callable[..., Any]:
         default=DEFAULT_LIST_LIMIT,
         show_default=True,
     )(func)
-
-
-def _format_day(data: dict[str, Any]) -> str:
-    lines = [
-        f"day {data['id']}",
-        f"focus: {data['focus'] or ''}",
-        f"brief-take: {data['brief_take'] or ''}",
-        f"watchout: {data['watchout'] or ''}",
-        f"if-today-lands: {data['if_today_lands'] or ''}",
-        f"midday-reconciliation: {data['midday_reconciliation'] or ''}",
-        "tickets:",
-        _format_tickets(data["tickets"]),
-    ]
-    return "\n".join(lines)
 
 
 def add_project_selectors(
@@ -1139,60 +1075,6 @@ def project_set(
     http.emit(data, as_json, f"{data['id']} {field} set")
 
 
-# --- day ----------------------------------------------------------------------
-
-
-@main.group("day")
-def day() -> None:
-    """Plan and inspect a day."""
-
-
-@day.command("show")
-@click.argument("date", required=False)
-@click.argument("part_names", required=False)
-@click.option("--date", "date_option", default=None, help="today or YYYY-MM-DD.")
-@json_option
-def day_show(
-    date: str | None,
-    part_names: str | None,
-    date_option: str | None,
-    as_json: bool,
-) -> None:
-    """Show a Day manifest or selected comma-separated PART_NAMES."""
-    if date_option is not None and date is not None:
-        if part_names is not None:
-            http.fail_validation(
-                "with --date, pass only the optional part list positionally", as_json
-            )
-        if date == date_option:
-            date_ = date_option
-        else:
-            date_, part_names = date_option, date
-    else:
-        date_ = date or date_option or "today"
-    data = http.send("GET", f"/api/day/{date_}", as_json=as_json)
-    header, parts = _day_record(data)
-    _emit_record(header, parts, part_names, as_json)
-
-
-@day.command("list-tickets", hidden=True)
-@click.option("--date", "date_", default="today", help="today or YYYY-MM-DD.")
-@bounded_options
-@json_option
-def day_list_tickets(date_: str, limit: int, offset: int, as_json: bool) -> None:
-    data = http.send(
-        "GET",
-        f"/api/day/{date_}/tickets",
-        as_json=as_json,
-        params={"limit": limit, "offset": offset},
-    )
-    http.emit(
-        data,
-        as_json,
-        _format_bounded(_format_ticket_summaries(data["tickets"]), data["page"]),
-    )
-
-
 # --- ticket -------------------------------------------------------------------
 
 
@@ -1224,9 +1106,7 @@ def ticket() -> None:
 @click.option("--deadline", default=None, hidden=True)
 @click.option("--project", default=None, hidden=True)
 @click.option("--project-id", default=None, hidden=True)
-@click.option("--sprint", "sprint_id", default=None, hidden=True)
 @click.option("--sprint-item", "sprint_item", default=None, hidden=True)
-@click.option("--backlog", is_flag=True, default=False, hidden=True)
 @click.option(
     "--blocked-by",
     "blocked_by_ticket_ids",
@@ -1252,9 +1132,7 @@ def ticket_create(
     deadline: str | None,
     project: str | None,
     project_id: str | None,
-    sprint_id: str | None,
     sprint_item: str | None,
-    backlog: bool,
     blocked_by_ticket_ids: tuple[str, ...],
     kickoff_note: str | None,
     kickoff_note_file: str | None,
@@ -1271,16 +1149,13 @@ def ticket_create(
         deadline,
         project,
         project_id,
-        sprint_id,
         sprint_item,
         kickoff_note,
         kickoff_note_file,
         ceiling,
         holder,
     )
-    legacy_used = (
-        any(value is not None for value in legacy_values) or backlog or bool(blocked_by_ticket_ids)
-    )
+    legacy_used = any(value is not None for value in legacy_values) or bool(blocked_by_ticket_ids)
     if input_json is not None:
         if legacy_used:
             http.fail_validation(
@@ -1323,8 +1198,6 @@ def ticket_create(
     add_project_selectors(
         body, project=project, project_id=project_id, required=False, as_json=as_json
     )
-    if sprint_id is not None or backlog:
-        http.fail_validation("Sprint placement is retired", as_json)
     if sprint_item is not None:
         body["orchestrator"] = {"kind": "sprint_item", "id": sprint_item}
     if blocked_by_ticket_ids:
@@ -1618,8 +1491,6 @@ def ticket_set_value(
 @click.argument("ticket_id")
 @click.option("--project", default=None, help="Project name.")
 @click.option("--project-id", default=None, help="Project id.")
-@click.option("--sprint", default=None, help="Sprint id or current.")
-@click.option("--backlog", is_flag=True, default=False, help="Clear Sprint placement.")
 @click.option("--sprint-item", default=None, help="Optional Sprint Item classification.")
 @click.option("--clear-sprint-item", is_flag=True, default=False, help="Remove classification.")
 @json_option
@@ -1627,14 +1498,10 @@ def ticket_place(
     ticket_id: str,
     project: str | None,
     project_id: str | None,
-    sprint: str | None,
-    backlog: bool,
     sprint_item: str | None,
     clear_sprint_item: bool,
     as_json: bool,
 ) -> None:
-    if backlog or sprint is not None:
-        http.fail_validation("Sprint placement is retired", as_json)
     if sprint_item is not None and clear_sprint_item:
         http.fail_validation(
             "--sprint-item and --clear-sprint-item are mutually exclusive", as_json
@@ -1998,52 +1865,7 @@ def ticket_copy(ticket_id: str | None, as_json: bool) -> None:
 
 @main.group("sprint")
 def sprint() -> None:
-    """Create, inspect, edit, and populate sprints."""
-
-
-@sprint.command("list")
-@bounded_options
-@json_option
-def sprint_list(limit: int, offset: int, as_json: bool) -> None:
-    data = http.send(
-        "GET",
-        "/api/sprints",
-        as_json=as_json,
-        params={"detail": "summary", "limit": limit, "offset": offset},
-    )
-    http.emit(
-        data,
-        as_json,
-        _format_bounded(
-            _lines(
-                data["sprints"],
-                lambda s: f"{s['id']} {s['date_start']}..{s['date_end']} {s['name']}",
-            ),
-            data["page"],
-        ),
-    )
-
-
-@sprint.command("show")
-@click.argument("sprint_id", required=False)
-@click.argument("part_names", required=False)
-@json_option
-def sprint_show(sprint_id: str | None, part_names: str | None, as_json: bool) -> None:
-    """Show a Sprint manifest or selected comma-separated PART_NAMES."""
-    if sprint_id is None or sprint_id == "current":
-        current_response = http.send("GET", "/api/sprint/current", as_json=as_json)
-        data = current_response["sprint"]
-        if data is None:
-            http.fail_validation("no current sprint", as_json, recovery="panels sprint list")
-    else:
-        data = http.send(
-            "GET",
-            "/api/sprints",
-            as_json=as_json,
-            params={"detail": "full", "id": sprint_id},
-        )
-    header, parts = _sprint_record(data)
-    _emit_record(header, parts, part_names, as_json)
+    """Compatibility command group for Sprint Items."""
 
 
 @sprint.group("item")
@@ -2593,51 +2415,12 @@ def ticket_request_help(
     )
 
 
-@sprint.group("outcome", hidden=True)
-def sprint_outcome() -> None:
-    """Compatibility paths for Sprint Item membership."""
-
-
-def _list_sprint_items(sprint_id: str, as_json: bool) -> None:
-    sid = sprint_value_for_write(sprint_id, as_json)
-    if sid is None:
-        http.fail_validation("tracking requires a Sprint", as_json)
-    result = http.send("GET", f"/api/sprints/{sid}/tracking", as_json=as_json)
-    http.emit(
-        result,
-        as_json,
-        _lines(
-            result["outcome_groups"],
-            lambda group: f"{group['outcome']['id']} {group['outcome']['title']}",
-        ),
-    )
-
-
-@sprint_outcome.command("list")
-@click.argument("sprint_id")
-@json_option
-def sprint_outcome_list(sprint_id: str, as_json: bool) -> None:
-    _list_sprint_items(sprint_id, as_json)
-
-
-@sprint.command("list-items")
-@click.argument("sprint_id")
-@json_option
-def sprint_list_items(sprint_id: str, as_json: bool) -> None:
-    """List the Sprint Items committed to one Sprint."""
-    _list_sprint_items(sprint_id, as_json)
-
-
 _PUBLIC_COMMAND_HELP = {
     ("send-message",): "Send one message to one existing Panels conversation.",
     ("project", "list"): "List Projects as bounded summaries.",
     ("project", "show"): "Read one Project record or selected parts.",
     ("project", "create"): "Create one Project.",
     ("project", "set"): "Change one Project field.",
-    ("day", "show"): "Read one Day record or selected parts.",
-    ("day", "set"): "Change one authored Day field.",
-    ("day", "add-ticket"): "Add one Ticket to one Day.",
-    ("day", "remove-ticket"): "Remove one Ticket from one Day.",
     ("ticket", "create"): "Create one Ticket from one JSON object.",
     ("ticket", "list"): "List Tickets with bounded filters.",
     ("ticket", "show"): "Read the current Worker's Ticket or one named Ticket.",
@@ -2656,17 +2439,6 @@ _PUBLIC_COMMAND_HELP = {
         "ticket",
         "request-help",
     ): "Record and send one Ticket help request from standard input.",
-    ("sprint", "create"): "Create one Sprint.",
-    ("sprint", "list"): "List Sprints as bounded summaries.",
-    ("sprint", "show"): "Read one Sprint record or selected parts.",
-    ("sprint", "set"): "Change one Sprint field.",
-    ("sprint", "add-item"): "Add one Sprint Item to one Sprint.",
-    ("sprint", "remove-item"): "Remove one Sprint Item from one Sprint.",
-    ("sprint", "list-items"): "List the Sprint Items tracked in one Sprint.",
-    (
-        "sprint",
-        "carry-item",
-    ): "Carry one Sprint Item and selected Tickets to another Sprint.",
     ("sprint", "item", "create"): "Create one Sprint Item.",
     ("sprint", "item", "list"): "List Sprint Items as bounded summaries.",
     ("sprint", "item", "show"): "Read one Sprint Item record or selected parts.",
@@ -2741,13 +2513,7 @@ def orchestrator_settle(item_id: str, active: bool, as_json: bool) -> None:
 
 _set_public_command_help()
 
-# Calendar objects retain historical reads only. The Item identity and conversations stay intact.
-for _retired in ("set", "add-ticket", "remove-ticket"):
-    day.commands.pop(_retired, None)
-for _retired in ("create", "set", "add-item", "remove-item", "carry-item"):
-    sprint.commands.pop(_retired, None)
-for _retired in ("add", "remove", "carry"):
-    sprint_outcome.commands.pop(_retired, None)
+# Keep the existing Item alias and its conversation identities.
 main.add_command(sprint_item, "orchestrator")
 
 

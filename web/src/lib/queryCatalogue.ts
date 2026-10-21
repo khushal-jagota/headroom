@@ -10,19 +10,15 @@ import type {
   ChiefManagementSettings,
   OrchestratorPrincipal,
   OrchestratorChildFilter,
-  CurrentSprintResponse,
-  DayResponse,
   DeploymentStatus,
   IdeasResponse,
   NotificationSettingsResponse,
   ProjectsResponse,
   SchedulesResponse,
   SkillsHomeResponse,
-  SprintsResponse,
   SprintItemsResponse,
   SprintItemWorkspace,
   SprintItemWorkspaceContent,
-  SprintTrackingBody,
   TicketDetail,
   TicketSummariesResponse,
   VpsStatusSummary,
@@ -67,7 +63,6 @@ export const queries = {
   vpsStatusSummary: () =>
     jsonQuery<VpsStatusSummary>(["vps-status-summary"], "/api/vps-status-summary"),
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
-  todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
   orchestratorTicketSummaries: (principal: OrchestratorPrincipal, filter: OrchestratorChildFilter, offset: number, limit = 30) =>
     jsonQuery<TicketSummariesResponse>(
       ["tickets", "orchestrator", { principal, filter, offset, limit }],
@@ -79,15 +74,7 @@ export const queries = {
     versionedJsonQuery<FeedbackCountResponse>(["feedback-count"], "/api/feedback/count"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects?detail=full"),
   schedules: () => jsonQuery<SchedulesResponse>(["schedules"], "/api/schedules"),
-  sprintSummaries: () => jsonQuery<SprintsResponse>(["sprints"], "/api/sprints?detail=full"),
   sprintItems: () => jsonQuery<SprintItemsResponse>(["items"], "/api/items?detail=full"),
-  currentSprint: () =>
-    jsonQuery<CurrentSprintResponse>(["sprint", "current"], "/api/sprint/current"),
-  sprintTracking: (sprintId: string) =>
-    jsonQuery<SprintTrackingBody>(
-      ["sprint", sprintId, "tracking"],
-      `/api/sprints/${encodeURIComponent(sprintId)}/tracking`
-    ),
   sprintItemWorkspaceContent: (itemId: string) =>
     versionedJsonQuery<SprintItemWorkspaceContent>(
       ["sprint-item", itemId, "workspace-content"],

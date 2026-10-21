@@ -22,7 +22,7 @@
 
   let open = $state(false);
   let attached = $state(true);
-  let activeContext = $state<FeedbackPageContext>({ address: "#/day", label: "Home" });
+  let activeContext = $state<FeedbackPageContext>({ address: "#/workspace/chief-of-staff", label: "Chief of Staff" });
   let text = $state("");
   let saving = $state(false);
   let error = $state<unknown>(null);
