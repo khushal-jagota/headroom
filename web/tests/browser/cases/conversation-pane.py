@@ -2260,10 +2260,39 @@ def _conversation_repairs(browser, url):
     page.close()
 
 
+def _manager_recap_header(browser, url):
+    """The real header must remeasure its recap after its typography changes."""
+    import time
+
+    from playwright.sync_api import expect
+
+    started = time.perf_counter()
+    page = browser.new_page(viewport={"width": 1100, "height": 800})
+    try:
+        page.goto(url + "?manager-layout=1", wait_until="domcontentloaded")
+        recap = page.get_by_role("textbox", name="Manager recap", exact=True)
+        toggle = page.locator("[data-manager-recap-toggle]")
+        expect(recap).to_have_text("The recap belongs below the title.")
+        assert page.evaluate("window.__layoutHeaderMatches()")
+        page.evaluate("window.__layoutUpdate('A long recap paragraph with enough text to span several measured lines. '.repeat(30))")
+        expect(toggle).to_be_visible()
+        toggle.click()
+        expect(toggle).to_have_text("Show less")
+        page.evaluate("window.__layoutUpdate('')")
+        expect(recap).to_be_empty()
+        expect(recap).to_have_attribute("data-ph", "Write a concise recap for this manager…")
+        expect(toggle).to_have_count(0)
+        assert page.evaluate("window.__layoutHeaderMatches()")
+    finally:
+        page.close()
+        print(f"Manager recap header browser scenario: {time.perf_counter() - started:.3f}s", flush=True)
+
+
 def run(browser, urls):
     from tests.e2e.harness import browser_failure_evidence
 
     with browser_failure_evidence(browser, "conversation-pane-browser"):
+        _manager_recap_header(browser, urls[0])
         _owner_width_frames(browser, urls[0])
         _conversation_repairs(browser, urls[0])
         _projected_visual_relationships(browser, urls[0])

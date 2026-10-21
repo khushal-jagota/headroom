@@ -205,6 +205,13 @@ conversation. `working` means that its runtime is running. `message_for_owner` m
 an explicit `message_to_owner` row is newer than the owner read position. Both can be true
 at once. A conversation with neither fact exposes two false values.
 
+The three boolean runtime checks — whether a turn is running, a permission ask is
+pending, or user input is pending — inspect existing live state without reading a stored
+record or waiting for a conversation lock. A conversation absent from this runtime has
+no live work or pending answers. Opening or sending still loads its stored record when
+needed. These checks still reject reads when the runtime has shut down or Signal is
+unavailable.
+
 Each conversation shows one indicator: an unread message dot takes precedence over the
 working spinner. Reading the latest message reveals the spinner if work is still running.
 This presentation does not change either fact or the shell's actual-work count.
