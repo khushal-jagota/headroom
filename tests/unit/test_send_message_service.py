@@ -32,7 +32,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.message_delivery import recap_request, service
 from planner.runtime import conversation_start
 from planner.runtime.conversation_start import DeliveredMessage
-from planner.sprints import data as sprints_data
+from planner.managers import data as managers_data
 from planner.tickets import data as tickets_data
 
 
@@ -173,12 +173,12 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Exercise the real conversation store and backend process at the service seam."""
-    first = Principal(PrincipalKind.sprint_item, "si_first")
-    second = Principal(PrincipalKind.sprint_item, "si_second")
+    first = Principal(PrincipalKind.manager, "si_first")
+    second = Principal(PrincipalKind.manager, "si_second")
     monkeypatch.setattr(
-        sprints_data,
-        "read_item",
-        lambda _conn, item_id: SimpleNamespace(item=SimpleNamespace(supervisor_agent_key=item_id)),
+        managers_data,
+        "read_manager",
+        lambda _conn, item_id: SimpleNamespace(item=SimpleNamespace(manager_agent_key=item_id)),
     )
     monkeypatch.setattr(
         conversation_start,
@@ -186,7 +186,7 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
         lambda _conn, key: f"c_{key}",
     )
     monkeypatch.setattr(
-        conversation_start, "sprint_item_supervisor_resolve", lambda _item: object()
+        conversation_start, "manager_resolve", lambda _item: object()
     )
 
     async def send_to_agent(
@@ -235,13 +235,13 @@ def test_supervisor_messages_keep_authenticated_addresses_in_durable_record_and_
                 assert prompts[0].sender == sender
                 assert prompts[0].recipient == recipient
                 assert message_content_text(prompts[0].content) == text
-                assert prompts[0].sender_label == f"Sprint Item {sender.id}"
+                assert prompts[0].sender_label == f"Manager {sender.id}"
             first_wire = (await subject.backend_writes("c_si_second"))[-1].text
             assert first_wire.startswith("[Authenticated Panels reply requirement]")
-            assert "panels send-message --sprint-item si_first" in first_wire
-            assert first_wire.endswith("Sprint Item si_first:\nCoordinate")
+            assert "panels send-message --manager si_first" in first_wire
+            assert first_wire.endswith("Manager si_first:\nCoordinate")
             reply_wire = (await subject.backend_writes("c_si_first"))[-1].text
-            assert reply_wire == "Sprint Item si_second:\nAgreed"
+            assert reply_wire == "Manager si_second:\nAgreed"
             turn = await subject.system.active_turn_reference("c_si_second")
             assert turn is not None
             assert not await subject.system.turn_expects_reply(turn, first)
@@ -368,22 +368,22 @@ def test_a_recap_cannot_be_asked_of_the_owner(
     asyncio.run(exercise())
 
 
-def test_a_recap_request_empties_an_orchestrator_recap_through_its_own_writer(
+def test_a_recap_request_empties_an_manager_recap_through_its_own_writer(
     tmp_db: Connection,
     fake_clock: PlannerTestClock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Each kind of agent keeps its recap in its own field, under its own writer.
 
-    A Ticket, an orchestrator, and the Chief store the line in three different places,
-    and only the orchestrator's writer validates the field name it is handed. Nothing
-    else here presses that writer, so a renamed field would refuse every orchestrator
+    A Ticket, an manager, and the Chief store the line in three different places,
+    and only the manager's writer validates the field name it is handed. Nothing
+    else here presses that writer, so a renamed field would refuse every manager
     press and no test would notice.
     """
-    item = sprints_data.create_item(
+    item = managers_data.create_manager(
         tmp_db, title="Surfaces", project_id="project_vylo", clock=fake_clock
     )
-    sprints_data.update_item(
+    managers_data.update_manager(
         tmp_db, item.id, edits={"recap": "Three surfaces reviewed."}, clock=fake_clock
     )
 
@@ -399,9 +399,9 @@ def test_a_recap_request_empties_an_orchestrator_recap_through_its_own_writer(
             tmp_db,
             fake_clock,
             RequestContext(Principal(PrincipalKind.owner, "owner")),
-            Principal(PrincipalKind.sprint_item, item.id),
+            Principal(PrincipalKind.manager, item.id),
         )
-        assert sprints_data.read_item(tmp_db, item.id).item.recap == ""
+        assert managers_data.read_manager(tmp_db, item.id).item.recap == ""
         assert sent == ["sent"]
 
     asyncio.run(exercise())

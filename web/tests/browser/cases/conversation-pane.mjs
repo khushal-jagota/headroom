@@ -40,7 +40,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   let catalogSelected=$state<string|null>(null);
   let catalogOwner=$state("t_catalog");
   (window as any).__catalogOwner=(owner:string)=>catalogOwner=owner;
-  import OrchestratorWorkspace from "../src/components/OrchestratorWorkspace.svelte";
+  import ManagerWorkspace from "../src/components/ManagerWorkspace.svelte";
   import { isPrimaryPressOutsideConversation } from "../src/lib/conversation/dismissal";
   const ticketGestures = new URLSearchParams(window.location.search).has("ticket");
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
@@ -127,7 +127,7 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
   }
 
   // The Ticket layout uses the same production predicate as TicketRoute. The
-  // orchestrator below mounts its actual production workspace and handlers.
+  // manager below mounts its actual production workspace and handlers.
   function dismissTicketOnPointerDown(event: PointerEvent): void {
     if (isPrimaryPressOutsideConversation(event)) conversationState = "rest";
   }
@@ -585,10 +585,10 @@ const indexPath = join(scratchRoot, `conversation-layer-index-${process.pid}.htm
       <div class="conversation-column">{@render conversationPane()}</div>
     </section>
   {:else}
-    <OrchestratorWorkspace bind:conversationState>
+    <ManagerWorkspace bind:conversationState>
       <button type="button" data-ticket-behind>Ticket content</button>
       {#snippet conversation()}{@render conversationPane()}{/snippet}
-    </OrchestratorWorkspace>
+    </ManagerWorkspace>
   {/if}
 </div>
 

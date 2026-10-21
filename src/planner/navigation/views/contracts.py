@@ -13,7 +13,7 @@ from planner.navigation.contracts import (
     AttentionKnowledge,
     ChiefRecord,
     Continuity,
-    OrchestratorValue,
+    ManagerValue,
     ProjectRecord,
     RecordKey,
     TicketValue,
@@ -22,7 +22,7 @@ from planner.navigation.delivery_contracts import CurrentAuthority, DegradedAuth
 from planner.navigation.proof_contracts import ProofResult
 
 VIEW_WIRE_VERSION = 3
-VIEW_PROJECTION_VERSION = 2
+VIEW_PROJECTION_VERSION = 3
 
 ViewSection = Literal["rail_parents", "rail_tickets", "children", "settled", "unread", "review"]
 ViewGroup = Literal[
@@ -43,7 +43,7 @@ ViewGroup = Literal[
 
 
 class ViewOwner(TypedDict):
-    kind: Literal["chief", "orchestrator", "ticket"]
+    kind: Literal["chief", "manager", "ticket"]
     id: str
 
 
@@ -66,7 +66,7 @@ class ViewWindowRequest(TypedDict):
 
 
 class ViewRequest(TypedDict):
-    projection_version: Literal[2]
+    projection_version: Literal[3]
     scope_generation: int
     locale: str
     selected: ViewOwner | None
@@ -88,11 +88,11 @@ class ViewTicketValue(TicketValue):
     recap_reference: ViewContentReference | None
 
 
-class ViewOrchestratorValue(OrchestratorValue):
+class ViewManagerValue(ManagerValue):
     recap_reference: ViewContentReference | None
 
 
-class ViewSettledOrchestratorValue(TypedDict):
+class ViewSettledManagerValue(TypedDict):
     """Settled rail membership without full-surface content dependencies."""
 
     title: str
@@ -113,16 +113,16 @@ class ViewTicketRecord(TypedDict):
     value: ViewTicketValue
 
 
-class ViewOrchestratorRecord(TypedDict):
-    kind: Literal["orchestrator"]
+class ViewManagerRecord(TypedDict):
+    kind: Literal["manager"]
     id: str
-    value: ViewOrchestratorValue
+    value: ViewManagerValue
 
 
-class ViewSettledOrchestratorRecord(TypedDict):
-    kind: Literal["orchestrator"]
+class ViewSettledManagerRecord(TypedDict):
+    kind: Literal["manager"]
     id: str
-    value: ViewSettledOrchestratorValue
+    value: ViewSettledManagerValue
 
 
 class ViewConversationRecord(TypedDict):
@@ -133,8 +133,8 @@ class ViewConversationRecord(TypedDict):
 
 type ViewRecord = (
     ViewTicketRecord
-    | ViewOrchestratorRecord
-    | ViewSettledOrchestratorRecord
+    | ViewManagerRecord
+    | ViewSettledManagerRecord
     | ViewConversationRecord
     | ChiefRecord
     | AddressRecord
@@ -171,7 +171,7 @@ class ViewContent(TypedDict):
 
 class ViewIdentity(TypedDict):
     wire_version: Literal[3]
-    projection_version: Literal[2]
+    projection_version: Literal[3]
     view_id: str
     scope_generation: int
     ordering_generation: str

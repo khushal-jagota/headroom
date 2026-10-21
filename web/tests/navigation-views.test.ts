@@ -9,7 +9,7 @@ import {authority,continuity,conversation} from './support/navigation/fixtures';
 
 function snapshot(request:ViewRequest,revision='0',name='one'):CurrentViewSnapshot {
   const source=conversation('c');
-  return {event:'snapshot',wire_version:3,projection_version:2,view_id:`view-${request.scope_generation}`,
+  return {event:'snapshot',wire_version:3,projection_version:3,view_id:`view-${request.scope_generation}`,
     scope_generation:request.scope_generation,ordering_generation:'fixture',coverage:{...continuity,revision},
     content_version:name,mode:'current',authority:authority(),proof:null,
     content:{records:[{kind:'project',id:'p',value:{name}},{kind:'conversation',id:'c',value:{attention:source.value.attention,owner_read_through_sequence:0,error_acknowledged_through_sequence:0}}],windows:[],counts:{running_conversations:1,out_claims:0,review:0,unread:0,settled:0}}};
@@ -84,52 +84,52 @@ describe('bounded navigation owner',()=>{
       expect((await pending).status).toBe('included');
     }finally{owner.dispose();}
   });
-  it('accepts only projection 2 and replaces lean/full records under one key',async()=>{
+  it('accepts only projection 3 and replaces lean/full records under one key',async()=>{
     const {owner,connections}=fixture();
     const presentationFor=createNavigationPresentationCache();
     try {
-      expect(defaultViewRequest().projection_version).toBe(2);
+      expect(defaultViewRequest().projection_version).toBe(3);
       const started=owner.start();
       const initial=snapshot(connections[0].request);
-      const lean={kind:'orchestrator' as const,id:'settled',value:{title:'Settled',created_at:1,settled:true as const,conversation_id:'c'}};
+      const lean={kind:'manager' as const,id:'settled',value:{title:'Settled',created_at:1,settled:true as const,conversation_id:'c'}};
       initial.content.records.push(lean);
-      expect(()=>parseFrame({...initial,projection_version:1})).toThrow();
-      expect(()=>applyFrame(undefined,{...initial,projection_version:1} as unknown as ViewFrame)).toThrow('projection version');
+      expect(()=>parseFrame({...initial,projection_version:2})).toThrow();
+      expect(()=>applyFrame(undefined,{...initial,projection_version:2} as unknown as ViewFrame)).toThrow('projection version');
       connections[0].send(parseFrame(initial));await started;
       const first=presentationFor(owner.getState().effective!);
-      expect(first.settledOrchestrators.map(item=>item.id)).toEqual(['settled']);
-      expect(first.rawOrchestratorsById.has('settled')).toBe(false);
-      expect(first.orchestratorsById.has('settled')).toBe(false);
-      expect(first.settledOrchestrators[0]).not.toHaveProperty('recap');
+      expect(first.settledManagers.map(item=>item.id)).toEqual(['settled']);
+      expect(first.rawManagersById.has('settled')).toBe(false);
+      expect(first.managersById.has('settled')).toBe(false);
+      expect(first.settledManagers[0]).not.toHaveProperty('recap');
       const full={...lean,value:{...lean.value,recap:'Retained for selection',recap_preview:'Retained',project_id:'p',recap_reference:null}};
-      const patch:ViewFrame={event:'patch',wire_version:3,projection_version:2,view_id:initial.view_id,
+      const patch:ViewFrame={event:'patch',wire_version:3,projection_version:3,view_id:initial.view_id,
         scope_generation:initial.scope_generation,ordering_generation:initial.ordering_generation,authority:initial.authority,
         coverage:{...continuity,revision:'1'},previous_coverage:initial.coverage,content_version:'full',previous_content_version:initial.content_version,
         upserts:[full],evictions:[],windows:[],counts:initial.content.counts};
       connections[0].send(parseFrame(patch));
       const promoted=presentationFor(owner.getState().effective!);
-      expect(promoted.rawOrchestratorsById.get('settled')?.value.recap).toBe('Retained for selection');
-      expect(promoted.orchestratorsById.get('settled')?.project).toBe('one');
-      expect(promoted.settledOrchestrators).toHaveLength(0);
+      expect(promoted.rawManagersById.get('settled')?.value.recap).toBe('Retained for selection');
+      expect(promoted.managersById.get('settled')?.project).toBe('one');
+      expect(promoted.settledManagers).toHaveLength(0);
       connections[0].send(parseFrame({...patch,coverage:{...continuity,revision:'2'},previous_coverage:patch.coverage,
         content_version:'lean-again',previous_content_version:'full',upserts:[lean]}));
       const demoted=presentationFor(owner.getState().effective!);
-      expect(owner.getState().publication!.records.filter(row=>row.kind==='orchestrator')).toHaveLength(1);
-      expect(demoted.rawOrchestratorsById.has('settled')).toBe(false);
-      expect(demoted.settledOrchestrators).toHaveLength(1);
+      expect(owner.getState().publication!.records.filter(row=>row.kind==='manager')).toHaveLength(1);
+      expect(demoted.rawManagersById.has('settled')).toBe(false);
+      expect(demoted.settledManagers).toHaveLength(1);
     } finally {owner.dispose();}
   });
   it('bounds combined open surfaces without mutating demand or changing Chief page size',()=>{
     const {owner}=fixture();
     try{
-      const windows=[viewWindow('settled',null,{limit:60}),...['active','backlogged','done'].map(child_filter=>viewWindow('children',{kind:'chief',id:'chief'},{child_filter:child_filter as 'active'|'backlogged'|'done',limit:30})),...Array.from({length:8},(_,i)=>viewWindow('rail_tickets',{kind:'orchestrator',id:`o${i}`},{limit:60}))];
+      const windows=[viewWindow('settled',null,{limit:60}),...['active','backlogged','done'].map(child_filter=>viewWindow('children',{kind:'chief',id:'chief'},{child_filter:child_filter as 'active'|'backlogged'|'done',limit:30})),...Array.from({length:8},(_,i)=>viewWindow('rail_tickets',{kind:'manager',id:`o${i}`},{limit:60}))];
       const before=JSON.stringify(windows);owner.setDemand('rail',{windows});const request=owner.getRequest();
       expect(request.windows.reduce((total,row)=>total+row.limit,0)).toBeLessThanOrEqual(256);
       expect(request.windows.filter(row=>row.section==='children').every(row=>row.limit===30)).toBe(true);
       expect(JSON.stringify(windows)).toBe(before);expect(defaultViewRequest().windows).toHaveLength(3);
       owner.setDemand('rail',undefined);
-      const ordinary={kind:'orchestrator' as const,id:'ordinary'};
-      const full=[viewWindow('children',ordinary,{child_filter:'active',limit:0}),...WORK_ITEM_TICKET_GROUPS.filter(g=>g.key!=='awaiting_reply').map(g=>viewWindow('children',ordinary,{child_filter:'active',group:g.key,limit:60})),...(['backlogged','done'] as const).map(child_filter=>viewWindow('children',ordinary,{child_filter,limit:60})),...Array.from({length:60},(_,i)=>viewWindow('rail_tickets',{kind:'orchestrator',id:`parent${i}`},{limit:60})),viewWindow('settled',null,{limit:60}),...Array.from({length:60},(_,i)=>viewWindow('unread',{kind:'orchestrator',id:`settled${i}`},{limit:60}))];
+      const ordinary={kind:'manager' as const,id:'ordinary'};
+      const full=[viewWindow('children',ordinary,{child_filter:'active',limit:0}),...WORK_ITEM_TICKET_GROUPS.filter(g=>g.key!=='awaiting_reply').map(g=>viewWindow('children',ordinary,{child_filter:'active',group:g.key,limit:60})),...(['backlogged','done'] as const).map(child_filter=>viewWindow('children',ordinary,{child_filter,limit:60})),...Array.from({length:60},(_,i)=>viewWindow('rail_tickets',{kind:'manager',id:`parent${i}`},{limit:60})),viewWindow('settled',null,{limit:60}),...Array.from({length:60},(_,i)=>viewWindow('unread',{kind:'manager',id:`settled${i}`},{limit:60}))];
       owner.setDemand('full',{windows:full});
       expect(owner.getRequest().windows).toHaveLength(138);
       expect(owner.getRequest().windows.reduce((n,w)=>n+w.limit,0)).toBeLessThanOrEqual(256);

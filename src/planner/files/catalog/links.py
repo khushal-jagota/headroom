@@ -56,9 +56,16 @@ def managed_href(href: str, origin: str) -> str | None:
         params = parse_qs(query)
         source = params.get("source", [""])[0]
         kind = (
-            "tickets" if source == "ticket" else "sprint-items" if source == "sprint-item" else ""
+            "tickets"
+            if source == "ticket"
+            else "managers"
+            if source in {"manager", "sprint-item"}
+            else ""
         )
-        owner = params.get("ticket" if kind == "tickets" else "item", [""])[0]
+        owner_key = (
+            "ticket" if kind == "tickets" else "item" if source == "sprint-item" else "manager"
+        )
+        owner = params.get(owner_key, [""])[0]
         file_path = params.get("path", [""])[0]
     else:
         parsed = urlsplit(href)
@@ -71,7 +78,11 @@ def managed_href(href: str, origin: str) -> str | None:
         if _BAD_PERCENT.search(parsed.path):
             return None
         parts = parsed.path.split("/", 4)
-        if len(parts) != 5 or parts[1] != "files" or parts[2] not in {"tickets", "sprint-items"}:
+        if (
+            len(parts) != 5
+            or parts[1] != "files"
+            or parts[2] not in {"tickets", "managers", "sprint-items"}
+        ):
             return None
         try:
             kind, owner, file_path = (
@@ -81,6 +92,7 @@ def managed_href(href: str, origin: str) -> str | None:
             )
         except UnicodeError:
             return None
+    kind = "managers" if kind == "sprint-items" else kind
     expected = r"t_[a-z0-9]+" if kind == "tickets" else r"si_[a-z0-9]+"
     if not kind or not re.fullmatch(expected, owner) or not file_path or file_path.startswith("/"):
         return None

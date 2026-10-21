@@ -30,8 +30,8 @@ from planner.cli import main as cli_main
         ),
         (
             ("sprint", "item", "list"),
-            "/api/items",
-            "items",
+            "/api/managers",
+            "managers",
             {"id": "si_one", "title": "One", "status": "todo"},
         ),
         (
@@ -86,3 +86,50 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
     assert json_result.exit_code == 0, json_result.output
     assert json.loads(json_result.output)["page"] == response["page"]
     assert requested_paths == [path, path]
+
+
+def test_issued_manager_reply_alias_remains_executable_without_teaching_old_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    targets: list[dict[str, str]] = []
+
+    def sent(method: str, path: str, **kwargs: Any) -> dict[str, str]:
+        assert (method, path) == ("POST", "/api/messages/send")
+        targets.append(kwargs["json_body"]["target"])
+        return {"fate": "accepted"}
+
+    monkeypatch.setattr(http, "send", sent)
+    runner = CliRunner()
+    for option in ("--manager", "--sprint-item"):
+        result = runner.invoke(
+            cli_main.main, ["send-message", option, "si_same", "--message", "Reply."]
+        )
+        assert result.exit_code == 0, result.output
+    assert targets == [{"kind": "manager", "id": "si_same"}] * 2
+    help_text = runner.invoke(cli_main.main, ["send-message", "--help"]).output
+    assert "--manager" in help_text and "--sprint-item" not in help_text
+    refused = runner.invoke(
+        cli_main.main,
+        ["send-message", "--manager", "si_one", "--sprint-item", "si_other", "--message", "Reply."],
+    )
+    assert refused.exit_code != 0
+    assert len(targets) == 2
+
+
+def test_schedule_issued_assignment_field_normalizes_before_canonical_choice_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    writes: list[dict[str, Any]] = []
+
+    def sent(method: str, path: str, **kwargs: Any) -> dict[str, str]:
+        assert (method, path) == ("PATCH", "/api/schedules/schedule_example")
+        writes.append(kwargs["json_body"])
+        return {"id": "schedule_example"}
+
+    monkeypatch.setattr(http, "send", sent)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["schedule", "set", "schedule_example", "sprint-item", "--value", "si_example"],
+    )
+    assert result.exit_code == 0, result.output
+    assert writes == [{"manager": {"kind": "manager", "id": "si_example"}}]

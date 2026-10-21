@@ -57,9 +57,7 @@ WORKER_ROLE_TEXT: Final = (
 CHIEF_ROLE_TEXT: Final = (
     f"{_ROLE_DIRECTIVE_PREFIX} You are a chief of staff.{_ROLE_REPLY_REQUIREMENT}"
 )
-SPRINT_ITEM_SUPERVISOR_ROLE_TEXT: Final = (
-    f"{_ROLE_DIRECTIVE_PREFIX} You are a Sprint Item supervisor.{_ROLE_REPLY_REQUIREMENT}"
-)
+MANAGER_ROLE_TEXT: Final = f"{_ROLE_DIRECTIVE_PREFIX} You are a Manager.{_ROLE_REPLY_REQUIREMENT}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,21 +126,21 @@ def chief_conversation_role_materials() -> ConversationRoleMaterials:
     )
 
 
-def sprint_item_supervisor_role_materials(
-    sprint_item_id: str,
+def manager_role_materials(
+    manager_id: str,
 ) -> ConversationRoleMaterials:
     return ConversationRoleMaterials(
-        role_text=SPRINT_ITEM_SUPERVISOR_ROLE_TEXT,
+        role_text=MANAGER_ROLE_TEXT,
         identity_environment_variables=(
-            ("PLAN_ACTOR", "sprint_item_supervisor"),
-            ("PLAN_SPRINT_ITEM_ID", sprint_item_id),
+            ("PLAN_ACTOR", "manager"),
+            ("PLAN_MANAGER_ID", manager_id),
         ),
     )
 
 
-def resolve_sprint_item_supervisor_conversation_start(
+def resolve_manager_conversation_start(
     *,
-    sprint_item_id: str,
+    manager_id: str,
     launch_configuration: ConversationStartConfiguration,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     workspace_folder: Path,
@@ -152,7 +150,7 @@ def resolve_sprint_item_supervisor_conversation_start(
         backend_key=resolved.backend_key,
         model=resolved.model,
         reasoning_effort=resolved.reasoning_effort,
-        role_materials=sprint_item_supervisor_role_materials(sprint_item_id),
+        role_materials=manager_role_materials(manager_id),
         workspace_folder=workspace_folder,
         access=FLOOR_DEFAULT_ACCESS,
     )

@@ -87,3 +87,12 @@ class WorkerManagementSummary:
 class WorkerManagementDetail:
     manifest: WorkerTypeManifest
     settings: ManagedWorkerSettings
+
+
+@dataclass(frozen=True, slots=True)
+class SkillApplication:
+    """One exact source with an optimistic current-row expectation."""
+
+    name: str
+    source_text: str
+    expected_sha256: str | None

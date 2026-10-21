@@ -154,9 +154,7 @@ def test_skill_description_edit_never_reads_terminal_input(monkeypatch: pytest.M
 def test_skill_input_refusals_name_a_complete_registered_edit(
     arguments: tuple[str, ...], stdin: str, cause: str
 ) -> None:
-    result = CliRunner().invoke(
-        main, ["skill", "edit", "example-skill", *arguments], input=stdin
-    )
+    result = CliRunner().invoke(main, ["skill", "edit", "example-skill", *arguments], input=stdin)
 
     assert result.exit_code == 1
     recovery = "panels skill edit NAME --description TEXT < SKILL_FILE"
@@ -179,3 +177,17 @@ def test_skill_input_refusals_name_a_complete_registered_edit(
         command = child
     with command.make_context(ctx.info_name or "edit", tokens, parent=ctx.parent):
         pass
+
+
+def test_skill_apply_sends_exact_reviewed_manifest(
+    skill_requests: list[tuple[str, str, dict[str, Any]]],
+) -> None:
+    manifest = {
+        "skills": [
+            {"name": "custom-skill", "source_text": "exact\nbytes\n", "expected_sha256": None}
+        ]
+    }
+    result = CliRunner().invoke(main, ["skill", "apply", "--json"], input=json.dumps(manifest))
+    assert result.exit_code == 0, result.output
+    assert skill_requests[0][:2] == ("POST", "/api/skills/apply")
+    assert skill_requests[0][2]["json"] == manifest

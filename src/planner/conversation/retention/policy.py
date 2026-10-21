@@ -8,6 +8,8 @@ SUPPORTED_SCHEMA_REVISIONS = frozenset(
         "worker_server_ownership",
         "open_work_group_index",
         "diagnostic_expiry_metadata",
+        "remove_calendar_records",
+        "rename_managers",
     }
 )
 DIAGNOSTIC_KINDS = frozenset(

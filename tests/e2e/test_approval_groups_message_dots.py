@@ -248,7 +248,7 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         _message(
             server,
             "dot-supervisor",
-            Principal(PrincipalKind.sprint_item, item["id"]),
+            Principal(PrincipalKind.manager, item["id"]),
             "Supervisor direct message",
         )
         page.reload()

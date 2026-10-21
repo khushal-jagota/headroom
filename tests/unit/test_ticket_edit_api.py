@@ -170,12 +170,12 @@ def test_creation_defaults_to_chief_without_calendar_and_preserves_project_conte
                 "title": "Project default",
                 "worker_type": "coding",
                 "project_id": "project_vylo",
-                "orchestrator": {"kind": "chief", "id": "chief"},
+                "manager": {"kind": "chief", "id": "chief"},
             },
         )
         for response in (defaulted, project):
             assert response.status_code == 200, response.text
-            assert response.json()["orchestrator"] == {"kind": "chief", "id": "chief"}
+            assert response.json()["manager"] == {"kind": "chief", "id": "chief"}
             assert "sprint_id" not in response.json()
             assert "effective_sprint_id" not in response.json()
             detail = client.get(f"/api/tickets?detail=full&id={response.json()['id']}")
@@ -186,13 +186,13 @@ def test_creation_defaults_to_chief_without_calendar_and_preserves_project_conte
             assert "resolved_priority_anchors" not in response.json()
         with connect(str(db_path)) as conn:
             before = tuple(conn.iterdump())
-        for removed in ({"sprint_id": None}, {"sprint_id": "sp_edit"}, {"sprint_item_id": None}):
+        for removed in ({"sprint_id": None}, {"sprint_id": "sp_edit"}, {"manager_id": None}):
             rejected = client.post(
                 "/api/tickets",
                 json={"title": "Obsolete ingress", "worker_type": "coding", **removed},
             )
             assert rejected.status_code == 400
-            assert "orchestrator assignment" in rejected.json()["error"]["message"]
+            assert "manager assignment" in rejected.json()["error"]["message"]
         with connect(str(db_path)) as conn:
             assert tuple(conn.iterdump()) == before
 
@@ -203,17 +203,17 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
     app, db_path = _make_app(tmp_path)
     with TestClient(app) as client:
         vylo_item = client.post(
-            "/api/items", json={"title": "Vylo outcome", "project_id": "project_vylo"}
+            "/api/managers", json={"title": "Vylo manager", "project_id": "project_vylo"}
         ).json()
         personal_item = client.post(
-            "/api/items", json={"title": "Personal outcome", "project_id": "project_personal"}
+            "/api/managers", json={"title": "Personal manager", "project_id": "project_personal"}
         ).json()
         created = client.post(
             "/api/tickets",
             json={
                 "title": "Derived project ticket",
                 "worker_type": "coding",
-                "orchestrator": {"kind": "sprint_item", "id": vylo_item["id"]},
+                "manager": {"kind": "manager", "id": vylo_item["id"]},
             },
         )
         assert created.status_code == 200, created.text
@@ -235,19 +235,19 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
         incompatible = client.patch(
             f"/api/tickets/{ticket_id}",
             json={
-                "orchestrator": {"kind": "sprint_item", "id": personal_item["id"]},
+                "manager": {"kind": "manager", "id": personal_item["id"]},
                 "project_id": "project_vylo",
             },
         )
         assert incompatible.status_code == 400
         unchanged = client.get(f"/api/tickets?detail=full&id={ticket_id}").json()
-        assert unchanged["sprint_item_id"] == vylo_item["id"]
+        assert unchanged["manager_id"] == vylo_item["id"]
         assert unchanged["project_id"] == "project_vylo"
 
         moved = client.patch(
             f"/api/tickets/{ticket_id}",
             json={
-                "orchestrator": {"kind": "sprint_item", "id": personal_item["id"]},
+                "manager": {"kind": "manager", "id": personal_item["id"]},
                 "project_id": "project_personal",
             },
         )
@@ -262,7 +262,7 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
             )
 
         detached = client.patch(
-            f"/api/tickets/{ticket_id}", json={"orchestrator": {"kind": "chief", "id": "chief"}}
+            f"/api/tickets/{ticket_id}", json={"manager": {"kind": "chief", "id": "chief"}}
         )
         assert detached.status_code == 200, detached.text
         assert detached.json()["project_id"] == "project_personal"
@@ -276,12 +276,12 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
 
         reattached = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"orchestrator": {"kind": "sprint_item", "id": personal_item["id"]}},
+            json={"manager": {"kind": "manager", "id": personal_item["id"]}},
         )
         assert reattached.status_code == 200, reattached.text
         replacement = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"orchestrator": {"kind": "chief", "id": "chief"}, "project_id": "project_vylo"},
+            json={"manager": {"kind": "chief", "id": "chief"}, "project_id": "project_vylo"},
         )
         assert replacement.status_code == 200, replacement.text
         assert replacement.json()["project_id"] == "project_vylo"

@@ -39,7 +39,7 @@ def archive_cancelled(archive_dir: Path, yes: bool) -> None:
     """
     if os.environ.get("PLAN_ACTOR", "").strip() not in {"", "owner"} or any(
         os.environ.get(key, "").strip()
-        for key in ("PLAN_TICKET_ID", "PLAN_SPRINT_ITEM_ID", "PLAN_AGENT_KEY")
+        for key in ("PLAN_TICKET_ID", "PLAN_MANAGER_ID", "PLAN_AGENT_KEY")
     ):
         raise click.ClickException("This offline recovery action requires the owner")
     if not yes:

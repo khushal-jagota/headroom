@@ -1,4 +1,4 @@
-"""Shared fixtures for the unit suite. Owned by the orchestrator (glue);
+"""Shared fixtures for the unit suite. Owned by the manager (glue);
 ticket agents use these read-only and add their own fixtures locally.
 """
 

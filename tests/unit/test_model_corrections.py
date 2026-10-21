@@ -315,16 +315,16 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
         resolver.before_resolve = None
 
         item = client.post(
-            "/api/items",
+            "/api/managers",
             json={"title": "Temporary authority", "project_id": "project_other"},
         ).json()
         with closing(connect(db_path)) as conn:
             conn.execute(
-                "UPDATE tickets SET orchestrator_kind='sprint_item',sprint_item_id=? WHERE id=?",
+                "UPDATE tickets SET manager_kind='manager',manager_id=? WHERE id=?",
                 (item["id"], worker.id),
             )
         supervisor_headers = {
-            "X-Plan-Actor": "sprint_item_supervisor",
+            "X-Plan-Actor": "manager",
             "X-Plan-Sprint-Item-ID": item["id"],
         }
         authorized_preview = client.post(
@@ -337,7 +337,7 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
         def revoke_authority() -> None:
             with closing(connect(db_path)) as conn:
                 conn.execute(
-                    "UPDATE tickets SET orchestrator_kind='chief',sprint_item_id=NULL WHERE id=?",
+                    "UPDATE tickets SET manager_kind='chief',manager_id=NULL WHERE id=?",
                     (worker.id,),
                 )
 
@@ -365,29 +365,29 @@ def test_http_preview_apply_reuses_conversation_and_enforces_authority(tmp_path:
 
 
 
-def test_orchestrator_correction_preserves_identity_and_blocks_stale_receipt(
+def test_manager_correction_preserves_identity_and_blocks_stale_receipt(
     tmp_db: Connection,
     fake_clock: Clock,
 ) -> None:
     from dataclasses import replace
 
     from planner.projects.data import create_project
-    from planner.sprints import data as sprints
+    from planner.managers import data as sprints
 
     seed_resolution(tmp_db)
     project = create_project(tmp_db, name="Corrections", summary="", now=1)
-    item = sprints.create_item(
-        tmp_db, title="An orchestrator", project_id=project.id, clock=fake_clock
+    item = sprints.create_manager(
+        tmp_db, title="An manager", project_id=project.id, clock=fake_clock
     )
-    original = item.supervisor_launch_configuration
-    tmp_db.execute("UPDATE sprint_items SET supervisor_model='gpt-6.1-sol' WHERE id=?", (item.id,))
-    item = sprints.read_item(tmp_db, item.id).item
-    original = item.supervisor_launch_configuration
-    target = CorrectionTarget(kind="orchestrator", id=item.id)
-    before = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item.id,)).fetchone())
+    original = item.manager_launch_configuration
+    tmp_db.execute("UPDATE managers SET manager_model='gpt-6.1-sol' WHERE id=?", (item.id,))
+    item = sprints.read_manager(tmp_db, item.id).item
+    original = item.manager_launch_configuration
+    target = CorrectionTarget(kind="manager", id=item.id)
+    before = dict(tmp_db.execute("SELECT * FROM managers WHERE id=?", (item.id,)).fetchone())
     correction = preview(tmp_db, target)
     assert apply(tmp_db, correction).applied
-    sprints.update_supervisor_launch_configuration(
+    sprints.update_manager_launch_configuration(
         tmp_db,
         item.id,
         replace(original, employee_launch_model="gpt-6.1-sol"),
@@ -395,13 +395,13 @@ def test_orchestrator_correction_preserves_identity_and_blocks_stale_receipt(
         clock=fake_clock,
         expected_configuration=original,
     )
-    after = dict(tmp_db.execute("SELECT * FROM sprint_items WHERE id=?", (item.id,)).fetchone())
-    assert after.pop("supervisor_model") == "gpt-6.2-sol"
-    before.pop("supervisor_model")
+    after = dict(tmp_db.execute("SELECT * FROM managers WHERE id=?", (item.id,)).fetchone())
+    assert after.pop("manager_model") == "gpt-6.2-sol"
+    before.pop("manager_model")
     after.pop("updated_at")
     before.pop("updated_at")
     assert after == before
-    own = Principal(PrincipalKind.sprint_item, item.id)
+    own = Principal(PrincipalKind.manager, item.id)
     assert preview(tmp_db, target, principal=own).error
 
 

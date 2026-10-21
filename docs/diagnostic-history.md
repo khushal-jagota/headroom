@@ -2,7 +2,7 @@
 
 Panels keeps diagnostic history until an owner explicitly runs the offline maintenance command. Installation, deployment, startup, restart, background loops, and shutdown do not activate expiry. The code registers no expiry task.
 
-The first policy selects diagnostic events older than fourteen days. It keeps current work, control records, unfamiliar records, and ambiguous tool pairs. All conversations linked to unfinished Tickets remain intact, including old conversations and backlogged work. Chief conversations and unsettled orchestrators remain intact. A report freezes its UTC cutoff and binds its candidates to the database contents and identity. Any change invalidates that report.
+The first policy selects diagnostic events older than fourteen days. It keeps current work, control records, unfamiliar records, and ambiguous tool pairs. All conversations linked to unfinished Tickets remain intact, including old conversations and backlogged work. Chief conversations and unsettled managers remain intact. A report freezes its UTC cutoff and binds its candidates to the database contents and identity. Any change invalidates that report.
 
 Expiry permanently removes selected event payloads. Compaction removes no logical records. These are separate owner decisions. The Ticket authorizes experiments on private copies, never expiry from the live archive. Chief receives the report before the owner decides.
 
@@ -56,7 +56,7 @@ PLAN_DB_PATH=/absolute/path/to/planner.db \
 The following examples belong to the owner after separate approval and a stopped server. Do not run them from a Worker context. The explicit environment removes Worker identity and selects the same database as the command.
 
 ```sh
-env -u PLAN_TICKET_ID -u PLAN_SPRINT_ITEM_ID -u PLAN_AGENT_KEY \
+env -u PLAN_TICKET_ID -u PLAN_MANAGER_ID -u PLAN_AGENT_KEY \
   PLAN_ACTOR=owner PLAN_DB_PATH=/absolute/path/to/planner.db \
   panels maintenance diagnostic-history apply \
   --database /absolute/path/to/planner.db \
@@ -66,7 +66,7 @@ env -u PLAN_TICKET_ID -u PLAN_SPRINT_ITEM_ID -u PLAN_AGENT_KEY \
 Compaction needs no expiry report and removes no logical history.
 
 ```sh
-env -u PLAN_TICKET_ID -u PLAN_SPRINT_ITEM_ID -u PLAN_AGENT_KEY \
+env -u PLAN_TICKET_ID -u PLAN_MANAGER_ID -u PLAN_AGENT_KEY \
   PLAN_ACTOR=owner PLAN_DB_PATH=/absolute/path/to/planner.db \
   panels maintenance diagnostic-history reclaim \
   --database /absolute/path/to/planner.db --yes

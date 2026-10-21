@@ -24,7 +24,7 @@
     lifecycle = null,
     ceiling = $bindable<string | null>(null),
     holder = $bindable<Principal | null>(null),
-    sprintItem = null,
+    manager = null,
     stageLocked = false,
     below = false,
     document = false,
@@ -47,7 +47,7 @@
     lifecycle?: Lifecycle | null;
     ceiling?: string | null;
     holder?: Principal | null;
-    sprintItem?: { id: string; title: string } | null;
+    manager?: { id: string; title: string } | null;
     stageLocked?: boolean;
     /** Open the panel downward, for a host that sits under the page header. */
     below?: boolean;
@@ -87,17 +87,17 @@
     ...ceilingOptionsFor(lifecycle, pendingStage ? lifecycle?.stageOrder[0] || pendingStage : newStage || lifecycle?.ceilingRange[0] || "needs_success_condition")
       .map((option) => ({ value:option.value, name:option.label }))
   ]);
-  let holders = $derived(holderOptionsFor(sprintItem, holder).map((option) => ({
-    value: option.value, name: pendingStage ? (holderLabel ? holderLabel(holderFromValue(option.value,sprintItem)) : option.label) : `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, detail:pendingStage ? undefined : option.detail
+  let holders = $derived(holderOptionsFor(manager, holder).map((option) => ({
+    value: option.value, name: pendingStage ? (holderLabel ? holderLabel(holderFromValue(option.value,manager)) : option.label) : `${option.label}${option.detail ? ` · ${option.detail}` : ""}`, detail:pendingStage ? undefined : option.detail
   })));
   let rows = $derived((showing === "ceiling" ? ceilingOptions : holders) as readonly ListboxPickerItem[]);
   let draftHolderValue = $derived(holderValue(draftHolder ?? holder));
   let selectedValue = $derived(showing === "ceiling" ? draftCeiling : draftHolderValue);
   // The trigger reports the saved ceiling, never a draft.
   let ceilingName = $derived(ceilingLabelFor(lifecycle,ceiling));
-  let holderName = $derived(holderLabel ? holderLabel(holder) : holderLabelFor(sprintItem, holder));
+  let holderName = $derived(holderLabel ? holderLabel(holder) : holderLabelFor(manager, holder));
   let draftCeilingName = $derived(ceilingLabelFor(lifecycle,draftCeiling));
-  let draftHolderName = $derived(holderLabel ? holderLabel(draftHolder ?? holder) : holderLabelFor(sprintItem,draftHolder ?? holder));
+  let draftHolderName = $derived(holderLabel ? holderLabel(draftHolder ?? holder) : holderLabelFor(manager,draftHolder ?? holder));
   let resolvedTriggerLabel = $derived(triggerLabel ?? (stageLocked
     ? `then ${holderName}`
     : `Until ${ceilingName ?? "Choose ceiling"} · then ${holderName}`));
@@ -150,7 +150,7 @@
       if (holderTouched) return commit();
       return show("holder");
     }
-    draftHolder = holderFromValue(value, sprintItem);
+    draftHolder = holderFromValue(value, manager);
     holderTouched = true;
     // The approve row starts with no ceiling at all and cannot approve without one, so
     // the unanswered half is asked for rather than guessed. A held stage cannot be
@@ -220,7 +220,7 @@
   {#snippet optionContent(choice)}
     {#if showing === "holder"}
       {@const option = holders.find((item) => item.value === choice.value)}
-      <span>{pendingStage ? choice.name : holderOptionsFor(sprintItem,holder).find((item) => item.value === choice.value)?.label ?? choice.name}</span>
+      <span>{pendingStage ? choice.name : holderOptionsFor(manager,holder).find((item) => item.value === choice.value)?.label ?? choice.name}</span>
       {#if option?.detail}<small class="holder-detail">{option.detail}</small>{/if}
     {:else}<span>{choice.name}</span>{/if}
   {/snippet}

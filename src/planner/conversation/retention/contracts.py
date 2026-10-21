@@ -24,8 +24,8 @@ class TicketOwner:
 
 
 @dataclass(frozen=True, slots=True)
-class OrchestratorOwner:
-    orchestrator_id: str
+class ManagerOwner:
+    manager_id: str
     settled: bool
 
 
@@ -34,7 +34,7 @@ class ConversationRetentionInput:
     conversation_id: str
     identity_json: str
     tickets: tuple[TicketOwner, ...]
-    orchestrators: tuple[OrchestratorOwner, ...]
+    managers: tuple[ManagerOwner, ...]
     agent_keys: tuple[str, ...]
     events: tuple[RetentionEvent, ...]
     protected_sequences: tuple[int, ...]

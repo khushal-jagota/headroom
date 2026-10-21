@@ -38,8 +38,8 @@ class Lease:
         if self.reject_savepoint:
             raise ValueError("candidate forbids savepoints")
 
-    def settle(self, outcome: str, error: BaseException | None) -> None:
-        self.events.append(("settle", outcome, type(error).__name__ if error else None))
+    def settle(self, manager: str, error: BaseException | None) -> None:
+        self.events.append(("settle", manager, type(error).__name__ if error else None))
         if self.fail == "settle":
             raise ValueError("settle failed")
 

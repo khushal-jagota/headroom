@@ -113,8 +113,8 @@ function boardCard(facts: TicketFacts): BoardCard {
     blocked: facts.ticket_status === "blocked",
     conversation_id: "c_reading",
     waiting_to_closeout: facts.waiting_to_closeout,
-    sprint_item_id: null,
-    sprint_item_title: null,
+    manager_id: null,
+    manager_title: null,
     awaiting_reply: facts.awaiting_reply,
     awaiting_answer: facts.awaiting_answer,
     awaiting_approval: facts.awaiting_approval,
@@ -136,7 +136,7 @@ function ticketDetail(facts: TicketFacts): TicketDetail {
     stage: facts.stage,
     ceiling: "needs_plan",
     ceiling_holder: OWNER,
-    sprint_item_title: null,
+    manager_title: null,
     ticket_status: facts.ticket_status,
     conversation_id: "c_reading",
     conversation_history: [],
@@ -156,8 +156,8 @@ export function workspaceHeading(facts: TicketFacts): string {
   return workspaceGroups([boardCard(facts)])[0].label;
 }
 
-/** The heading the Ticket sits under on the Sprint Item page. */
-export function sprintItemHeading(facts: TicketFacts): string {
+/** The heading the Ticket sits under on the Manager page. */
+export function managerHeading(facts: TicketFacts): string {
   const key = workItemTicketGroupKey({ id: "", title: "", ...facts });
   return WORK_ITEM_TICKET_GROUPS.find((group) => group.key === key)?.label ?? key;
 }

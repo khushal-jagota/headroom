@@ -45,7 +45,7 @@ def _prepare(
 
 def _answer(collection: str, write: MembershipWrite) -> MembershipAnswer:
     return MembershipAnswer(
-        collection=collection,
+        collection=Collection(collection).value,
         container_id=write.container_id,
         member_id=write.member_id,
         ok=True,

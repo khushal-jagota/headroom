@@ -11,10 +11,10 @@ from planner.core import db
 from planner.core.clock import Clock
 from planner.core.contracts import OWNER_PRINCIPAL, Principal, PrincipalKind
 from planner.files.logic.paths import ticket_files_root
+from planner.managers import data as managers_data
+from planner.managers.contracts import Manager
 from planner.projects import data as projects_data
 from planner.projects.contracts import Project
-from planner.sprints import data as sprints_data
-from planner.sprints.contracts import SprintItem
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, Ticket, TicketEdit
@@ -51,7 +51,7 @@ def build_fake_environment_database(db_path: Path, *, now: int) -> FakeFixtureRe
     try:
         db.create_schema(conn)
         projects = _create_projects(conn, now=now)
-        items = _create_items(
+        items = _create_managers(
             conn,
             project_ids=(projects[0].id, projects[1].id),
             clock=clock,
@@ -59,7 +59,7 @@ def build_fake_environment_database(db_path: Path, *, now: int) -> FakeFixtureRe
         generated_ids.update(item.id for item in items)
         tickets = _create_tickets(
             conn,
-            sprint_item_ids=(items[0].id, items[1].id),
+            manager_ids=(items[0].id, items[1].id),
             project_id=projects[0].id,
             now=now,
         )
@@ -73,13 +73,13 @@ def build_fake_environment_database(db_path: Path, *, now: int) -> FakeFixtureRe
         fixture_version=FAKE_FIXTURE_VERSION,
         logical_summary={
             "projects": 2,
-            "sprint_items": 2,
+            "managers": 2,
             "tickets": 4,
             "managed_files": len(managed_file_relative_paths),
         },
         logical_titles={
             "projects": tuple(project.name for project in projects),
-            "sprint_items": tuple(item.title for item in items),
+            "managers": tuple(item.title for item in items),
             "tickets": tuple(ticket.title for ticket in tickets),
         },
         generated_ids=frozenset(generated_ids),
@@ -104,21 +104,21 @@ def _create_projects(conn: sqlite3.Connection, *, now: int) -> tuple[Project, Pr
     )
 
 
-def _create_items(
+def _create_managers(
     conn: sqlite3.Connection,
     *,
     project_ids: tuple[str, str],
     clock: Clock,
-) -> tuple[SprintItem, SprintItem]:
+) -> tuple[Manager, Manager]:
     items = (
-        sprints_data.create_item(
+        managers_data.create_manager(
             conn,
             title="Prepare isolated runtime story",
             goal="Small representative plan for fictional staging work.",
             project_id=project_ids[0],
             clock=clock,
         ),
-        sprints_data.create_item(
+        managers_data.create_manager(
             conn,
             title="Review fake environment behavior",
             goal="Fictional review item with child tickets in multiple states.",
@@ -132,7 +132,7 @@ def _create_items(
 def _create_tickets(
     conn: sqlite3.Connection,
     *,
-    sprint_item_ids: tuple[str, str],
+    manager_ids: tuple[str, str],
     project_id: str,
     now: int,
 ) -> tuple[Ticket, Ticket, Ticket, Ticket]:
@@ -143,7 +143,7 @@ def _create_tickets(
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         brief="Build fictional state only.",
-        sprint_item_id=sprint_item_ids[0],
+        manager_id=manager_ids[0],
         worker_type="coding",
         stated_ceiling="needs_what_changes",
     )
@@ -169,7 +169,7 @@ def _create_tickets(
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         brief="Invent a representative worker without creating registry rows.",
-        sprint_item_id=sprint_item_ids[0],
+        manager_id=manager_ids[0],
         worker_type="new_worker",
         stated_ceiling="needs_stages",
     )
@@ -195,7 +195,7 @@ def _create_tickets(
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         brief="Inspect reset behavior in fictional staging.",
-        sprint_item_id=sprint_item_ids[1],
+        manager_id=manager_ids[1],
         worker_type="exploration",
         stated_ceiling="needs_research_plan",
     )

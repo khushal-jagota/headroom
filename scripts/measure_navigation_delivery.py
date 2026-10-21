@@ -44,7 +44,7 @@ EVIDENCE_SCHEMA: dict[str, Any] = {
         "source": {"type": "string"},
         "revision": {"type": "string"},
         "mode": {"enum": ["baseline", "candidate"]},
-        "samples": {"type": "array", "items": {"type": "object", "required": ["scenario"]}},
+        "samples": {"type": "array", "managers": {"type": "object", "required": ["scenario"]}},
         "requests": {"type": "array"},
         "network": {"type": "array"},
         "writes": {"type": "array"},
@@ -60,7 +60,7 @@ EVIDENCE_SCHEMA: dict[str, Any] = {
             "type": "array",
             "minItems": 2,
             "maxItems": 2,
-            "items": {"type": "integer"},
+            "managers": {"type": "integer"},
         },
     },
 }
@@ -233,10 +233,10 @@ def seed_application(app: Any, root: Path, count: int) -> dict[str, Any]:
     db = importlib.import_module("planner.core.db")
     catalogue = importlib.import_module("tests.support.model_catalogue")
     projects = importlib.import_module("planner.projects.data")
-    items = importlib.import_module("planner.sprints.data")
+    items = importlib.import_module("planner.managers.data")
     tickets = importlib.import_module("planner.tickets.data")
     contracts = importlib.import_module("planner.core.contracts")
-    result: dict[str, Any] = {"tickets": [], "items": [], "logical_titles": []}
+    result: dict[str, Any] = {"tickets": [], "managers": [], "logical_titles": []}
     with closing(db.connect(app.state.config.db_path)) as conn:
         catalogue.seed_test_model_catalogue(conn)
         conn.commit()
@@ -248,10 +248,10 @@ def seed_application(app: Any, root: Path, count: int) -> dict[str, Any]:
             now=1,
         )
         for name in ("Measured Alpha", "Measured Beta"):
-            item = items.create_item(
+            item = items.create_manager(
                 conn, title=name, project_id=project.id, clock=app.state.clock
             )
-            result["items"].append(item.id)
+            result["managers"].append(item.id)
         for index in range(count):
             title = f"Measured ticket {index:04d}"
             ticket = tickets.create_ticket(
@@ -261,7 +261,7 @@ def seed_application(app: Any, root: Path, count: int) -> dict[str, Any]:
                 now=1000 + index,
                 title_max_chars=200,
                 project_id=project.id,
-                sprint_item_id=result["items"][0],
+                manager_id=result["managers"][0],
                 worker_type="coding",
             )
             result["tickets"].append(ticket.id)

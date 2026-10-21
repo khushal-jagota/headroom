@@ -32,7 +32,7 @@ export function ticketSectionDetailMatches(record:TicketRecord,detail:TicketDeta
     || detail.ticket_status!==row.ticket_status || detail.ceiling!==row.ceiling
     || detail.ceiling_holder.kind!==row.ceiling_holder.kind || detail.ceiling_holder.id!==row.ceiling_holder.id
     || detail.is_backlogged!==row.is_backlogged || detail.blocked!==row.blocked
-    || detail.sprint_item_id!==row.sprint_item_id || detail.conversation_id!==row.conversation_id) return false;
+    || detail.manager_id!==row.manager_id || detail.conversation_id!==row.conversation_id) return false;
   const proposal=detail.pending_proposal;
   return proposal===null ? row.proposal_field===null && row.proposal_created_at===null
     : proposal.field===row.proposal_field && proposal.created_at===row.proposal_created_at && proposal.revision===row.proposal_revision;

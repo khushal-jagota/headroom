@@ -45,7 +45,7 @@ def descriptor(*, limit: int = 30, selected: str | None = None) -> ViewRequest:
     }
     return request(
         {
-            "projection_version": 2,
+            "projection_version": 3,
             "scope_generation": 1,
             "locale": "en-US",
             "selected": None if selected is None else {"kind": "ticket", "id": selected},
@@ -136,7 +136,7 @@ def test_sequence_bookkeeping_changes_coverage_without_public_content(tmp_path: 
         assert footprint == {"globals": False, "keys": [], "sections": []}
         common = {
             "wire_version": 3,
-            "projection_version": 2,
+            "projection_version": 3,
             "view_id": "view",
             "scope_generation": 1,
             "ordering_generation": "order",
@@ -230,7 +230,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
         runtime = ScopedDeliveryRuntime(host.delivery)
         query = descriptor(selected="t")
         current, access = asyncio.run(runtime.snapshot(query))
-        assert current["projection_version"] == 2
+        assert current["projection_version"] == 3
         assert current["mode"] == "current"
         assert current["content"]["counts"]["unread"] == 1
         captured = asyncio.run(runtime.capture())
@@ -241,7 +241,7 @@ def test_scoped_snapshot_is_fenced_by_real_source_authority(actual_binding: _Act
             asyncio.run(runtime.snapshot(query, captured=captured))
         degraded, _ = asyncio.run(runtime.snapshot(query))
         assert degraded["mode"] == "degraded"
-        assert degraded["projection_version"] == 2
+        assert degraded["projection_version"] == 3
         assert degraded["authority"]["permit"] is None
         assert degraded["content"]["counts"]["running_conversations"] is None
         assert degraded["content"]["counts"]["unread"] == 1
@@ -259,9 +259,9 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
         conn.execute("BEGIN")
         for index in range(94):
             add_parent(conn, f"o{index:03}")
-        conn.execute("UPDATE sprint_items SET settled=1,recap=?", ("A nonempty recap. " * 300,))
+        conn.execute("UPDATE managers SET settled=1,recap=?", ("A nonempty recap. " * 300,))
         add_parent(conn, "active")
-        conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_o000','own')")
+        conn.execute("INSERT INTO agents VALUES('manager_o000','own')")
         add_ticket(conn, "t", "o001")
         conn.execute("UPDATE tickets SET conversation_id='current' WHERE id='t'")
         conn.execute("INSERT INTO ticket_conversations VALUES('historical','t')")
@@ -284,16 +284,16 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
             {
                 **settled,
                 "section": "unread",
-                "owner": {"kind": "orchestrator", "id": owner},
+                "owner": {"kind": "manager", "id": owner},
                 "limit": 0,
             }
             for owner in ("o000", "o001", "o002")
         )
         _, lean = read_content(conn, query, current=True)
         expected_fields = {"title", "created_at", "settled", "conversation_id"}
-        orchestrators = [row for row in lean["records"] if row["kind"] == "orchestrator"]
-        assert len(orchestrators) == 60
-        assert all(set(row["value"]) == expected_fields for row in orchestrators)
+        managers = [row for row in lean["records"] if row["kind"] == "manager"]
+        assert len(managers) == 60
+        assert all(set(row["value"]) == expected_fields for row in managers)
         assert not any(row["kind"] in ("ticket", "project", "address") for row in lean["records"])
         assert any(row["kind"] == "conversation" and row["id"] == "own" for row in lean["records"])
         assert lean["counts"]["settled"] == 94
@@ -317,10 +317,10 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
             return {
                 row["id"]
                 for row in content["records"]
-                if row["kind"] == "orchestrator" and "recap_reference" in row["value"]
+                if row["kind"] == "manager" and "recap_reference" in row["value"]
             }
 
-        selected = {**query, "selected": {"kind": "orchestrator", "id": "o003"}}
+        selected = {**query, "selected": {"kind": "manager", "id": "o003"}}
         assert full_ids(read_content(conn, cast(ViewRequest, selected), current=True)[1]) == {
             "o003"
         }
@@ -366,7 +366,7 @@ def test_settled_records_stay_lean_until_an_admitted_full_consumer_requires_them
                 {
                     **settled,
                     "section": "children",
-                    "owner": {"kind": "orchestrator", "id": "o001"},
+                    "owner": {"kind": "manager", "id": "o001"},
                     "limit": 1,
                 },
                 {**settled, "section": "unread", "limit": 1},
@@ -398,8 +398,8 @@ def test_settled_promotion_charges_replacement_bytes_and_refuses_incomplete_depe
         add_conversation(conn, "own")
         conn.execute("BEGIN")
         add_parent(conn, "o")
-        conn.execute("UPDATE sprint_items SET settled=1,recap=?", ("R" * 1500,))
-        conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_o','own')")
+        conn.execute("UPDATE managers SET settled=1,recap=?", ("R" * 1500,))
+        conn.execute("INSERT INTO agents VALUES('manager_o','own')")
         conn.execute("INSERT INTO conversation_events VALUES('own',1,'message_to_owner','{}',0)")
         conn.commit()
         query = descriptor(limit=1)
@@ -433,7 +433,7 @@ def test_settled_promotion_charges_replacement_bytes_and_refuses_incomplete_depe
             assert all(
                 set(row["value"]) == {"title", "created_at", "settled", "conversation_id"}
                 for row in refused["records"]
-                if row["kind"] == "orchestrator"
+                if row["kind"] == "manager"
             )
 
 
@@ -515,7 +515,7 @@ def test_cursor_domain_rebase_empty_edge_and_all_count_scopes(tmp_path: Path) ->
         # Ordinary documents need up to 138 distinct count identities.
         query = descriptor(limit=0)
         query["windows"] = [
-            {**query["windows"][0], "owner": {"kind": "orchestrator", "id": f"o{i}"}}
+            {**query["windows"][0], "owner": {"kind": "manager", "id": f"o{i}"}}
             for i in range(138)
         ]
         checked = request(query)

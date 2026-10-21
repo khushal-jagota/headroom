@@ -47,15 +47,15 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   Stage and ceiling.
 - **`panels ticket show <id> [part,part]`** — read another Ticket's header and part
   manifest, or expand named saved fields, `proposal`, and `recap`.
-- **`panels ticket proposal [id] submit`**, piping the proposal text on stdin — answer your own Ticket's current gated field. No supervisor, holder Ticket, or other Worker can file it for you. The body carries only what is proposed. Below the ceiling the answer settles the field and advances the Ticket. At the ceiling it parks for approval.
+- **`panels ticket proposal [id] submit`**, piping the proposal text on stdin — answer your own Ticket's current gated field. No Manager, holder Ticket, or other Worker can file it for you. The body carries only what is proposed. Below the ceiling the answer settles the field and advances the Ticket. At the ceiling it parks for approval.
   While your proposal is pending, run the same command again to replace the pending draft
   for that Stage. Re-propose when you find a mistake or receive steering. Do not wait for
   rejection first.
 - **`panels ticket edit [id] --input-json -`** — update the recap, alone or in one batch with other permitted Ticket fields. Keep the recap current as a separate edit from the proposal.
-- **`panels ticket request-help [id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--sprint-item <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, or confirmed Worker errors.
+- **`panels ticket request-help [id]`**, piping the help message on stdin — send one canonical addressed message when you cannot responsibly continue without important input. The current ceiling holder is the default recipient. Use exactly one of `--owner`, `--chief`, `--ticket <id>`, or `--manager <id>` only when another principal must answer. The message drives the shared unread-reply attention fact. Do not use this for ordinary discussion, proposals, approvals, permission prompts, or confirmed Worker errors.
 - **`panels send-message --owner --message "…"`** — send one addressed chat message to
   the owner through this Ticket's current conversation. Use the same command with exactly
-  one of `--chief`, `--ticket <id>`, or `--sprint-item <id>` to message another employee.
+  one of `--chief`, `--ticket <id>`, or `--manager <id>` to message another employee.
   This is conversation, not a substitute for a canonical Ticket action.
   Your ordinary turn-end prose is runtime-only; use this command when another principal
   must receive a message.

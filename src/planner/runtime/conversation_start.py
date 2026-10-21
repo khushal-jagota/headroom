@@ -58,7 +58,7 @@ from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartOverrides,
     ConversationStartValues,
     resolve_agent_conversation_start,
-    resolve_sprint_item_supervisor_conversation_start,
+    resolve_manager_conversation_start,
     resolve_worker_conversation_start,
 )
 from planner.tickets import data as tickets_data
@@ -72,7 +72,7 @@ from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
 
 if TYPE_CHECKING:
-    from planner.sprints.contracts import SprintItem
+    from planner.managers.contracts import Manager
 
 CONVERSATION_ID_PREFIX: Final = "conv_"
 
@@ -199,15 +199,15 @@ def agent_resolve(
     return values
 
 
-def sprint_item_supervisor_resolve(
-    item: SprintItem,
+def manager_resolve(
+    item: Manager,
     overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
     *,
     workspace_folder: Path | None = None,
 ) -> ConversationStartValues:
-    launch = item.supervisor_launch_configuration
-    return resolve_sprint_item_supervisor_conversation_start(
-        sprint_item_id=item.id,
+    launch = item.manager_launch_configuration
+    return resolve_manager_conversation_start(
+        manager_id=item.id,
         launch_configuration=ConversationStartConfiguration(
             backend_key=launch.employee_backend,
             model=launch.employee_launch_model,
@@ -709,10 +709,10 @@ def read_agent_conversations(
     return {str(row[0]): str(row[1]) for row in rows}
 
 
-def read_sprint_item_supervisor_conversation_history(
-    conn: sqlite3.Connection, sprint_item_id: str
+def read_manager_conversation_history(
+    conn: sqlite3.Connection, manager_id: str
 ) -> list[dict[str, str | int]]:
-    """Find every durable transcript started under one Sprint Item identity."""
+    """Find every durable transcript started under one Manager identity."""
     rows = conn.execute(
         "SELECT conversation_id,identity_environment_variables,created_at "
         "FROM conversations ORDER BY created_at,conversation_id"
@@ -731,8 +731,13 @@ def read_sprint_item_supervisor_conversation_history(
             if isinstance(pair, list) and len(pair) == 2
         }
         if (
-            values.get("PLAN_ACTOR") != "sprint_item_supervisor"
-            or values.get("PLAN_SPRINT_ITEM_ID") != sprint_item_id
+            values.get("PLAN_ACTOR") not in {"manager", "sprint_item_supervisor"}
+            or values.get("PLAN_MANAGER_ID", values.get("PLAN_SPRINT_ITEM_ID")) != manager_id
+            or (
+                "PLAN_MANAGER_ID" in values
+                and "PLAN_SPRINT_ITEM_ID" in values
+                and values["PLAN_MANAGER_ID"] != values["PLAN_SPRINT_ITEM_ID"]
+            )
         ):
             continue
         history.append(
@@ -751,7 +756,7 @@ async def start_agent_conversation(
     values: ConversationStartValues,
     *,
     conversation_id: str,
-    required_sprint_item_id: str | None = None,
+    required_manager_id: str | None = None,
 ) -> LinkedConversation:
     """Start a conversation for an agent that is not a Ticket, under a minted name.
 
@@ -774,7 +779,7 @@ async def start_agent_conversation(
     )
     missing_supervisor = False
     with conn:
-        if required_sprint_item_id is None:
+        if required_manager_id is None:
             conn.execute(
                 "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
                 "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
@@ -785,9 +790,10 @@ async def start_agent_conversation(
             linked = conn.execute(
                 "UPDATE agents SET conversation_id=? WHERE agent_key=? "
                 "AND conversation_id IS NULL AND EXISTS ("
-                "SELECT 1 FROM sprint_items WHERE id=? "
-                "AND 'sprint_item_supervisor_' || id=agents.agent_key)",
-                (conversation_id, agent_key, required_sprint_item_id),
+                "SELECT 1 FROM managers WHERE id=? "
+                "AND ('manager_' || id=agents.agent_key "
+                "OR 'sprint_item_supervisor_' || id=agents.agent_key))",
+                (conversation_id, agent_key, required_manager_id),
             )
             missing_supervisor = (
                 linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None
@@ -796,8 +802,8 @@ async def start_agent_conversation(
         await system.kill(conversation_id)
         raise PlannerError(
             ErrorCode.not_found,
-            "Sprint Item supervisor no longer exists",
-            {"sprint_item_id": required_sprint_item_id},
+            "Manager no longer exists",
+            {"manager_id": required_manager_id},
         )
     now_in = read_agent_conversation(conn, agent_key) or conversation_id
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
@@ -820,7 +826,7 @@ async def send_to_agent_conversation(
     sender: Principal | None = None,
     recipient: Principal | None = None,
     reply_requested: bool = True,
-    required_sprint_item_id: str | None = None,
+    required_manager_id: str | None = None,
     retain_created_conversation: bool = False,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
@@ -850,7 +856,7 @@ async def send_to_agent_conversation(
             agent_key,
             values,
             conversation_id=making,
-            required_sprint_item_id=required_sprint_item_id,
+            required_manager_id=required_manager_id,
         )
         if linked.made_here:
             # Made here, on the values this message says it runs under, so the message has

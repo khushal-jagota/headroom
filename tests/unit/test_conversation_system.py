@@ -619,7 +619,7 @@ def _store_manager_notice_batch(
         with conn:
             conn.execute(
                 "INSERT INTO manager_wake_batches("
-                "sprint_item_id,sender_message_id,message,status,conversation_id,"
+                "manager_id,sender_message_id,message,status,conversation_id,"
                 "created_at,updated_at,target_kind,target_id) "
                 "VALUES (NULL,?,?,'offering',?,1,1,'chief','chief')",
                 (sender_message_id, "review failure", conversation_id),
@@ -1889,7 +1889,7 @@ def test_caller_cancellation_after_acceptance_preserves_receipt_and_duplicate_id
             return await original(*args, **kwargs)
 
         harness.store.append_delivered_prompt = blocked  # type: ignore[method-assign]
-        sender = Principal(PrincipalKind.sprint_item, "sender")
+        sender = Principal(PrincipalKind.manager, "sender")
         recipient = Principal(PrincipalKind.ticket, "worker")
         first = asyncio.create_task(
             harness.system.send_with_receipt(
@@ -1956,7 +1956,7 @@ def test_active_steer_receipt_barrier_preserves_sender_obligation_before_complet
             return await original(conversation_id, payload, **kwargs)
 
         harness.store.append_event = blocked  # type: ignore[method-assign]
-        sender = Principal(PrincipalKind.sprint_item, "supervisor")
+        sender = Principal(PrincipalKind.manager, "supervisor")
         steering = asyncio.create_task(
             harness.system.send(
                 "c",
@@ -2346,7 +2346,7 @@ def test_turn_replacement_waits_for_accepted_steer_receipt_and_sender_obligation
             return outcome
 
         monkeypatch.setattr(child, "steer", accepted_without_ack)
-        sender = Principal(PrincipalKind.sprint_item, "supervisor")
+        sender = Principal(PrincipalKind.manager, "supervisor")
         steering = asyncio.create_task(
             harness.system.send(
                 "c",

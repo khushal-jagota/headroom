@@ -78,10 +78,10 @@ export function feedbackPageContext(hash: string, detailTitle = ""): FeedbackPag
   }
   if (screen === "workspace") {
     if (segments[1] === "chief-of-staff") return { address, label: "Chief of Staff" };
-    if (segments[1] === "item" && segments.length === 3) {
-      return { address, label: title ? `Sprint Item · ${title}` : "Sprint Item" };
+    if (["manager", "item"].includes(segments[1]) && segments.length === 3) {
+      return { address, label: title ? `Manager · ${title}` : "Manager" };
     }
-    if ((segments[1] === "item" && segments.length === 4) ||
+    if ((["manager", "item"].includes(segments[1]) && segments.length === 4) ||
         (segments.length === 2 && segments[1] !== "chief-of-staff")) {
       return { address, label: title ? `Ticket · ${title}` : "Ticket" };
     }
@@ -114,7 +114,7 @@ export function feedbackTicketStateLabel(ticket: FeedbackTicket): string {
   if (ticket.stage === "done") return "Done";
   if (ticket.ticket_status === "blocked") return "Blocked";
   const attention = primaryWorkAttention(ticket);
-  // The same four facts the Workspace rail and the Sprint Item page head their groups
+  // The same four facts the Workspace rail and the Manager page head their groups
   // with, in the same words. One fact is named one way wherever it is read.
   if (attention === "awaiting_approval") return "Needs your approval";
   if (attention === "awaiting_answer") return "Needs your answer";

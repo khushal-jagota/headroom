@@ -7,7 +7,7 @@ import json
 import sqlite3
 from typing import Any, cast, get_args
 
-from planner.navigation.contracts import Continuity, NavigationRecord
+from planner.navigation.contracts import SCHEMA_VERSION, Continuity, NavigationRecord
 from planner.navigation.delivery_authority import DeliveryUnavailable
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.contracts import (
@@ -48,7 +48,7 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
             item is None
             or isinstance(item, dict)
             and set(item) == {"kind", "id"}
-            and item["kind"] in ("chief", "orchestrator", "ticket")
+            and item["kind"] in ("chief", "manager", "ticket")
             and isinstance(item["id"], str)
             and 0 < len(item["id"]) <= 256
             and (item["kind"] != "chief" or item["id"] == "chief")
@@ -98,7 +98,7 @@ def request(value: object, config: ViewConfig = DEFAULT_CONFIG) -> ViewRequest:
             raise ValueError("invalid window anchor")
         section = window["section"]
         if section in ("rail_tickets", "children") and (
-            window["owner"] is None or window["owner"]["kind"] not in ("chief", "orchestrator")
+            window["owner"] is None or window["owner"]["kind"] not in ("chief", "manager")
         ):
             raise ValueError("window requires a parent")
         if section in ("rail_parents", "settled", "review") and window["owner"] is not None:
@@ -143,7 +143,7 @@ def continuity(conn: sqlite3.Connection) -> Continuity:
     ).fetchone()
     if (
         row is None
-        or row[1] != 6
+        or row[1] != SCHEMA_VERSION
         or meta is None
         or tuple(meta) != (1, row[2], row[3], ORDERING_GENERATION)
         or conn.execute("SELECT 1 FROM navigation_dirty LIMIT 1").fetchone()
@@ -152,7 +152,7 @@ def continuity(conn: sqlite3.Connection) -> Continuity:
     return {
         "scope": row[0],
         "schema_version": row[1],
-        "semantics": "attention-knowledge-v6-recap",
+        "semantics": "attention-knowledge-v8-manager",
         "epoch": row[2],
         "revision": str(row[3]),
     }
@@ -214,7 +214,7 @@ def read_content(
             item, full = pending.pop()
             existing = found.get(item, records.get(item))
             if existing is not None and (
-                item[0] != "orchestrator" or not full or "recap_reference" in existing["value"]
+                item[0] != "manager" or not full or "recap_reference" in existing["value"]
             ):
                 continue
             raw = record(conn, item)
@@ -231,23 +231,23 @@ def read_content(
                     "durable": raw["attention"]["durable"],
                 }
             found[item] = row
-            if item[0] in ("ticket", "orchestrator", "chief"):
+            if item[0] in ("ticket", "manager", "chief"):
                 if raw["conversation_id"]:
                     pending.append((("conversation", raw["conversation_id"]), True))
-                if raw.get("project_id") and (item[0] != "orchestrator" or full):
+                if raw.get("project_id") and (item[0] != "manager" or full):
                     pending.append((("project", raw["project_id"]), True))
                 if item[0] == "ticket":
                     pending.append(
                         (
                             ("chief", "chief")
-                            if raw["orchestrator_kind"] == "chief"
-                            else ("orchestrator", raw["sprint_item_id"]),
+                            if raw["manager_kind"] == "chief"
+                            else ("manager", raw["manager_id"]),
                             True,
                         )
                     )
             elif item[0] == "address":
                 # The admitted owner supplies its current dependencies. An address's
-                # parent_id alone is never a reason to demand a full orchestrator.
+                # parent_id alone is never a reason to demand a full manager.
                 pending.extend(
                     (
                         ((raw["owner_kind"], raw["owner_id"]), True),

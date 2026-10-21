@@ -113,7 +113,7 @@ def cli_app(
             *args: str,
             ticket_id: str | None = None,
             actor: str | None = None,
-            sprint_item_id: str | None = None,
+            manager_id: str | None = None,
             stdin: str | None = None,
         ) -> JsonObject:
             # The identity a launched Worker runs under, which is both variables
@@ -125,8 +125,8 @@ def cli_app(
                 env["PLAN_ACTOR"] = "worker"
             if actor is not None:
                 env["PLAN_ACTOR"] = actor
-            if sprint_item_id is not None:
-                env["PLAN_SPRINT_ITEM_ID"] = sprint_item_id
+            if manager_id is not None:
+                env["PLAN_MANAGER_ID"] = manager_id
             result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)
             assert result.exit_code == 0, result.output
             return cast(JsonObject, json.loads(result.stdout))

@@ -50,7 +50,7 @@ navigation.owner.waitForVisibility=(fence,options)=>{
  const before=navigation.owner.getState().publication!;
  if(response.coverage.revision===before.continuity.revision)return;
  const keys=new Set(response.content.records.map((row:any)=>JSON.stringify([row.kind,row.id])));
- const frame:any={event:'patch',wire_version:3,projection_version:2,view_id:response.view_id,
+ const frame:any={event:'patch',wire_version:3,projection_version:3,view_id:response.view_id,
  scope_generation:response.scope_generation,ordering_generation:response.ordering_generation,
  coverage:response.coverage,previous_coverage:before.continuity,authority:response.authority,
  content_version:response.content_version,previous_content_version:before.view!.contentVersion,

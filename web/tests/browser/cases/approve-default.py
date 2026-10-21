@@ -78,8 +78,8 @@ def run(browser, urls):
         return {
             "project_id": "project_one",
             "project": "Panels",
-            "sprint_item_id": "item_one",
-            "sprint_item_title": "Outcome",
+            "manager_id": "item_one",
+            "manager_title": "Outcome",
             "id": ticket_id,
             "title": "Restore compact approval",
             "worker_type": worker_type,
@@ -90,7 +90,7 @@ def run(browser, urls):
             "stage": stage,
             "ceiling": stage,
             "ticket_status": "awaiting_approval",
-            "ceiling_holder": {"kind": "sprint_item", "id": "item_one"},
+            "ceiling_holder": {"kind": "manager", "id": "item_one"},
             "conversation_id": None,
             "conversation_history": [],
             "blocked": False,
@@ -147,14 +147,14 @@ def run(browser, urls):
         response = navigation_response(
             {
                 "columns": [{"cards": list(tickets.values())}],
-                "sprint_items": [
+                "managers": [
                     {**parent, "id": identity}
                     for identity in {
                         "item_one",
                         *(
-                            row["sprint_item_id"]
+                            row["manager_id"]
                             for row in tickets.values()
-                            if row["sprint_item_id"]
+                            if row["manager_id"]
                         ),
                     }
                 ],
@@ -199,7 +199,7 @@ def run(browser, urls):
         return {
             **source,
             "locale": "en-US",
-            "orchestrator": {"kind": "sprint_item", "id": "item_one"},
+            "manager": {"kind": "manager", "id": "item_one"},
             "record_sha256": source.get("record_sha256", "record-initial"),
             "field_values": {gate: source["field_values"].get(gate, "")} if gate else {},
             "field_summaries": {
@@ -410,7 +410,7 @@ def run(browser, urls):
             page.wait_for_timeout(20)
         assert len(items) == count, items
 
-    expect(block().locator("[data-reviewer-heading]")).to_have_text("Orchestrator")
+    expect(block().locator("[data-reviewer-heading]")).to_have_text("Manager")
     assert (
         block().locator("[data-scope-ceiling], [data-ceiling-effect], .approves-mark").count() == 0
     )
@@ -449,7 +449,7 @@ def run(browser, urls):
                 page.screenshot(path=str(Path(artifact_dir) / path), full_page=True)
                 evidence.append(path)
             page.locator('[data-ceiling-part="holder"]').click()
-            expect(page.get_by_role("option", name="Orchestrator", exact=True)).to_have_count(1)
+            expect(page.get_by_role("option", name="Manager", exact=True)).to_have_count(1)
             if artifact_dir:
                 path = f"{host_kind}-{label}-reviewers.png"
                 page.screenshot(path=str(Path(artifact_dir) / path), full_page=True)
@@ -465,7 +465,7 @@ def run(browser, urls):
     expect(page.locator("[data-review-card]")).to_have_attribute("data-ticket-id", "t_coding")
     expect(page.get_by_role("listbox")).to_be_focused()
     page.locator('[data-ceiling-part="holder"]').click()
-    page.get_by_role("listbox").press("o")
+    page.get_by_role("listbox").press("m")
     expect(page.locator("[data-listbox-picker-active]")).to_have_attribute(
         "data-ceiling-picker-choice", "item_one"
     )
@@ -483,7 +483,7 @@ def run(browser, urls):
     expect(page.get_by_role("option", name="Worker", exact=True)).to_have_attribute(
         "data-ceiling-picker-choice", "t_holder"
     )
-    expect(page.get_by_role("option", name="Orchestrator", exact=True)).to_have_attribute(
+    expect(page.get_by_role("option", name="Manager", exact=True)).to_have_attribute(
         "data-ceiling-picker-choice", "item_one"
     )
     page.get_by_role("listbox").press("Escape")
@@ -649,8 +649,8 @@ def run(browser, urls):
         [
             {"kind": "owner", "id": "owner"},
             {"kind": "chief", "id": "chief"},
-            {"kind": "sprint_item", "id": "si_assigned"},
-            {"kind": "sprint_item", "id": "si_foreign"},
+            {"kind": "manager", "id": "si_assigned"},
+            {"kind": "manager", "id": "si_foreign"},
             {"kind": "ticket", "id": "t_foreign"},
         ]
     ):
@@ -658,7 +658,7 @@ def run(browser, urls):
         value = ticket(
             identity, "coding", "needs_plan", "plan", "Literal principal proposal", 100 + index
         )
-        value["sprint_item_id"] = "si_assigned"
+        value["manager_id"] = "si_assigned"
         value["ceiling_holder"] = principal
         tickets[identity] = value
         page.evaluate("(id) => window.__showTicket(id)", identity)
@@ -747,7 +747,7 @@ def run(browser, urls):
                     "hosts": ["TicketRoute", "ReviewRoute"],
                     "same_proposal_revision": 1,
                     "same_reviewer": "User",
-                    "preceding_ticket_reviewer": "Orchestrator",
+                    "preceding_ticket_reviewer": "Manager",
                     "screenshots": evidence,
                     "browser_errors": errors,
                     "steps": step_states,

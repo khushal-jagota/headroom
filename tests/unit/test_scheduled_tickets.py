@@ -38,7 +38,7 @@ def _template(
     kickoff_note: str = "Gather evidence first.",
     blocked_by: tuple[str, ...] = (),
     project_id: str | None = None,
-    sprint_item_id: str | None = None,
+    manager_id: str | None = None,
 ) -> ScheduledTicketTemplate:
     return ScheduledTicketTemplate(
         title=title,
@@ -46,8 +46,8 @@ def _template(
         kickoff_note=kickoff_note,
         deadline=None,
         project_id=project_id,
-        sprint_item_id=sprint_item_id,
-        orchestrator_kind="sprint_item" if sprint_item_id is not None else "chief",
+        manager_id=manager_id,
+        manager_kind="manager" if manager_id is not None else "chief",
         employee_backend=None,
         employee_launch_model=None,
         blocked_by_ticket_ids=blocked_by,
@@ -165,8 +165,8 @@ def test_due_occurrence_creates_one_ordinary_ticket_without_day_placement(
     assert ticket.ticket_status is TicketStatus.awaiting_approval
     assert ticket.pending_proposal is not None
     assert ticket.pending_proposal.body == original.template.kickoff_note
-    assert ticket.orchestrator_kind == "chief"
-    assert ticket.sprint_item_id is None
+    assert ticket.manager_kind == "chief"
+    assert ticket.manager_id is None
     assert ticket.is_backlogged is False
     assert first[0].target_date == "2026-07-28"
     receipt = views.occurrence_json(first[0])

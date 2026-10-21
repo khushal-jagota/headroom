@@ -104,7 +104,7 @@ class SignalDeletion:
 class SignalAssociationEffect:
     """Both sides of an address change in its source transaction."""
 
-    owner_kind: Literal["ticket", "orchestrator", "chief"]
+    owner_kind: Literal["ticket", "manager", "chief"]
     owner_id: str
     relation: Literal["current", "historical"]
     before_conversation_id: str | None

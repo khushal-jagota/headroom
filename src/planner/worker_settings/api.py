@@ -17,6 +17,7 @@ from planner.conversation.storage import ConversationStore
 from planner.core.authctx import (
     RequestContext,
     request_context,
+    require_owner,
     require_owner_or_chief,
 )
 from planner.core.authority import owner_only, require_above
@@ -64,6 +65,7 @@ def _skill_json(skill: ManagedSkill) -> JsonDict:
         "name": skill.name,
         "description": skill.description,
         "markdown_body": skill.markdown_body,
+        "source_text": skill.source_text,
     }
 
 
@@ -223,6 +225,17 @@ async def get_stale_skill_references(conn: DbConn) -> JsonDict:
 @router.get("/skills")
 async def list_skills(conn: DbConn) -> JsonDict:
     return _skills_home_json(service.read_skills_home(conn))
+
+
+@router.post("/skills/apply")
+async def apply_skills(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clk: Clk
+) -> JsonDict:
+    require_owner(ctx)
+    applied = service.apply_skills(
+        conn, raw, now=clk.now_unix(), database_parent=_database_parent(config)
+    )
+    return {"skills": [_skill_json(skill) for skill in applied]}
 
 
 @router.get("/skills/{skill_name}")

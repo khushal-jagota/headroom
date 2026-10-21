@@ -17,7 +17,7 @@ from planner.core.contracts import Principal, PrincipalKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.projects import data as projects_data
-from planner.sprints import data as sprints_data
+from planner.managers import data as managers_data
 from planner.tickets import data, views
 from planner.tickets.contracts import Ticket
 
@@ -26,8 +26,8 @@ CHIEF = Principal(PrincipalKind.chief, "chief")
 
 def _item(conn: Connection) -> str:
     project = projects_data.create_project(conn, name="Item Project", now=1)
-    return sprints_data.create_item(
-        conn, title="An orchestrator", project_id=project.id, clock=RealClock()
+    return managers_data.create_manager(
+        conn, title="An manager", project_id=project.id, clock=RealClock()
     ).id
 
 
@@ -35,14 +35,14 @@ def _ticket(
     conn: Connection,
     *,
     worker_type: str = "coding",
-    sprint_item_id: str | None = None,
+    manager_id: str | None = None,
     stated_holder: Principal | None = None,
 ) -> Ticket:
     return data.create_ticket(
         conn,
         title="A Worker",
         worker_type=worker_type,
-        sprint_item_id=sprint_item_id,
+        manager_id=manager_id,
         stated_holder=stated_holder,
         brief="An agreed brief.",
         principal=OWNER_PRINCIPAL,
@@ -55,27 +55,27 @@ def test_chief_assignment_is_explicit_and_preserves_identity_and_owner_holder(
     tmp_db: Connection,
 ) -> None:
     item_id = _item(tmp_db)
-    ticket = _ticket(tmp_db, sprint_item_id=item_id)
+    ticket = _ticket(tmp_db, manager_id=item_id)
     tmp_db.execute(
         "UPDATE tickets SET conversation_id='existing-conversation' WHERE id=?", (ticket.id,)
     )
     moved = data.edit_ticket(
         tmp_db,
         ticket.id,
-        edit={"orchestrator": CHIEF},
+        edit={"manager": CHIEF},
         title_max_chars=200,
         principal=OWNER_PRINCIPAL,
         now=2,
     )
     assert moved.id == ticket.id
     assert moved.conversation_id == "existing-conversation"
-    assert moved.orchestrator_kind == "chief"
-    assert moved.sprint_item_id is None
+    assert moved.manager_kind == "chief"
+    assert moved.manager_id is None
     assert moved.ceiling_holder == OWNER_PRINCIPAL
     assert moved.project_id == ticket.project_id
-    assert views.ticket_json(moved, 2)["orchestrator"] == {"kind": "chief", "id": "chief"}
+    assert views.ticket_json(moved, 2)["manager"] == {"kind": "chief", "id": "chief"}
     assert (
-        tmp_db.execute("SELECT orchestrator_kind FROM tickets WHERE id=?", (ticket.id,)).fetchone()[
+        tmp_db.execute("SELECT manager_kind FROM tickets WHERE id=?", (ticket.id,)).fetchone()[
             0
         ]
         == "chief"
@@ -96,15 +96,15 @@ def test_normal_assignment_inherits_project_and_retains_chief_holder(tmp_db: Con
     moved = data.edit_ticket(
         tmp_db,
         ticket.id,
-        edit={"orchestrator": Principal(PrincipalKind.sprint_item, item_id)},
+        edit={"manager": Principal(PrincipalKind.manager, item_id)},
         title_max_chars=200,
         principal=OWNER_PRINCIPAL,
         now=2,
     )
-    assert moved.orchestrator_kind == "sprint_item"
-    assert moved.sprint_item_id == item_id
+    assert moved.manager_kind == "manager"
+    assert moved.manager_id == item_id
     assert moved.ceiling_holder == CHIEF
-    assert moved.project_id == sprints_data.read_item(tmp_db, item_id).item.project_id
+    assert moved.project_id == managers_data.read_manager(tmp_db, item_id).item.project_id
     assert (
         tmp_db.execute("SELECT project_id FROM tickets WHERE id=?", (ticket.id,)).fetchone()[0]
         is None
@@ -115,13 +115,13 @@ def test_a_move_to_chief_releases_only_an_invalid_old_parent_holder(tmp_db: Conn
     item_id = _item(tmp_db)
     ticket = _ticket(
         tmp_db,
-        sprint_item_id=item_id,
-        stated_holder=Principal(PrincipalKind.sprint_item, item_id),
+        manager_id=item_id,
+        stated_holder=Principal(PrincipalKind.manager, item_id),
     )
     moved = data.edit_ticket(
         tmp_db,
         ticket.id,
-        edit={"orchestrator": CHIEF},
+        edit={"manager": CHIEF},
         title_max_chars=200,
         principal=OWNER_PRINCIPAL,
         now=2,

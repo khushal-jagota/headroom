@@ -27,9 +27,9 @@ from planner.core.authctx import RequestContext
 from planner.core.clock import Clock
 from planner.core.contracts import Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
+from planner.managers import data as managers_data
 from planner.message_delivery import service
 from planner.message_delivery.contracts import MessageDeliveryMode, MessageDeliveryResult
-from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.worker_settings import service as worker_settings_service
 
@@ -38,7 +38,7 @@ RECAP_REQUEST_MESSAGE = "Owner has requested a recap. Remember to keep it short 
 # Every agent Panels runs keeps a recap, so every agent can be asked for a fresh one. The
 # owner is not an agent and has no recap, so the owner is the only principal left out.
 RECAP_REQUEST_RECIPIENT_KINDS = frozenset(
-    {PrincipalKind.ticket, PrincipalKind.sprint_item, PrincipalKind.chief}
+    {PrincipalKind.ticket, PrincipalKind.manager, PrincipalKind.chief}
 )
 
 
@@ -49,11 +49,11 @@ async def request_recap(
     ctx: RequestContext,
     recipient: Principal,
 ) -> MessageDeliveryResult:
-    """Ask one Ticket, orchestrator, or the Chief for a fresh recap, now rather than later."""
+    """Ask one Ticket, manager, or the Chief for a fresh recap, now rather than later."""
     if recipient.kind not in RECAP_REQUEST_RECIPIENT_KINDS:
         raise PlannerError(
             ErrorCode.validation,
-            "a recap can be asked of a ticket, an orchestrator, or the Chief",
+            "a recap can be asked of a ticket, a Manager, or the Chief",
             {"kind": recipient.kind.value},
         )
     _clear_recap(conn, clock, ctx, recipient)
@@ -83,8 +83,8 @@ def _clear_recap(
             principal=ctx.principal,
             now=clock.now_unix(),
         )
-    elif recipient.kind is PrincipalKind.sprint_item:
-        sprints_data.update_item(conn, recipient.id, edits={"recap": ""}, clock=clock)
+    elif recipient.kind is PrincipalKind.manager:
+        managers_data.update_manager(conn, recipient.id, edits={"recap": ""}, clock=clock)
     else:
         worker_settings_service.update_chief_recap(conn, {"recap": ""})
 

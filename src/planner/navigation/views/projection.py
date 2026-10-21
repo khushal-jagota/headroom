@@ -6,7 +6,7 @@ import json
 import sqlite3
 from typing import Any, cast
 
-from planner.navigation.contracts import NavigationRecord, RecordKey
+from planner.navigation.contracts import SCHEMA_VERSION, NavigationRecord, RecordKey
 from planner.navigation.views.configuration import DEFAULT_CONFIG, ViewConfig
 from planner.navigation.views.logic import GROUPS, compact, digest, group, project, section_key
 from planner.navigation.views.ordering import ORDERING_GENERATION, sort_key
@@ -33,9 +33,9 @@ def _metadata(
     conversation = value.get("conversation_id")
     parent = (
         ("chief", "chief")
-        if kind == "ticket" and value["orchestrator_kind"] == "chief"
+        if kind == "ticket" and value["manager_kind"] == "chief"
         else (
-            ("orchestrator", value["sprint_item_id"])
+            ("manager", value["manager_id"])
             if kind == "ticket"
             else (value.get("parent_kind"), value.get("parent_id"))
         )
@@ -127,7 +127,7 @@ def _members(
                     )
                 )
 
-            if kind == "orchestrator":
+            if kind == "manager":
                 add(
                     "settled" if value["settled"] else "rail_parents",
                     None,
@@ -273,7 +273,7 @@ def update(
                     "SELECT kind,id FROM navigation_view_index WHERE conversation_id=?", (identity,)
                 )
             )
-        if kind in ("ticket", "orchestrator", "chief"):
+        if kind in ("ticket", "manager", "chief"):
             affected.update(
                 (r[0], r[1])
                 for r in conn.execute(
@@ -281,12 +281,12 @@ def update(
                     (kind, identity),
                 )
             )
-        if kind == "orchestrator":
+        if kind == "manager":
             affected.update(
                 (r[0], r[1])
                 for r in conn.execute(
                     "SELECT kind,id FROM navigation_view_index WHERE "
-                    "parent_kind='orchestrator' AND parent_id=?",
+                    "parent_kind='manager' AND parent_id=?",
                     (identity,),
                 )
             )
@@ -316,7 +316,7 @@ def update(
         for candidate in (old, new):
             if (
                 candidate
-                and candidate[0] in ("ticket", "orchestrator", "chief", "address")
+                and candidate[0] in ("ticket", "manager", "chief", "address")
                 and candidate[3]
             ):
                 pointer_ids.add(candidate[3])
@@ -383,7 +383,7 @@ def update(
         ).fetchone()
         references = conn.execute(
             "SELECT count(*) FROM navigation_view_index WHERE conversation_id=? "
-            "AND kind IN ('chief','ticket','orchestrator')",
+            "AND kind IN ('chief','ticket','manager')",
             (identity,),
         ).fetchone()[0]
         current = conn.execute(
@@ -426,7 +426,7 @@ def update(
 def rebuild(conn: sqlite3.Connection, config: ViewConfig = DEFAULT_CONFIG) -> None:
     if not prepared(conn):
         return
-    if conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] != 6:
+    if conn.execute("SELECT schema_version FROM navigation_meta").fetchone()[0] != SCHEMA_VERSION:
         return
     if not conn.in_transaction:
         raise RuntimeError("view activation requires the source transaction")

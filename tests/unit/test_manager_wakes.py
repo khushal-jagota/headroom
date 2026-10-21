@@ -41,25 +41,25 @@ from planner.manager_wakes.runtime import (
     reconcile_batch_outcomes,
 )
 from planner.runtime import conversation_start
-from planner.sprints import data as sprints_data
-from planner.sprints.contracts import SprintItemSupervisorLaunchConfiguration
+from planner.managers import data as managers_data
+from planner.managers.contracts import ManagerLaunchConfiguration
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
 
 
 def _item_and_ticket(conn: Connection, clock: FakeClock) -> tuple[str, str]:
-    item = sprints_data.create_item(
-        conn, title="Managed outcome", project_id="project_vylo", clock=clock
+    item = managers_data.create_manager(
+        conn, title="Managed manager", project_id="project_vylo", clock=clock
     )
     ticket = tickets_data.create_ticket(
         conn,
         title="Managed ticket",
-        principal=Principal(PrincipalKind.sprint_item, item.id),
+        principal=Principal(PrincipalKind.manager, item.id),
         now=clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        sprint_item_id=item.id,
+        manager_id=item.id,
         stated_ceiling="needs_success_condition",
     )
     return item.id, ticket.id
@@ -93,7 +93,7 @@ def _append_failed_turn(store: ConversationStore, conversation_id: str) -> None:
     )
 
 
-@pytest.mark.parametrize("holder_kind", ["chief", "sprint_item", "ticket"])
+@pytest.mark.parametrize("holder_kind", ["chief", "manager", "ticket"])
 def test_failed_ticket_turn_snapshots_each_employee_ceiling_holder(
     tmp_db: Connection, fake_clock: FakeClock, holder_kind: str
 ) -> None:
@@ -133,7 +133,7 @@ def test_failed_turn_notice_source_identity_is_idempotent(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    target = Principal(PrincipalKind.sprint_item, item_id)
+    target = Principal(PrincipalKind.manager, item_id)
     def create_notice() -> bool:
         return wake_data.create_turn_failure_wake(
             tmp_db,
@@ -416,7 +416,7 @@ def test_manager_proposal_wakes_are_atomic_and_each_file_gets_a_generation(
     )
 
     rows = _wake_rows(tmp_db)
-    assert [(row["sprint_item_id"], row["source_revision"]) for row in rows] == [
+    assert [(row["manager_id"], row["source_revision"]) for row in rows] == [
         (item_id, 1),
         (item_id, 2),
     ]
@@ -435,7 +435,7 @@ def test_readdressing_a_parked_proposal_to_the_item_manager_creates_one_new_wake
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    manager = Principal(PrincipalKind.sprint_item, item_id)
+    manager = Principal(PrincipalKind.manager, item_id)
     tickets_data.edit_ticket(
         tmp_db,
         ticket_id,
@@ -468,7 +468,7 @@ def test_readdressing_a_parked_proposal_to_the_item_manager_creates_one_new_wake
         ).fetchone()[0]
         == 2
     )
-    assert [(row["sprint_item_id"], row["source_revision"]) for row in _wake_rows(tmp_db)] == [
+    assert [(row["manager_id"], row["source_revision"]) for row in _wake_rows(tmp_db)] == [
         (item_id, 2)
     ]
 
@@ -495,7 +495,7 @@ def test_moving_a_parked_proposal_wakes_the_new_manager_and_removes_old_authorit
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     old_item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    old_manager = Principal(PrincipalKind.sprint_item, old_item_id)
+    old_manager = Principal(PrincipalKind.manager, old_item_id)
     tickets_data.file_current_proposal(
         tmp_db,
         ticket_id,
@@ -503,20 +503,20 @@ def test_moving_a_parked_proposal_wakes_the_new_manager_and_removes_old_authorit
         principal=Principal(PrincipalKind.ticket, ticket_id),
         now=2,
     )
-    new_item = sprints_data.create_item(
-        tmp_db, title="New managed outcome", project_id="project_vylo", clock=fake_clock
+    new_item = managers_data.create_manager(
+        tmp_db, title="New managed manager", project_id="project_vylo", clock=fake_clock
     )
-    new_manager = Principal(PrincipalKind.sprint_item, new_item.id)
+    new_manager = Principal(PrincipalKind.manager, new_item.id)
     tickets_data.edit_ticket(
         tmp_db,
         ticket_id,
-        edit={"sprint_item_id": new_item.id, "ceiling_holder": new_manager},
+        edit={"manager_id": new_item.id, "ceiling_holder": new_manager},
         title_max_chars=TITLE_MAX_CHARS,
         principal=OWNER_PRINCIPAL,
         now=3,
     )
     rows = _wake_rows(tmp_db)
-    assert [(row["sprint_item_id"], row["source_revision"]) for row in rows] == [
+    assert [(row["manager_id"], row["source_revision"]) for row in rows] == [
         (old_item_id, 1),
         (new_item.id, 2),
     ]
@@ -536,18 +536,18 @@ def test_moving_a_parked_proposal_wakes_the_new_manager_and_removes_old_authorit
 def test_manager_routed_kickoff_proposal_creates_its_wake_with_ticket(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
-    item = sprints_data.create_item(
-        tmp_db, title="Managed outcome", project_id="project_vylo", clock=fake_clock
+    item = managers_data.create_manager(
+        tmp_db, title="Managed manager", project_id="project_vylo", clock=fake_clock
     )
     ticket = tickets_data.create_ticket(
         tmp_db,
         title="Kickoff waits here",
-        principal=Principal(PrincipalKind.sprint_item, item.id),
+        principal=Principal(PrincipalKind.manager, item.id),
         now=1,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Review this kickoff",
-        sprint_item_id=item.id,
+        manager_id=item.id,
         stated_ceiling="needs_brief",
     )
     assert ticket.pending_proposal is not None
@@ -568,7 +568,7 @@ def test_real_error_transitions_use_claim_revisions_and_repeated_writes_do_not_d
     assert first.worker_step_claim_revision == repeated.worker_step_claim_revision == 1
     rows = _wake_rows(tmp_db)
     assert len(rows) == 1
-    assert rows[0]["sprint_item_id"] == item_id
+    assert rows[0]["manager_id"] == item_id
     assert rows[0]["source_kind"] == "worker_error"
     assert rows[0]["source_revision"] == 1
 
@@ -580,7 +580,7 @@ def test_batches_group_wakes_and_close_only_for_the_exact_prompt(
     for revision, kind in enumerate(WakeSourceKind, start=1):
         wake_data.create_wake(
             tmp_db,
-            sprint_item_id=item_id,
+            manager_id=item_id,
             ticket_id=ticket_id,
             source_kind=kind,
             source_revision=revision,
@@ -590,7 +590,7 @@ def test_batches_group_wakes_and_close_only_for_the_exact_prompt(
     batch = wake_data.claim_next_batch(tmp_db, process_token="process-a", now=20)
     assert batch is not None
     assert "Event 1" in batch.message and "Event 2" in batch.message
-    assert batch.sender_message_id.startswith("supervisor_delivery_")
+    assert batch.sender_message_id.startswith("manager_delivery_")
 
     tmp_db.execute(
         "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
@@ -629,7 +629,7 @@ def test_busy_manager_leaves_sources_unclaimed_so_later_wakes_combine(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
@@ -651,7 +651,7 @@ def test_busy_manager_leaves_sources_unclaimed_so_later_wakes_combine(
     )
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         claim_revision=2,
         ticket_title="Managed ticket",
@@ -679,7 +679,7 @@ def test_busy_manager_leaves_sources_unclaimed_so_later_wakes_combine(
     )
     wake_data.create_proposal_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         proposal_revision=1,
         ticket_title="Managed ticket",
@@ -698,13 +698,13 @@ def test_running_wake_loop_does_not_spin_on_active_manager_bookkeeping(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
         now=1,
     )
-    agent_key = sprints_data.supervisor_agent_key(item_id)
+    agent_key = managers_data.manager_agent_key(item_id)
     tmp_db.execute(
         "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,access,"
         "created_at) VALUES ('conv-active','hermes','model','/tmp','full',1)"
@@ -767,7 +767,7 @@ def test_definite_failure_waits_then_creates_a_new_attempt_id(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
@@ -794,7 +794,7 @@ def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batc
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
@@ -820,17 +820,17 @@ def test_restart_preserves_dispatching_as_uncertain_and_recovers_known_held_batc
     second_ticket = tickets_data.create_ticket(
         tmp_db,
         title="Second managed ticket",
-        principal=Principal(PrincipalKind.sprint_item, item_id),
+        principal=Principal(PrincipalKind.manager, item_id),
         now=6,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="coding",
         brief="Start",
-        sprint_item_id=item_id,
+        manager_id=item_id,
         stated_ceiling="needs_success_condition",
     )
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=second_ticket.id,
         claim_revision=1,
         ticket_title=second_ticket.title,
@@ -868,7 +868,7 @@ def test_held_wake_is_marked_dispatching_before_it_can_leave_the_queue(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
@@ -919,7 +919,7 @@ def test_dequeue_marker_wins_the_race_with_the_queued_send_receipt(
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
@@ -958,13 +958,13 @@ def test_dequeue_marker_wins_the_race_with_the_queued_send_receipt(
     assert stored.status is WakeBatchStatus.dispatching
 
 
-def test_late_uncertain_outcome_prevents_restart_replay(
+def test_late_uncertain_manager_prevents_restart_replay(
     tmp_db: Connection, fake_clock: FakeClock
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
@@ -1012,10 +1012,10 @@ def test_delivery_uses_the_supervisor_boundary_and_closes_on_its_prompt(
     backend_key: ConversationBackendKey,
 ) -> None:
     item_id, ticket_id = _item_and_ticket(tmp_db, fake_clock)
-    sprints_data.update_supervisor_launch_configuration(
+    managers_data.update_manager_launch_configuration(
         tmp_db,
         item_id,
-        SprintItemSupervisorLaunchConfiguration(
+        ManagerLaunchConfiguration(
             employee_backend=backend_key,
             employee_launch_model="a-model",
             employee_launch_reasoning_effort=None,
@@ -1025,7 +1025,7 @@ def test_delivery_uses_the_supervisor_boundary_and_closes_on_its_prompt(
     )
     wake_data.create_worker_error_wake(
         tmp_db,
-        sprint_item_id=item_id,
+        manager_id=item_id,
         ticket_id=ticket_id,
         claim_revision=1,
         ticket_title="Managed ticket",
@@ -1061,7 +1061,7 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
         ticket = tickets_data.create_ticket(
             tmp_db, title="Chief kickoff review", principal=OWNER_PRINCIPAL,
             now=10, title_max_chars=TITLE_MAX_CHARS, worker_type="coding",
-            brief="Chief must see this canonical proposal", sprint_item_id=item_id,
+            brief="Chief must see this canonical proposal", manager_id=item_id,
             stated_holder=CHIEF_PRINCIPAL,
         )
         ticket_id = ticket.id
@@ -1083,7 +1083,7 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
                 title_max_chars=TITLE_MAX_CHARS, principal=OWNER_PRINCIPAL, now=12,
             )
     assert ticket.ceiling_holder == CHIEF_PRINCIPAL
-    assert ticket.sprint_item_id == item_id
+    assert ticket.manager_id == item_id
     assert ticket.pending_proposal is not None
     initial_stage = ticket.stage
     expected_revision = 2 if source == "readdress" else 1
@@ -1120,7 +1120,7 @@ def test_chief_review_proposals_reach_the_real_chief_prompt_boundary(
     unchanged = tickets_data.read_ticket(tmp_db, ticket_id)
     assert unchanged.stage == initial_stage
     assert unchanged.pending_proposal == ticket.pending_proposal
-    assert unchanged.sprint_item_id == item_id
+    assert unchanged.manager_id == item_id
     # A later explicit owner reroute is still an address change, not employee delivery.
     tickets_data.edit_ticket(
         tmp_db, ticket_id, edit={"ceiling_holder": OWNER_PRINCIPAL},

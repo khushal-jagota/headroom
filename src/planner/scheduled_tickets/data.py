@@ -21,8 +21,8 @@ from planner.tickets.contracts import TicketLocale
 
 _SCHEDULE_COLUMNS = (
     "id, enabled, cadence, local_time, title, worker_type, kickoff_note, "
-    "deadline, project_id, sprint_item_id, employee_backend, "
-    "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, locale, "
+    "deadline, project_id, manager_id, employee_backend, "
+    "employee_launch_model, blocked_by_ticket_ids, manager_kind, locale, "
     "created_at, updated_at"
 )
 
@@ -67,14 +67,14 @@ def _row_to_schedule(row: sqlite3.Row) -> ScheduledTicketSchedule:
         cadence=ScheduleCadence(str(row["cadence"])),
         local_time=str(row["local_time"]),
         template=ScheduledTicketTemplate(
-            orchestrator_kind=str(row["orchestrator_kind"]),
+            manager_kind=str(row["manager_kind"]),
             locale=TicketLocale(str(row["locale"])),
             title=str(row["title"]),
             worker_type=str(row["worker_type"]),
             kickoff_note=str(row["kickoff_note"]),
             deadline=None if row["deadline"] is None else str(row["deadline"]),
             project_id=None if row["project_id"] is None else str(row["project_id"]),
-            sprint_item_id=(None if row["sprint_item_id"] is None else str(row["sprint_item_id"])),
+            manager_id=(None if row["manager_id"] is None else str(row["manager_id"])),
             employee_backend=(
                 None if row["employee_backend"] is None else str(row["employee_backend"])
             ),
@@ -114,8 +114,8 @@ def create_schedule(
         conn.execute(
             "INSERT INTO scheduled_ticket_schedules ("
             "id, enabled, cadence, local_time, title, worker_type, kickoff_note, "
-            "deadline, project_id, sprint_item_id, employee_backend, "
-            "employee_launch_model, blocked_by_ticket_ids, orchestrator_kind, locale, "
+            "deadline, project_id, manager_id, employee_backend, "
+            "employee_launch_model, blocked_by_ticket_ids, manager_kind, locale, "
             "created_at, updated_at"
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -128,11 +128,11 @@ def create_schedule(
                 template.kickoff_note,
                 template.deadline,
                 template.project_id,
-                template.sprint_item_id,
+                template.manager_id,
                 template.employee_backend,
                 template.employee_launch_model,
                 json.dumps(list(template.blocked_by_ticket_ids)),
-                template.orchestrator_kind,
+                template.manager_kind,
                 template.locale.value if template.locale is not None else TicketLocale.vps.value,
                 now,
                 now,
@@ -185,8 +185,8 @@ _UPDATABLE_COLUMNS = frozenset(
         "kickoff_note",
         "deadline",
         "project_id",
-        "sprint_item_id",
-        "orchestrator_kind",
+        "manager_id",
+        "manager_kind",
         "employee_backend",
         "employee_launch_model",
         "blocked_by_ticket_ids",

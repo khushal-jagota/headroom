@@ -1,4 +1,4 @@
-"""Calendar reads disappear while ordinary orchestrator and Idea reads remain."""
+"""Calendar reads disappear while ordinary manager and Idea reads remain."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def test_calendar_reads_and_commands_are_removed(tmp_path: Path) -> None:
             "/api/sprints/historical/tracking",
         ):
             assert client.get(route).status_code == 404
-        assert client.get("/api/items?detail=full").json() == {"items": []}
+        assert client.get("/api/managers?detail=full").json() == {"managers": []}
         assert client.get("/api/ideas?detail=full").json() == {"ideas": []}
 
     runner = CliRunner()
@@ -36,7 +36,7 @@ def test_calendar_reads_and_commands_are_removed(tmp_path: Path) -> None:
         result = runner.invoke(main, arguments)
         assert result.exit_code != 0
         assert "is not a command" in result.output
-    for arguments in (("orchestrator", "--help"), ("sprint", "item", "--help")):
+    for arguments in (("manager", "--help"), ("sprint", "item", "--help")):
         result = runner.invoke(main, arguments)
         assert result.exit_code == 0, result.output
         assert "workspace" in result.output

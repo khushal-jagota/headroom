@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-import json
 import sqlite3
 import threading
 import uuid
@@ -21,7 +20,6 @@ from typing import IO, Literal, Protocol, cast
 from planner.conversation.contracts import (
     ConversationAttention,
     ConversationSignalPublicationV1,
-    SignalAssociationEffect,
     SignalAvailability,
     SignalBatch,
     SignalCursor,
@@ -706,7 +704,7 @@ class SignalPublicationCoordinator:
                 (identity, revision, body),
             )
         associations = tuple(
-            SignalAssociationEffect(**json.loads(row[0]))
+            persistence.decode_association(str(row[0]))
             for row in connection.execute(
                 "SELECT value FROM signal_publication_associations ORDER BY sequence"
             )

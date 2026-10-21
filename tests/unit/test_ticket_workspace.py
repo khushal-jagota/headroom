@@ -34,7 +34,7 @@ def test_selected_ticket_preserves_controls_without_closed_bodies(tmp_db: Connec
         "ceiling_holder",
         "is_backlogged",
         "blocked",
-        "sprint_item_id",
+        "manager_id",
         "conversation_id",
         "pending_proposal",
         "field_approvals",

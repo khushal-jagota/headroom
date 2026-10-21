@@ -5,14 +5,14 @@ import {
 
 export type FilePreviewTarget =
   | { kind: "ticket-file"; ticketId: string; path: string }
-  | { kind: "sprint-item-file"; sprintItemId: string; path: string }
+  | { kind: "manager-file"; managerId: string; path: string }
   | { kind: "conversation-file"; href: string; fileName: string }
   | { kind: "external-link"; href: string; label?: string };
 
 /** A file Panels itself serves and can name in an address. */
 export type ManagedFileTarget = Extract<
   FilePreviewTarget,
-  { kind: "ticket-file" | "sprint-item-file" }
+  { kind: "ticket-file" | "manager-file" }
 >;
 
 export type FilePreviewKind =
@@ -112,10 +112,10 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
     throw new Error("unsafe ticket file target");
   }
   if (
-    target.kind === "sprint-item-file" &&
-    !sprintItemFileTarget(target.sprintItemId, target.path)
+    target.kind === "manager-file" &&
+    !managerFileTarget(target.managerId, target.path)
   ) {
-    throw new Error("unsafe Sprint Item file target");
+    throw new Error("unsafe Manager file target");
   }
   return {
     kind: KIND_BY_EXTENSION.get(extensionFor(target.path)) || "download",
@@ -185,8 +185,8 @@ export function markdownExpansionFor(
 export function targetFromHref(href: string, label = ""): FilePreviewTarget {
   const ticketTarget = ticketFileTargetFromHref(href);
   if (ticketTarget) return ticketTarget;
-  const sprintItemTarget = sprintItemFileTargetFromHref(href);
-  if (sprintItemTarget) return sprintItemTarget;
+  const managerTarget = managerFileTargetFromHref(href);
+  if (managerTarget) return managerTarget;
   return { kind: "external-link", href, label: label || href };
 }
 
@@ -198,12 +198,12 @@ export function ticketFileTarget(
   return { kind: "ticket-file", ticketId, path };
 }
 
-export function sprintItemFileTarget(
-  sprintItemId: string,
+export function managerFileTarget(
+  managerId: string,
   path: string
-): Extract<FilePreviewTarget, { kind: "sprint-item-file" }> | null {
-  if (!/^si_[a-z0-9]+$/.test(sprintItemId) || !safeManagedPath(path)) return null;
-  return { kind: "sprint-item-file", sprintItemId, path };
+): Extract<FilePreviewTarget, { kind: "manager-file" }> | null {
+  if (!/^si_[a-z0-9]+$/.test(managerId) || !safeManagedPath(path)) return null;
+  return { kind: "manager-file", managerId, path };
 }
 
 /** One managed file, named in an address.
@@ -213,10 +213,10 @@ export function sprintItemFileTarget(
  * and read by one pair of functions, so no address can name a file its own way.
  */
 export function previewQuery(target: ManagedFileTarget): string {
-  if (target.kind === "sprint-item-file") {
+  if (target.kind === "manager-file") {
     return (
-      "source=sprint-item" +
-      `&item=${encodeURIComponent(target.sprintItemId)}` +
+      "source=manager" +
+      `&manager=${encodeURIComponent(target.managerId)}` +
       `&path=${encodeURIComponent(target.path)}`
     );
   }
@@ -232,8 +232,11 @@ export function targetFromPreviewQuery(params: URLSearchParams): ManagedFileTarg
   if (params.get("source") === "ticket") {
     return ticketFileTarget(params.get("ticket") || "", path);
   }
+  if (params.get("source") === "manager") {
+    return managerFileTarget(params.get("manager") || "", path);
+  }
   if (params.get("source") === "sprint-item") {
-    return sprintItemFileTarget(params.get("item") || "", path);
+    return managerFileTarget(params.get("item") || "", path);
   }
   return null;
 }
@@ -261,7 +264,7 @@ export function targetFromPreviewHref(href: string | null | undefined): ManagedF
 }
 
 function managedFileHref(target: ManagedFileTarget): string {
-  return target.kind === "ticket-file" ? ticketFileHref(target) : sprintItemFileHref(target);
+  return target.kind === "ticket-file" ? ticketFileHref(target) : managerFileHref(target);
 }
 
 export function ticketFileHref(target: Extract<FilePreviewTarget, { kind: "ticket-file" }>): string {
@@ -269,11 +272,11 @@ export function ticketFileHref(target: Extract<FilePreviewTarget, { kind: "ticke
   return `/files/tickets/${encodeURIComponent(target.ticketId)}/${path}`;
 }
 
-export function sprintItemFileHref(
-  target: Extract<FilePreviewTarget, { kind: "sprint-item-file" }>
+export function managerFileHref(
+  target: Extract<FilePreviewTarget, { kind: "manager-file" }>
 ): string {
   const path = encodedManagedPath(target.path);
-  return `/files/sprint-items/${encodeURIComponent(target.sprintItemId)}/${path}`;
+  return `/files/managers/${encodeURIComponent(target.managerId)}/${path}`;
 }
 
 function ticketFileTargetFromHref(href: string): FilePreviewTarget | null {
@@ -282,10 +285,10 @@ function ticketFileTargetFromHref(href: string): FilePreviewTarget | null {
   return ticketFileTarget(parts.entityId, parts.path);
 }
 
-function sprintItemFileTargetFromHref(href: string): FilePreviewTarget | null {
-  const parts = managedHrefParts(href, "/files/sprint-items/");
+function managerFileTargetFromHref(href: string): FilePreviewTarget | null {
+  const parts = managedHrefParts(href, "/files/managers/") ?? managedHrefParts(href, "/files/sprint-items/");
   if (!parts) return null;
-  return sprintItemFileTarget(parts.entityId, parts.path);
+  return managerFileTarget(parts.entityId, parts.path);
 }
 
 function isSameOriginHref(href: string): boolean {

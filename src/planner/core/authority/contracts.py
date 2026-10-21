@@ -6,13 +6,11 @@ is asking. :func:`planner.core.authority.service.stands_above` answers that.
 Four kinds cover every guarded operation in Panels:
 
 ``ticket``
-    One Ticket. Its Outcome stands above it, because ``tickets.sprint_item_id`` says so.
-``outcome``
-    One Sprint Item. Khushal and the Chief stand above it. A Sprint planning Ticket
-    stands above it too, because that is the work it was created to do.
+    One Ticket. Its Manager stands above it, because ``tickets.manager_id`` says so.
+``manager``
+    One Manager. Khushal and the Chief stand above it.
 ``plan``
-    Named parts of the shared plan: a Day, a Sprint, Sprint membership. ``id`` is the
-    plan object and ``fields`` are the exact fields the operation writes.
+    A retained historical declaration. No current Worker type grants shared-plan authority.
 ``owner_only``
     Everything else Khushal owns outright: projects, settings, skills, Worker types,
     feedback. Khushal and the Chief stand above it and nothing else does. ``id`` names
@@ -36,7 +34,7 @@ class TargetKind(StrEnum):
     """The complete set of things an authority question can be asked about."""
 
     ticket = "ticket"
-    outcome = "outcome"
+    manager = "manager"
     plan = "plan"
     owner_only = "owner_only"
 
@@ -50,15 +48,15 @@ class Target:
     def __post_init__(self) -> None:
         if not self.id or self.id != self.id.strip():
             raise ValueError("target id must be non-empty and must not contain outer whitespace")
-        if self.fields and self.kind not in (TargetKind.plan, TargetKind.outcome):
-            raise ValueError("only a plan or outcome target carries fields")
+        if self.fields and self.kind not in (TargetKind.plan, TargetKind.manager):
+            raise ValueError("only a plan or manager target carries fields")
 
     def covers(self, other: Target) -> bool:
         """Whether this declaration reaches ``other``, the target of a real operation.
 
         A declaration that names no fields reaches the whole object. One that names fields
         reaches an operation on those fields and nothing else — including an operation that
-        names no fields, which is an operation on the whole object. Deleting an Outcome
+        names no fields, which is an operation on the whole object. Deleting a Manager
         names no field, so a declaration over four of its fields must not reach it.
         """
         if self.kind is not other.kind:
@@ -76,8 +74,8 @@ def ticket(ticket_id: str) -> Target:
     return Target(TargetKind.ticket, ticket_id)
 
 
-def outcome(sprint_item_id: str, *fields: str) -> Target:
-    return Target(TargetKind.outcome, sprint_item_id, frozenset(fields))
+def manager(manager_id: str, *fields: str) -> Target:
+    return Target(TargetKind.manager, manager_id, frozenset(fields))
 
 
 def plan(plan_object: str, *fields: str) -> Target:
@@ -92,7 +90,7 @@ __all__ = [
     "ANY_ID",
     "Target",
     "TargetKind",
-    "outcome",
+    "manager",
     "owner_only",
     "plan",
     "ticket",

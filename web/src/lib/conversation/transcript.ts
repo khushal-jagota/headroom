@@ -590,7 +590,7 @@ export function principalLabel(principal: Principal): string {
     case "owner": return "owner";
     case "chief": return "Chief";
     case "ticket": return `Ticket ${principal.id}`;
-    case "sprint_item": return `Sprint Item ${principal.id}`;
+    case "manager": return `Manager ${principal.id}`;
   }
 }
 

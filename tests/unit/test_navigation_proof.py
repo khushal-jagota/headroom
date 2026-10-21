@@ -21,7 +21,7 @@ def fixture_database(path: Path) -> ChangeSignallingConnection:
     for sql in (
         "CREATE TABLE navigation_meta(singleton INTEGER,scope TEXT,schema_version INTEGER,"
         "epoch TEXT,revision INTEGER)",
-        "INSERT INTO navigation_meta VALUES(1,'workspace',6,'epoch-one',0)",
+        "INSERT INTO navigation_meta VALUES(1,'workspace',8,'epoch-one',0)",
         "CREATE TABLE navigation_dirty(kind TEXT,id TEXT)",
         "CREATE TABLE navigation_commit_witnesses(sequence INTEGER PRIMARY KEY AUTOINCREMENT,"
         "identity TEXT NOT NULL UNIQUE)",

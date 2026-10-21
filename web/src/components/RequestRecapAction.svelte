@@ -13,7 +13,7 @@
   import type { PromptDeliveryFate } from "../lib/conversation/wire";
 
   let { kind, id, class: extraClass = "" }: {
-    kind: "ticket" | "sprint_item" | "chief";
+    kind: "ticket" | "manager" | "chief";
     id: string;
     class?: string;
   } = $props();

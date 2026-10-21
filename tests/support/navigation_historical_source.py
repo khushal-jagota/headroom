@@ -302,6 +302,8 @@ def source_facts(connection: sqlite3.Connection) -> dict[str, Any]:
         "ceiling_holder FROM tickets ORDER BY id",
         "heads": "SELECT version_num FROM alembic_version ORDER BY version_num",
     }
+    if "manager_id" in {row[1] for row in connection.execute("PRAGMA table_info(tickets)")}:
+        queries["tickets"] = queries["tickets"].replace("sprint_item_id", "manager_id")
     return {name: [list(row) for row in connection.execute(sql)] for name, sql in queries.items()}
 
 
@@ -489,7 +491,7 @@ def _main() -> None:
                 "backlog": ticket.is_backlogged,
                 "status": ticket.ticket_status.value,
                 "project": ticket.project_id,
-                "orchestrator": ticket.sprint_item_id,
+                "orchestrator": getattr(ticket, "sprint_item_id"),
                 "conversation": ticket.conversation_id,
                 "fields": dict(ticket.field_values),
                 "proposal": None

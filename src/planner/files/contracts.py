@@ -14,8 +14,8 @@ class TicketFile:
 
 
 @dataclass(frozen=True)
-class SprintItemFile:
-    sprint_item_id: str
+class ManagerFile:
+    manager_id: str
     relative_path: str
     absolute_path: Path
 

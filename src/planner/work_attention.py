@@ -30,8 +30,9 @@ async def read_running_conversation_count(
         "SELECT conversation_id FROM tickets WHERE conversation_id IS NOT NULL "
         "UNION SELECT conversation_id FROM agents WHERE agent_key = ? "
         "AND conversation_id IS NOT NULL "
-        "UNION SELECT a.conversation_id FROM sprint_items si JOIN agents a "
-        "ON a.agent_key = 'sprint_item_supervisor_' || si.id "
+        "UNION SELECT a.conversation_id FROM managers si JOIN agents a "
+        "ON a.agent_key = coalesce((SELECT agent_key FROM agents WHERE agent_key="
+        "'sprint_item_supervisor_' || si.id),'manager_' || si.id) "
         "WHERE a.conversation_id IS NOT NULL",
         (CHIEF_SETTINGS_KEY,),
     ).fetchall()
@@ -160,21 +161,21 @@ async def add_work_attention(
     conversation_record: ConversationStore,
     *,
     tickets: Iterable[JsonDict] = (),
-    sprint_items: Iterable[JsonDict] = (),
+    managers: Iterable[JsonDict] = (),
 ) -> None:
     """Attach what the owner is being asked for, and the shared agent-state facts."""
     ticket_rows = tuple(tickets)
-    item_rows = tuple(sprint_items)
+    item_rows = tuple(managers)
     direct_ticket_ids = {str(row["id"]) for row in ticket_rows}
     item_ids = {str(row["id"]) for row in item_rows}
     child_ids_by_item: dict[str, list[str]] = {item_id: [] for item_id in item_ids}
     if item_ids:
         placeholders = ",".join("?" for _ in item_ids)
         for row in conn.execute(
-            f"SELECT id, sprint_item_id FROM tickets WHERE sprint_item_id IN ({placeholders})",
+            f"SELECT id, manager_id FROM tickets WHERE manager_id IN ({placeholders})",
             tuple(sorted(item_ids)),
         ).fetchall():
-            child_ids_by_item[str(row["sprint_item_id"])].append(str(row["id"]))
+            child_ids_by_item[str(row["manager_id"])].append(str(row["id"]))
     all_ticket_ids = direct_ticket_ids | {
         ticket_id for ticket_ids in child_ids_by_item.values() for ticket_id in ticket_ids
     }
@@ -183,8 +184,9 @@ async def add_work_attention(
     if item_ids:
         placeholders = ",".join("?" for _ in item_ids)
         rows = conn.execute(
-            "SELECT si.id, a.conversation_id FROM sprint_items si LEFT JOIN agents a "
-            "ON a.agent_key = 'sprint_item_supervisor_' || si.id "
+            "SELECT si.id, a.conversation_id FROM managers si LEFT JOIN agents a "
+            "ON a.agent_key = coalesce((SELECT agent_key FROM agents WHERE agent_key="
+            "'sprint_item_supervisor_' || si.id),'manager_' || si.id) "
             f"WHERE si.id IN ({placeholders})",
             tuple(sorted(item_ids)),
         ).fetchall()

@@ -47,15 +47,15 @@ def _create_note(client: TestClient, text: str, **context: str) -> dict[str, Any
 
 
 def _create_ticket(
-    client: TestClient, title: str, *, sprint_item_id: str | None = None
+    client: TestClient, title: str, *, manager_id: str | None = None
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "worker_type": "coding",
         "title": title,
         "brief": "Agreed brief.",
     }
-    if sprint_item_id is not None:
-        body["orchestrator"] = {"kind": "sprint_item", "id": sprint_item_id}
+    if manager_id is not None:
+        body["manager"] = {"kind": "manager", "id": manager_id}
     response = client.post("/api/tickets", json=body)
     assert response.status_code == 200, response.text
     return cast(dict[str, Any], response.json())
@@ -144,14 +144,14 @@ def test_feedback_write_permissions_follow_direct_worker_and_supervisor_scope(
     feedback_client: TestClient,
 ) -> None:
     first_item = feedback_client.post(
-        "/api/items", json={"title": "First", "project_id": "project_vylo"}
+        "/api/managers", json={"title": "First", "project_id": "project_vylo"}
     ).json()
     second_item = feedback_client.post(
-        "/api/items", json={"title": "Second", "project_id": "project_vylo"}
+        "/api/managers", json={"title": "Second", "project_id": "project_vylo"}
     ).json()
-    own_ticket = _create_ticket(feedback_client, "Own child", sprint_item_id=str(first_item["id"]))
+    own_ticket = _create_ticket(feedback_client, "Own child", manager_id=str(first_item["id"]))
     other_ticket = _create_ticket(
-        feedback_client, "Other child", sprint_item_id=str(second_item["id"])
+        feedback_client, "Other child", manager_id=str(second_item["id"])
     )
     notes = [_create_note(feedback_client, f"Note {index}") for index in range(5)]
     worker_headers = {
@@ -159,7 +159,7 @@ def test_feedback_write_permissions_follow_direct_worker_and_supervisor_scope(
         "X-Plan-Ticket-ID": str(own_ticket["id"]),
     }
     supervisor_headers = {
-        "X-Plan-Actor": "sprint_item_supervisor",
+        "X-Plan-Actor": "manager",
         "X-Plan-Sprint-Item-ID": str(first_item["id"]),
     }
 

@@ -18,7 +18,7 @@ export function ticketSectionDomMatches(root:HTMLElement,masthead:HTMLElement,se
     || markers.length!==(row.is_backlogged ? 1 : 0) || (row.is_backlogged && markers[0].textContent!=='Backlogged')) return false;
   if(!root.isConnected || root.dataset.ticketSection!==section.record.id || root.dataset.sectionStage!==row.stage) return false;
   if(root.querySelector('[role=listbox]')) return false;
-  const parent=detail.sprint_item_id ? {id:detail.sprint_item_id,title:detail.sprint_item_title || 'Sprint Item'} : null;
+  const parent=detail.manager_id ? {id:detail.manager_id,title:detail.manager_title || 'Manager'} : null;
   // Admission proves this typed detail principal has the canonical kind and ID.
   const principal=detail.ceiling_holder;
   const holder=holderLabelFor(parent,principal);

@@ -42,7 +42,7 @@ def run(browser, urls):
             path=os.path.join(screenshot_dir, "scheduled-tasks-editor-phone.png"), full_page=True
         )
         page.set_viewport_size({"width": 1280, "height": 900})
-    assert editor.locator('[data-input="orchestrator"]').input_value() == ""
+    assert editor.locator('[data-input="manager"]').input_value() == ""
     assert editor.locator('[data-input="worker-type"] option[value="planning-day"]').count() == 0
     assert editor.locator('[data-input="cadence"]').inner_text() == "Every day"
     assert (
@@ -66,7 +66,7 @@ def run(browser, urls):
     title.fill("Created browser schedule")
     editor.locator('[data-input="local-time"]').fill("11:30")
     editor.locator('[data-input="project"]').select_option("project_panels")
-    editor.locator('[data-input="orchestrator"]').select_option("si_demo")
+    editor.locator('[data-input="manager"]').select_option("si_demo")
     submit.click()
     created = page.locator('[data-schedule-id="schedule_created"]')
     created.wait_for()
@@ -74,7 +74,7 @@ def run(browser, urls):
     created.locator("[data-schedule-title]").click()
     editor.locator('[data-input="local-time"]').wait_for()
     assert editor.locator('[data-input="local-time"]').input_value() == "11:30"
-    assert editor.locator('[data-input="orchestrator"]').input_value() == "si_demo"
+    assert editor.locator('[data-input="manager"]').input_value() == "si_demo"
     page.locator("[data-back-to-schedules]").click()
 
     card.locator("[data-schedule-toggle]").click()
@@ -83,11 +83,11 @@ def run(browser, urls):
     )
     assert card.locator("[data-schedule-toggle]").get_attribute("aria-checked") == "false"
     card.locator("[data-schedule-title]").click()
-    assert editor.locator('[data-input="orchestrator"]').input_value() == "si_demo"
+    assert editor.locator('[data-input="manager"]').input_value() == "si_demo"
     editor.locator('[data-input="project"]').select_option("project_panels")
-    assert editor.locator('[data-input="orchestrator"]').input_value() == "si_demo"
+    assert editor.locator('[data-input="manager"]').input_value() == "si_demo"
     editor.locator('[data-input="project"]').select_option("project_other")
-    assert editor.locator('[data-input="orchestrator"]').input_value() == ""
+    assert editor.locator('[data-input="manager"]').input_value() == ""
     editor.locator("[data-schedule-title] .ed").fill("Edited existing schedule")
     editor.locator('[data-input="local-time"]').fill("09:50")
     editor.get_by_text("Advanced Ticket settings").click()
@@ -122,10 +122,10 @@ def run(browser, urls):
         and request["body"].get("title") == "Edited existing schedule"
     )
     assert placement["project_id"] == "project_other"
-    assert placement["orchestrator"] == {"kind": "chief", "id": "chief"}
+    assert placement["manager"] == {"kind": "chief", "id": "chief"}
     for request in requests:
         if request["method"] in ("POST", "PATCH") and "/api/schedules" in request["path"]:
-            assert not ({"placement_mode", "sprint_id", "sprint_item_id"} & set(request["body"]))
+            assert not ({"placement_mode", "sprint_id", "manager_id"} & set(request["body"]))
     created_body = next(
         request["body"]
         for request in requests
@@ -133,7 +133,7 @@ def run(browser, urls):
         and request["body"].get("title") == "Created browser schedule"
     )
     assert created_body["cadence"] == "daily"
-    assert created_body["orchestrator"] == {"kind": "sprint_item", "id": "si_demo"}
+    assert created_body["manager"] == {"kind": "manager", "id": "si_demo"}
     retired = page.locator('[data-schedule-id="schedule_retired"]')
     assert retired.locator("[data-schedule-toggle]").is_disabled()
     before = len(page.evaluate("window.__requests()"))
@@ -153,7 +153,7 @@ def run(browser, urls):
     assert editor.locator("[data-schedule-title] .ed").count() == 0
     assert editor.locator('[data-input="enabled"]').get_attribute("aria-checked") == "false"
     assert editor.locator('[data-input="project"]').is_disabled()
-    assert editor.locator('[data-input="orchestrator"]').is_disabled()
+    assert editor.locator('[data-input="manager"]').is_disabled()
     if screenshot_dir:
         page.screenshot(path=os.path.join(screenshot_dir, "historical-schedule-locked.png"), full_page=True)
     page.locator("[data-back-to-schedules]").click()

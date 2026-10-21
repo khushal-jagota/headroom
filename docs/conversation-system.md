@@ -200,7 +200,7 @@ establishes that nothing outside the conversation shows it.
 
 ## Work and messages on other screens
 
-Each Worker, supervisor, and Chief exposes the same `conversation_signal` from its own
+Each Worker, Manager, and Chief exposes the same `conversation_signal` from its own
 conversation. `working` means that its runtime is running. `message_for_owner` means that
 an explicit `message_to_owner` row is newer than the owner read position. Both can be true
 at once. A conversation with neither fact exposes two false values.
@@ -211,7 +211,7 @@ This presentation does not change either fact or the shell's actual-work count.
 
 A turn ending stops work and creates no message mark. Pending approvals, permission asks,
 Ticket stages, and child activity do not define either mark. Child totals remain separate
-from the supervisor's own conversation signal. Existing answer, approval, error, and
+from the Manager's own conversation signal. Existing answer, approval, error, and
 notification facts remain available for their own purposes.
 
 Reading or sending a prompt advances only that conversation's established read position.
@@ -222,9 +222,9 @@ end. This publication follows the runtime state transition, so a query cannot re
 answer from before the prompt or ending commit settled. The event stream carries no
 payload. Mounted queries fetch the canonical conversation signal again.
 
-The shell's working count sums that same working fact across Worker, supervisor, and
+The shell's working count sums that same working fact across Worker, Manager, and
 Chief conversations. Each conversation counts once, even when multiple records refer to
-it. Settled supervisors and backlogged Workers still count when their conversations run.
+it. Settled Managers and backlogged Workers still count when their conversations run.
 Worker-step claims do not define this count. Its existing query uses the same change
 stream refresh as the individual marks.
 
@@ -358,7 +358,7 @@ completed turn with no compaction confirmation.
 ## Sending
 
 The top-level `panels send-message` command is the plain-text command-line door into this
-same send operation. It accepts the owner, Chief, Ticket, or Sprint Item principal. An
+same send operation. It accepts the owner, Chief, Ticket, or Manager principal. An
 employee-to-owner send appends an addressed `message_to_owner` row to the employee's
 current conversation without invoking a backend. An employee without a current
 conversation cannot send to the owner. Employee recipients use their normal current
@@ -366,8 +366,8 @@ conversation path, creating it when any send needs one. Every mode starts a turn
 recipient is idle. Agent keys remain a private resolution detail. The command adds no
 second transport, queue, or conversation record.
 
-Existing ordinary orchestrator supervisors can address each other through this same
-Send Message path. Both Sprint Items must exist. This grants no authority over the
+Existing ordinary Managers can address each other through this same
+Send Message path. Both Managers must exist. This grants no authority over the
 recipient's record or Workers. Worker messages and help-recipient overrides retain
 their existing chain boundary.
 
@@ -396,17 +396,17 @@ Panels classifies that accepted send as the reply, so its recipient receives no 
 reply requirement and agent conversations cannot form an acknowledgement loop.
 
 The owner can also ask an agent for a fresh recap. That ask is one route taking a Ticket,
-orchestrator, or Chief principal. It empties the recap being replaced and steers the same
+manager, or Chief principal. It empties the recap being replaced and steers the same
 fixed sentence into that agent's conversation: "Owner has requested a recap. Remember to
 keep it short and top level." Only the owner may ask, and the owner is the only principal
 it cannot be addressed to, because the owner keeps no recap. The answer to it is the recap
 the agent writes rather than words it sends back. This system message carries no reply
 requirement and leaves no missing-reply marker.
 
-Automatic orchestrator startup sends the exact saved goal as a queued Panels message.
-Its answer is the work the orchestrator does. It requires no explicit reply to its
+Automatic manager startup sends the exact saved goal as a queued Panels message.
+Its answer is the work the manager does. It requires no explicit reply to its
 creator, so startup produces no `explicit_reply_missing` signal in Focus when the
-orchestrator sends no reply. No replacement signal detects a clean delivery followed by
+manager sends no reply. No replacement signal detects a clean delivery followed by
 silent inaction. Work indicators, failure rows, and delivery outcomes do not cover that gap.
 
 An actual native slash command uses its backend's exact control route, so its wire form
@@ -427,10 +427,10 @@ produce none. The markers and ending are one ordered transaction.
 
 When a failed turn belongs to a Ticket's current conversation, that transaction also
 snapshots the Ticket's current ceiling holder. The existing owner attention flag handles
-an owner-held ceiling. A Chief, Sprint Item, or Ticket holder receives one durable Panels
+an owner-held ceiling. A Chief, Manager, or Ticket holder receives one durable Panels
 notice through that principal's canonical conversation door. The failed event's
 conversation and sequence identify the notice, so replay cannot duplicate it. Historical,
-unattached, Chief, and Sprint Item conversation failures create no Ticket notice. A turn
+unattached, Chief, and Manager conversation failures create no Ticket notice. A turn
 started by a failure notice cannot create another failure notice.
 
 The composer accepts pictures and supported files from its pickers, the clipboard, or
@@ -450,9 +450,9 @@ A confirmed steer refusal does the same. An uncertain steer remains terminal and
 enters the queue, because a retry can deliver the same message twice.
 
 A lower-level raw send route remains for testing conversation mechanics in isolation. It
-rejects every conversation associated with a Ticket, the Chief, or a Sprint Item
-supervisor. It therefore is not an employee conversation door and does not participate in
-principal addressing. No shipped screen uses it: Ticket, Chief, and Sprint Item composers
+rejects every conversation associated with a Ticket, the Chief, or a Manager
+Manager. It therefore is not an employee conversation door and does not participate in
+principal addressing. No shipped screen uses it: Ticket, Chief, and Manager composers
 all use the addressed Send Message operation.
 
 The conversation owns each backend exchange until its receipt settles. If its caller
@@ -604,9 +604,9 @@ evidence does not block a fresh installation. Available evidence still rejects a
 unknown or disabled selection, or an unsupported effort. This exception applies to
 creation only. A later turn still requires a successful resolution.
 
-This rule covers Workers, Chief, ordinary orchestrators, new conversations, reused
+This rule covers Workers, Chief, ordinary Managers, new conversations, reused
 conversations and queued messages. Steering retains the active turn's model. Saved legacy
-versions resolve within their own variant. New orchestrators use the managed launch
+versions resolve within their own variant. New managers use the managed launch
 defaults instead of a model pinned by a database trigger.
 
 An explicit correction action previews saved choices and applies selected corrections.
