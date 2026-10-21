@@ -1,3 +1,4 @@
+import json
 import shutil
 import sqlite3
 import tempfile
@@ -933,4 +934,251 @@ def test_priority_removal_preserves_other_values_constraints_and_dependents(
         conn.execute("UPDATE tickets SET worker_step_claim='invalid' WHERE id='t_kept'")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE scheduled_ticket_schedules SET enabled=5 WHERE id='schedule_kept'")
+    conn.close()
+
+
+# This fixture starts after the historical cohort gates, with real source triggers.
+def _database_before_calendar_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[sqlite3.Connection, Path]:
+    shipped = db_module.MIGRATIONS_DIRECTORY
+    tree = _migration_tree_through(tmp_path, monkeypatch, "diagnostic_expiry_metadata")
+    conn = connect(str(tmp_path / "before-calendar-removal.db"))
+    create_schema(conn)
+    project_id = str(conn.execute("SELECT id FROM projects LIMIT 1").fetchone()[0])
+    personal = json.loads(
+        conn.execute(
+            "SELECT definition_json FROM worker_types WHERE worker_type='coding'"
+        ).fetchone()[0]
+    )
+    personal["worker_type"] = "personal"
+    personal["label"] = "Historical personal task"
+    conn.execute("INSERT INTO worker_types(worker_type,position,definition_json,updated_at) "
+        "VALUES('personal',99,?,1)", (json.dumps(personal),))
+    conn.execute(
+        "INSERT INTO sprint_items(id,title,goal,recap,project_id,supervisor_backend,"
+        "supervisor_model,created_at,updated_at) "
+        "VALUES('si_kept','Orchestrator','Keep goal','Keep recap',?,'codex','model',1,2)",
+        (project_id,),
+    )
+    conn.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,workspace_folder,access,created_at) "
+        "VALUES('kept-conversation','codex',?,'full',1)",
+        (str(tmp_path),),
+    )
+    conn.execute("INSERT INTO agents VALUES('sprint_item_supervisor_si_kept','kept-conversation')")
+    conn.execute(
+        "INSERT INTO ideas(id,title,body,project_id,created_at,updated_at) "
+        "VALUES('idea_kept','Idea','Keep idea',?,1,2)",
+        (project_id,),
+    )
+    conn.execute(
+        "INSERT INTO sprints(id,name,date_start,date_end,primary_bet,kickoff,checkpoint,review,"
+        "created_at,updated_at) VALUES('sp_removed','Sprint','2026-01-01','2026-01-07',"
+        "'Bet','Kickoff','Checkpoint','Review',1,2)"
+    )
+    for ticket_id in ("t_chief", "t_item", "t_personal"):
+        _insert_ticket(conn, ticket_id, stage="needs_plan")
+    conn.execute(
+        "UPDATE tickets SET ceiling='done',sprint_id='sp_removed',field_values=?,"
+        "field_approvals=?,pending_proposal=?,pending_proposal_revision=7,"
+        "worker_step_claim='out',worker_step_claim_revision=9,is_backlogged=1,"
+        "conversation_id='kept-conversation',guidance='Keep guidance',locale='macos' "
+        "WHERE id='t_item'",
+        (
+            '{ "brief": "Keep original bytes" }',
+            '{ "brief": {"fixture": true} }',
+            '{"field":"plan","body":"Keep proposal","proposed_by":"worker","created_at":3}',
+        ),
+    )
+    conn.execute(
+        "UPDATE tickets SET sprint_item_id='si_kept',orchestrator_kind='sprint_item',"
+        "project_id=NULL "
+        "WHERE id='t_item'"
+    )
+    conn.execute("UPDATE tickets SET worker_type='personal' WHERE id='t_personal'")
+    conn.execute("INSERT INTO ticket_blocks VALUES('t_chief','t_item')")
+    conn.execute("INSERT INTO ticket_conversations VALUES('kept-conversation','t_item')")
+    conn.execute("INSERT INTO sprint_outcomes VALUES('sp_removed','si_kept')")
+    conn.execute(
+        "INSERT INTO days(id,focus,notes,created_at,updated_at) "
+        "VALUES('day_2024-02-29','Delete focus','Delete notes',1,2)"
+    )
+    conn.execute("INSERT INTO day_tickets VALUES('day_2024-02-29','t_item',0)")
+    for identity, enabled, cadence, worker_type, item_id in (
+        ("daily", 1, "daily", "coding", None),
+        ("retired", 0, "current_sprint_final_day", "planning-sprint", None),
+        ("assigned", 1, "daily", "coding", "si_kept"),
+    ):
+        conn.execute(
+            "INSERT INTO scheduled_ticket_schedules(id,enabled,cadence,local_time,title,"
+            "worker_type,kickoff_note,deadline,project_id,sprint_id,sprint_item_id,"
+            "employee_backend,employee_launch_model,blocked_by_ticket_ids,created_at,updated_at,"
+            "placement_mode,locale,orchestrator_kind) "
+            "VALUES(?,?,?,'09:05',? ,?,'Keep brief','2026-11-01',?,'sp_removed',?,"
+            "'codex','model','[\"t_chief\"]',3,4,'current_sprint','macos',?)",
+            (
+                identity,
+                enabled,
+                cadence,
+                identity,
+                worker_type,
+                project_id,
+                item_id,
+                "chief" if item_id is None else "sprint_item",
+            ),
+        )
+    for identity, outcome, target, receipt_ticket_id, error in (
+        ("one", "created", "day_2024-02-29", "t_chief", None),
+        ("two", "suppressed", "day_2026-01-01", None, None),
+        ("three", "failed", "day_9999-12-31", None, "Keep error"),
+    ):
+        conn.execute(
+            "INSERT INTO scheduled_ticket_occurrences VALUES('daily',?,?,?,?,?,5)",
+            (identity, target, outcome, receipt_ticket_id, error),
+        )
+    conn.commit()
+    shutil.copy(shipped / "versions" / "remove_calendar_records.py", tree / "versions")
+    return conn, tree / "versions" / "remove_calendar_records.py"
+
+
+def _all_table_rows(conn: sqlite3.Connection) -> dict[str, list[tuple[object, ...]]]:
+    result = {}
+    for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
+        table = str(row[0])
+        columns = list(conn.execute(f'PRAGMA table_info("{table}")'))
+        order = ",".join(str(index + 1) for index in range(len(columns)))
+        result[table] = [
+            tuple(value) for value in conn.execute(f'SELECT * FROM "{table}" ORDER BY {order}')
+        ]
+    return result
+
+
+def test_calendar_removal_preserves_work_receipts_constraints_and_projections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn, _ = _database_before_calendar_removal(tmp_path, monkeypatch)
+    removed_tables = {"days", "day_tickets", "sprints", "sprint_outcomes"}
+    projected = {}
+    structures = {}
+    for table, removed in (
+        ("tickets", {"sprint_id"}),
+        ("scheduled_ticket_schedules", {"sprint_id", "placement_mode"}),
+    ):
+        structures[table] = _table_structure(conn, table)
+        columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")]
+        projection = ",".join(f'"{column}"' for column in columns if column not in removed)
+        projected[table] = (
+            projection,
+            list(conn.execute(f"SELECT {projection} FROM {table} ORDER BY id")),
+        )
+    before = _all_table_rows(conn)
+    receipt_structure = _table_structure(conn, "scheduled_ticket_occurrences")
+    objects = _schema_objects(conn)
+    create_schema(conn)
+    assert _revision(conn) == "remove_calendar_records"
+    after = _all_table_rows(conn)
+    assert set(before) - set(after) == removed_tables
+    changed = removed_tables | {
+        "tickets",
+        "scheduled_ticket_schedules",
+        "scheduled_ticket_occurrences",
+        "alembic_version",
+    }
+    assert {key: value for key, value in after.items() if key not in changed} == {
+        key: value for key, value in before.items() if key not in changed
+    }
+    for table, (projection, values) in projected.items():
+        assert list(conn.execute(f"SELECT {projection} FROM {table} ORDER BY id")) == values
+        retained_structure = _table_structure(conn, table)
+        assert retained_structure["indexes"] == structures[table]["indexes"]
+        assert retained_structure["foreign_keys"] == [
+            fk
+            for fk in cast(list[tuple[str, str, str, str]], structures[table]["foreign_keys"])
+            if fk[1] != "sprint_id"
+        ]
+        removed = {"sprint_id", "placement_mode"} if table.endswith("schedules") else {"sprint_id"}
+        assert retained_structure["columns"] == [
+            column
+            for column in cast(
+                list[tuple[str, str, int, str | None, int]], structures[table]["columns"]
+            )
+            if column[0] not in removed
+        ]
+    assert after["scheduled_ticket_occurrences"] == [
+        (row[0], row[1], str(row[2])[4:], *row[3:])
+        for row in before["scheduled_ticket_occurrences"]
+    ]
+    receipt_after = _table_structure(conn, "scheduled_ticket_occurrences")
+    assert receipt_after == {
+        **receipt_structure,
+        "columns": [
+            ("target_date" if column[0] == "target_day_id" else column[0], *column[1:])
+            for column in cast(
+                list[tuple[str, str, int, str | None, int]], receipt_structure["columns"]
+            )
+        ],
+    }
+    excluded_objects = removed_tables | {
+        "tickets",
+        "scheduled_ticket_schedules",
+        "scheduled_ticket_occurrences",
+        "idx_sprint_outcomes_outcome_id",
+    }
+    assert {
+        key: value for key, value in _schema_objects(conn).items() if key not in excluded_objects
+    } == {key: value for key, value in objects.items() if key not in excluded_objects}
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    # A schema check alone cannot prove that retained guard triggers still execute.
+    for sql in (
+        "UPDATE tickets SET worker_step_claim='invalid' WHERE id='t_item'",
+        "UPDATE tickets SET orchestrator_kind='chief' WHERE id='t_item'",
+        "UPDATE scheduled_ticket_schedules SET enabled=5 WHERE id='daily'",
+        "UPDATE scheduled_ticket_schedules SET cadence='unknown' WHERE id='daily'",
+        "UPDATE scheduled_ticket_schedules SET orchestrator_kind='chief' WHERE id='assigned'",
+        "UPDATE scheduled_ticket_occurrences SET target_date=NULL WHERE occurrence_key='one'",
+    ):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(sql)
+    conn.rollback()
+    # Opening an already migrated database is idempotent and keeps every retained row.
+    create_schema(conn)
+    assert _all_table_rows(conn) == after
+    conn.close()
+
+
+def test_calendar_removal_failure_after_drops_rolls_back_every_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn, revision_path = _database_before_calendar_removal(tmp_path, monkeypatch)
+    before = list(conn.iterdump())
+    source = revision_path.read_text()
+    source = source.replace(
+        '    if _retained_rows(conn, "tickets", frozenset()) != tickets:',
+        '    raise RuntimeError("injected failure after calendar drops")\n'
+        '    if _retained_rows(conn, "tickets", frozenset()) != tickets:',
+    )
+    revision_path.write_text(source)
+    with pytest.raises(RuntimeError, match="injected failure after calendar drops"):
+        create_schema(conn)
+    assert list(conn.iterdump()) == before
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "target", ["2026-01-01", "day_2026-1-01", "day_2026-02-30", "day_0000-01-01"]
+)
+def test_calendar_removal_refuses_invalid_receipt_without_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    conn, _ = _database_before_calendar_removal(tmp_path, monkeypatch)
+    conn.execute(
+        "UPDATE scheduled_ticket_occurrences SET target_day_id=? WHERE occurrence_key='one'",
+        (target,),
+    )
+    conn.commit()
+    before = list(conn.iterdump())
+    with pytest.raises(RuntimeError, match="invalid receipt target"):
+        create_schema(conn)
+    assert list(conn.iterdump()) == before
     conn.close()

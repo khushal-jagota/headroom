@@ -52,14 +52,6 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     return create_app(config, clock, conn_factory), db_path
 
 
-def _seed_sprint(conn: Connection, sprint_id: str = "sp_edit") -> None:
-    conn.execute(
-        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
-        "VALUES (?, 'Edit sprint', '2026-07-01', '2026-07-14', 1, 1)",
-        (sprint_id,),
-    )
-
-
 def _create_ticket(db_path: Path, **values: Any) -> str:
     conn = connect(str(db_path))
     try:
@@ -170,8 +162,6 @@ def test_creation_defaults_to_chief_without_calendar_and_preserves_project_conte
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
-    with connect(str(db_path)) as conn:
-        _seed_sprint(conn)  # Existing history does not choose live placement.
     with TestClient(app) as client:
         defaulted = client.post("/api/tickets", json={"title": "Default", "worker_type": "coding"})
         project = client.post(
@@ -186,10 +176,10 @@ def test_creation_defaults_to_chief_without_calendar_and_preserves_project_conte
         for response in (defaulted, project):
             assert response.status_code == 200, response.text
             assert response.json()["orchestrator"] == {"kind": "chief", "id": "chief"}
-            assert response.json()["sprint_id"] is None
-            assert response.json()["effective_sprint_id"] is None
+            assert "sprint_id" not in response.json()
+            assert "effective_sprint_id" not in response.json()
             detail = client.get(f"/api/tickets?detail=full&id={response.json()['id']}")
-            assert detail.json()["day_ids"] == []
+            assert "day_ids" not in detail.json()
         assert project.json()["project_id"] == "project_vylo"
         for response in (defaulted, project):
             assert "priority" not in response.json()
@@ -205,8 +195,6 @@ def test_creation_defaults_to_chief_without_calendar_and_preserves_project_conte
             assert "orchestrator assignment" in rejected.json()["error"]["message"]
         with connect(str(db_path)) as conn:
             assert tuple(conn.iterdump()) == before
-            assert conn.execute("SELECT count(*) FROM days").fetchone()[0] == 0
-            assert conn.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 0
 
 
 def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
@@ -304,10 +292,6 @@ def test_parented_ticket_project_is_derived_and_combined_edits_are_atomic(
                 ]
                 == "project_vylo"
             )
-
-
-
-
 
 
 def _backend_snapshot(

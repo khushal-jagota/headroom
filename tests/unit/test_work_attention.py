@@ -13,7 +13,6 @@ from planner.conversation.contracts import ConversationSystem
 from planner.conversation.storage import ConversationStore
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
-from planner.days.data import add_day_ticket
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.api import add_conversation_row_signals
@@ -35,10 +34,6 @@ class _ConversationFacts:
 
     async def has_pending_user_input(self, conversation_id: str) -> bool:
         return False
-
-
-
-
 
 
 def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path: Path) -> None:
@@ -66,7 +61,6 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
             ("Off Today agent approval", "coding"),
         )
     ]
-    add_day_ticket(conn, "2026-10-16", rows[0].id, 1)
     for index in (1, 3):
         conn.execute(
             "UPDATE tickets SET pending_proposal = ? WHERE id = ?",
@@ -132,10 +126,8 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     assert owner_approval["gating_field"] == "brief"
     assert owner_approval["ceiling_holder"] == {"kind": "owner", "id": "owner"}
     assert owner_approval["worker_type"] == "coding"
-    assert owner_approval["day_ids"] == []
     assert owner_approval["blocked"] is False
     assert owner_approval["sprint_item_id"] == item.id
-    assert children[rows[0].id]["day_ids"] == ["2026-10-16"]
     feedback = children[rows[2].id]
     assert feedback["assigned"] is True
     assert feedback["awaiting_approval"] is False
@@ -149,10 +141,6 @@ def test_global_board_and_item_carry_the_same_complete_attention_queue(tmp_path:
     assert item_row["conversation_signal"] == {"working": False, "message_for_owner": False}
     assert all(not children[row.id]["awaiting_reply"] for row in (rows[0], rows[2], rows[3]))
     conn.close()
-
-
-
-
 
 
 class _ConversationWaitingOnAnAnswer:

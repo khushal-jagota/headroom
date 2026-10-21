@@ -29,34 +29,10 @@ from planner.cli import main as cli_main
             },
         ),
         (
-            ("sprint", "list"),
-            "/api/sprints",
-            "sprints",
-            {
-                "id": "sp_one",
-                "name": "One",
-                "date_start": "2026-07-01",
-                "date_end": "2026-07-14",
-            },
-        ),
-        (
             ("sprint", "item", "list"),
             "/api/items",
             "items",
             {"id": "si_one", "title": "One", "status": "todo"},
-        ),
-        (
-            ("day", "list-tickets"),
-            "/api/day/today/tickets",
-            "tickets",
-            {
-                "id": "t_day",
-                "title": "Day",
-                "stage": "needs_plan",
-                "ticket_status": "user",
-                "project": "Panels",
-                "recap_preview": "Plan it.",
-            },
         ),
         (
             ("project", "list"),
@@ -110,5 +86,3 @@ def test_bounded_list_commands_report_page_facts_in_text_and_json(
     assert json_result.exit_code == 0, json_result.output
     assert json.loads(json_result.output)["page"] == response["page"]
     assert requested_paths == [path, path]
-
-

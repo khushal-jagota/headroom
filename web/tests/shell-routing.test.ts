@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { feedbackPageContext } from "../src/lib/feedback";
+import { render } from "svelte/server";
+import AppWithQueryClient from "../src/AppWithQueryClient.svelte";
+import { describe, expect, it, vi } from "vitest";
+import { feedbackPageContext, feedbackPageHref } from "../src/lib/feedback";
 import { canonicalShellHash } from "../src/lib/shellRouting";
 
 describe("historical shell addresses", () => {
@@ -34,5 +36,39 @@ describe("historical shell addresses", () => {
 it("records Settings feedback against its actual section address", () => {
   for (const [hash, label] of [["#/settings", "Settings · Config"], ["#/settings/config/workers/coding", "Settings · Config"], ["#/settings/scheduled-tasks", "Settings · Scheduled tasks"], ["#/settings/notifications", "Settings · Notifications"]]) {
     expect(feedbackPageContext(hash)).toEqual({address: hash, label});
+  }
+});
+
+it("captures new feedback on Chief and retains saved historical links", () => {
+  expect(feedbackPageHref("#/day/2026-07-29")).toBe("#/day/2026-07-29");
+  expect(feedbackPageHref("#/sprint?sprint=old")).toBe("#/sprint?sprint=old");
+  for (const hash of ["", "#", "#/workspace/chief-of-staff"]) {
+    expect(feedbackPageContext(hash)).toEqual({ address: "#/workspace/chief-of-staff", label: "Chief of Staff" });
+  }
+});
+
+it("uses the unavailable screen for archived calendar routes", () => {
+  for (const hash of ["#/day/2026-07-29", "#/sprint", "#/sprint/documents?sprint=old"]) {
+    const replace = vi.fn();
+    vi.stubGlobal("window", { location: { hash, replace } });
+    try {
+      expect(render(AppWithQueryClient).body).toContain("no such screen");
+      expect(replace).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }
+});
+
+it("preserves the bare Home redirect to Chief", () => {
+  for (const hash of ["", "#", "#/day"]) {
+    const replace = vi.fn();
+    vi.stubGlobal("window", { location: { hash, replace } });
+    try {
+      expect(render(AppWithQueryClient).body).not.toContain("no such screen");
+      expect(replace).toHaveBeenCalledWith("#/workspace/chief-of-staff");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   }
 });

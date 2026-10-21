@@ -1,7 +1,4 @@
-"""Canonical sprint writers and sprint-item reads.
-
-Outcomes store shared context independently of Sprint commitments.
-"""
+"""Canonical orchestrator writers and reads."""
 
 from __future__ import annotations
 
@@ -18,16 +15,10 @@ from planner.core.contracts import Principal
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.sprints.contracts import (
-    SPRINT_DOCUMENT_FIELDS,
     SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS,
-    Sprint,
     SprintItem,
     SprintItemDeletion,
     SprintItemSupervisorLaunchConfiguration,
-)
-from planner.sprints.logic import (
-    DateRange,
-    find_overlap,
 )
 
 
@@ -36,7 +27,6 @@ class ItemRead(NamedTuple):
 
 
 _ITEM_PLAIN_FIELDS: frozenset[str] = frozenset({"title", "goal", "recap", "project_id"})
-_SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(SPRINT_DOCUMENT_FIELDS + ("primary_bet", "name"))
 PERSONAL_PROJECT_ID = "project_personal"
 
 
@@ -73,21 +63,6 @@ def _tx(conn: sqlite3.Connection) -> Iterator[None]:
         conn.execute("COMMIT")
 
 
-def _row_to_sprint(row: sqlite3.Row) -> Sprint:
-    return Sprint(
-        id=row["id"],
-        name=row["name"],
-        date_start=row["date_start"],
-        date_end=row["date_end"],
-        primary_bet=row["primary_bet"],
-        kickoff=row["kickoff"],
-        checkpoint=row["checkpoint"],
-        review=row["review"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
-
-
 def _row_to_item(row: sqlite3.Row) -> SprintItem:
     return SprintItem(
         id=row["id"],
@@ -111,13 +86,6 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
     )
 
 
-def _load_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:
-    row = conn.execute("SELECT * FROM sprints WHERE id = ?", (sprint_id,)).fetchone()
-    if row is None:
-        raise PlannerError(ErrorCode.not_found, "sprint not found", {"id": sprint_id})
-    return _row_to_sprint(row)
-
-
 def _load_item(conn: sqlite3.Connection, item_id: str) -> SprintItem:
     row = conn.execute(
         "SELECT sprint_items.*, projects.name AS project_name "
@@ -131,88 +99,6 @@ def _load_item(conn: sqlite3.Connection, item_id: str) -> SprintItem:
 
 
 # --- sprint writers -------------------------------------------------------------
-
-
-def create_sprint(
-    conn: sqlite3.Connection,
-    *,
-    name: str,
-    date_start: str,
-    date_end: str,
-    primary_bet: str = "",
-    kickoff: str = "",
-    checkpoint: str = "",
-    review: str = "",
-    clock: Clock,
-    admit: Callable[[], None] | None = None,
-) -> Sprint:
-    if not name:
-        raise PlannerError(ErrorCode.validation, "sprint name is required", {})
-    if date_start > date_end:
-        raise PlannerError(
-            ErrorCode.validation,
-            "date_start must not be after date_end",
-            {"date_start": date_start, "date_end": date_end},
-        )
-    now = clock.now_unix()
-    sprint_id = new_id(ID_PREFIXES["sprint"])
-    with _tx(conn):
-        if admit is not None:
-            admit()
-        existing = [
-            DateRange(id=r["id"], date_start=r["date_start"], date_end=r["date_end"])
-            for r in conn.execute("SELECT id, date_start, date_end FROM sprints")
-        ]
-        conflict = find_overlap(date_start, date_end, existing)
-        if conflict is not None:
-            raise PlannerError(
-                ErrorCode.sprint_overlap,
-                "sprint dates overlap",
-                {
-                    "conflict_id": conflict,
-                    "date_start": date_start,
-                    "date_end": date_end,
-                },
-            )
-        conn.execute(
-            "INSERT INTO sprints ("
-            "id, name, date_start, date_end, primary_bet, kickoff, checkpoint, review, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                sprint_id,
-                name,
-                date_start,
-                date_end,
-                primary_bet,
-                kickoff,
-                checkpoint,
-                review,
-                now,
-                now,
-            ),
-        )
-    return _load_sprint(conn, sprint_id)
-
-
-def update_sprint_field(
-    conn: sqlite3.Connection, sprint_id: str, field: str, value: str, *, clock: Clock
-) -> Sprint:
-    if field not in _SPRINT_TEXT_FIELDS:
-        raise PlannerError(
-            ErrorCode.validation,
-            "field is not an editable sprint text field",
-            {"field": field},
-        )
-    # Freeze retired (rev6): nothing in a sprint locks, so every text field
-    # (kickoff / mid-sprint / review / name) is always editable. No admissibility gate.
-    _load_sprint(conn, sprint_id)
-    now = clock.now_unix()
-    with _tx(conn):
-        conn.execute(
-            f"UPDATE sprints SET {field} = ?, updated_at = ? WHERE id = ?",
-            (value, now, sprint_id),
-        )
-    return _load_sprint(conn, sprint_id)
 
 
 # --- sprint-item writers --------------------------------------------------------
@@ -406,20 +292,11 @@ def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDelet
             "Sprint Item cannot be deleted while it holds a Ticket ceiling",
             {"sprint_item_id": item_id, "held_ticket_id": str(held_ticket["id"])},
         )
-    sprint_ids = tuple(
-        str(row[0])
-        for row in conn.execute(
-            "SELECT sprint_id FROM sprint_outcomes WHERE outcome_id=? ORDER BY sprint_id",
-            (item_id,),
-        )
-    )
-
     conn.execute("DELETE FROM sprint_items WHERE id = ?", (item_id,))
     conn.execute("DELETE FROM agents WHERE agent_key = ?", (item.supervisor_agent_key,))
     return SprintItemDeletion(
         sprint_item_id=item_id,
         title=item.title,
-        sprint_ids=sprint_ids,
     )
 
 
@@ -429,10 +306,6 @@ def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDelet
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     item = _load_item(conn, item_id)
     return ItemRead(item=item)
-
-
-def read_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:
-    return _load_sprint(conn, sprint_id)
 
 
 def set_item_settled(

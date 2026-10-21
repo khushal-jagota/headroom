@@ -229,7 +229,7 @@ One narrow recovery also covers Tickets stranded by an older rejection. It requi
 Worker-owned Stage, Empty status, no claim, an existing conversation, and pending revision
 feedback for that Stage. Restart starts normal readiness without resetting its conversation. It clears stale running and queued traffic
 first, then sends the revision into the same conversation history. Ordinary unfinished
-Tickets follow the same readiness rules regardless of their historical Day membership. This recovery preserves the launch configuration, so it refuses restart
+Tickets follow the ordinary readiness rules without calendar membership. This recovery preserves the launch configuration, so it refuses restart
 options that name a backend, model, or reasoning effort.
 
 ## Sending a proposal back

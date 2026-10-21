@@ -13,7 +13,6 @@ const quiet = {
 const card = (id: string, values: Partial<BoardCard> = {}): BoardCard & SprintItemWorkspaceTicket => ({
   id, title: id, recap:"", recap_preview:"", is_backlogged:false, activity_at: 0, stage: "needs_implementation",
   ticket_status: "agent", worker_type: "coding", sprint_item_id: null,
-  day_ids: [], sprint_id: null, sprint_name: null,
   ...quiet, ...values
 } as BoardCard & SprintItemWorkspaceTicket);
 const item = (id: string, values: Partial<BoardSprintItem> = {}): BoardSprintItem => ({

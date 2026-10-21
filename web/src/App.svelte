@@ -62,9 +62,7 @@
   let route = $state<Route>(parseRoute());
   const routeModule = $derived.by(() => {
     switch (route.name) {
-      case "day": return cachedImport("./DayRoute.svelte", () => import("./routes/DayRoute.svelte"));
       case "review": return cachedImport("./ReviewRoute.svelte", () => import("./routes/ReviewRoute.svelte"));
-      case "sprint": return cachedImport("./SprintRoute.svelte", () => import("./routes/SprintRoute.svelte"));
       case "ideas": return cachedImport("./IdeasRoute.svelte", () => import("./routes/IdeasRoute.svelte"));
       case "feedback": return cachedImport("./FeedbackRoute.svelte", () => import("./routes/FeedbackRoute.svelte"));
       case "settings": return cachedImport("./SettingsRoute.svelte", () => import("./routes/SettingsRoute.svelte"));
@@ -121,7 +119,6 @@
     const queryIndex = routeText.indexOf("?");
     const path = queryIndex >= 0 ? routeText.slice(0, queryIndex) : routeText;
     const query = queryIndex >= 0 ? routeText.slice(queryIndex) : "";
-    const search = new URLSearchParams(query.startsWith("?") ? query.slice(1) : query);
     const segments = path.split("/").filter(Boolean);
     const name = segments[0] || "workspace";
     const params: Record<string, string> = {};
@@ -165,28 +162,9 @@
       params.roleKind = usage.roleKind;
       if (usage.roleId) params.id = usage.roleId;
     }
-    if (name === "sprint" && segments[1]) {
-      // Legacy sub-routes redirect to the new split: the old two-tab page became a
-      // tracking page (#/sprint) and a documents page (#/sprint/documents).
-      if (segments[1] === "overview") {
-        window.location.replace("#/sprint/documents");
-        return { name: "sprint", params: { sub: "documents" }, key: "sprint/documents" };
-      }
-      if (segments[1] === "tracking") {
-        window.location.replace("#/sprint");
-        return { name: "sprint", params: {}, key: "sprint" };
-      }
-      params.sub = segments[1];
-    }
-    if (name === "sprint" && search.has("item")) {
-      params.item = search.get("item") || "";
-    }
-    if (name === "sprint" && search.has("sprint")) {
-      params.sprint = search.get("sprint") || "";
-    }
     // Usage owns its tab state so period/provider choices survive tab navigation.
     // Its Config detail keys live inside the page, beside the shared editor mount.
-    const screenKey = name === "backends" ? "backends" : segments.join("/") || "day";
+    const screenKey = name === "backends" ? "backends" : segments.join("/") || "workspace";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
 
@@ -196,14 +174,10 @@
   }
 
   function isKnownRoute(): boolean {
-    if (route.name === "sprint") {
-      return !route.params.sub || route.params.sub === "documents";
-    }
     if (route.name === "settings") {
       return route.params.roleKind !== "unknown";
     }
     return [
-      "day",
       "review",
       "workspace",
       "ideas",
@@ -214,14 +188,13 @@
   }
 
   function secondaryRouteActive(): boolean {
-    return ["sprint", "ideas", "feedback", "settings", "backends"].includes(
+    return ["ideas", "feedback", "settings", "backends"].includes(
       route.name
     );
   }
 
   function screenTitle(): string {
     if (route.name === "workspace") return "Workspace";
-    if (route.name === "day") return "Home";
     return `${route.name.charAt(0).toUpperCase()}${route.name.slice(1)}`;
   }
 
@@ -383,13 +356,7 @@
       {#key route.key}
         <div class="screen screen-enter">
           {#snippet selectedRoute()}
-          {#if route.name === "day"}
-            {#await import("./routes/DayRoute.svelte") then view}
-<view.default />
-{:catch error}
-<ErrorLine {error} />
-{/await}
-          {:else if route.name === "review"}
+          {#if route.name === "review"}
             {#await import("./routes/ReviewRoute.svelte") then view}
 <view.default />
 {:catch error}
@@ -397,12 +364,6 @@
 {/await}
           {:else if route.name === "workspace" && route.workspace}
             <BoardRoute address={route.workspace} onDismissed={showDismissedToast} />
-          {:else if route.name === "sprint"}
-            {#await import("./routes/SprintRoute.svelte") then view}
-<view.default sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} sprintId={route.params.sprint || null} />
-{:catch error}
-<ErrorLine {error} />
-{/await}
           {:else if route.name === "ideas"}
             {#await import("./routes/IdeasRoute.svelte") then view}
 <view.default />

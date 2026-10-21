@@ -101,8 +101,6 @@ def test_approval_membership_and_each_workers_durable_message_dot(
         },
     )
     _bind(server, "feedback", feedback["id"])
-    with sqlite3.connect(server.db_path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM day_tickets").fetchone()[0] == 0
     ticket = tickets[0]
     for name in ("dot-ticket", "dot-supervisor", "dot-chief"):
         _conversation(server, name)

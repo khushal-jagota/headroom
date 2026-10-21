@@ -34,7 +34,7 @@ manual fold choices during page refreshes, like other unfinished groups.
 The existing discovery filters remain intact. Active and Backlogged exclude terminal
 Tickets. Done exposes completed work. The sidebar excludes all backlogged Tickets, including hover details and nested
 Messages under Settled. Its other existing filters remain intact. Exact unread conversation
-discovery remains independent of sidebar visibility and these grouped lists. Historical Day counts and Feedback
+discovery remains independent of sidebar visibility and these grouped lists. Feedback
 labels keep their separate rules.
 
 ## Ideas
@@ -48,13 +48,12 @@ Below, the ideas are listed newest first. An idea with no note is one line. An i
 with a note gets a small arrow that opens its detail.
 
 _Code paths:_ `web/src/components/ChiefConversation.svelte`,
-`web/src/components/SprintItemWorkspace.svelte`, `web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Sprint Items hold shared context independently of Sprint commitments. Sprint Items and ideas
+`web/src/components/SprintItemWorkspace.svelte`, `web/src/routes/IdeasRoute.svelte`. Tickets live in `src/planner/tickets/`. Sprint Items hold shared context and supervise their Tickets. Sprint Items and ideas
 live in `src/planner/sprints/`.
 
 ## Handoffs
 
 - **Feedback** (`feedback.md`) — the loose capture path available from every page.
-- **Days** (`days.md`) — historical Day records.
 - **Orchestrators** (`sprints.md`) — assignment and independent settlement.
 - **Projects** (`projects.md`) — where the project list comes from.
 

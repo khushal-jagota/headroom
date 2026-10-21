@@ -139,7 +139,8 @@ def run(browser, urls):
     before = len(page.evaluate("window.__requests()"))
     retired.locator("[data-schedule-title]").click()
     assert "Every planning day" in editor.locator("[data-retired-schedule]").inner_text()
-    assert "Current sprint" in editor.locator("[data-retired-schedule]").inner_text()
+    assert "Historical cadence" in editor.locator("[data-retired-schedule]").inner_text()
+    assert "Current sprint" not in editor.locator("[data-retired-schedule]").inner_text()
     assert "sprint_history" not in editor.inner_text()
     assert (
         editor.locator('[data-input="worker-type"] option:checked').inner_text()
@@ -150,6 +151,11 @@ def run(browser, urls):
     assert editor.locator('[data-input="enabled"]').is_disabled()
     assert editor.locator("[data-commit-schedule]").count() == 0
     assert editor.locator("[data-schedule-title] .ed").count() == 0
+    assert editor.locator('[data-input="enabled"]').get_attribute("aria-checked") == "false"
+    assert editor.locator('[data-input="project"]').is_disabled()
+    assert editor.locator('[data-input="orchestrator"]').is_disabled()
+    if screenshot_dir:
+        page.screenshot(path=os.path.join(screenshot_dir, "historical-schedule-locked.png"), full_page=True)
     page.locator("[data-back-to-schedules]").click()
     personal = page.locator('[data-schedule-id="schedule_personal"]')
     assert personal.locator("[data-schedule-toggle]").is_disabled()
@@ -178,6 +184,10 @@ def run(browser, urls):
         request["method"] != "GET" and request["path"].endswith("/schedule_retired")
         for request in page.evaluate("window.__requests()")[before:]
     )
+    if screenshot_dir:
+        page.evaluate("window.location.hash = '#/sprint'")
+        page.get_by_text("no such screen", exact=True).wait_for()
+        page.screenshot(path=os.path.join(screenshot_dir, "sprint-route-unavailable.png"), full_page=True)
     pass  # Shared runner owns the browser lifecycle.
 
     print("scheduled tasks browser assertions passed")

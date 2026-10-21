@@ -44,10 +44,8 @@ export type FeedbackPageContext = {
 };
 
 const SCREEN_LABELS: Record<string, string> = {
-  day: "Home",
   review: "Review",
   workspace: "Workspace",
-  sprint: "Sprint",
   backlog: "Backlog",
   ideas: "Ideas",
   feedback: "Feedback",
@@ -68,10 +66,10 @@ function decoded(segment: string): string {
 }
 
 export function feedbackPageContext(hash: string, detailTitle = ""): FeedbackPageContext {
-  const address = hash && hash !== "#" ? hash : "#/day";
+  const address = hash && hash !== "#" ? hash : "#/workspace/chief-of-staff";
   const path = address.replace(/^#/, "").split("?")[0];
   const segments = path.split("/").filter(Boolean);
-  const screen = segments[0] || "day";
+  const screen = segments[0] || "workspace";
   const title = detailTitle.trim();
 
   if (screen === "settings") {
@@ -79,6 +77,7 @@ export function feedbackPageContext(hash: string, detailTitle = ""): FeedbackPag
     return { address, label: `Settings · ${SCREEN_LABELS[section] || decoded(section)}` };
   }
   if (screen === "workspace") {
+    if (segments[1] === "chief-of-staff") return { address, label: "Chief of Staff" };
     if (segments[1] === "item" && segments.length === 3) {
       return { address, label: title ? `Sprint Item · ${title}` : "Sprint Item" };
     }
@@ -86,9 +85,6 @@ export function feedbackPageContext(hash: string, detailTitle = ""): FeedbackPag
         (segments.length === 2 && segments[1] !== "chief-of-staff")) {
       return { address, label: title ? `Ticket · ${title}` : "Ticket" };
     }
-  }
-  if (screen === "sprint" && new URLSearchParams(address.split("?")[1] || "").has("item")) {
-    return { address, label: title ? `Sprint Item · ${title}` : "Sprint Item" };
   }
   return { address, label: SCREEN_LABELS[screen] || decoded(screen) };
 }

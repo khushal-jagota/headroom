@@ -24,7 +24,6 @@ def run(browser, urls):
     ticket = dict(
         project_id="project_one",
         project="One",
-        sprint_id="sp_old",
         sprint_item_id="outcome_kept",
         sprint_item_title="Kept outcome",
         id="t_review",
@@ -40,7 +39,6 @@ def run(browser, urls):
         ceiling_holder={"kind": "chief", "id": "chief"},
         conversation_id=None,
         conversation_history=[],
-        day_ids=[],
         blocked=False,
         is_backlogged=False,
         blocker_summary={"blocked_by": []},
@@ -341,7 +339,6 @@ def run(browser, urls):
                 result = {**result, "field_values": {name: value for name, value in fields.items() if name == stage["gating_field"]},
                     "field_summaries": {name: {"revision": value, "byte_count": len(value.encode())} for name, value in fields.items()}}
                 result.pop("conversation_history", None)
-                result.pop("day_ids", None)
             result = {"epoch": "fixture", "key": key, "revision": str(source_revision), "body": result}
         route.fulfill(status=200, content_type="application/json", body=json.dumps(result))
 

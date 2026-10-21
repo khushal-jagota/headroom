@@ -1,4 +1,4 @@
-"""Sprint domain shapes: Sprints, durable Outcomes, commitments, and ideas."""
+"""Orchestrator and Idea contracts."""
 
 from __future__ import annotations
 
@@ -21,24 +21,6 @@ SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS: Final = SprintItemSupervisorLaunchConfig
     employee_launch_model="sol",
     employee_launch_reasoning_effort="medium",
 )
-
-
-# Editable documents; their internal headings are prose, not stored fields.
-SPRINT_DOCUMENT_FIELDS: Final[tuple[str, ...]] = ("kickoff", "checkpoint", "review")
-
-
-@dataclass
-class Sprint:  # §3.1
-    id: str
-    name: str
-    date_start: str  # ISO, inclusive
-    date_end: str  # ISO, inclusive
-    primary_bet: str = ""  # summary also displayed above Sprint tracking
-    kickoff: str = ""
-    checkpoint: str = ""
-    review: str = ""
-    created_at: int = 0
-    updated_at: int = 0
 
 
 @dataclass
@@ -66,7 +48,6 @@ class SprintItemDeletion:
 
     sprint_item_id: str
     title: str
-    sprint_ids: tuple[str, ...]
 
 
 class ItemWorkspaceDocument(TypedDict):
@@ -82,7 +63,7 @@ class ItemWorkspaceContent(ItemWorkspaceDocument):
 
 # --- request bodies (§9 wire shapes) ---
 # Every key is optional on the wire: an absent key takes the documented default,
-# unknown keys are ignored except for Sprint creation, which rejects them.
+# unknown keys are ignored.
 # The api layer marshals the raw JSON dict into these
 # shapes; a null or wrong-typed value raises ErrorCode.validation. Enum-valued
 # keys carry the string form and are parsed against the contract enums in api.
@@ -127,22 +108,6 @@ class Idea:  # §3.5
     updated_at: int
 
 
-class SprintSummary(TypedDict):
-    id: str
-    name: str
-    date_start: str
-    date_end: str
-
-
-class SprintWireBody(SprintSummary):
-    primary_bet: str
-    kickoff: str
-    checkpoint: str
-    review: str
-    created_at: int
-    updated_at: int
-
-
 class OutcomeSummary(TypedDict):
     settled: bool
     id: str
@@ -151,26 +116,3 @@ class OutcomeSummary(TypedDict):
     project: str
     created_at: int
     updated_at: int
-
-
-class SprintTicketSummary(TypedDict):
-    id: str
-    title: str
-    stage: str
-    ticket_status: str
-    project_id: str | None
-    sprint_item_id: str | None
-    waiting_to_closeout: bool
-
-
-class SprintOutcomeGroup(TypedDict):
-    outcome: OutcomeSummary
-    committed: bool
-    tickets: list[SprintTicketSummary]
-
-
-class SprintTrackingBody(TypedDict):
-    planning_date: str
-    sprint: SprintWireBody | None
-    outcome_groups: list[SprintOutcomeGroup]
-    unclassified_tickets: list[SprintTicketSummary]

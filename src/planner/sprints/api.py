@@ -1,7 +1,4 @@
-"""Sprint-item, sprint, current-sprint view, and idea routes (§9). Thin HTTP shells
-over the stage-3 sprint writers and the sprint read views. Ideas are homed here
-because the Idea shape lives in this domain's contracts. Sprint writers take a
-`clock: Clock`, not `now: int` — do not mix them up."""
+"""Orchestrator, supervisor conversation, and Idea HTTP routes."""
 
 from __future__ import annotations
 
@@ -16,7 +13,6 @@ from planner.core import authority
 from planner.core.authority import require_above, require_above_or_self
 from planner.core.contracts import JsonDict, Principal, PrincipalKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import planning_date
 from planner.files import sprint_item_files
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
@@ -35,7 +31,6 @@ from planner.sprints import service as sprints_service
 from planner.sprints import startup as sprints_startup
 from planner.sprints import views as sprints_views
 from planner.sprints.contracts import (
-    SPRINT_DOCUMENT_FIELDS,
     CreateIdeaBody,
     CreateItemBody,
     ItemWorkspaceContent,
@@ -55,7 +50,6 @@ from planner.work_attention import add_work_attention
 
 router = APIRouter()
 
-_SPRINT_TEXT_FIELDS = ("name", "primary_bet") + SPRINT_DOCUMENT_FIELDS
 _ITEM_PLAIN_FIELDS = ("title", "goal", "recap", "project_id")
 
 
@@ -64,7 +58,7 @@ _ITEM_PLAIN_FIELDS = ("title", "goal", "recap", "project_id")
 
 def _marshal_create_item(raw: JsonDict) -> CreateItemBody:
     if "sprint_id" in raw:
-        raise PlannerError(ErrorCode.validation, "Outcome has no single Sprint; add a commitment")
+        raise PlannerError(ErrorCode.validation, "Sprint placement is removed")
     return CreateItemBody(
         title=body_str(raw, "title"),
         project=body_opt_str(raw, "project"),
@@ -314,7 +308,6 @@ async def delete_item(
         "ok": True,
         "sprint_item_id": deleted.sprint_item_id,
         "title": deleted.title,
-        "sprint_ids": list(deleted.sprint_ids),
     }
 
 
@@ -362,47 +355,6 @@ async def patch_item(
 # --- sprint routes -------------------------------------------------------------
 
 
-@router.get("/sprints")
-async def read_sprints(
-    conn: DbConn,
-    detail: str | None = None,
-    object_id: Annotated[str | None, Query(alias="id")] = None,
-    limit: int | None = None,
-    offset: int | None = None,
-) -> JsonDict:
-    """Read Sprints at the level the caller asks for, or one Sprint by id."""
-    level = parse_read_detail(detail)
-    if object_id is not None:
-        require_full_for_one(level)
-        reject_parameters("id", {"limit": limit, "offset": offset})
-        return dict(sprints_views.sprint_json(sprints_data.read_sprint(conn, object_id)))
-    if level is ReadDetail.full:
-        reject_parameters("detail=full", {"limit": limit, "offset": offset})
-        return {"sprints": sprints_views.list_sprints(conn)}
-    page = sprints_views.list_sprint_summaries(
-        conn,
-        page_request=ListPageRequest(
-            limit=DEFAULT_LIST_LIMIT if limit is None else limit,
-            offset=0 if offset is None else offset,
-        ),
-    )
-    return page.response("sprints")
-
-
-@router.get("/sprint/current")
-async def current_sprint(
-    conn: DbConn,
-    cfg: Cfg,
-    clk: Clk,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    planning_date_iso = planning_date(clk.now(), cfg.boundary_hour).isoformat()
-    result = dict(sprints_views.sprint_current_view(conn, planning_date_iso))
-    await _add_tracking_attention(conn, conversations, conversation_record, result)
-    return result
-
-
 # --- idea routes ---------------------------------------------------------------
 
 
@@ -435,43 +387,6 @@ async def list_ideas(
             project_id=resolved_project.id if resolved_project is not None else None,
         )
     }
-
-
-@router.get("/sprints/{sprint_id}/tracking")
-async def sprint_tracking(
-    sprint_id: str,
-    conn: DbConn,
-    clk: Clk,
-    cfg: Cfg,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-) -> JsonDict:
-    result = dict(
-        sprints_views.sprint_tracking_view(
-            conn, sprint_id, planning_date(clk.now(), cfg.boundary_hour).isoformat()
-        )
-    )
-    await _add_tracking_attention(conn, conversations, conversation_record, result)
-    return result
-
-
-async def _add_tracking_attention(
-    conn: DbConn,
-    conversations: Conversations,
-    conversation_record: ConversationRecord,
-    result: JsonDict,
-) -> None:
-    groups = result.get("outcome_groups", [])
-    items = [group["outcome"] for group in groups]
-    tickets = [ticket for group in groups for ticket in group["tickets"]]
-    tickets.extend(result.get("unclassified_tickets", []))
-    await add_work_attention(
-        conn,
-        conversations,
-        conversation_record,
-        tickets=tickets,
-        sprint_items=items,
-    )
 
 
 @router.patch("/items/{item_id}/settled")

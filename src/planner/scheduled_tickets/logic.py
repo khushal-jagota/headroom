@@ -7,7 +7,6 @@ from datetime import datetime
 
 from planner.core.errors import ErrorCode, PlannerError
 from planner.scheduled_tickets.contracts import ScheduleCadence
-from planner.sprints.logic import DateRange
 
 _LOCAL_TIME = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
@@ -31,15 +30,6 @@ def occurrence_key(now: datetime) -> str:
     return now.isoformat(timespec="minutes")
 
 
-def cadence_qualifies(
-    cadence: ScheduleCadence,
-    *,
-    planning_day: str,
-    sprint_ranges: tuple[DateRange, ...],
-) -> bool:
-    # Legacy calendar cadences remain readable for receipts, but never execute.
+def cadence_qualifies(cadence: ScheduleCadence) -> bool:
+    """Historical calendar cadences remain inert."""
     return cadence is ScheduleCadence.daily
-
-
-def planning_day_for(now: datetime, boundary_hour: int) -> str:
-    return now.date().isoformat()
