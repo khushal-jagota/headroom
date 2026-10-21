@@ -8,10 +8,14 @@ is gone, with a real layout and a real scroll height.
 """
 
 import os
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "support"))
+from vps_metrics_fixture import MetricsFixture  # noqa: E402
 
 
 def run(browser, urls):
@@ -39,10 +43,18 @@ def run(browser, urls):
         for worker_type in worker_types
     ]
     unexpected = []
+    metrics = MetricsFixture()
+    metrics.append()
+    metrics_calls = []
 
     def respond(route):
         parts = urlsplit(route.request.url)
         path = parts.path
+        if path.startswith("/api/vps-metrics/"):
+            metrics_calls.append(path)
+            response = metrics.client.request(route.request.method, path + ("?" + parts.query if parts.query else ""))
+            route.fulfill(status=response.status_code, content_type="application/json", body=response.content)
+            return
         if path == "/api/resource-body":
             # Versioned reads arrive wrapped. The screen only needs the body.
             key = parse_qs(parts.query).get("key", [""])[0]
@@ -169,10 +181,30 @@ def run(browser, urls):
     page.evaluate("location.hash='#/settings'")
     expect(pane.locator('[data-settings]')).to_be_visible()
     rail.evaluate("node => window.__persistentRail = node")
-    for destination, selector in [("#/review", ".review-screen"), ("#/vps", "[data-vps-placeholder]"), ("#/settings", "[data-settings]")]:
+    for destination, selector in [("#/review", ".review-screen"), ("#/vps", '[data-screen="vps"]'), ("#/settings", "[data-settings]")]:
         page.evaluate("hash => location.hash=hash", destination)
         expect(pane.locator(selector)).to_be_visible()
         assert rail.evaluate("node => node === window.__persistentRail")
+
+    # The real App route owns the live page. Leaving it stops reads and lease renewals.
+    page.evaluate("location.hash='#/vps'")
+    expect(pane.locator('[data-vps-metric="cpu"]')).to_contain_text("27")
+    assert metrics_calls.count('/api/vps-metrics/activity') > 0
+    vps_evidence = Path(os.environ.get('PANELS_VPS_ARTIFACT_DIR', os.environ['PANELS_SIDEBAR_ARTIFACT_DIR']))
+    vps_evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(animations="disabled", path=str(vps_evidence / 'vps-shell-pane.png'))
+    page.evaluate("location.hash='#/settings'")
+    expect(pane.locator('[data-settings]')).to_be_visible()
+    before = len(metrics_calls)
+    page.wait_for_timeout(2200)
+    page.evaluate("dispatchEvent(new Event('focus')); dispatchEvent(new Event('online'))")
+    page.wait_for_timeout(30)
+    assert len(metrics_calls) == before, metrics_calls[before:]
+    page.evaluate("location.hash='#/vps'")
+    expect(pane.locator('[data-vps-metric="cpu"]')).to_contain_text("27")
+    assert '/api/vps-metrics/latest' in metrics_calls[before:]
+    assert '/api/vps-metrics/activity' in metrics_calls[before:]
+    assert rail.evaluate("node => node === window.__persistentRail")
 
     # Preview's own full-height document styles must remain inside the same pane.
     page.route("**/files/tickets/t_fixture/artifacts/wide.html", lambda route: route.fulfill(
@@ -236,3 +268,4 @@ def run(browser, urls):
     unwanted = [path for path in unexpected if not path.startswith(("/api/navigation", "/api/changes", "/api/managers", "/api/projects", "/api/schedules", "/api/conversation", "/api/workers/chief-of-staff"))]
     assert not unwanted, unwanted
     context.close()
+    metrics.close()

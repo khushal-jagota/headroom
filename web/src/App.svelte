@@ -1,5 +1,6 @@
 <script lang="ts">
   import LazyRegion from "./components/LazyRegion.svelte";
+  import VpsPage from "./components/vps/VpsPage.svelte";
   import { cachedImport } from "./lib/lazyViews";
   import ErrorLine from "./components/ErrorLine.svelte";
   import { onMount, onDestroy, tick } from "svelte";
@@ -298,7 +299,7 @@
         {:else if route.name === "preview"}
           {#await import("./routes/FilePreviewRoute.svelte") then view}<view.default />{:catch error}<ErrorLine {error} />{/await}
         {:else if route.name === "vps"}
-          <div class="vps-placeholder" data-vps-placeholder><strong>VPS</strong><span>separate Ticket</span></div>
+          <VpsPage />
         {:else}<div class="quiet-line">no such screen</div>{/if}
       {/snippet}
       {#if routeModule}<LazyRegion promise={routeModule} shape={routeShape} layout="fill">{@render selectedRoute()}</LazyRegion>{:else}{@render selectedRoute()}{/if}
